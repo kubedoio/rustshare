@@ -73,4 +73,23 @@ impl ObjectStore {
             Err(_) => Ok(false),
         }
     }
+
+    /// Generate a presigned URL for downloading an object
+    pub async fn get_presigned_url(&self, key: &str, expires_in_secs: u64) -> Result<String> {
+        use aws_sdk_s3::presigning::PresigningConfig;
+        use std::time::Duration;
+
+        let presigning_config = PresigningConfig::builder()
+            .expires_in(Duration::from_secs(expires_in_secs))
+            .build()?;
+
+        let presigned_request = self.client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .presigned(presigning_config)
+            .await?;
+
+        Ok(presigned_request.uri().to_string())
+    }
 }

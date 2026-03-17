@@ -1,10 +1,15 @@
+mod handlers;
+
 use anyhow::Result;
 use axum::{
-    routing::{get, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use rustshare_auth::{JwtManager, PasswordHasher};
-use rustshare_core::domain::User;
+use rustshare_core::{
+    domain::User,
+    services::{FileService, FolderService},
+};
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -20,6 +25,8 @@ pub struct AppState {
     pub event_store: Arc<EventStore>,
     pub object_store: Arc<ObjectStore>,
     pub jwt_manager: Arc<JwtManager>,
+    pub file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore>>,
+    pub folder_service: Arc<FolderService<EventStore, MetadataStore>>,
 }
 
 #[tokio::main]
@@ -68,6 +75,17 @@ async fn main() -> Result<()> {
     let jwt_secret = std::env::var("JWT_SECRET")?;
     let jwt_manager = Arc::new(JwtManager::new(jwt_secret));
 
+    // Initialize services
+    let file_service = Arc::new(FileService::new(
+        Arc::clone(&event_store),
+        Arc::clone(&metadata_store),
+        Arc::clone(&object_store),
+    ));
+    let folder_service = Arc::new(FolderService::new(
+        Arc::clone(&event_store),
+        Arc::clone(&metadata_store),
+    ));
+
     // Bootstrap admin user if no users exist
     if !metadata_store.has_users().await? {
         let admin_username = std::env::var("RUSTSHARE_ADMIN_USERNAME")?;
@@ -96,12 +114,35 @@ async fn main() -> Result<()> {
         event_store,
         object_store,
         jwt_manager,
+        file_service,
+        folder_service,
     };
 
     // Build router
     let app = Router::new()
+        // Health check
         .route("/health", get(health_check))
+        // Auth
         .route("/api/auth/login", post(login))
+        // File routes (Task 15-19)
+        .route("/api/files/upload", post(handlers::upload_file))
+        .route("/api/files/:id", get(handlers::get_file))
+        .route("/api/files/:id", put(handlers::update_file))
+        .route("/api/files/:id", delete(handlers::delete_file))
+        .route("/api/files/:id/download", get(handlers::download_file))
+        .route("/api/files/:id/versions", get(handlers::get_file_versions))
+        .route("/api/files/:id/restore", post(handlers::restore_file_version))
+        .route("/api/files/:id/move", post(handlers::move_file))
+        .route("/api/files/:id/rename", post(handlers::rename_file))
+        // Folder routes (Task 20-22)
+        .route("/api/folders", post(handlers::create_folder))
+        .route("/api/folders/:id", get(handlers::get_folder))
+        .route("/api/folders/:id", delete(handlers::delete_folder))
+        .route("/api/folders/:id/contents", get(handlers::get_folder_contents))
+        .route("/api/folders/tree", get(handlers::get_folder_tree))
+        .route("/api/folders/:id/move", post(handlers::move_folder))
+        .route("/api/folders/:id/rename", post(handlers::rename_folder))
+        // Tracing
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
