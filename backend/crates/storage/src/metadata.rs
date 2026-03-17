@@ -5,7 +5,7 @@
 //! This will be migrated to compile-time queries after Docker Compose is set up in Task 11.
 
 use anyhow::Result;
-use rustshare_core::domain::{File, FileVersion, User};
+use rustshare_core::domain::{File, FileVersion, Folder, User};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -333,12 +333,179 @@ impl MetadataStore {
             Ok(None)
         }
     }
+
+    /// Create a new folder in the projection table
+    pub async fn create_folder(&self, folder: &Folder) -> Result<()> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        sqlx::query(
+            r#"
+            INSERT INTO folders (id, name, path, parent_folder_id, owner_id, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+        )
+        .bind(folder.id)
+        .bind(&folder.name)
+        .bind(&folder.path)
+        .bind(folder.parent_folder_id)
+        .bind(folder.owner_id)
+        .bind(folder.created_at)
+        .bind(folder.updated_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Find folder by ID
+    pub async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<Folder>> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
+            FROM folders
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let folder = Folder {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                owner_id: row.try_get("owner_id")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            };
+            Ok(Some(folder))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Update a folder in the projection table
+    pub async fn update_folder(&self, folder: &Folder) -> Result<()> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        sqlx::query(
+            r#"
+            UPDATE folders
+            SET name = $2, path = $3, parent_folder_id = $4, updated_at = $5
+            WHERE id = $1
+            "#,
+        )
+        .bind(folder.id)
+        .bind(&folder.name)
+        .bind(&folder.path)
+        .bind(folder.parent_folder_id)
+        .bind(folder.updated_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Delete a folder from the projection table
+    pub async fn delete_folder(&self, id: Uuid) -> Result<()> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        sqlx::query("DELETE FROM folders WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// List folders with optional filters
+    ///
+    /// Returns folders owned by the specified user, optionally filtered by parent folder.
+    /// Pass `None` for parent_id to get folders in the root directory (no parent).
+    pub async fn list_folders(&self, parent_id: Option<Uuid>, owner_id: Uuid) -> Result<Vec<Folder>> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        let rows = sqlx::query(
+            r#"
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
+            FROM folders
+            WHERE owner_id = $1 AND (parent_folder_id = $2 OR ($2 IS NULL AND parent_folder_id IS NULL))
+            ORDER BY name ASC
+            "#,
+        )
+        .bind(owner_id)
+        .bind(parent_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut folders = Vec::new();
+        for row in rows {
+            let folder = Folder {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                owner_id: row.try_get("owner_id")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            };
+            folders.push(folder);
+        }
+
+        Ok(folders)
+    }
+
+    /// Find all descendant folders of a given folder using recursive CTE
+    ///
+    /// Returns all folders in the subtree rooted at the specified folder,
+    /// including the folder itself and all its direct and indirect children.
+    pub async fn find_descendant_folders(&self, folder_id: Uuid) -> Result<Vec<Folder>> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        let rows = sqlx::query(
+            r#"
+            WITH RECURSIVE folder_tree AS (
+                -- Base case: start with the specified folder
+                SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
+                FROM folders
+                WHERE id = $1
+
+                UNION ALL
+
+                -- Recursive case: get all direct children
+                SELECT f.id, f.name, f.path, f.parent_folder_id, f.owner_id, f.created_at, f.updated_at
+                FROM folders f
+                INNER JOIN folder_tree ft ON f.parent_folder_id = ft.id
+            )
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
+            FROM folder_tree
+            ORDER BY path ASC
+            "#,
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut folders = Vec::new();
+        for row in rows {
+            let folder = Folder {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                owner_id: row.try_get("owner_id")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            };
+            folders.push(folder);
+        }
+
+        Ok(folders)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustshare_core::domain::{File, FileVersion, User};
+    use rustshare_core::domain::{File, FileVersion, Folder, User};
 
     async fn setup_test_db() -> PgPool {
         let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
@@ -550,6 +717,178 @@ mod tests {
         // Cleanup user
         sqlx::query("DELETE FROM users WHERE id = $1")
             .bind(user.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires DATABASE_URL
+    async fn test_folder_crud() {
+        let (store, pool) = setup_metadata_store().await;
+
+        // First create a user to own the folders
+        let owner = User::new(
+            "folderowner".to_string(),
+            "Folder Owner".to_string(),
+            "hashabc".to_string(),
+            "folderowner@example.com".to_string(),
+            false,
+            10_737_418_240,
+        );
+        store.create_user(&owner).await.unwrap();
+
+        // Test: create_folder (root folder)
+        let root_folder = Folder::new_root(owner.id);
+        store.create_folder(&root_folder).await.unwrap();
+
+        // Test: find_folder_by_id
+        let found = store.find_folder_by_id(root_folder.id).await.unwrap();
+        assert!(found.is_some());
+        let found_folder = found.unwrap();
+        assert_eq!(found_folder.id, root_folder.id);
+        assert_eq!(found_folder.name, "Root");
+        assert_eq!(found_folder.path, "/");
+        assert_eq!(found_folder.parent_folder_id, None);
+        assert_eq!(found_folder.owner_id, owner.id);
+
+        // Test: create_folder (child folder - Documents)
+        let docs_folder = Folder::new_child(
+            "Documents".to_string(),
+            "/Documents".to_string(),
+            root_folder.id,
+            owner.id,
+        );
+        store.create_folder(&docs_folder).await.unwrap();
+
+        // Test: create_folder (child folder - Photos)
+        let photos_folder = Folder::new_child(
+            "Photos".to_string(),
+            "/Photos".to_string(),
+            root_folder.id,
+            owner.id,
+        );
+        store.create_folder(&photos_folder).await.unwrap();
+
+        // Test: create_folder (nested folder - Documents/Work)
+        let work_folder = Folder::new_child(
+            "Work".to_string(),
+            "/Documents/Work".to_string(),
+            docs_folder.id,
+            owner.id,
+        );
+        store.create_folder(&work_folder).await.unwrap();
+
+        // Test: create_folder (deeply nested folder - Documents/Work/Projects)
+        let projects_folder = Folder::new_child(
+            "Projects".to_string(),
+            "/Documents/Work/Projects".to_string(),
+            work_folder.id,
+            owner.id,
+        );
+        store.create_folder(&projects_folder).await.unwrap();
+
+        // Test: list_folders (root level - should return Documents and Photos)
+        let root_children = store
+            .list_folders(Some(root_folder.id), owner.id)
+            .await
+            .unwrap();
+        assert_eq!(root_children.len(), 2);
+        assert!(root_children.iter().any(|f| f.name == "Documents"));
+        assert!(root_children.iter().any(|f| f.name == "Photos"));
+
+        // Test: list_folders (Documents children - should return Work)
+        let docs_children = store
+            .list_folders(Some(docs_folder.id), owner.id)
+            .await
+            .unwrap();
+        assert_eq!(docs_children.len(), 1);
+        assert_eq!(docs_children[0].name, "Work");
+
+        // Test: list_folders (no parent - should return root folder)
+        let root_folders = store.list_folders(None, owner.id).await.unwrap();
+        assert_eq!(root_folders.len(), 1);
+        assert_eq!(root_folders[0].name, "Root");
+
+        // Test: find_descendant_folders (should find all descendants of Documents)
+        let descendants = store
+            .find_descendant_folders(docs_folder.id)
+            .await
+            .unwrap();
+        // Should include: Documents, Work, Projects (3 folders)
+        assert_eq!(descendants.len(), 3);
+        assert!(descendants.iter().any(|f| f.name == "Documents"));
+        assert!(descendants.iter().any(|f| f.name == "Work"));
+        assert!(descendants.iter().any(|f| f.name == "Projects"));
+
+        // Test: find_descendant_folders (leaf folder should only return itself)
+        let leaf_descendants = store
+            .find_descendant_folders(projects_folder.id)
+            .await
+            .unwrap();
+        assert_eq!(leaf_descendants.len(), 1);
+        assert_eq!(leaf_descendants[0].name, "Projects");
+
+        // Test: update_folder (rename Photos to Pictures)
+        let mut updated_photos = photos_folder.clone();
+        updated_photos.name = "Pictures".to_string();
+        updated_photos.path = "/Pictures".to_string();
+        updated_photos.updated_at = chrono::Utc::now();
+        store.update_folder(&updated_photos).await.unwrap();
+
+        let found_updated = store
+            .find_folder_by_id(photos_folder.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found_updated.name, "Pictures");
+        assert_eq!(found_updated.path, "/Pictures");
+
+        // Test: delete_folder (delete leaf folder first)
+        store.delete_folder(projects_folder.id).await.unwrap();
+        let not_found = store
+            .find_folder_by_id(projects_folder.id)
+            .await
+            .unwrap();
+        assert!(not_found.is_none());
+
+        // Verify descendants updated after deletion
+        let updated_descendants = store
+            .find_descendant_folders(docs_folder.id)
+            .await
+            .unwrap();
+        assert_eq!(updated_descendants.len(), 2); // Only Documents and Work remain
+        assert!(!updated_descendants.iter().any(|f| f.name == "Projects"));
+
+        // Cleanup: Delete folders (cascade will handle children)
+        // Delete in order: leaf -> parent
+        sqlx::query("DELETE FROM folders WHERE id = $1")
+            .bind(work_folder.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("DELETE FROM folders WHERE id = $1")
+            .bind(docs_folder.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("DELETE FROM folders WHERE id = $1")
+            .bind(photos_folder.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("DELETE FROM folders WHERE id = $1")
+            .bind(root_folder.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Cleanup user
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(owner.id)
             .execute(&pool)
             .await
             .unwrap();
