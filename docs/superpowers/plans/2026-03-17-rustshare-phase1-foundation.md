@@ -148,10 +148,11 @@ members = [
     "crates/core",
     "crates/storage",
     "crates/auth",
-    "crates/protocols",
     "server",
 ]
 resolver = "2"
+
+# Note: crates/protocols will be added in Phase 4
 
 [workspace.package]
 version = "0.1.0"
