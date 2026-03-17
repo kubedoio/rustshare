@@ -10,3 +10,7 @@ license.workspace = true
 argon2.workspace = true
 rand.workspace = true
 thiserror.workspace = true
+jsonwebtoken.workspace = true
+serde.workspace = true
+chrono.workspace = true
+uuid.workspace = true

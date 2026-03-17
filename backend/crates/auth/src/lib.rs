@@ -5,4 +5,4 @@ pub mod jwt;
 // Note: session module will be added in Phase 2 for session management
 
 pub use password::PasswordHasher;
-// pub use jwt::JwtManager; // Will be uncommented in Task 7
+pub use jwt::JwtManager;
