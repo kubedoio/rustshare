@@ -117,7 +117,6 @@ rustshare/
 ```gitignore
 # Rust
 target/
-Cargo.lock
 
 # Environment
 .env
@@ -138,6 +137,9 @@ docker-compose.override.yml
 
 # Logs
 *.log
+
+# Note: Cargo.lock IS committed for applications (not libraries)
+# to ensure reproducible builds
 ```
 
 - [ ] **Step 2: Create workspace Cargo.toml**
