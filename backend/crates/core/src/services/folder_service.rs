@@ -10,7 +10,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::domain::{File, Folder, FolderId, UserId};
+use crate::domain::{File, Folder, FolderContents, FolderTree, FolderId, UserId};
 use crate::events::{AggregateType, Event, EventType, FolderCreatedPayload};
 use crate::services::FolderError;
 
@@ -183,6 +183,75 @@ where
         }
 
         Ok(folder)
+    }
+
+    /// List the contents of a folder (immediate children only).
+    ///
+    /// Returns a FolderContents structure containing the files and immediate subfolders
+    /// in the specified folder. Does not recurse into subdirectories.
+    pub async fn list_contents(
+        &self,
+        folder_id: FolderId,
+        user_id: UserId,
+    ) -> Result<FolderContents, FolderError> {
+        // Verify folder exists and user has access
+        let folder = self.get_folder(folder_id, user_id).await?;
+
+        // Get files in this folder
+        let files = self
+            .metadata_store
+            .list_files(Some(folder.id), user_id)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        // Get subfolders in this folder
+        let folders = self
+            .metadata_store
+            .list_folders(Some(folder.id), user_id)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        Ok(FolderContents::with_contents(files, folders))
+    }
+
+    /// Get a recursive tree structure of a folder and all its descendants.
+    ///
+    /// Returns a FolderTree containing the folder, all its files, and recursively
+    /// all its subfolders with their files.
+    pub async fn get_tree(&self, folder_id: FolderId, user_id: UserId) -> Result<FolderTree, FolderError> {
+        // Verify folder exists and user has access
+        let folder = self.get_folder(folder_id, user_id).await?;
+
+        // Build the tree recursively
+        self.build_tree_internal(folder, user_id).await
+    }
+
+    /// Internal recursive method to build folder tree.
+    ///
+    /// This is a separate method to allow for Box::pin recursion.
+    async fn build_tree_internal(&self, folder: Folder, user_id: UserId) -> Result<FolderTree, FolderError> {
+        // Get files in this folder
+        let files = self
+            .metadata_store
+            .list_files(Some(folder.id), user_id)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        // Get immediate subfolders
+        let subfolders = self
+            .metadata_store
+            .list_folders(Some(folder.id), user_id)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        // Recursively build trees for each subfolder
+        let mut subfolder_trees = Vec::new();
+        for subfolder in subfolders {
+            let subtree = Box::pin(self.build_tree_internal(subfolder, user_id)).await?;
+            subfolder_trees.push(subtree);
+        }
+
+        Ok(FolderTree::with_contents(folder, files, subfolder_trees))
     }
 
     /// Validate folder name.
@@ -450,6 +519,140 @@ mod tests {
         let created = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
 
         let result = service.get_folder(created.id, other_user_id).await;
+
+        assert!(matches!(result, Err(FolderError::PermissionDenied { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_list_contents_empty_folder() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store, metadata_store);
+
+        let owner_id = Uuid::new_v4();
+        let folder = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+
+        let contents = service.list_contents(folder.id, owner_id).await.unwrap();
+
+        assert_eq!(contents.files.len(), 0);
+        assert_eq!(contents.folders.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_contents_with_subfolders() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store, metadata_store);
+
+        let owner_id = Uuid::new_v4();
+
+        // Create parent folder
+        let parent = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+
+        // Create subfolders
+        let _subfolder1 = service
+            .create_folder("Work".to_string(), Some(parent.id), owner_id)
+            .await
+            .unwrap();
+        let _subfolder2 = service
+            .create_folder("Personal".to_string(), Some(parent.id), owner_id)
+            .await
+            .unwrap();
+
+        let contents = service.list_contents(parent.id, owner_id).await.unwrap();
+
+        assert_eq!(contents.files.len(), 0);
+        assert_eq!(contents.folders.len(), 2);
+        let folder_names: Vec<&str> = contents.folders.iter().map(|f| f.name.as_str()).collect();
+        assert!(folder_names.contains(&"Work"));
+        assert!(folder_names.contains(&"Personal"));
+    }
+
+    #[tokio::test]
+    async fn test_list_contents_permission_denied() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store, metadata_store);
+
+        let owner_id = Uuid::new_v4();
+        let other_user_id = Uuid::new_v4();
+        let folder = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+
+        let result = service.list_contents(folder.id, other_user_id).await;
+
+        assert!(matches!(result, Err(FolderError::PermissionDenied { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_get_tree_single_folder() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store, metadata_store);
+
+        let owner_id = Uuid::new_v4();
+        let folder = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+
+        let tree = service.get_tree(folder.id, owner_id).await.unwrap();
+
+        assert_eq!(tree.folder.id, folder.id);
+        assert_eq!(tree.folder.name, "Documents");
+        assert_eq!(tree.files.len(), 0);
+        assert_eq!(tree.subfolders.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_tree_with_subfolders() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store, metadata_store);
+
+        let owner_id = Uuid::new_v4();
+
+        // Create folder hierarchy:
+        // Documents/
+        //   Work/
+        //     Projects/
+        //   Personal/
+        let root = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+        let work = service
+            .create_folder("Work".to_string(), Some(root.id), owner_id)
+            .await
+            .unwrap();
+        let _projects = service
+            .create_folder("Projects".to_string(), Some(work.id), owner_id)
+            .await
+            .unwrap();
+        let _personal = service
+            .create_folder("Personal".to_string(), Some(root.id), owner_id)
+            .await
+            .unwrap();
+
+        let tree = service.get_tree(root.id, owner_id).await.unwrap();
+
+        assert_eq!(tree.folder.name, "Documents");
+        assert_eq!(tree.subfolders.len(), 2);
+
+        // Check Work subfolder
+        let work_tree = tree.subfolders.iter().find(|t| t.folder.name == "Work").unwrap();
+        assert_eq!(work_tree.subfolders.len(), 1);
+        assert_eq!(work_tree.subfolders[0].folder.name, "Projects");
+
+        // Check Personal subfolder
+        let personal_tree = tree.subfolders.iter().find(|t| t.folder.name == "Personal").unwrap();
+        assert_eq!(personal_tree.subfolders.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_tree_permission_denied() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store, metadata_store);
+
+        let owner_id = Uuid::new_v4();
+        let other_user_id = Uuid::new_v4();
+        let folder = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+
+        let result = service.get_tree(folder.id, other_user_id).await;
 
         assert!(matches!(result, Err(FolderError::PermissionDenied { .. })));
     }
