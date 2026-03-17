@@ -1,0 +1,25 @@
+# Rust
+target/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Logs
+*.log
+
+# Note: Cargo.lock IS committed for applications (not libraries)
+# to ensure reproducible builds
