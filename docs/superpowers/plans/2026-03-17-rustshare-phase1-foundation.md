@@ -701,16 +701,102 @@ mod tests {
 }
 ```
 
-- [ ] **Step 10: Run all core tests**
+- [ ] **Step 10: Write file_version.rs**
+
+```rust
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use super::{file::FileId, user::UserId};
+
+/// Unique identifier for a file version
+pub type VersionId = Uuid;
+
+/// File version record
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FileVersion {
+    pub id: VersionId,
+    pub file_id: FileId,
+    pub version_number: i32,
+    pub content_hash: String,
+    pub storage_key: String,
+    pub size: i64,
+    pub created_by: UserId,
+    pub created_at: DateTime<Utc>,
+    pub change_description: Option<String>,
+}
+
+impl FileVersion {
+    /// Create a new file version
+    pub fn new(
+        file_id: FileId,
+        version_number: i32,
+        content_hash: String,
+        size: i64,
+        created_by: UserId,
+        change_description: Option<String>,
+    ) -> Self {
+        let storage_key = format!("blobs/{}", content_hash);
+        Self {
+            id: Uuid::new_v4(),
+            file_id,
+            version_number,
+            content_hash,
+            storage_key,
+            size,
+            created_by,
+            created_at: Utc::now(),
+            change_description,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_file_version_creation() {
+        let file_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+
+        let version = FileVersion::new(
+            file_id,
+            2,
+            "def456".to_string(),
+            2048,
+            user_id,
+            Some("Updated content".to_string()),
+        );
+
+        assert_eq!(version.file_id, file_id);
+        assert_eq!(version.version_number, 2);
+        assert_eq!(version.storage_key, "blobs/def456");
+        assert_eq!(version.size, 2048);
+    }
+}
+```
+
+- [ ] **Step 11: Update domain/mod.rs to export FileVersion**
+
+Add to `backend/crates/core/src/domain/mod.rs`:
+
+```rust
+pub mod file_version;
+pub use file_version::FileVersion;
+```
+
+- [ ] **Step 12: Run all core tests**
 
 Run: `cd backend && cargo test -p rustshare-core`
-Expected: 8 tests passed
+Expected: 9 tests passed
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 13: Commit**
 
 ```bash
 git add backend/crates/core/
-git commit -m "feat(core): add domain models for User, File, Folder, Share"
+git commit -m "feat(core): add domain models for User, File, Folder, Share, FileVersion"
 ```
 
 ---
