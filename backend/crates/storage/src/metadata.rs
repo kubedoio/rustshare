@@ -5,7 +5,7 @@
 //! This will be migrated to compile-time queries after Docker Compose is set up in Task 11.
 
 use anyhow::Result;
-use rustshare_core::domain::{File, User};
+use rustshare_core::domain::{File, FileVersion, User};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -244,12 +244,101 @@ impl MetadataStore {
 
         Ok(files)
     }
+
+    /// Create a new file version in the projection table
+    pub async fn create_file_version(&self, version: &FileVersion) -> Result<()> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        sqlx::query(
+            r#"
+            INSERT INTO file_versions (id, file_id, version_number, content_hash, storage_key, size, created_by, created_at, change_description)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            "#,
+        )
+        .bind(version.id)
+        .bind(version.file_id)
+        .bind(version.version_number)
+        .bind(&version.content_hash)
+        .bind(version.storage_key())
+        .bind(version.size)
+        .bind(version.created_by)
+        .bind(version.created_at)
+        .bind(&version.change_description)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// List all versions for a file, ordered by version number descending (newest first)
+    pub async fn list_file_versions(&self, file_id: Uuid) -> Result<Vec<FileVersion>> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        let rows = sqlx::query(
+            r#"
+            SELECT id, file_id, version_number, content_hash, size, created_by, created_at, change_description
+            FROM file_versions
+            WHERE file_id = $1
+            ORDER BY version_number DESC
+            "#,
+        )
+        .bind(file_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut versions = Vec::new();
+        for row in rows {
+            let version = FileVersion {
+                id: row.try_get("id")?,
+                file_id: row.try_get("file_id")?,
+                version_number: row.try_get("version_number")?,
+                content_hash: row.try_get("content_hash")?,
+                size: row.try_get("size")?,
+                created_by: row.try_get("created_by")?,
+                created_at: row.try_get("created_at")?,
+                change_description: row.try_get("change_description")?,
+            };
+            versions.push(version);
+        }
+
+        Ok(versions)
+    }
+
+    /// Find a specific version of a file
+    pub async fn find_file_version(&self, file_id: Uuid, version: i32) -> Result<Option<FileVersion>> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        let row = sqlx::query(
+            r#"
+            SELECT id, file_id, version_number, content_hash, size, created_by, created_at, change_description
+            FROM file_versions
+            WHERE file_id = $1 AND version_number = $2
+            "#,
+        )
+        .bind(file_id)
+        .bind(version)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let version = FileVersion {
+                id: row.try_get("id")?,
+                file_id: row.try_get("file_id")?,
+                version_number: row.try_get("version_number")?,
+                content_hash: row.try_get("content_hash")?,
+                size: row.try_get("size")?,
+                created_by: row.try_get("created_by")?,
+                created_at: row.try_get("created_at")?,
+                change_description: row.try_get("change_description")?,
+            };
+            Ok(Some(version))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustshare_core::domain::{File, User};
+    use rustshare_core::domain::{File, FileVersion, User};
 
     async fn setup_test_db() -> PgPool {
         let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
@@ -361,6 +450,106 @@ mod tests {
         // Cleanup user
         sqlx::query("DELETE FROM users WHERE id = $1")
             .bind(owner.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires DATABASE_URL
+    async fn test_file_versions() {
+        let (store, pool) = setup_metadata_store().await;
+
+        // First create a user to own the file
+        let user = User::new(
+            "versionuser".to_string(),
+            "Version User".to_string(),
+            "hash789".to_string(),
+            "versionuser@example.com".to_string(),
+            false,
+            10_737_418_240,
+        );
+        store.create_user(&user).await.unwrap();
+
+        // Create a file
+        let file = File::new(
+            "versioned-doc.txt".to_string(),
+            "/Documents/versioned-doc.txt".to_string(),
+            "hash1".to_string(),
+            100,
+            "text/plain".to_string(),
+            None,
+            user.id,
+        );
+        store.create_file(&file).await.unwrap();
+
+        // Create file version 1
+        let version1 = FileVersion::new(
+            file.id,
+            1,
+            "hash1".to_string(),
+            100,
+            user.id,
+            Some("Initial version".to_string()),
+        );
+        store.create_file_version(&version1).await.unwrap();
+
+        // Create file version 2
+        let version2 = FileVersion::new(
+            file.id,
+            2,
+            "hash2".to_string(),
+            200,
+            user.id,
+            Some("Second version".to_string()),
+        );
+        store.create_file_version(&version2).await.unwrap();
+
+        // Create file version 3
+        let version3 = FileVersion::new(
+            file.id,
+            3,
+            "hash3".to_string(),
+            300,
+            user.id,
+            None,
+        );
+        store.create_file_version(&version3).await.unwrap();
+
+        // Test: list_file_versions (should be in DESC order: 3, 2, 1)
+        let versions = store.list_file_versions(file.id).await.unwrap();
+        assert_eq!(versions.len(), 3);
+        assert_eq!(versions[0].version_number, 3);
+        assert_eq!(versions[1].version_number, 2);
+        assert_eq!(versions[2].version_number, 1);
+        assert_eq!(versions[0].content_hash, "hash3");
+        assert_eq!(versions[1].content_hash, "hash2");
+        assert_eq!(versions[2].content_hash, "hash1");
+
+        // Test: find_file_version (find version 2)
+        let found_version = store.find_file_version(file.id, 2).await.unwrap();
+        assert!(found_version.is_some());
+        let found = found_version.unwrap();
+        assert_eq!(found.version_number, 2);
+        assert_eq!(found.content_hash, "hash2");
+        assert_eq!(found.size, 200);
+        assert_eq!(found.created_by, user.id);
+        assert_eq!(found.change_description, Some("Second version".to_string()));
+
+        // Test: find_file_version (non-existent version)
+        let not_found = store.find_file_version(file.id, 99).await.unwrap();
+        assert!(not_found.is_none());
+
+        // Cleanup (file_versions will cascade delete with file)
+        sqlx::query("DELETE FROM files WHERE id = $1")
+            .bind(file.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Cleanup user
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user.id)
             .execute(&pool)
             .await
             .unwrap();
