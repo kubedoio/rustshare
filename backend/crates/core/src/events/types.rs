@@ -1,0 +1,144 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+use uuid::Uuid;
+
+use crate::domain::*;
+
+/// Unique identifier for an event
+pub type EventId = Uuid;
+
+/// Event aggregate type
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AggregateType {
+    User,
+    File,
+    Folder,
+    Share,
+}
+
+/// Event types in the system
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase", tag = "type")]
+pub enum EventType {
+    // User events
+    UserCreated,
+    UserUpdated,
+    UserDeleted,
+
+    // File events
+    FileUploaded,
+    FileModified,
+    FileRenamed,
+    FileMoved,
+    FileDeleted,
+    FileRestored,
+
+    // Folder events
+    FolderCreated,
+    FolderRenamed,
+    FolderMoved,
+    FolderDeleted,
+
+    // Share events
+    ShareCreated,
+    ShareRevoked,
+    ShareUpdated,
+
+    // Sync events
+    ConflictDetected,
+    ConflictResolved,
+}
+
+/// Event stored in the event store
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Event {
+    pub id: EventId,
+    pub event_type: EventType,
+    pub aggregate_id: Uuid,
+    pub aggregate_type: AggregateType,
+    pub payload: JsonValue,
+    pub user_id: UserId,
+    pub timestamp: DateTime<Utc>,
+    pub version: i32,
+}
+
+impl Event {
+    /// Create a new event
+    pub fn new(
+        event_type: EventType,
+        aggregate_id: Uuid,
+        aggregate_type: AggregateType,
+        payload: JsonValue,
+        user_id: UserId,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            event_type,
+            aggregate_id,
+            aggregate_type,
+            payload,
+            user_id,
+            timestamp: Utc::now(),
+            version: 1,
+        }
+    }
+}
+
+/// File uploaded event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileUploadedPayload {
+    pub file_id: FileId,
+    pub name: String,
+    pub path: String,
+    pub size: i64,
+    pub content_hash: String,
+    pub storage_key: String,
+    pub mime_type: String,
+    pub owner_id: UserId,
+}
+
+/// Folder created event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FolderCreatedPayload {
+    pub folder_id: FolderId,
+    pub name: String,
+    pub path: String,
+    pub parent_folder_id: Option<FolderId>,
+    pub owner_id: UserId,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_event_creation() {
+        let user_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let payload = serde_json::json!({
+            "file_id": file_id.to_string(),
+            "name": "test.txt"
+        });
+
+        let event = Event::new(
+            EventType::FileUploaded,
+            file_id,
+            AggregateType::File,
+            payload,
+            user_id,
+        );
+
+        assert_eq!(event.event_type, EventType::FileUploaded);
+        assert_eq!(event.aggregate_id, file_id);
+        assert_eq!(event.version, 1);
+    }
+
+    #[test]
+    fn test_event_type_serialization() {
+        let event_type = EventType::FileUploaded;
+        let json = serde_json::to_string(&event_type).unwrap();
+        assert_eq!(json, r#"{"type":"FileUploaded"}"#);
+    }
+}
