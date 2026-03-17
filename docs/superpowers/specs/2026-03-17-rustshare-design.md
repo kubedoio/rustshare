@@ -122,6 +122,7 @@ struct User {
     email: String,
     password_hash: String,   // Argon2id
     display_name: String,
+    is_admin: bool,          // admin can create users, manage system
     storage_quota: i64,      // bytes
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -424,6 +425,21 @@ Protocol Request → Authenticate → Authorize → Translate to Domain Command
 - `GET /api/user/profile` - Get current user
 - `GET /api/user/storage` - Storage usage
 
+**Admin (requires `is_admin: true`):**
+- `POST /api/admin/users` - Create new user
+- `GET /api/admin/users` - List all users
+- `GET /api/admin/users/{id}` - Get user details
+- `PUT /api/admin/users/{id}` - Update user (quota, admin status)
+- `DELETE /api/admin/users/{id}` - Delete user (cascade delete files)
+- `GET /api/admin/stats` - System statistics (storage usage, user count)
+
+**Admin Bootstrapping:**
+- On first startup, if no users exist, create default admin user from environment variables:
+  - `RUSTSHARE_ADMIN_EMAIL` (default: `admin@localhost`)
+  - `RUSTSHARE_ADMIN_PASSWORD` (required, no default)
+- Log admin credentials to console on first boot
+- Admin can create additional users via admin API
+
 **WebSocket:**
 - `WS /api/ws` - Real-time sync connection
 
@@ -475,7 +491,7 @@ Content-Type: application/octet-stream
 - `MKCOL` - Create folder
 - `MOVE` - Rename/move file
 - `COPY` - Copy file (future)
-- `LOCK/UNLOCK` - File locking (optional for v1)
+- `LOCK/UNLOCK` - File locking (explicitly out of scope for v1)
 
 **Authentication:** HTTP Basic Auth or Bearer token (JWT)
 
@@ -552,29 +568,36 @@ trait ObjectStore {
 
 1. Calculate SHA-256 hash of file content
 2. Check if hash already exists in storage (deduplication)
-3. If new: upload to RustFS with key `users/{user_id}/files/{file_id}/v{version}`
-4. If duplicate: reuse existing storage key, create new version record
+3. If new: upload to RustFS with content-addressed key `blobs/{hash}`
+4. If duplicate: reuse existing storage key (same blob), create new version record
 5. Increment version counter in database (atomic operation)
 6. Create `FileVersion` entry linking to storage key
 7. Emit `FileModified` event
+
+**Storage Key Strategy:**
+- **File content:** `blobs/{sha256_hash}` - enables deduplication across all users
+- **Thumbnails:** `thumbnails/{file_id}/small.jpg` and `large.jpg` - user-specific
 
 ### 5.2 Storage Layout in RustFS
 
 ```
 Bucket: rustshare-data
-├── users/
-│   ├── {user_id}/
-│   │   ├── files/
-│   │   │   ├── {file_id}/
-│   │   │   │   ├── v1         # original upload
-│   │   │   │   ├── v2         # first modification
-│   │   │   │   ├── v3         # second modification
-│   │   │   │   └── current    # symlink/metadata (optional)
-│   │   └── thumbnails/
-│   │       ├── {file_id}/
-│   │       │   ├── small.jpg  # 200x200
-│   │       │   └── large.jpg  # 800x800
+├── blobs/
+│   ├── {sha256_hash_1}    # deduplicated file content
+│   ├── {sha256_hash_2}
+│   └── {sha256_hash_3}
+└── thumbnails/
+    ├── {file_id}/
+    │   ├── small.jpg      # 200x200
+    │   └── large.jpg      # 800x800
 ```
+
+**Deduplication Benefits:**
+- If user uploads same file twice, only one blob stored
+- If two users upload identical files, they share the same blob
+- Version records in database track logical file instances
+- Deleting a file only deletes database record; blob remains if other files reference it
+- Background job cleans unreferenced blobs periodically
 
 ### 5.3 Version Retention Policy
 
@@ -602,13 +625,6 @@ Bucket: rustshare-data
 - Copies content from old version's storage key
 - Emits `FileRestored` event
 - New version becomes current
-
-### 5.5 Deduplication Benefits
-
-- If user uploads same file twice, only one copy stored in RustFS
-- If two users upload identical files, shared storage (with separate metadata)
-- Saves storage space and bandwidth
-- Version records track different logical uses of same content
 
 ---
 
@@ -832,7 +848,7 @@ struct PermissionSet {
 
 ### 9.1 Technology Stack
 
-**Recommended: SvelteKit** or **React + Vite**
+**Framework: SvelteKit**
 
 **Core Stack:**
 - **TypeScript** - type safety for API interactions
@@ -1171,6 +1187,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # Note: RustFS is S3-compatible and uses MinIO-compatible health endpoints
 
   backend:
     build:
