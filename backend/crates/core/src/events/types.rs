@@ -124,37 +124,20 @@ pub struct FileModifiedPayload {
     pub modified_by: UserId,
 }
 
-/// File deleted event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileDeletedPayload {
-    pub file_id: FileId,
-    pub name: String,
-    pub path: String,
-    pub deleted_by: UserId,
-}
 
-/// File moved event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileMovedPayload {
-    pub file_id: FileId,
-    pub old_parent_folder_id: Option<FolderId>,
-    pub new_parent_folder_id: Option<FolderId>,
-    pub old_path: String,
-    pub new_path: String,
-    pub moved_by: UserId,
-}
 
-/// File renamed event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileRenamedPayload {
-    pub file_id: FileId,
-    pub old_name: String,
-    pub new_name: String,
-    pub old_path: String,
-    pub new_path: String,
-    pub renamed_by: UserId,
-}
 
+/// File restored event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileRestoredPayload {
+    pub file_id: FileId,
+    pub old_version: i32,
+    pub new_version: i32,
+    pub restored_from_version: i32,
+    pub content_hash: String,
+    pub size: i64,
+    pub restored_by: UserId,
+}
 
 #[cfg(test)]
 mod tests {
