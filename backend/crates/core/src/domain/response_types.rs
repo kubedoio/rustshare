@@ -40,8 +40,8 @@ impl Default for FolderContents {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FolderTree {
     pub folder: Folder,
-    pub files: Vec<File>,
     pub subfolders: Vec<FolderTree>,
+    pub files: Vec<File>,
 }
 
 impl FolderTree {
@@ -49,8 +49,8 @@ impl FolderTree {
     pub fn new(folder: Folder) -> Self {
         Self {
             folder,
-            files: vec![],
             subfolders: vec![],
+            files: vec![],
         }
     }
 
@@ -58,8 +58,8 @@ impl FolderTree {
     pub fn with_contents(folder: Folder, files: Vec<File>, subfolders: Vec<FolderTree>) -> Self {
         Self {
             folder,
-            files,
             subfolders,
+            files,
         }
     }
 }
@@ -160,8 +160,8 @@ mod tests {
         let folder = Folder::new_root(owner_id);
         let tree = FolderTree {
             folder: folder.clone(),
-            files: vec![],
             subfolders: vec![],
+            files: vec![],
         };
 
         assert_eq!(tree.folder, folder);
