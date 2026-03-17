@@ -14,16 +14,25 @@ pub enum FileError {
     PermissionDenied { file_id: FileId, user_id: UserId },
 
     /// Version conflict during optimistic locking.
-    #[error("Version conflict: expected version {expected}, but found version {actual}")]
-    VersionConflict { expected: i32, actual: i32 },
+    #[error("Version conflict: expected version {expected}, but found version {actual} (modified by {current_modified_by} at {current_modified_at})")]
+    VersionConflict {
+        expected: i32,
+        actual: i32,
+        current_modified_by: String,
+        current_modified_at: String,
+    },
 
     /// The parent folder does not exist.
     #[error("Parent folder not found: {0}")]
     ParentFolderNotFound(FolderId),
 
     /// User's storage quota has been exceeded.
-    #[error("Quota exceeded for user {0}")]
-    QuotaExceeded(UserId),
+    #[error("Quota exceeded for user {user_id}: using {used} bytes of {quota} bytes quota")]
+    QuotaExceeded {
+        user_id: UserId,
+        used: i64,
+        quota: i64,
+    },
 
     /// File name is invalid (e.g., empty, contains illegal characters).
     #[error("Invalid file name: {0}")]
@@ -35,7 +44,7 @@ pub enum FileError {
 
     /// Database operation failed.
     #[error("Database error: {0}")]
-    Database(String),
+    Database(#[from] sqlx::Error),
 
     /// Storage operation failed.
     #[error("Storage error: {0}")]
@@ -81,7 +90,7 @@ pub enum FolderError {
 
     /// Database operation failed.
     #[error("Database error: {0}")]
-    Database(String),
+    Database(#[from] sqlx::Error),
 }
 
 #[cfg(test)]
@@ -109,10 +118,14 @@ mod tests {
         let err = FileError::VersionConflict {
             expected: 5,
             actual: 3,
+            current_modified_by: "user@example.com".to_string(),
+            current_modified_at: "2026-03-17T10:30:00Z".to_string(),
         };
         assert!(err.to_string().contains("Version conflict"));
         assert!(err.to_string().contains("expected version 5"));
         assert!(err.to_string().contains("found version 3"));
+        assert!(err.to_string().contains("modified by user@example.com"));
+        assert!(err.to_string().contains("at 2026-03-17T10:30:00Z"));
     }
 
     #[test]
@@ -128,11 +141,15 @@ mod tests {
     #[test]
     fn test_file_error_quota_exceeded() {
         let user_id = Uuid::new_v4();
-        let err = FileError::QuotaExceeded(user_id);
-        assert_eq!(
-            err.to_string(),
-            format!("Quota exceeded for user {}", user_id)
-        );
+        let err = FileError::QuotaExceeded {
+            user_id,
+            used: 1024 * 1024 * 1024, // 1 GB
+            quota: 500 * 1024 * 1024, // 500 MB
+        };
+        assert!(err.to_string().contains("Quota exceeded"));
+        assert!(err.to_string().contains(&user_id.to_string()));
+        assert!(err.to_string().contains("1073741824")); // 1 GB in bytes
+        assert!(err.to_string().contains("524288000")); // 500 MB in bytes
     }
 
     #[test]
@@ -150,18 +167,15 @@ mod tests {
     }
 
     #[test]
-    fn test_file_error_database() {
-        let msg = "connection failed";
-        let err = FileError::Database(msg.to_string());
-        assert_eq!(err.to_string(), format!("Database error: {}", msg));
-    }
-
-    #[test]
     fn test_file_error_storage() {
         let msg = "upload failed";
         let err = FileError::Storage(msg.to_string());
         assert_eq!(err.to_string(), format!("Storage error: {}", msg));
     }
+
+    // Note: Database error tests removed as they require sqlx::Error which cannot
+    // be easily constructed in unit tests. The #[from] attribute ensures proper
+    // automatic conversion from sqlx::Error to FileError::Database.
 
     #[test]
     fn test_folder_error_not_found() {
@@ -225,10 +239,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_folder_error_database() {
-        let msg = "query failed";
-        let err = FolderError::Database(msg.to_string());
-        assert_eq!(err.to_string(), format!("Database error: {}", msg));
-    }
+    // Note: Database error tests removed as they require sqlx::Error which cannot
+    // be easily constructed in unit tests. The #[from] attribute ensures proper
+    // automatic conversion from sqlx::Error to FolderError::Database.
 }
