@@ -97,6 +97,7 @@ pub struct FileUploadedPayload {
     pub storage_key: String,
     pub mime_type: String,
     pub owner_id: UserId,
+    pub parent_folder_id: Option<FolderId>,
 }
 
 /// Folder created event payload
