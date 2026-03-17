@@ -161,6 +161,19 @@ struct FileVersion {
 }
 ```
 
+**Folder:**
+```rust
+struct Folder {
+    id: FolderId,            // UUID
+    name: String,
+    path: String,            // logical path: "/Documents"
+    owner_id: UserId,
+    parent_folder_id: Option<FolderId>,  // null for root folders
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+```
+
 **Share:**
 ```rust
 struct Share {
@@ -199,17 +212,31 @@ CREATE TABLE events (
 ```
 
 **Event Types:**
+
+**File Events:**
 - `FileUploaded` - new file created
 - `FileModified` - file content changed
 - `FileRenamed` - filename changed
 - `FileMoved` - moved to different folder
 - `FileDeleted` - soft delete
+
+**Folder Events:**
+- `FolderCreated` - new folder created
+- `FolderRenamed` - folder name changed
+- `FolderMoved` - folder moved to different parent
+- `FolderDeleted` - folder deleted (cascades to contents)
+
+**Share Events:**
 - `ShareCreated` - share link generated
 - `ShareRevoked` - share link invalidated
+
+**Sync Events:**
 - `ConflictDetected` - sync conflict occurred
 - `ConflictResolved` - user resolved conflict
 
-**Example Event Payload:**
+**Example Event Payloads:**
+
+**File Event:**
 ```json
 {
   "event_type": "FileModified",
@@ -221,6 +248,21 @@ CREATE TABLE events (
     "storage_key": "users/user123/files/file456/v5",
     "size": 2048576,
     "modified_by": "user-uuid-789"
+  }
+}
+```
+
+**Folder Event:**
+```json
+{
+  "event_type": "FolderCreated",
+  "aggregate_id": "650e8400-e29b-41d4-a716-446655440001",
+  "payload": {
+    "folder_id": "650e8400-e29b-41d4-a716-446655440001",
+    "name": "Projects",
+    "path": "/Documents/Projects",
+    "parent_folder_id": "parent-folder-uuid",
+    "owner_id": "user-uuid-123"
   }
 }
 ```
@@ -355,6 +397,14 @@ Protocol Request → Authenticate → Authorize → Translate to Domain Command
 - `GET /api/files/tree?path=/` - Get folder structure
 - `POST /api/files/{id}/move` - Move file to different folder
 - `POST /api/files/{id}/rename` - Rename file
+
+**Folder Operations:**
+- `POST /api/folders` - Create new folder
+- `GET /api/folders/{id}` - Get folder metadata
+- `PUT /api/folders/{id}` - Update folder (rename)
+- `DELETE /api/folders/{id}` - Delete folder (cascade to contents)
+- `POST /api/folders/{id}/move` - Move folder to different parent
+- `GET /api/folders/{id}/contents` - List folder contents
 
 **Versioning:**
 - `GET /api/files/{id}/versions` - List version history
@@ -1359,7 +1409,7 @@ sqlx migrate revert
    - Recommendation: Async background job for better UX
 
 4. **Self-Registration:** Allow public sign-ups or invite-only?
-   - Decision needed based on use case
+   - Recommendation: Start with **invite-only** (admin creates users) for v1. Public self-registration can be added as optional config in Phase 2. This keeps initial deployment secure and simple, suitable for personal/team use cases without requiring email verification, captcha, or anti-abuse measures.
 
 5. **Storage Limits:** Default quota per user?
    - Recommendation: 10GB initially, configurable
