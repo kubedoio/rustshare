@@ -219,6 +219,7 @@ CREATE TABLE events (
 - `FileRenamed` - filename changed
 - `FileMoved` - moved to different folder
 - `FileDeleted` - soft delete
+- `FileRestored` - previous version restored
 
 **Folder Events:**
 - `FolderCreated` - new folder created
@@ -501,11 +502,23 @@ Content-Type: application/octet-stream
 
 **Authentication:** AWS Signature V4 (compatible with S3 tools)
 - Each user gets API credentials (access key ID + secret access key)
-- Stored hashed in database
+- Secret keys stored hashed with Argon2id (same as passwords)
 
 **Bucket Mapping:**
 - Buckets map to top-level user folders
 - Example: user's `/Documents` folder appears as `documents` bucket
+
+**Conflict Detection in WebDAV:**
+- WebDAV `PUT` operations use HTTP `If-Match` header with ETag (file version)
+- Server returns `412 Precondition Failed` if version doesn't match
+- Client must fetch current version and retry
+- Standard WebDAV clients handle this automatically
+
+**Conflict Detection in S3 API:**
+- S3 `PutObject` operations do NOT support version checking in standard S3 protocol
+- For v1: Last-write-wins (overwrite) with automatic version creation
+- Server emits `FileModified` event with new version
+- Future enhancement: Use S3 Object Versioning API for true conflict detection
 
 ### 4.5 Storage Abstraction
 
@@ -1457,7 +1470,7 @@ sqlx migrate revert
 
 **MVP is complete when:**
 
-✅ User can register, login, and manage profile
+✅ Admin can create users (invite-only for v1), users can login and manage profile
 ✅ User can upload files via web UI (with progress indicators)
 ✅ User can browse files in folder structure
 ✅ User can download files
