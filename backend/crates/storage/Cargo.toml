@@ -14,3 +14,6 @@ serde_json.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+aws-sdk-s3.workspace = true
+aws-config.workspace = true
+bytes = "1.5"

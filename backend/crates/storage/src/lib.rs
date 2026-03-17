@@ -8,3 +8,4 @@ pub mod object_store;
 
 pub use event_store::EventStore;
 pub use metadata::MetadataStore;
+pub use object_store::ObjectStore;
