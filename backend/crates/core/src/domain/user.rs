@@ -3,20 +3,28 @@ use serde::{Deserialize, Serialize};
 
 use super::UserId;
 
+/// User account information.
+///
+/// Note: The `username` field is used for login and is distinct from `email`.
+/// This allows users to have a stable login identifier separate from their email address.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct User {
     pub id: UserId,
+    /// Login identifier (enhancement beyond spec)
     pub username: String,
+    /// Display name shown in UI
     pub display_name: String,
     pub password_hash: String,
     pub email: String,
     pub is_admin: bool,
+    /// Storage quota in bytes
     pub storage_quota: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 impl User {
+    /// Creates a new user account with the given credentials and settings.
     pub fn new(username: String, display_name: String, password_hash: String, email: String, is_admin: bool, storage_quota: i64) -> Self {
         use uuid::Uuid;
         Self {

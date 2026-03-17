@@ -3,16 +3,24 @@ use serde::{Deserialize, Serialize};
 
 use super::{FileId, ShareId, UserId};
 
+/// Permission level for a share link.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SharePermissions {
+    /// Read-only access to the file
     Read,
+    /// Read and write access to the file
     ReadWrite,
 }
 
+/// A share link that allows external access to a file.
+///
+/// Share links can be password-protected and have expiration times.
+/// They track access count for monitoring purposes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Share {
     pub id: ShareId,
     pub file_id: FileId,
+    /// Unique token used in the share URL
     pub share_token: String,
     pub permissions: SharePermissions,
     pub password_hash: Option<String>,
@@ -23,6 +31,7 @@ pub struct Share {
 }
 
 impl Share {
+    /// Creates a new share link for a file.
     pub fn new(
         file_id: FileId,
         share_token: String,
@@ -45,6 +54,7 @@ impl Share {
         }
     }
 
+    /// Checks if the share link has expired.
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
             Utc::now() > expires_at
@@ -53,6 +63,7 @@ impl Share {
         }
     }
 
+    /// Checks if the share link is password-protected.
     pub fn is_password_protected(&self) -> bool {
         self.password_hash.is_some()
     }

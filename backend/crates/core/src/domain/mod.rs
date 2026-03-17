@@ -13,8 +13,13 @@ pub use user::User;
 use uuid::Uuid;
 
 // Type aliases for better type safety
+/// Unique identifier for a user.
 pub type UserId = Uuid;
+/// Unique identifier for a file.
 pub type FileId = Uuid;
+/// Unique identifier for a folder.
 pub type FolderId = Uuid;
+/// Unique identifier for a share link.
 pub type ShareId = Uuid;
+/// Unique identifier for a file version.
 pub type VersionId = Uuid;

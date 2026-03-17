@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{FolderId, UserId};
 
+/// A folder that organizes files in a hierarchical structure.
+///
+/// Folders form a tree structure where each folder can have a parent folder.
+/// The root folder has no parent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Folder {
     pub id: FolderId,
@@ -15,6 +19,7 @@ pub struct Folder {
 }
 
 impl Folder {
+    /// Creates a new root folder for a user.
     pub fn new_root(owner_id: UserId) -> Self {
         use uuid::Uuid;
         Self {
@@ -28,6 +33,7 @@ impl Folder {
         }
     }
 
+    /// Creates a new subfolder under a parent folder.
     pub fn new_child(name: String, path: String, parent_folder_id: FolderId, owner_id: UserId) -> Self {
         use uuid::Uuid;
         Self {

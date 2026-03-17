@@ -1,3 +1,7 @@
+//! RustShare core domain models and business logic.
+//!
+//! This crate contains pure business logic with no I/O dependencies.
+
 pub mod domain;
 
 // Re-export commonly used types
