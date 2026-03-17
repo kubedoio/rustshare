@@ -1,21 +1,49 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+use super::{FileId, FolderId, UserId};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct File {
-    pub id: Uuid,
+    pub id: FileId,
     pub name: String,
+    pub path: String,
     pub content_hash: String,
     pub size_bytes: i64,
     pub mime_type: String,
-    pub parent_folder_id: Uuid,
-    pub owner_id: Uuid,
+    pub parent_folder_id: Option<FolderId>,
+    pub owner_id: UserId,
+    pub current_version: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 impl File {
+    pub fn new(
+        name: String,
+        path: String,
+        content_hash: String,
+        size_bytes: i64,
+        mime_type: String,
+        parent_folder_id: Option<FolderId>,
+        owner_id: UserId,
+    ) -> Self {
+        use uuid::Uuid;
+        Self {
+            id: Uuid::new_v4(),
+            name,
+            path,
+            content_hash,
+            size_bytes,
+            mime_type,
+            parent_folder_id,
+            owner_id,
+            current_version: 1,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
     pub fn storage_key(&self) -> String {
         format!("blobs/{}", self.content_hash)
     }
@@ -24,17 +52,20 @@ impl File {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn test_file_storage_key() {
         let file = File {
             id: Uuid::new_v4(),
             name: "document.pdf".to_string(),
+            path: "/Documents/document.pdf".to_string(),
             content_hash: "abc123def456".to_string(),
             size_bytes: 1024,
             mime_type: "application/pdf".to_string(),
-            parent_folder_id: Uuid::new_v4(),
+            parent_folder_id: Some(Uuid::new_v4()),
             owner_id: Uuid::new_v4(),
+            current_version: 1,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -48,15 +79,43 @@ mod tests {
         let file = File {
             id: Uuid::new_v4(),
             name: "test.txt".to_string(),
+            path: "/test.txt".to_string(),
             content_hash: hash.to_string(),
             size_bytes: 100,
             mime_type: "text/plain".to_string(),
-            parent_folder_id: Uuid::new_v4(),
+            parent_folder_id: None,
             owner_id: Uuid::new_v4(),
+            current_version: 1,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
 
         assert_eq!(file.storage_key(), format!("blobs/{}", hash));
+    }
+
+    #[test]
+    fn test_file_new_constructor() {
+        let owner_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+
+        let file = File::new(
+            "document.pdf".to_string(),
+            "/Documents/document.pdf".to_string(),
+            "abc123def456".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            Some(parent_id),
+            owner_id,
+        );
+
+        assert_eq!(file.name, "document.pdf");
+        assert_eq!(file.path, "/Documents/document.pdf");
+        assert_eq!(file.content_hash, "abc123def456");
+        assert_eq!(file.size_bytes, 1024);
+        assert_eq!(file.mime_type, "application/pdf");
+        assert_eq!(file.parent_folder_id, Some(parent_id));
+        assert_eq!(file.owner_id, owner_id);
+        assert_eq!(file.current_version, 1);
+        assert!(!file.id.is_nil());
     }
 }
