@@ -126,6 +126,12 @@ Server → Client (notification):
 }
 ```
 
+**Note on serialization:**
+- `event_type` is serialized as a simple string (e.g., `"FileUploaded"`) using a helper method `EventType::type_name()` that extracts the variant name
+- `aggregate_type` is serialized as lowercase string (e.g., `"file"`) due to `#[serde(rename_all = "snake_case")]`
+- `event_id` and `aggregate_id` are UUIDs serialized as strings
+- `version` is the aggregate's version number after this event (for optimistic locking)
+
 Server → Client (lagged warning):
 ```json
 {
@@ -135,10 +141,10 @@ Server → Client (lagged warning):
 ```
 
 **Handler Logic:**
-1. Authenticate JWT from upgrade request headers
+1. Authenticate JWT from upgrade request headers (see Handler Signature below)
 2. Upgrade HTTP connection to WebSocket
 3. Subscribe to EventBroadcaster
-4. If client sends `last_seen_event_id`, query EventStore for missed events, send catch-up batch
+4. If client sends `last_seen_event_id`, query EventStore for missed events, send each as individual notification messages in order
 5. Enter event loop:
    - Receive from broadcast channel
    - Filter: `event.user_id == authenticated_user_id`
@@ -146,6 +152,32 @@ Server → Client (lagged warning):
    - Send via WebSocket
 6. On `RecvError::Lagged`, send lagged warning to client
 7. On connection close or error, clean up subscription and exit
+
+**Handler Signature:**
+```rust
+pub async fn sync_handler(
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+) -> Result<Response, (StatusCode, String)> {
+    // Validate JWT
+    let claims = state.jwt_manager
+        .validate(auth.token())
+        .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid token".to_string()))?;
+
+    // Upgrade connection
+    Ok(ws.on_upgrade(move |socket| handle_socket(socket, claims.user_id, state)))
+}
+
+async fn handle_socket(socket: WebSocket, user_id: UserId, state: AppState) {
+    // Implementation of steps 3-7 above
+}
+```
+
+**Catch-up protocol:**
+- Missed events are sent as individual notification messages (same format as real-time notifications)
+- Catch-up completes before transitioning to live event streaming
+- No special batch format needed - seamless transition from catch-up to live
 
 **Error Handling:**
 - Missing/invalid JWT → 401 Unauthorized, don't upgrade
@@ -166,29 +198,30 @@ Server → Client (lagged warning):
 impl EventStore {
     pub async fn append(
         &self,
-        event: Event,
+        event: &Event,
         broadcaster: &EventBroadcaster,
     ) -> Result<()> {
         // Insert into database
-        sqlx::query!(
+        // Note: Using sqlx::query() not query!() - see comment in event_store.rs
+        sqlx::query(
             r#"
-            INSERT INTO events (id, event_type, aggregate_id, aggregate_type, payload, user_id, timestamp, version)
+            INSERT INTO events (event_id, event_type, aggregate_id, aggregate_type, payload, user_id, timestamp, version)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
-            event.id,
-            serde_json::to_value(&event.event_type)?,
-            event.aggregate_id,
-            serde_json::to_value(&event.aggregate_type)?,
-            event.payload,
-            event.user_id,
-            event.timestamp,
-            event.version
         )
+        .bind(event.id)
+        .bind(serde_json::to_string(&event.event_type)?)
+        .bind(event.aggregate_id)
+        .bind(serde_json::to_string(&event.aggregate_type)?)
+        .bind(&event.payload)
+        .bind(event.user_id)
+        .bind(event.timestamp)
+        .bind(event.version)
         .execute(&self.pool)
         .await?;
 
         // Publish to subscribers
-        broadcaster.publish(event);
+        broadcaster.publish(event.clone());
 
         Ok(())
     }
@@ -197,10 +230,40 @@ impl EventStore {
 
 **Rationale:** Publish after successful database write ensures notifications only go out for persisted events. If database write fails, no notification is sent.
 
+**Trait Updates:**
+
+The `EventStoreOps` trait must be updated to include the broadcaster parameter:
+
+```rust
+// In file_service.rs and folder_service.rs
+#[allow(async_fn_in_trait)]
+pub trait EventStoreOps: Send + Sync {
+    async fn append(&self, event: &Event, broadcaster: &EventBroadcaster) -> Result<()>;
+}
+```
+
+This is a **breaking change** - all trait implementations (including test mocks) must be updated.
+
 **Service Layer Impact:**
 - Add `broadcaster: Arc<EventBroadcaster>` field to `FileService` and `FolderService`
-- Update constructors to accept broadcaster
-- Pass `&self.broadcaster` to all `event_store.append()` calls
+- Update constructors:
+  ```rust
+  // FileService
+  pub fn new(
+      event_store: Arc<E>,
+      metadata_store: Arc<M>,
+      object_store: Arc<O>,
+      broadcaster: Arc<EventBroadcaster>,
+  ) -> Self { ... }
+
+  // FolderService
+  pub fn new(
+      event_store: Arc<E>,
+      metadata_store: Arc<M>,
+      broadcaster: Arc<EventBroadcaster>,
+  ) -> Self { ... }
+  ```
+- Pass `&self.broadcaster` to all `event_store.append()` calls throughout both services
 
 **AppState Update:**
 - Add `broadcaster: Arc<EventBroadcaster>` field to `AppState`
@@ -228,13 +291,22 @@ impl EventStore {
 
 **Query:**
 ```sql
-SELECT id, event_type, aggregate_id, aggregate_type, payload, user_id, timestamp, version
+SELECT event_id, event_type, aggregate_id, aggregate_type, payload, user_id, timestamp, version
 FROM events
 WHERE user_id = $1
-  AND ($2::uuid IS NULL OR id > $2)
+  AND ($2::uuid IS NULL OR (timestamp, id) > (
+    SELECT timestamp, id FROM events WHERE event_id = $2
+  ))
 ORDER BY timestamp ASC, id ASC
 LIMIT $3;
 ```
+
+**Query explanation:**
+- Uses the BIGSERIAL `id` column (auto-incrementing) for deterministic ordering
+- Compares `(timestamp, id)` tuple to find events after the specified `event_id`
+- If `last_seen_event_id` is NULL, fetches most recent events
+- Orders by timestamp first, then id for deterministic ordering within the same timestamp
+- The `event_id` column is the UUID returned to clients; the BIGSERIAL `id` is for internal ordering
 
 **Parameters:**
 - `user_id`: Filter events for authenticated user
@@ -247,6 +319,13 @@ LIMIT $3;
 - `last_seen_event_id` doesn't exist → Return last 100 events, client reconciles
 - No new events → Return empty array
 - User has no events → Return empty array
+
+**Database Index:**
+Add index for efficient catch-up queries:
+```sql
+CREATE INDEX idx_events_user_timestamp_id ON events(user_id, timestamp, id);
+```
+This composite index optimizes the catch-up query's `WHERE user_id = $1 AND (timestamp, id) > ...` condition.
 
 ## Data Flow Example
 
@@ -291,6 +370,11 @@ LIMIT $3;
    - `get_events_since()` method with SQL query
    - Unit tests for pagination, filtering, edge cases
 
+4. **EventType Helper:** `backend/crates/core/src/events/types.rs`
+   - Add `impl EventType { pub fn type_name(&self) -> &'static str }` method
+   - Returns variant name as string (e.g., "FileUploaded") for WebSocket serialization
+   - Needed because the enum's `#[serde(tag = "type")]` attribute serializes as `{"type": "FileUploaded"}`, but notifications need just the string
+
 ### Modified Components
 
 1. **EventStore:** `backend/crates/storage/src/event_store.rs`
@@ -299,13 +383,15 @@ LIMIT $3;
 
 2. **FileService:** `backend/crates/core/src/services/file_service.rs`
    - Add `broadcaster: Arc<EventBroadcaster>` field
-   - Update constructor
-   - Pass broadcaster to all `event_store.append()` calls (9 locations)
+   - Update constructor (adds broadcaster parameter after object_store)
+   - Update `EventStoreOps` trait: `async fn append(&self, event: &Event, broadcaster: &EventBroadcaster)`
+   - Pass broadcaster to all `event_store.append()` calls throughout service methods
 
 3. **FolderService:** `backend/crates/core/src/services/folder_service.rs`
    - Add `broadcaster: Arc<EventBroadcaster>` field
-   - Update constructor
-   - Pass broadcaster to all `event_store.append()` calls (7 locations)
+   - Update constructor (adds broadcaster parameter after metadata_store)
+   - Update `EventStoreOps` trait: `async fn append(&self, event: &Event, broadcaster: &EventBroadcaster)`
+   - Pass broadcaster to all `event_store.append()` calls throughout service methods
 
 4. **AppState:** `backend/server/src/main.rs`
    - Add `broadcaster: Arc<EventBroadcaster>` field
@@ -330,18 +416,19 @@ LIMIT $3;
 
 **Integration Tests:**
 
-1. **Connection Lifecycle** (`backend/tests/websocket_sync.rs`)
+**Note:** Test file location is `backend/server/tests/` (integration tests alongside the server crate).
+
+1. **Connection Lifecycle** (`backend/server/tests/websocket_sync.rs`)
    - `test_connect_with_valid_jwt` — verify WebSocket upgrade succeeds
    - `test_connect_without_jwt` — verify upgrade fails with 401
    - `test_receive_notification_on_upload` — verify client receives notification for their file upload
    - `test_multiple_devices_receive_notification` — verify 3 concurrent connections all receive same event
 
-2. **Catch-up** (`backend/tests/websocket_catchup.rs`)
+2. **Catch-up** (`backend/server/tests/websocket_catchup.rs`)
    - `test_catchup_after_disconnect` — disconnect, perform 5 operations, reconnect with last_seen_event_id, verify all 5 events received
    - `test_catchup_with_invalid_id` — send non-existent last_seen_event_id, verify receives recent events
-   - `test_catchup_pagination` — create 150 events while disconnected, verify first 100 received, can request next batch
 
-3. **Multi-Device** (`backend/tests/websocket_multidevice.rs`)
+3. **Multi-Device** (`backend/server/tests/websocket_multidevice.rs`)
    - `test_broadcast_to_all_sessions` — connect 3 devices, perform action on device 1, verify all 3 receive notification
 
 **Test Infrastructure:**
@@ -353,10 +440,12 @@ LIMIT $3;
 
 Add to `backend/server/Cargo.toml`:
 ```toml
+# Update axum to enable WebSocket support
+axum = { workspace = true, features = ["multipart", "ws"] }
+
+# Add WebSocket test client
 tokio-tungstenite = "0.21"
 ```
-
-Axum WebSocket utilities already available (no new dependency).
 
 ## Success Criteria
 
@@ -365,8 +454,8 @@ Axum WebSocket utilities already available (no new dependency).
 - [ ] All folder operations (create, rename, move, delete) trigger WebSocket notifications
 - [ ] Multiple devices receive same notification simultaneously
 - [ ] Reconnecting clients catch up on missed events using `last_seen_event_id`
-- [ ] All 12 unit tests pass
-- [ ] All 6 integration tests pass
+- [ ] All 7 unit tests pass
+- [ ] All 5 integration tests pass
 - [ ] Invalid JWT rejects WebSocket upgrade with 401
 - [ ] Lagged subscribers receive warning and can re-sync
 
