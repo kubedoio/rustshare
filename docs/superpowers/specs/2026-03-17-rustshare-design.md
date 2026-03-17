@@ -392,7 +392,7 @@ Protocol Request → Authenticate → Authorize → Translate to Domain Command
 - `POST /api/files/upload` - Upload file with metadata
 - `GET /api/files/{id}` - Get file metadata
 - `GET /api/files/{id}/download` - Download file content (presigned URL)
-- `PUT /api/files/{id}` - Update file (triggers conflict detection)
+- `PUT /api/files/{id}` - Update file (triggers conflict detection, requires `If-Match` header with current version)
 - `DELETE /api/files/{id}` - Soft delete
 - `GET /api/files/tree?path=/` - Get folder structure
 - `POST /api/files/{id}/move` - Move file to different folder
@@ -425,6 +425,40 @@ Protocol Request → Authenticate → Authorize → Translate to Domain Command
 
 **WebSocket:**
 - `WS /api/ws` - Real-time sync connection
+
+**Conflict Detection in HTTP API:**
+
+When updating files via HTTP PUT, the client must send the current version number in the `If-Match` header:
+
+```http
+PUT /api/files/{id} HTTP/1.1
+If-Match: "version-5"
+Content-Type: application/octet-stream
+```
+
+**Server Response:**
+- **200 OK:** File updated successfully (no conflict)
+- **409 Conflict:** File was modified by another client
+  ```json
+  {
+    "error": "conflict",
+    "current_version": 7,
+    "your_version": 5,
+    "current_download_url": "https://...",
+    "current_modified_by": "user@example.com",
+    "current_modified_at": "2026-03-17T09:15:00Z"
+  }
+  ```
+- **412 Precondition Failed:** Missing or invalid `If-Match` header
+
+**Client Handling:**
+- On 409 Conflict, download current version, show conflict UI to user
+- On 412, client should fetch current version before retrying
+
+**WebSocket vs HTTP Conflict Detection:**
+- **WebSocket:** Proactive check via `upload_intent` before uploading content (better UX, saves bandwidth)
+- **HTTP API:** Reactive check via `If-Match` header after upload attempt (simpler for basic clients)
+- Both use the same version-checking logic in the core service
 
 ### 4.3 WebDAV Protocol
 
@@ -1400,7 +1434,7 @@ sqlx migrate revert
 **Before Implementation:**
 
 1. **Frontend Framework Choice:** SvelteKit vs React?
-   - Recommendation: SvelteKit (leaner, better real-time support)
+   - **Decision: SvelteKit** - Leaner bundle size, built-in SSR/routing, better DX for real-time WebSocket features, less boilerplate than React. The reactive model fits naturally with event-driven architecture.
 
 2. **Database:** PostgreSQL sufficient, or add Redis for caching?
    - Recommendation: Start with PostgreSQL only, add Redis if WebSocket scaling needed
