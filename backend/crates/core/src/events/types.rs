@@ -124,8 +124,36 @@ pub struct FileModifiedPayload {
     pub modified_by: UserId,
 }
 
+/// Folder renamed event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FolderRenamedPayload {
+    pub folder_id: FolderId,
+    pub old_name: String,
+    pub new_name: String,
+    pub old_path: String,
+    pub new_path: String,
+    pub renamed_by: UserId,
+}
 
+/// Folder moved event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FolderMovedPayload {
+    pub folder_id: FolderId,
+    pub old_parent_folder_id: Option<FolderId>,
+    pub new_parent_folder_id: Option<FolderId>,
+    pub old_path: String,
+    pub new_path: String,
+    pub moved_by: UserId,
+}
 
+/// Folder deleted event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FolderDeletedPayload {
+    pub folder_id: FolderId,
+    pub name: String,
+    pub path: String,
+    pub deleted_by: UserId,
+}
 
 /// File restored event payload
 #[derive(Debug, Clone, Serialize, Deserialize)]

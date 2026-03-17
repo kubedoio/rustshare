@@ -11,7 +11,10 @@ use anyhow::Result;
 use std::sync::Arc;
 
 use crate::domain::{File, Folder, FolderContents, FolderTree, FolderId, UserId};
-use crate::events::{AggregateType, Event, EventType, FolderCreatedPayload};
+use crate::events::{
+    AggregateType, Event, EventType, FolderCreatedPayload, FolderDeletedPayload, FolderMovedPayload,
+    FolderRenamedPayload,
+};
 use crate::services::FolderError;
 
 /// Trait for event store operations needed by FolderService.
@@ -252,6 +255,262 @@ where
         }
 
         Ok(FolderTree::with_contents(folder, files, subfolder_trees))
+    }
+
+    /// Rename a folder.
+    ///
+    /// Updates the folder name and path, and recursively updates all descendant paths.
+    pub async fn rename_folder(
+        &self,
+        folder_id: FolderId,
+        new_name: String,
+        user_id: UserId,
+    ) -> Result<Folder, FolderError> {
+        // Validate new name
+        self.validate_folder_name(&new_name)?;
+
+        // Get and verify folder ownership
+        let mut folder = self.get_folder(folder_id, user_id).await?;
+
+        // Check if name is actually changing
+        if folder.name == new_name {
+            return Ok(folder);
+        }
+
+        let old_name = folder.name.clone();
+        let old_path = folder.path.clone();
+
+        // Calculate new path
+        let new_path = if let Some(parent_id) = folder.parent_folder_id {
+            let parent = self
+                .metadata_store
+                .find_folder_by_id(parent_id)
+                .await
+                .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?
+                .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
+            format!("{}/{}", parent.path.trim_end_matches('/'), new_name)
+        } else {
+            format!("/{}", new_name)
+        };
+
+        // Update folder
+        folder.name = new_name.clone();
+        folder.path = new_path.clone();
+        folder.updated_at = chrono::Utc::now();
+
+        // Update descendants' paths
+        self.update_descendant_paths(folder_id, &old_path, &new_path, user_id)
+            .await?;
+
+        // Emit FolderRenamed event
+        let payload = FolderRenamedPayload {
+            folder_id,
+            old_name,
+            new_name,
+            old_path,
+            new_path,
+            renamed_by: user_id,
+        };
+
+        let event = Event::new(
+            EventType::FolderRenamed,
+            folder_id,
+            AggregateType::Folder,
+            serde_json::to_value(payload).map_err(|e| FolderError::Database(sqlx::Error::Decode(Box::new(e))))?,
+            user_id,
+        );
+
+        self.event_store
+            .append(&event)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(format!("Failed to append event: {}", e))))?;
+
+        // Update in metadata store
+        self.metadata_store
+            .update_folder(&folder)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        Ok(folder)
+    }
+
+    /// Move a folder to a new parent.
+    ///
+    /// Checks for circular references and updates paths for the folder and all descendants.
+    pub async fn move_folder(
+        &self,
+        folder_id: FolderId,
+        new_parent_id: Option<FolderId>,
+        user_id: UserId,
+    ) -> Result<Folder, FolderError> {
+        // Get and verify folder ownership
+        let mut folder = self.get_folder(folder_id, user_id).await?;
+
+        // Check if parent is actually changing
+        if folder.parent_folder_id == new_parent_id {
+            return Ok(folder);
+        }
+
+        let old_parent_id = folder.parent_folder_id;
+        let old_path = folder.path.clone();
+
+        // Verify new parent exists and check for circular reference
+        let new_path = if let Some(parent_id) = new_parent_id {
+            // Check if new parent exists and user owns it
+            let parent = self.get_folder(parent_id, user_id).await?;
+
+            // Check for circular reference: ensure we're not moving into our own descendant
+            let descendants = self
+                .metadata_store
+                .find_descendant_folders(folder_id)
+                .await
+                .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+            if descendants.iter().any(|d| d.id == parent_id) {
+                return Err(FolderError::CircularReference {
+                    folder_id,
+                    target_id: parent_id,
+                });
+            }
+
+            // Calculate new path
+            format!("{}/{}", parent.path.trim_end_matches('/'), folder.name)
+        } else {
+            // Moving to root
+            format!("/{}", folder.name)
+        };
+
+        // Update folder
+        folder.parent_folder_id = new_parent_id;
+        folder.path = new_path.clone();
+        folder.updated_at = chrono::Utc::now();
+
+        // Update descendants' paths
+        self.update_descendant_paths(folder_id, &old_path, &new_path, user_id)
+            .await?;
+
+        // Emit FolderMoved event
+        let payload = FolderMovedPayload {
+            folder_id,
+            old_parent_folder_id: old_parent_id,
+            new_parent_folder_id: new_parent_id,
+            old_path,
+            new_path,
+            moved_by: user_id,
+        };
+
+        let event = Event::new(
+            EventType::FolderMoved,
+            folder_id,
+            AggregateType::Folder,
+            serde_json::to_value(payload).map_err(|e| FolderError::Database(sqlx::Error::Decode(Box::new(e))))?,
+            user_id,
+        );
+
+        self.event_store
+            .append(&event)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(format!("Failed to append event: {}", e))))?;
+
+        // Update in metadata store
+        self.metadata_store
+            .update_folder(&folder)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        Ok(folder)
+    }
+
+    /// Delete a folder and all its contents recursively.
+    ///
+    /// Emits FolderDeleted events for all deleted folders (in reverse tree order).
+    pub async fn delete_folder(&self, folder_id: FolderId, user_id: UserId) -> Result<(), FolderError> {
+        // Get and verify folder ownership
+        let folder = self.get_folder(folder_id, user_id).await?;
+
+        // Check if it's a root folder (optional protection)
+        if folder.parent_folder_id.is_none() && folder.name == "Root" {
+            return Err(FolderError::CannotDeleteRoot(folder_id));
+        }
+
+        // Get all descendant folders (including this folder)
+        let descendants = self
+            .metadata_store
+            .find_descendant_folders(folder_id)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        // Delete in reverse order (children before parents) to maintain referential integrity
+        for descendant in descendants.iter().rev() {
+            // Emit FolderDeleted event for each folder
+            let payload = FolderDeletedPayload {
+                folder_id: descendant.id,
+                name: descendant.name.clone(),
+                path: descendant.path.clone(),
+                deleted_by: user_id,
+            };
+
+            let event = Event::new(
+                EventType::FolderDeleted,
+                descendant.id,
+                AggregateType::Folder,
+                serde_json::to_value(payload).map_err(|e| FolderError::Database(sqlx::Error::Decode(Box::new(e))))?,
+                user_id,
+            );
+
+            self.event_store
+                .append(&event)
+                .await
+                .map_err(|e| FolderError::Database(sqlx::Error::Protocol(format!("Failed to append event: {}", e))))?;
+
+            // Delete from metadata store
+            self.metadata_store
+                .delete_folder(descendant.id)
+                .await
+                .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+        }
+
+        Ok(())
+    }
+
+    /// Helper method to update paths of all descendant folders.
+    ///
+    /// Used when renaming or moving a folder to ensure all descendant paths remain consistent.
+    async fn update_descendant_paths(
+        &self,
+        folder_id: FolderId,
+        old_path: &str,
+        new_path: &str,
+        _user_id: UserId,
+    ) -> Result<(), FolderError> {
+        // Get all descendants (excluding the folder itself)
+        let all_descendants = self
+            .metadata_store
+            .find_descendant_folders(folder_id)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        // Filter to get only descendants, not the folder itself
+        let descendants: Vec<_> = all_descendants
+            .into_iter()
+            .filter(|d| d.id != folder_id)
+            .collect();
+
+        // Update each descendant's path
+        for mut descendant in descendants {
+            // Replace the old path prefix with the new path
+            if descendant.path.starts_with(old_path) {
+                descendant.path = descendant.path.replace(old_path, new_path);
+                descendant.updated_at = chrono::Utc::now();
+
+                self.metadata_store
+                    .update_folder(&descendant)
+                    .await
+                    .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Validate folder name.
@@ -653,6 +912,273 @@ mod tests {
         let folder = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
 
         let result = service.get_tree(folder.id, other_user_id).await;
+
+        assert!(matches!(result, Err(FolderError::PermissionDenied { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_rename_folder_success() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store.clone(), metadata_store.clone());
+
+        let owner_id = Uuid::new_v4();
+        let folder = service.create_folder("OldName".to_string(), None, owner_id).await.unwrap();
+
+        let renamed = service.rename_folder(folder.id, "NewName".to_string(), owner_id).await.unwrap();
+
+        assert_eq!(renamed.name, "NewName");
+        assert_eq!(renamed.path, "/NewName");
+        assert_eq!(renamed.id, folder.id);
+
+        // Verify event was emitted
+        let events = event_store.events.lock().unwrap();
+        assert!(events.iter().any(|e| e.event_type == EventType::FolderRenamed));
+    }
+
+    #[tokio::test]
+    async fn test_rename_folder_updates_descendant_paths() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store, metadata_store.clone());
+
+        let owner_id = Uuid::new_v4();
+
+        // Create hierarchy: Documents/Work/Projects
+        let docs = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+        let work = service
+            .create_folder("Work".to_string(), Some(docs.id), owner_id)
+            .await
+            .unwrap();
+        let projects = service
+            .create_folder("Projects".to_string(), Some(work.id), owner_id)
+            .await
+            .unwrap();
+
+        // Rename Documents to Files
+        service.rename_folder(docs.id, "Files".to_string(), owner_id).await.unwrap();
+
+        // Verify descendant paths were updated
+        let updated_work = service.get_folder(work.id, owner_id).await.unwrap();
+        let updated_projects = service.get_folder(projects.id, owner_id).await.unwrap();
+
+        assert_eq!(updated_work.path, "/Files/Work");
+        assert_eq!(updated_projects.path, "/Files/Work/Projects");
+    }
+
+    #[tokio::test]
+    async fn test_rename_folder_invalid_name() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store, metadata_store);
+
+        let owner_id = Uuid::new_v4();
+        let folder = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+
+        let result = service.rename_folder(folder.id, "Invalid/Name".to_string(), owner_id).await;
+
+        assert!(matches!(result, Err(FolderError::InvalidName(_))));
+    }
+
+    #[tokio::test]
+    async fn test_rename_folder_no_change() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store.clone(), metadata_store);
+
+        let owner_id = Uuid::new_v4();
+        let folder = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+
+        // Get initial event count
+        let initial_event_count = event_store.events.lock().unwrap().len();
+
+        // Rename to same name
+        let renamed = service.rename_folder(folder.id, "Documents".to_string(), owner_id).await.unwrap();
+
+        assert_eq!(renamed.name, "Documents");
+
+        // No new event should be emitted
+        let final_event_count = event_store.events.lock().unwrap().len();
+        assert_eq!(initial_event_count, final_event_count);
+    }
+
+    #[tokio::test]
+    async fn test_move_folder_success() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store.clone(), metadata_store);
+
+        let owner_id = Uuid::new_v4();
+
+        // Create folders at root level
+        let docs = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+        let projects = service.create_folder("Projects".to_string(), None, owner_id).await.unwrap();
+
+        // Move Projects into Documents
+        let moved = service
+            .move_folder(projects.id, Some(docs.id), owner_id)
+            .await
+            .unwrap();
+
+        assert_eq!(moved.parent_folder_id, Some(docs.id));
+        assert_eq!(moved.path, "/Documents/Projects");
+
+        // Verify event was emitted
+        let events = event_store.events.lock().unwrap();
+        assert!(events.iter().any(|e| e.event_type == EventType::FolderMoved));
+    }
+
+    #[tokio::test]
+    async fn test_move_folder_circular_reference() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store, metadata_store);
+
+        let owner_id = Uuid::new_v4();
+
+        // Create hierarchy: Documents/Work
+        let docs = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+        let work = service
+            .create_folder("Work".to_string(), Some(docs.id), owner_id)
+            .await
+            .unwrap();
+
+        // Try to move Documents into Work (circular reference)
+        let result = service.move_folder(docs.id, Some(work.id), owner_id).await;
+
+        assert!(matches!(result, Err(FolderError::CircularReference { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_move_folder_updates_descendant_paths() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store, metadata_store);
+
+        let owner_id = Uuid::new_v4();
+
+        // Create hierarchy: Documents, Work/Projects
+        let docs = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+        let work = service.create_folder("Work".to_string(), None, owner_id).await.unwrap();
+        let projects = service
+            .create_folder("Projects".to_string(), Some(work.id), owner_id)
+            .await
+            .unwrap();
+
+        // Move Work into Documents
+        service.move_folder(work.id, Some(docs.id), owner_id).await.unwrap();
+
+        // Verify descendant paths were updated
+        let updated_work = service.get_folder(work.id, owner_id).await.unwrap();
+        let updated_projects = service.get_folder(projects.id, owner_id).await.unwrap();
+
+        assert_eq!(updated_work.path, "/Documents/Work");
+        assert_eq!(updated_projects.path, "/Documents/Work/Projects");
+    }
+
+    #[tokio::test]
+    async fn test_move_folder_no_change() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store.clone(), metadata_store);
+
+        let owner_id = Uuid::new_v4();
+
+        let docs = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+        let work = service
+            .create_folder("Work".to_string(), Some(docs.id), owner_id)
+            .await
+            .unwrap();
+
+        // Get initial event count
+        let initial_event_count = event_store.events.lock().unwrap().len();
+
+        // Move to same parent
+        let result = service.move_folder(work.id, Some(docs.id), owner_id).await.unwrap();
+
+        assert_eq!(result.parent_folder_id, Some(docs.id));
+
+        // No new event should be emitted
+        let final_event_count = event_store.events.lock().unwrap().len();
+        assert_eq!(initial_event_count, final_event_count);
+    }
+
+    #[tokio::test]
+    async fn test_delete_folder_empty() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store.clone(), metadata_store.clone());
+
+        let owner_id = Uuid::new_v4();
+        let folder = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+
+        service.delete_folder(folder.id, owner_id).await.unwrap();
+
+        // Verify folder no longer exists
+        let result = service.get_folder(folder.id, owner_id).await;
+        assert!(matches!(result, Err(FolderError::NotFound(_))));
+
+        // Verify event was emitted
+        let events = event_store.events.lock().unwrap();
+        assert!(events.iter().any(|e| e.event_type == EventType::FolderDeleted));
+    }
+
+    #[tokio::test]
+    async fn test_delete_folder_with_descendants() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store.clone(), metadata_store.clone());
+
+        let owner_id = Uuid::new_v4();
+
+        // Create hierarchy: Documents/Work/Projects
+        let docs = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+        let work = service
+            .create_folder("Work".to_string(), Some(docs.id), owner_id)
+            .await
+            .unwrap();
+        let projects = service
+            .create_folder("Projects".to_string(), Some(work.id), owner_id)
+            .await
+            .unwrap();
+
+        // Delete Documents (should cascade delete Work and Projects)
+        service.delete_folder(docs.id, owner_id).await.unwrap();
+
+        // Verify all folders are deleted
+        assert!(matches!(
+            service.get_folder(docs.id, owner_id).await,
+            Err(FolderError::NotFound(_))
+        ));
+        assert!(matches!(
+            service.get_folder(work.id, owner_id).await,
+            Err(FolderError::NotFound(_))
+        ));
+        assert!(matches!(
+            service.get_folder(projects.id, owner_id).await,
+            Err(FolderError::NotFound(_))
+        ));
+
+        // Verify events were emitted for all folders (3 FolderDeleted events)
+        let events = event_store.events.lock().unwrap();
+        let delete_events: Vec<_> = events
+            .iter()
+            .filter(|e| e.event_type == EventType::FolderDeleted)
+            .collect();
+        assert_eq!(delete_events.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_delete_folder_permission_denied() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(event_store, metadata_store);
+
+        let owner_id = Uuid::new_v4();
+        let other_user_id = Uuid::new_v4();
+        let folder = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
+
+        let result = service.delete_folder(folder.id, other_user_id).await;
 
         assert!(matches!(result, Err(FolderError::PermissionDenied { .. })));
     }
