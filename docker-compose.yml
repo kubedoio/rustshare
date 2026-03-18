@@ -46,6 +46,7 @@ services:
       STORAGE_ACCESS_KEY: rustfsadmin
       STORAGE_SECRET_KEY: rustfsadmin
       STORAGE_BUCKET: rustshare-files
+      STORAGE_REGION: us-east-1
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
     depends_on:
       postgres:
