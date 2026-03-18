@@ -9,7 +9,7 @@ pub use file::File;
 pub use file_version::FileVersion;
 pub use folder::Folder;
 pub use response_types::{FolderContents, FolderTree};
-pub use share::{Share, SharePermissions};
+pub use share::{Share, SharePermissions, ShareRecipient};
 pub use user::User;
 
 use uuid::Uuid;
