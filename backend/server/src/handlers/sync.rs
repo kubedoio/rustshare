@@ -12,14 +12,27 @@ use axum_extra::{
 };
 use chrono::{DateTime, Utc};
 use futures_util::{StreamExt, SinkExt};
+use rustshare_auth::ShareSessionClaims;
 use rustshare_core::events::{Event, EventType, ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload};
-use rustshare_core::domain::{UserId, SharePermissions};
+use rustshare_core::domain::{UserId, ShareId, FileId, SharePermissions};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::AppState;
+
+/// Identifies the client connected to WebSocket
+#[derive(Debug, Clone)]
+enum ClientIdentity {
+    /// Authenticated user
+    User(UserId),
+    /// Anonymous share viewer with session token
+    ShareViewer {
+        share_id: ShareId,
+        file_id: FileId,
+    },
+}
 
 /// Client message for requesting catch-up
 #[derive(Debug, Deserialize)]
@@ -74,32 +87,60 @@ struct LaggedMessage {
     message: String,
 }
 
+/// Validate client token - supports both user and share session JWTs
+async fn validate_client_token(
+    token: &str,
+    jwt_manager: &rustshare_auth::JwtManager,
+) -> Result<ClientIdentity, (StatusCode, String)> {
+    // First try to decode as user JWT
+    if let Ok(claims) = jwt_manager.validate(token) {
+        let user_id = UserId::from(
+            Uuid::parse_str(&claims.sub)
+                .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid user ID".to_string()))?,
+        );
+        return Ok(ClientIdentity::User(user_id));
+    }
+
+    // Try to decode as share session JWT
+    if let Ok(claims) = jwt_manager.decode_custom::<ShareSessionClaims>(token) {
+        // Check if expired
+        if claims.is_expired() {
+            return Err((StatusCode::UNAUTHORIZED, "Token expired".to_string()));
+        }
+
+        return Ok(ClientIdentity::ShareViewer {
+            share_id: claims.share_id,
+            file_id: claims.file_id,
+        });
+    }
+
+    Err((StatusCode::UNAUTHORIZED, "Invalid token".to_string()))
+}
+
 /// WebSocket handler for real-time sync
 pub async fn sync_handler(
     State(state): State<AppState>,
     ws: WebSocketUpgrade,
     TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
 ) -> Result<Response, (StatusCode, String)> {
-    // Validate JWT
-    let claims = state
-        .jwt_manager
-        .validate(auth.token())
-        .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid token".to_string()))?;
+    // Validate token and determine client identity
+    let client_identity = validate_client_token(auth.token(), &state.jwt_manager).await?;
 
-    // Extract user_id from JWT subject claim
-    let user_id = UserId::from(
-        Uuid::parse_str(&claims.sub)
-            .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid user ID".to_string()))?,
-    );
-
-    info!("WebSocket connection established for user {}", user_id);
+    match &client_identity {
+        ClientIdentity::User(user_id) => {
+            info!("WebSocket connection established for user {}", user_id);
+        }
+        ClientIdentity::ShareViewer { share_id, file_id } => {
+            info!("WebSocket connection established for share viewer: share_id={}, file_id={}", share_id, file_id);
+        }
+    }
 
     // Upgrade connection
-    Ok(ws.on_upgrade(move |socket| handle_socket(socket, user_id, state)))
+    Ok(ws.on_upgrade(move |socket| handle_socket(socket, client_identity, state)))
 }
 
 /// Handle WebSocket connection
-async fn handle_socket(socket: WebSocket, user_id: UserId, state: AppState) {
+async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state: AppState) {
     let (mut sender, mut receiver) = socket.split();
 
     // Subscribe to event broadcaster
@@ -121,49 +162,55 @@ async fn handle_socket(socket: WebSocket, user_id: UserId, state: AppState) {
 
     // Clone state for use in send task
     let metadata_store = state.metadata_store.clone();
+    let client_identity_for_task = client_identity.clone();
 
     // Send events to client
     let send_task = tokio::spawn(async move {
-        // Wait briefly for catch-up request
-        tokio::select! {
-            last_seen_id = &mut recv_task => {
-                if let Ok(Some(last_id_str)) = last_seen_id {
-                    // Handle catch-up
-                    if let Ok(last_id) = Uuid::parse_str(&last_id_str) {
-                        match state.event_store.get_events_since(user_id, Some(last_id), 100).await {
-                            Ok(events) => {
-                                info!("Sending {} catch-up events to user {}", events.len(), user_id);
-                                for event in events {
-                                    if let Ok(message) = event_to_sync_message(&event, user_id, &metadata_store).await {
-                                        if let Ok(json) = serde_json::to_string(&message) {
-                                            if sender.send(Message::Text(json)).await.is_err() {
-                                                return;
+        // Wait briefly for catch-up request (only for authenticated users)
+        if let ClientIdentity::User(user_id) = &client_identity_for_task {
+            tokio::select! {
+                last_seen_id = &mut recv_task => {
+                    if let Ok(Some(last_id_str)) = last_seen_id {
+                        // Handle catch-up
+                        if let Ok(last_id) = Uuid::parse_str(&last_id_str) {
+                            match state.event_store.get_events_since(*user_id, Some(last_id), 100).await {
+                                Ok(events) => {
+                                    info!("Sending {} catch-up events to user {}", events.len(), user_id);
+                                    for event in events {
+                                        if let Ok(message) = event_to_sync_message(&event, &metadata_store).await {
+                                            if let Ok(json) = serde_json::to_string(&message) {
+                                                if sender.send(Message::Text(json)).await.is_err() {
+                                                    return;
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                error!("Failed to fetch catch-up events: {}", e);
+                                Err(e) => {
+                                    error!("Failed to fetch catch-up events: {}", e);
+                                }
                             }
                         }
                     }
                 }
+                _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
+                    // No catch-up request, proceed to live events
+                }
             }
-            _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
-                // No catch-up request, proceed to live events
-            }
+        } else {
+            // Share viewers don't support catch-up, skip the wait
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
 
         // Stream live events
         loop {
             match event_rx.recv().await {
                 Ok(event) => {
-                    // Check if this event is relevant to this user
-                    match should_send_event_to_user(&event, user_id, &metadata_store).await {
+                    // Check if this event is relevant to this client
+                    match should_send_event_to_client(&event, &client_identity_for_task, &metadata_store).await {
                         Ok(true) => {
                             // Convert event to sync message
-                            match event_to_sync_message(&event, user_id, &metadata_store).await {
+                            match event_to_sync_message(&event, &metadata_store).await {
                                 Ok(message) => {
                                     if let Ok(json) = serde_json::to_string(&message) {
                                         if sender.send(Message::Text(json)).await.is_err() {
@@ -177,7 +224,7 @@ async fn handle_socket(socket: WebSocket, user_id: UserId, state: AppState) {
                             }
                         }
                         Ok(false) => {
-                            // Event not relevant to this user, skip
+                            // Event not relevant to this client, skip
                         }
                         Err(e) => {
                             error!("Failed to check event relevance: {}", e);
@@ -207,10 +254,47 @@ async fn handle_socket(socket: WebSocket, user_id: UserId, state: AppState) {
     // Wait for send task to complete
     let _ = send_task.await;
 
-    info!("WebSocket connection closed for user {}", user_id);
+    match &client_identity {
+        ClientIdentity::User(user_id) => {
+            info!("WebSocket connection closed for user {}", user_id);
+        }
+        ClientIdentity::ShareViewer { share_id, .. } => {
+            info!("WebSocket connection closed for share viewer: share_id={}", share_id);
+        }
+    }
 }
 
-/// Determine if an event should be sent to a specific user
+/// Determine if an event should be sent to a specific client
+async fn should_send_event_to_client(
+    event: &Event,
+    client_identity: &ClientIdentity,
+    metadata_store: &rustshare_storage::MetadataStore,
+) -> Result<bool, String> {
+    match client_identity {
+        ClientIdentity::User(user_id) => {
+            // For authenticated users, use existing logic
+            should_send_event_to_user(event, *user_id, metadata_store).await
+        }
+        ClientIdentity::ShareViewer { share_id, file_id } => {
+            // Share viewers receive:
+            // 1. Events for their specific file
+            // 2. ShareRevoked/ShareUpdated events for their share
+            match event.event_type {
+                EventType::ShareRevoked | EventType::ShareUpdated => {
+                    // Check if this event is for their share
+                    Ok(event.aggregate_id == *share_id)
+                }
+                EventType::FileModified | EventType::FileDeleted | EventType::FileRenamed => {
+                    // Check if this event is for their file
+                    Ok(event.aggregate_id == *file_id)
+                }
+                _ => Ok(false),
+            }
+        }
+    }
+}
+
+/// Determine if an event should be sent to a specific user (authenticated users only)
 async fn should_send_event_to_user(
     event: &Event,
     user_id: UserId,
@@ -264,7 +348,6 @@ async fn should_send_event_to_user(
 /// Convert Event to SyncMessage
 async fn event_to_sync_message(
     event: &Event,
-    _user_id: UserId,
     _metadata_store: &rustshare_storage::MetadataStore,
 ) -> Result<SyncMessage, String> {
     // For share events, create specialized messages
@@ -325,7 +408,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use rustshare_core::domain::{File, SharePermissions};
-    use rustshare_core::events::{AggregateType, Event, EventType, ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload};
+    use rustshare_core::events::{AggregateType, Event, EventType, ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload, FileModifiedPayload};
     use rustshare_storage::MetadataStore;
     use sqlx::PgPool;
     use uuid::Uuid;
@@ -524,7 +607,7 @@ mod tests {
         };
         let metadata_store = MetadataStore::new(pool);
 
-        let message = event_to_sync_message(&event, owner_id, &metadata_store).await.unwrap();
+        let message = event_to_sync_message(&event, &metadata_store).await.unwrap();
 
         match message {
             SyncMessage::ShareCreated {
@@ -576,7 +659,7 @@ mod tests {
         };
         let metadata_store = MetadataStore::new(pool);
 
-        let message = event_to_sync_message(&event, owner_id, &metadata_store).await.unwrap();
+        let message = event_to_sync_message(&event, &metadata_store).await.unwrap();
 
         match message {
             SyncMessage::ShareRevoked {
@@ -624,7 +707,7 @@ mod tests {
         };
         let metadata_store = MetadataStore::new(pool);
 
-        let message = event_to_sync_message(&event, owner_id, &metadata_store).await.unwrap();
+        let message = event_to_sync_message(&event, &metadata_store).await.unwrap();
 
         match message {
             SyncMessage::ShareUpdated {
@@ -672,7 +755,7 @@ mod tests {
         };
         let metadata_store = MetadataStore::new(pool);
 
-        let message = event_to_sync_message(&event, owner_id, &metadata_store).await.unwrap();
+        let message = event_to_sync_message(&event, &metadata_store).await.unwrap();
 
         match message {
             SyncMessage::Event {
@@ -727,5 +810,273 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"ShareUpdated\""));
         assert!(json.contains("\"password_changed\":true"));
+    }
+
+    #[tokio::test]
+    async fn test_share_viewer_receives_revoked_event() {
+        let share_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+
+        let client_identity = ClientIdentity::ShareViewer {
+            share_id,
+            file_id,
+        };
+
+        // Create ShareRevoked event for this share
+        let payload = ShareRevokedPayload {
+            share_id,
+            file_id,
+            revoked_by: owner_id,
+        };
+
+        let event = Event::new(
+            EventType::ShareRevoked,
+            share_id,
+            rustshare_core::events::AggregateType::Share,
+            serde_json::to_value(&payload).unwrap(),
+            owner_id,
+        );
+
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+
+        let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
+            println!("Skipping test - database not available");
+            return;
+        };
+        let metadata_store = MetadataStore::new(pool);
+
+        // Share viewer should receive the event
+        let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
+            .await
+            .unwrap();
+        assert!(should_send, "Share viewer should receive ShareRevoked event for their share");
+    }
+
+    #[tokio::test]
+    async fn test_share_viewer_receives_updated_event() {
+        let share_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+
+        let client_identity = ClientIdentity::ShareViewer {
+            share_id,
+            file_id,
+        };
+
+        // Create ShareUpdated event for this share
+        let payload = ShareUpdatedPayload {
+            share_id,
+            file_id,
+            password_changed: true,
+            expires_at_changed: false,
+            new_expires_at: None,
+            updated_by: owner_id,
+        };
+
+        let event = Event::new(
+            EventType::ShareUpdated,
+            share_id,
+            rustshare_core::events::AggregateType::Share,
+            serde_json::to_value(&payload).unwrap(),
+            owner_id,
+        );
+
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+
+        let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
+            println!("Skipping test - database not available");
+            return;
+        };
+        let metadata_store = MetadataStore::new(pool);
+
+        // Share viewer should receive the event
+        let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
+            .await
+            .unwrap();
+        assert!(should_send, "Share viewer should receive ShareUpdated event for their share");
+    }
+
+    #[tokio::test]
+    async fn test_share_viewer_receives_file_modified_event() {
+        let share_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+
+        let client_identity = ClientIdentity::ShareViewer {
+            share_id,
+            file_id,
+        };
+
+        // Create FileModified event for this file
+        let payload = FileModifiedPayload {
+            file_id,
+            old_version: 1,
+            new_version: 2,
+            old_content_hash: "hash1".to_string(),
+            new_content_hash: "hash2".to_string(),
+            old_size: 100,
+            new_size: 200,
+            storage_key: "key123".to_string(),
+            modified_by: owner_id,
+        };
+
+        let event = Event::new(
+            EventType::FileModified,
+            file_id,
+            rustshare_core::events::AggregateType::File,
+            serde_json::to_value(&payload).unwrap(),
+            owner_id,
+        );
+
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+
+        let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
+            println!("Skipping test - database not available");
+            return;
+        };
+        let metadata_store = MetadataStore::new(pool);
+
+        // Share viewer should receive the event
+        let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
+            .await
+            .unwrap();
+        assert!(should_send, "Share viewer should receive FileModified event for their file");
+    }
+
+    #[tokio::test]
+    async fn test_share_viewer_does_not_receive_other_file_events() {
+        let share_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let other_file_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+
+        let client_identity = ClientIdentity::ShareViewer {
+            share_id,
+            file_id,
+        };
+
+        // Create FileModified event for a different file
+        let payload = FileModifiedPayload {
+            file_id: other_file_id,
+            old_version: 1,
+            new_version: 2,
+            old_content_hash: "hash1".to_string(),
+            new_content_hash: "hash2".to_string(),
+            old_size: 100,
+            new_size: 200,
+            storage_key: "key123".to_string(),
+            modified_by: owner_id,
+        };
+
+        let event = Event::new(
+            EventType::FileModified,
+            other_file_id,
+            rustshare_core::events::AggregateType::File,
+            serde_json::to_value(&payload).unwrap(),
+            owner_id,
+        );
+
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+
+        let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
+            println!("Skipping test - database not available");
+            return;
+        };
+        let metadata_store = MetadataStore::new(pool);
+
+        // Share viewer should NOT receive the event
+        let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
+            .await
+            .unwrap();
+        assert!(!should_send, "Share viewer should not receive FileModified event for other files");
+    }
+
+    #[tokio::test]
+    async fn test_share_viewer_does_not_receive_other_share_events() {
+        let share_id = Uuid::new_v4();
+        let other_share_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+
+        let client_identity = ClientIdentity::ShareViewer {
+            share_id,
+            file_id,
+        };
+
+        // Create ShareRevoked event for a different share
+        let payload = ShareRevokedPayload {
+            share_id: other_share_id,
+            file_id,
+            revoked_by: owner_id,
+        };
+
+        let event = Event::new(
+            EventType::ShareRevoked,
+            other_share_id,
+            rustshare_core::events::AggregateType::Share,
+            serde_json::to_value(&payload).unwrap(),
+            owner_id,
+        );
+
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+
+        let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
+            println!("Skipping test - database not available");
+            return;
+        };
+        let metadata_store = MetadataStore::new(pool);
+
+        // Share viewer should NOT receive the event
+        let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
+            .await
+            .unwrap();
+        assert!(!should_send, "Share viewer should not receive ShareRevoked event for other shares");
+    }
+
+    #[tokio::test]
+    async fn test_share_viewer_does_not_receive_user_events() {
+        let share_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+
+        let client_identity = ClientIdentity::ShareViewer {
+            share_id,
+            file_id,
+        };
+
+        // Create UserCreated event
+        let payload = serde_json::json!({
+            "user_id": user_id.to_string(),
+            "email": "test@example.com"
+        });
+
+        let event = Event::new(
+            EventType::UserCreated,
+            user_id,
+            rustshare_core::events::AggregateType::User,
+            payload,
+            user_id,
+        );
+
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+
+        let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
+            println!("Skipping test - database not available");
+            return;
+        };
+        let metadata_store = MetadataStore::new(pool);
+
+        // Share viewer should NOT receive the event
+        let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
+            .await
+            .unwrap();
+        assert!(!should_send, "Share viewer should not receive UserCreated event");
     }
 }
