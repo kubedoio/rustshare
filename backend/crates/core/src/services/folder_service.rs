@@ -642,7 +642,7 @@ mod tests {
     async fn test_create_folder_success() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store.clone(), metadata_store.clone());
+        let service = FolderService::new(event_store.clone(), metadata_store.clone(), Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let folder = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
@@ -662,7 +662,7 @@ mod tests {
     async fn test_create_subfolder_success() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store.clone(), metadata_store.clone());
+        let service = FolderService::new(event_store.clone(), metadata_store.clone(), Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
 
@@ -685,7 +685,7 @@ mod tests {
     async fn test_create_folder_invalid_name_empty() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let result = service.create_folder("".to_string(), None, owner_id).await;
@@ -697,7 +697,7 @@ mod tests {
     async fn test_create_folder_invalid_name_with_slash() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let result = service.create_folder("Work/Projects".to_string(), None, owner_id).await;
@@ -709,7 +709,7 @@ mod tests {
     async fn test_create_folder_parent_not_found() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let non_existent_parent_id = Uuid::new_v4();
@@ -724,7 +724,7 @@ mod tests {
     async fn test_create_folder_permission_denied() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store.clone());
+        let service = FolderService::new(event_store, metadata_store.clone(), Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let other_user_id = Uuid::new_v4();
@@ -744,7 +744,7 @@ mod tests {
     async fn test_get_folder_success() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let created = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
@@ -760,7 +760,7 @@ mod tests {
     async fn test_get_folder_not_found() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let non_existent_id = Uuid::new_v4();
@@ -773,7 +773,7 @@ mod tests {
     async fn test_get_folder_permission_denied() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let other_user_id = Uuid::new_v4();
@@ -788,7 +788,7 @@ mod tests {
     async fn test_list_contents_empty_folder() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let folder = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
@@ -803,7 +803,7 @@ mod tests {
     async fn test_list_contents_with_subfolders() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
 
@@ -833,7 +833,7 @@ mod tests {
     async fn test_list_contents_permission_denied() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let other_user_id = Uuid::new_v4();
@@ -848,7 +848,7 @@ mod tests {
     async fn test_get_tree_single_folder() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let folder = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
@@ -865,7 +865,7 @@ mod tests {
     async fn test_get_tree_with_subfolders() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
 
@@ -907,7 +907,7 @@ mod tests {
     async fn test_get_tree_permission_denied() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let other_user_id = Uuid::new_v4();
@@ -922,7 +922,7 @@ mod tests {
     async fn test_rename_folder_success() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store.clone(), metadata_store.clone());
+        let service = FolderService::new(event_store.clone(), metadata_store.clone(), Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let folder = service.create_folder("OldName".to_string(), None, owner_id).await.unwrap();
@@ -942,7 +942,7 @@ mod tests {
     async fn test_rename_folder_updates_descendant_paths() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store.clone());
+        let service = FolderService::new(event_store, metadata_store.clone(), Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
 
@@ -972,7 +972,7 @@ mod tests {
     async fn test_rename_folder_invalid_name() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let folder = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
@@ -986,7 +986,7 @@ mod tests {
     async fn test_rename_folder_no_change() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store.clone(), metadata_store);
+        let service = FolderService::new(event_store.clone(), metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let folder = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
@@ -1008,7 +1008,7 @@ mod tests {
     async fn test_move_folder_success() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store.clone(), metadata_store);
+        let service = FolderService::new(event_store.clone(), metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
 
@@ -1034,7 +1034,7 @@ mod tests {
     async fn test_move_folder_circular_reference() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
 
@@ -1055,7 +1055,7 @@ mod tests {
     async fn test_move_folder_updates_descendant_paths() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
 
@@ -1082,7 +1082,7 @@ mod tests {
     async fn test_move_folder_no_change() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store.clone(), metadata_store);
+        let service = FolderService::new(event_store.clone(), metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
 
@@ -1109,7 +1109,7 @@ mod tests {
     async fn test_delete_folder_empty() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store.clone(), metadata_store.clone());
+        let service = FolderService::new(event_store.clone(), metadata_store.clone(), Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let folder = service.create_folder("Documents".to_string(), None, owner_id).await.unwrap();
@@ -1129,7 +1129,7 @@ mod tests {
     async fn test_delete_folder_with_descendants() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store.clone(), metadata_store.clone());
+        let service = FolderService::new(event_store.clone(), metadata_store.clone(), Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
 
@@ -1174,7 +1174,7 @@ mod tests {
     async fn test_delete_folder_permission_denied() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let service = FolderService::new(event_store, metadata_store);
+        let service = FolderService::new(event_store, metadata_store, Arc::new(EventBroadcaster::new(100)));
 
         let owner_id = Uuid::new_v4();
         let other_user_id = Uuid::new_v4();

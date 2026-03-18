@@ -781,11 +781,13 @@ mod tests {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
         let object_store = Arc::new(MockObjectStore::new());
+        let broadcaster = Arc::new(EventBroadcaster::new(100));
 
         let service = FileService::new(
             event_store.clone(),
             metadata_store.clone(),
             object_store.clone(),
+            broadcaster,
         );
 
         (service, event_store, metadata_store, object_store)
@@ -1026,7 +1028,8 @@ mod tests {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
         let object_store = Arc::new(MockObjectStore::new());
-        let service = FileService::new(event_store, metadata_store, object_store);
+        let broadcaster = Arc::new(EventBroadcaster::new(100));
+        let service = FileService::new(event_store, metadata_store, object_store, broadcaster);
 
         assert!(service.validate_file_name("test.txt").is_ok());
         assert!(service.validate_file_name("my-file.pdf").is_ok());
@@ -1039,7 +1042,8 @@ mod tests {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
         let object_store = Arc::new(MockObjectStore::new());
-        let service = FileService::new(event_store, metadata_store, object_store);
+        let broadcaster = Arc::new(EventBroadcaster::new(100));
+        let service = FileService::new(event_store, metadata_store, object_store, broadcaster);
 
         assert!(service.validate_file_name("").is_err());
         assert!(service.validate_file_name("path/file.txt").is_err());
