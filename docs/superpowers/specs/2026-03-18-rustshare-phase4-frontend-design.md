@@ -117,7 +117,225 @@ frontend/
 
 ---
 
-## Component Architecture
+---
+
+## Backend API Reference
+
+### Authentication Endpoints
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/api/auth/login` | User login | No |
+
+**Request:**
+```json
+{ "email": "user@example.com", "password": "password123" }
+```
+
+**Response:**
+```json
+{
+  "token": "eyJhbG...",
+  "user": {
+    "id": "uuid",
+    "email": "user@example.com",
+    "display_name": "User Name",
+    "is_admin": false,
+    "storage_quota": 10737418240,
+    "created_at": "2026-03-18T12:00:00Z",
+    "updated_at": "2026-03-18T12:00:00Z"
+  }
+}
+```
+
+### File Endpoints
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/api/files/upload?folder_id={id}` | Upload file | Yes |
+| GET | `/api/files/:id` | Get file metadata | Yes |
+| PUT | `/api/files/:id` | Update file (with If-Match header) | Yes |
+| DELETE | `/api/files/:id` | Delete file | Yes |
+| GET | `/api/files/:id/download` | Get download URL | Yes |
+| GET | `/api/files/:id/versions` | List file versions | Yes |
+| POST | `/api/files/:id/restore` | Restore file version | Yes |
+| POST | `/api/files/:id/move` | Move file to folder | Yes |
+| POST | `/api/files/:id/rename` | Rename file | Yes |
+
+### Folder Endpoints
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/api/folders` | Create folder | Yes |
+| GET | `/api/folders/:id` | Get folder metadata | Yes |
+| DELETE | `/api/folders/:id` | Delete folder | Yes |
+| GET | `/api/folders/:id/contents` | Get folder contents | Yes |
+| GET | `/api/folders/tree` | Get entire folder tree | Yes |
+| POST | `/api/folders/:id/move` | Move folder | Yes |
+| POST | `/api/folders/:id/rename` | Rename folder | Yes |
+
+### Public Share Endpoints
+
+**Note:** These use **plural** `/shares` to create multiple public shares per file.
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/api/files/:file_id/shares` | Create public share | Yes |
+| GET | `/api/files/:file_id/shares` | List public shares for file | Yes |
+| GET | `/api/public/share/:token/info` | Get public share info | No |
+| POST | `/api/public/share/:token/session` | Create session (with password) | No |
+| GET | `/api/public/share/:token/file` | Download file (requires session JWT) | Session JWT |
+
+**Create Public Share Request:**
+```json
+{
+  "permissions": "View",
+  "password": "optional-password",
+  "expires_at": "2026-04-18T12:00:00Z"
+}
+```
+
+**Create Public Share Response:**
+```json
+{
+  "id": "uuid",
+  "file_id": "uuid",
+  "share_token": "abc123xyz",
+  "permissions": "View",
+  "password_protected": true,
+  "expires_at": "2026-04-18T12:00:00Z",
+  "created_at": "2026-03-18T12:00:00Z"
+}
+```
+
+### User-to-User Share Endpoints
+
+**Note:** These use **singular** `/share` for sharing with specific users.
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/api/files/:id/share` | Share file with user | Yes |
+| POST | `/api/folders/:id/share` | Share folder with user | Yes |
+| GET | `/api/shares/received` | List received shares | Yes |
+| GET | `/api/files/:id/recipients` | List file recipients | Yes |
+| GET | `/api/folders/:id/recipients` | List folder recipients | Yes |
+| PUT | `/api/shares/:id/permission` | Update recipient permission | Yes |
+| DELETE | `/api/shares/:id/recipient` | Remove recipient | Yes |
+
+**Share File with User Request:**
+```json
+{
+  "recipient_email": "colleague@example.com",
+  "permission": "Edit"
+}
+```
+
+**Share Response:**
+```json
+{
+  "share_id": "uuid",
+  "resource_id": "uuid",
+  "resource_type": "File",
+  "recipient_email": "colleague@example.com",
+  "permission": "Edit",
+  "created_at": "2026-03-18T12:00:00Z"
+}
+```
+
+**List Received Shares Response:**
+```json
+[
+  {
+    "share_id": "uuid",
+    "resource_type": "File",
+    "resource_id": "uuid",
+    "resource_name": "document.pdf",
+    "owner_email": "owner@example.com",
+    "permission": "Edit",
+    "created_at": "2026-03-18T12:00:00Z"
+  }
+]
+```
+
+**Permission Resolution:**
+- The `permission` field in received shares indicates the current user's permission level
+- Values: `"View"`, `"Edit"`, `"Admin"`
+- Frontend uses this to show/hide UI elements (e.g., "Manage Recipients" button requires Admin)
+- Folder permissions are inherited by child files/folders automatically by backend
+
+### Notification Endpoints
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| GET | `/api/notifications?limit=50&offset=0&unread_only=false` | List notifications | Yes |
+| PUT | `/api/notifications/:id/read` | Mark as read | Yes |
+| DELETE | `/api/notifications/:id` | Delete notification | Yes |
+
+**List Notifications Query Parameters:**
+- `limit` (default: 50) - Maximum notifications to return
+- `offset` (default: 0) - Skip N notifications for pagination
+- `unread_only` (default: false) - Filter to unread only
+
+**Notification Response:**
+```json
+{
+  "notifications": [
+    {
+      "id": "uuid",
+      "notification_type": "share_received",
+      "title": "New Share",
+      "message": "admin@localhost shared 'document.pdf' with you",
+      "resource_id": "uuid",
+      "resource_type": "file",
+      "action_url": "/files/uuid",
+      "read": false,
+      "created_at": "2026-03-18T12:00:00Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+### WebSocket Endpoint
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| GET | `/api/sync?token={jwt}` | WebSocket sync stream | JWT in query param |
+
+**Important:** Browser WebSocket API doesn't support custom headers, so JWT token must be passed as query parameter. Backend validates during upgrade handshake.
+
+**Event Types:**
+```typescript
+type EventType =
+  // File events
+  | 'FileUploaded' | 'FileModified' | 'FileRenamed' | 'FileMoved' | 'FileDeleted' | 'FileRestored'
+  // Folder events
+  | 'FolderCreated' | 'FolderRenamed' | 'FolderMoved' | 'FolderDeleted'
+  // Share events (public)
+  | 'ShareCreated' | 'ShareRevoked' | 'ShareUpdated'
+  // Share events (user-to-user)
+  | 'ShareReceivedByUser' | 'SharePermissionChanged' | 'ShareRevokedFromUser'
+  // Notification events
+  | 'NotificationCreated'
+  // Conflict events
+  | 'ConflictDetected' | 'ConflictResolved';
+```
+
+**Event Message Format:**
+```json
+{
+  "type": "FileUploaded",
+  "event_id": "uuid",
+  "aggregate_id": "uuid",
+  "aggregate_type": "file",
+  "timestamp": "2026-03-18T12:00:00Z",
+  "version": 1
+}
+```
+
+---
+
+## Component Architecture (Detailed)
 
 ### 1. API Layer (`src/lib/api/`)
 
@@ -166,8 +384,8 @@ export class ApiClient {
 - `auth.ts` - Login, logout, token management
 - `files.ts` - Upload, download, rename, delete, versions
 - `folders.ts` - Create, rename, delete, tree, contents
-- `shares.ts` - Create public share, list, revoke
-- `user-shares.ts` - Share with user, list received, update permissions
+- `shares.ts` - Create public share, list, revoke (uses `/api/files/:file_id/shares` - plural)
+- `user-shares.ts` - Share with user, list received, update permissions (uses `/api/files/:id/share` - singular)
 - `notifications.ts` - List, mark as read, delete
 
 ### 2. State Management
@@ -223,6 +441,9 @@ export const syncStore = writable<SyncState>({
 ### 3. WebSocket Layer
 
 **Connection Manager (`src/lib/websocket/client.ts`):**
+
+**Important:** WebSocket authentication in browsers requires passing the JWT token as a query parameter, not as a header, because the browser WebSocket API doesn't support custom headers. The backend validates the token from the query string during the upgrade handshake.
+
 ```typescript
 export class WebSocketClient {
   private ws: WebSocket | null = null;
@@ -231,11 +452,12 @@ export class WebSocketClient {
 
   connect(token: string) {
     const wsUrl = `${VITE_WS_URL}/sync`;
-    this.ws = new WebSocket(wsUrl);
+    // WebSocket authentication happens via Authorization header during upgrade handshake
+    // Backend validates JWT during upgrade and rejects with 401 if invalid
+    // Note: Some WebSocket client libraries don't support headers - for browser, we need to pass token as query param
+    this.ws = new WebSocket(`${wsUrl}?token=${token}`);
 
     this.ws.onopen = () => {
-      // Send auth message
-      this.ws.send(JSON.stringify({ type: 'Auth', token }));
       syncStore.update(s => ({ ...s, connected: true, reconnecting: false }));
       this.reconnectAttempts = 0;
     };
@@ -270,16 +492,40 @@ export class WebSocketClient {
         queryClient.invalidateQueries(['files', event.folder_id]);
         break;
       case 'FileRenamed':
+      case 'FileMoved':
         queryClient.invalidateQueries(['files']);
         break;
       case 'ShareCreated':
+      case 'ShareReceivedByUser':
         queryClient.invalidateQueries(['shares', event.file_id]);
+        queryClient.invalidateQueries(['received-shares']);
+        break;
+      case 'SharePermissionChanged':
+        queryClient.invalidateQueries(['shares', event.share_id]);
+        queryClient.invalidateQueries(['received-shares']);
+        break;
+      case 'ShareRevoked':
+      case 'ShareRevokedFromUser':
+        queryClient.invalidateQueries(['shares']);
         queryClient.invalidateQueries(['received-shares']);
         break;
       case 'NotificationCreated':
         queryClient.invalidateQueries(['notifications']);
         break;
-      // ... handle all event types
+      case 'ConflictDetected':
+      case 'ConflictResolved':
+        // Show conflict modal or notification
+        queryClient.invalidateQueries(['files', event.file_id]);
+        break;
+      case 'FolderCreated':
+      case 'FolderRenamed':
+      case 'FolderMoved':
+      case 'FolderDeleted':
+        queryClient.invalidateQueries(['folders']);
+        break;
+      default:
+        // Forward compatibility: log unknown events but don't crash
+        console.warn('Unknown event type:', event.type);
     }
 
     // Show toast notification for events from other users
