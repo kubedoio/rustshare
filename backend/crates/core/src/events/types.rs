@@ -45,6 +45,12 @@ pub enum EventType {
     ShareCreated,
     ShareRevoked,
     ShareUpdated,
+    ShareReceivedByUser,
+    SharePermissionChanged,
+    ShareRevokedFromUser,
+
+    // Notification events
+    NotificationCreated,
 
     // Sync events
     ConflictDetected,
@@ -71,6 +77,10 @@ impl EventType {
             EventType::ShareCreated => "ShareCreated",
             EventType::ShareRevoked => "ShareRevoked",
             EventType::ShareUpdated => "ShareUpdated",
+            EventType::ShareReceivedByUser => "ShareReceivedByUser",
+            EventType::SharePermissionChanged => "SharePermissionChanged",
+            EventType::ShareRevokedFromUser => "ShareRevokedFromUser",
+            EventType::NotificationCreated => "NotificationCreated",
             EventType::ConflictDetected => "ConflictDetected",
             EventType::ConflictResolved => "ConflictResolved",
         }
@@ -222,6 +232,47 @@ pub struct ShareUpdatedPayload {
     pub expires_at_changed: bool,
     pub new_expires_at: Option<DateTime<Utc>>,
     pub updated_by: UserId,
+}
+
+/// Share received by user event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareReceivedByUserPayload {
+    pub share_id: ShareId,
+    pub file_id: FileId,
+    pub received_by: UserId,
+    pub shared_by: UserId,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Share permission changed event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharePermissionChangedPayload {
+    pub share_id: ShareId,
+    pub file_id: FileId,
+    pub old_permissions: SharePermissions,
+    pub new_permissions: SharePermissions,
+    pub changed_by: UserId,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Share revoked from user event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareRevokedFromUserPayload {
+    pub share_id: ShareId,
+    pub file_id: FileId,
+    pub revoked_from: UserId,
+    pub revoked_by: UserId,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Notification created event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationCreatedPayload {
+    pub notification_id: Uuid,
+    pub user_id: UserId,
+    pub message: String,
+    pub notification_type: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 
