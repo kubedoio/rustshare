@@ -6,6 +6,7 @@
 
 use anyhow::Result;
 use rustshare_core::events::*;
+use rustshare_core::events::EventBroadcaster;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -20,7 +21,7 @@ impl EventStore {
     }
 
     /// Append a new event to the event store
-    pub async fn append(&self, event: &Event) -> Result<()> {
+    pub async fn append(&self, event: &Event, broadcaster: &EventBroadcaster) -> Result<()> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         sqlx::query(
             r#"
@@ -38,6 +39,8 @@ impl EventStore {
         .bind(event.version)
         .execute(&self.pool)
         .await?;
+
+        broadcaster.publish(event.clone());
 
         Ok(())
     }
