@@ -31,6 +31,7 @@ enum ClientIdentity {
     ShareViewer {
         share_id: ShareId,
         file_id: FileId,
+        permissions: SharePermissions,
     },
 }
 
@@ -111,6 +112,7 @@ async fn validate_client_token(
         return Ok(ClientIdentity::ShareViewer {
             share_id: claims.share_id,
             file_id: claims.file_id,
+            permissions: claims.permissions,
         });
     }
 
@@ -130,8 +132,11 @@ pub async fn sync_handler(
         ClientIdentity::User(user_id) => {
             info!("WebSocket connection established for user {}", user_id);
         }
-        ClientIdentity::ShareViewer { share_id, file_id } => {
-            info!("WebSocket connection established for share viewer: share_id={}, file_id={}", share_id, file_id);
+        ClientIdentity::ShareViewer { share_id, file_id, permissions } => {
+            info!(
+                "WebSocket connection established for share viewer: share_id={}, file_id={}, permissions={:?}",
+                share_id, file_id, permissions
+            );
         }
     }
 
@@ -258,7 +263,7 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
         ClientIdentity::User(user_id) => {
             info!("WebSocket connection closed for user {}", user_id);
         }
-        ClientIdentity::ShareViewer { share_id, .. } => {
+        ClientIdentity::ShareViewer { share_id, permissions: _, .. } => {
             info!("WebSocket connection closed for share viewer: share_id={}", share_id);
         }
     }
@@ -275,7 +280,7 @@ async fn should_send_event_to_client(
             // For authenticated users, use existing logic
             should_send_event_to_user(event, *user_id, metadata_store).await
         }
-        ClientIdentity::ShareViewer { share_id, file_id } => {
+        ClientIdentity::ShareViewer { share_id, file_id, permissions: _ } => {
             // Share viewers receive:
             // 1. Events for their specific file
             // 2. ShareRevoked/ShareUpdated events for their share
@@ -821,6 +826,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
+            permissions: SharePermissions::Read,
         };
 
         // Create ShareRevoked event for this share
@@ -863,6 +869,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
+            permissions: SharePermissions::Read,
         };
 
         // Create ShareUpdated event for this share
@@ -908,6 +915,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
+            permissions: SharePermissions::Read,
         };
 
         // Create FileModified event for this file
@@ -957,6 +965,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
+            permissions: SharePermissions::Read,
         };
 
         // Create FileModified event for a different file
@@ -1006,6 +1015,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
+            permissions: SharePermissions::Read,
         };
 
         // Create ShareRevoked event for a different share
@@ -1048,6 +1058,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
+            permissions: SharePermissions::Read,
         };
 
         // Create UserCreated event
