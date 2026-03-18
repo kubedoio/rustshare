@@ -1,0 +1,25 @@
+[package]
+name = "rustshare-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+uuid = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sqlx = { workspace = true }
+anyhow = { workspace = true }
+bytes = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+rand = { workspace = true }
+rustshare-crypto = { path = "../crypto" }
+
+[dev-dependencies]
+tokio = { workspace = true }

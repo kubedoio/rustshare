@@ -1,0 +1,166 @@
+//! HTTP handlers for folder operations.
+
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::Response,
+    Json,
+};
+use serde::Deserialize;
+use uuid::Uuid;
+
+use rustshare_core::{
+    domain::{Folder, FolderContents, FolderTree},
+    services::FolderError,
+};
+
+use crate::AppState;
+use super::{AuthenticatedUser, folder_error_response};
+
+// ============================================================================
+// Task 20: Folder CRUD
+// ============================================================================
+
+/// Create a new folder.
+///
+/// POST /api/folders
+///
+/// Request body: { "name": "Documents", "parent_folder_id": "uuid-or-null" }
+pub async fn create_folder(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Json(req): Json<CreateFolderRequest>,
+) -> Result<(StatusCode, Json<Folder>), Response> {
+    let folder = state.folder_service
+        .create_folder(req.name, req.parent_folder_id, auth.user_id)
+        .await
+        .map_err(folder_error_response)?;
+
+    Ok((StatusCode::CREATED, Json(folder)))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateFolderRequest {
+    pub name: String,
+    pub parent_folder_id: Option<Uuid>,
+}
+
+/// Get folder metadata.
+///
+/// GET /api/folders/{id}
+pub async fn get_folder(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(folder_id): Path<Uuid>,
+) -> Result<Json<Folder>, Response> {
+    let folder = state.folder_service.get_folder(folder_id, auth.user_id).await.map_err(folder_error_response)?;
+    Ok(Json(folder))
+}
+
+/// Delete a folder and its contents.
+///
+/// DELETE /api/folders/{id}
+pub async fn delete_folder(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(folder_id): Path<Uuid>,
+) -> Result<StatusCode, Response> {
+    state.folder_service.delete_folder(folder_id, auth.user_id).await.map_err(folder_error_response)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ============================================================================
+// Task 21: Folder List/Tree
+// ============================================================================
+
+/// List folder contents (immediate children only).
+///
+/// GET /api/folders/{id}/contents
+pub async fn get_folder_contents(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(folder_id): Path<Uuid>,
+) -> Result<Json<FolderContents>, Response> {
+    let contents = state.folder_service.list_contents(folder_id, auth.user_id).await.map_err(folder_error_response)?;
+    Ok(Json(contents))
+}
+
+/// Get full folder tree (recursive).
+///
+/// GET /api/folders/tree
+///
+/// Returns the user's root folder and all descendants.
+pub async fn get_folder_tree(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+) -> Result<Json<FolderTree>, Response> {
+    // Find user's root folder (folders with no parent)
+    let root_folders = state
+        .metadata_store
+        .list_folders(None, auth.user_id)
+        .await
+        .map_err(|_| {
+            use axum::{http::StatusCode, response::IntoResponse, Json};
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(super::ErrorResponse::new("Internal server error"))).into_response()
+        })?;
+
+    let root_folder = root_folders
+        .into_iter()
+        .next()
+        .ok_or_else(|| folder_error_response(FolderError::NotFound(Uuid::nil())))?;
+
+    let tree = state.folder_service.get_tree(root_folder.id, auth.user_id).await.map_err(folder_error_response)?;
+    Ok(Json(tree))
+}
+
+// ============================================================================
+// Task 22: Folder Move/Rename
+// ============================================================================
+
+/// Move a folder to a different parent.
+///
+/// POST /api/folders/{id}/move
+///
+/// Request body: { "target_parent_id": "uuid-or-null" }
+pub async fn move_folder(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(folder_id): Path<Uuid>,
+    Json(req): Json<MoveFolderRequest>,
+) -> Result<Json<Folder>, Response> {
+    let folder = state.folder_service
+        .move_folder(folder_id, req.target_parent_id, auth.user_id)
+        .await
+        .map_err(folder_error_response)?;
+
+    Ok(Json(folder))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MoveFolderRequest {
+    pub target_parent_id: Option<Uuid>,
+}
+
+/// Rename a folder.
+///
+/// POST /api/folders/{id}/rename
+///
+/// Request body: { "new_name": "New Documents" }
+pub async fn rename_folder(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(folder_id): Path<Uuid>,
+    Json(req): Json<RenameFolderRequest>,
+) -> Result<Json<Folder>, Response> {
+    let folder = state.folder_service
+        .rename_folder(folder_id, req.new_name, auth.user_id)
+        .await
+        .map_err(folder_error_response)?;
+
+    Ok(Json(folder))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RenameFolderRequest {
+    pub new_name: String,
+}

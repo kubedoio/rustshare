@@ -1,0 +1,19 @@
+[package]
+name = "rustshare-auth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+argon2.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+jsonwebtoken.workspace = true
+serde.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+anyhow.workspace = true
+rustshare-core = { path = "../core" }
+rustshare-crypto = { path = "../crypto" }

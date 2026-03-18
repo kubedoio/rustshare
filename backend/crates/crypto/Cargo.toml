@@ -1,0 +1,12 @@
+[package]
+name = "rustshare-crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+argon2.workspace = true
+rand.workspace = true
+thiserror.workspace = true

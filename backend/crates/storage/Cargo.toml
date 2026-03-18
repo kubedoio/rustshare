@@ -1,0 +1,19 @@
+[package]
+name = "rustshare-storage"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rustshare-core = { path = "../core" }
+sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+aws-sdk-s3.workspace = true
+aws-config.workspace = true
+bytes = "1.5"

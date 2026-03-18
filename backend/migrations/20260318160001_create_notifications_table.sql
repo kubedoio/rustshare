@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   resource_type VARCHAR(50) NOT NULL,
   action_url VARCHAR(500),
   read BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Indexes for efficient queries

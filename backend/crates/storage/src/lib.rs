@@ -1,0 +1,156 @@
+//! Storage layer for RustShare.
+//!
+//! Handles persistence to PostgreSQL and RustFS.
+
+pub mod event_store;
+pub mod metadata;
+pub mod object_store;
+
+pub use event_store::EventStore;
+pub use metadata::MetadataStore;
+pub use object_store::ObjectStore;
+
+// Implement service layer traits for storage types
+use anyhow::Result;
+use rustshare_core::services::{
+    FileEventStoreOps, FileMetadataStoreOps, FolderEventStoreOps, FolderMetadataStoreOps,
+    ObjectStoreOps as CoreObjectStoreOps, ShareEventStoreOps, ShareMetadataStoreOps,
+};
+
+// EventStore implements both File and Folder event store traits
+impl FileEventStoreOps for EventStore {
+    async fn append(&self, event: &rustshare_core::events::Event, broadcaster: &rustshare_core::events::EventBroadcaster) -> Result<()> {
+        self.append(event, broadcaster).await
+    }
+}
+
+impl FolderEventStoreOps for EventStore {
+    async fn append(&self, event: &rustshare_core::events::Event, broadcaster: &rustshare_core::events::EventBroadcaster) -> Result<()> {
+        self.append(event, broadcaster).await
+    }
+}
+
+impl ShareEventStoreOps for EventStore {
+    async fn append(&self, event: &rustshare_core::events::Event, broadcaster: &rustshare_core::events::EventBroadcaster) -> Result<()> {
+        self.append(event, broadcaster).await
+    }
+}
+
+// MetadataStore implements both File and Folder metadata store traits
+impl FileMetadataStoreOps for MetadataStore {
+    async fn create_file(&self, file: &rustshare_core::domain::File) -> Result<()> {
+        self.create_file(file).await
+    }
+
+    async fn create_file_version(&self, version: &rustshare_core::domain::FileVersion) -> Result<()> {
+        self.create_file_version(version).await
+    }
+
+    async fn find_folder_by_id(&self, id: uuid::Uuid) -> Result<Option<rustshare_core::domain::Folder>> {
+        self.find_folder_by_id(id).await
+    }
+
+    async fn find_file_by_id(&self, id: uuid::Uuid) -> Result<Option<rustshare_core::domain::File>> {
+        self.find_file_by_id(id).await
+    }
+
+    async fn update_file(&self, file: &rustshare_core::domain::File) -> Result<()> {
+        self.update_file(file).await
+    }
+
+    async fn delete_file(&self, id: uuid::Uuid) -> Result<()> {
+        self.delete_file(id).await
+    }
+
+    async fn list_file_versions(&self, file_id: uuid::Uuid) -> Result<Vec<rustshare_core::domain::FileVersion>> {
+        self.list_file_versions(file_id).await
+    }
+
+    async fn find_file_version(
+        &self,
+        file_id: uuid::Uuid,
+        version: i32,
+    ) -> Result<Option<rustshare_core::domain::FileVersion>> {
+        self.find_file_version(file_id, version).await
+    }
+}
+
+impl FolderMetadataStoreOps for MetadataStore {
+    async fn create_folder(&self, folder: &rustshare_core::domain::Folder) -> Result<()> {
+        self.create_folder(folder).await
+    }
+
+    async fn find_folder_by_id(&self, id: uuid::Uuid) -> Result<Option<rustshare_core::domain::Folder>> {
+        self.find_folder_by_id(id).await
+    }
+
+    async fn update_folder(&self, folder: &rustshare_core::domain::Folder) -> Result<()> {
+        self.update_folder(folder).await
+    }
+
+    async fn delete_folder(&self, id: uuid::Uuid) -> Result<()> {
+        self.delete_folder(id).await
+    }
+
+    async fn list_folders(&self, parent_id: Option<uuid::Uuid>, owner_id: uuid::Uuid) -> Result<Vec<rustshare_core::domain::Folder>> {
+        self.list_folders(parent_id, owner_id).await
+    }
+
+    async fn find_descendant_folders(&self, folder_id: uuid::Uuid) -> Result<Vec<rustshare_core::domain::Folder>> {
+        self.find_descendant_folders(folder_id).await
+    }
+
+    async fn list_files(&self, parent_id: Option<uuid::Uuid>, owner_id: uuid::Uuid) -> Result<Vec<rustshare_core::domain::File>> {
+        self.list_files(parent_id, owner_id).await
+    }
+}
+
+impl ShareMetadataStoreOps for MetadataStore {
+    async fn find_file_by_id(&self, id: uuid::Uuid) -> Result<Option<rustshare_core::domain::File>> {
+        self.find_file_by_id(id).await
+    }
+
+    async fn create_share(&self, share: &rustshare_core::domain::Share) -> Result<()> {
+        self.create_share(share).await
+    }
+
+    async fn get_share_by_id(&self, id: uuid::Uuid) -> Result<Option<rustshare_core::domain::Share>> {
+        self.get_share(id).await
+    }
+
+    async fn get_share_by_token(&self, token: &str) -> Result<Option<rustshare_core::domain::Share>> {
+        self.get_share_by_token(token).await
+    }
+
+    async fn get_file_shares(&self, file_id: uuid::Uuid) -> Result<Vec<rustshare_core::domain::Share>> {
+        self.get_file_shares(file_id).await
+    }
+
+    async fn revoke_share(&self, share_id: uuid::Uuid) -> Result<()> {
+        self.revoke_share(share_id).await
+    }
+
+    async fn update_share(&self, share: &rustshare_core::domain::Share) -> Result<()> {
+        self.update_share(share).await
+    }
+}
+
+// ObjectStore implements ObjectStoreOps trait
+impl CoreObjectStoreOps for ObjectStore {
+    async fn put(&self, key: &str, data: bytes::Bytes) -> Result<()> {
+        self.put(key, data).await
+    }
+
+    async fn exists(&self, key: &str) -> Result<bool> {
+        self.exists(key).await
+    }
+
+    async fn get_presigned_url(&self, key: &str, expires_in_secs: u64) -> Result<String> {
+        self.get_presigned_url(key, expires_in_secs).await
+    }
+
+    async fn get(&self, key: &str) -> Result<bytes::Bytes> {
+        self.get(key).await
+    }
+}
+
