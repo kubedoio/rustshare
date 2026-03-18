@@ -12,8 +12,8 @@ ALTER TABLE shares DROP CONSTRAINT IF EXISTS shares_share_token_key;
 
 -- Step 4: Add new columns for user shares and folder shares
 ALTER TABLE shares
-  ADD COLUMN IF NOT EXISTS recipient_user_id UUID REFERENCES users(id),
-  ADD COLUMN IF NOT EXISTS folder_id UUID REFERENCES folders(id);
+  ADD COLUMN IF NOT EXISTS recipient_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  ADD COLUMN IF NOT EXISTS folder_id UUID REFERENCES folders(id) ON DELETE CASCADE;
 
 -- Step 5: Add CHECK constraints
 ALTER TABLE shares
