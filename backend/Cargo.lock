@@ -2629,10 +2629,12 @@ dependencies = [
 name = "rustshare-auth"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "argon2",
  "chrono",
  "jsonwebtoken",
  "rand 0.8.5",
+ "rustshare-core",
  "serde",
  "thiserror 1.0.69",
  "uuid",
@@ -2645,6 +2647,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "chrono",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "sha2",
