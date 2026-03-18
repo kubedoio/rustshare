@@ -148,8 +148,8 @@ Server → Client (lagged warning):
 5. Enter event loop:
    - Receive from broadcast channel
    - Filter: `event.user_id == authenticated_user_id`
-   - Serialize event metadata to JSON
-   - Send via WebSocket
+   - Serialize event metadata to JSON string
+   - Send via WebSocket as text message: `socket.send(Message::Text(json))`
 6. On `RecvError::Lagged`, send lagged warning to client
 7. On connection close or error, clean up subscription and exit
 
@@ -165,8 +165,14 @@ pub async fn sync_handler(
         .validate(auth.token())
         .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid token".to_string()))?;
 
+    // Extract user_id from JWT subject claim
+    let user_id = UserId::from(
+        Uuid::parse_str(&claims.sub)
+            .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid user ID".to_string()))?
+    );
+
     // Upgrade connection
-    Ok(ws.on_upgrade(move |socket| handle_socket(socket, claims.user_id, state)))
+    Ok(ws.on_upgrade(move |socket| handle_socket(socket, user_id, state)))
 }
 
 async fn handle_socket(socket: WebSocket, user_id: UserId, state: AppState) {
@@ -304,19 +310,19 @@ LIMIT $3;
 **Query explanation:**
 - Uses the BIGSERIAL `id` column (auto-incrementing) for deterministic ordering
 - Compares `(timestamp, id)` tuple to find events after the specified `event_id`
-- If `last_seen_event_id` is NULL, fetches most recent events
+- If `last_seen_event_id` is NULL, fetches oldest events (up to limit)
 - Orders by timestamp first, then id for deterministic ordering within the same timestamp
 - The `event_id` column is the UUID returned to clients; the BIGSERIAL `id` is for internal ordering
 
 **Parameters:**
 - `user_id`: Filter events for authenticated user
-- `last_seen_event_id`: If provided, fetch events after this ID. If NULL, fetch most recent events.
+- `last_seen_event_id`: If provided, fetch events after this ID. If NULL, fetch from the beginning.
 - `limit`: Maximum events to return (default 100)
 
 **Pagination:** Clients more than 100 events behind receive first 100 events. They should process and request next batch if needed.
 
 **Edge Cases:**
-- `last_seen_event_id` doesn't exist → Return last 100 events, client reconciles
+- `last_seen_event_id` doesn't exist → Return empty array (subquery returns no results), client must sync from beginning
 - No new events → Return empty array
 - User has no events → Return empty array
 
@@ -373,7 +379,7 @@ This composite index optimizes the catch-up query's `WHERE user_id = $1 AND (tim
 4. **EventType Helper:** `backend/crates/core/src/events/types.rs`
    - Add `impl EventType { pub fn type_name(&self) -> &'static str }` method
    - Returns variant name as string (e.g., "FileUploaded") for WebSocket serialization
-   - Needed because the enum's `#[serde(tag = "type")]` attribute serializes as `{"type": "FileUploaded"}`, but notifications need just the string
+   - Needed because WebSocket notifications require plain strings, not the tagged JSON format used for database storage
 
 ### Modified Components
 
