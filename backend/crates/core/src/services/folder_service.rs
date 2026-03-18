@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use crate::domain::{File, Folder, FolderContents, FolderTree, FolderId, UserId};
 use crate::events::{
-    AggregateType, Event, EventType, FolderCreatedPayload, FolderDeletedPayload, FolderMovedPayload,
+    AggregateType, Event, EventBroadcaster, EventType, FolderCreatedPayload, FolderDeletedPayload, FolderMovedPayload,
     FolderRenamedPayload,
 };
 use crate::services::FolderError;
@@ -23,7 +23,7 @@ use crate::services::FolderError;
 #[allow(async_fn_in_trait)]
 pub trait EventStoreOps: Send + Sync {
     /// Append an event to the event store.
-    async fn append(&self, event: &Event) -> Result<()>;
+    async fn append(&self, event: &Event, broadcaster: &EventBroadcaster) -> Result<()>;
 }
 
 /// Trait for metadata store operations needed by FolderService.
@@ -64,6 +64,7 @@ where
 {
     event_store: Arc<E>,
     metadata_store: Arc<M>,
+    broadcaster: Arc<EventBroadcaster>,
 }
 
 impl<E, M> FolderService<E, M>
@@ -72,10 +73,11 @@ where
     M: MetadataStoreOps,
 {
     /// Create a new FolderService instance.
-    pub fn new(event_store: Arc<E>, metadata_store: Arc<M>) -> Self {
+    pub fn new(event_store: Arc<E>, metadata_store: Arc<M>, broadcaster: Arc<EventBroadcaster>) -> Self {
         Self {
             event_store,
             metadata_store,
+            broadcaster,
         }
     }
 
@@ -153,7 +155,7 @@ where
         );
 
         self.event_store
-            .append(&event)
+            .append(&event, &self.broadcaster)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(format!("Failed to append event: {}", e))))?;
 
@@ -321,7 +323,7 @@ where
         );
 
         self.event_store
-            .append(&event)
+            .append(&event, &self.broadcaster)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(format!("Failed to append event: {}", e))))?;
 
@@ -408,7 +410,7 @@ where
         );
 
         self.event_store
-            .append(&event)
+            .append(&event, &self.broadcaster)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(format!("Failed to append event: {}", e))))?;
 
@@ -459,7 +461,7 @@ where
             );
 
             self.event_store
-                .append(&event)
+                .append(&event, &self.broadcaster)
                 .await
                 .map_err(|e| FolderError::Database(sqlx::Error::Protocol(format!("Failed to append event: {}", e))))?;
 

@@ -19,14 +19,14 @@ use rustshare_core::services::{
 
 // EventStore implements both File and Folder event store traits
 impl FileEventStoreOps for EventStore {
-    async fn append(&self, event: &rustshare_core::events::Event) -> Result<()> {
-        self.append(event).await
+    async fn append(&self, event: &rustshare_core::events::Event, broadcaster: &rustshare_core::events::EventBroadcaster) -> Result<()> {
+        self.append(event, broadcaster).await
     }
 }
 
 impl FolderEventStoreOps for EventStore {
-    async fn append(&self, event: &rustshare_core::events::Event) -> Result<()> {
-        self.append(event).await
+    async fn append(&self, event: &rustshare_core::events::Event, broadcaster: &rustshare_core::events::EventBroadcaster) -> Result<()> {
+        self.append(event, broadcaster).await
     }
 }
 
