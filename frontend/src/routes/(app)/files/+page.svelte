@@ -12,6 +12,7 @@
   import CreateFolderModal from '$lib/components/modals/CreateFolderModal.svelte';
   import RenameModal from '$lib/components/modals/RenameModal.svelte';
   import DeleteConfirmation from '$lib/components/modals/DeleteConfirmation.svelte';
+  import ShareModal from '$lib/components/modals/ShareModal.svelte';
   import type { File, Folder } from '$lib/api/types';
   import type { UploadTask } from '$lib/components/files/UploadProgress.svelte';
 
@@ -27,8 +28,10 @@
   let showCreateFolderModal = false;
   let showRenameModal = false;
   let showDeleteModal = false;
+  let showShareModal = false;
   let renameTarget: { item: File | Folder; isFolder: boolean } | null = null;
   let deleteTarget: { item: File | Folder; isFolder: boolean } | null = null;
+  let shareTarget: File | null = null;
 
   // Reactive query key - updates when currentFolderId changes
   $: contentsQuery = createQuery({
@@ -306,6 +309,11 @@
     showDeleteModal = true;
   }
 
+  function handleShareFile(file: File) {
+    shareTarget = file;
+    showShareModal = true;
+  }
+
   function handleDeleteConfirm() {
     if (!deleteTarget) return;
 
@@ -370,6 +378,7 @@
         onDeleteFolder={handleDeleteFolder}
         onRenameFile={handleRenameFile}
         onDeleteFile={handleDeleteFile}
+        onShareFile={handleShareFile}
       />
     {/if}
   </div>
@@ -408,6 +417,17 @@
     deleteTarget = null;
   }}
   on:confirm={handleDeleteConfirm}
+/>
+
+<ShareModal
+  open={showShareModal}
+  fileId={shareTarget?.id || ''}
+  fileName={shareTarget?.name || ''}
+  on:close={() => {
+    showShareModal = false;
+    shareTarget = null;
+  }}
+  on:notification={(e) => showNotification(e.detail.message, e.detail.type)}
 />
 
 <!-- Toast Notifications -->
