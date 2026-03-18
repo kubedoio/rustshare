@@ -145,6 +145,12 @@ frontend/
 }
 ```
 
+**JWT Token Details:**
+- Token expiration: 24 hours (configurable via `JWT_EXPIRY_HOURS` env var)
+- Token contains claims: `sub` (user ID), `email`, `display_name`, `is_admin`
+- No refresh token in MVP - user must re-login after expiration
+- Frontend should decode JWT to extract user info for auth store
+
 ### File Endpoints
 
 | Method | Endpoint | Description | Auth Required |
@@ -291,11 +297,11 @@ frontend/
 
 ### WebSocket Endpoint
 
+**Backend Modification Required:** Current backend uses `Authorization` header for WebSocket auth, but browser WebSocket API doesn't support custom headers. Backend needs to be modified to accept token as query parameter.
+
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
 | GET | `/api/sync?token={jwt}` | WebSocket sync stream | JWT in query param |
-
-**Important:** Browser WebSocket API doesn't support custom headers, so JWT token must be passed as query parameter. Backend validates during upgrade handshake.
 
 **Event Types:**
 ```typescript
@@ -435,7 +441,24 @@ export const syncStore = writable<SyncState>({
 
 **Connection Manager (`src/lib/websocket/client.ts`):**
 
-**Important:** WebSocket authentication in browsers must use query parameters because the browser WebSocket API doesn't support custom headers. The backend validates the token from the query string during the upgrade handshake.
+**WebSocket Authentication - Backend Modification Required:**
+
+The current backend implementation expects JWT in an `Authorization: Bearer {token}` header during WebSocket upgrade (see `backend/server/src/handlers/sync.rs` line 126). However, the browser's native WebSocket API doesn't support custom headers.
+
+**Solutions (choose one before implementation):**
+
+**Option A: Modify Backend to Accept Query Parameter** (Recommended for browser compatibility)
+- Change backend to extract token from URL: `/api/sync?token={jwt}`
+- Validate token during upgrade handshake
+- Most compatible with browser WebSocket API
+
+**Option B: Modify Backend to Accept Post-Connection Auth**
+- Accept unauthenticated WebSocket connection
+- Client sends `{type: 'Auth', token: '{jwt}'}` as first message
+- Backend validates and responds with `{type: 'AuthSuccess'}` or `{type: 'AuthError'}`
+- More complex but allows fallback authentication
+
+**For this spec, we'll document Option A** (query parameter), which requires backend modification:
 
 ```typescript
 export class WebSocketClient {
@@ -444,11 +467,9 @@ export class WebSocketClient {
   private maxReconnectDelay = 30000; // 30 seconds
 
   connect(token: string) {
-    const wsUrl = `${VITE_WS_URL}/sync`;
-    // WebSocket authentication happens via Authorization header during upgrade handshake
-    // Backend validates JWT during upgrade and rejects with 401 if invalid
-    // Note: Some WebSocket client libraries don't support headers - for browser, we need to pass token as query param
-    this.ws = new WebSocket(`${wsUrl}?token=${token}`);
+    // Backend modification required: accept token as query parameter
+    const wsUrl = `${VITE_WS_URL}/sync?token=${encodeURIComponent(token)}`;
+    this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {
       syncStore.update(s => ({ ...s, connected: true, reconnecting: false }));
@@ -1067,14 +1088,16 @@ CMD ["node", "build"]
 
 ### Known Limitations (Acceptable for MVP)
 
+- **WebSocket authentication requires backend modification** - Backend currently expects Authorization header, needs to support query parameter for browser compatibility
 - No file preview (just download)
 - No search functionality
 - No activity feed
 - No trash/restore
-- No conflict resolution UI (409 handling basic)
+- Basic conflict detection (ConflictDetected/ConflictResolved events handled, but no UI for resolution)
 - No keyboard shortcuts
 - No dark mode
 - No file thumbnails (just mime-type icons)
+- No user registration endpoint (admin creates users)
 
 ---
 
