@@ -6,6 +6,7 @@ mod folders;
 mod public_shares;
 mod shares;
 mod sync;
+mod user_shares;
 
 pub use extractors::{AuthenticatedUser, ShareSessionAuth};
 pub use files::{
@@ -21,6 +22,11 @@ pub use folders::{
 pub use public_shares::{create_session, get_share_info, download_shared_file};
 pub use shares::{create_share, list_file_shares};
 pub use sync::sync_handler;
+pub use user_shares::{
+    create_file_share, create_folder_share, list_received_shares,
+    list_file_recipients, list_folder_recipients,
+    update_recipient_permission, remove_recipient,
+};
 
 use axum::{http::StatusCode, response::{IntoResponse, Response}, Json};
 use rustshare_core::services::{FileError, FolderError, ShareError};
@@ -97,6 +103,11 @@ pub fn share_error_response(err: ShareError) -> Response {
         ShareError::Expired => (StatusCode::GONE, err.to_string()),
         ShareError::PasswordRequired => (StatusCode::UNAUTHORIZED, err.to_string()),
         ShareError::InvalidPassword => (StatusCode::UNAUTHORIZED, err.to_string()),
+        ShareError::RecipientNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
+        ShareError::InsufficientPermission { .. } => (StatusCode::FORBIDDEN, err.to_string()),
+        ShareError::CannotShareWithSelf => (StatusCode::BAD_REQUEST, err.to_string()),
+        ShareError::ShareAlreadyExists(_) => (StatusCode::CONFLICT, err.to_string()),
+        ShareError::CannotRemoveOwner => (StatusCode::FORBIDDEN, err.to_string()),
         ShareError::Database(_) | ShareError::PasswordHash(_) | ShareError::Jwt(_) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
         }

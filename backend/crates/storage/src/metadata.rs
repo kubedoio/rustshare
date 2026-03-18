@@ -505,19 +505,22 @@ impl MetadataStore {
     pub async fn create_share(&self, share: &Share) -> Result<()> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let permissions = match share.permissions {
-            SharePermissions::Read => "read",
-            SharePermissions::ReadWrite => "readwrite",
+            SharePermissions::View => "view",
+            SharePermissions::Edit => "edit",
+            SharePermissions::Admin => "admin",
         };
 
         sqlx::query(
             r#"
-            INSERT INTO shares (id, file_id, share_token, created_by, permissions, password_hash, expires_at, access_count, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO shares (id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, access_count, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
         )
         .bind(share.id)
         .bind(share.file_id)
+        .bind(share.folder_id)
         .bind(&share.share_token)
+        .bind(share.recipient_user_id)
         .bind(share.created_by)
         .bind(permissions)
         .bind(&share.password_hash)
@@ -535,7 +538,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, file_id, share_token, created_by, permissions, password_hash, expires_at, access_count, created_at
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, access_count, created_at, revoked_at
             FROM shares
             WHERE share_token = $1
             "#,
@@ -547,14 +550,17 @@ impl MetadataStore {
         if let Some(row) = row {
             let permissions_str: String = row.try_get("permissions")?;
             let permissions = match permissions_str.as_str() {
-                "readwrite" => SharePermissions::ReadWrite,
-                _ => SharePermissions::Read,
+                "edit" => SharePermissions::Edit,
+                "admin" => SharePermissions::Admin,
+                _ => SharePermissions::View,
             };
 
             let share = Share {
                 id: row.try_get("id")?,
                 file_id: row.try_get("file_id")?,
+                folder_id: row.try_get("folder_id")?,
                 share_token: row.try_get("share_token")?,
+                recipient_user_id: row.try_get("recipient_user_id")?,
                 created_by: row.try_get("created_by")?,
                 permissions,
                 password_hash: row.try_get("password_hash")?,
@@ -574,7 +580,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, file_id, share_token, created_by, permissions, password_hash, expires_at, access_count, created_at
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, access_count, created_at, revoked_at
             FROM shares
             WHERE id = $1
             "#,
@@ -586,14 +592,17 @@ impl MetadataStore {
         if let Some(row) = row {
             let permissions_str: String = row.try_get("permissions")?;
             let permissions = match permissions_str.as_str() {
-                "readwrite" => SharePermissions::ReadWrite,
-                _ => SharePermissions::Read,
+                "edit" => SharePermissions::Edit,
+                "admin" => SharePermissions::Admin,
+                _ => SharePermissions::View,
             };
 
             let share = Share {
                 id: row.try_get("id")?,
                 file_id: row.try_get("file_id")?,
+                folder_id: row.try_get("folder_id")?,
                 share_token: row.try_get("share_token")?,
+                recipient_user_id: row.try_get("recipient_user_id")?,
                 created_by: row.try_get("created_by")?,
                 permissions,
                 password_hash: row.try_get("password_hash")?,
@@ -613,7 +622,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
-            SELECT id, file_id, share_token, created_by, permissions, password_hash, expires_at, access_count, created_at
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, access_count, created_at, revoked_at
             FROM shares
             WHERE file_id = $1 AND revoked_at IS NULL
             ORDER BY created_at DESC
@@ -627,14 +636,17 @@ impl MetadataStore {
         for row in rows {
             let permissions_str: String = row.try_get("permissions")?;
             let permissions = match permissions_str.as_str() {
-                "readwrite" => SharePermissions::ReadWrite,
-                _ => SharePermissions::Read,
+                "edit" => SharePermissions::Edit,
+                "admin" => SharePermissions::Admin,
+                _ => SharePermissions::View,
             };
 
             let share = Share {
                 id: row.try_get("id")?,
                 file_id: row.try_get("file_id")?,
+                folder_id: row.try_get("folder_id")?,
                 share_token: row.try_get("share_token")?,
+                recipient_user_id: row.try_get("recipient_user_id")?,
                 created_by: row.try_get("created_by")?,
                 permissions,
                 password_hash: row.try_get("password_hash")?,

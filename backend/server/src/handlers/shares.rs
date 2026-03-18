@@ -56,8 +56,8 @@ pub async fn create_share(
         StatusCode::CREATED,
         Json(ShareResponse {
             id: share.id,
-            file_id: share.file_id,
-            share_token: share.share_token,
+            file_id: share.file_id.unwrap_or_else(|| file_id), // Should always be Some for public shares
+            share_token: share.share_token.unwrap_or_default(), // Should always be Some for public shares
             permissions: share.permissions,
             password_protected: share.password_hash.is_some(),
             expires_at: share.expires_at,
@@ -80,14 +80,21 @@ pub async fn list_file_shares(
 
     let response: Vec<ShareResponse> = shares
         .into_iter()
-        .map(|s| ShareResponse {
-            id: s.id,
-            file_id: s.file_id,
-            share_token: s.share_token,
-            permissions: s.permissions,
-            password_protected: s.password_hash.is_some(),
-            expires_at: s.expires_at,
-            created_at: s.created_at,
+        .filter_map(|s| {
+            // Only include shares with file_id and share_token (public shares)
+            if let (Some(file_id), Some(share_token)) = (s.file_id, s.share_token.clone()) {
+                Some(ShareResponse {
+                    id: s.id,
+                    file_id,
+                    share_token,
+                    permissions: s.permissions,
+                    password_protected: s.password_hash.is_some(),
+                    expires_at: s.expires_at,
+                    created_at: s.created_at,
+                })
+            } else {
+                None
+            }
         })
         .collect();
 

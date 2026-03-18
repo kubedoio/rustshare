@@ -116,9 +116,17 @@ pub async fn download_shared_file(
     }
 
     // Get file metadata
+    let file_id = share.file_id.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "This share is not for a file"})),
+        )
+            .into_response()
+    })?;
+
     let file = state
         .metadata_store
-        .find_file_by_id(share.file_id)
+        .find_file_by_id(file_id)
         .await
         .map_err(|e| {
             (
@@ -127,7 +135,7 @@ pub async fn download_shared_file(
             )
                 .into_response()
         })?
-        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::FileNotFound(share.file_id)))?;
+        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::FileNotFound(file_id)))?;
 
     // Get file content from storage
     let content = state
