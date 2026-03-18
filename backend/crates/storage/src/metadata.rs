@@ -511,8 +511,8 @@ impl MetadataStore {
 
         sqlx::query(
             r#"
-            INSERT INTO shares (id, file_id, share_token, created_by, permissions, password_hash, expires_at, access_count, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO shares (id, file_id, share_token, created_by, permissions, password_hash, expires_at, access_count, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             "#,
         )
         .bind(share.id)
@@ -524,7 +524,6 @@ impl MetadataStore {
         .bind(share.expires_at)
         .bind(share.access_count)
         .bind(share.created_at)
-        .bind(share.created_at) // updated_at = created_at for new shares
         .execute(&self.pool)
         .await?;
 
@@ -653,7 +652,7 @@ impl MetadataStore {
         sqlx::query(
             r#"
             UPDATE shares
-            SET password_hash = $2, expires_at = $3, updated_at = NOW()
+            SET password_hash = $2, expires_at = $3
             WHERE id = $1
             "#,
         )
@@ -710,6 +709,11 @@ impl MetadataStore {
         success: bool,
     ) -> Result<()> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        // Validate IP address format before storage
+        let validated_ip = ip_address.and_then(|ip| {
+            ip.parse::<std::net::IpAddr>().ok().map(|_| ip)
+        });
+
         sqlx::query(
             r#"
             INSERT INTO share_access_log (share_id, ip_address, user_agent, action, success)
@@ -717,7 +721,7 @@ impl MetadataStore {
             "#,
         )
         .bind(share_id)
-        .bind(ip_address)
+        .bind(validated_ip)
         .bind(user_agent)
         .bind(action)
         .bind(success)
