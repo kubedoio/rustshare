@@ -2,7 +2,8 @@
 
 pub mod password;
 pub mod jwt;
-// Note: session module will be added in Phase 2 for session management
+pub mod session;
 
 pub use password::PasswordHasher;
 pub use jwt::JwtManager;
+pub use session::ShareSessionClaims;

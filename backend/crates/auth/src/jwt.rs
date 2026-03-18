@@ -70,6 +70,28 @@ impl JwtManager {
 
         Ok(token_data.claims)
     }
+
+    /// Encode custom claims to JWT
+    pub fn encode_custom_claims<T: Serialize>(&self, claims: &T) -> Result<String, JwtError> {
+        encode(
+            &Header::default(),
+            claims,
+            &EncodingKey::from_secret(self.secret.as_bytes()),
+        )
+        .map_err(|e| JwtError::EncodeError(e.to_string()))
+    }
+
+    /// Decode custom claims from JWT
+    pub fn decode_custom<T: for<'de> Deserialize<'de>>(&self, token: &str) -> Result<T, JwtError> {
+        let token_data = decode::<T>(
+            token,
+            &DecodingKey::from_secret(self.secret.as_bytes()),
+            &Validation::default(),
+        )
+        .map_err(|e| JwtError::DecodeError(e.to_string()))?;
+
+        Ok(token_data.claims)
+    }
 }
 
 #[cfg(test)]
@@ -100,4 +122,28 @@ mod tests {
         let result = manager.validate("invalid.token.here");
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_encode_decode_custom_claims() {
+        use crate::session::ShareSessionClaims;
+        use rustshare_core::domain::SharePermissions;
+
+        let manager = JwtManager::new("test_secret".to_string());
+        let share_id = uuid::Uuid::new_v4();
+        let file_id = uuid::Uuid::new_v4();
+
+        let claims = ShareSessionClaims::new(
+            share_id,
+            file_id,
+            SharePermissions::Read,
+            3600,
+        );
+
+        let token = manager.encode_custom_claims(&claims).unwrap();
+        let decoded: ShareSessionClaims = manager.decode_custom(&token).unwrap();
+
+        assert_eq!(decoded.share_id, share_id);
+        assert_eq!(decoded.file_id, file_id);
+    }
 }
+

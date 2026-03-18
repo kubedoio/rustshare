@@ -14,3 +14,5 @@ jsonwebtoken.workspace = true
 serde.workspace = true
 chrono.workspace = true
 uuid.workspace = true
+anyhow.workspace = true
+rustshare-core = { path = "../core" }
