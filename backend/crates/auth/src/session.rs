@@ -48,12 +48,12 @@ mod tests {
     fn test_share_session_claims_creation() {
         let share_id = uuid::Uuid::new_v4();
         let file_id = uuid::Uuid::new_v4();
-        let claims = ShareSessionClaims::new(share_id, file_id, SharePermissions::Read, 3600);
+        let claims = ShareSessionClaims::new(share_id, file_id, SharePermissions::View, 3600);
 
         assert_eq!(claims.sub, format!("share:{}", share_id));
         assert_eq!(claims.share_id, share_id);
         assert_eq!(claims.file_id, file_id);
-        assert_eq!(claims.permissions, SharePermissions::Read);
+        assert_eq!(claims.permissions, SharePermissions::View);
         assert!(claims.exp > claims.iat);
     }
 
@@ -61,7 +61,7 @@ mod tests {
     fn test_share_session_claims_expiration() {
         let share_id = uuid::Uuid::new_v4();
         let file_id = uuid::Uuid::new_v4();
-        let claims = ShareSessionClaims::new(share_id, file_id, SharePermissions::Read, -1);
+        let claims = ShareSessionClaims::new(share_id, file_id, SharePermissions::View, -1);
 
         assert!(claims.is_expired());
     }
