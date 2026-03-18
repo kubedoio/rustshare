@@ -14,7 +14,13 @@ export function decodeJWT(token: string): User | null {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
 
-    const payload = JSON.parse(atob(parts[1]));
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+
+    // Validate required fields
+    if (!payload.sub || !payload.email || !payload.display_name) {
+      return null;
+    }
+
     return {
       id: payload.sub,
       email: payload.email,
@@ -32,7 +38,7 @@ export function isTokenExpired(token: string): boolean {
     const parts = token.split('.');
     if (parts.length !== 3) return true;
 
-    const payload: JWTPayload = JSON.parse(atob(parts[1]));
+    const payload: JWTPayload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
     return Date.now() >= payload.exp * 1000;
   } catch {
     return true;
