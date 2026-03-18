@@ -2,89 +2,82 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Enable file owners to create public share links with password protection, expiration, and real-time notifications for anonymous viewers.
+**Goal:** Implement public share links for files with password protection, expiration, and real-time WebSocket notifications for share viewers.
 
-**Architecture:** Extends Phase 3A's WebSocket infrastructure with ShareService for link management, session tokens for anonymous auth, and modified sync_handler to support both user JWTs and share sessions.
+**Architecture:** Extend Phase 3A's event sourcing and real-time sync infrastructure to support anonymous share access. ShareService manages share link creation/validation, JwtManager issues session tokens, and WebSocket sync_handler extends to serve share viewers.
 
-**Tech Stack:** Rust, Axum, PostgreSQL, tokio::sync::broadcast (EventBroadcaster), jsonwebtoken, argon2
-
----
-
-## File Structure
-
-**New Files:**
-- `backend/crates/core/src/services/share_service.rs` - ShareService for CRUD operations on shares
-- `backend/crates/core/src/services/share_errors.rs` - ShareError types
-- `backend/crates/auth/src/session.rs` - ShareSessionClaims struct and helpers
-- `backend/server/src/handlers/shares.rs` - Authenticated share management endpoints
-- `backend/server/src/handlers/public.rs` - Public share access endpoints
-- `backend/migrations/20260318000004_add_share_revocation.sql` - Add revoked_at column
-- `backend/migrations/20260318000005_create_share_access_log.sql` - Access logging table
-
-**Modified Files:**
-- `backend/crates/core/src/services/mod.rs` - Export ShareService
-- `backend/crates/core/src/services/errors.rs` - Add ShareError variant
-- `backend/crates/core/src/events/types.rs` - Add ShareCreated/ShareRevoked/ShareUpdated events
-- `backend/crates/storage/src/metadata_store.rs` - Add share CRUD methods
-- `backend/crates/auth/src/jwt_manager.rs` - Add encode_custom_claims/decode_custom methods
-- `backend/crates/auth/src/lib.rs` - Export session module
-- `backend/server/src/handlers/sync.rs` - Extend to support session tokens
-- `backend/server/src/handlers/mod.rs` - Export shares and public modules
-- `backend/server/src/main.rs` - Add share routes and initialize ShareService
+**Tech Stack:** PostgreSQL (migrations), ShareService, JwtManager extensions, rate limiting middleware (in-memory LRU), background cleanup job (tokio interval).
 
 ---
 
-## Task 1: Add Database Migrations
+## Task 1: Database Migrations
 
 **Files:**
 - Create: `backend/migrations/20260318000004_add_share_revocation.sql`
 - Create: `backend/migrations/20260318000005_create_share_access_log.sql`
 
-- [ ] **Step 1: Create revocation migration**
+- [ ] **Step 1: Write migration for revoked_at and last_accessed_at**
 
+Create 20260318000004_add_share_revocation.sql:
 ```sql
--- Add revocation and last_accessed tracking to shares table
+-- Add soft delete and access tracking to shares table
 ALTER TABLE shares ADD COLUMN revoked_at TIMESTAMP WITH TIME ZONE;
 ALTER TABLE shares ADD COLUMN last_accessed_at TIMESTAMP WITH TIME ZONE;
 
--- Index for querying active shares
-CREATE INDEX idx_shares_active ON shares(share_token)
-WHERE revoked_at IS NULL;
+-- Index for active shares lookup (excludes revoked)
+CREATE INDEX idx_shares_active ON shares(share_token) WHERE revoked_at IS NULL;
+
+-- Comment on columns
+COMMENT ON COLUMN shares.revoked_at IS 'Soft delete timestamp - share is revoked when not NULL';
+COMMENT ON COLUMN shares.last_accessed_at IS 'Last time share was accessed via validate_and_create_session';
 ```
 
-- [ ] **Step 2: Create access log migration**
+- [ ] **Step 2: Write migration for share_access_log table**
 
+Create 20260318000005_create_share_access_log.sql:
 ```sql
--- Track share access events for analytics and security
+-- Audit log for share access attempts
 CREATE TABLE share_access_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     share_id UUID NOT NULL REFERENCES shares(id) ON DELETE CASCADE,
     accessed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     ip_address INET,
     user_agent TEXT,
-    action VARCHAR(50) NOT NULL,
+    action VARCHAR(50) NOT NULL, -- 'access', 'download', 'upload'
     success BOOLEAN NOT NULL DEFAULT true
 );
 
-CREATE INDEX idx_share_access_log_share_id ON share_access_log(share_id);
+-- Index for cleanup queries
 CREATE INDEX idx_share_access_log_accessed_at ON share_access_log(accessed_at);
+
+-- Index for share-specific queries
+CREATE INDEX idx_share_access_log_share_id ON share_access_log(share_id);
+
+COMMENT ON TABLE share_access_log IS 'Audit log for share link access attempts';
+COMMENT ON COLUMN share_access_log.action IS 'Type of access: access (session), download, upload';
 ```
 
-- [ ] **Step 3: Verify migrations**
+- [ ] **Step 3: Run migrations**
 
 Run: `cd backend && sqlx migrate run`
-Expected: Migrations apply successfully
+Expected: Migrations applied successfully
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Verify schema**
+
+Run: `psql -d rustshare_dev -c "\d shares"` and `\d share_access_log`
+Expected: New columns and table present
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add backend/migrations/20260318000004_add_share_revocation.sql backend/migrations/20260318000005_create_share_access_log.sql
-git commit -m "feat(db): add share revocation and access logging migrations
+git commit -m "feat(migrations): add share revocation and access logging
 
-Add database schema for Phase 3B:
-- revoked_at and last_accessed_at columns on shares table
-- share_access_log table for tracking access events
-- Index for efficient active share queries"
+Add Phase 3B database schema:
+- shares.revoked_at for soft delete
+- shares.last_accessed_at for usage tracking
+- share_access_log table for audit trail
+- Indexes for efficient queries"
 ```
 
 ---
@@ -94,9 +87,34 @@ Add database schema for Phase 3B:
 **Files:**
 - Modify: `backend/crates/core/src/events/types.rs`
 
-- [ ] **Step 1: Add event types to EventType enum**
+- [ ] **Step 1: Write test for new event types**
 
-Add to EventType enum (after existing Share events comment):
+Add to types.rs tests:
+```rust
+#[test]
+fn test_share_event_type_serialization() {
+    let event_type = EventType::ShareCreated;
+    let json = serde_json::to_string(&event_type).unwrap();
+    assert_eq!(json, r#"{"type":"ShareCreated"}"#);
+
+    let event_type = EventType::ShareRevoked;
+    let json = serde_json::to_string(&event_type).unwrap();
+    assert_eq!(json, r#"{"type":"ShareRevoked"}"#);
+
+    let event_type = EventType::ShareUpdated;
+    let json = serde_json::to_string(&event_type).unwrap();
+    assert_eq!(json, r#"{"type":"ShareUpdated"}"#);
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd backend/crates/core && cargo test test_share_event_type_serialization`
+Expected: FAIL with "no variant `ShareCreated` found"
+
+- [ ] **Step 3: Add ShareCreated, ShareRevoked, ShareUpdated variants**
+
+Add to EventType enum:
 ```rust
 // Share events
 ShareCreated,
@@ -104,18 +122,18 @@ ShareRevoked,
 ShareUpdated,
 ```
 
-- [ ] **Step 2: Add type_name() cases**
+- [ ] **Step 4: Add type_name() matches**
 
-Add to EventType::type_name() method:
+Add to type_name() method:
 ```rust
 EventType::ShareCreated => "ShareCreated",
 EventType::ShareRevoked => "ShareRevoked",
 EventType::ShareUpdated => "ShareUpdated",
 ```
 
-- [ ] **Step 3: Add event payload structures**
+- [ ] **Step 5: Add event payloads**
 
-Add at end of file before tests:
+Add after existing payloads:
 ```rust
 /// Share created event payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,30 +167,23 @@ pub struct ShareUpdatedPayload {
 }
 ```
 
-- [ ] **Step 4: Add ShareId and SharePermissions imports**
+- [ ] **Step 6: Run test to verify it passes**
 
-Add to imports at top:
-```rust
-use crate::domain::{ShareId, SharePermissions, ...};  // Update existing domain import
-```
+Run: `cd backend/crates/core && cargo test test_share_event_type_serialization`
+Expected: PASS
 
-- [ ] **Step 5: Verify it compiles**
-
-Run: `cd backend/crates/core && cargo check`
-Expected: SUCCESS
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add backend/crates/core/src/events/types.rs
-git commit -m "feat(events): add Share event types for Phase 3B
+git commit -m "feat(events): add share event types
 
-Add event types for share lifecycle:
-- ShareCreated: track share link creation
-- ShareRevoked: track share revocation
-- ShareUpdated: track share settings changes
+Add ShareCreated, ShareRevoked, ShareUpdated events:
+- Event variants in EventType enum
+- type_name() mapping for WebSocket notifications
+- Event payload structs with all required fields
 
-Includes payload structures with full event data."
+Includes serialization test."
 ```
 
 ---
@@ -181,235 +192,28 @@ Includes payload structures with full event data."
 
 **Files:**
 - Create: `backend/crates/core/src/services/share_errors.rs`
-- Modify: `backend/crates/core/src/services/errors.rs`
 - Modify: `backend/crates/core/src/services/mod.rs`
 
-- [ ] **Step 1: Create share_errors.rs**
+- [ ] **Step 1: Write test for ShareError Display**
 
+Create share_errors.rs:
 ```rust
-use thiserror::Error;
-
-use crate::domain::{FileId, ShareId, UserId};
-
-/// Errors that can occur during share operations.
-#[derive(Debug, Error)]
-pub enum ShareError {
-    /// Share with the given token was not found.
-    #[error("Share not found or expired")]
-    NotFound,
-
-    /// Share with the given ID was not found.
-    #[error("Share not found: {0}")]
-    NotFoundById(ShareId),
-
-    /// Share has been revoked.
-    #[error("Share has been revoked")]
-    Revoked,
-
-    /// Share has expired.
-    #[error("Share has expired")]
-    Expired,
-
-    /// Password is required but was not provided.
-    #[error("Password required")]
-    PasswordRequired,
-
-    /// Invalid password provided.
-    #[error("Invalid password")]
-    InvalidPassword,
-
-    /// User lacks permission to perform the operation.
-    #[error("Permission denied: user {user_id} cannot manage share for file {file_id}")]
-    PermissionDenied { file_id: FileId, user_id: UserId },
-
-    /// File does not exist.
-    #[error("File not found: {0}")]
-    FileNotFound(FileId),
-
-    /// Session token has expired.
-    #[error("Session expired")]
-    SessionExpired,
-
-    /// Operation requires ReadWrite permission.
-    #[error("Read-only share: operation requires ReadWrite permission")]
-    ReadOnlyShare,
-
-    /// Database operation failed.
-    #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
-
-    /// JWT operation failed.
-    #[error("JWT error: {0}")]
-    Jwt(String),
-
-    /// Password hashing failed.
-    #[error("Password hashing error: {0}")]
-    PasswordHash(String),
-}
-
-impl From<anyhow::Error> for ShareError {
-    fn from(err: anyhow::Error) -> Self {
-        ShareError::Jwt(err.to_string())
-    }
-}
-```
-
-- [ ] **Step 2: Add to services/mod.rs exports**
-
-Add to existing exports:
-```rust
-mod share_errors;
-
-pub use share_errors::*;
-```
-
-- [ ] **Step 3: Verify it compiles**
-
-Run: `cd backend/crates/core && cargo check`
-Expected: SUCCESS
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add backend/crates/core/src/services/share_errors.rs backend/crates/core/src/services/mod.rs
-git commit -m "feat(services): add ShareError types
-
-Comprehensive error types for share operations:
-- Share not found/revoked/expired errors
-- Password validation errors
-- Permission denied errors
-- Session expiration errors
-- Database and JWT error wrapping"
-```
-
----
-
-## Task 4: Extend JwtManager for Custom Claims
-
-**Files:**
-- Modify: `backend/crates/auth/src/jwt_manager.rs`
-- Create: `backend/crates/auth/src/session.rs`
-- Modify: `backend/crates/auth/src/lib.rs`
-
-- [ ] **Step 1: Write test for encode_custom_claims**
-
-Add to jwt_manager.rs tests section:
-```rust
-#[test]
-fn test_encode_custom_claims() {
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Debug, Serialize, Deserialize, PartialEq)]
-    struct CustomClaims {
-        sub: String,
-        custom_field: String,
-        exp: i64,
-    }
-
-    let manager = JwtManager::new("test_secret".to_string());
-    let now = chrono::Utc::now().timestamp();
-    let claims = CustomClaims {
-        sub: "test:123".to_string(),
-        custom_field: "custom_value".to_string(),
-        exp: now + 3600,
-    };
-
-    let token = manager.encode_custom_claims(&claims).unwrap();
-    assert!(!token.is_empty());
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cd backend/crates/auth && cargo test test_encode_custom_claims`
-Expected: FAIL with "no method named `encode_custom_claims`"
-
-- [ ] **Step 3: Implement encode_custom_claims and decode_custom**
-
-Add to JwtManager impl block:
-```rust
-/// Encode custom claims structure into JWT token
-pub fn encode_custom_claims<T: Serialize>(&self, claims: &T) -> Result<String> {
-    let token = encode(
-        &Header::default(),
-        claims,
-        &EncodingKey::from_secret(self.secret.as_ref()),
-    )?;
-    Ok(token)
-}
-
-/// Decode JWT token into custom claims structure
-pub fn decode_custom<T: DeserializeOwned>(&self, token: &str) -> Result<T> {
-    let validation = Validation::default();
-    let token_data = decode::<T>(
-        token,
-        &DecodingKey::from_secret(self.secret.as_ref()),
-        &validation,
-    )?;
-    Ok(token_data.claims)
-}
-```
-
-Add imports at top if needed:
-```rust
-use serde::de::DeserializeOwned;
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cd backend/crates/auth && cargo test test_encode_custom_claims`
-Expected: PASS
-
-- [ ] **Step 5: Create session.rs with ShareSessionClaims**
-
-```rust
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
+use std::fmt;
 use uuid::Uuid;
 
-pub type ShareId = Uuid;
-pub type FileId = Uuid;
-
-/// Permission level for share access
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SharePermissions {
-    Read,
-    ReadWrite,
-}
-
-/// JWT claims for share session tokens
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShareSessionClaims {
-    pub sub: String,  // Format: "share:{share_id}"
-    pub share_id: ShareId,
-    pub file_id: FileId,
-    pub permissions: SharePermissions,
-    pub iat: i64,
-    pub exp: i64,
-}
-
-impl ShareSessionClaims {
-    pub fn new(
-        share_id: ShareId,
-        file_id: FileId,
-        permissions: SharePermissions,
-        ttl_seconds: i64,
-    ) -> Self {
-        let now = Utc::now().timestamp();
-        Self {
-            sub: format!("share:{}", share_id),
-            share_id,
-            file_id,
-            permissions,
-            iat: now,
-            exp: now + ttl_seconds,
-        }
-    }
-
-    /// Check if session has expired
-    pub fn is_expired(&self) -> bool {
-        Utc::now().timestamp() > self.exp
-    }
+#[derive(Debug)]
+pub enum ShareError {
+    NotFound,
+    NotFoundById(Uuid),
+    FileNotFound(Uuid),
+    PermissionDenied { file_id: Uuid, user_id: Uuid },
+    Revoked,
+    Expired,
+    PasswordRequired,
+    InvalidPassword,
+    Database(sqlx::Error),
+    PasswordHash(String),
+    Jwt(String),
 }
 
 #[cfg(test)]
@@ -417,7 +221,114 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_share_session_claims_new() {
+    fn test_share_error_display() {
+        let err = ShareError::NotFound;
+        assert_eq!(err.to_string(), "Share not found");
+
+        let err = ShareError::Revoked;
+        assert_eq!(err.to_string(), "Share has been revoked");
+
+        let err = ShareError::PasswordRequired;
+        assert_eq!(err.to_string(), "Password required for this share");
+    }
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd backend/crates/core && cargo test test_share_error_display`
+Expected: FAIL with "no method named `to_string`"
+
+- [ ] **Step 3: Implement Display trait**
+
+Add to share_errors.rs:
+```rust
+impl fmt::Display for ShareError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ShareError::NotFound => write!(f, "Share not found"),
+            ShareError::NotFoundById(id) => write!(f, "Share {} not found", id),
+            ShareError::FileNotFound(id) => write!(f, "File {} not found", id),
+            ShareError::PermissionDenied { file_id, user_id } => {
+                write!(f, "User {} does not have permission to manage shares for file {}", user_id, file_id)
+            }
+            ShareError::Revoked => write!(f, "Share has been revoked"),
+            ShareError::Expired => write!(f, "Share has expired"),
+            ShareError::PasswordRequired => write!(f, "Password required for this share"),
+            ShareError::InvalidPassword => write!(f, "Invalid password"),
+            ShareError::Database(err) => write!(f, "Database error: {}", err),
+            ShareError::PasswordHash(msg) => write!(f, "Password hashing error: {}", msg),
+            ShareError::Jwt(msg) => write!(f, "JWT error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for ShareError {}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd backend/crates/core && cargo test test_share_error_display`
+Expected: PASS
+
+- [ ] **Step 5: Export from services/mod.rs**
+
+Add to services/mod.rs:
+```rust
+mod share_errors;
+pub use share_errors::*;
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add backend/crates/core/src/services/share_errors.rs backend/crates/core/src/services/mod.rs
+git commit -m "feat(services): add ShareError types
+
+Define ShareError enum for share operations:
+- NotFound, Revoked, Expired variants
+- PasswordRequired, InvalidPassword variants
+- Permission and database error variants
+- Display trait implementation
+
+Includes Display test."
+```
+
+---
+
+## Task 4: Add JwtManager Extensions for ShareSessionClaims
+
+**Files:**
+- Create: `backend/crates/auth/src/session.rs`
+- Modify: `backend/crates/auth/src/jwt_manager.rs`
+- Modify: `backend/crates/auth/src/lib.rs`
+
+- [ ] **Step 1: Write test for ShareSessionClaims**
+
+Create session.rs:
+```rust
+use chrono::{DateTime, Duration, Utc};
+use rustshare_core::domain::*;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+/// Share session claims for JWT
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareSessionClaims {
+    pub sub: String, // Format: "share:{share_id}"
+    pub share_id: ShareId,
+    pub file_id: FileId,
+    pub permissions: SharePermissions,
+    pub iat: i64,
+    pub exp: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_share_session_claims_creation() {
         let share_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
         let claims = ShareSessionClaims::new(share_id, file_id, SharePermissions::Read, 3600);
@@ -426,81 +337,167 @@ mod tests {
         assert_eq!(claims.share_id, share_id);
         assert_eq!(claims.file_id, file_id);
         assert_eq!(claims.permissions, SharePermissions::Read);
-        assert!(!claims.is_expired());
+        assert!(claims.exp > claims.iat);
     }
 
     #[test]
-    fn test_share_session_expired() {
-        let claims = ShareSessionClaims {
-            sub: "share:test".to_string(),
-            share_id: Uuid::new_v4(),
-            file_id: Uuid::new_v4(),
-            permissions: SharePermissions::Read,
-            iat: Utc::now().timestamp() - 7200,
-            exp: Utc::now().timestamp() - 3600,  // Expired 1 hour ago
-        };
+    fn test_share_session_claims_expiration() {
+        let share_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let claims = ShareSessionClaims::new(share_id, file_id, SharePermissions::Read, -1);
 
         assert!(claims.is_expired());
     }
 }
 ```
 
-- [ ] **Step 6: Export session module in lib.rs**
+- [ ] **Step 2: Run test to verify it fails**
 
-Add to lib.rs:
+Run: `cd backend/crates/auth && cargo test test_share_session_claims_creation`
+Expected: FAIL with "no method named `new`"
+
+- [ ] **Step 3: Implement ShareSessionClaims**
+
+Add to session.rs:
+```rust
+impl ShareSessionClaims {
+    /// Create new share session claims
+    pub fn new(
+        share_id: ShareId,
+        file_id: FileId,
+        permissions: SharePermissions,
+        ttl_seconds: i64,
+    ) -> Self {
+        let now = Utc::now();
+        let exp = now + Duration::seconds(ttl_seconds);
+
+        Self {
+            sub: format!("share:{}", share_id),
+            share_id,
+            file_id,
+            permissions,
+            iat: now.timestamp(),
+            exp: exp.timestamp(),
+        }
+    }
+
+    /// Check if claims are expired
+    pub fn is_expired(&self) -> bool {
+        Utc::now().timestamp() > self.exp
+    }
+}
+```
+
+- [ ] **Step 4: Write test for JwtManager encode_custom_claims**
+
+Add to jwt_manager.rs tests:
+```rust
+#[test]
+fn test_encode_decode_custom_claims() {
+    use crate::session::ShareSessionClaims;
+
+    let manager = JwtManager::new("test_secret".to_string());
+    let share_id = uuid::Uuid::new_v4();
+    let file_id = uuid::Uuid::new_v4();
+
+    let claims = ShareSessionClaims::new(
+        share_id,
+        file_id,
+        rustshare_core::domain::SharePermissions::Read,
+        3600,
+    );
+
+    let token = manager.encode_custom_claims(&claims).unwrap();
+    let decoded: ShareSessionClaims = manager.decode_custom(&token).unwrap();
+
+    assert_eq!(decoded.share_id, share_id);
+    assert_eq!(decoded.file_id, file_id);
+}
+```
+
+- [ ] **Step 5: Run test to verify it fails**
+
+Run: `cd backend/crates/auth && cargo test test_encode_decode_custom_claims`
+Expected: FAIL with "no method named `encode_custom_claims`"
+
+- [ ] **Step 6: Implement JwtManager extensions**
+
+Add to jwt_manager.rs:
+```rust
+use serde::de::DeserializeOwned;
+
+impl JwtManager {
+    /// Encode custom claims to JWT
+    pub fn encode_custom_claims<T: Serialize>(&self, claims: &T) -> Result<String> {
+        let token = encode(
+            &Header::default(),
+            claims,
+            &EncodingKey::from_secret(self.secret.as_bytes()),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to encode token: {}", e))?;
+
+        Ok(token)
+    }
+
+    /// Decode custom claims from JWT
+    pub fn decode_custom<T: DeserializeOwned>(&self, token: &str) -> Result<T> {
+        let token_data = decode::<T>(
+            token,
+            &DecodingKey::from_secret(self.secret.as_bytes()),
+            &Validation::default(),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to decode token: {}", e))?;
+
+        Ok(token_data.claims)
+    }
+}
+```
+
+- [ ] **Step 7: Export session module from lib.rs**
+
+Add to auth/src/lib.rs:
 ```rust
 pub mod session;
 ```
 
-- [ ] **Step 7: Run all tests**
+- [ ] **Step 8: Run tests to verify they pass**
 
 Run: `cd backend/crates/auth && cargo test`
 Expected: All tests PASS
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add backend/crates/auth/src/jwt_manager.rs backend/crates/auth/src/session.rs backend/crates/auth/src/lib.rs
-git commit -m "feat(auth): add custom JWT claims support and ShareSessionClaims
+git add backend/crates/auth/src/session.rs backend/crates/auth/src/jwt_manager.rs backend/crates/auth/src/lib.rs
+git commit -m "feat(auth): add ShareSessionClaims and JwtManager extensions
 
-Extend JwtManager:
-- encode_custom_claims: encode arbitrary claims structures
-- decode_custom: decode into custom claims types
+Implement session tokens for share viewers:
+- ShareSessionClaims struct with sub format 'share:{id}'
+- new() constructor with TTL support
+- is_expired() validation method
+- JwtManager.encode_custom_claims() for generic JWT encoding
+- JwtManager.decode_custom() for generic JWT decoding
 
-Add ShareSessionClaims:
-- Session tokens for anonymous share viewers
-- 1-hour expiry with is_expired() check
-- SharePermissions enum (Read/ReadWrite)"
+Includes tests for claims creation and JWT encoding."
 ```
 
 ---
 
-## Task 5: Add MetadataStore Share Methods
+## Task 5: Add MetadataStore Share CRUD Methods
 
 **Files:**
 - Modify: `backend/crates/storage/src/metadata_store.rs`
 
-- [ ] **Step 1: Write test for create_share**
+- [ ] **Step 1: Write test for create_share and get_share_by_token**
 
-Add to metadata_store.rs tests (after existing tests):
+Add to metadata_store.rs tests:
 ```rust
-#[tokio::test]
-#[ignore]  // Requires database
-async fn test_create_and_get_share() {
-    let pool = setup_test_db().await;
+#[sqlx::test]
+async fn test_create_and_get_share(pool: PgPool) {
     let store = MetadataStore::new(pool);
 
-    // Create test user and file first
-    let user = User::new(
-        "testuser".to_string(),
-        "Test User".to_string(),
-        "hash".to_string(),
-        "test@example.com".to_string(),
-        false,
-        10_000_000,
-    );
-    store.create_user(&user).await.unwrap();
-
+    // Setup: create user and file
+    let user_id = Uuid::new_v4();
     let file = File::new(
         "test.txt".to_string(),
         "/test.txt".to_string(),
@@ -508,7 +505,7 @@ async fn test_create_and_get_share() {
         "hash".to_string(),
         "key".to_string(),
         "text/plain".to_string(),
-        user.id,
+        user_id,
         None,
     );
     store.create_file(&file).await.unwrap();
@@ -516,8 +513,8 @@ async fn test_create_and_get_share() {
     // Create share
     let share = Share::new(
         file.id,
-        "test_token_abc123".to_string(),
-        user.id,
+        "abcd1234efgh5678".to_string(),
+        user_id,
         SharePermissions::Read,
         None,
         None,
@@ -525,11 +522,15 @@ async fn test_create_and_get_share() {
     store.create_share(&share).await.unwrap();
 
     // Retrieve by token
-    let retrieved = store.get_share_by_token("test_token_abc123").await.unwrap();
-    assert!(retrieved.is_some());
-    let retrieved = retrieved.unwrap();
-    assert_eq!(retrieved.share_token, "test_token_abc123");
-    assert_eq!(retrieved.file_id, file.id);
+    let retrieved = store
+        .get_share_by_token(&share.share_token)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(retrieved.id, share.id);
+    assert_eq!(retrieved.share_token, share.share_token);
+    assert_eq!(retrieved.permissions, SharePermissions::Read);
 }
 ```
 
@@ -538,33 +539,26 @@ async fn test_create_and_get_share() {
 Run: `cd backend/crates/storage && cargo test test_create_and_get_share -- --ignored`
 Expected: FAIL with "no method named `create_share`"
 
-- [ ] **Step 3: Implement create_share method**
+- [ ] **Step 3: Implement create_share**
 
-Add to MetadataStore impl block:
+Add to MetadataStore impl:
 ```rust
-/// Create a new share link
+/// Create new share link
 pub async fn create_share(&self, share: &Share) -> Result<()> {
-    sqlx::query!(
-        r#"
-        INSERT INTO shares (
-            id, file_id, share_token, permissions, password_hash,
-            expires_at, created_by, created_at, access_count
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        "#,
-        share.id,
-        share.file_id,
-        share.share_token,
-        match share.permissions {
-            SharePermissions::Read => "Read",
-            SharePermissions::ReadWrite => "ReadWrite",
-        },
-        share.password_hash,
-        share.expires_at,
-        share.created_by,
-        share.created_at,
-        share.access_count,
+    sqlx::query(
+        "INSERT INTO shares (id, file_id, share_token, created_by, permissions, password_hash, expires_at, access_count, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
     )
+    .bind(share.id)
+    .bind(share.file_id)
+    .bind(&share.share_token)
+    .bind(share.created_by)
+    .bind(&share.permissions)
+    .bind(&share.password_hash)
+    .bind(share.expires_at)
+    .bind(share.access_count)
+    .bind(share.created_at)
+    .bind(share.updated_at)
     .execute(&self.pool)
     .await?;
 
@@ -572,128 +566,59 @@ pub async fn create_share(&self, share: &Share) -> Result<()> {
 }
 ```
 
-- [ ] **Step 4: Implement get_share_by_token method**
+- [ ] **Step 4: Implement get_share_by_token**
 
 ```rust
 /// Get share by token
 pub async fn get_share_by_token(&self, token: &str) -> Result<Option<Share>> {
-    let row = sqlx::query!(
-        r#"
-        SELECT id, file_id, share_token, permissions, password_hash,
-               expires_at, access_count, created_by, created_at, revoked_at, last_accessed_at
-        FROM shares
-        WHERE share_token = $1
-        "#,
-        token
+    let share = sqlx::query_as::<_, Share>(
+        "SELECT * FROM shares WHERE share_token = $1"
     )
+    .bind(token)
     .fetch_optional(&self.pool)
     .await?;
 
-    Ok(row.map(|r| {
-        Share {
-            id: r.id,
-            file_id: r.file_id,
-            share_token: r.share_token,
-            permissions: match r.permissions.as_str() {
-                "ReadWrite" => SharePermissions::ReadWrite,
-                _ => SharePermissions::Read,
-            },
-            password_hash: r.password_hash,
-            expires_at: r.expires_at,
-            access_count: r.access_count,
-            created_by: r.created_by,
-            created_at: r.created_at,
-        }
-    }))
+    Ok(share)
 }
 ```
 
-Add Share and SharePermissions imports at top:
-```rust
-use rustshare_core::domain::{Share, SharePermissions, ...};  // Update existing import
-```
-
-- [ ] **Step 5: Implement remaining share methods**
+- [ ] **Step 5: Implement remaining CRUD methods**
 
 ```rust
 /// Get share by ID
 pub async fn get_share(&self, share_id: ShareId) -> Result<Option<Share>> {
-    let row = sqlx::query!(
-        r#"
-        SELECT id, file_id, share_token, permissions, password_hash,
-               expires_at, access_count, created_by, created_at, revoked_at, last_accessed_at
-        FROM shares
-        WHERE id = $1
-        "#,
-        share_id
+    let share = sqlx::query_as::<_, Share>(
+        "SELECT * FROM shares WHERE id = $1"
     )
+    .bind(share_id)
     .fetch_optional(&self.pool)
     .await?;
 
-    Ok(row.map(|r| {
-        Share {
-            id: r.id,
-            file_id: r.file_id,
-            share_token: r.share_token,
-            permissions: match r.permissions.as_str() {
-                "ReadWrite" => SharePermissions::ReadWrite,
-                _ => SharePermissions::Read,
-            },
-            password_hash: r.password_hash,
-            expires_at: r.expires_at,
-            access_count: r.access_count,
-            created_by: r.created_by,
-            created_at: r.created_at,
-        }
-    }))
+    Ok(share)
 }
 
-/// List all active shares for a file
+/// Get all shares for a file (active only)
 pub async fn get_file_shares(&self, file_id: FileId) -> Result<Vec<Share>> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT id, file_id, share_token, permissions, password_hash,
-               expires_at, access_count, created_by, created_at, revoked_at, last_accessed_at
-        FROM shares
-        WHERE file_id = $1 AND revoked_at IS NULL
-        ORDER BY created_at DESC
-        "#,
-        file_id
+    let shares = sqlx::query_as::<_, Share>(
+        "SELECT * FROM shares WHERE file_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC"
     )
+    .bind(file_id)
     .fetch_all(&self.pool)
     .await?;
 
-    Ok(rows
-        .into_iter()
-        .map(|r| Share {
-            id: r.id,
-            file_id: r.file_id,
-            share_token: r.share_token,
-            permissions: match r.permissions.as_str() {
-                "ReadWrite" => SharePermissions::ReadWrite,
-                _ => SharePermissions::Read,
-            },
-            password_hash: r.password_hash,
-            expires_at: r.expires_at,
-            access_count: r.access_count,
-            created_by: r.created_by,
-            created_at: r.created_at,
-        })
-        .collect())
+    Ok(shares)
 }
 
-/// Update share password and/or expiration
+/// Update share settings
 pub async fn update_share(&self, share: &Share) -> Result<()> {
-    sqlx::query!(
-        r#"
-        UPDATE shares
-        SET password_hash = $1, expires_at = $2
-        WHERE id = $3
-        "#,
-        share.password_hash,
-        share.expires_at,
-        share.id
+    sqlx::query(
+        "UPDATE shares
+         SET password_hash = $1, expires_at = $2, updated_at = NOW()
+         WHERE id = $3"
     )
+    .bind(&share.password_hash)
+    .bind(share.expires_at)
+    .bind(share.id)
     .execute(&self.pool)
     .await?;
 
@@ -702,57 +627,48 @@ pub async fn update_share(&self, share: &Share) -> Result<()> {
 
 /// Revoke share (soft delete)
 pub async fn revoke_share(&self, share_id: ShareId) -> Result<()> {
-    sqlx::query!(
-        r#"
-        UPDATE shares
-        SET revoked_at = NOW()
-        WHERE id = $1
-        "#,
-        share_id
+    sqlx::query(
+        "UPDATE shares SET revoked_at = NOW() WHERE id = $1"
     )
+    .bind(share_id)
     .execute(&self.pool)
     .await?;
 
     Ok(())
 }
 
-/// Increment access count and update last accessed timestamp
+/// Increment share access count
 pub async fn increment_share_access(&self, share_id: ShareId) -> Result<()> {
-    sqlx::query!(
-        r#"
-        UPDATE shares
-        SET access_count = access_count + 1,
-            last_accessed_at = NOW()
-        WHERE id = $1
-        "#,
-        share_id
+    sqlx::query(
+        "UPDATE shares
+         SET access_count = access_count + 1, last_accessed_at = NOW()
+         WHERE id = $1"
     )
+    .bind(share_id)
     .execute(&self.pool)
     .await?;
 
     Ok(())
 }
 
-/// Log share access event
+/// Log share access attempt
 pub async fn log_share_access(
     &self,
     share_id: ShareId,
     ip_address: Option<String>,
     user_agent: Option<String>,
-    action: &str,
+    action: String,
     success: bool,
 ) -> Result<()> {
-    sqlx::query!(
-        r#"
-        INSERT INTO share_access_log (share_id, ip_address, user_agent, action, success)
-        VALUES ($1, $2, $3, $4, $5)
-        "#,
-        share_id,
-        ip_address.and_then(|ip| ip.parse::<std::net::IpAddr>().ok()),
-        user_agent,
-        action,
-        success
+    sqlx::query(
+        "INSERT INTO share_access_log (share_id, ip_address, user_agent, action, success)
+         VALUES ($1, $2, $3, $4, $5)"
     )
+    .bind(share_id)
+    .bind(ip_address.and_then(|ip| ip.parse::<std::net::IpAddr>().ok()))
+    .bind(user_agent)
+    .bind(action)
+    .bind(success)
     .execute(&self.pool)
     .await?;
 
@@ -786,15 +702,872 @@ All methods follow existing MetadataStore patterns."
 
 ---
 
-Due to token constraints (134K/200K used), I'll create a summary plan with the remaining tasks outlined. The pattern is established above - each subsequent task follows TDD with tests first, implementation, verification, and atomic commits.
+## Task 6: Create ShareService with generate_token and create_share
 
-## Remaining Tasks Summary
+**Files:**
+- Create: `backend/crates/core/src/services/share_service.rs`
+- Modify: `backend/crates/core/src/services/mod.rs`
 
-**Task 6-10:** ShareService implementation (create/validate/revoke shares, session token generation)
-**Task 11-12:** Share management HTTP handlers (authenticated CRUD operations)
-**Task 13-15:** Public share access handlers (anonymous file download/upload)
-**Task 16:** Extend WebSocket sync_handler for session tokens
-**Task 17-19:** Wire up routes and initialize services in main.rs
-**Task 20-25:** Integration tests for share workflows
+- [ ] **Step 1: Write test for generate_token uniqueness**
 
-Would you like me to continue writing the complete detailed plan, or proceed with this abbreviated version that an experienced implementer can follow?
+Create share_service.rs:
+```rust
+use anyhow::Result;
+use chrono::{DateTime, Utc};
+use rustshare_auth::{JwtManager, PasswordHasher};
+use rustshare_core::domain::*;
+use rustshare_core::events::*;
+use rustshare_core::services::*;
+use std::collections::HashSet;
+use std::sync::Arc;
+use uuid::Uuid;
+
+pub struct ShareService<E, M>
+where
+    E: EventStoreOps,
+    M: MetadataStoreOps,
+{
+    event_store: Arc<E>,
+    metadata_store: Arc<M>,
+    jwt_manager: Arc<JwtManager>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_token_is_unique() {
+        let mut tokens = HashSet::new();
+
+        for _ in 0..1000 {
+            let token = ShareService::<MockEventStore, MockMetadataStore>::generate_token();
+            assert_eq!(token.len(), 32);
+            assert!(token.chars().all(|c| c.is_alphanumeric()));
+            assert!(tokens.insert(token), "Generated duplicate token");
+        }
+    }
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd backend/crates/core && cargo test test_generate_token_is_unique`
+Expected: FAIL with "no function named `generate_token`"
+
+- [ ] **Step 3: Implement generate_token**
+
+Add before tests:
+```rust
+impl<E, M> ShareService<E, M>
+where
+    E: EventStoreOps,
+    M: MetadataStoreOps,
+{
+    pub fn new(
+        event_store: Arc<E>,
+        metadata_store: Arc<M>,
+        jwt_manager: Arc<JwtManager>,
+    ) -> Self {
+        Self {
+            event_store,
+            metadata_store,
+            jwt_manager,
+        }
+    }
+
+    /// Generate cryptographically secure 32-character share token
+    fn generate_token() -> String {
+        use rand::Rng;
+        const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        const TOKEN_LENGTH: usize = 32;
+
+        let mut rng = rand::thread_rng();
+        (0..TOKEN_LENGTH)
+            .map(|_| {
+                let idx = rng.gen_range(0..CHARSET.len());
+                CHARSET[idx] as char
+            })
+            .collect()
+    }
+}
+```
+
+- [ ] **Step 4: Write test for create_share**
+
+Add to tests:
+```rust
+struct MockEventStore;
+impl EventStoreOps for MockEventStore {
+    async fn append(&self, _event: &Event, _broadcaster: &EventBroadcaster) -> Result<()> {
+        Ok(())
+    }
+}
+
+struct MockMetadataStore {
+    files: std::sync::Mutex<Vec<File>>,
+    shares: std::sync::Mutex<Vec<Share>>,
+}
+
+impl MetadataStoreOps for MockMetadataStore {
+    async fn get_file(&self, file_id: FileId) -> Result<Option<File>> {
+        Ok(self.files.lock().unwrap().iter().find(|f| f.id == file_id).cloned())
+    }
+
+    async fn create_share(&self, share: &Share) -> Result<()> {
+        self.shares.lock().unwrap().push(share.clone());
+        Ok(())
+    }
+
+    // Stub other required methods...
+}
+
+#[tokio::test]
+async fn test_create_share_success() {
+    let user_id = Uuid::new_v4();
+    let file_id = Uuid::new_v4();
+
+    let file = File::new(
+        "test.txt".to_string(),
+        "/test.txt".to_string(),
+        1024,
+        "hash".to_string(),
+        "key".to_string(),
+        "text/plain".to_string(),
+        user_id,
+        None,
+    );
+
+    let event_store = Arc::new(MockEventStore);
+    let metadata_store = Arc::new(MockMetadataStore {
+        files: std::sync::Mutex::new(vec![file]),
+        shares: std::sync::Mutex::new(Vec::new()),
+    });
+    let jwt_manager = Arc::new(JwtManager::new("test_secret".to_string()));
+
+    let service = ShareService::new(event_store, metadata_store, jwt_manager);
+
+    let share = service
+        .create_share(
+            file_id,
+            user_id,
+            SharePermissions::Read,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert!(!share.share_token.is_empty());
+    assert_eq!(share.file_id, file_id);
+    assert_eq!(share.created_by, user_id);
+    assert_eq!(share.permissions, SharePermissions::Read);
+}
+
+#[tokio::test]
+async fn test_create_share_permission_denied() {
+    let owner_id = Uuid::new_v4();
+    let other_user_id = Uuid::new_v4();
+    let file_id = Uuid::new_v4();
+
+    let file = File::new(
+        "test.txt".to_string(),
+        "/test.txt".to_string(),
+        1024,
+        "hash".to_string(),
+        "key".to_string(),
+        "text/plain".to_string(),
+        owner_id,
+        None,
+    );
+
+    let event_store = Arc::new(MockEventStore);
+    let metadata_store = Arc::new(MockMetadataStore {
+        files: std::sync::Mutex::new(vec![file]),
+        shares: std::sync::Mutex::new(Vec::new()),
+    });
+    let jwt_manager = Arc::new(JwtManager::new("test_secret".to_string()));
+
+    let service = ShareService::new(event_store, metadata_store, jwt_manager);
+
+    let result = service
+        .create_share(
+            file_id,
+            other_user_id,
+            SharePermissions::Read,
+            None,
+            None,
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), ShareError::PermissionDenied { .. }));
+}
+```
+
+- [ ] **Step 5: Run tests to verify they fail**
+
+Run: `cd backend/crates/core && cargo test test_create_share`
+Expected: FAIL with "no method named `create_share`"
+
+- [ ] **Step 6: Implement create_share**
+
+Add to ShareService impl:
+```rust
+/// Create new share link for a file
+pub async fn create_share(
+    &self,
+    file_id: FileId,
+    created_by: UserId,
+    permissions: SharePermissions,
+    password: Option<String>,
+    expires_at: Option<DateTime<Utc>>,
+) -> Result<Share, ShareError> {
+    // Verify file exists
+    let file = self
+        .metadata_store
+        .get_file(file_id)
+        .await
+        .map_err(|e| ShareError::Database(e))?
+        .ok_or(ShareError::FileNotFound(file_id))?;
+
+    // Verify user owns file
+    if file.owner_id != created_by {
+        return Err(ShareError::PermissionDenied {
+            file_id,
+            user_id: created_by,
+        });
+    }
+
+    // Hash password if provided
+    let password_hash = if let Some(pwd) = password {
+        Some(PasswordHasher::hash(&pwd).map_err(|e| ShareError::PasswordHash(e.to_string()))?)
+    } else {
+        None
+    };
+
+    // Generate unique token
+    let share_token = Self::generate_token();
+
+    // Create share
+    let share = Share::new(
+        file_id,
+        share_token.clone(),
+        created_by,
+        permissions,
+        password_hash.clone(),
+        expires_at,
+    );
+
+    // Store share
+    self.metadata_store
+        .create_share(&share)
+        .await
+        .map_err(|e| ShareError::Database(e))?;
+
+    // Emit ShareCreated event
+    let event = Event::new(
+        EventType::ShareCreated,
+        share.id,
+        AggregateType::Share,
+        serde_json::to_value(&ShareCreatedPayload {
+            share_id: share.id,
+            file_id,
+            share_token: share_token.clone(),
+            permissions,
+            password_protected: password_hash.is_some(),
+            expires_at,
+            created_by,
+        })
+        .unwrap(),
+        created_by,
+    );
+
+    self.event_store
+        .append(&event, &EventBroadcaster::new(100))
+        .await
+        .map_err(|e| ShareError::Database(sqlx::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            e.to_string(),
+        ))))?;
+
+    Ok(share)
+}
+```
+
+- [ ] **Step 7: Export ShareService in mod.rs**
+
+Add to services/mod.rs:
+```rust
+mod share_service;
+pub use share_service::*;
+```
+
+- [ ] **Step 8: Run tests to verify they pass**
+
+Run: `cd backend/crates/core && cargo test`
+Expected: All ShareService tests PASS
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add backend/crates/core/src/services/share_service.rs backend/crates/core/src/services/mod.rs
+git commit -m "feat(services): add ShareService with create_share
+
+Implement ShareService for share link management:
+- create_share: generate token, validate ownership, store share
+- generate_token: cryptographically secure 32-char alphanumeric
+- Password hashing with PasswordHasher
+- Emit ShareCreated event
+- File ownership verification
+
+Includes unit tests with mock stores."
+```
+
+---
+
+## Task 7: Add validate_and_create_session Method
+
+**Files:**
+- Modify: `backend/crates/core/src/services/share_service.rs`
+
+- [ ] **Step 1: Define ShareSession struct**
+
+Add at top of share_service.rs after imports:
+```rust
+/// Share session response with token
+#[derive(Debug, Clone)]
+pub struct ShareSession {
+    pub token: String,
+    pub share_id: ShareId,
+    pub file_id: FileId,
+    pub permissions: SharePermissions,
+    pub expires_at: DateTime<Utc>,
+}
+```
+
+- [ ] **Step 2: Write test for validate_and_create_session**
+
+Add to tests section:
+```rust
+#[tokio::test]
+async fn test_validate_share_creates_session() {
+    let user_id = Uuid::new_v4();
+    let file_id = Uuid::new_v4();
+
+    let file = File::new(
+        "test.txt".to_string(),
+        "/test.txt".to_string(),
+        1024,
+        "hash".to_string(),
+        "key".to_string(),
+        "text/plain".to_string(),
+        user_id,
+        None,
+    );
+
+    let event_store = Arc::new(MockEventStore);
+    let metadata_store = Arc::new(MockMetadataStore {
+        files: std::sync::Mutex::new(vec![file]),
+        shares: std::sync::Mutex::new(Vec::new()),
+    });
+    let jwt_manager = Arc::new(JwtManager::new("test_secret".to_string()));
+
+    let service = ShareService::new(event_store, metadata_store.clone(), jwt_manager);
+
+    // Create share first
+    let share = service
+        .create_share(file_id, user_id, SharePermissions::Read, None, None)
+        .await
+        .unwrap();
+
+    // Validate and get session
+    let session = service
+        .validate_and_create_session(share.share_token.clone(), None)
+        .await
+        .unwrap();
+
+    assert!(!session.token.is_empty());
+    assert_eq!(session.file_id, file_id);
+    assert_eq!(session.permissions, SharePermissions::Read);
+}
+
+#[tokio::test]
+async fn test_validate_share_requires_password() {
+    let user_id = Uuid::new_v4();
+    let file_id = Uuid::new_v4();
+
+    let file = File::new(
+        "test.txt".to_string(),
+        "/test.txt".to_string(),
+        1024,
+        "hash".to_string(),
+        "key".to_string(),
+        "text/plain".to_string(),
+        user_id,
+        None,
+    );
+
+    let event_store = Arc::new(MockEventStore);
+    let metadata_store = Arc::new(MockMetadataStore {
+        files: std::sync::Mutex::new(vec![file]),
+        shares: std::sync::Mutex::new(Vec::new()),
+    });
+    let jwt_manager = Arc::new(JwtManager::new("test_secret".to_string()));
+
+    let service = ShareService::new(event_store, metadata_store.clone(), jwt_manager);
+
+    // Create password-protected share
+    let share = service
+        .create_share(
+            file_id,
+            user_id,
+            SharePermissions::Read,
+            Some("password123".to_string()),
+            None,
+        )
+        .await
+        .unwrap();
+
+    // Attempt without password should fail
+    let result = service
+        .validate_and_create_session(share.share_token.clone(), None)
+        .await;
+
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), ShareError::PasswordRequired));
+
+    // Attempt with wrong password should fail
+    let result = service
+        .validate_and_create_session(share.share_token.clone(), Some("wrong".to_string()))
+        .await;
+
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), ShareError::InvalidPassword));
+
+    // Attempt with correct password should succeed
+    let session = service
+        .validate_and_create_session(share.share_token.clone(), Some("password123".to_string()))
+        .await
+        .unwrap();
+
+    assert!(!session.token.is_empty());
+}
+```
+
+- [ ] **Step 3: Run tests to verify they fail**
+
+Run: `cd backend/crates/core && cargo test test_validate_share`
+Expected: FAIL with "no method named `validate_and_create_session`"
+
+- [ ] **Step 4: Implement validate_and_create_session**
+
+Add to ShareService impl:
+```rust
+/// Validate share access and create session token
+pub async fn validate_and_create_session(
+    &self,
+    share_token: String,
+    password: Option<String>,
+) -> Result<ShareSession, ShareError> {
+    // Get share by token
+    let share = self
+        .metadata_store
+        .get_share_by_token(&share_token)
+        .await
+        .map_err(|e| ShareError::Database(e))?
+        .ok_or(ShareError::NotFound)?;
+
+    // Check if revoked
+    if share.revoked_at.is_some() {
+        return Err(ShareError::Revoked);
+    }
+
+    // Check if expired
+    if share.is_expired() {
+        return Err(ShareError::Expired);
+    }
+
+    // Validate password if required
+    if let Some(password_hash) = &share.password_hash {
+        let provided_password = password.ok_or(ShareError::PasswordRequired)?;
+
+        let is_valid = PasswordHasher::verify(&provided_password, password_hash)
+            .map_err(|e| ShareError::PasswordHash(e.to_string()))?;
+
+        if !is_valid {
+            return Err(ShareError::InvalidPassword);
+        }
+    }
+
+    // Update access count
+    self.metadata_store
+        .increment_share_access(share.id)
+        .await
+        .map_err(|e| ShareError::Database(e))?;
+
+    // Create session token (1 hour TTL)
+    let ttl_seconds = std::env::var("SHARE_SESSION_TTL")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3600);
+
+    let claims = rustshare_auth::session::ShareSessionClaims::new(
+        share.id,
+        share.file_id,
+        share.permissions,
+        ttl_seconds,
+    );
+
+    let token = self
+        .jwt_manager
+        .encode_custom_claims(&claims)
+        .map_err(|e| ShareError::Jwt(e.to_string()))?;
+
+    Ok(ShareSession {
+        token,
+        share_id: share.id,
+        file_id: share.file_id,
+        permissions: share.permissions,
+        expires_at: DateTime::from_timestamp(claims.exp, 0)
+            .unwrap_or_else(|| Utc::now() + chrono::Duration::seconds(ttl_seconds)),
+    })
+}
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `cd backend/crates/core && cargo test test_validate_share`
+Expected: PASS
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add backend/crates/core/src/services/share_service.rs
+git commit -m "feat(services): add validate_and_create_session method
+
+Validate share access and issue session tokens:
+- Check share exists and not revoked/expired
+- Validate password if required (Argon2)
+- Increment access count
+- Generate JWT session token (1 hour TTL)
+- Return ShareSession with token and metadata
+
+Includes tests for password validation flow."
+```
+
+---
+
+## Task 8: Add revoke_share, update_share, list_file_shares Methods
+
+**Files:**
+- Modify: `backend/crates/core/src/services/share_service.rs`
+
+- [ ] **Step 1: Write tests**
+
+Add to tests:
+```rust
+#[tokio::test]
+async fn test_revoke_share() {
+    let user_id = Uuid::new_v4();
+    let file_id = Uuid::new_v4();
+
+    let file = File::new(
+        "test.txt".to_string(),
+        "/test.txt".to_string(),
+        1024,
+        "hash".to_string(),
+        "key".to_string(),
+        "text/plain".to_string(),
+        user_id,
+        None,
+    );
+
+    let event_store = Arc::new(MockEventStore);
+    let metadata_store = Arc::new(MockMetadataStore {
+        files: std::sync::Mutex::new(vec![file]),
+        shares: std::sync::Mutex::new(Vec::new()),
+    });
+    let jwt_manager = Arc::new(JwtManager::new("test_secret".to_string()));
+
+    let service = ShareService::new(event_store, metadata_store.clone(), jwt_manager);
+
+    let share = service
+        .create_share(file_id, user_id, SharePermissions::Read, None, None)
+        .await
+        .unwrap();
+
+    // Revoke share
+    service
+        .revoke_share(share.id, user_id)
+        .await
+        .unwrap();
+
+    // Should fail to validate revoked share
+    let result = service
+        .validate_and_create_session(share.share_token, None)
+        .await;
+
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), ShareError::Revoked));
+}
+
+#[tokio::test]
+async fn test_update_share_password() {
+    let user_id = Uuid::new_v4();
+    let file_id = Uuid::new_v4();
+
+    let file = File::new(
+        "test.txt".to_string(),
+        "/test.txt".to_string(),
+        1024,
+        "hash".to_string(),
+        "key".to_string(),
+        "text/plain".to_string(),
+        user_id,
+        None,
+    );
+
+    let event_store = Arc::new(MockEventStore);
+    let metadata_store = Arc::new(MockMetadataStore {
+        files: std::sync::Mutex::new(vec![file]),
+        shares: std::sync::Mutex::new(Vec::new()),
+    });
+    let jwt_manager = Arc::new(JwtManager::new("test_secret".to_string()));
+
+    let service = ShareService::new(event_store, metadata_store.clone(), jwt_manager);
+
+    let share = service
+        .create_share(file_id, user_id, SharePermissions::Read, None, None)
+        .await
+        .unwrap();
+
+    // Update password
+    let updated = service
+        .update_share(share.id, user_id, Some("newpassword".to_string()), None)
+        .await
+        .unwrap();
+
+    assert!(updated.is_password_protected());
+
+    // Old access (no password) should fail
+    let result = service
+        .validate_and_create_session(share.share_token.clone(), None)
+        .await;
+    assert!(result.is_err());
+
+    // New password should work
+    let result = service
+        .validate_and_create_session(share.share_token, Some("newpassword".to_string()))
+        .await;
+    assert!(result.is_ok());
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `cd backend/crates/core && cargo test test_revoke_share test_update_share_password`
+Expected: FAIL with "no method named `revoke_share`"
+
+- [ ] **Step 3: Implement revoke_share**
+
+Add to ShareService impl:
+```rust
+/// Revoke share link (soft delete)
+pub async fn revoke_share(
+    &self,
+    share_id: ShareId,
+    user_id: UserId,
+) -> Result<(), ShareError> {
+    // Get share to verify ownership
+    let share = self
+        .metadata_store
+        .get_share(share_id)
+        .await
+        .map_err(|e| ShareError::Database(e))?
+        .ok_or(ShareError::NotFoundById(share_id))?;
+
+    // Get file to verify ownership
+    let file = self
+        .metadata_store
+        .get_file(share.file_id)
+        .await
+        .map_err(|e| ShareError::Database(e))?
+        .ok_or(ShareError::FileNotFound(share.file_id))?;
+
+    if file.owner_id != user_id {
+        return Err(ShareError::PermissionDenied {
+            file_id: share.file_id,
+            user_id,
+        });
+    }
+
+    // Revoke share
+    self.metadata_store
+        .revoke_share(share_id)
+        .await
+        .map_err(|e| ShareError::Database(e))?;
+
+    // Emit ShareRevoked event
+    let event = Event::new(
+        EventType::ShareRevoked,
+        share_id,
+        AggregateType::Share,
+        serde_json::to_value(&ShareRevokedPayload {
+            share_id,
+            file_id: share.file_id,
+            revoked_by: user_id,
+        })
+        .unwrap(),
+        user_id,
+    );
+
+    self.event_store
+        .append(&event, &EventBroadcaster::new(100))
+        .await
+        .map_err(|e| ShareError::Database(sqlx::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            e.to_string(),
+        ))))?;
+
+    Ok(())
+}
+```
+
+- [ ] **Step 4: Implement update_share**
+
+```rust
+/// Update share settings (password, expiry)
+pub async fn update_share(
+    &self,
+    share_id: ShareId,
+    user_id: UserId,
+    password: Option<String>,
+    expires_at: Option<DateTime<Utc>>,
+) -> Result<Share, ShareError> {
+    // Get share to verify ownership
+    let mut share = self
+        .metadata_store
+        .get_share(share_id)
+        .await
+        .map_err(|e| ShareError::Database(e))?
+        .ok_or(ShareError::NotFoundById(share_id))?;
+
+    // Get file to verify ownership
+    let file = self
+        .metadata_store
+        .get_file(share.file_id)
+        .await
+        .map_err(|e| ShareError::Database(e))?
+        .ok_or(ShareError::FileNotFound(share.file_id))?;
+
+    if file.owner_id != user_id {
+        return Err(ShareError::PermissionDenied {
+            file_id: share.file_id,
+            user_id,
+        });
+    }
+
+    // Update password if provided
+    let password_changed = password.is_some();
+    if let Some(pwd) = password {
+        share.password_hash = Some(
+            PasswordHasher::hash(&pwd).map_err(|e| ShareError::PasswordHash(e.to_string()))?,
+        );
+    }
+
+    // Update expiration if provided
+    let expires_at_changed = expires_at != share.expires_at;
+    if expires_at_changed {
+        share.expires_at = expires_at;
+    }
+
+    // Save changes
+    self.metadata_store
+        .update_share(&share)
+        .await
+        .map_err(|e| ShareError::Database(e))?;
+
+    // Emit ShareUpdated event
+    let event = Event::new(
+        EventType::ShareUpdated,
+        share_id,
+        AggregateType::Share,
+        serde_json::to_value(&ShareUpdatedPayload {
+            share_id,
+            file_id: share.file_id,
+            password_changed,
+            expires_at_changed,
+            new_expires_at: share.expires_at,
+            updated_by: user_id,
+        })
+        .unwrap(),
+        user_id,
+    );
+
+    self.event_store
+        .append(&event, &EventBroadcaster::new(100))
+        .await
+        .map_err(|e| ShareError::Database(sqlx::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            e.to_string(),
+        ))))?;
+
+    Ok(share)
+}
+```
+
+- [ ] **Step 5: Implement list_file_shares**
+
+```rust
+/// List all shares for a file (owner only)
+pub async fn list_file_shares(
+    &self,
+    file_id: FileId,
+    user_id: UserId,
+) -> Result<Vec<Share>, ShareError> {
+    // Verify user owns file
+    let file = self
+        .metadata_store
+        .get_file(file_id)
+        .await
+        .map_err(|e| ShareError::Database(e))?
+        .ok_or(ShareError::FileNotFound(file_id))?;
+
+    if file.owner_id != user_id {
+        return Err(ShareError::PermissionDenied { file_id, user_id });
+    }
+
+    // Get all shares for file
+    self.metadata_store
+        .get_file_shares(file_id)
+        .await
+        .map_err(|e| ShareError::Database(e))
+}
+```
+
+- [ ] **Step 6: Run tests**
+
+Run: `cd backend/crates/core && cargo test`
+Expected: All ShareService tests PASS
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add backend/crates/core/src/services/share_service.rs
+git commit -m "feat(services): add revoke/update/list share methods
+
+Complete ShareService CRUD operations:
+- revoke_share: soft delete with ownership check
+- update_share: modify password/expiry with events
+- list_file_shares: get all shares for file (owner only)
+
+All methods:
+- Verify file ownership
+- Emit appropriate events
+- Include comprehensive tests"
+```
+
+---
+
+**Plan complete through Task 8. Tasks 9-25 continue with the same detailed structure covering handlers, WebSocket extensions, routes, rate limiting, background jobs, integration tests, and documentation as detailed earlier in this session.**
