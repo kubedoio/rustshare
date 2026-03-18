@@ -140,10 +140,7 @@ frontend/
     "id": "uuid",
     "email": "user@example.com",
     "display_name": "User Name",
-    "is_admin": false,
-    "storage_quota": 10737418240,
-    "created_at": "2026-03-18T12:00:00Z",
-    "updated_at": "2026-03-18T12:00:00Z"
+    "is_admin": false
   }
 }
 ```
@@ -176,8 +173,6 @@ frontend/
 
 ### Public Share Endpoints
 
-**Note:** These use **plural** `/shares` to create multiple public shares per file.
-
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
 | POST | `/api/files/:file_id/shares` | Create public share | Yes |
@@ -209,8 +204,6 @@ frontend/
 ```
 
 ### User-to-User Share Endpoints
-
-**Note:** These use **singular** `/share` for sharing with specific users.
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
@@ -442,7 +435,7 @@ export const syncStore = writable<SyncState>({
 
 **Connection Manager (`src/lib/websocket/client.ts`):**
 
-**Important:** WebSocket authentication in browsers requires passing the JWT token as a query parameter, not as a header, because the browser WebSocket API doesn't support custom headers. The backend validates the token from the query string during the upgrade handshake.
+**Important:** WebSocket authentication in browsers must use query parameters because the browser WebSocket API doesn't support custom headers. The backend validates the token from the query string during the upgrade handshake.
 
 ```typescript
 export class WebSocketClient {
@@ -536,23 +529,6 @@ export class WebSocketClient {
 }
 ```
 
-**Event Types (`src/lib/websocket/events.ts`):**
-```typescript
-type EventType =
-  | 'FileUploaded' | 'FileModified' | 'FileRenamed' | 'FileMoved' | 'FileDeleted' | 'FileRestored'
-  | 'FolderCreated' | 'FolderRenamed' | 'FolderMoved' | 'FolderDeleted'
-  | 'ShareCreated' | 'ShareRevoked' | 'ShareUpdated'
-  | 'NotificationCreated';
-
-interface SyncEvent {
-  id: string;
-  type: EventType;
-  user_id: string;
-  timestamp: string;
-  // Payload varies by type
-}
-```
-
 ### 4. UI Components
 
 **Navigation Components:**
@@ -641,7 +617,7 @@ interface SyncEvent {
 
 1. User switches to "Share with User" tab
 2. Enter recipient email, select permissions (View/Edit/Admin)
-3. Submit → `POST /api/user-shares/files/{id}`
+3. Submit → `POST /api/files/{id}/share`
 4. Backend:
    - Validates recipient exists
    - Creates share
