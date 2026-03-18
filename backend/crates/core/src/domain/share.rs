@@ -28,6 +28,7 @@ pub struct Share {
     pub access_count: i32,
     pub created_by: UserId,
     pub created_at: DateTime<Utc>,
+    pub revoked_at: Option<DateTime<Utc>>,
 }
 
 impl Share {
@@ -51,6 +52,7 @@ impl Share {
             created_at: Utc::now(),
             permissions,
             access_count: 0,
+            revoked_at: None,
         }
     }
 
@@ -87,6 +89,7 @@ mod tests {
             access_count: 0,
             created_by: Uuid::new_v4(),
             created_at: Utc::now(),
+            revoked_at: None,
         };
 
         assert!(!share.is_expired());
@@ -104,6 +107,7 @@ mod tests {
             access_count: 5,
             created_by: Uuid::new_v4(),
             created_at: Utc::now(),
+            revoked_at: None,
         };
 
         assert!(share.is_expired());
@@ -121,6 +125,7 @@ mod tests {
             access_count: 0,
             created_by: Uuid::new_v4(),
             created_at: Utc::now(),
+            revoked_at: None,
         };
 
         assert!(!share.is_expired());
@@ -138,6 +143,7 @@ mod tests {
             access_count: 0,
             created_by: Uuid::new_v4(),
             created_at: Utc::now(),
+            revoked_at: None,
         };
 
         assert!(share.is_password_protected());
