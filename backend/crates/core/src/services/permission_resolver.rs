@@ -397,7 +397,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_owner_has_admin_permission() {
-        let (mut resolver, _share_ops, file_ops, _folder_ops) = setup();
+        let (resolver, _share_ops, file_ops, _folder_ops) = setup();
 
         let owner_id = Uuid::new_v4();
         let file = File::new(
@@ -420,7 +420,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_direct_file_share() {
-        let (mut resolver, share_ops, file_ops, _folder_ops) = setup();
+        let (resolver, share_ops, file_ops, _folder_ops) = setup();
 
         let owner_id = Uuid::new_v4();
         let user_id = Uuid::new_v4();
@@ -462,7 +462,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_folder_permission_inheritance() {
-        let (mut resolver, share_ops, file_ops, folder_ops) = setup();
+        let (resolver, share_ops, file_ops, folder_ops) = setup();
 
         let owner_id = Uuid::new_v4();
         let user_id = Uuid::new_v4();
@@ -528,7 +528,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_revoked_share_denied() {
-        let (mut resolver, share_ops, file_ops, _folder_ops) = setup();
+        let (resolver, share_ops, file_ops, _folder_ops) = setup();
 
         let owner_id = Uuid::new_v4();
         let user_id = Uuid::new_v4();
@@ -568,7 +568,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_caching_works() {
-        let (mut resolver, share_ops, file_ops, _folder_ops) = setup();
+        let (resolver, share_ops, file_ops, _folder_ops) = setup();
 
         let owner_id = Uuid::new_v4();
         let user_id = Uuid::new_v4();
@@ -607,16 +607,16 @@ mod tests {
 
         // Second call should use cache (we can verify this by checking cache size)
         assert!(resolver.check_file_permission(user_id, file_id, SharePermissions::Edit).await.unwrap());
-        assert_eq!(resolver.cache.len(), 1);
+        assert_eq!(resolver.cache.lock().unwrap().len(), 1);
 
         // Clear cache
         resolver.clear_cache();
-        assert_eq!(resolver.cache.len(), 0);
+        assert_eq!(resolver.cache.lock().unwrap().len(), 0);
     }
 
     #[tokio::test]
     async fn test_no_permission_for_unshared_resource() {
-        let (mut resolver, _share_ops, file_ops, _folder_ops) = setup();
+        let (resolver, _share_ops, file_ops, _folder_ops) = setup();
 
         let owner_id = Uuid::new_v4();
         let user_id = Uuid::new_v4();
@@ -639,7 +639,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_folder_owner_has_admin() {
-        let (mut resolver, _share_ops, _file_ops, folder_ops) = setup();
+        let (resolver, _share_ops, _file_ops, folder_ops) = setup();
 
         let owner_id = Uuid::new_v4();
 
@@ -655,7 +655,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_max_permission_from_multiple_shares() {
-        let (mut resolver, share_ops, file_ops, folder_ops) = setup();
+        let (resolver, share_ops, file_ops, folder_ops) = setup();
 
         let owner_id = Uuid::new_v4();
         let user_id = Uuid::new_v4();
