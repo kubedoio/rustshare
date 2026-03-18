@@ -13,6 +13,7 @@ use super::Event;
 /// Uses tokio's broadcast channel to implement a pub/sub pattern where
 /// each subscriber receives an independent copy of all published events.
 /// Events are wrapped in Arc to avoid cloning for each subscriber.
+#[derive(Clone)]
 pub struct EventBroadcaster {
     tx: broadcast::Sender<Arc<Event>>,
 }
@@ -23,7 +24,7 @@ impl EventBroadcaster {
     /// # Arguments
     ///
     /// * `capacity` - The number of events that can be buffered in the channel
-    ///                before subscribers start lagging
+    ///   before subscribers start lagging
     pub fn new(capacity: usize) -> Self {
         let (tx, _rx) = broadcast::channel(capacity);
         Self { tx }
