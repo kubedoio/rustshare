@@ -34,6 +34,38 @@ services:
       timeout: 5s
       retries: 5
 
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://rustshare:changeme@postgres:5432/rustshare
+      STORAGE_ENDPOINT: http://rustfs:9000
+      STORAGE_ACCESS_KEY: rustfsadmin
+      STORAGE_SECRET_KEY: rustfsadmin
+      STORAGE_BUCKET: rustshare-files
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      ORIGIN: http://localhost:3000
+      VITE_API_URL: http://backend:8080/api
+      VITE_WS_URL: ws://backend:8080/api
+    depends_on:
+      - backend
+
 volumes:
   postgres_data:
   rustfs_data:

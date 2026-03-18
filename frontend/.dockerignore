@@ -1,0 +1,35 @@
+# Dependencies
+node_modules
+
+# Build outputs
+.svelte-kit
+build
+
+# Git
+.git
+.gitignore
+
+# Environment variables (keep .env.example)
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor directories
+.vscode
+.idea
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test outputs
+test-results
+playwright-report
+
+# Misc
+*.md
+!README.md
