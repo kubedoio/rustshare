@@ -470,6 +470,47 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))
     }
+
+    /// Get public share info for anonymous access.
+    ///
+    /// Checks revocation and expiration, returns file metadata.
+    /// This method is used for anonymous access to shared files.
+    ///
+    /// Returns a tuple of (Share, File) or a ShareError.
+    pub async fn get_public_share_info(
+        &self,
+        share_token: &str,
+    ) -> Result<(Share, File), ShareError> {
+        // Get share by token
+        let share = self
+            .metadata_store
+            .get_share_by_token(share_token)
+            .await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .ok_or(ShareError::NotFound)?;
+
+        // Check if revoked
+        if share.revoked_at.is_some() {
+            return Err(ShareError::Revoked);
+        }
+
+        // Check if expired
+        if let Some(expires_at) = share.expires_at {
+            if expires_at < chrono::Utc::now() {
+                return Err(ShareError::Expired);
+            }
+        }
+
+        // Get file info
+        let file = self
+            .metadata_store
+            .find_file_by_id(share.file_id)
+            .await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .ok_or(ShareError::FileNotFound(share.file_id))?;
+
+        Ok((share, file))
+    }
 }
 
 #[cfg(test)]
@@ -928,5 +969,147 @@ mod tests {
             .await
             .unwrap();
         assert!(session.token.len() > 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_public_share_info_success() {
+        let (service, _, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+
+        // Create and add a file
+        let file = File::new(
+            "document.pdf".to_string(),
+            "/documents/document.pdf".to_string(),
+            "abc123".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            None,
+            owner_id,
+        );
+        let file_id = file.id;
+        metadata_store.add_file(file.clone());
+
+        // Create share
+        let share = service
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::Read,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let share_token = share.share_token.clone();
+
+        // Get public share info
+        let (returned_share, returned_file) = service
+            .get_public_share_info(&share_token)
+            .await
+            .unwrap();
+
+        // Verify share and file are returned correctly
+        assert_eq!(returned_share.id, share.id);
+        assert_eq!(returned_share.file_id, file_id);
+        assert_eq!(returned_file.id, file_id);
+        assert_eq!(returned_file.name, "document.pdf");
+    }
+
+    #[tokio::test]
+    async fn test_get_public_share_info_not_found() {
+        let (service, _, _) = setup_share_service();
+
+        let share_token = "nonexistent_token_12345678901234";
+
+        let result = service.get_public_share_info(share_token).await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ShareError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn test_get_public_share_info_revoked() {
+        let (service, _, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+
+        // Create and add a file
+        let file = File::new(
+            "document.pdf".to_string(),
+            "/documents/document.pdf".to_string(),
+            "abc123".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            None,
+            owner_id,
+        );
+        let file_id = file.id;
+        metadata_store.add_file(file.clone());
+
+        // Create share
+        let share = service
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::Read,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let share_token = share.share_token.clone();
+
+        // Revoke share
+        service.revoke_share(share.id, owner_id).await.unwrap();
+
+        // Try to get public share info
+        let result = service.get_public_share_info(&share_token).await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ShareError::Revoked));
+    }
+
+    #[tokio::test]
+    async fn test_get_public_share_info_expired() {
+        let (service, _, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+
+        // Create and add a file
+        let file = File::new(
+            "document.pdf".to_string(),
+            "/documents/document.pdf".to_string(),
+            "abc123".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            None,
+            owner_id,
+        );
+        let file_id = file.id;
+        metadata_store.add_file(file.clone());
+
+        // Create share with expiration in the past
+        let expired_time = chrono::Utc::now() - chrono::Duration::hours(1);
+        let share = service
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::Read,
+                None,
+                Some(expired_time),
+            )
+            .await
+            .unwrap();
+
+        let share_token = share.share_token.clone();
+
+        // Try to get public share info
+        let result = service.get_public_share_info(&share_token).await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ShareError::Expired));
     }
 }

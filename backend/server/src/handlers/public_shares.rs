@@ -63,33 +63,11 @@ pub async fn get_share_info(
     State(state): State<AppState>,
     Path(token): Path<String>,
 ) -> Result<Response, Response> {
-    // Get share by token
-    let share = state
-        .metadata_store
-        .get_share_by_token(&token)
+    let (share, file) = state
+        .share_service
+        .get_public_share_info(&token)
         .await
-        .map_err(|_| super::share_error_response(rustshare_core::services::ShareError::NotFound))?
-        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::NotFound))?;
-
-    // Check if revoked
-    if share.revoked_at.is_some() {
-        return Err(super::share_error_response(rustshare_core::services::ShareError::Revoked));
-    }
-
-    // Check if expired
-    if let Some(expires_at) = share.expires_at {
-        if expires_at < chrono::Utc::now() {
-            return Err(super::share_error_response(rustshare_core::services::ShareError::Expired));
-        }
-    }
-
-    // Get file info
-    let file = state
-        .metadata_store
-        .find_file_by_id(share.file_id)
-        .await
-        .map_err(|_| super::share_error_response(rustshare_core::services::ShareError::FileNotFound(share.file_id)))?
-        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::FileNotFound(share.file_id)))?;
+        .map_err(super::share_error_response)?;
 
     Ok(Json(ShareInfoResponse {
         file_id: file.id,
