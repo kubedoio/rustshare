@@ -1,0 +1,18 @@
+[package]
+name = "rustshare-infrastructure"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rustshare-core = { path = "../core" }
+
+# Database
+sqlx = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }

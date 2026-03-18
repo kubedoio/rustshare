@@ -2767,6 +2767,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustshare-infrastructure"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rustshare-core",
+ "serde",
+ "sqlx",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
 name = "rustshare-server"
 version = "0.1.0"
 dependencies = [
