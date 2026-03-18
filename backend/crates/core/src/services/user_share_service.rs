@@ -294,7 +294,7 @@ where
 
     /// List recipients of a shared resource (Admin permission required).
     pub async fn list_recipients(
-        &mut self,
+        &self,
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
         requesting_user: UserId,
@@ -309,8 +309,7 @@ where
         };
 
         // Check if requesting user has Admin permission
-        let permission = Arc::get_mut(&mut self.permission_resolver)
-            .ok_or_else(|| ShareError::Database(sqlx::Error::PoolTimedOut))?
+        let permission = self.permission_resolver
             .resolve_permission(requesting_user, resource)
             .await
             .map_err(|e| ShareError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -351,7 +350,7 @@ where
 
     /// Update recipient permission (Admin permission required).
     pub async fn update_recipient_permission(
-        &mut self,
+        &self,
         share_id: ShareId,
         new_permission: SharePermissions,
         requesting_user: UserId,
@@ -374,8 +373,7 @@ where
         };
 
         // Check if requesting user has Admin permission
-        let permission = Arc::get_mut(&mut self.permission_resolver)
-            .ok_or_else(|| ShareError::Database(sqlx::Error::PoolTimedOut))?
+        let permission = self.permission_resolver
             .resolve_permission(requesting_user, resource)
             .await
             .map_err(|e| ShareError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -444,7 +442,7 @@ where
 
     /// Remove a recipient from a share (Admin permission required).
     pub async fn remove_recipient(
-        &mut self,
+        &self,
         share_id: ShareId,
         requesting_user: UserId,
     ) -> Result<(), ShareError> {
@@ -466,8 +464,7 @@ where
         };
 
         // Check if requesting user has Admin permission
-        let permission = Arc::get_mut(&mut self.permission_resolver)
-            .ok_or_else(|| ShareError::Database(sqlx::Error::PoolTimedOut))?
+        let permission = self.permission_resolver
             .resolve_permission(requesting_user, resource)
             .await
             .map_err(|e| ShareError::Database(sqlx::Error::Protocol(e.to_string())))?;

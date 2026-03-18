@@ -12,7 +12,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use rustshare_core::domain::{SharePermissions, ShareRecipient};
+use rustshare_core::domain::SharePermissions;
 
 use crate::AppState;
 use super::{AuthenticatedUser, share_error_response};
@@ -225,7 +225,7 @@ pub async fn list_received_shares(
 /// Requires Admin permission on the file.
 /// Returns list of users who have access to the file and their permission levels.
 pub async fn list_file_recipients(
-    State(mut state): State<AppState>,
+    State(state): State<AppState>,
     Path(file_id): Path<Uuid>,
     auth: AuthenticatedUser,
 ) -> Result<Response, Response> {
@@ -261,7 +261,7 @@ pub async fn list_file_recipients(
 /// Requires Admin permission on the folder.
 /// Returns list of users who have access to the folder and their permission levels.
 pub async fn list_folder_recipients(
-    State(mut state): State<AppState>,
+    State(state): State<AppState>,
     Path(folder_id): Path<Uuid>,
     auth: AuthenticatedUser,
 ) -> Result<Response, Response> {
@@ -297,7 +297,7 @@ pub async fn list_folder_recipients(
 /// Requires Admin permission on the shared resource.
 /// Updates the permission level for the specified share.
 pub async fn update_recipient_permission(
-    State(mut state): State<AppState>,
+    State(state): State<AppState>,
     Path(share_id): Path<Uuid>,
     auth: AuthenticatedUser,
     Json(req): Json<UpdatePermissionRequest>,
@@ -337,7 +337,7 @@ pub async fn update_recipient_permission(
 /// Requires Admin permission on the shared resource.
 /// Revokes the share and removes the recipient's access.
 pub async fn remove_recipient(
-    State(mut state): State<AppState>,
+    State(state): State<AppState>,
     Path(share_id): Path<Uuid>,
     auth: AuthenticatedUser,
 ) -> Result<Response, Response> {

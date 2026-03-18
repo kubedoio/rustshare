@@ -2770,6 +2770,7 @@ dependencies = [
 name = "rustshare-infrastructure"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "rustshare-core",
  "serde",
@@ -2794,6 +2795,7 @@ dependencies = [
  "reqwest",
  "rustshare-auth",
  "rustshare-core",
+ "rustshare-infrastructure",
  "rustshare-storage",
  "serde",
  "serde_json",

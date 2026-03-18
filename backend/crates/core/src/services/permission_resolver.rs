@@ -8,7 +8,7 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::domain::{File, Folder, SharePermissions, UserId, FileId, FolderId};
 
@@ -60,7 +60,7 @@ pub struct PermissionResolver<S: ShareResolverOps, F: FileResolverOps, D: Folder
     share_ops: Arc<S>,
     file_ops: Arc<F>,
     folder_ops: Arc<D>,
-    cache: HashMap<CacheKey, Option<SharePermissions>>,
+    cache: Mutex<HashMap<CacheKey, Option<SharePermissions>>>,
 }
 
 impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionResolver<S, F, D> {
@@ -70,7 +70,7 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
             share_ops,
             file_ops,
             folder_ops,
-            cache: HashMap::new(),
+            cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -83,14 +83,14 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
     ///
     /// Returns true if user has the required permission or higher.
     pub async fn check_file_permission(
-        &mut self,
+        &self,
         user_id: UserId,
         file_id: FileId,
         required: SharePermissions,
     ) -> Result<bool> {
         // Check cache first
         let cache_key = CacheKey::File(user_id, file_id);
-        if let Some(cached) = self.cache.get(&cache_key) {
+        if let Some(cached) = self.cache.lock().unwrap().get(&cache_key).copied() {
             return Ok(cached.map_or(false, |perm| perm >= required));
         }
 
@@ -103,7 +103,7 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
 
         // 1. Check ownership (implicit Admin permission)
         if file.owner_id == user_id {
-            self.cache.insert(cache_key, Some(SharePermissions::Admin));
+            self.cache.lock().unwrap().insert(cache_key, Some(SharePermissions::Admin));
             return Ok(true);
         }
 
@@ -111,7 +111,7 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
         if let Some(share) = self.share_ops.find_user_share(Some(file_id), None, user_id).await? {
             if share.revoked_at.is_none() {
                 let perm = share.permissions;
-                self.cache.insert(cache_key, Some(perm));
+                self.cache.lock().unwrap().insert(cache_key, Some(perm));
                 return Ok(perm >= required);
             }
         }
@@ -119,13 +119,13 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
         // 3. Walk up folder ancestry for inherited permissions
         if let Some(parent_folder_id) = file.parent_folder_id {
             if let Some(inherited_perm) = self.resolve_folder_ancestry(user_id, parent_folder_id).await? {
-                self.cache.insert(cache_key, Some(inherited_perm));
+                self.cache.lock().unwrap().insert(cache_key, Some(inherited_perm));
                 return Ok(inherited_perm >= required);
             }
         }
 
         // No permission found
-        self.cache.insert(cache_key, None);
+        self.cache.lock().unwrap().insert(cache_key, None);
         Ok(false)
     }
 
@@ -138,14 +138,14 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
     ///
     /// Returns true if user has the required permission or higher.
     pub async fn check_folder_permission(
-        &mut self,
+        &self,
         user_id: UserId,
         folder_id: FolderId,
         required: SharePermissions,
     ) -> Result<bool> {
         // Check cache first
         let cache_key = CacheKey::Folder(user_id, folder_id);
-        if let Some(cached) = self.cache.get(&cache_key) {
+        if let Some(cached) = self.cache.lock().unwrap().get(&cache_key).copied() {
             return Ok(cached.map_or(false, |perm| perm >= required));
         }
 
@@ -158,7 +158,7 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
 
         // 1. Check ownership (implicit Admin permission)
         if folder.owner_id == user_id {
-            self.cache.insert(cache_key, Some(SharePermissions::Admin));
+            self.cache.lock().unwrap().insert(cache_key, Some(SharePermissions::Admin));
             return Ok(true);
         }
 
@@ -166,7 +166,7 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
         if let Some(share) = self.share_ops.find_user_share(None, Some(folder_id), user_id).await? {
             if share.revoked_at.is_none() {
                 let perm = share.permissions;
-                self.cache.insert(cache_key, Some(perm));
+                self.cache.lock().unwrap().insert(cache_key, Some(perm));
                 return Ok(perm >= required);
             }
         }
@@ -174,13 +174,13 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
         // 3. Walk up parent folder ancestry for inherited permissions
         if let Some(parent_folder_id) = folder.parent_folder_id {
             if let Some(inherited_perm) = self.resolve_folder_ancestry(user_id, parent_folder_id).await? {
-                self.cache.insert(cache_key, Some(inherited_perm));
+                self.cache.lock().unwrap().insert(cache_key, Some(inherited_perm));
                 return Ok(inherited_perm >= required);
             }
         }
 
         // No permission found
-        self.cache.insert(cache_key, None);
+        self.cache.lock().unwrap().insert(cache_key, None);
         Ok(false)
     }
 
@@ -189,7 +189,7 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
     /// Returns the highest permission found in the folder tree.
     /// Walks up to 50 levels max to prevent infinite loops.
     async fn resolve_folder_ancestry(
-        &mut self,
+        &self,
         user_id: UserId,
         mut folder_id: FolderId,
     ) -> Result<Option<SharePermissions>> {
@@ -199,9 +199,9 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
         while max_depth > 0 {
             // Check cache for this folder
             let cache_key = CacheKey::Folder(user_id, folder_id);
-            if let Some(cached) = self.cache.get(&cache_key) {
+            if let Some(cached) = self.cache.lock().unwrap().get(&cache_key).copied() {
                 if let Some(perm) = cached {
-                    permissions.push(*perm);
+                    permissions.push(perm);
                 }
                 // If cached with no permission, continue walking up
             } else {
@@ -209,11 +209,11 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
                 if let Some(share) = self.share_ops.find_user_share(None, Some(folder_id), user_id).await? {
                     if share.revoked_at.is_none() {
                         let perm = share.permissions;
-                        self.cache.insert(cache_key, Some(perm));
+                        self.cache.lock().unwrap().insert(cache_key, Some(perm));
                         permissions.push(perm);
                     }
                 } else {
-                    self.cache.insert(cache_key, None);
+                    self.cache.lock().unwrap().insert(cache_key, None);
                 }
             }
 
@@ -247,8 +247,8 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
     /// Clear the permission cache.
     ///
     /// Should be called at the end of each request to ensure cache doesn't leak between requests.
-    pub fn clear_cache(&mut self) {
-        self.cache.clear();
+    pub fn clear_cache(&self) {
+        self.cache.lock().unwrap().clear();
     }
 
     /// Resolve the permission a user has on a resource (file or folder).
@@ -256,7 +256,7 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
     /// Returns Some(permission) if the user has access, None otherwise.
     /// This is a convenience method that wraps check_file_permission and check_folder_permission.
     pub async fn resolve_permission(
-        &mut self,
+        &self,
         user_id: UserId,
         resource: Resource,
     ) -> Result<Option<SharePermissions>> {

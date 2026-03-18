@@ -49,8 +49,9 @@ use rustshare_auth::{JwtManager, PasswordHasher};
 use rustshare_core::{
     domain::User,
     events::EventBroadcaster,
-    services::{FileService, FolderService, ShareService},
+    services::{FileService, FolderService, NotificationService, PermissionResolver, ShareService, UserShareService},
 };
+use rustshare_infrastructure::repositories::{NotificationRepository, ShareRepository, UserRepository, FileRepository, FolderRepository};
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -70,6 +71,9 @@ pub struct AppState {
     pub file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore>>,
     pub folder_service: Arc<FolderService<EventStore, MetadataStore>>,
     pub share_service: Arc<ShareService<EventStore, MetadataStore, JwtManager>>,
+    pub permission_resolver: Arc<PermissionResolver<ShareRepository, FileRepository, FolderRepository>>,
+    pub notification_service: Arc<NotificationService<NotificationRepository>>,
+    pub user_share_service: Arc<UserShareService<ShareRepository, UserRepository, FileRepository, FolderRepository, ShareRepository, FileRepository, FolderRepository, NotificationRepository>>,
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
 }
 
@@ -147,6 +151,33 @@ async fn main() -> Result<()> {
         Arc::clone(&jwt_manager),
     ));
 
+    // Initialize repositories for new services
+    let notification_repository = NotificationRepository::new(db_pool.clone());
+    let share_repository = Arc::new(ShareRepository::new(db_pool.clone()));
+    let user_repository = Arc::new(UserRepository::new(db_pool.clone()));
+    let file_repository = Arc::new(FileRepository::new(db_pool.clone()));
+    let folder_repository = Arc::new(FolderRepository::new(db_pool.clone()));
+
+    // Initialize permission resolver
+    let permission_resolver = Arc::new(PermissionResolver::new(
+        Arc::clone(&share_repository),
+        Arc::clone(&file_repository),
+        Arc::clone(&folder_repository),
+    ));
+
+    // Initialize notification service
+    let notification_service = Arc::new(NotificationService::new(notification_repository));
+
+    // Initialize user share service
+    let user_share_service = Arc::new(UserShareService::new(
+        Arc::clone(&share_repository),
+        Arc::clone(&user_repository),
+        Arc::clone(&file_repository),
+        Arc::clone(&folder_repository),
+        Arc::clone(&permission_resolver),
+        Arc::clone(&notification_service),
+    ));
+
     // Initialize rate limiting configuration
     let rate_limit_config = Arc::new(middleware::RateLimitConfig::new());
 
@@ -184,6 +215,9 @@ async fn main() -> Result<()> {
         file_service,
         folder_service,
         share_service,
+        permission_resolver,
+        notification_service,
+        user_share_service,
         rate_limit_config,
     };
 
@@ -214,6 +248,18 @@ async fn main() -> Result<()> {
         // Share routes (Task 9)
         .route("/api/files/:file_id/shares", post(handlers::create_share))
         .route("/api/files/:file_id/shares", get(handlers::list_file_shares))
+        // User share routes (Task 14)
+        .route("/api/files/:id/share", post(handlers::create_file_share))
+        .route("/api/folders/:id/share", post(handlers::create_folder_share))
+        .route("/api/shares/received", get(handlers::list_received_shares))
+        .route("/api/files/:id/recipients", get(handlers::list_file_recipients))
+        .route("/api/folders/:id/recipients", get(handlers::list_folder_recipients))
+        .route("/api/shares/:id/permission", put(handlers::update_recipient_permission))
+        .route("/api/shares/:id/recipient", delete(handlers::remove_recipient))
+        // Notification routes (Task 15)
+        .route("/api/notifications", get(handlers::list_notifications))
+        .route("/api/notifications/:id/read", put(handlers::mark_notification_read))
+        .route("/api/notifications/:id", delete(handlers::delete_notification))
         // Public share routes (Task 10 - no authentication required for session creation and info)
         .route("/api/public/share/:token/session", post(handlers::create_session))
         .route("/api/public/share/:token/info", get(handlers::get_share_info))
