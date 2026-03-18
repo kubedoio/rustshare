@@ -50,11 +50,6 @@ export class ApiClient {
       return null as T;
     }
 
-    // Handle redirects (302 for downloads)
-    if (response.status === 302 || response.redirected) {
-      return { url: response.url } as T;
-    }
-
     return response.json();
   }
 
@@ -62,17 +57,17 @@ export class ApiClient {
     return this.request<T>(endpoint, { method: 'GET' });
   }
 
-  async post<T>(endpoint: string, body?: unknown): Promise<T> {
+  async post<T>(endpoint: string, body?: Record<string, unknown> | FormData | null): Promise<T> {
     return this.request<T>(endpoint, {
       method: 'POST',
       body: body instanceof FormData ? body : JSON.stringify(body)
     });
   }
 
-  async put<T>(endpoint: string, body?: unknown): Promise<T> {
+  async put<T>(endpoint: string, body?: Record<string, unknown> | FormData | null): Promise<T> {
     return this.request<T>(endpoint, {
       method: 'PUT',
-      body: JSON.stringify(body)
+      body: body instanceof FormData ? body : JSON.stringify(body)
     });
   }
 
