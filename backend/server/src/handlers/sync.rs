@@ -11,10 +11,9 @@ use axum_extra::{
     TypedHeader,
 };
 use futures_util::{StreamExt, SinkExt};
-use rustshare_core::events::{Event, EventBroadcaster};
+use rustshare_core::events::Event;
 use rustshare_core::domain::UserId;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 use uuid::Uuid;

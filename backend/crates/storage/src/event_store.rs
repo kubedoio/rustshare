@@ -159,6 +159,7 @@ mod tests {
     async fn test_append_and_retrieve_event() {
         let pool = setup_test_db().await;
         let store = EventStore::new(pool);
+        let broadcaster = EventBroadcaster::new(100);
 
         let user_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
@@ -177,7 +178,7 @@ mod tests {
         );
 
         // Append event
-        store.append(&event).await.unwrap();
+        store.append(&event, &broadcaster).await.unwrap();
 
         // Retrieve events
         let events = store.get_events(file_id, AggregateType::File).await.unwrap();
@@ -192,6 +193,7 @@ mod tests {
     async fn test_get_events_since_with_last_id() {
         let pool = setup_test_db().await;
         let store = EventStore::new(pool);
+        let broadcaster = EventBroadcaster::new(100);
 
         let user_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
@@ -213,7 +215,7 @@ mod tests {
                 user_id,
             );
             event_ids.push(event.id);
-            store.append(&event).await.unwrap();
+            store.append(&event, &broadcaster).await.unwrap();
 
             // Small delay to ensure different timestamps
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -234,6 +236,7 @@ mod tests {
     async fn test_get_events_since_respects_limit() {
         let pool = setup_test_db().await;
         let store = EventStore::new(pool);
+        let broadcaster = EventBroadcaster::new(100);
 
         let user_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
@@ -255,7 +258,7 @@ mod tests {
                 user_id,
             );
             event_ids.push(event.id);
-            store.append(&event).await.unwrap();
+            store.append(&event, &broadcaster).await.unwrap();
 
             // Small delay to ensure different timestamps
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -276,6 +279,7 @@ mod tests {
     async fn test_get_events_since_filters_by_user() {
         let pool = setup_test_db().await;
         let store = EventStore::new(pool);
+        let broadcaster = EventBroadcaster::new(100);
 
         let user1_id = Uuid::new_v4();
         let user2_id = Uuid::new_v4();
@@ -298,7 +302,7 @@ mod tests {
                 user1_id,
             );
             user1_event_ids.push(event.id);
-            store.append(&event).await.unwrap();
+            store.append(&event, &broadcaster).await.unwrap();
 
             // Small delay to ensure different timestamps
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -321,7 +325,7 @@ mod tests {
                 user2_id,
             );
             user2_event_ids.push(event.id);
-            store.append(&event).await.unwrap();
+            store.append(&event, &broadcaster).await.unwrap();
 
             // Small delay to ensure different timestamps
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -351,6 +355,7 @@ mod tests {
     async fn test_get_events_since_with_null_id() {
         let pool = setup_test_db().await;
         let store = EventStore::new(pool);
+        let broadcaster = EventBroadcaster::new(100);
 
         let user_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
@@ -372,7 +377,7 @@ mod tests {
                 user_id,
             );
             event_ids.push(event.id);
-            store.append(&event).await.unwrap();
+            store.append(&event, &broadcaster).await.unwrap();
 
             // Small delay to ensure different timestamps
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
