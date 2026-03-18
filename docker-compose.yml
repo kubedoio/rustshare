@@ -42,11 +42,11 @@ services:
       - "8080:8080"
     environment:
       DATABASE_URL: postgres://rustshare:changeme@postgres:5432/rustshare
-      STORAGE_ENDPOINT: http://rustfs:9000
-      STORAGE_ACCESS_KEY: rustfsadmin
-      STORAGE_SECRET_KEY: rustfsadmin
-      STORAGE_BUCKET: rustshare-files
-      STORAGE_REGION: us-east-1
+      RUSTFS_ENDPOINT: http://rustfs:9000
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: rustfsadmin
+      RUSTFS_BUCKET: rustshare-files
+      RUSTFS_REGION: us-east-1
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
     depends_on:
       postgres:
