@@ -6,4 +6,4 @@ mod share_errors;
 pub use errors::{FileError, FolderError};
 pub use file_service::{EventStoreOps as FileEventStoreOps, FileService, MetadataStoreOps as FileMetadataStoreOps, ObjectStoreOps};
 pub use folder_service::{EventStoreOps as FolderEventStoreOps, FolderService, MetadataStoreOps as FolderMetadataStoreOps};
-pub use share_errors::*;
+pub use share_errors::ShareError;
