@@ -51,20 +51,20 @@
 </script>
 
 <div
-  class="card bg-base-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer relative group"
+  class="card bg-base-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer relative group touch-manipulation"
   on:click={onSelect}
   on:keydown={(e) => e.key === 'Enter' && onSelect()}
   role="button"
   tabindex="0"
 >
-  <div class="card-body p-4">
-    <div class="flex items-center gap-3">
-      <span class="text-3xl">{icon}</span>
+  <div class="card-body p-3 lg:p-4">
+    <div class="flex items-center gap-2 lg:gap-3">
+      <span class="text-2xl lg:text-3xl">{icon}</span>
       <div class="flex-1 min-w-0">
-        <h3 class="font-semibold truncate">{item.name}</h3>
-        <div class="text-sm text-base-content/60 flex gap-4">
+        <h3 class="font-semibold truncate text-sm lg:text-base">{item.name}</h3>
+        <div class="text-xs lg:text-sm text-base-content/60 flex gap-2 lg:gap-4">
           <span>{displaySize}</span>
-          <span>{displayDate}</span>
+          <span class="hidden sm:inline">{displayDate}</span>
         </div>
       </div>
 
@@ -73,7 +73,7 @@
         <button
           type="button"
           tabindex="0"
-          class="btn btn-ghost btn-sm btn-circle opacity-0 group-hover:opacity-100 transition-opacity"
+          class="btn btn-ghost btn-sm btn-circle opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity min-h-[44px] min-w-[44px] lg:min-h-0 lg:min-w-0"
           on:click={handleMenuToggle}
         >
           <svg

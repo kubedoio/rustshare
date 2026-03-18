@@ -2,6 +2,9 @@
   import { page } from '$app/stores';
   import { authStore } from '$lib/stores/auth';
 
+  export let mobileOpen = false;
+  export let onClose: () => void = () => {};
+
   const navItems = [
     { href: '/files', label: 'My Files', icon: '📁' },
     { href: '/shared-with-me', label: 'Shared with Me', icon: '👥' },
@@ -11,11 +14,52 @@
   function handleLogout() {
     authStore.logout();
   }
+
+  function handleNavClick() {
+    onClose();
+  }
 </script>
 
-<aside class="w-64 bg-base-100 h-screen flex flex-col border-r border-base-300">
-  <div class="p-4 border-b border-base-300">
+<!-- Mobile overlay -->
+{#if mobileOpen}
+  <div
+    class="fixed inset-0 bg-black/50 z-40 lg:hidden"
+    on:click={onClose}
+    on:keydown={(e) => e.key === 'Escape' && onClose()}
+    role="button"
+    tabindex="0"
+  ></div>
+{/if}
+
+<!-- Sidebar -->
+<aside
+  class="w-64 bg-base-100 h-screen flex flex-col border-r border-base-300 fixed lg:static z-50 transition-transform duration-300 {mobileOpen
+    ? 'translate-x-0'
+    : '-translate-x-full lg:translate-x-0'}"
+>
+  <div class="p-4 border-b border-base-300 flex items-center justify-between">
     <h1 class="text-2xl font-bold">RustShare</h1>
+
+    <!-- Close button (mobile only) -->
+    <button
+      class="btn btn-ghost btn-sm btn-circle lg:hidden"
+      on:click={onClose}
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke-width="1.5"
+        stroke="currentColor"
+        class="w-6 h-6"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M6 18L18 6M6 6l12 12"
+        />
+      </svg>
+    </button>
   </div>
 
   <nav class="flex-1 p-4">
@@ -26,6 +70,7 @@
             href={item.href}
             class:active={$page.url.pathname === item.href}
             class="flex items-center gap-2"
+            on:click={handleNavClick}
           >
             <span>{item.icon}</span>
             <span>{item.label}</span>

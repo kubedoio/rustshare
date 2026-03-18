@@ -7,6 +7,8 @@
 
   import { browser } from '$app/environment';
 
+  let mobileMenuOpen = false;
+
   // Check authentication on mount
   onMount(() => {
     if (!$isAuthenticated) {
@@ -18,18 +20,26 @@
   $: if (browser && !$isAuthenticated) {
     goto('/login');
   }
+
+  function toggleMobileMenu() {
+    mobileMenuOpen = !mobileMenuOpen;
+  }
+
+  function closeMobileMenu() {
+    mobileMenuOpen = false;
+  }
 </script>
 
 {#if $isAuthenticated}
   <div class="flex h-screen overflow-hidden">
-    <Sidebar />
+    <Sidebar mobileOpen={mobileMenuOpen} onClose={closeMobileMenu} />
 
     <div class="flex-1 flex flex-col overflow-hidden">
-      <Header>
+      <Header onMenuClick={toggleMobileMenu}>
         <slot slot="breadcrumbs" name="breadcrumbs" />
       </Header>
 
-      <main class="flex-1 overflow-auto bg-base-200 p-6">
+      <main class="flex-1 overflow-auto bg-base-200 p-4 lg:p-6">
         <slot />
       </main>
     </div>
