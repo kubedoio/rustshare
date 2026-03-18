@@ -149,7 +149,7 @@ use rand::Rng;
 
 fn generate_share_token() -> String {
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    const TOKEN_LENGTH: usize = 32;
+    const TOKEN_LENGTH: usize = 32;  // 32 chars fits in VARCHAR(64) with room for future expansion
 
     let mut rng = rand::thread_rng();
     (0..TOKEN_LENGTH)
@@ -162,6 +162,9 @@ fn generate_share_token() -> String {
 ```
 
 **Session Token Structure:**
+
+JWT claims for share session tokens include custom fields beyond standard claims:
+
 ```rust
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ShareSessionClaims {
@@ -190,6 +193,48 @@ impl ShareSessionClaims {
             exp: now + ttl_seconds,
         }
     }
+}
+```
+
+**JWT Token Examples:**
+
+User JWT (Phase 3A):
+```json
+{
+  "sub": "user:550e8400-e29b-41d4-a716-446655440000",
+  "email": "user@example.com",
+  "iat": 1710753600,
+  "exp": 1710757200
+}
+```
+
+Share Session Token (Phase 3B):
+```json
+{
+  "sub": "share:660e8400-e29b-41d4-a716-446655440001",
+  "share_id": "660e8400-e29b-41d4-a716-446655440001",
+  "file_id": "770e8400-e29b-41d4-a716-446655440002",
+  "permissions": "Read",
+  "iat": 1710753600,
+  "exp": 1710757200
+}
+```
+
+**Token Encoding/Decoding:**
+
+JwtManager should be extended to support custom claims:
+```rust
+// Encode share session
+let claims = ShareSessionClaims::new(share_id, file_id, permissions, 3600);
+let token = jwt_manager.encode_custom_claims(&claims)?;
+
+// Decode and validate
+let decoded = jwt_manager.decode_token(&token)?;
+if decoded.sub.starts_with("share:") {
+    let session: ShareSessionClaims = serde_json::from_value(
+        serde_json::to_value(&decoded)?
+    )?;
+    // Use session.share_id, session.file_id, session.permissions
 }
 ```
 
@@ -553,6 +598,8 @@ Errors:
 - 413 Payload Too Large: File exceeds quota
 ```
 
+**Note:** The `:token` in the URL path is for API clarity and logging, but authorization is entirely based on the session token's embedded permissions. The handler validates that the session token's `file_id` matches the file being uploaded.
+
 ### WebSocket Real-Time Notifications
 
 **Endpoint:** `ws://host/api/sync` (same as Phase 3A)
@@ -652,6 +699,8 @@ pub fn is_expired(&self) -> bool {
 - Soft delete: set `revoked_at` timestamp
 - Check at validation time: `share.revoked_at.is_some()`
 - Existing sessions remain valid until expiry (eventual consistency)
+
+**Known Limitation:** Revoked shares with active session tokens can continue accessing files for up to 1 hour (session TTL). This tradeoff favors simplicity over immediate revocation. Mitigation: keep session TTL short (1 hour default) and implement in-memory revoked share cache if immediate revocation is required in the future.
 
 ### Access Control
 
@@ -777,8 +826,8 @@ pub enum EventType {
 - `test_session_token_connects_successfully()`
 - `test_expired_session_token_rejected()`
 - `test_share_viewer_receives_file_modified_event()`
-- `test_share_viewer_does_not_receive_other_file_events()`
-- `test_share_viewer_does_not_receive_unrelated_file_events()`
+- `test_share_viewer_filters_events_by_file_id()` - verify viewer only sees their shared file
+- `test_share_viewer_does_not_receive_folder_events()` - verify non-file events are filtered
 - `test_user_and_share_viewer_both_receive_event()`
 - `test_catch_up_for_share_viewer()`
 
@@ -875,6 +924,75 @@ SHARE_LOG_RETENTION_DAYS=30
 ```
 
 ## Implementation Notes
+
+### Rate Limiting
+
+**Public Endpoints:**
+- `/public/share/:token/access` - 10 requests per minute per IP
+- `/public/share/:token/upload` - 5 uploads per hour per share token
+- Implement using in-memory cache or Redis
+- Return `429 Too Many Requests` with `Retry-After` header
+
+**Password Attempts:**
+- 5 failed attempts per share token per 15 minutes
+- Track in-memory with automatic cleanup
+- Reset counter on successful validation
+
+### CORS Configuration
+
+Public share endpoints require CORS headers for browser access:
+```rust
+.layer(CorsLayer::new()
+    .allow_origin(Any)
+    .allow_methods([Method::GET, Method::POST])
+    .allow_headers([AUTHORIZATION, CONTENT_TYPE])
+    .max_age(Duration::from_secs(3600)))
+```
+
+### File Size Limits
+
+Upload endpoint file size limits:
+- Default: 100MB per file (configurable via `MAX_FILE_SIZE` env var)
+- Enforced at multipart parser level
+- Return `413 Payload Too Large` if exceeded
+- Check against owner's remaining quota before accepting upload
+
+### Error Response Format
+
+Standardized error format for all endpoints:
+```json
+{
+  "error": "Human-readable message",
+  "code": "ERROR_CODE",
+  "details": "Optional additional context"
+}
+```
+
+Error codes:
+- `SHARE_NOT_FOUND` - Invalid or expired share token
+- `SHARE_PASSWORD_REQUIRED` - Password required for access
+- `SHARE_INVALID_PASSWORD` - Incorrect password
+- `SHARE_REVOKED` - Share has been revoked
+- `SHARE_EXPIRED` - Share expiration date passed
+- `SESSION_EXPIRED` - Session token expired
+- `PERMISSION_DENIED` - ReadWrite required for operation
+- `QUOTA_EXCEEDED` - File upload would exceed owner's quota
+
+### Background Jobs
+
+**Access Log Cleanup:**
+```rust
+// Run daily at 3 AM
+async fn cleanup_old_access_logs(metadata_store: &MetadataStore) {
+    let retention_days = env::var("SHARE_LOG_RETENTION_DAYS")
+        .unwrap_or("30".to_string())
+        .parse()
+        .unwrap_or(30);
+
+    let cutoff = Utc::now() - Duration::days(retention_days);
+    metadata_store.delete_access_logs_before(cutoff).await;
+}
+```
 
 ### TDD Approach
 
