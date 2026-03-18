@@ -51,6 +51,32 @@ pub enum EventType {
     ConflictResolved,
 }
 
+impl EventType {
+    /// Returns the variant name as a plain string for WebSocket notifications.
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            EventType::UserCreated => "UserCreated",
+            EventType::UserUpdated => "UserUpdated",
+            EventType::UserDeleted => "UserDeleted",
+            EventType::FileUploaded => "FileUploaded",
+            EventType::FileModified => "FileModified",
+            EventType::FileRenamed => "FileRenamed",
+            EventType::FileMoved => "FileMoved",
+            EventType::FileDeleted => "FileDeleted",
+            EventType::FileRestored => "FileRestored",
+            EventType::FolderCreated => "FolderCreated",
+            EventType::FolderRenamed => "FolderRenamed",
+            EventType::FolderMoved => "FolderMoved",
+            EventType::FolderDeleted => "FolderDeleted",
+            EventType::ShareCreated => "ShareCreated",
+            EventType::ShareRevoked => "ShareRevoked",
+            EventType::ShareUpdated => "ShareUpdated",
+            EventType::ConflictDetected => "ConflictDetected",
+            EventType::ConflictResolved => "ConflictResolved",
+        }
+    }
+}
+
 /// Event stored in the event store
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
@@ -198,5 +224,14 @@ mod tests {
         let event_type = EventType::FileUploaded;
         let json = serde_json::to_string(&event_type).unwrap();
         assert_eq!(json, r#"{"type":"FileUploaded"}"#);
+    }
+
+    #[test]
+    fn test_event_type_name() {
+        assert_eq!(EventType::FileUploaded.type_name(), "FileUploaded");
+        assert_eq!(EventType::FileModified.type_name(), "FileModified");
+        assert_eq!(EventType::FolderCreated.type_name(), "FolderCreated");
+        assert_eq!(EventType::ShareCreated.type_name(), "ShareCreated");
+        assert_eq!(EventType::ConflictDetected.type_name(), "ConflictDetected");
     }
 }
