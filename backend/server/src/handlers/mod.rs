@@ -3,6 +3,7 @@
 mod extractors;
 mod files;
 mod folders;
+mod shares;
 mod sync;
 
 pub use extractors::AuthenticatedUser;
@@ -16,6 +17,7 @@ pub use folders::{
     get_folder_contents, get_folder_tree,
     move_folder, rename_folder,
 };
+pub use shares::{create_share, list_file_shares};
 pub use sync::sync_handler;
 
 use axum::{http::StatusCode, response::{IntoResponse, Response}, Json};

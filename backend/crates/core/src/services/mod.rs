@@ -8,4 +8,4 @@ pub use errors::{FileError, FolderError};
 pub use file_service::{EventStoreOps as FileEventStoreOps, FileService, MetadataStoreOps as FileMetadataStoreOps, ObjectStoreOps};
 pub use folder_service::{EventStoreOps as FolderEventStoreOps, FolderService, MetadataStoreOps as FolderMetadataStoreOps};
 pub use share_errors::ShareError;
-pub use share_service::{EventStoreOps as ShareEventStoreOps, ShareService, MetadataStoreOps as ShareMetadataStoreOps};
+pub use share_service::{EventStoreOps as ShareEventStoreOps, JwtOps, ShareService, MetadataStoreOps as ShareMetadataStoreOps};

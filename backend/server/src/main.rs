@@ -9,7 +9,7 @@ use rustshare_auth::{JwtManager, PasswordHasher};
 use rustshare_core::{
     domain::User,
     events::EventBroadcaster,
-    services::{FileService, FolderService},
+    services::{FileService, FolderService, ShareService},
 };
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
@@ -29,6 +29,7 @@ pub struct AppState {
     pub broadcaster: Arc<EventBroadcaster>,
     pub file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore>>,
     pub folder_service: Arc<FolderService<EventStore, MetadataStore>>,
+    pub share_service: Arc<ShareService<EventStore, MetadataStore, JwtManager>>,
 }
 
 #[tokio::main]
@@ -98,6 +99,12 @@ async fn main() -> Result<()> {
         Arc::clone(&metadata_store),
         Arc::clone(&broadcaster),
     ));
+    let share_service = Arc::new(ShareService::new(
+        Arc::clone(&event_store),
+        Arc::clone(&metadata_store),
+        Arc::clone(&broadcaster),
+        Arc::clone(&jwt_manager),
+    ));
 
     // Bootstrap admin user if no users exist
     if !metadata_store.has_users().await? {
@@ -130,6 +137,7 @@ async fn main() -> Result<()> {
         broadcaster,
         file_service,
         folder_service,
+        share_service,
     };
 
     // Build router
@@ -156,6 +164,9 @@ async fn main() -> Result<()> {
         .route("/api/folders/tree", get(handlers::get_folder_tree))
         .route("/api/folders/:id/move", post(handlers::move_folder))
         .route("/api/folders/:id/rename", post(handlers::rename_folder))
+        // Share routes (Task 9)
+        .route("/api/files/:file_id/shares", post(handlers::create_share))
+        .route("/api/files/:file_id/shares", get(handlers::list_file_shares))
         // WebSocket sync endpoint (Task Phase 3A)
         .route("/api/sync", get(handlers::sync_handler))
         // Tracing

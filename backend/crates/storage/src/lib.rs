@@ -14,7 +14,7 @@ pub use object_store::ObjectStore;
 use anyhow::Result;
 use rustshare_core::services::{
     FileEventStoreOps, FileMetadataStoreOps, FolderEventStoreOps, FolderMetadataStoreOps,
-    ObjectStoreOps as CoreObjectStoreOps,
+    ObjectStoreOps as CoreObjectStoreOps, ShareEventStoreOps, ShareMetadataStoreOps,
 };
 
 // EventStore implements both File and Folder event store traits
@@ -25,6 +25,12 @@ impl FileEventStoreOps for EventStore {
 }
 
 impl FolderEventStoreOps for EventStore {
+    async fn append(&self, event: &rustshare_core::events::Event, broadcaster: &rustshare_core::events::EventBroadcaster) -> Result<()> {
+        self.append(event, broadcaster).await
+    }
+}
+
+impl ShareEventStoreOps for EventStore {
     async fn append(&self, event: &rustshare_core::events::Event, broadcaster: &rustshare_core::events::EventBroadcaster) -> Result<()> {
         self.append(event, broadcaster).await
     }
@@ -96,6 +102,36 @@ impl FolderMetadataStoreOps for MetadataStore {
 
     async fn list_files(&self, parent_id: Option<uuid::Uuid>, owner_id: uuid::Uuid) -> Result<Vec<rustshare_core::domain::File>> {
         self.list_files(parent_id, owner_id).await
+    }
+}
+
+impl ShareMetadataStoreOps for MetadataStore {
+    async fn find_file_by_id(&self, id: uuid::Uuid) -> Result<Option<rustshare_core::domain::File>> {
+        self.find_file_by_id(id).await
+    }
+
+    async fn create_share(&self, share: &rustshare_core::domain::Share) -> Result<()> {
+        self.create_share(share).await
+    }
+
+    async fn get_share_by_id(&self, id: uuid::Uuid) -> Result<Option<rustshare_core::domain::Share>> {
+        self.get_share(id).await
+    }
+
+    async fn get_share_by_token(&self, token: &str) -> Result<Option<rustshare_core::domain::Share>> {
+        self.get_share_by_token(token).await
+    }
+
+    async fn get_file_shares(&self, file_id: uuid::Uuid) -> Result<Vec<rustshare_core::domain::Share>> {
+        self.get_file_shares(file_id).await
+    }
+
+    async fn revoke_share(&self, share_id: uuid::Uuid) -> Result<()> {
+        self.revoke_share(share_id).await
+    }
+
+    async fn update_share(&self, share: &rustshare_core::domain::Share) -> Result<()> {
+        self.update_share(share).await
     }
 }
 
