@@ -61,12 +61,13 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+        VITE_WS_URL: /api
     ports:
       - "3000:3000"
     environment:
       ORIGIN: http://localhost:3000
-      VITE_API_URL: http://backend:8080/api
-      VITE_WS_URL: ws://backend:8080/api
     depends_on:
       - backend
 
