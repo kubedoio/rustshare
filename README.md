@@ -515,6 +515,279 @@ cargo clippy -- -D warnings
 cargo audit
 ```
 
+## 🐳 Docker Deployment
+
+### Quick Start with Docker Compose
+
+The easiest way to deploy RustShare in production:
+
+1. **Clone the repository**
+```bash
+git clone https://github.com/yourusername/rustshare.git
+cd rustshare
+```
+
+2. **Configure environment**
+```bash
+cp .env.example .env
+```
+
+3. **Update production settings** in `.env`:
+```bash
+# CRITICAL: Generate a strong JWT secret
+openssl rand -base64 32
+
+# Edit .env and set:
+# - JWT_SECRET (use generated value above)
+# - DATABASE_URL (update password)
+# - STORAGE credentials (update MinIO access keys)
+# - ORIGIN (your production domain)
+```
+
+4. **Update docker-compose.yml**:
+   - Change PostgreSQL password (POSTGRES_PASSWORD)
+   - Update MinIO credentials (MINIO_ROOT_USER/PASSWORD)
+
+5. **Start all services**
+```bash
+docker-compose up -d
+```
+
+6. **Verify deployment**
+```bash
+# Check all services are running
+docker-compose ps
+
+# Test backend health
+curl http://localhost/health
+
+# View logs
+docker-compose logs -f
+```
+
+7. **Access the application**
+   - Frontend: http://localhost
+   - Backend API: http://localhost/api
+   - MinIO Console: http://localhost:9001
+
+### Services Architecture
+
+The Docker Compose stack includes:
+
+| Service | Description | Ports | Internal URL |
+|---------|-------------|-------|--------------|
+| **Frontend** | SvelteKit web UI | 3000 | http://frontend:3000 |
+| **Backend** | Rust API server | 8080 | http://backend:8080 |
+| **Nginx** | Reverse proxy & load balancer | 80 | - |
+| **PostgreSQL** | Database | 5432 | postgres:5432 |
+| **MinIO** | S3-compatible storage | 9000, 9001 | http://rustfs:9000 |
+
+All services are connected via Docker network and communicate internally using service names.
+
+### Environment Variables
+
+See `.env.example` for all available configuration options. Key variables:
+
+#### Backend Configuration
+```bash
+# Database
+DATABASE_URL=postgres://rustshare:changeme@postgres:5432/rustshare
+
+# Storage
+STORAGE_ENDPOINT=http://rustfs:9000
+STORAGE_ACCESS_KEY=rustfsadmin
+STORAGE_SECRET_KEY=rustfsadmin
+STORAGE_BUCKET=rustshare-files
+STORAGE_REGION=us-east-1
+
+# Security
+JWT_SECRET=change-this-secret-in-production
+JWT_EXPIRY_HOURS=24
+
+# Server
+SERVER_HOST=0.0.0.0
+SERVER_PORT=8080
+
+# Limits
+RATE_LIMIT_REQUESTS_PER_MINUTE=60
+DEFAULT_USER_QUOTA_GB=10
+```
+
+#### Frontend Configuration
+```bash
+# SvelteKit origin (set to your domain in production)
+ORIGIN=http://localhost:3000
+
+# API endpoints (use nginx proxy in production)
+VITE_API_URL=http://localhost/api
+VITE_WS_URL=ws://localhost/api
+```
+
+### Production Deployment Checklist
+
+Before deploying to production:
+
+- [ ] **Security**
+  - [ ] Generate strong JWT_SECRET: `openssl rand -base64 32`
+  - [ ] Update database password in docker-compose.yml and DATABASE_URL
+  - [ ] Change MinIO credentials (MINIO_ROOT_USER/PASSWORD in docker-compose.yml)
+  - [ ] Update STORAGE_ACCESS_KEY and STORAGE_SECRET_KEY to match MinIO
+  - [ ] Remove or change default admin credentials
+
+- [ ] **SSL/TLS**
+  - [ ] Set up reverse proxy with HTTPS (Caddy, Traefik, or external nginx)
+  - [ ] Configure SSL certificates (Let's Encrypt recommended)
+  - [ ] Update ORIGIN to use https://your-domain.com
+  - [ ] Update VITE_API_URL and VITE_WS_URL to use wss:// for WebSocket
+
+- [ ] **Domain & Network**
+  - [ ] Point your domain to server IP
+  - [ ] Configure firewall rules (allow 80, 443; block 5432, 9000 from public)
+  - [ ] Set up monitoring for port 80 availability
+
+- [ ] **Storage & Capacity**
+  - [ ] Adjust DEFAULT_USER_QUOTA_GB based on your storage capacity
+  - [ ] Configure volume mounts for persistent data
+  - [ ] Set up automated backups for PostgreSQL
+  - [ ] Set up automated backups for MinIO data
+
+- [ ] **Performance & Reliability**
+  - [ ] Tune RATE_LIMIT_REQUESTS_PER_MINUTE based on expected traffic
+  - [ ] Set RUST_LOG=info (disable debug logging)
+  - [ ] Configure health check monitoring
+  - [ ] Set up log aggregation (e.g., ELK stack, Loki)
+
+- [ ] **Maintenance**
+  - [ ] Document backup/restore procedures
+  - [ ] Set up automated database migrations
+  - [ ] Plan for updates and rollbacks
+  - [ ] Configure alerting for service failures
+
+### SSL/TLS Setup with Caddy (Recommended)
+
+Caddy provides automatic HTTPS with Let's Encrypt:
+
+1. **Create Caddyfile**:
+```caddy
+files.example.com {
+    reverse_proxy nginx:80
+}
+```
+
+2. **Update docker-compose.yml**:
+```yaml
+caddy:
+  image: caddy:2-alpine
+  ports:
+    - "80:80"
+    - "443:443"
+  volumes:
+    - ./Caddyfile:/etc/caddy/Caddyfile
+    - caddy_data:/data
+    - caddy_config:/config
+  depends_on:
+    - nginx
+```
+
+3. **Update environment**:
+```bash
+ORIGIN=https://files.example.com
+VITE_API_URL=https://files.example.com/api
+VITE_WS_URL=wss://files.example.com/api
+```
+
+### Backup & Restore
+
+#### Database Backup
+```bash
+# Backup
+docker-compose exec postgres pg_dump -U rustshare rustshare > backup.sql
+
+# Restore
+docker-compose exec -T postgres psql -U rustshare rustshare < backup.sql
+```
+
+#### MinIO Backup
+```bash
+# Using MinIO client (mc)
+docker run --rm -it --network rustshare_default \
+  -v $(pwd)/minio-backup:/backup \
+  minio/mc alias set myminio http://rustfs:9000 rustfsadmin rustfsadmin
+
+docker run --rm -it --network rustshare_default \
+  -v $(pwd)/minio-backup:/backup \
+  minio/mc cp --recursive myminio/rustshare-files /backup/
+```
+
+### Monitoring & Logs
+
+```bash
+# View logs for all services
+docker-compose logs -f
+
+# View specific service logs
+docker-compose logs -f backend
+docker-compose logs -f frontend
+
+# Check service health
+docker-compose ps
+
+# Restart a service
+docker-compose restart backend
+
+# Stop all services
+docker-compose down
+
+# Stop and remove volumes (WARNING: deletes all data)
+docker-compose down -v
+```
+
+### Troubleshooting
+
+**Backend won't start:**
+- Check DATABASE_URL is correct
+- Verify PostgreSQL is running: `docker-compose ps postgres`
+- Check backend logs: `docker-compose logs backend`
+
+**Frontend can't connect to backend:**
+- Verify VITE_API_URL matches your nginx configuration
+- Check nginx is running: `docker-compose ps nginx`
+- Test backend directly: `curl http://localhost:8080/health`
+
+**Storage errors:**
+- Verify MinIO is running: `docker-compose ps rustfs`
+- Check MinIO credentials match between docker-compose.yml and .env
+- Access MinIO console: http://localhost:9001
+
+**WebSocket connection fails:**
+- Check VITE_WS_URL protocol (ws:// or wss://)
+- Verify nginx websocket proxy configuration
+- Check browser console for connection errors
+
+### Scaling & Performance
+
+For high-traffic deployments:
+
+1. **Database optimization**:
+   - Use connection pooling (already configured in backend)
+   - Enable PostgreSQL query caching
+   - Add read replicas for read-heavy workloads
+
+2. **Storage optimization**:
+   - Use AWS S3 instead of MinIO for better scalability
+   - Enable CloudFront CDN for static assets
+   - Configure S3 lifecycle policies for old versions
+
+3. **Application scaling**:
+   - Run multiple backend instances with load balancing
+   - Use Redis for session storage and caching
+   - Enable nginx caching for static content
+
+4. **Monitoring**:
+   - Set up Prometheus metrics collection
+   - Use Grafana for visualization
+   - Configure alerting for critical metrics
+
 ## 🚢 Deployment
 
 ### Production Configuration
@@ -526,14 +799,14 @@ cargo audit
 5. **Rate limiting**: Tune based on expected traffic
 6. **Monitoring**: Set up logging and health check monitoring
 
-### Docker Production Deployment
+### Manual Docker Build
 
 ```bash
 # Build production image
 docker build -f docker/backend.Dockerfile -t rustshare:latest .
 
 # Run with production compose file
-docker-compose -f docker-compose.yml up -d
+docker-compose up -d
 
 # Check logs
 docker-compose logs -f backend
