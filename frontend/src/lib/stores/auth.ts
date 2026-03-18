@@ -11,17 +11,21 @@ interface AuthState {
 }
 
 function createAuthStore() {
-  const initialToken = getStoredToken();
+  let initialToken: string | null = null;
   let initialUser: User | null = null;
   let initialIsAuthenticated = false;
 
-  if (initialToken && !isTokenExpired(initialToken)) {
-    initialUser = decodeJWT(initialToken);
-    initialIsAuthenticated = initialUser !== null;
-  } else if (initialToken) {
-    // Token expired, clear it
-    if (typeof window !== 'undefined') {
+  // Only initialize from localStorage in browser
+  if (typeof window !== 'undefined') {
+    initialToken = getStoredToken();
+
+    if (initialToken && !isTokenExpired(initialToken)) {
+      initialUser = decodeJWT(initialToken);
+      initialIsAuthenticated = initialUser !== null;
+    } else if (initialToken) {
+      // Token expired, clear it
       localStorage.removeItem('token');
+      initialToken = null;  // Important: clear the variable too
     }
   }
 
