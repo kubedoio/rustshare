@@ -14,7 +14,8 @@ use std::sync::Arc;
 
 use crate::domain::{File, FileVersion, Folder, FolderId, UserId};
 use crate::events::{
-    AggregateType, Event, EventType, FileModifiedPayload, FileRestoredPayload, FileUploadedPayload,
+    AggregateType, Event, EventBroadcaster, EventType, FileModifiedPayload, FileRestoredPayload,
+    FileUploadedPayload,
 };
 use crate::services::FileError;
 
@@ -24,7 +25,7 @@ use crate::services::FileError;
 #[allow(async_fn_in_trait)]
 pub trait EventStoreOps: Send + Sync {
     /// Append an event to the event store.
-    async fn append(&self, event: &Event) -> Result<()>;
+    async fn append(&self, event: &Event, broadcaster: &EventBroadcaster) -> Result<()>;
 }
 
 /// Trait for metadata store operations needed by FileService.
@@ -102,6 +103,7 @@ where
     event_store: Arc<E>,
     metadata_store: Arc<M>,
     object_store: Arc<O>,
+    broadcaster: Arc<EventBroadcaster>,
 }
 
 impl<E, M, O> FileService<E, M, O>
@@ -111,11 +113,12 @@ where
     O: ObjectStoreOps,
 {
     /// Create a new FileService with the given stores.
-    pub fn new(event_store: Arc<E>, metadata_store: Arc<M>, object_store: Arc<O>) -> Self {
+    pub fn new(event_store: Arc<E>, metadata_store: Arc<M>, object_store: Arc<O>, broadcaster: Arc<EventBroadcaster>) -> Self {
         Self {
             event_store,
             metadata_store,
             object_store,
+            broadcaster,
         }
     }
 
@@ -231,7 +234,7 @@ where
         );
 
         self.event_store
-            .append(&event)
+            .append(&event, &self.broadcaster)
             .await
             .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
 
@@ -434,7 +437,7 @@ where
         );
 
         self.event_store
-            .append(&event)
+            .append(&event, &self.broadcaster)
             .await
             .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
 
@@ -571,7 +574,7 @@ where
         );
 
         self.event_store
-            .append(&event)
+            .append(&event, &self.broadcaster)
             .await
             .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
 
