@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createQuery, createMutation } from '@tanstack/svelte-query';
   import { getFolderContents, createFolder, renameFolder, deleteFolder } from '$lib/api/folders';
-  import { downloadFile, uploadFile } from '$lib/api/files';
+  import { downloadFile, uploadFile, renameFile, deleteFile } from '$lib/api/files';
   import { queryClient } from '$lib/query-client';
   import FileGrid from '$lib/components/files/FileGrid.svelte';
   import UploadButton from '$lib/components/files/UploadButton.svelte';
@@ -98,6 +98,44 @@
     onError: (error) => {
       showNotification(
         error instanceof Error ? error.message : 'Failed to delete folder',
+        'error'
+      );
+    }
+  });
+
+  // Rename file mutation
+  const renameFileMutation = createMutation({
+    mutationFn: async ({ fileId, newName }: { fileId: string; newName: string }) => {
+      return renameFile(fileId, newName);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+      showRenameModal = false;
+      renameTarget = null;
+      showNotification('File renamed successfully', 'success');
+    },
+    onError: (error) => {
+      showNotification(
+        error instanceof Error ? error.message : 'Failed to rename file',
+        'error'
+      );
+    }
+  });
+
+  // Delete file mutation
+  const deleteFileMutation = createMutation({
+    mutationFn: async (fileId: string) => {
+      return deleteFile(fileId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+      showDeleteModal = false;
+      deleteTarget = null;
+      showNotification('File deleted successfully', 'success');
+    },
+    onError: (error) => {
+      showNotification(
+        error instanceof Error ? error.message : 'Failed to delete file',
         'error'
       );
     }
@@ -251,10 +289,10 @@
         newName: event.detail.newName
       });
     } else {
-      // TODO: Implement file rename when file API is ready
-      showNotification('File rename not yet implemented', 'info');
-      showRenameModal = false;
-      renameTarget = null;
+      $renameFileMutation.mutate({
+        fileId: renameTarget.item.id,
+        newName: event.detail.newName
+      });
     }
   }
 
@@ -274,10 +312,7 @@
     if (deleteTarget.isFolder) {
       $deleteFolderMutation.mutate(deleteTarget.item.id);
     } else {
-      // TODO: Implement file delete when file API is ready
-      showNotification('File delete not yet implemented', 'info');
-      showDeleteModal = false;
-      deleteTarget = null;
+      $deleteFileMutation.mutate(deleteTarget.item.id);
     }
   }
 
@@ -353,7 +388,7 @@
 
 <RenameModal
   open={showRenameModal}
-  loading={$renameFolderMutation.isPending}
+  loading={renameTarget?.isFolder ? $renameFolderMutation.isPending : $renameFileMutation.isPending}
   itemName={renameTarget?.item.name || ''}
   itemType={renameTarget?.isFolder ? 'folder' : 'file'}
   on:close={() => {
@@ -365,7 +400,7 @@
 
 <DeleteConfirmation
   open={showDeleteModal}
-  loading={$deleteFolderMutation.isPending}
+  loading={deleteTarget?.isFolder ? $deleteFolderMutation.isPending : $deleteFileMutation.isPending}
   itemName={deleteTarget?.item.name || ''}
   itemType={deleteTarget?.isFolder ? 'folder' : 'file'}
   on:close={() => {
