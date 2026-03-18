@@ -7,6 +7,7 @@
   import { getWebSocketClient, disconnectWebSocket } from '$lib/websocket/client';
   import type { WebSocketEvent } from '$lib/websocket/client';
   import FileGrid from '$lib/components/files/FileGrid.svelte';
+  import FileGridSkeleton from '$lib/components/files/FileGridSkeleton.svelte';
   import UploadButton from '$lib/components/files/UploadButton.svelte';
   import UploadProgress from '$lib/components/files/UploadProgress.svelte';
   import DropZone from '$lib/components/files/DropZone.svelte';
@@ -427,11 +428,12 @@
     </div>
 
     {#if $filesQuery.isLoading}
-      <div class="flex justify-center py-12">
-        <span class="loading loading-spinner loading-lg"></span>
-      </div>
+      <FileGridSkeleton count={8} />
     {:else if $filesQuery.isError}
       <div class="alert alert-error">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
         <span>Failed to load files: {$filesQuery.error?.message}</span>
       </div>
     {:else if $filesQuery.data}
