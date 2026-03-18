@@ -561,6 +561,7 @@ impl MetadataStore {
                 expires_at: row.try_get("expires_at")?,
                 access_count: row.try_get("access_count")?,
                 created_at: row.try_get("created_at")?,
+                revoked_at: row.try_get("revoked_at")?,
             };
             Ok(Some(share))
         } else {
@@ -599,6 +600,7 @@ impl MetadataStore {
                 expires_at: row.try_get("expires_at")?,
                 access_count: row.try_get("access_count")?,
                 created_at: row.try_get("created_at")?,
+                revoked_at: row.try_get("revoked_at")?,
             };
             Ok(Some(share))
         } else {
@@ -639,6 +641,7 @@ impl MetadataStore {
                 expires_at: row.try_get("expires_at")?,
                 access_count: row.try_get("access_count")?,
                 created_at: row.try_get("created_at")?,
+                revoked_at: row.try_get("revoked_at")?,
             };
             shares.push(share);
         }
