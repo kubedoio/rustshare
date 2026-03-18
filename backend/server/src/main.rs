@@ -1,3 +1,42 @@
+//! RustShare Server
+//!
+//! # Reverse Proxy Support
+//!
+//! The server supports deployment behind reverse proxies (nginx, Cloudflare, AWS ALB, etc.).
+//! Rate limiting automatically extracts real client IPs from standard proxy headers:
+//!
+//! - **X-Forwarded-For**: Takes leftmost non-private IP (most common)
+//! - **X-Real-IP**: Used by nginx and Cloudflare
+//! - **Forwarded**: RFC 7239 standard header
+//! - **Direct connection**: Falls back to ConnectInfo when no proxy headers present
+//!
+//! ## Security
+//!
+//! - Private/loopback IPs in headers are rejected (prevents spoofing)
+//! - Header values are validated and sanitized
+//! - IP extraction source is logged for debugging
+//!
+//! ## Proxy Configuration Examples
+//!
+//! ### nginx
+//! ```nginx
+//! location / {
+//!     proxy_pass http://localhost:8080;
+//!     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+//!     proxy_set_header X-Real-IP $remote_addr;
+//!     proxy_set_header Host $host;
+//! }
+//! ```
+//!
+//! ### Cloudflare
+//! - X-Forwarded-For is automatically set by Cloudflare
+//! - No additional configuration required
+//!
+//! ### AWS Application Load Balancer
+//! - X-Forwarded-For is automatically set
+//! - Ensure target group health checks are configured
+//!
+
 mod handlers;
 mod middleware;
 

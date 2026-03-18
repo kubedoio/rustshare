@@ -1,10 +1,11 @@
 use axum::{
     extract::{ConnectInfo, Request, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     Json,
 };
+use super::client_ip::extract_client_ip;
 use governor::{
     clock::DefaultClock,
     state::keyed::DashMapStateStore,
@@ -60,14 +61,25 @@ impl Default for RateLimitConfig {
 /// - GET /api/public/share/:token/file: 10 req/min per IP
 /// - Authenticated share endpoints: 100 req/min per IP
 ///
+/// Supports reverse proxy deployments:
+/// - Checks X-Forwarded-For, X-Real-IP, and Forwarded headers
+/// - Falls back to direct connection IP when no proxy headers present
+/// - Validates and rejects private/loopback IPs from headers (prevents spoofing)
+///
 /// Returns 429 Too Many Requests when limit is exceeded.
 pub async fn rate_limit_middleware(
     State(state): State<crate::AppState>,
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
     request: Request,
     next: Next,
 ) -> Response {
-    let client_ip = addr.ip();
+    // Extract real client IP (handles proxy headers)
+    let client_ip = extract_client_ip(&headers, Some(&ConnectInfo(addr)))
+        .unwrap_or_else(|| {
+            tracing::warn!("Could not extract client IP, using fallback");
+            addr.ip()
+        });
     let path = request.uri().path();
 
     // Determine which rate limiter to use based on path
