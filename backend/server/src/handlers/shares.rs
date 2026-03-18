@@ -9,13 +9,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use rustshare_core::{
-    domain::SharePermissions,
-    services::ShareError,
-};
+use rustshare_core::domain::SharePermissions;
 
 use crate::AppState;
-use super::AuthenticatedUser;
+use super::{AuthenticatedUser, share_error_response};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateShareRequest {
@@ -97,27 +94,10 @@ pub async fn list_file_shares(
     Ok(Json(response).into_response())
 }
 
-fn share_error_response(err: ShareError) -> Response {
-    let (status, message) = match err {
-        ShareError::NotFound => (StatusCode::NOT_FOUND, err.to_string()),
-        ShareError::NotFoundById(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        ShareError::PermissionDenied { .. } => (StatusCode::FORBIDDEN, err.to_string()),
-        ShareError::FileNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        ShareError::Revoked => (StatusCode::GONE, err.to_string()),
-        ShareError::Expired => (StatusCode::GONE, err.to_string()),
-        ShareError::PasswordRequired => (StatusCode::UNAUTHORIZED, err.to_string()),
-        ShareError::InvalidPassword => (StatusCode::UNAUTHORIZED, err.to_string()),
-        ShareError::Database(_) | ShareError::PasswordHash(_) | ShareError::Jwt(_) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
-        }
-    };
-
-    (status, Json(serde_json::json!({"error": message}))).into_response()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustshare_core::services::ShareError;
 
     // Note: Full integration tests require axum_test which is not yet configured.
     // These tests verify that the handler functions are correctly typed and compile.

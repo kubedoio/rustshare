@@ -21,7 +21,7 @@ pub use shares::{create_share, list_file_shares};
 pub use sync::sync_handler;
 
 use axum::{http::StatusCode, response::{IntoResponse, Response}, Json};
-use rustshare_core::services::{FileError, FolderError};
+use rustshare_core::services::{FileError, FolderError, ShareError};
 use serde::Serialize;
 
 /// Standard error response format.
@@ -77,6 +77,25 @@ pub fn folder_error_response(err: FolderError) -> Response {
         FolderError::InvalidName(_) => (StatusCode::BAD_REQUEST, err.to_string()),
         FolderError::CannotDeleteRoot(_) => (StatusCode::BAD_REQUEST, err.to_string()),
         FolderError::Database(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
+        }
+    };
+
+    (status, Json(ErrorResponse::new(message))).into_response()
+}
+
+/// Map ShareError to HTTP response.
+pub fn share_error_response(err: ShareError) -> Response {
+    let (status, message) = match err {
+        ShareError::NotFound => (StatusCode::NOT_FOUND, err.to_string()),
+        ShareError::NotFoundById(_) => (StatusCode::NOT_FOUND, err.to_string()),
+        ShareError::PermissionDenied { .. } => (StatusCode::FORBIDDEN, err.to_string()),
+        ShareError::FileNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
+        ShareError::Revoked => (StatusCode::GONE, err.to_string()),
+        ShareError::Expired => (StatusCode::GONE, err.to_string()),
+        ShareError::PasswordRequired => (StatusCode::UNAUTHORIZED, err.to_string()),
+        ShareError::InvalidPassword => (StatusCode::UNAUTHORIZED, err.to_string()),
+        ShareError::Database(_) | ShareError::PasswordHash(_) | ShareError::Jwt(_) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
         }
     };
