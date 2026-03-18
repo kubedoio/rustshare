@@ -11,6 +11,7 @@
     rename: { item: File | Folder; isFolder: boolean };
     delete: { item: File | Folder; isFolder: boolean };
     share: { item: File };
+    versionHistory: { item: File };
   }>();
 
   const icon = isFolder ? '📁' : getMimeTypeIcon((item as File).mime_type || '');
@@ -29,6 +30,12 @@
     e.stopPropagation();
     showMenu = false;
     dispatch('share', { item: item as File });
+  }
+
+  function handleVersionHistory(e: Event) {
+    e.stopPropagation();
+    showMenu = false;
+    dispatch('versionHistory', { item: item as File });
   }
 
   function handleDelete(e: Event) {
@@ -126,6 +133,25 @@
                     />
                   </svg>
                   Share
+                </button>
+              </li>
+              <li>
+                <button type="button" on:click={handleVersionHistory}>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke-width="1.5"
+                    stroke="currentColor"
+                    class="w-4 h-4"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  Version History
                 </button>
               </li>
             {/if}

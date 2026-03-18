@@ -46,5 +46,5 @@ export async function restoreFileVersion(
   fileId: string,
   versionNumber: number
 ): Promise<void> {
-  return apiClient.post<void>(`/files/${fileId}/restore`, { version_number: versionNumber });
+  return apiClient.post<void>(`/files/${fileId}/restore`, { version: versionNumber });
 }

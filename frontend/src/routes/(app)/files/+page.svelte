@@ -12,6 +12,7 @@
   import DeleteConfirmation from '$lib/components/modals/DeleteConfirmation.svelte';
   import ShareModal from '$lib/components/modals/ShareModal.svelte';
   import CreateFolderModal from '$lib/components/modals/CreateFolderModal.svelte';
+  import VersionHistoryModal from '$lib/components/modals/VersionHistoryModal.svelte';
   import Breadcrumbs from '$lib/components/layout/Breadcrumbs.svelte';
   import type { File, Folder } from '$lib/api/types';
   import type { UploadTask } from '$lib/components/files/UploadProgress.svelte';
@@ -30,11 +31,13 @@
   let showDeleteModal = false;
   let showShareModal = false;
   let showCreateFolderModal = false;
+  let showVersionHistoryModal = false;
   let renameTarget: File | Folder | null = null;
   let renameType: 'file' | 'folder' = 'file';
   let deleteTarget: File | Folder | null = null;
   let deleteType: 'file' | 'folder' = 'file';
   let shareTarget: File | null = null;
+  let versionHistoryTarget: File | null = null;
 
   // Query for folder contents (or root contents if at root)
   const filesQuery = createQuery({
@@ -308,6 +311,17 @@
     showShareModal = true;
   }
 
+  function handleVersionHistory(file: File) {
+    versionHistoryTarget = file;
+    showVersionHistoryModal = true;
+  }
+
+  function handleVersionRestored() {
+    // Refresh the file list after version restore
+    queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+    showNotification('File version restored successfully', 'success');
+  }
+
   function handleDeleteConfirm() {
     if (!deleteTarget) return;
 
@@ -386,6 +400,7 @@
         onRenameFile={handleRenameFile}
         onDeleteFile={handleDeleteFile}
         onShareFile={handleShareFile}
+        onVersionHistory={handleVersionHistory}
       />
     {/if}
   </div>
@@ -437,6 +452,17 @@
     shareTarget = null;
   }}
   on:notification={(e) => showNotification(e.detail.message, e.detail.type)}
+/>
+
+<VersionHistoryModal
+  open={showVersionHistoryModal}
+  fileId={versionHistoryTarget?.id || ''}
+  fileName={versionHistoryTarget?.name || ''}
+  on:close={() => {
+    showVersionHistoryModal = false;
+    versionHistoryTarget = null;
+  }}
+  on:restored={handleVersionRestored}
 />
 
 <!-- Toast Notifications -->

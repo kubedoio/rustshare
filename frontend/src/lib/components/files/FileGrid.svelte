@@ -11,6 +11,7 @@
   export let onRenameFile: (file: File) => void = () => {};
   export let onDeleteFile: (file: File) => void = () => {};
   export let onShareFile: (file: File) => void = () => {};
+  export let onVersionHistory: (file: File) => void = () => {};
 </script>
 
 {#if folders.length === 0 && files.length === 0}
@@ -37,6 +38,7 @@
         on:rename={(e) => !e.detail.isFolder && onRenameFile(file)}
         on:delete={(e) => !e.detail.isFolder && onDeleteFile(file)}
         on:share={(e) => onShareFile(e.detail.item)}
+        on:versionHistory={(e) => onVersionHistory(e.detail.item)}
       />
     {/each}
   </div>
