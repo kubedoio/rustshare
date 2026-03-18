@@ -1,5 +1,6 @@
 use thiserror::Error;
 use uuid::Uuid;
+use crate::domain::UserId;
 
 /// Errors that can occur during share operations.
 #[derive(Debug, Error)]
@@ -47,6 +48,26 @@ pub enum ShareError {
     /// JWT operation failed.
     #[error("JWT error: {0}")]
     Jwt(String),
+
+    /// Recipient user email was not found.
+    #[error("Recipient {0} not found")]
+    RecipientNotFound(String),
+
+    /// User lacks required permission for this operation.
+    #[error("Insufficient permission: required {required}, but have {actual}")]
+    InsufficientPermission { required: String, actual: String },
+
+    /// Cannot share a file with oneself.
+    #[error("Cannot share a file with yourself")]
+    CannotShareWithSelf,
+
+    /// Share already exists for this recipient.
+    #[error("Share already exists for user {0}")]
+    ShareAlreadyExists(UserId),
+
+    /// Cannot remove the owner from a share.
+    #[error("Cannot remove the owner from a share")]
+    CannotRemoveOwner,
 }
 
 #[cfg(test)]
@@ -120,6 +141,46 @@ mod tests {
         let msg = "token validation failed";
         let err = ShareError::Jwt(msg.to_string());
         assert_eq!(err.to_string(), format!("JWT error: {}", msg));
+    }
+
+    #[test]
+    fn test_share_error_recipient_not_found() {
+        let email = "nonexistent@example.com";
+        let err = ShareError::RecipientNotFound(email.to_string());
+        assert_eq!(err.to_string(), format!("Recipient {} not found", email));
+    }
+
+    #[test]
+    fn test_share_error_insufficient_permission() {
+        let err = ShareError::InsufficientPermission {
+            required: "write".to_string(),
+            actual: "read".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("Insufficient permission"));
+        assert!(msg.contains("required write"));
+        assert!(msg.contains("have read"));
+    }
+
+    #[test]
+    fn test_share_error_cannot_share_with_self() {
+        let err = ShareError::CannotShareWithSelf;
+        assert_eq!(err.to_string(), "Cannot share a file with yourself");
+    }
+
+    #[test]
+    fn test_share_error_share_already_exists() {
+        let user_id = Uuid::new_v4();
+        let err = ShareError::ShareAlreadyExists(user_id);
+        let msg = err.to_string();
+        assert!(msg.contains("Share already exists for user"));
+        assert!(msg.contains(&user_id.to_string()));
+    }
+
+    #[test]
+    fn test_share_error_cannot_remove_owner() {
+        let err = ShareError::CannotRemoveOwner;
+        assert_eq!(err.to_string(), "Cannot remove the owner from a share");
     }
 
     // Note: Database error tests removed as they require sqlx::Error which cannot
