@@ -16,6 +16,7 @@
   import ShareModal from '$lib/components/modals/ShareModal.svelte';
   import CreateFolderModal from '$lib/components/modals/CreateFolderModal.svelte';
   import VersionHistoryModal from '$lib/components/modals/VersionHistoryModal.svelte';
+  import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
   import Breadcrumbs from '$lib/components/layout/Breadcrumbs.svelte';
   import type { File, Folder } from '$lib/api/types';
   import type { UploadTask } from '$lib/components/files/UploadProgress.svelte';
@@ -35,12 +36,14 @@
   let showShareModal = false;
   let showCreateFolderModal = false;
   let showVersionHistoryModal = false;
+  let showFilePreviewModal = false;
   let renameTarget: File | Folder | null = null;
   let renameType: 'file' | 'folder' = 'file';
   let deleteTarget: File | Folder | null = null;
   let deleteType: 'file' | 'folder' = 'file';
   let shareTarget: File | null = null;
   let versionHistoryTarget: File | null = null;
+  let previewTarget: File | null = null;
 
   // Query for folder contents (or root contents if at root)
   const filesQuery = createQuery({
@@ -178,13 +181,9 @@
   }
 
   async function handleFileClick(file: File) {
-    try {
-      const response = await downloadFile(file.id);
-      window.open(response.url, '_blank');
-    } catch (error) {
-      console.error('Download failed:', error);
-      showNotification('Failed to download file', 'error');
-    }
+    // Show preview modal instead of direct download
+    previewTarget = file;
+    showFilePreviewModal = true;
   }
 
   function showNotification(message: string, type: 'success' | 'error' | 'info') {
@@ -509,6 +508,15 @@
     versionHistoryTarget = null;
   }}
   on:restored={handleVersionRestored}
+/>
+
+<FilePreviewModal
+  open={showFilePreviewModal}
+  file={previewTarget}
+  on:close={() => {
+    showFilePreviewModal = false;
+    previewTarget = null;
+  }}
 />
 
 <!-- Toast Notifications -->
