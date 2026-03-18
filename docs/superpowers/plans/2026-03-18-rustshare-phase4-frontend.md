@@ -12,7 +12,14 @@
 
 ## Prerequisites
 
-Before starting frontend implementation, the backend WebSocket authentication must be modified to accept JWT tokens via query parameter instead of Authorization header (browser WebSocket API limitation).
+**Backend WebSocket Authentication Modification:**
+
+Before starting frontend implementation, the backend WebSocket authentication must be modified to accept JWT tokens via query parameter. This modification can be deferred until before Task 19 (WebSocket Client implementation), as Phases 1-3 don't require WebSocket functionality.
+
+**Recommended execution order:**
+- Complete Tasks 1-18 (foundation, file management, sharing)
+- Complete Task 0 (WebSocket auth fix)
+- Complete Tasks 19-27 (real-time, polish, deployment)
 
 ---
 
@@ -836,7 +843,9 @@ export async function getFolder(folderId: string): Promise<Folder> {
 }
 
 export async function getFolderContents(folderId: string | null): Promise<FolderContents> {
-  const endpoint = folderId ? `/folders/${folderId}/contents` : '/folders/tree';
+  // Root folder contents - backend doesn't have explicit /root endpoint, pass null to tree endpoint
+  // Backend will return root-level items
+  const endpoint = folderId ? `/folders/${folderId}/contents` : `/folders/contents`;
   return apiClient.get<FolderContents>(endpoint);
 }
 
@@ -1192,7 +1201,7 @@ Create `frontend/src/lib/components/files/FileGrid.svelte`:
 {/if}
 ```
 
-- [ ] **Step 4: Create file browser page with query**
+- [ ] **Step 4: Create file browser page with reactive query**
 
 Create `frontend/src/routes/(app)/files/+page.svelte`:
 
@@ -1206,7 +1215,8 @@ Create `frontend/src/routes/(app)/files/+page.svelte`:
 
   let currentFolderId: string | null = null;
 
-  const contentsQuery = createQuery({
+  // Reactive query key - updates when currentFolderId changes
+  $: contentsQuery = createQuery({
     queryKey: ['folder-contents', currentFolderId],
     queryFn: () => getFolderContents(currentFolderId)
   });
@@ -1350,6 +1360,8 @@ Would you like me to continue with the complete plan including all remaining tas
 
 ### Task 14: Public Share API Module
 
+**Important:** Public shares use **plural** endpoint `/api/files/:file_id/shares` (can create multiple public shares per file)
+
 **Files:**
 - Create: `frontend/src/lib/api/shares.ts`
 
@@ -1360,6 +1372,8 @@ Would you like me to continue with the complete plan including all remaining tas
 4. Commit: "feat(api): add public share operations"
 
 ### Task 15: User Share API Module
+
+**Important:** User-to-user shares use **singular** endpoint `/api/files/:id/share` (for creating) but **plural** `/api/shares/:id/permission` (for management)
 
 **Files:**
 - Create: `frontend/src/lib/api/user-shares.ts`
@@ -1428,12 +1442,13 @@ Would you like me to continue with the complete plan including all remaining tas
 
 **Steps:**
 1. Create WebSocket event type definitions
-2. Create WebSocket client with auto-reconnect
+2. Create WebSocket client with auto-reconnect and catch-up mechanism
 3. Create sync state store
 4. Implement event handlers that invalidate TanStack Query cache
-5. Connect on login, disconnect on logout
-6. Test: Connect, receive events, reconnect after disconnect
-7. Commit: "feat(websocket): add WebSocket client with auto-reconnect"
+5. Send catch-up request on reconnect: `{type: 'CatchUp', last_seen_event_id: 'uuid'}`
+6. Connect on login, disconnect on logout
+7. Test: Connect, receive events, reconnect after disconnect
+8. Commit: "feat(websocket): add WebSocket client with auto-reconnect"
 
 ### Task 20: Notifications API & UI
 
@@ -1643,11 +1658,9 @@ MVP is complete when:
 4. Finish: Use superpowers:finishing-a-development-branch
 
 **Task Execution Order:**
-- Task 0 MUST be completed first (WebSocket auth fix)
-- Tasks 1-10 build foundation (can't skip)
-- Tasks 11-13 enable file management
-- Tasks 14-18 enable sharing
-- Tasks 19-24 add real-time and polish
+- Tasks 1-18 can proceed without backend WebSocket modification
+- Task 0 (WebSocket auth fix) MUST be completed before Task 19
+- Tasks 19-24 add real-time and polish (require WebSocket)
 - Tasks 25-27 enable deployment
 - Run integration tests after all tasks complete
 
