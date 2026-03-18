@@ -193,4 +193,70 @@ impl ShareRepository {
 
         Ok(result)
     }
+
+    /// Get a share by ID (alias for find_share_by_id).
+    pub async fn get_by_id(&self, share_id: ShareId) -> Result<Option<Share>, sqlx::Error> {
+        self.find_share_by_id(share_id).await
+    }
+
+    /// Revoke a share (alias for delete_share).
+    pub async fn revoke_share(&self, share_id: ShareId) -> Result<(), sqlx::Error> {
+        self.delete_share(share_id).await
+    }
+}
+
+// Implement ShareOps trait for ShareRepository
+impl rustshare_core::services::ShareOps for ShareRepository {
+    async fn find_user_share(
+        &self,
+        file_id: Option<rustshare_core::domain::FileId>,
+        folder_id: Option<rustshare_core::domain::FolderId>,
+        recipient_user_id: rustshare_core::domain::UserId,
+    ) -> Result<Option<rustshare_core::domain::Share>, sqlx::Error> {
+        self.find_user_share(file_id, folder_id, recipient_user_id).await
+    }
+
+    async fn create_user_share(
+        &self,
+        file_id: Option<rustshare_core::domain::FileId>,
+        folder_id: Option<rustshare_core::domain::FolderId>,
+        recipient_user_id: rustshare_core::domain::UserId,
+        permissions: rustshare_core::domain::SharePermissions,
+        created_by: rustshare_core::domain::UserId,
+    ) -> Result<rustshare_core::domain::Share, sqlx::Error> {
+        self.create_user_share(file_id, folder_id, recipient_user_id, permissions, created_by).await
+    }
+
+    async fn update_share_permission(
+        &self,
+        share_id: rustshare_core::domain::ShareId,
+        new_permission: rustshare_core::domain::SharePermissions,
+    ) -> Result<rustshare_core::domain::Share, sqlx::Error> {
+        self.update_share_permission(share_id, new_permission).await
+    }
+
+    async fn get_by_id(&self, share_id: rustshare_core::domain::ShareId) -> Result<Option<rustshare_core::domain::Share>, sqlx::Error> {
+        self.get_by_id(share_id).await
+    }
+
+    async fn list_received_shares(
+        &self,
+        user_id: rustshare_core::domain::UserId,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<rustshare_core::domain::Share>, sqlx::Error> {
+        self.list_received_shares(user_id, limit, offset).await
+    }
+
+    async fn list_share_recipients(
+        &self,
+        file_id: Option<rustshare_core::domain::FileId>,
+        folder_id: Option<rustshare_core::domain::FolderId>,
+    ) -> Result<Vec<rustshare_core::domain::Share>, sqlx::Error> {
+        self.list_share_recipients(file_id, folder_id).await
+    }
+
+    async fn revoke_share(&self, share_id: rustshare_core::domain::ShareId) -> Result<(), sqlx::Error> {
+        self.revoke_share(share_id).await
+    }
 }

@@ -7,7 +7,7 @@ use super::{FolderId, UserId};
 ///
 /// Folders form a tree structure where each folder can have a parent folder.
 /// The root folder has no parent.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Folder {
     pub id: FolderId,
     pub name: String,

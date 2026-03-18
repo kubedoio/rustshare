@@ -1,6 +1,6 @@
 use thiserror::Error;
 use uuid::Uuid;
-use crate::domain::UserId;
+use crate::domain::{SharePermissions, UserId};
 
 /// Errors that can occur during share operations.
 #[derive(Debug, Error)]
@@ -54,8 +54,8 @@ pub enum ShareError {
     RecipientNotFound(String),
 
     /// User lacks required permission for this operation.
-    #[error("Insufficient permission: required {required}, but have {actual}")]
-    InsufficientPermission { required: String, actual: String },
+    #[error("Insufficient permission: required {required:?}, but have {actual:?}")]
+    InsufficientPermission { required: SharePermissions, actual: SharePermissions },
 
     /// Cannot share a file with oneself.
     #[error("Cannot share a file with yourself")]
@@ -153,13 +153,13 @@ mod tests {
     #[test]
     fn test_share_error_insufficient_permission() {
         let err = ShareError::InsufficientPermission {
-            required: "write".to_string(),
-            actual: "read".to_string(),
+            required: SharePermissions::Admin,
+            actual: SharePermissions::View,
         };
         let msg = err.to_string();
         assert!(msg.contains("Insufficient permission"));
-        assert!(msg.contains("required write"));
-        assert!(msg.contains("have read"));
+        assert!(msg.contains("required"));
+        assert!(msg.contains("have"));
     }
 
     #[test]

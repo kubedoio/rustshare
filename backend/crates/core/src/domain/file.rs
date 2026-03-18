@@ -7,7 +7,7 @@ use super::{FileId, FolderId, UserId};
 ///
 /// Files use content-addressed storage where the actual file content is stored
 /// in object storage using the content hash as the key.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct File {
     pub id: FileId,
     pub name: String,

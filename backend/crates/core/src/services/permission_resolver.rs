@@ -12,6 +12,13 @@ use std::sync::Arc;
 
 use crate::domain::{File, Folder, SharePermissions, UserId, FileId, FolderId};
 
+/// Resource type for permission checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resource {
+    File(FileId),
+    Folder(FolderId),
+}
+
 /// Cache key for permission lookups.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum CacheKey {
@@ -242,6 +249,43 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
     /// Should be called at the end of each request to ensure cache doesn't leak between requests.
     pub fn clear_cache(&mut self) {
         self.cache.clear();
+    }
+
+    /// Resolve the permission a user has on a resource (file or folder).
+    ///
+    /// Returns Some(permission) if the user has access, None otherwise.
+    /// This is a convenience method that wraps check_file_permission and check_folder_permission.
+    pub async fn resolve_permission(
+        &mut self,
+        user_id: UserId,
+        resource: Resource,
+    ) -> Result<Option<SharePermissions>> {
+        match resource {
+            Resource::File(file_id) => {
+                // Check all permission levels from highest to lowest
+                if self.check_file_permission(user_id, file_id, SharePermissions::Admin).await? {
+                    Ok(Some(SharePermissions::Admin))
+                } else if self.check_file_permission(user_id, file_id, SharePermissions::Edit).await? {
+                    Ok(Some(SharePermissions::Edit))
+                } else if self.check_file_permission(user_id, file_id, SharePermissions::View).await? {
+                    Ok(Some(SharePermissions::View))
+                } else {
+                    Ok(None)
+                }
+            }
+            Resource::Folder(folder_id) => {
+                // Check all permission levels from highest to lowest
+                if self.check_folder_permission(user_id, folder_id, SharePermissions::Admin).await? {
+                    Ok(Some(SharePermissions::Admin))
+                } else if self.check_folder_permission(user_id, folder_id, SharePermissions::Edit).await? {
+                    Ok(Some(SharePermissions::Edit))
+                } else if self.check_folder_permission(user_id, folder_id, SharePermissions::View).await? {
+                    Ok(Some(SharePermissions::View))
+                } else {
+                    Ok(None)
+                }
+            }
+        }
     }
 }
 

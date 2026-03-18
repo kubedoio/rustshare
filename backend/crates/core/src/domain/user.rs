@@ -7,7 +7,7 @@ use super::UserId;
 ///
 /// Note: The `username` field is used for login and is distinct from `email`.
 /// This allows users to have a stable login identifier separate from their email address.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct User {
     pub id: UserId,
     /// Login identifier (enhancement beyond spec)
