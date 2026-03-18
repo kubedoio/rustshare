@@ -12,10 +12,12 @@
     }
   });
 
-  // Redirect if auth state changes
-  $: if (!$isAuthenticated) {
-    goto('/login');
-  }
+  // Redirect if auth state changes using $effect
+  $effect(() => {
+    if (!$isAuthenticated) {
+      goto('/login');
+    }
+  });
 </script>
 
 {#if $isAuthenticated}
