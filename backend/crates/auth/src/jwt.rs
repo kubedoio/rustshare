@@ -135,7 +135,7 @@ mod tests {
         let claims = ShareSessionClaims::new(
             share_id,
             file_id,
-            SharePermissions::Read,
+            SharePermissions::View,
             3600,
         );
 
