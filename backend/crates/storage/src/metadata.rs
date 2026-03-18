@@ -1172,7 +1172,7 @@ mod tests {
             file.id,
             "sharetoken123".to_string(),
             owner.id,
-            SharePermissions::Read,
+            SharePermissions::View,
             Some("hashed_password".to_string()),
             None,
         );
@@ -1183,9 +1183,9 @@ mod tests {
         assert!(found_by_token.is_some());
         let found_share = found_by_token.unwrap();
         assert_eq!(found_share.id, share.id);
-        assert_eq!(found_share.share_token, "sharetoken123");
-        assert_eq!(found_share.file_id, file.id);
-        assert_eq!(found_share.permissions, SharePermissions::Read);
+        assert_eq!(found_share.share_token, Some("sharetoken123".to_string()));
+        assert_eq!(found_share.file_id, Some(file.id));
+        assert_eq!(found_share.permissions, SharePermissions::View);
         assert_eq!(found_share.password_hash, Some("hashed_password".to_string()));
         assert_eq!(found_share.access_count, 0);
 
@@ -1194,14 +1194,14 @@ mod tests {
         assert!(found_by_id.is_some());
         let found_share_by_id = found_by_id.unwrap();
         assert_eq!(found_share_by_id.id, share.id);
-        assert_eq!(found_share_by_id.share_token, "sharetoken123");
+        assert_eq!(found_share_by_id.share_token, Some("sharetoken123".to_string()));
 
         // Create a second share for the same file
         let share2 = Share::new(
             file.id,
             "sharetoken456".to_string(),
             owner.id,
-            SharePermissions::ReadWrite,
+            SharePermissions::Edit,
             None,
             None,
         );
@@ -1210,8 +1210,8 @@ mod tests {
         // Test: get_file_shares
         let file_shares = store.get_file_shares(file.id).await.unwrap();
         assert_eq!(file_shares.len(), 2);
-        assert!(file_shares.iter().any(|s| s.share_token == "sharetoken123"));
-        assert!(file_shares.iter().any(|s| s.share_token == "sharetoken456"));
+        assert!(file_shares.iter().any(|s| s.share_token == Some("sharetoken123".to_string())));
+        assert!(file_shares.iter().any(|s| s.share_token == Some("sharetoken456".to_string())));
 
         // Test: increment_share_access
         store.increment_share_access(share.id).await.unwrap();
@@ -1247,7 +1247,7 @@ mod tests {
         // After revoke, share should not appear in get_file_shares (only active shares)
         let active_shares = store.get_file_shares(file.id).await.unwrap();
         assert_eq!(active_shares.len(), 1);
-        assert!(active_shares.iter().all(|s| s.share_token == "sharetoken456"));
+        assert!(active_shares.iter().all(|s| s.share_token == Some("sharetoken456".to_string())));
 
         // But should still be retrievable by ID
         let revoked_share = store.get_share(share.id).await.unwrap();
