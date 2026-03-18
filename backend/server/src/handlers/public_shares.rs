@@ -12,7 +12,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::AppState;
+use crate::{handlers::ShareSessionAuth, AppState};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
@@ -82,17 +82,84 @@ pub async fn get_share_info(
 
 /// Download shared file (requires session JWT)
 pub async fn download_shared_file(
-    State(_state): State<AppState>,
-    Path(_token): Path<String>,
-    // TODO: Add ShareSessionAuth extractor to verify session JWT
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+    ShareSessionAuth(claims): ShareSessionAuth,
 ) -> Result<Response, Response> {
-    // For now, return not implemented
-    // This will be completed when we implement the ShareSessionAuth extractor
+    // Verify the JWT was issued for this specific share token
+    let share_id_from_token = claims.share_id;
+
+    // Get share to verify token matches
+    let share = state
+        .metadata_store
+        .get_share_by_token(&token)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Database error: {}", e)})),
+            )
+                .into_response()
+        })?
+        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::NotFound))?;
+
+    // Verify JWT share_id matches the share we're accessing
+    if share.id != share_id_from_token {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "Token is not valid for this share"})),
+        )
+            .into_response());
+    }
+
+    // Get file metadata
+    let file = state
+        .metadata_store
+        .find_file_by_id(share.file_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Database error: {}", e)})),
+            )
+                .into_response()
+        })?
+        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::FileNotFound(share.file_id)))?;
+
+    // Get file content from storage
+    let content = state
+        .object_store
+        .get(&file.storage_key())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Failed to retrieve file: {}", e)})),
+            )
+                .into_response()
+        })?;
+
+    // Increment access count and log access
+    let _ = state.metadata_store.increment_share_access(share.id).await;
+    let _ = state.metadata_store.log_share_access(
+        share.id,
+        None, // IP address - could extract from request
+        None, // User agent - could extract from request
+        "download".to_string(),
+        true,
+    ).await;
+
+    // Return file with appropriate headers
     Ok((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({"error": "File download requires ShareSessionAuth extractor"})),
+        StatusCode::OK,
+        [
+            ("Content-Type", file.mime_type.as_str()),
+            ("Content-Disposition", &format!("attachment; filename=\"{}\"", file.name)),
+            ("Content-Length", &content.len().to_string()),
+        ],
+        content,
     )
-    .into_response())
+        .into_response())
 }
 
 #[cfg(test)]

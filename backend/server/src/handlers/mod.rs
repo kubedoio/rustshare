@@ -7,7 +7,7 @@ mod public_shares;
 mod shares;
 mod sync;
 
-pub use extractors::AuthenticatedUser;
+pub use extractors::{AuthenticatedUser, ShareSessionAuth};
 pub use files::{
     upload_file, get_file, download_file, delete_file,
     update_file, get_file_versions, restore_file_version,
