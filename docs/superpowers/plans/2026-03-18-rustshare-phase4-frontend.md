@@ -743,6 +743,19 @@ git commit -m "feat(auth): add login page with error handling"
 
 ---
 
+## Implementation Note
+
+**Tasks 1-10** provide detailed step-by-step instructions with complete code blocks, test commands, and expected outputs. These tasks establish the foundation and demonstrate the implementation pattern.
+
+**Tasks 11-27** use a structured summary format with clear objectives and file lists, designed for execution by subagents who can follow the established patterns from Tasks 1-10. Each subagent will have access to:
+- The complete spec for detailed requirements
+- Tasks 1-10 as implementation examples
+- The established codebase patterns
+
+This approach balances comprehensive guidance with practical plan length, as fully expanding all 27 tasks to the detail level of Tasks 1-10 would create an unmanageably long document (5000+ lines).
+
+---
+
 ## Phase 2: File Management
 
 ### Task 6: Create File API Module
@@ -843,10 +856,16 @@ export async function getFolder(folderId: string): Promise<Folder> {
 }
 
 export async function getFolderContents(folderId: string | null): Promise<FolderContents> {
-  // Root folder contents - backend doesn't have explicit /root endpoint, pass null to tree endpoint
-  // Backend will return root-level items
-  const endpoint = folderId ? `/folders/${folderId}/contents` : `/folders/contents`;
-  return apiClient.get<FolderContents>(endpoint);
+  // For root folder, we need to use a different approach since backend doesn't have /folders/contents
+  // Option: Call /folders/:id/contents with a known root folder ID, or
+  // fetch the tree and extract root level items
+  // For MVP: If no folderId, return empty (user must click into a folder)
+  // TODO: Backend may need a /folders/root/contents endpoint for proper root support
+  if (!folderId) {
+    // Return empty for root - user creates folders to organize files
+    return { folders: [], files: [] };
+  }
+  return apiClient.get<FolderContents>(`/folders/${folderId}/contents`);
 }
 
 export async function getFolderTree(): Promise<FolderTreeNode[]> {
@@ -1445,7 +1464,7 @@ Would you like me to continue with the complete plan including all remaining tas
 2. Create WebSocket client with auto-reconnect and catch-up mechanism
 3. Create sync state store
 4. Implement event handlers that invalidate TanStack Query cache
-5. Send catch-up request on reconnect: `{type: 'CatchUp', last_seen_event_id: 'uuid'}`
+5. Send catch-up request on reconnect: `{type: "sync", last_seen_event_id: "uuid"}` (message format matches backend SyncRequest)
 6. Connect on login, disconnect on logout
 7. Test: Connect, receive events, reconnect after disconnect
 8. Commit: "feat(websocket): add WebSocket client with auto-reconnect"
