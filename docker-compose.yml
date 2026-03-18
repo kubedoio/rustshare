@@ -22,6 +22,8 @@ services:
     environment:
       MINIO_ROOT_USER: rustfsadmin
       MINIO_ROOT_PASSWORD: rustfsadmin
+      MINIO_DOMAIN: localhost
+      MINIO_SERVER_URL: http://localhost:9000
     volumes:
       - rustfs_data:/data
     ports:
@@ -44,10 +46,9 @@ services:
       DATABASE_URL: postgres://rustshare:changeme@postgres:5432/rustshare
       RUST_LOG: debug
       RUSTFS_ENDPOINT: http://rustfs:9000
-      RUSTFS_ACCESS_KEY: rustfsadmin
-      RUSTFS_SECRET_KEY: rustfsadmin
-      RUSTFS_BUCKET: rustshare-files
+      RUSTFS_PUBLIC_ENDPOINT: http://localhost:9000
       RUSTFS_REGION: us-east-1
+      RUSTFS_BUCKET: rustshare-files
       AWS_ACCESS_KEY_ID: rustfsadmin
       AWS_SECRET_ACCESS_KEY: rustfsadmin
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}

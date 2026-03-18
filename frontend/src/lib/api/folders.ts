@@ -27,8 +27,8 @@ export async function getFolder(folderId: string): Promise<Folder> {
 
 export async function getFolderContents(folderId: string | null): Promise<FolderContents> {
   if (!folderId) {
-    // Return empty for root - user creates folders to organize files
-    return { folders: [], files: [] };
+    // Get root contents
+    return apiClient.get<FolderContents>('/folders/root/contents');
   }
   return apiClient.get<FolderContents>(`/folders/${folderId}/contents`);
 }

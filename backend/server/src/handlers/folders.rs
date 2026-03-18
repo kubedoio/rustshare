@@ -85,6 +85,36 @@ pub async fn get_folder_contents(
     Ok(Json(contents))
 }
 
+/// List root contents (folders and files with no parent).
+///
+/// GET /api/folders/root/contents
+pub async fn get_root_contents(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+) -> Result<Json<FolderContents>, Response> {
+    // Get root folders (parent_folder_id = null)
+    let folders = state
+        .metadata_store
+        .list_folders(None, auth.user_id)
+        .await
+        .map_err(|_| {
+            use axum::{http::StatusCode, response::IntoResponse, Json};
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(super::ErrorResponse::new("Internal server error"))).into_response()
+        })?;
+
+    // Get root files (parent_folder_id = null)
+    let files = state
+        .metadata_store
+        .list_files(None, auth.user_id)
+        .await
+        .map_err(|_| {
+            use axum::{http::StatusCode, response::IntoResponse, Json};
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(super::ErrorResponse::new("Internal server error"))).into_response()
+        })?;
+
+    Ok(Json(FolderContents { folders, files }))
+}
+
 /// Get full folder tree (recursive).
 ///
 /// GET /api/folders/tree

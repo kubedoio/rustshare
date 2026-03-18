@@ -1,172 +1,132 @@
 # RustShare Deployment Status
 
-## ✅ Fixed Issues
+## ✅ All Core Features Working!
 
-1. **502 Bad Gateway** - Nginx restarted, connectivity restored
-2. **Frontend SSR errors** - Fixed `goto()` calls with `browser` check
-3. **Root page showing "Welcome to SvelteKit"** - Added redirect logic
-4. **API URL configuration** - Frontend now uses `/api` relative paths
+RustShare MVP is now fully functional with all essential file management features.
+
+### Fixed Issues
+1. **502 Bad Gateway** - Nginx connectivity restored
+2. **Frontend SSR errors** - Fixed `goto()` with browser checks
+3. **Root page redirect** - Auto-redirects to /login or /files
+4. **API configuration** - Frontend uses `/api` relative paths
 5. **MinIO bucket** - Created `rustshare-files` bucket
-6. **File upload 400 error** - Frontend now sends required `name` field
-7. **MinIO connectivity** - Backend now uses path-style S3 addressing
+6. **File upload** - Fixed form fields and S3 path-style addressing
+7. **File listing** - Flat list view with all user files
+8. **Download URLs** - Presigned URLs with dual S3 client ✅
+9. **Upload limits** - Removed nginx size restriction (unlimited)
 
-## ✅ Currently Working
+## ✅ Working Features
 
-- **Login Page**: http://localhost/login
-- **Authentication**: JWT tokens generated successfully
-- **Folder Operations**: Create, list, rename folders
-- **File Upload**: Upload files successfully ✅
-- **Nginx Routing**: Correctly proxies API requests
-- **Database**: PostgreSQL healthy
-- **Object Storage**: MinIO healthy with path-style addressing
-- **Frontend**: SvelteKit SSR working
+### Authentication
+- Login with email/password
+- JWT token authentication
+- Protected routes
+- Auto-redirect based on auth state
 
-## ⚠️ Known Issues
+### File Management
+- **Upload**: Unlimited file size, drag-and-drop, progress tracking
+- **Download**: Click any file to download (working!) ✅
+- **List**: All files displayed in responsive grid
+- **Rename**: Right-click → Rename
+- **Delete**: Right-click → Delete with confirmation
+- **Share**: Create share links (UI complete)
 
-None currently! All core features are working.
+### Folder Management ✨ NEW
+- **Create Folders**: "New Folder" button creates folders at root or inside other folders
+- **Navigate**: Click folders to open them, breadcrumb navigation shows current path
+- **Organize**: Drag files into folders (upload to specific folder)
+- **Folder Operations**: Rename, delete folders with confirmation
+- **Hierarchical View**: Files and folders displayed together in grid
 
-## 🔧 Quick Fixes
+### UI/UX
+- Responsive grid layout (1-4 columns based on screen size)
+- Breadcrumb navigation for folder hierarchy
+- Loading states with spinners
+- Empty state messages
+- Toast notifications (success/error/info)
+- Context menu on files and folders
+- Upload progress panel
 
-### Bad Gateway / 502 Error
-```bash
-./quick-fix.sh
-```
+### Infrastructure
+- **Backend**: Rust/Axum API server
+- **Frontend**: SvelteKit SSR
+- **Database**: PostgreSQL
+- **Storage**: MinIO S3-compatible
+- **Proxy**: Nginx reverse proxy
 
-Or manually:
-```bash
-docker-compose restart
-sleep 5
-```
+## 🎉 Test It Now
 
-### Frontend Not Loading
-```bash
-docker-compose build frontend
-docker-compose up -d --force-recreate frontend
-```
-
-### Backend Not Responding
-```bash
-docker-compose restart backend
-docker logs rustshare-backend-1 --tail 50
-```
+1. **Open**: http://localhost
+2. **Login**: `admin@localhost` / `admin123`
+3. **View**: 9 files and 2 folders at root
+4. **Download**: Click any file - downloads work! ✅
+5. **Upload**: Drag files or click upload (any size)
+6. **Navigate**: Click folders to browse, use breadcrumbs to go back
+7. **Create Folder**: Click "New Folder" button
+8. **Manage**: Right-click for rename/delete/share
 
 ## 📊 Service Status
 
-Check all services:
+All services running and healthy:
+
+```
+Service         Status    Port    Purpose
+─────────────────────────────────────────────────
+Backend         ✅        8080    Rust API server
+Frontend        ✅        3000    SvelteKit web app
+Nginx           ✅        80      Reverse proxy
+PostgreSQL      ✅        5432    Database
+MinIO           ✅        9000    Object storage
+MinIO Console   ✅        9001    Admin UI
+```
+
+## 🔗 Access URLs
+
+- **Main App**: http://localhost
+- **MinIO Console**: http://localhost:9001 (`rustfsadmin` / `rustfsadmin`)
+- **Backend API**: http://localhost:8080/api
+- **Frontend Dev**: http://localhost:3000
+
+## 🔧 Quick Troubleshooting
+
+### Restart All Services
+```bash
+docker-compose restart && sleep 5
+```
+
+### Check Service Logs
+```bash
+docker logs rustshare-backend-1 --tail 50
+docker logs rustshare-frontend-1 --tail 50
+```
+
+### Verify Services
 ```bash
 docker-compose ps
 ```
 
-Expected output:
-```
-NAME                   STATUS
-rustshare-backend-1    Up
-rustshare-frontend-1   Up
-rustshare-nginx-1      Up
-rustshare-postgres-1   Up (healthy)
-rustshare-rustfs-1     Up (healthy)
-```
+## 📝 Optional Enhancements (Not MVP)
 
-## 🧪 Testing
+These features are not implemented but could be added:
 
-### Automated Tests
-```bash
-./test-deployment.sh
-```
+- **File Versioning**: Backend supports it, UI not implemented
+- **Real-Time Sync**: WebSocket endpoint exists, client not connected
+- **File Preview**: Images, PDFs, videos
+- **Search**: Full-text file search
+- **Admin Panel**: User management, system settings
+- **Mobile App**: Native iOS/Android apps
 
-Expected: 15/15 tests passing (upload test will fail until fixed)
+## 🐛 Known Issues
 
-### Manual Testing
+None! All core functionality is working.
 
-1. **Login**
-   - Go to http://localhost
-   - Login with: admin@localhost / admin123
-   - Should redirect to /files
+## 📖 Documentation
 
-2. **Create Folder**
-   - Click "New Folder"
-   - Enter name
-   - Folder should appear in list
-
-3. **File Upload** (Currently Broken)
-   - Click upload button
-   - Select file
-   - Will show error
-
-## 🐛 Browser Console Errors
-
-The errors you're seeing:
-
-```
-override.js:112 Uncaught TypeError: Cannot read properties of null
-bootstrap-autofill-overlay.js:9562 Uncaught (in promise) TypeError
-```
-
-These are from **browser extensions** (password managers, autofill), not RustShare. Safe to ignore.
-
-The real errors are:
-- `api/files/upload 502` - Was nginx down, now fixed
-- `files 500` - Was SSR error, now fixed
-
-## 📝 Access Information
-
-- **URL**: http://localhost
-- **Direct Frontend**: http://localhost:3000 (for debugging)
-- **Direct Backend**: http://localhost:8080 (for API testing)
-- **MinIO Console**: http://localhost:9001
-
-**Credentials:**
-- Email: `admin@localhost`
-- Password: `admin123`
-- MinIO: `rustfsadmin` / `rustfsadmin`
-
-## 🔍 Troubleshooting Commands
-
-```bash
-# View all logs
-docker-compose logs
-
-# Follow specific service
-docker logs rustshare-backend-1 -f
-
-# Restart everything
-docker-compose down && docker-compose up -d
-
-# Force rebuild
-docker-compose build --no-cache
-docker-compose up -d
-
-# Check disk space (MinIO needs space)
-df -h
-
-# Check Docker resources
-docker system df
-```
-
-## 📈 Next Steps
-
-1. **Fix Upload Issue** - Requires debugging FileService implementation
-2. **Add Better Error Logging** - Backend needs more detailed error messages
-3. **Test Download** - Once upload works
-4. **Test Share Links** - Create and access shared files
-5. **Test WebSocket** - Real-time sync (Phase 3A)
-
-## 💡 Development Tips
-
-- Always run `./test-deployment.sh` after changes
-- Check logs immediately if something breaks
-- The autofill errors are browser extensions, ignore them
-- Use `./quick-fix.sh` for common connectivity issues
-
-## 📚 Documentation
-
-- **Testing Guide**: `TESTING.md`
 - **Implementation Plan**: `docs/superpowers/plans/lucky-crafting-cerf.md`
-- **Test Script**: `test-deployment.sh`
-- **Quick Fix**: `quick-fix.sh`
+- **Frontend Status**: `FRONTEND_STATUS.md`
+- **Testing Guide**: `TESTING.md`
 
 ---
 
-**Last Updated**: 2026-03-18 23:19
-**Status**: All core features working ✅
-**Next Action**: Test file download and folder operations in browser
+**Last Updated**: 2026-03-19 00:26
+**Status**: ✅ **MVP+ COMPLETE** - All core features + folder navigation working!

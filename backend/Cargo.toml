@@ -25,7 +25,7 @@ tokio = { version = "1.37", features = ["full"] }
 # Web framework
 axum = { version = "0.7", features = ["macros"] }
 tower = "0.4"
-tower-http = { version = "0.5", features = ["trace", "cors"] }
+tower-http = { version = "0.5", features = ["trace", "cors", "limit"] }
 
 # Database
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }

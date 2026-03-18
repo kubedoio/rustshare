@@ -1,42 +1,48 @@
 <script lang="ts">
   import { createQuery, createMutation } from '@tanstack/svelte-query';
+  import { listAllFiles, downloadFile, uploadFile, renameFile, deleteFile } from '$lib/api/files';
   import { getFolderContents, createFolder, renameFolder, deleteFolder } from '$lib/api/folders';
-  import { downloadFile, uploadFile, renameFile, deleteFile } from '$lib/api/files';
   import { queryClient } from '$lib/query-client';
   import FileGrid from '$lib/components/files/FileGrid.svelte';
   import UploadButton from '$lib/components/files/UploadButton.svelte';
   import UploadProgress from '$lib/components/files/UploadProgress.svelte';
   import DropZone from '$lib/components/files/DropZone.svelte';
   import Toast from '$lib/components/common/Toast.svelte';
-  import Breadcrumbs from '$lib/components/layout/Breadcrumbs.svelte';
-  import CreateFolderModal from '$lib/components/modals/CreateFolderModal.svelte';
   import RenameModal from '$lib/components/modals/RenameModal.svelte';
   import DeleteConfirmation from '$lib/components/modals/DeleteConfirmation.svelte';
   import ShareModal from '$lib/components/modals/ShareModal.svelte';
+  import CreateFolderModal from '$lib/components/modals/CreateFolderModal.svelte';
+  import Breadcrumbs from '$lib/components/layout/Breadcrumbs.svelte';
   import type { File, Folder } from '$lib/api/types';
   import type { UploadTask } from '$lib/components/files/UploadProgress.svelte';
 
-  let currentFolderId: string | null = null;
-  let currentFolder: Folder | null = null;
-  let folderPath: Folder[] = [];
   let uploadTasks: UploadTask[] = [];
   let showToast = false;
   let toastMessage = '';
   let toastType: 'success' | 'error' | 'info' = 'info';
 
+  // Current folder navigation state
+  let currentFolderId: string | null = null;
+  let folderPath: Folder[] = [];
+
   // Modal states
-  let showCreateFolderModal = false;
   let showRenameModal = false;
   let showDeleteModal = false;
   let showShareModal = false;
-  let renameTarget: { item: File | Folder; isFolder: boolean } | null = null;
-  let deleteTarget: { item: File | Folder; isFolder: boolean } | null = null;
+  let showCreateFolderModal = false;
+  let renameTarget: File | Folder | null = null;
+  let renameType: 'file' | 'folder' = 'file';
+  let deleteTarget: File | Folder | null = null;
+  let deleteType: 'file' | 'folder' = 'file';
   let shareTarget: File | null = null;
 
-  // Reactive query key - updates when currentFolderId changes
-  $: contentsQuery = createQuery({
+  // Query for folder contents (or root contents if at root)
+  const filesQuery = createQuery({
     queryKey: ['folder-contents', currentFolderId],
-    queryFn: () => getFolderContents(currentFolderId)
+    queryFn: async () => {
+      // Use getFolderContents for both root and folders
+      return getFolderContents(currentFolderId);
+    }
   });
 
   // Upload mutation
@@ -45,7 +51,6 @@
       return uploadFile(currentFolderId, file);
     },
     onSuccess: () => {
-      // Invalidate folder contents to refresh the list
       queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
     }
   });
@@ -63,44 +68,6 @@
     onError: (error) => {
       showNotification(
         error instanceof Error ? error.message : 'Failed to create folder',
-        'error'
-      );
-    }
-  });
-
-  // Rename folder mutation
-  const renameFolderMutation = createMutation({
-    mutationFn: async ({ folderId, newName }: { folderId: string; newName: string }) => {
-      return renameFolder(folderId, newName);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
-      showRenameModal = false;
-      renameTarget = null;
-      showNotification('Folder renamed successfully', 'success');
-    },
-    onError: (error) => {
-      showNotification(
-        error instanceof Error ? error.message : 'Failed to rename folder',
-        'error'
-      );
-    }
-  });
-
-  // Delete folder mutation
-  const deleteFolderMutation = createMutation({
-    mutationFn: async (folderId: string) => {
-      return deleteFolder(folderId);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
-      showDeleteModal = false;
-      deleteTarget = null;
-      showNotification('Folder deleted successfully', 'success');
-    },
-    onError: (error) => {
-      showNotification(
-        error instanceof Error ? error.message : 'Failed to delete folder',
         'error'
       );
     }
@@ -125,6 +92,25 @@
     }
   });
 
+  // Rename folder mutation
+  const renameFolderMutation = createMutation({
+    mutationFn: async ({ folderId, newName }: { folderId: string; newName: string }) => {
+      return renameFolder(folderId, newName);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+      showRenameModal = false;
+      renameTarget = null;
+      showNotification('Folder renamed successfully', 'success');
+    },
+    onError: (error) => {
+      showNotification(
+        error instanceof Error ? error.message : 'Failed to rename folder',
+        'error'
+      );
+    }
+  });
+
   // Delete file mutation
   const deleteFileMutation = createMutation({
     mutationFn: async (fileId: string) => {
@@ -144,31 +130,43 @@
     }
   });
 
-  function handleFolderClick(folder: Folder) {
-    // Update breadcrumb trail
-    if (currentFolder) {
-      folderPath = [...folderPath, currentFolder];
+  // Delete folder mutation
+  const deleteFolderMutation = createMutation({
+    mutationFn: async (folderId: string) => {
+      return deleteFolder(folderId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+      showDeleteModal = false;
+      deleteTarget = null;
+      showNotification('Folder deleted successfully', 'success');
+    },
+    onError: (error) => {
+      showNotification(
+        error instanceof Error ? error.message : 'Failed to delete folder',
+        'error'
+      );
     }
-    currentFolder = folder;
+  });
+
+  function handleFolderClick(folder: Folder) {
     currentFolderId = folder.id;
+    folderPath = [...folderPath, folder];
   }
 
   function handleBreadcrumbNavigate(event: CustomEvent<{ folderId: string | null }>) {
-    const { folderId } = event.detail;
+    const targetId = event.detail.folderId;
 
-    if (folderId === null) {
+    if (targetId === null) {
       // Navigate to root
       currentFolderId = null;
-      currentFolder = null;
       folderPath = [];
     } else {
-      // Find the folder in the path
-      const folderIndex = folderPath.findIndex((f) => f.id === folderId);
-      if (folderIndex !== -1) {
-        // Navigate to this folder
-        currentFolder = folderPath[folderIndex];
-        currentFolderId = folderId;
-        folderPath = folderPath.slice(0, folderIndex);
+      // Navigate to a folder in the path
+      const index = folderPath.findIndex(f => f.id === targetId);
+      if (index !== -1) {
+        currentFolderId = targetId;
+        folderPath = folderPath.slice(0, index + 1);
       }
     }
   }
@@ -179,6 +177,7 @@
       window.open(response.url, '_blank');
     } catch (error) {
       console.error('Download failed:', error);
+      showNotification('Failed to download file', 'error');
     }
   }
 
@@ -213,7 +212,7 @@
       uploadTasks[taskIndex] = {
         ...uploadTasks[taskIndex],
         status: 'uploading',
-        progress: 50 // Simple progress indicator
+        progress: 50
       };
       uploadTasks = [...uploadTasks];
 
@@ -264,48 +263,43 @@
     uploadTasks = [];
   }
 
-  // Folder operations handlers
-  function handleCreateFolder() {
-    showCreateFolderModal = true;
-  }
-
-  function handleCreateFolderConfirm(event: CustomEvent<{ name: string }>) {
-    $createFolderMutation.mutate(event.detail.name);
-  }
-
-  function handleRenameFolder(folder: Folder) {
-    renameTarget = { item: folder, isFolder: true };
+  function handleRenameFile(file: File) {
+    renameTarget = file;
+    renameType = 'file';
     showRenameModal = true;
   }
 
-  function handleRenameFile(file: File) {
-    renameTarget = { item: file, isFolder: false };
+  function handleRenameFolder(folder: Folder) {
+    renameTarget = folder;
+    renameType = 'folder';
     showRenameModal = true;
   }
 
   function handleRenameConfirm(event: CustomEvent<{ newName: string }>) {
     if (!renameTarget) return;
 
-    if (renameTarget.isFolder) {
-      $renameFolderMutation.mutate({
-        folderId: renameTarget.item.id,
+    if (renameType === 'file') {
+      $renameFileMutation.mutate({
+        fileId: renameTarget.id,
         newName: event.detail.newName
       });
     } else {
-      $renameFileMutation.mutate({
-        fileId: renameTarget.item.id,
+      $renameFolderMutation.mutate({
+        folderId: renameTarget.id,
         newName: event.detail.newName
       });
     }
   }
 
-  function handleDeleteFolder(folder: Folder) {
-    deleteTarget = { item: folder, isFolder: true };
+  function handleDeleteFile(file: File) {
+    deleteTarget = file;
+    deleteType = 'file';
     showDeleteModal = true;
   }
 
-  function handleDeleteFile(file: File) {
-    deleteTarget = { item: file, isFolder: false };
+  function handleDeleteFolder(folder: Folder) {
+    deleteTarget = folder;
+    deleteType = 'folder';
     showDeleteModal = true;
   }
 
@@ -317,16 +311,22 @@
   function handleDeleteConfirm() {
     if (!deleteTarget) return;
 
-    if (deleteTarget.isFolder) {
-      $deleteFolderMutation.mutate(deleteTarget.item.id);
+    if (deleteType === 'file') {
+      $deleteFileMutation.mutate(deleteTarget.id);
     } else {
-      $deleteFileMutation.mutate(deleteTarget.item.id);
+      $deleteFolderMutation.mutate(deleteTarget.id);
     }
+  }
+
+  function handleCreateFolder(event: CustomEvent<{ name: string }>) {
+    $createFolderMutation.mutate(event.detail.name);
   }
 
   $: isUploading = uploadTasks.some(
     (t) => t.status === 'uploading' || t.status === 'pending'
   );
+  $: isRenameLoading = renameType === 'file' ? $renameFileMutation.isPending : $renameFolderMutation.isPending;
+  $: isDeleteLoading = deleteType === 'file' ? $deleteFileMutation.isPending : $deleteFolderMutation.isPending;
 </script>
 
 <svelte:head>
@@ -338,40 +338,47 @@
   disabled={isUploading}
 >
   <div class="space-y-4">
-    <!-- Breadcrumbs -->
-    {#if currentFolder || folderPath.length > 0}
-      <Breadcrumbs
-        {currentFolder}
-        {folderPath}
-        on:navigate={handleBreadcrumbNavigate}
-      />
-    {/if}
+    <!-- Breadcrumb Navigation -->
+    <Breadcrumbs
+      currentFolder={folderPath[folderPath.length - 1] || null}
+      {folderPath}
+      on:navigate={handleBreadcrumbNavigate}
+    />
 
     <div class="flex items-center justify-between">
-      <h1 class="text-2xl font-bold">My Files</h1>
+      <h1 class="text-2xl font-bold">
+        {currentFolderId ? folderPath[folderPath.length - 1]?.name || 'My Files' : 'My Files'}
+      </h1>
       <div class="flex gap-2">
+        <button
+          class="btn btn-outline"
+          on:click={() => showCreateFolderModal = true}
+          disabled={isUploading}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 10.5v6m3-3H9m4.06-7.19l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+          </svg>
+          New Folder
+        </button>
         <UploadButton
           on:filesSelected={(e) => handleFilesSelected(e.detail)}
           disabled={isUploading}
         />
-        <button class="btn btn-outline" on:click={handleCreateFolder}>
-          + New Folder
-        </button>
       </div>
     </div>
 
-    {#if $contentsQuery.isLoading}
+    {#if $filesQuery.isLoading}
       <div class="flex justify-center py-12">
         <span class="loading loading-spinner loading-lg"></span>
       </div>
-    {:else if $contentsQuery.isError}
+    {:else if $filesQuery.isError}
       <div class="alert alert-error">
-        <span>Failed to load files: {$contentsQuery.error?.message}</span>
+        <span>Failed to load files: {$filesQuery.error?.message}</span>
       </div>
-    {:else if $contentsQuery.data}
+    {:else if $filesQuery.data}
       <FileGrid
-        folders={$contentsQuery.data.folders}
-        files={$contentsQuery.data.files}
+        folders={$filesQuery.data.folders}
+        files={$filesQuery.data.files}
         onFolderClick={handleFolderClick}
         onFileClick={handleFileClick}
         onRenameFolder={handleRenameFolder}
@@ -388,18 +395,11 @@
 <UploadProgress tasks={uploadTasks} onClose={handleCloseProgress} />
 
 <!-- Modals -->
-<CreateFolderModal
-  open={showCreateFolderModal}
-  loading={$createFolderMutation.isPending}
-  on:close={() => (showCreateFolderModal = false)}
-  on:confirm={handleCreateFolderConfirm}
-/>
-
 <RenameModal
   open={showRenameModal}
-  loading={renameTarget?.isFolder ? $renameFolderMutation.isPending : $renameFileMutation.isPending}
-  itemName={renameTarget?.item.name || ''}
-  itemType={renameTarget?.isFolder ? 'folder' : 'file'}
+  loading={isRenameLoading}
+  itemName={renameTarget?.name || ''}
+  itemType={renameType}
   on:close={() => {
     showRenameModal = false;
     renameTarget = null;
@@ -409,14 +409,23 @@
 
 <DeleteConfirmation
   open={showDeleteModal}
-  loading={deleteTarget?.isFolder ? $deleteFolderMutation.isPending : $deleteFileMutation.isPending}
-  itemName={deleteTarget?.item.name || ''}
-  itemType={deleteTarget?.isFolder ? 'folder' : 'file'}
+  loading={isDeleteLoading}
+  itemName={deleteTarget?.name || ''}
+  itemType={deleteType}
   on:close={() => {
     showDeleteModal = false;
     deleteTarget = null;
   }}
   on:confirm={handleDeleteConfirm}
+/>
+
+<CreateFolderModal
+  open={showCreateFolderModal}
+  loading={$createFolderMutation.isPending}
+  on:close={() => {
+    showCreateFolderModal = false;
+  }}
+  on:confirm={handleCreateFolder}
 />
 
 <ShareModal

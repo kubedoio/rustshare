@@ -1,6 +1,10 @@
 import { apiClient } from './client';
 import type { File, FileVersion } from './types';
 
+export async function listAllFiles(): Promise<File[]> {
+  return apiClient.get<File[]>('/files');
+}
+
 export async function uploadFile(folderId: string | null, file: globalThis.File): Promise<File> {
   const formData = new FormData();
   formData.append('file', file);

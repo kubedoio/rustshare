@@ -228,6 +228,7 @@ async fn main() -> Result<()> {
         // Auth
         .route("/api/auth/login", post(login))
         // File routes (Task 15-19)
+        .route("/api/files", get(handlers::list_files))
         .route("/api/files/upload", post(handlers::upload_file))
         .route("/api/files/:id", get(handlers::get_file))
         .route("/api/files/:id", put(handlers::update_file))
@@ -238,13 +239,15 @@ async fn main() -> Result<()> {
         .route("/api/files/:id/move", post(handlers::move_file))
         .route("/api/files/:id/rename", post(handlers::rename_file))
         // Folder routes (Task 20-22)
+        // NOTE: More specific routes (with literal path segments) must come BEFORE parameterized routes
         .route("/api/folders", post(handlers::create_folder))
-        .route("/api/folders/:id", get(handlers::get_folder))
-        .route("/api/folders/:id", delete(handlers::delete_folder))
-        .route("/api/folders/:id/contents", get(handlers::get_folder_contents))
+        .route("/api/folders/root/contents", get(handlers::get_root_contents))
         .route("/api/folders/tree", get(handlers::get_folder_tree))
+        .route("/api/folders/:id/contents", get(handlers::get_folder_contents))
         .route("/api/folders/:id/move", post(handlers::move_folder))
         .route("/api/folders/:id/rename", post(handlers::rename_folder))
+        .route("/api/folders/:id", get(handlers::get_folder))
+        .route("/api/folders/:id", delete(handlers::delete_folder))
         // Share routes (Task 9)
         .route("/api/files/:file_id/shares", post(handlers::create_share))
         .route("/api/files/:file_id/shares", get(handlers::list_file_shares))
@@ -267,6 +270,8 @@ async fn main() -> Result<()> {
         // WebSocket sync endpoint (Task Phase 3A)
         .route("/api/sync", get(handlers::sync_handler))
         .with_state(state.clone())
+        // Increase body size limit for file uploads (100MB)
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(100 * 1024 * 1024))
         // Apply rate limiting middleware after state is set
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

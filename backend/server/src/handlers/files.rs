@@ -322,3 +322,36 @@ pub async fn rename_file(
 pub struct RenameFileRequest {
     pub new_name: String,
 }
+
+// ============================================================================
+// List All User Files (Simple View)
+// ============================================================================
+
+/// List all files for the current user.
+///
+/// GET /api/files
+///
+/// Returns a simple flat list of all files owned by the user.
+pub async fn list_files(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+) -> Result<Json<Vec<File>>, Response> {
+    // Query all files for this user from database
+    let files = sqlx::query_as::<_, File>(
+        r#"
+        SELECT
+            id, name, path, content_hash, size, mime_type,
+            parent_folder_id, owner_id, current_version,
+            created_at, modified_at
+        FROM files
+        WHERE owner_id = $1
+        ORDER BY created_at DESC
+        "#
+    )
+    .bind(auth.user_id)
+    .fetch_all(&state.db_pool)
+    .await
+    .map_err(|e| file_error_response(FileError::Storage(format!("Failed to list files: {}", e))))?;
+
+    Ok(Json(files))
+}

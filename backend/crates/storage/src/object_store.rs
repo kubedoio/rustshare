@@ -6,13 +6,20 @@ use bytes::Bytes;
 pub struct ObjectStore {
     client: S3Client,
     bucket: String,
+    public_endpoint: Option<S3Client>,
 }
 
 impl ObjectStore {
     /// Create new object store
     pub async fn new(endpoint: String, region: String, bucket: String) -> Result<Self> {
+        // Check if there's a public endpoint for presigned URLs
+        let public_endpoint = std::env::var("RUSTFS_PUBLIC_ENDPOINT").ok();
+
+        // Use public endpoint for presigned URLs if configured
+        let presign_endpoint = public_endpoint.clone().unwrap_or_else(|| endpoint.clone());
+
         let config = aws_config::from_env()
-            .endpoint_url(endpoint)
+            .endpoint_url(&endpoint)
             .region(aws_config::Region::new(region))
             .load()
             .await;
@@ -24,7 +31,24 @@ impl ObjectStore {
 
         let client = S3Client::from_conf(s3_config);
 
-        Ok(Self { client, bucket })
+        // Create a second client for presigned URLs with public endpoint
+        let presign_config = aws_config::from_env()
+            .endpoint_url(&presign_endpoint)
+            .region(aws_config::Region::new(config.region().unwrap().to_string()))
+            .load()
+            .await;
+
+        let presign_s3_config = aws_sdk_s3::config::Builder::from(&presign_config)
+            .force_path_style(true)
+            .build();
+
+        let presign_client = S3Client::from_conf(presign_s3_config);
+
+        Ok(Self {
+            client,
+            bucket,
+            public_endpoint: Some(presign_client)
+        })
     }
 
     /// Put object in storage
@@ -88,7 +112,10 @@ impl ObjectStore {
             .expires_in(Duration::from_secs(expires_in_secs))
             .build()?;
 
-        let presigned_request = self.client
+        // Use the presign client if available (with public endpoint)
+        let client = self.public_endpoint.as_ref().unwrap_or(&self.client);
+
+        let presigned_request = client
             .get_object()
             .bucket(&self.bucket)
             .key(key)

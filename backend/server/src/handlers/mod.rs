@@ -13,11 +13,11 @@ pub use extractors::{AuthenticatedUser, ShareSessionAuth};
 pub use files::{
     upload_file, get_file, download_file, delete_file,
     update_file, get_file_versions, restore_file_version,
-    move_file, rename_file,
+    move_file, rename_file, list_files,
 };
 pub use folders::{
     create_folder, get_folder, delete_folder,
-    get_folder_contents, get_folder_tree,
+    get_folder_contents, get_root_contents, get_folder_tree,
     move_folder, rename_folder,
 };
 pub use notifications::{
@@ -26,11 +26,6 @@ pub use notifications::{
 pub use public_shares::{create_session, get_share_info, download_shared_file};
 pub use shares::{create_share, list_file_shares};
 pub use sync::sync_handler;
-pub use user_shares::{
-    create_file_share, create_folder_share, list_received_shares,
-    list_file_recipients, list_folder_recipients,
-    update_recipient_permission, remove_recipient,
-};
 
 use axum::{http::StatusCode, response::{IntoResponse, Response}, Json};
 use rustshare_core::services::{FileError, FolderError, ShareError};
