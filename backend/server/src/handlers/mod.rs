@@ -3,6 +3,7 @@
 mod extractors;
 mod files;
 mod folders;
+mod sync;
 
 pub use extractors::AuthenticatedUser;
 pub use files::{
@@ -15,6 +16,7 @@ pub use folders::{
     get_folder_contents, get_folder_tree,
     move_folder, rename_folder,
 };
+pub use sync::sync_handler;
 
 use axum::{http::StatusCode, response::{IntoResponse, Response}, Json};
 use rustshare_core::services::{FileError, FolderError};
