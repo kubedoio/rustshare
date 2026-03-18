@@ -167,6 +167,10 @@ async fn main() -> Result<()> {
         // Share routes (Task 9)
         .route("/api/files/:file_id/shares", post(handlers::create_share))
         .route("/api/files/:file_id/shares", get(handlers::list_file_shares))
+        // Public share routes (Task 10 - no authentication required for session creation and info)
+        .route("/api/public/share/:token/session", post(handlers::create_session))
+        .route("/api/public/share/:token/info", get(handlers::get_share_info))
+        .route("/api/public/share/:token/file", get(handlers::download_shared_file))
         // WebSocket sync endpoint (Task Phase 3A)
         .route("/api/sync", get(handlers::sync_handler))
         // Tracing
