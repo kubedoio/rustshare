@@ -28,6 +28,8 @@ tracing-subscriber.workspace = true
 bytes.workspace = true
 futures-util = "0.3"
 dotenv = "0.15"
+governor = "0.6"
+nonzero_ext = "0.3"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"

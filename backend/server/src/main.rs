@@ -1,4 +1,5 @@
 mod handlers;
+mod middleware;
 
 use anyhow::Result;
 use axum::{
@@ -30,6 +31,7 @@ pub struct AppState {
     pub file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore>>,
     pub folder_service: Arc<FolderService<EventStore, MetadataStore>>,
     pub share_service: Arc<ShareService<EventStore, MetadataStore, JwtManager>>,
+    pub rate_limit_config: Arc<middleware::RateLimitConfig>,
 }
 
 #[tokio::main]
@@ -106,6 +108,11 @@ async fn main() -> Result<()> {
         Arc::clone(&jwt_manager),
     ));
 
+    // Initialize rate limiting configuration
+    let rate_limit_config = Arc::new(middleware::RateLimitConfig::new());
+
+    info!("Rate limiting initialized");
+
     // Bootstrap admin user if no users exist
     if !metadata_store.has_users().await? {
         let admin_username = std::env::var("RUSTSHARE_ADMIN_USERNAME")?;
@@ -138,6 +145,7 @@ async fn main() -> Result<()> {
         file_service,
         folder_service,
         share_service,
+        rate_limit_config,
     };
 
     // Build router
@@ -173,9 +181,14 @@ async fn main() -> Result<()> {
         .route("/api/public/share/:token/file", get(handlers::download_shared_file))
         // WebSocket sync endpoint (Task Phase 3A)
         .route("/api/sync", get(handlers::sync_handler))
+        .with_state(state.clone())
+        // Apply rate limiting middleware after state is set
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::rate_limit_middleware,
+        ))
         // Tracing
-        .layer(TraceLayer::new_for_http())
-        .with_state(state);
+        .layer(TraceLayer::new_for_http());
 
     // Start server
     let host = std::env::var("SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
@@ -185,7 +198,11 @@ async fn main() -> Result<()> {
     info!("Server listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
