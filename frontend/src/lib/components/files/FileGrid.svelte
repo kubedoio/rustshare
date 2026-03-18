@@ -6,6 +6,10 @@
   export let files: File[] = [];
   export let onFolderClick: (folder: Folder) => void;
   export let onFileClick: (file: File) => void;
+  export let onRenameFolder: (folder: Folder) => void = () => {};
+  export let onDeleteFolder: (folder: Folder) => void = () => {};
+  export let onRenameFile: (file: File) => void = () => {};
+  export let onDeleteFile: (file: File) => void = () => {};
 </script>
 
 {#if folders.length === 0 && files.length === 0}
@@ -19,6 +23,8 @@
         item={folder}
         isFolder={true}
         onSelect={() => onFolderClick(folder)}
+        on:rename={(e) => e.detail.isFolder && onRenameFolder(folder)}
+        on:delete={(e) => e.detail.isFolder && onDeleteFolder(folder)}
       />
     {/each}
 
@@ -27,6 +33,8 @@
         item={file}
         isFolder={false}
         onSelect={() => onFileClick(file)}
+        on:rename={(e) => !e.detail.isFolder && onRenameFile(file)}
+        on:delete={(e) => !e.detail.isFolder && onDeleteFile(file)}
       />
     {/each}
   </div>
