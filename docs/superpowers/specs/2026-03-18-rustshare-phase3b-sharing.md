@@ -222,20 +222,56 @@ Share Session Token (Phase 3B):
 
 **Token Encoding/Decoding:**
 
-JwtManager should be extended to support custom claims:
+JwtManager needs extension to support custom claims. Add new methods:
+```rust
+impl JwtManager {
+    // Existing method for user JWTs
+    pub fn generate(&self, user_id: Uuid, email: String) -> Result<String> {
+        // ... existing implementation
+    }
+
+    // NEW: Encode custom claims (for share sessions)
+    pub fn encode_custom_claims<T: Serialize>(&self, claims: &T) -> Result<String> {
+        let token = encode(
+            &Header::default(),
+            claims,
+            &EncodingKey::from_secret(self.secret.as_ref()),
+        )?;
+        Ok(token)
+    }
+
+    // Existing validation method returns generic claims
+    pub fn validate(&self, token: &str) -> Result<Claims> {
+        let validation = Validation::default();
+        let token_data = decode::<Claims>(
+            token,
+            &DecodingKey::from_secret(self.secret.as_ref()),
+            &validation,
+        )?;
+        Ok(token_data.claims)
+    }
+
+    // NEW: Decode with custom claims type
+    pub fn decode_custom<T: DeserializeOwned>(&self, token: &str) -> Result<T> {
+        let validation = Validation::default();
+        let token_data = decode::<T>(
+            token,
+            &DecodingKey::from_secret(self.secret.as_ref()),
+            &validation,
+        )?;
+        Ok(token_data.claims)
+    }
+}
+```
+
+Usage in ShareService:
 ```rust
 // Encode share session
 let claims = ShareSessionClaims::new(share_id, file_id, permissions, 3600);
 let token = jwt_manager.encode_custom_claims(&claims)?;
 
-// Decode and validate
-let decoded = jwt_manager.decode_token(&token)?;
-if decoded.sub.starts_with("share:") {
-    let session: ShareSessionClaims = serde_json::from_value(
-        serde_json::to_value(&decoded)?
-    )?;
-    // Use session.share_id, session.file_id, session.permissions
-}
+// Decode share session
+let session: ShareSessionClaims = jwt_manager.decode_custom(&token)?;
 ```
 
 ### 2. Database Schema Changes
@@ -345,29 +381,54 @@ pub async fn sync_handler(
     let token = auth.token();
 
     // Validate token and determine client identity
-    let identity = match validate_token(&state.jwt_manager, token) {
-        Ok(claims) if claims.sub.starts_with("user:") => {
-            let user_id = Uuid::parse_str(&claims.sub[5..])
-                .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid user ID".to_string()))?;
-            ClientIdentity::User { user_id }
-        }
-        Ok(claims) if claims.sub.starts_with("share:") => {
-            // Parse share session claims
-            let share_claims: ShareSessionClaims = serde_json::from_value(claims.into())
-                .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid session".to_string()))?;
+    let identity = match validate_client_token(&state.jwt_manager, token) {
+        Ok(ClientIdentity::User { user_id }) => ClientIdentity::User { user_id },
+        Ok(ClientIdentity::ShareViewer { share_id, file_id, permissions }) => {
+            // Additional validation: check file still exists and share not revoked
+            let share = state.metadata_store.get_share(share_id)
+                .await
+                .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error".to_string()))?
+                .ok_or((StatusCode::UNAUTHORIZED, "Share not found".to_string()))?;
 
-            ClientIdentity::ShareViewer {
-                share_id: share_claims.share_id,
-                file_id: share_claims.file_id,
-                permissions: share_claims.permissions,
+            if share.revoked_at.is_some() || share.is_expired() {
+                return Err((StatusCode::UNAUTHORIZED, "Share expired or revoked".to_string()));
             }
+
+            ClientIdentity::ShareViewer { share_id, file_id, permissions }
         }
-        _ => return Err((StatusCode::UNAUTHORIZED, "Invalid token".to_string())),
+        Err(_) => return Err((StatusCode::UNAUTHORIZED, "Invalid token".to_string())),
     };
 
     info!("WebSocket connection established: {:?}", identity);
 
     Ok(ws.on_upgrade(move |socket| handle_socket(socket, identity, state)))
+}
+
+fn validate_client_token(
+    jwt_manager: &JwtManager,
+    token: &str,
+) -> Result<ClientIdentity, String> {
+    // Try decoding as user JWT first
+    if let Ok(claims) = jwt_manager.validate(token) {
+        if claims.sub.starts_with("user:") {
+            let user_id = Uuid::parse_str(&claims.sub[5..])
+                .map_err(|_| "Invalid user ID format")?;
+            return Ok(ClientIdentity::User { user_id });
+        }
+    }
+
+    // Try decoding as share session token
+    if let Ok(session) = jwt_manager.decode_custom::<ShareSessionClaims>(token) {
+        if session.sub.starts_with("share:") {
+            return Ok(ClientIdentity::ShareViewer {
+                share_id: session.share_id,
+                file_id: session.file_id,
+                permissions: session.permissions,
+            });
+        }
+    }
+
+    Err("Invalid token type".to_string())
 }
 
 async fn handle_socket(socket: WebSocket, identity: ClientIdentity, state: AppState) {
@@ -598,7 +659,13 @@ Errors:
 - 413 Payload Too Large: File exceeds quota
 ```
 
-**Note:** The `:token` in the URL path is for API clarity and logging, but authorization is entirely based on the session token's embedded permissions. The handler validates that the session token's `file_id` matches the file being uploaded.
+**Note:** The `:token` in the URL path must match the session token's embedded share token for security. Handler validates:
+1. Session token is valid and not expired
+2. Session token's `share_id` corresponds to the share token in URL path
+3. Session token's `file_id` matches the file being uploaded
+4. Session token's `permissions` is `ReadWrite`
+
+This prevents session token reuse across different shares.
 
 ### WebSocket Real-Time Notifications
 
@@ -700,7 +767,7 @@ pub fn is_expired(&self) -> bool {
 - Check at validation time: `share.revoked_at.is_some()`
 - Existing sessions remain valid until expiry (eventual consistency)
 
-**Known Limitation:** Revoked shares with active session tokens can continue accessing files for up to 1 hour (session TTL). This tradeoff favors simplicity over immediate revocation. Mitigation: keep session TTL short (1 hour default) and implement in-memory revoked share cache if immediate revocation is required in the future.
+**Security Decision:** Phase 3B accepts eventual revocation (up to 1-hour delay). Immediate revocation via in-memory cache is explicitly deferred to future optimization. Rationale: 1-hour window is acceptable risk for v1 given simplicity benefits. Future: if immediate revocation becomes required, implement in-memory revoked share ID cache checked during WebSocket connection and file operations.
 
 ### Access Control
 
@@ -841,7 +908,7 @@ pub enum EventType {
 
 **File Operations via Share:**
 - `test_download_shared_file()`
-- `test_upload_version_with_read_write_share()`
+- `test_upload_version_with_read_write_share()` - verify upload succeeds AND both owner and viewer receive FileModified notification via WebSocket
 - `test_upload_version_with_read_only_share_fails()`
 
 **Real-Time Notifications:**
@@ -930,7 +997,7 @@ SHARE_LOG_RETENTION_DAYS=30
 **Public Endpoints:**
 - `/public/share/:token/access` - 10 requests per minute per IP
 - `/public/share/:token/upload` - 5 uploads per hour per share token
-- Implement using in-memory cache or Redis
+- Implement using in-memory LRU cache (no external dependencies)
 - Return `429 Too Many Requests` with `Retry-After` header
 
 **Password Attempts:**
@@ -993,6 +1060,21 @@ async fn cleanup_old_access_logs(metadata_store: &MetadataStore) {
     metadata_store.delete_access_logs_before(cutoff).await;
 }
 ```
+
+**Implementation:** Use tokio interval timer in main.rs:
+```rust
+tokio::spawn(async move {
+    let mut interval = tokio::time::interval(Duration::from_secs(86400)); // 24 hours
+    loop {
+        interval.tick().await;
+        if Utc::now().hour() == 3 {  // Run at 3 AM
+            cleanup_old_access_logs(&metadata_store).await;
+        }
+    }
+});
+```
+
+No external job scheduler required.
 
 ### TDD Approach
 
