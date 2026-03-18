@@ -2645,6 +2645,7 @@ name = "rustshare-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "argon2",
  "bytes",
  "chrono",
  "rand 0.8.5",
