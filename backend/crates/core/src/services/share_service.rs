@@ -8,14 +8,11 @@
 //! - Metadata persistence via MetadataStore
 
 use anyhow::Result;
-use argon2::{
-    password_hash::{PasswordHasher as _, SaltString},
-    Argon2,
-};
 use chrono::{DateTime, Utc};
 use rand::Rng;
-use rand::rngs::OsRng;
 use std::sync::Arc;
+
+use rustshare_crypto::PasswordHasher;
 
 use crate::domain::{File, Share, SharePermissions, UserId};
 use crate::events::{AggregateType, Event, EventBroadcaster, EventType, ShareCreatedPayload};
@@ -116,12 +113,8 @@ impl<E: EventStoreOps, M: MetadataStoreOps> ShareService<E, M> {
 
         // Hash password if provided
         let password_hash = if let Some(pwd) = password {
-            let salt = SaltString::generate(&mut OsRng);
-            let argon2 = Argon2::default();
-            let hash = argon2
-                .hash_password(pwd.as_bytes(), &salt)
-                .map_err(|e| ShareError::PasswordHash(e.to_string()))?;
-            Some(hash.to_string())
+            Some(PasswordHasher::hash(&pwd)
+                .map_err(|e| ShareError::PasswordHash(e.to_string()))?)
         } else {
             None
         };

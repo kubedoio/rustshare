@@ -2635,6 +2635,7 @@ dependencies = [
  "jsonwebtoken",
  "rand 0.8.5",
  "rustshare-core",
+ "rustshare-crypto",
  "serde",
  "thiserror 1.0.69",
  "uuid",
@@ -2645,10 +2646,10 @@ name = "rustshare-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "argon2",
  "bytes",
  "chrono",
  "rand 0.8.5",
+ "rustshare-crypto",
  "serde",
  "serde_json",
  "sha2",
@@ -2657,6 +2658,15 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "rustshare-crypto"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "rand 0.8.5",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

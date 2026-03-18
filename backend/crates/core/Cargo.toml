@@ -19,7 +19,7 @@ sha2 = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 rand = { workspace = true }
-argon2 = { workspace = true }
+rustshare-crypto = { path = "../crypto" }
 
 [dev-dependencies]
 tokio = { workspace = true }
