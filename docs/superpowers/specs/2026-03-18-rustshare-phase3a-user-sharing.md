@@ -192,6 +192,11 @@ impl Share {
     }
 
     /// Get the resource being shared (file or folder ID)
+    ///
+    /// # Safety
+    /// This uses expect() which panics if both file_id and folder_id are None.
+    /// The database CHECK constraint guarantees this never happens, but callers
+    /// in test code should ensure one is set.
     pub fn resource_id(&self) -> Uuid {
         self.file_id.or(self.folder_id).expect("Share must have file_id or folder_id")
     }
@@ -835,7 +840,7 @@ pub enum NotificationError {
 
 - Folder tree is acyclic (enforced by Phase 1 foreign key constraints)
 - Permission resolution cannot loop infinitely
-- Safety: Max depth of 100 levels (return error if exceeded)
+- Safety: Max depth of 50 levels (return error if exceeded - matches implementation)
 
 #### Admin Permission Edge Cases
 
@@ -1366,30 +1371,40 @@ None at this time. Design is complete and ready for implementation planning.
 ## Appendix B: Database Schema Summary
 
 ```sql
--- Extended shares table
+-- Extended shares table (final schema)
 CREATE TABLE shares (
   id UUID PRIMARY KEY,
-  file_id UUID REFERENCES files(id),           -- For file shares
-  folder_id UUID REFERENCES folders(id),       -- For folder shares (NEW)
-  share_token VARCHAR(255) UNIQUE NOT NULL,
-  permissions VARCHAR(50) NOT NULL,            -- View/Edit/Admin (extended)
-  password_hash VARCHAR(255),
-  expires_at TIMESTAMP,
-  access_count INTEGER DEFAULT 0,
-  recipient_user_id UUID REFERENCES users(id), -- For user shares (NEW)
+  file_id UUID REFERENCES files(id),           -- Nullable for folder shares
+  folder_id UUID REFERENCES folders(id),       -- NEW: for folder shares
+  share_token VARCHAR(255),                    -- Nullable for user shares
+  permissions VARCHAR(50) NOT NULL,            -- View/Edit/Admin
+  password_hash VARCHAR(255),                  -- For public shares only
+  expires_at TIMESTAMP,                        -- For public shares only
+  access_count INTEGER DEFAULT 0,              -- For public shares only
+  recipient_user_id UUID REFERENCES users(id), -- NEW: for user shares (NULL = public)
   created_by UUID NOT NULL REFERENCES users(id),
   created_at TIMESTAMP NOT NULL,
   revoked_at TIMESTAMP,
   CONSTRAINT check_share_target CHECK (
     (file_id IS NOT NULL AND folder_id IS NULL) OR
     (file_id IS NULL AND folder_id IS NOT NULL)
+  ),
+  CONSTRAINT check_share_token_for_public CHECK (
+    (recipient_user_id IS NULL AND share_token IS NOT NULL) OR
+    (recipient_user_id IS NOT NULL)
   )
 );
+
+-- Indexes
+CREATE INDEX idx_shares_recipient ON shares(recipient_user_id, revoked_at);
+CREATE INDEX idx_shares_file ON shares(file_id, revoked_at);
+CREATE INDEX idx_shares_folder ON shares(folder_id, revoked_at);
+CREATE UNIQUE INDEX idx_shares_token_unique ON shares(share_token) WHERE share_token IS NOT NULL;
 
 -- New notifications table
 CREATE TABLE notifications (
   id UUID PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   notification_type VARCHAR(50) NOT NULL,
   title VARCHAR(255) NOT NULL,
   message TEXT NOT NULL,
@@ -1399,6 +1414,10 @@ CREATE TABLE notifications (
   read BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP NOT NULL
 );
+
+-- Indexes
+CREATE INDEX idx_user_unread ON notifications(user_id, read, created_at);
+CREATE INDEX idx_resource ON notifications(resource_id, resource_type);
 ```
 
 ---
