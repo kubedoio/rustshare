@@ -1,8 +1,11 @@
 <script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
   import { createQuery, createMutation } from '@tanstack/svelte-query';
   import { listAllFiles, downloadFile, uploadFile, renameFile, deleteFile } from '$lib/api/files';
   import { getFolderContents, createFolder, renameFolder, deleteFolder } from '$lib/api/folders';
   import { queryClient } from '$lib/query-client';
+  import { getWebSocketClient, disconnectWebSocket } from '$lib/websocket/client';
+  import type { WebSocketEvent } from '$lib/websocket/client';
   import FileGrid from '$lib/components/files/FileGrid.svelte';
   import UploadButton from '$lib/components/files/UploadButton.svelte';
   import UploadProgress from '$lib/components/files/UploadProgress.svelte';
@@ -341,6 +344,49 @@
   );
   $: isRenameLoading = renameType === 'file' ? $renameFileMutation.isPending : $renameFolderMutation.isPending;
   $: isDeleteLoading = deleteType === 'file' ? $deleteFileMutation.isPending : $deleteFolderMutation.isPending;
+
+  // WebSocket setup
+  onMount(() => {
+    const ws = getWebSocketClient();
+
+    // Connect to WebSocket
+    ws.connect().then(() => {
+      console.log('[Files] WebSocket connected');
+
+      // Listen for file events
+      ws.on('FileUploaded', handleFileEvent);
+      ws.on('FileModified', handleFileEvent);
+      ws.on('FileRenamed', handleFileEvent);
+      ws.on('FileMoved', handleFileEvent);
+      ws.on('FileDeleted', handleFileEvent);
+      ws.on('FileRestored', handleFileEvent);
+
+      // Listen for folder events
+      ws.on('FolderCreated', handleFolderEvent);
+      ws.on('FolderRenamed', handleFolderEvent);
+      ws.on('FolderMoved', handleFolderEvent);
+      ws.on('FolderDeleted', handleFolderEvent);
+    }).catch((error) => {
+      console.error('[Files] WebSocket connection failed:', error);
+    });
+  });
+
+  onDestroy(() => {
+    // Cleanup - disconnect WebSocket when leaving page
+    disconnectWebSocket();
+  });
+
+  function handleFileEvent(event: WebSocketEvent) {
+    console.log('[Files] File event received:', event.type);
+    // Refresh current folder contents
+    queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+  }
+
+  function handleFolderEvent(event: WebSocketEvent) {
+    console.log('[Files] Folder event received:', event.type);
+    // Refresh current folder contents
+    queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+  }
 </script>
 
 <svelte:head>
