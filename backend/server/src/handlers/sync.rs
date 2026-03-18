@@ -10,9 +10,10 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
     TypedHeader,
 };
+use chrono::{DateTime, Utc};
 use futures_util::{StreamExt, SinkExt};
-use rustshare_core::events::Event;
-use rustshare_core::domain::UserId;
+use rustshare_core::events::{Event, EventType, ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload};
+use rustshare_core::domain::{UserId, SharePermissions};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
@@ -29,14 +30,40 @@ struct SyncRequest {
 }
 
 /// Notification message sent to client
-#[derive(Debug, Serialize)]
-struct NotificationMessage {
-    event_id: String,
-    event_type: String,
-    aggregate_id: String,
-    aggregate_type: String,
-    timestamp: String,
-    version: i32,
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
+enum SyncMessage {
+    /// Generic event notification (for backward compatibility)
+    Event {
+        event_id: String,
+        event_type: String,
+        aggregate_id: String,
+        aggregate_type: String,
+        timestamp: String,
+        version: i32,
+    },
+    /// Share created notification
+    ShareCreated {
+        share_id: Uuid,
+        file_id: Uuid,
+        share_token: String,
+        permissions: SharePermissions,
+        password_protected: bool,
+        expires_at: Option<DateTime<Utc>>,
+    },
+    /// Share revoked notification
+    ShareRevoked {
+        share_id: Uuid,
+        file_id: Uuid,
+    },
+    /// Share updated notification
+    ShareUpdated {
+        share_id: Uuid,
+        file_id: Uuid,
+        password_changed: bool,
+        expires_at_changed: bool,
+        new_expires_at: Option<DateTime<Utc>>,
+    },
 }
 
 /// Lagged warning message
@@ -92,8 +119,11 @@ async fn handle_socket(socket: WebSocket, user_id: UserId, state: AppState) {
         None
     });
 
+    // Clone state for use in send task
+    let metadata_store = state.metadata_store.clone();
+
     // Send events to client
-    let mut send_task = tokio::spawn(async move {
+    let send_task = tokio::spawn(async move {
         // Wait briefly for catch-up request
         tokio::select! {
             last_seen_id = &mut recv_task => {
@@ -104,8 +134,8 @@ async fn handle_socket(socket: WebSocket, user_id: UserId, state: AppState) {
                             Ok(events) => {
                                 info!("Sending {} catch-up events to user {}", events.len(), user_id);
                                 for event in events {
-                                    if let Ok(notification) = event_to_notification(&event) {
-                                        if let Ok(json) = serde_json::to_string(&notification) {
+                                    if let Ok(message) = event_to_sync_message(&event, user_id, &metadata_store).await {
+                                        if let Ok(json) = serde_json::to_string(&message) {
                                             if sender.send(Message::Text(json)).await.is_err() {
                                                 return;
                                             }
@@ -129,22 +159,28 @@ async fn handle_socket(socket: WebSocket, user_id: UserId, state: AppState) {
         loop {
             match event_rx.recv().await {
                 Ok(event) => {
-                    // Filter by user_id
-                    if event.user_id != user_id {
-                        continue;
-                    }
-
-                    // Serialize and send
-                    match event_to_notification(&event) {
-                        Ok(notification) => {
-                            if let Ok(json) = serde_json::to_string(&notification) {
-                                if sender.send(Message::Text(json)).await.is_err() {
-                                    break;
+                    // Check if this event is relevant to this user
+                    match should_send_event_to_user(&event, user_id, &metadata_store).await {
+                        Ok(true) => {
+                            // Convert event to sync message
+                            match event_to_sync_message(&event, user_id, &metadata_store).await {
+                                Ok(message) => {
+                                    if let Ok(json) = serde_json::to_string(&message) {
+                                        if sender.send(Message::Text(json)).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Failed to convert event to sync message: {}", e);
                                 }
                             }
                         }
+                        Ok(false) => {
+                            // Event not relevant to this user, skip
+                        }
                         Err(e) => {
-                            error!("Failed to serialize event: {}", e);
+                            error!("Failed to check event relevance: {}", e);
                         }
                     }
                 }
@@ -174,17 +210,522 @@ async fn handle_socket(socket: WebSocket, user_id: UserId, state: AppState) {
     info!("WebSocket connection closed for user {}", user_id);
 }
 
-/// Convert Event to NotificationMessage
-fn event_to_notification(event: &Event) -> Result<NotificationMessage, String> {
-    Ok(NotificationMessage {
-        event_id: event.id.to_string(),
-        event_type: event.event_type.type_name().to_string(),
-        aggregate_id: event.aggregate_id.to_string(),
-        aggregate_type: serde_json::to_string(&event.aggregate_type)
-            .map_err(|e| e.to_string())?
-            .trim_matches('"')
-            .to_string(),
-        timestamp: event.timestamp.to_rfc3339(),
-        version: event.version,
-    })
+/// Determine if an event should be sent to a specific user
+async fn should_send_event_to_user(
+    event: &Event,
+    user_id: UserId,
+    metadata_store: &rustshare_storage::MetadataStore,
+) -> Result<bool, String> {
+    // For most events, send to the user who triggered them
+    if event.user_id == user_id {
+        return Ok(true);
+    }
+
+    // For share events, also send to file owner
+    match event.event_type {
+        EventType::ShareCreated | EventType::ShareRevoked | EventType::ShareUpdated => {
+            // Deserialize payload to get file_id
+            let file_id = match event.event_type {
+                EventType::ShareCreated => {
+                    let payload: ShareCreatedPayload = serde_json::from_value(event.payload.clone())
+                        .map_err(|e| format!("Failed to deserialize ShareCreatedPayload: {}", e))?;
+                    payload.file_id
+                }
+                EventType::ShareRevoked => {
+                    let payload: ShareRevokedPayload = serde_json::from_value(event.payload.clone())
+                        .map_err(|e| format!("Failed to deserialize ShareRevokedPayload: {}", e))?;
+                    payload.file_id
+                }
+                EventType::ShareUpdated => {
+                    let payload: ShareUpdatedPayload = serde_json::from_value(event.payload.clone())
+                        .map_err(|e| format!("Failed to deserialize ShareUpdatedPayload: {}", e))?;
+                    payload.file_id
+                }
+                _ => return Ok(false),
+            };
+
+            // Get file to check owner
+            let file = metadata_store
+                .find_file_by_id(file_id.into())
+                .await
+                .map_err(|e| format!("Failed to get file: {}", e))?;
+
+            if let Some(file) = file {
+                // Send to file owner
+                return Ok(file.owner_id == user_id);
+            }
+
+            Ok(false)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// Convert Event to SyncMessage
+async fn event_to_sync_message(
+    event: &Event,
+    _user_id: UserId,
+    _metadata_store: &rustshare_storage::MetadataStore,
+) -> Result<SyncMessage, String> {
+    // For share events, create specialized messages
+    match event.event_type {
+        EventType::ShareCreated => {
+            let payload: ShareCreatedPayload = serde_json::from_value(event.payload.clone())
+                .map_err(|e| format!("Failed to deserialize ShareCreatedPayload: {}", e))?;
+
+            Ok(SyncMessage::ShareCreated {
+                share_id: payload.share_id.into(),
+                file_id: payload.file_id.into(),
+                share_token: payload.share_token,
+                permissions: payload.permissions,
+                password_protected: payload.password_protected,
+                expires_at: payload.expires_at,
+            })
+        }
+        EventType::ShareRevoked => {
+            let payload: ShareRevokedPayload = serde_json::from_value(event.payload.clone())
+                .map_err(|e| format!("Failed to deserialize ShareRevokedPayload: {}", e))?;
+
+            Ok(SyncMessage::ShareRevoked {
+                share_id: payload.share_id.into(),
+                file_id: payload.file_id.into(),
+            })
+        }
+        EventType::ShareUpdated => {
+            let payload: ShareUpdatedPayload = serde_json::from_value(event.payload.clone())
+                .map_err(|e| format!("Failed to deserialize ShareUpdatedPayload: {}", e))?;
+
+            Ok(SyncMessage::ShareUpdated {
+                share_id: payload.share_id.into(),
+                file_id: payload.file_id.into(),
+                password_changed: payload.password_changed,
+                expires_at_changed: payload.expires_at_changed,
+                new_expires_at: payload.new_expires_at,
+            })
+        }
+        _ => {
+            // For other events, use generic event message
+            Ok(SyncMessage::Event {
+                event_id: event.id.to_string(),
+                event_type: event.event_type.type_name().to_string(),
+                aggregate_id: event.aggregate_id.to_string(),
+                aggregate_type: serde_json::to_string(&event.aggregate_type)
+                    .map_err(|e| e.to_string())?
+                    .trim_matches('"')
+                    .to_string(),
+                timestamp: event.timestamp.to_rfc3339(),
+                version: event.version,
+            })
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use rustshare_core::domain::{File, SharePermissions};
+    use rustshare_core::events::{AggregateType, Event, EventType, ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload};
+    use rustshare_storage::MetadataStore;
+    use sqlx::PgPool;
+    use uuid::Uuid;
+
+    /// Helper to create a test metadata store
+    async fn create_test_metadata_store() -> (MetadataStore, PgPool) {
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+
+        let pool = PgPool::connect(&database_url)
+            .await
+            .expect("Failed to connect to test database");
+
+        let metadata_store = MetadataStore::new(pool.clone());
+        (metadata_store, pool)
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn test_should_send_share_created_to_file_owner() {
+        let (metadata_store, _pool) = create_test_metadata_store().await;
+
+        let owner_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let share_id = Uuid::new_v4();
+
+        // Create a file
+        let file = File::new(
+            "test.txt".to_string(),
+            "/test.txt".to_string(),
+            "hash123".to_string(),
+            100,
+            "text/plain".to_string(),
+            None,
+            owner_id,
+        );
+        metadata_store.create_file(&file).await.unwrap();
+
+        // Create ShareCreated event
+        let payload = ShareCreatedPayload {
+            share_id,
+            file_id,
+            share_token: "token123".to_string(),
+            permissions: SharePermissions::Read,
+            password_protected: false,
+            expires_at: None,
+            created_by: owner_id,
+        };
+
+        let event = Event::new(
+            EventType::ShareCreated,
+            share_id,
+            AggregateType::Share,
+            serde_json::to_value(&payload).unwrap(),
+            owner_id,
+        );
+
+        // File owner should receive the event
+        let should_send = should_send_event_to_user(&event, owner_id, &metadata_store).await.unwrap();
+        assert!(should_send, "File owner should receive ShareCreated event");
+
+        // Other users should not receive the event
+        let other_user = Uuid::new_v4();
+        let should_send = should_send_event_to_user(&event, other_user, &metadata_store).await.unwrap();
+        assert!(!should_send, "Other users should not receive ShareCreated event");
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn test_should_send_share_revoked_to_file_owner() {
+        let (metadata_store, _pool) = create_test_metadata_store().await;
+
+        let owner_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let share_id = Uuid::new_v4();
+
+        // Create a file
+        let file = File::new(
+            "test.txt".to_string(),
+            "/test.txt".to_string(),
+            "hash123".to_string(),
+            100,
+            "text/plain".to_string(),
+            None,
+            owner_id,
+        );
+        metadata_store.create_file(&file).await.unwrap();
+
+        // Create ShareRevoked event
+        let payload = ShareRevokedPayload {
+            share_id,
+            file_id,
+            revoked_by: owner_id,
+        };
+
+        let event = Event::new(
+            EventType::ShareRevoked,
+            share_id,
+            AggregateType::Share,
+            serde_json::to_value(&payload).unwrap(),
+            owner_id,
+        );
+
+        // File owner should receive the event
+        let should_send = should_send_event_to_user(&event, owner_id, &metadata_store).await.unwrap();
+        assert!(should_send, "File owner should receive ShareRevoked event");
+
+        // Other users should not receive the event
+        let other_user = Uuid::new_v4();
+        let should_send = should_send_event_to_user(&event, other_user, &metadata_store).await.unwrap();
+        assert!(!should_send, "Other users should not receive ShareRevoked event");
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn test_should_send_share_updated_to_file_owner() {
+        let (metadata_store, _pool) = create_test_metadata_store().await;
+
+        let owner_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let share_id = Uuid::new_v4();
+
+        // Create a file
+        let file = File::new(
+            "test.txt".to_string(),
+            "/test.txt".to_string(),
+            "hash123".to_string(),
+            100,
+            "text/plain".to_string(),
+            None,
+            owner_id,
+        );
+        metadata_store.create_file(&file).await.unwrap();
+
+        // Create ShareUpdated event
+        let payload = ShareUpdatedPayload {
+            share_id,
+            file_id,
+            password_changed: true,
+            expires_at_changed: false,
+            new_expires_at: None,
+            updated_by: owner_id,
+        };
+
+        let event = Event::new(
+            EventType::ShareUpdated,
+            share_id,
+            AggregateType::Share,
+            serde_json::to_value(&payload).unwrap(),
+            owner_id,
+        );
+
+        // File owner should receive the event
+        let should_send = should_send_event_to_user(&event, owner_id, &metadata_store).await.unwrap();
+        assert!(should_send, "File owner should receive ShareUpdated event");
+
+        // Other users should not receive the event
+        let other_user = Uuid::new_v4();
+        let should_send = should_send_event_to_user(&event, other_user, &metadata_store).await.unwrap();
+        assert!(!should_send, "Other users should not receive ShareUpdated event");
+    }
+
+    #[tokio::test]
+    async fn test_event_to_sync_message_share_created() {
+        let share_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+
+        let payload = ShareCreatedPayload {
+            share_id,
+            file_id,
+            share_token: "token123".to_string(),
+            permissions: SharePermissions::Read,
+            password_protected: false,
+            expires_at: None,
+            created_by: owner_id,
+        };
+
+        let event = Event::new(
+            EventType::ShareCreated,
+            share_id,
+            AggregateType::Share,
+            serde_json::to_value(&payload).unwrap(),
+            owner_id,
+        );
+
+        // We don't need actual database connection for this test
+        // as event_to_sync_message doesn't use metadata_store for ShareCreated events
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+
+        // Skip test if database is not available
+        let Ok(pool) = PgPool::connect(&database_url).await else {
+            println!("Skipping test - database not available");
+            return;
+        };
+        let metadata_store = MetadataStore::new(pool);
+
+        let message = event_to_sync_message(&event, owner_id, &metadata_store).await.unwrap();
+
+        match message {
+            SyncMessage::ShareCreated {
+                share_id: msg_share_id,
+                file_id: msg_file_id,
+                share_token,
+                permissions,
+                password_protected,
+                expires_at,
+            } => {
+                assert_eq!(msg_share_id, share_id);
+                assert_eq!(msg_file_id, file_id);
+                assert_eq!(share_token, "token123");
+                assert_eq!(permissions, SharePermissions::Read);
+                assert!(!password_protected);
+                assert!(expires_at.is_none());
+            }
+            _ => panic!("Expected ShareCreated message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_event_to_sync_message_share_revoked() {
+        let share_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+
+        let payload = ShareRevokedPayload {
+            share_id,
+            file_id,
+            revoked_by: owner_id,
+        };
+
+        let event = Event::new(
+            EventType::ShareRevoked,
+            share_id,
+            AggregateType::Share,
+            serde_json::to_value(&payload).unwrap(),
+            owner_id,
+        );
+
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+
+        // Skip test if database is not available
+        let Ok(pool) = PgPool::connect(&database_url).await else {
+            println!("Skipping test - database not available");
+            return;
+        };
+        let metadata_store = MetadataStore::new(pool);
+
+        let message = event_to_sync_message(&event, owner_id, &metadata_store).await.unwrap();
+
+        match message {
+            SyncMessage::ShareRevoked {
+                share_id: msg_share_id,
+                file_id: msg_file_id,
+            } => {
+                assert_eq!(msg_share_id, share_id);
+                assert_eq!(msg_file_id, file_id);
+            }
+            _ => panic!("Expected ShareRevoked message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_event_to_sync_message_share_updated() {
+        let share_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let expires_at = Some(Utc::now() + chrono::Duration::hours(24));
+
+        let payload = ShareUpdatedPayload {
+            share_id,
+            file_id,
+            password_changed: true,
+            expires_at_changed: true,
+            new_expires_at: expires_at,
+            updated_by: owner_id,
+        };
+
+        let event = Event::new(
+            EventType::ShareUpdated,
+            share_id,
+            AggregateType::Share,
+            serde_json::to_value(&payload).unwrap(),
+            owner_id,
+        );
+
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+
+        // Skip test if database is not available
+        let Ok(pool) = PgPool::connect(&database_url).await else {
+            println!("Skipping test - database not available");
+            return;
+        };
+        let metadata_store = MetadataStore::new(pool);
+
+        let message = event_to_sync_message(&event, owner_id, &metadata_store).await.unwrap();
+
+        match message {
+            SyncMessage::ShareUpdated {
+                share_id: msg_share_id,
+                file_id: msg_file_id,
+                password_changed,
+                expires_at_changed,
+                new_expires_at,
+            } => {
+                assert_eq!(msg_share_id, share_id);
+                assert_eq!(msg_file_id, file_id);
+                assert!(password_changed);
+                assert!(expires_at_changed);
+                assert!(new_expires_at.is_some());
+            }
+            _ => panic!("Expected ShareUpdated message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_event_to_sync_message_non_share_event() {
+        let file_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+
+        let payload = serde_json::json!({
+            "file_id": file_id.to_string(),
+            "name": "test.txt"
+        });
+
+        let event = Event::new(
+            EventType::FileUploaded,
+            file_id,
+            AggregateType::File,
+            payload,
+            owner_id,
+        );
+
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+
+        // Skip test if database is not available
+        let Ok(pool) = PgPool::connect(&database_url).await else {
+            println!("Skipping test - database not available");
+            return;
+        };
+        let metadata_store = MetadataStore::new(pool);
+
+        let message = event_to_sync_message(&event, owner_id, &metadata_store).await.unwrap();
+
+        match message {
+            SyncMessage::Event {
+                event_type,
+                aggregate_type,
+                ..
+            } => {
+                assert_eq!(event_type, "FileUploaded");
+                assert_eq!(aggregate_type, "file");
+            }
+            _ => panic!("Expected generic Event message"),
+        }
+    }
+
+    #[test]
+    fn test_sync_message_serialization() {
+        let share_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+
+        // Test ShareCreated serialization
+        let msg = SyncMessage::ShareCreated {
+            share_id,
+            file_id,
+            share_token: "token123".to_string(),
+            permissions: SharePermissions::Read,
+            password_protected: false,
+            expires_at: None,
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"ShareCreated\""));
+        assert!(json.contains("token123"));
+
+        // Test ShareRevoked serialization
+        let msg = SyncMessage::ShareRevoked {
+            share_id,
+            file_id,
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"ShareRevoked\""));
+
+        // Test ShareUpdated serialization
+        let msg = SyncMessage::ShareUpdated {
+            share_id,
+            file_id,
+            password_changed: true,
+            expires_at_changed: false,
+            new_expires_at: None,
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"ShareUpdated\""));
+        assert!(json.contains("\"password_changed\":true"));
+    }
 }
