@@ -5,7 +5,7 @@
 //! This will be migrated to compile-time queries after Docker Compose is set up in Task 11.
 
 use anyhow::Result;
-use rustshare_core::domain::{File, FileVersion, Folder, User};
+use rustshare_core::domain::{File, FileVersion, Folder, Share, SharePermissions, User};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -500,12 +500,238 @@ impl MetadataStore {
 
         Ok(folders)
     }
+
+    /// Create a new share link for a file
+    pub async fn create_share(&self, share: &Share) -> Result<()> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        let permissions = match share.permissions {
+            SharePermissions::Read => "read",
+            SharePermissions::ReadWrite => "readwrite",
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO shares (id, file_id, share_token, created_by, permissions, password_hash, expires_at, access_count, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            "#,
+        )
+        .bind(share.id)
+        .bind(share.file_id)
+        .bind(&share.share_token)
+        .bind(share.created_by)
+        .bind(permissions)
+        .bind(&share.password_hash)
+        .bind(share.expires_at)
+        .bind(share.access_count)
+        .bind(share.created_at)
+        .bind(share.created_at) // updated_at = created_at for new shares
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Find a share by its token
+    pub async fn get_share_by_token(&self, token: &str) -> Result<Option<Share>> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        let row = sqlx::query(
+            r#"
+            SELECT id, file_id, share_token, created_by, permissions, password_hash, expires_at, access_count, created_at
+            FROM shares
+            WHERE share_token = $1
+            "#,
+        )
+        .bind(token)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let permissions_str: String = row.try_get("permissions")?;
+            let permissions = match permissions_str.as_str() {
+                "readwrite" => SharePermissions::ReadWrite,
+                _ => SharePermissions::Read,
+            };
+
+            let share = Share {
+                id: row.try_get("id")?,
+                file_id: row.try_get("file_id")?,
+                share_token: row.try_get("share_token")?,
+                created_by: row.try_get("created_by")?,
+                permissions,
+                password_hash: row.try_get("password_hash")?,
+                expires_at: row.try_get("expires_at")?,
+                access_count: row.try_get("access_count")?,
+                created_at: row.try_get("created_at")?,
+            };
+            Ok(Some(share))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Find a share by ID
+    pub async fn get_share(&self, share_id: Uuid) -> Result<Option<Share>> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        let row = sqlx::query(
+            r#"
+            SELECT id, file_id, share_token, created_by, permissions, password_hash, expires_at, access_count, created_at
+            FROM shares
+            WHERE id = $1
+            "#,
+        )
+        .bind(share_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let permissions_str: String = row.try_get("permissions")?;
+            let permissions = match permissions_str.as_str() {
+                "readwrite" => SharePermissions::ReadWrite,
+                _ => SharePermissions::Read,
+            };
+
+            let share = Share {
+                id: row.try_get("id")?,
+                file_id: row.try_get("file_id")?,
+                share_token: row.try_get("share_token")?,
+                created_by: row.try_get("created_by")?,
+                permissions,
+                password_hash: row.try_get("password_hash")?,
+                expires_at: row.try_get("expires_at")?,
+                access_count: row.try_get("access_count")?,
+                created_at: row.try_get("created_at")?,
+            };
+            Ok(Some(share))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get all active (non-revoked) shares for a file
+    pub async fn get_file_shares(&self, file_id: Uuid) -> Result<Vec<Share>> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        let rows = sqlx::query(
+            r#"
+            SELECT id, file_id, share_token, created_by, permissions, password_hash, expires_at, access_count, created_at
+            FROM shares
+            WHERE file_id = $1 AND revoked_at IS NULL
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(file_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut shares = Vec::new();
+        for row in rows {
+            let permissions_str: String = row.try_get("permissions")?;
+            let permissions = match permissions_str.as_str() {
+                "readwrite" => SharePermissions::ReadWrite,
+                _ => SharePermissions::Read,
+            };
+
+            let share = Share {
+                id: row.try_get("id")?,
+                file_id: row.try_get("file_id")?,
+                share_token: row.try_get("share_token")?,
+                created_by: row.try_get("created_by")?,
+                permissions,
+                password_hash: row.try_get("password_hash")?,
+                expires_at: row.try_get("expires_at")?,
+                access_count: row.try_get("access_count")?,
+                created_at: row.try_get("created_at")?,
+            };
+            shares.push(share);
+        }
+
+        Ok(shares)
+    }
+
+    /// Update a share's password and expiration
+    pub async fn update_share(&self, share: &Share) -> Result<()> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        sqlx::query(
+            r#"
+            UPDATE shares
+            SET password_hash = $2, expires_at = $3, updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(share.id)
+        .bind(&share.password_hash)
+        .bind(share.expires_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Revoke a share link (soft delete)
+    pub async fn revoke_share(&self, share_id: Uuid) -> Result<()> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        sqlx::query(
+            r#"
+            UPDATE shares
+            SET revoked_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(share_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Increment share access count and update last_accessed_at
+    pub async fn increment_share_access(&self, share_id: Uuid) -> Result<()> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        sqlx::query(
+            r#"
+            UPDATE shares
+            SET access_count = access_count + 1, last_accessed_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(share_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Log a share access attempt
+    pub async fn log_share_access(
+        &self,
+        share_id: Uuid,
+        ip_address: Option<String>,
+        user_agent: Option<String>,
+        action: String,
+        success: bool,
+    ) -> Result<()> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        sqlx::query(
+            r#"
+            INSERT INTO share_access_log (share_id, ip_address, user_agent, action, success)
+            VALUES ($1, $2, $3, $4, $5)
+            "#,
+        )
+        .bind(share_id)
+        .bind(ip_address)
+        .bind(user_agent)
+        .bind(action)
+        .bind(success)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustshare_core::domain::{File, FileVersion, Folder, User};
+    use rustshare_core::domain::{File, FileVersion, Folder, Share, SharePermissions, User};
 
     async fn setup_test_db() -> PgPool {
         let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
@@ -882,6 +1108,141 @@ mod tests {
 
         sqlx::query("DELETE FROM folders WHERE id = $1")
             .bind(root_folder.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Cleanup user
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(owner.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires DATABASE_URL
+    async fn test_share_crud() {
+        let (store, pool) = setup_metadata_store().await;
+
+        // First create a user to own the file
+        let owner = User::new(
+            "shareowner".to_string(),
+            "Share Owner".to_string(),
+            "hashxyz".to_string(),
+            "shareowner@example.com".to_string(),
+            false,
+            10_737_418_240,
+        );
+        store.create_user(&owner).await.unwrap();
+
+        // Create a file to share
+        let file = File::new(
+            "shareable-document.pdf".to_string(),
+            "/Documents/shareable-document.pdf".to_string(),
+            "abcdef123456hash".to_string(),
+            3072,
+            "application/pdf".to_string(),
+            None,
+            owner.id,
+        );
+        store.create_file(&file).await.unwrap();
+
+        // Test: create_share
+        let share = Share::new(
+            file.id,
+            "sharetoken123".to_string(),
+            owner.id,
+            SharePermissions::Read,
+            Some("hashed_password".to_string()),
+            None,
+        );
+        store.create_share(&share).await.unwrap();
+
+        // Test: get_share_by_token
+        let found_by_token = store.get_share_by_token("sharetoken123").await.unwrap();
+        assert!(found_by_token.is_some());
+        let found_share = found_by_token.unwrap();
+        assert_eq!(found_share.id, share.id);
+        assert_eq!(found_share.share_token, "sharetoken123");
+        assert_eq!(found_share.file_id, file.id);
+        assert_eq!(found_share.permissions, SharePermissions::Read);
+        assert_eq!(found_share.password_hash, Some("hashed_password".to_string()));
+        assert_eq!(found_share.access_count, 0);
+
+        // Test: get_share
+        let found_by_id = store.get_share(share.id).await.unwrap();
+        assert!(found_by_id.is_some());
+        let found_share_by_id = found_by_id.unwrap();
+        assert_eq!(found_share_by_id.id, share.id);
+        assert_eq!(found_share_by_id.share_token, "sharetoken123");
+
+        // Create a second share for the same file
+        let share2 = Share::new(
+            file.id,
+            "sharetoken456".to_string(),
+            owner.id,
+            SharePermissions::ReadWrite,
+            None,
+            None,
+        );
+        store.create_share(&share2).await.unwrap();
+
+        // Test: get_file_shares
+        let file_shares = store.get_file_shares(file.id).await.unwrap();
+        assert_eq!(file_shares.len(), 2);
+        assert!(file_shares.iter().any(|s| s.share_token == "sharetoken123"));
+        assert!(file_shares.iter().any(|s| s.share_token == "sharetoken456"));
+
+        // Test: increment_share_access
+        store.increment_share_access(share.id).await.unwrap();
+        let updated = store.get_share(share.id).await.unwrap().unwrap();
+        assert_eq!(updated.access_count, 1);
+
+        // Test: log_share_access
+        store
+            .log_share_access(
+                share.id,
+                Some("192.168.1.1".to_string()),
+                Some("Mozilla/5.0".to_string()),
+                "access".to_string(),
+                true,
+            )
+            .await
+            .unwrap();
+
+        // Test: update_share
+        let mut updated_share = found_share.clone();
+        updated_share.password_hash = Some("new_hashed_password".to_string());
+        store.update_share(&updated_share).await.unwrap();
+
+        let after_update = store.get_share(share.id).await.unwrap().unwrap();
+        assert_eq!(
+            after_update.password_hash,
+            Some("new_hashed_password".to_string())
+        );
+
+        // Test: revoke_share
+        store.revoke_share(share.id).await.unwrap();
+
+        // After revoke, share should not appear in get_file_shares (only active shares)
+        let active_shares = store.get_file_shares(file.id).await.unwrap();
+        assert_eq!(active_shares.len(), 1);
+        assert!(active_shares.iter().all(|s| s.share_token == "sharetoken456"));
+
+        // But should still be retrievable by ID
+        let revoked_share = store.get_share(share.id).await.unwrap();
+        assert!(revoked_share.is_some());
+
+        // Cleanup
+        sqlx::query("DELETE FROM shares WHERE file_id = $1")
+            .bind(file.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("DELETE FROM files WHERE id = $1")
+            .bind(file.id)
             .execute(&pool)
             .await
             .unwrap();
