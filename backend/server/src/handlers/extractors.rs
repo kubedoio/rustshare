@@ -28,7 +28,7 @@ pub struct AuthenticatedUser {
 
 #[async_trait]
 impl FromRequestParts<AppState> for AuthenticatedUser {
-    type Rejection = (StatusCode, String);
+    type Rejection = Response;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -41,22 +41,30 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             .map_err(|_| {
                 (
                     StatusCode::UNAUTHORIZED,
-                    "Missing or invalid Authorization header".to_string(),
+                    Json(serde_json::json!({"error": "Missing or invalid Authorization header"})),
                 )
+                    .into_response()
             })?;
 
         // Validate JWT token
         let claims = state
             .jwt_manager
             .validate(bearer.token())
-            .map_err(|e| (StatusCode::UNAUTHORIZED, format!("Invalid token: {}", e)))?;
+            .map_err(|e| {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({"error": format!("Invalid token: {}", e)})),
+                )
+                    .into_response()
+            })?;
 
         // Parse user ID from claims
         let user_id = Uuid::parse_str(&claims.sub).map_err(|_| {
             (
                 StatusCode::UNAUTHORIZED,
-                "Invalid user ID in token".to_string(),
+                Json(serde_json::json!({"error": "Invalid user ID in token"})),
             )
+                .into_response()
         })?;
 
         Ok(AuthenticatedUser { user_id })

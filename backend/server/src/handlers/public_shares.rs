@@ -4,12 +4,13 @@
 //! It includes session creation with password validation and file download.
 
 use axum::{
-    extract::{Path, State},
-    http::StatusCode,
+    extract::{ConnectInfo, Path, State},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use uuid::Uuid;
 
 use crate::{handlers::ShareSessionAuth, AppState};
@@ -85,6 +86,8 @@ pub async fn download_shared_file(
     State(state): State<AppState>,
     Path(token): Path<String>,
     ShareSessionAuth(claims): ShareSessionAuth,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
 ) -> Result<Response, Response> {
     // Verify the JWT was issued for this specific share token
     let share_id_from_token = claims.share_id;
@@ -139,15 +142,28 @@ pub async fn download_shared_file(
                 .into_response()
         })?;
 
-    // Increment access count and log access
-    let _ = state.metadata_store.increment_share_access(share.id).await;
-    let _ = state.metadata_store.log_share_access(
+    // Extract request metadata
+    let ip_address = Some(addr.ip().to_string());
+    let user_agent = headers
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(String::from);
+
+    // Increment access count - log error but continue
+    if let Err(e) = state.metadata_store.increment_share_access(share.id).await {
+        tracing::warn!("Failed to increment share access count: {}", e);
+    }
+
+    // Log access with request metadata
+    if let Err(e) = state.metadata_store.log_share_access(
         share.id,
-        None, // IP address - could extract from request
-        None, // User agent - could extract from request
+        ip_address,
+        user_agent,
         "download".to_string(),
         true,
-    ).await;
+    ).await {
+        tracing::warn!("Failed to log share access: {}", e);
+    }
 
     // Return file with appropriate headers
     Ok((
