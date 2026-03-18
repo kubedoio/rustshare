@@ -34,10 +34,10 @@
   let shareTarget: File | null = null;
 
   // Reactive query key - updates when currentFolderId changes
-  const contentsQuery = $derived(createQuery({
+  $: contentsQuery = createQuery({
     queryKey: ['folder-contents', currentFolderId],
     queryFn: () => getFolderContents(currentFolderId)
-  }));
+  });
 
   // Upload mutation
   const uploadMutation = createMutation({
