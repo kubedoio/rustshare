@@ -4,9 +4,14 @@ import type { File, FileVersion } from './types';
 export async function uploadFile(folderId: string | null, file: globalThis.File): Promise<File> {
   const formData = new FormData();
   formData.append('file', file);
+  formData.append('name', file.name);
 
-  const endpoint = folderId ? `/files/upload?folder_id=${folderId}` : '/files/upload';
-  return apiClient.post<File>(endpoint, formData);
+  // Only append parent_folder_id if it's not null
+  if (folderId) {
+    formData.append('parent_folder_id', folderId);
+  }
+
+  return apiClient.post<File>('/files/upload', formData);
 }
 
 export async function getFile(fileId: string): Promise<File> {

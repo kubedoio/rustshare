@@ -17,7 +17,12 @@ impl ObjectStore {
             .load()
             .await;
 
-        let client = S3Client::new(&config);
+        // Use path-style addressing for MinIO compatibility
+        let s3_config = aws_sdk_s3::config::Builder::from(&config)
+            .force_path_style(true)
+            .build();
+
+        let client = S3Client::from_conf(s3_config);
 
         Ok(Self { client, bucket })
     }

@@ -42,11 +42,14 @@ services:
       - "8080:8080"
     environment:
       DATABASE_URL: postgres://rustshare:changeme@postgres:5432/rustshare
+      RUST_LOG: debug
       RUSTFS_ENDPOINT: http://rustfs:9000
       RUSTFS_ACCESS_KEY: rustfsadmin
       RUSTFS_SECRET_KEY: rustfsadmin
       RUSTFS_BUCKET: rustshare-files
       RUSTFS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: rustfsadmin
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
       RUSTSHARE_ADMIN_USERNAME: admin
       RUSTSHARE_ADMIN_EMAIL: admin@localhost

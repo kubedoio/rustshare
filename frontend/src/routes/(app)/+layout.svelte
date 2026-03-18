@@ -5,6 +5,8 @@
   import Sidebar from '$lib/components/layout/Sidebar.svelte';
   import Header from '$lib/components/layout/Header.svelte';
 
+  import { browser } from '$app/environment';
+
   // Check authentication on mount
   onMount(() => {
     if (!$isAuthenticated) {
@@ -12,8 +14,8 @@
     }
   });
 
-  // Redirect if auth state changes
-  $: if (!$isAuthenticated) {
+  // Redirect if auth state changes (only in browser)
+  $: if (browser && !$isAuthenticated) {
     goto('/login');
   }
 </script>
