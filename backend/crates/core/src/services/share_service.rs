@@ -178,8 +178,8 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         // Emit ShareCreated event
         let payload = ShareCreatedPayload {
             share_id: share.id,
-            file_id: share.file_id,
-            share_token: share.share_token.clone(),
+            file_id: share.file_id.expect("public share must have file_id"),
+            share_token: share.share_token.clone().expect("public share must have share_token"),
             permissions: share.permissions,
             password_protected: share.password_hash.is_some(),
             expires_at: share.expires_at,
@@ -277,7 +277,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         Ok(ShareSession {
             token,
             share_id: share.id,
-            file_id: share.file_id,
+            file_id: share.file_id.expect("public share must have file_id"),
             permissions: share.permissions,
             expires_at,
         })
@@ -306,15 +306,15 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         // Get file to verify ownership
         let file = self
             .metadata_store
-            .find_file_by_id(share.file_id)
+            .find_file_by_id(share.file_id.expect("public share must have file_id"))
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-            .ok_or(ShareError::FileNotFound(share.file_id))?;
+            .ok_or(ShareError::FileNotFound(share.file_id.expect("public share must have file_id")))?;
 
         // Check user owns file
         if file.owner_id != user_id {
             return Err(ShareError::PermissionDenied {
-                file_id: share.file_id,
+                file_id: share.file_id.expect("public share must have file_id"),
                 user_id,
             });
         }
@@ -328,7 +328,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         // Emit ShareRevoked event
         let payload = ShareRevokedPayload {
             share_id: share.id,
-            file_id: share.file_id,
+            file_id: share.file_id.expect("public share must have file_id"),
             revoked_by: user_id,
         };
 
@@ -376,15 +376,15 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         // Get file to verify ownership
         let file = self
             .metadata_store
-            .find_file_by_id(share.file_id)
+            .find_file_by_id(share.file_id.expect("public share must have file_id"))
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-            .ok_or(ShareError::FileNotFound(share.file_id))?;
+            .ok_or(ShareError::FileNotFound(share.file_id.expect("public share must have file_id")))?;
 
         // Check user owns file
         if file.owner_id != user_id {
             return Err(ShareError::PermissionDenied {
-                file_id: share.file_id,
+                file_id: share.file_id.expect("public share must have file_id"),
                 user_id,
             });
         }
@@ -417,7 +417,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         // Emit ShareUpdated event
         let payload = ShareUpdatedPayload {
             share_id: share.id,
-            file_id: share.file_id,
+            file_id: share.file_id.expect("public share must have file_id"),
             password_changed,
             expires_at_changed,
             new_expires_at: share.expires_at,
@@ -504,10 +504,10 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         // Get file info
         let file = self
             .metadata_store
-            .find_file_by_id(share.file_id)
+            .find_file_by_id(share.file_id.expect("public share must have file_id"))
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-            .ok_or(ShareError::FileNotFound(share.file_id))?;
+            .ok_or(ShareError::FileNotFound(share.file_id.expect("public share must have file_id")))?;
 
         Ok((share, file))
     }
@@ -571,11 +571,11 @@ mod tests {
         }
 
         async fn get_share_by_token(&self, token: &str) -> Result<Option<Share>> {
-            Ok(self.shares.lock().unwrap().iter().find(|s| s.share_token == token).cloned())
+            Ok(self.shares.lock().unwrap().iter().find(|s| s.share_token.as_deref() == Some(token)).cloned())
         }
 
         async fn get_file_shares(&self, file_id: Uuid) -> Result<Vec<Share>> {
-            Ok(self.shares.lock().unwrap().iter().filter(|s| s.file_id == file_id).cloned().collect())
+            Ok(self.shares.lock().unwrap().iter().filter(|s| s.file_id == Some(file_id)).cloned().collect())
         }
 
         async fn revoke_share(&self, share_id: Uuid) -> Result<()> {
@@ -675,7 +675,7 @@ mod tests {
             .create_share(
                 file_id,
                 owner_id,
-                SharePermissions::Read,
+                SharePermissions::View,
                 None,
                 None,
             )
@@ -683,10 +683,10 @@ mod tests {
             .unwrap();
 
         // Verify share properties
-        assert_eq!(share.file_id, file_id);
+        assert_eq!(share.file_id, Some(file_id));
         assert_eq!(share.created_by, owner_id);
-        assert_eq!(share.permissions, SharePermissions::Read);
-        assert_eq!(share.share_token.len(), 32);
+        assert_eq!(share.permissions, SharePermissions::View);
+        assert_eq!(share.share_token.clone().unwrap().len(), 32);
         assert!(share.password_hash.is_none());
         assert!(share.expires_at.is_none());
 
@@ -728,7 +728,7 @@ mod tests {
             .create_share(
                 file_id,
                 other_user,
-                SharePermissions::Read,
+                SharePermissions::View,
                 None,
                 None,
             )
@@ -764,14 +764,14 @@ mod tests {
             .create_share(
                 file_id,
                 owner_id,
-                SharePermissions::Read,
+                SharePermissions::View,
                 None,
                 None,
             )
             .await
             .unwrap();
 
-        let share_token = share.share_token.clone();
+        let share_token = share.share_token.clone().unwrap();
 
         // Validate share and create session
         let session = service
@@ -782,7 +782,7 @@ mod tests {
         // Verify session properties
         assert_eq!(session.share_id, share.id);
         assert_eq!(session.file_id, file_id);
-        assert_eq!(session.permissions, SharePermissions::Read);
+        assert_eq!(session.permissions, SharePermissions::View);
         assert!(!session.token.is_empty());
 
         // Verify access count was incremented
@@ -818,14 +818,14 @@ mod tests {
             .create_share(
                 file_id,
                 owner_id,
-                SharePermissions::Read,
+                SharePermissions::View,
                 Some("password123".to_string()),
                 None,
             )
             .await
             .unwrap();
 
-        let share_token = share.share_token.clone();
+        let share_token = share.share_token.clone().unwrap();
 
         // Try to validate without password - should fail
         let result = service
@@ -872,7 +872,7 @@ mod tests {
             .create_share(
                 file_id,
                 owner_id,
-                SharePermissions::Read,
+                SharePermissions::View,
                 None,
                 None,
             )
@@ -880,7 +880,7 @@ mod tests {
             .unwrap();
 
         let share_id = share.id;
-        let share_token = share.share_token.clone();
+        let share_token = share.share_token.clone().unwrap();
 
         // Revoke share
         service.revoke_share(share_id, owner_id).await.unwrap();
@@ -929,7 +929,7 @@ mod tests {
             .create_share(
                 file_id,
                 owner_id,
-                SharePermissions::Read,
+                SharePermissions::View,
                 None,
                 None,
             )
@@ -937,7 +937,7 @@ mod tests {
             .unwrap();
 
         let share_id = share.id;
-        let share_token = share.share_token.clone();
+        let share_token = share.share_token.clone().unwrap();
 
         // Verify share is accessible without password
         let session = service
@@ -995,14 +995,14 @@ mod tests {
             .create_share(
                 file_id,
                 owner_id,
-                SharePermissions::Read,
+                SharePermissions::View,
                 None,
                 None,
             )
             .await
             .unwrap();
 
-        let share_token = share.share_token.clone();
+        let share_token = share.share_token.clone().unwrap();
 
         // Get public share info
         let (returned_share, returned_file) = service
@@ -1012,7 +1012,7 @@ mod tests {
 
         // Verify share and file are returned correctly
         assert_eq!(returned_share.id, share.id);
-        assert_eq!(returned_share.file_id, file_id);
+        assert_eq!(returned_share.file_id, Some(file_id));
         assert_eq!(returned_file.id, file_id);
         assert_eq!(returned_file.name, "document.pdf");
     }
@@ -1053,14 +1053,14 @@ mod tests {
             .create_share(
                 file_id,
                 owner_id,
-                SharePermissions::Read,
+                SharePermissions::View,
                 None,
                 None,
             )
             .await
             .unwrap();
 
-        let share_token = share.share_token.clone();
+        let share_token = share.share_token.clone().unwrap();
 
         // Revoke share
         service.revoke_share(share.id, owner_id).await.unwrap();
@@ -1097,14 +1097,14 @@ mod tests {
             .create_share(
                 file_id,
                 owner_id,
-                SharePermissions::Read,
+                SharePermissions::View,
                 None,
                 Some(expired_time),
             )
             .await
             .unwrap();
 
-        let share_token = share.share_token.clone();
+        let share_token = share.share_token.clone().unwrap();
 
         // Try to get public share info
         let result = service.get_public_share_info(&share_token).await;

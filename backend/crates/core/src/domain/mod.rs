@@ -1,6 +1,7 @@
 mod file;
 mod file_version;
 mod folder;
+mod notification;
 mod response_types;
 mod share;
 mod user;
@@ -8,6 +9,7 @@ mod user;
 pub use file::File;
 pub use file_version::FileVersion;
 pub use folder::Folder;
+pub use notification::{Notification, NotificationId, NotificationType, ResourceType};
 pub use response_types::{FolderContents, FolderTree};
 pub use share::{Share, SharePermissions, ShareRecipient};
 pub use user::User;
