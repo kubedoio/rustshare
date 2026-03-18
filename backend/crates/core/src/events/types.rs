@@ -193,6 +193,38 @@ pub struct FileRestoredPayload {
     pub restored_by: UserId,
 }
 
+/// Share created event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareCreatedPayload {
+    pub share_id: ShareId,
+    pub file_id: FileId,
+    pub share_token: String,
+    pub permissions: SharePermissions,
+    pub password_protected: bool,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub created_by: UserId,
+}
+
+/// Share revoked event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareRevokedPayload {
+    pub share_id: ShareId,
+    pub file_id: FileId,
+    pub revoked_by: UserId,
+}
+
+/// Share updated event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareUpdatedPayload {
+    pub share_id: ShareId,
+    pub file_id: FileId,
+    pub password_changed: bool,
+    pub expires_at_changed: bool,
+    pub new_expires_at: Option<DateTime<Utc>>,
+    pub updated_by: UserId,
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,5 +265,20 @@ mod tests {
         assert_eq!(EventType::FolderCreated.type_name(), "FolderCreated");
         assert_eq!(EventType::ShareCreated.type_name(), "ShareCreated");
         assert_eq!(EventType::ConflictDetected.type_name(), "ConflictDetected");
+    }
+
+    #[test]
+    fn test_share_event_type_serialization() {
+        let event_type = EventType::ShareCreated;
+        let json = serde_json::to_string(&event_type).unwrap();
+        assert_eq!(json, r#"{"type":"ShareCreated"}"#);
+
+        let event_type = EventType::ShareRevoked;
+        let json = serde_json::to_string(&event_type).unwrap();
+        assert_eq!(json, r#"{"type":"ShareRevoked"}"#);
+
+        let event_type = EventType::ShareUpdated;
+        let json = serde_json::to_string(&event_type).unwrap();
+        assert_eq!(json, r#"{"type":"ShareUpdated"}"#);
     }
 }
