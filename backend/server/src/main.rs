@@ -8,6 +8,7 @@ use axum::{
 use rustshare_auth::{JwtManager, PasswordHasher};
 use rustshare_core::{
     domain::User,
+    events::EventBroadcaster,
     services::{FileService, FolderService},
 };
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
@@ -25,6 +26,7 @@ pub struct AppState {
     pub event_store: Arc<EventStore>,
     pub object_store: Arc<ObjectStore>,
     pub jwt_manager: Arc<JwtManager>,
+    pub broadcaster: Arc<EventBroadcaster>,
     pub file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore>>,
     pub folder_service: Arc<FolderService<EventStore, MetadataStore>>,
 }
@@ -75,15 +77,26 @@ async fn main() -> Result<()> {
     let jwt_secret = std::env::var("JWT_SECRET")?;
     let jwt_manager = Arc::new(JwtManager::new(jwt_secret));
 
+    // Initialize EventBroadcaster
+    let capacity = std::env::var("BROADCAST_CAPACITY")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1000);
+    let broadcaster = Arc::new(EventBroadcaster::new(capacity));
+
+    info!("EventBroadcaster initialized with capacity {}", capacity);
+
     // Initialize services
     let file_service = Arc::new(FileService::new(
         Arc::clone(&event_store),
         Arc::clone(&metadata_store),
         Arc::clone(&object_store),
+        Arc::clone(&broadcaster),
     ));
     let folder_service = Arc::new(FolderService::new(
         Arc::clone(&event_store),
         Arc::clone(&metadata_store),
+        Arc::clone(&broadcaster),
     ));
 
     // Bootstrap admin user if no users exist
@@ -114,6 +127,7 @@ async fn main() -> Result<()> {
         event_store,
         object_store,
         jwt_manager,
+        broadcaster,
         file_service,
         folder_service,
     };
@@ -142,6 +156,8 @@ async fn main() -> Result<()> {
         .route("/api/folders/tree", get(handlers::get_folder_tree))
         .route("/api/folders/:id/move", post(handlers::move_folder))
         .route("/api/folders/:id/rename", post(handlers::rename_folder))
+        // WebSocket sync endpoint (Task Phase 3A)
+        .route("/api/sync", get(handlers::sync_handler))
         // Tracing
         .layer(TraceLayer::new_for_http())
         .with_state(state);
