@@ -7,6 +7,7 @@
   import { getWebSocketClient, disconnectWebSocket } from '$lib/websocket/client';
   import type { WebSocketEvent } from '$lib/websocket/client';
   import FileGrid from '$lib/components/files/FileGrid.svelte';
+  import FileList from '$lib/components/files/FileList.svelte';
   import FileGridSkeleton from '$lib/components/files/FileGridSkeleton.svelte';
   import UploadButton from '$lib/components/files/UploadButton.svelte';
   import UploadProgress from '$lib/components/files/UploadProgress.svelte';
@@ -21,6 +22,7 @@
   import Breadcrumbs from '$lib/components/layout/Breadcrumbs.svelte';
   import { showKeyboardShortcuts } from '$lib/stores/ui';
   import { searchQuery } from '$lib/stores/search';
+  import { fileSortState, setSortField, setViewMode, type SortField } from '$lib/stores/fileSort';
   import type { File, Folder } from '$lib/api/types';
   import type { UploadTask } from '$lib/components/files/UploadProgress.svelte';
 
@@ -355,6 +357,47 @@
       )
     : ($filesQuery.data?.files || []);
 
+  // Sort files and folders
+  $: sortedFolders = (() => {
+    const folders = [...filteredFolders];
+    folders.sort((a, b) => {
+      if ($fileSortState.field === 'name') {
+        return $fileSortState.order === 'asc'
+          ? a.name.localeCompare(b.name)
+          : b.name.localeCompare(a.name);
+      } else if ($fileSortState.field === 'modified_at') {
+        const aTime = new Date(a.updated_at).getTime();
+        const bTime = new Date(b.updated_at).getTime();
+        return $fileSortState.order === 'asc' ? aTime - bTime : bTime - aTime;
+      }
+      return 0;
+    });
+    return folders;
+  })();
+
+  $: sortedFiles = (() => {
+    const files = [...filteredFiles];
+    files.sort((a, b) => {
+      if ($fileSortState.field === 'name') {
+        return $fileSortState.order === 'asc'
+          ? a.name.localeCompare(b.name)
+          : b.name.localeCompare(a.name);
+      } else if ($fileSortState.field === 'modified_at') {
+        const aTime = new Date(a.modified_at).getTime();
+        const bTime = new Date(b.modified_at).getTime();
+        return $fileSortState.order === 'asc' ? aTime - bTime : bTime - aTime;
+      } else if ($fileSortState.field === 'size') {
+        return $fileSortState.order === 'asc' ? a.size - b.size : b.size - a.size;
+      } else if ($fileSortState.field === 'mime_type') {
+        return $fileSortState.order === 'asc'
+          ? a.mime_type.localeCompare(b.mime_type)
+          : b.mime_type.localeCompare(a.mime_type);
+      }
+      return 0;
+    });
+    return files;
+  })();
+
   $: isUploading = uploadTasks.some(
     (t) => t.status === 'uploading' || t.status === 'pending'
   );
@@ -462,6 +505,95 @@
         {currentFolderId ? folderPath[folderPath.length - 1]?.name || 'My Files' : 'My Files'}
       </h1>
       <div class="flex gap-2">
+        <!-- Sort dropdown -->
+        <div class="dropdown dropdown-end">
+          <label tabindex="0" class="btn btn-ghost btn-sm lg:btn-md">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 lg:w-5 lg:h-5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5" />
+            </svg>
+            <span class="hidden sm:inline">Sort</span>
+            {#if $fileSortState.order === 'desc'}
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3 h-3">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 13.5L12 21m0 0l-7.5-7.5M12 21V3" />
+              </svg>
+            {:else}
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3 h-3">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 10.5L12 3m0 0l7.5 7.5M12 3v18" />
+              </svg>
+            {/if}
+          </label>
+          <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52">
+            <li>
+              <button
+                class:active={$fileSortState.field === 'name'}
+                on:click={() => setSortField('name')}
+              >
+                Name
+                {#if $fileSortState.field === 'name'}
+                  <span class="ml-auto">{$fileSortState.order === 'asc' ? '↑' : '↓'}</span>
+                {/if}
+              </button>
+            </li>
+            <li>
+              <button
+                class:active={$fileSortState.field === 'modified_at'}
+                on:click={() => setSortField('modified_at')}
+              >
+                Date Modified
+                {#if $fileSortState.field === 'modified_at'}
+                  <span class="ml-auto">{$fileSortState.order === 'asc' ? '↑' : '↓'}</span>
+                {/if}
+              </button>
+            </li>
+            <li>
+              <button
+                class:active={$fileSortState.field === 'size'}
+                on:click={() => setSortField('size')}
+              >
+                Size
+                {#if $fileSortState.field === 'size'}
+                  <span class="ml-auto">{$fileSortState.order === 'asc' ? '↑' : '↓'}</span>
+                {/if}
+              </button>
+            </li>
+            <li>
+              <button
+                class:active={$fileSortState.field === 'mime_type'}
+                on:click={() => setSortField('mime_type')}
+              >
+                Type
+                {#if $fileSortState.field === 'mime_type'}
+                  <span class="ml-auto">{$fileSortState.order === 'asc' ? '↑' : '↓'}</span>
+                {/if}
+              </button>
+            </li>
+          </ul>
+        </div>
+
+        <!-- View mode toggle -->
+        <div class="btn-group">
+          <button
+            class="btn btn-sm lg:btn-md"
+            class:btn-active={$fileSortState.viewMode === 'grid'}
+            on:click={() => setViewMode('grid')}
+            title="Grid view"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 lg:w-5 lg:h-5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+            </svg>
+          </button>
+          <button
+            class="btn btn-sm lg:btn-md"
+            class:btn-active={$fileSortState.viewMode === 'list'}
+            on:click={() => setViewMode('list')}
+            title="List view"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 lg:w-5 lg:h-5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" />
+            </svg>
+          </button>
+        </div>
+
         <button
           class="btn btn-outline btn-sm lg:btn-md"
           on:click={() => showCreateFolderModal = true}
@@ -503,18 +635,33 @@
           </button>
         </div>
       {:else}
-        <FileGrid
-          folders={filteredFolders}
-          files={filteredFiles}
-          onFolderClick={handleFolderClick}
-          onFileClick={handleFileClick}
-          onRenameFolder={handleRenameFolder}
-          onDeleteFolder={handleDeleteFolder}
-          onRenameFile={handleRenameFile}
-          onDeleteFile={handleDeleteFile}
-          onShareFile={handleShareFile}
-          onVersionHistory={handleVersionHistory}
-        />
+        {#if $fileSortState.viewMode === 'grid'}
+          <FileGrid
+            folders={sortedFolders}
+            files={sortedFiles}
+            onFolderClick={handleFolderClick}
+            onFileClick={handleFileClick}
+            onRenameFolder={handleRenameFolder}
+            onDeleteFolder={handleDeleteFolder}
+            onRenameFile={handleRenameFile}
+            onDeleteFile={handleDeleteFile}
+            onShareFile={handleShareFile}
+            onVersionHistory={handleVersionHistory}
+          />
+        {:else}
+          <FileList
+            folders={sortedFolders}
+            files={sortedFiles}
+            onFolderClick={handleFolderClick}
+            onFileClick={handleFileClick}
+            onRenameFolder={handleRenameFolder}
+            onDeleteFolder={handleDeleteFolder}
+            onRenameFile={handleRenameFile}
+            onDeleteFile={handleDeleteFile}
+            onShareFile={handleShareFile}
+            onVersionHistory={handleVersionHistory}
+          />
+        {/if}
       {/if}
     {/if}
   </div>
