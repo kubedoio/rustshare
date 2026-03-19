@@ -5,8 +5,13 @@
   export let file: File;
   export let size: 'sm' | 'md' | 'lg' = 'md';
 
+  const isImage = (mimeType: string) => {
+    return mimeType.startsWith('image/');
+  };
+
+  // Initialize loading based on whether this is an image
   let thumbnailUrl: string | null = null;
-  let loading = true;
+  let loading = isImage(file.mime_type);
   let error = false;
 
   const sizeClasses = {
@@ -16,10 +21,6 @@
   };
 
   $: sizeClass = sizeClasses[size];
-
-  const isImage = (mimeType: string) => {
-    return mimeType.startsWith('image/');
-  };
 
   const isPDF = (mimeType: string) => {
     return mimeType === 'application/pdf';
@@ -107,8 +108,6 @@
   onMount(() => {
     if (isImage(file.mime_type)) {
       generateThumbnail();
-    } else {
-      loading = false;
     }
   });
 
