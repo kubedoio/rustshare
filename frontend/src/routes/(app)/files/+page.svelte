@@ -48,7 +48,8 @@
   let previewTarget: File | null = null;
 
   // Query for folder contents (or root contents if at root)
-  const filesQuery = createQuery({
+  // Use $: to make the query reactive to currentFolderId changes
+  $: filesQuery = createQuery({
     queryKey: ['folder-contents', currentFolderId],
     queryFn: async () => {
       // Use getFolderContents for both root and folders
