@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { authStore, isAuthenticated } from '$lib/stores/auth';
+  import { authStore } from '$lib/stores/auth';
   import { showKeyboardShortcuts } from '$lib/stores/ui';
   import Sidebar from '$lib/components/layout/Sidebar.svelte';
   import Header from '$lib/components/layout/Header.svelte';
@@ -10,18 +10,21 @@
   import { browser } from '$app/environment';
 
   let mobileMenuOpen = false;
-  let mounted = false;
+  let checkComplete = false;
 
   // Check authentication on mount
   onMount(() => {
-    mounted = true;
-    if (!$isAuthenticated) {
-      goto('/login');
-    }
+    // Give the auth store a moment to initialize from localStorage
+    setTimeout(() => {
+      checkComplete = true;
+      if (!$authStore.isAuthenticated) {
+        goto('/login');
+      }
+    }, 0);
   });
 
-  // Redirect if auth state changes (only in browser after mount)
-  $: if (browser && mounted && !$isAuthenticated) {
+  // Redirect if auth state changes (only after initial check)
+  $: if (browser && checkComplete && !$authStore.isAuthenticated) {
     goto('/login');
   }
 
@@ -38,25 +41,29 @@
   }
 </script>
 
-{#if $isAuthenticated}
-  <div class="flex h-screen overflow-hidden">
-    <Sidebar mobileOpen={mobileMenuOpen} onClose={closeMobileMenu} />
+{#if checkComplete}
+  {#if $authStore.isAuthenticated}
+    <div class="flex h-screen overflow-hidden">
+      <Sidebar mobileOpen={mobileMenuOpen} onClose={closeMobileMenu} />
 
-    <div class="flex-1 flex flex-col overflow-hidden">
-      <Header onMenuClick={toggleMobileMenu} onHelpClick={showHelp}>
-        <slot slot="breadcrumbs" name="breadcrumbs" />
-      </Header>
+      <div class="flex-1 flex flex-col overflow-hidden">
+        <Header onMenuClick={toggleMobileMenu} onHelpClick={showHelp}>
+          <slot slot="breadcrumbs" name="breadcrumbs" />
+        </Header>
 
-      <main class="flex-1 overflow-auto bg-base-200 p-4 lg:p-6">
-        <slot />
-      </main>
+        <main class="flex-1 overflow-auto bg-base-200 p-4 lg:p-6">
+          <slot />
+        </main>
+      </div>
     </div>
-  </div>
 
-  <KeyboardShortcuts
-    open={$showKeyboardShortcuts}
-    on:close={() => showKeyboardShortcuts.set(false)}
-  />
+    <KeyboardShortcuts
+      open={$showKeyboardShortcuts}
+      on:close={() => showKeyboardShortcuts.set(false)}
+    />
+  {:else}
+    <!-- Will redirect to login in onMount -->
+  {/if}
 {:else}
   <div class="flex items-center justify-center h-screen">
     <span class="loading loading-spinner loading-lg"></span>
