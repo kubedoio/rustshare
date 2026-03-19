@@ -46,6 +46,67 @@ Object.defineProperty(navigator, 'clipboard', {
   writable: true
 });
 
+// Mock Image constructor for thumbnail tests
+class MockImage {
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  src = '';
+  width = 800;
+  height = 600;
+  crossOrigin = '';
+
+  constructor() {
+    // Simulate image load after src is set
+    setTimeout(() => {
+      if (this.onload) {
+        this.onload();
+      }
+    }, 10);
+  }
+}
+
+(global as any).Image = MockImage;
+
+// Mock Canvas API for thumbnail generation
+class MockCanvasRenderingContext2D {
+  canvas = { width: 0, height: 0 };
+  drawImage = vi.fn();
+  clearRect = vi.fn();
+  fillRect = vi.fn();
+  getImageData = vi.fn();
+  putImageData = vi.fn();
+}
+
+class MockHTMLCanvasElement {
+  width = 0;
+  height = 0;
+  private context = new MockCanvasRenderingContext2D();
+
+  getContext(type: string) {
+    if (type === '2d') {
+      return this.context;
+    }
+    return null;
+  }
+
+  toDataURL(type: string, quality?: number) {
+    return 'data:image/jpeg;base64,mockImageData';
+  }
+
+  toBlob(callback: (blob: Blob | null) => void, type?: string, quality?: number) {
+    callback(new Blob(['mock'], { type: type || 'image/png' }));
+  }
+}
+
+// Override document.createElement for canvas
+const originalCreateElement = document.createElement.bind(document);
+document.createElement = vi.fn((tagName: string) => {
+  if (tagName === 'canvas') {
+    return new MockHTMLCanvasElement() as any;
+  }
+  return originalCreateElement(tagName);
+}) as any;
+
 // Suppress console errors in tests (optional)
 global.console = {
   ...console,
