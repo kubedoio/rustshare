@@ -7,7 +7,7 @@
   onMount(() => {
     const user = get(currentUser);
     if (user) {
-      goto('/files');
+      goto('/dashboard');
     } else {
       goto('/login');
     }

@@ -6,6 +6,7 @@
   export let onClose: () => void = () => {};
 
   const navItems = [
+    { href: '/dashboard', label: 'Dashboard', icon: '🏠' },
     { href: '/files', label: 'My Files', icon: '📁' },
     { href: '/shared-with-me', label: 'Shared with Me', icon: '👥' },
     { href: '/notifications', label: 'Notifications', icon: '🔔' },
