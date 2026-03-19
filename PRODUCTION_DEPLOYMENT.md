@@ -1,15 +1,31 @@
-# RustShare Production Deployment v1.0.1
+# RustShare Production Deployment v1.1.0
 
 ## 🚀 Deployment Status: LIVE
 
 **Date**: March 19, 2026
-**Version**: v1.0.1-production (Critical Fixes)
-**Tag**: v1.0.1-production
+**Version**: v1.1.0-production (New Features)
+**Tag**: v1.1.0-production
 **Repository**: https://github.com/senolcolak/rustshare
 
 ---
 
-## ✅ v1.0.1 Critical Fixes
+## 🎉 v1.1.0 New Features
+
+### Features Added:
+1. **Settings Page** ✅ - User profile, storage stats, theme toggle
+2. **Search Functionality** ✅ - Real-time client-side search for files/folders
+3. **Theme Management** ✅ - Light/dark mode with localStorage persistence
+
+### Implementation Details:
+- Settings page with profile display, storage visualization, and account management
+- Real-time search bar in header (desktop inline, mobile dropdown)
+- Client-side filtering for instant results without backend API
+- Theme toggle persists across sessions
+- Mobile-responsive design for all new features
+
+---
+
+## ✅ v1.0.1 Critical Fixes (Previous Release)
 
 ### Issues Resolved:
 1. **Auth Persistence** ✅ - Users now stay logged in after page refresh
