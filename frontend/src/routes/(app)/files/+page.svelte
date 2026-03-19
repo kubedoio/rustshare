@@ -24,6 +24,7 @@
   import { searchQuery } from '$lib/stores/search';
   import { fileSortState, setSortField, setViewMode, type SortField } from '$lib/stores/fileSort';
   import { selectionStore, selectionCount, hasSelection } from '$lib/stores/selection';
+  import { activityStore } from '$lib/stores/activity';
   import type { File, Folder } from '$lib/api/types';
   import type { UploadTask } from '$lib/components/files/UploadProgress.svelte';
 
@@ -67,8 +68,9 @@
     mutationFn: async (file: globalThis.File) => {
       return uploadFile(currentFolderId, file);
     },
-    onSuccess: () => {
+    onSuccess: (_, file) => {
       queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+      activityStore.addActivity('file_uploaded', file.name);
     }
   });
 
@@ -77,10 +79,11 @@
     mutationFn: async (name: string) => {
       return createFolder(name, currentFolderId);
     },
-    onSuccess: () => {
+    onSuccess: (folder) => {
       queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
       showCreateFolderModal = false;
       showNotification('Folder created successfully', 'success');
+      activityStore.addActivity('folder_created', folder.name);
     },
     onError: (error) => {
       showNotification(
@@ -95,11 +98,13 @@
     mutationFn: async ({ fileId, newName }: { fileId: string; newName: string }) => {
       return renameFile(fileId, newName);
     },
-    onSuccess: () => {
+    onSuccess: (_, { newName }) => {
+      const oldName = renameTarget?.name || 'File';
       queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
       showRenameModal = false;
       renameTarget = null;
       showNotification('File renamed successfully', 'success');
+      activityStore.addActivity('file_renamed', newName, oldName);
     },
     onError: (error) => {
       showNotification(
@@ -114,11 +119,13 @@
     mutationFn: async ({ folderId, newName }: { folderId: string; newName: string }) => {
       return renameFolder(folderId, newName);
     },
-    onSuccess: () => {
+    onSuccess: (_, { newName }) => {
+      const oldName = renameTarget?.name || 'Folder';
       queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
       showRenameModal = false;
       renameTarget = null;
       showNotification('Folder renamed successfully', 'success');
+      activityStore.addActivity('folder_renamed', newName, oldName);
     },
     onError: (error) => {
       showNotification(
@@ -133,11 +140,13 @@
     mutationFn: async (fileId: string) => {
       return deleteFile(fileId);
     },
-    onSuccess: () => {
+    onSuccess: (_, fileId) => {
+      const fileName = deleteTarget?.name || 'File';
       queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
       showDeleteModal = false;
       deleteTarget = null;
       showNotification('File deleted successfully', 'success');
+      activityStore.addActivity('file_deleted', fileName);
     },
     onError: (error) => {
       showNotification(
@@ -153,10 +162,12 @@
       return deleteFolder(folderId);
     },
     onSuccess: () => {
+      const folderName = deleteTarget?.name || 'Folder';
       queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
       showDeleteModal = false;
       deleteTarget = null;
       showNotification('Folder deleted successfully', 'success');
+      activityStore.addActivity('folder_deleted', folderName);
     },
     onError: (error) => {
       showNotification(

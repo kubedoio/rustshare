@@ -3,6 +3,7 @@
   import { createQuery } from '@tanstack/svelte-query';
   import { getFolderContents } from '$lib/api/folders';
   import { currentUser } from '$lib/stores/auth';
+  import ActivityFeed from '$lib/components/activity/ActivityFeed.svelte';
   import type { File, Folder } from '$lib/api/types';
 
   // Query for root contents to get recent files
@@ -230,6 +231,13 @@
           </table>
         </div>
       {/if}
+    </div>
+  </div>
+
+  <!-- Activity Feed -->
+  <div class="card bg-base-100 shadow-xl">
+    <div class="card-body">
+      <ActivityFeed maxItems={10} showClearButton={true} />
     </div>
   </div>
 
