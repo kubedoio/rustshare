@@ -8,7 +8,8 @@
   const navItems = [
     { href: '/files', label: 'My Files', icon: '📁' },
     { href: '/shared-with-me', label: 'Shared with Me', icon: '👥' },
-    { href: '/notifications', label: 'Notifications', icon: '🔔' }
+    { href: '/notifications', label: 'Notifications', icon: '🔔' },
+    { href: '/settings', label: 'Settings', icon: '⚙️' }
   ];
 
   function handleLogout() {
