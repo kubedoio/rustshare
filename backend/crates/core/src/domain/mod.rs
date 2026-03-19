@@ -12,7 +12,7 @@ pub use folder::Folder;
 pub use notification::{Notification, NotificationId, NotificationType, ResourceType};
 pub use response_types::{FolderContents, FolderTree};
 pub use share::{Share, SharePermissions, ShareRecipient};
-pub use user::User;
+pub use user::{User, Theme};
 
 use uuid::Uuid;
 

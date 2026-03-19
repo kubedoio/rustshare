@@ -2,6 +2,8 @@ import { writable, derived } from 'svelte/store';
 import type { User } from '../api/types';
 import { decodeJWT, isTokenExpired } from '../utils/jwt';
 import { getStoredToken, setStoredToken, logout } from '../api/auth';
+import { getUserProfile } from '../api/users';
+import { themeStore } from './theme';
 
 interface AuthState {
   user: User | null;
@@ -22,6 +24,18 @@ function createAuthStore() {
     if (initialToken && !isTokenExpired(initialToken)) {
       initialUser = decodeJWT(initialToken);
       initialIsAuthenticated = initialUser !== null;
+
+      // Load theme from backend after authentication
+      if (initialUser) {
+        getUserProfile()
+          .then(profile => {
+            themeStore.loadFromBackend(profile.theme);
+          })
+          .catch(err => {
+            console.error('Failed to load user profile:', err);
+            // Continue with local theme if API fails
+          });
+      }
     } else if (initialToken) {
       // Token expired, clear it
       localStorage.removeItem('token');
@@ -38,7 +52,7 @@ function createAuthStore() {
 
   return {
     subscribe,
-    login: (token: string, user: User) => {
+    login: async (token: string, user: User) => {
       setStoredToken(token);
       set({
         user,
@@ -46,6 +60,15 @@ function createAuthStore() {
         isAuthenticated: true,
         isLoading: false
       });
+
+      // Load theme from backend after login
+      try {
+        const profile = await getUserProfile();
+        themeStore.loadFromBackend(profile.theme);
+      } catch (err) {
+        console.error('Failed to load user profile:', err);
+        // Continue with local theme if API fails
+      }
     },
     logout: () => {
       logout();

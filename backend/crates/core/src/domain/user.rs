@@ -3,6 +3,45 @@ use serde::{Deserialize, Serialize};
 
 use super::UserId;
 
+/// User theme preference
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text")]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    Light,
+    Dark,
+    System,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Theme::System
+    }
+}
+
+impl std::fmt::Display for Theme {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Theme::Light => write!(f, "light"),
+            Theme::Dark => write!(f, "dark"),
+            Theme::System => write!(f, "system"),
+        }
+    }
+}
+
+impl std::str::FromStr for Theme {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "light" => Ok(Theme::Light),
+            "dark" => Ok(Theme::Dark),
+            "system" => Ok(Theme::System),
+            _ => Err(format!("Invalid theme: {}", s)),
+        }
+    }
+}
+
 /// User account information.
 ///
 /// Note: The `username` field is used for login and is distinct from `email`.
@@ -19,6 +58,9 @@ pub struct User {
     pub is_admin: bool,
     /// Storage quota in bytes
     pub storage_quota: i64,
+    /// Theme preference (light/dark/system)
+    #[serde(default)]
+    pub theme: Theme,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -35,9 +77,16 @@ impl User {
             email,
             is_admin,
             storage_quota,
+            theme: Theme::default(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
+    }
+
+    /// Updates the user's theme preference.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
+        self.updated_at = Utc::now();
     }
 }
 

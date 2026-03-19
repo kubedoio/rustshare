@@ -1,4 +1,4 @@
-use rustshare_core::domain::{User, UserId};
+use rustshare_core::domain::{User, UserId, Theme};
 use sqlx::PgPool;
 
 /// Repository for user database operations.
@@ -19,7 +19,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
-                   storage_quota, created_at, updated_at
+                   storage_quota, theme, created_at, updated_at
             FROM users
             WHERE LOWER(email) = $1
             "#,
@@ -36,7 +36,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
-                   storage_quota, created_at, updated_at
+                   storage_quota, theme, created_at, updated_at
             FROM users
             WHERE id = $1
             "#,
@@ -46,6 +46,23 @@ impl UserRepository {
         .await?;
 
         Ok(user)
+    }
+
+    /// Update user's theme preference.
+    pub async fn update_theme(&self, user_id: UserId, theme: Theme) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE users
+            SET theme = $1, updated_at = NOW()
+            WHERE id = $2
+            "#,
+        )
+        .bind(theme.to_string())
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 }
 

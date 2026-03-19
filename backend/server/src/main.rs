@@ -42,7 +42,7 @@ mod middleware;
 
 use anyhow::Result;
 use axum::{
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use rustshare_auth::{JwtManager, PasswordHasher};
@@ -251,6 +251,9 @@ async fn main() -> Result<()> {
         // Share routes (Task 9)
         .route("/api/files/:file_id/shares", post(handlers::create_share))
         .route("/api/files/:file_id/shares", get(handlers::list_file_shares))
+        // User routes
+        .route("/api/users/me", get(handlers::get_user_profile))
+        .route("/api/users/me/theme", patch(handlers::update_user_theme))
         // User share routes (Task 14) - Phase 3A (not MVP)
         // .route("/api/files/:id/share", post(handlers::create_file_share))
         // .route("/api/folders/:id/share", post(handlers::create_folder_share))

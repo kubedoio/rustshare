@@ -8,6 +8,7 @@ mod public_shares;
 mod shares;
 mod sync;
 mod user_shares;
+mod users;
 
 pub use extractors::{AuthenticatedUser, ShareSessionAuth};
 pub use files::{
@@ -26,6 +27,7 @@ pub use notifications::{
 pub use public_shares::{create_session, get_share_info, download_shared_file};
 pub use shares::{create_share, list_file_shares};
 pub use sync::sync_handler;
+pub use users::{update_user_theme, get_user_profile};
 
 use axum::{http::StatusCode, response::{IntoResponse, Response}, Json};
 use rustshare_core::services::{FileError, FolderError, ShareError};

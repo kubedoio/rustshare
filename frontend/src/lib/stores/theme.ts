@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import { browser } from '$app/environment';
+import { updateUserTheme } from '$lib/api/users';
 
 export type Theme = 'light' | 'dark' | 'system';
 
@@ -62,15 +63,23 @@ function createThemeStore() {
   return {
     subscribe,
 
-    setTheme: (theme: Theme) => {
+    setTheme: (theme: Theme, syncToBackend = false) => {
       if (browser) {
         localStorage.setItem(STORAGE_KEY, theme);
         applyTheme(theme);
       }
       set(theme);
+
+      // Sync to backend if requested
+      if (syncToBackend && browser) {
+        updateUserTheme(theme).catch(err => {
+          console.error('Failed to sync theme to backend:', err);
+          // Continue with local theme even if sync fails
+        });
+      }
     },
 
-    toggleTheme: () => {
+    toggleTheme: (syncToBackend = true) => {
       update(currentTheme => {
         const resolvedTheme = resolveTheme(currentTheme);
         const newTheme: Theme = resolvedTheme === 'light' ? 'dark' : 'light';
@@ -80,8 +89,25 @@ function createThemeStore() {
           applyTheme(newTheme);
         }
 
+        // Sync to backend
+        if (syncToBackend && browser) {
+          updateUserTheme(newTheme).catch(err => {
+            console.error('Failed to sync theme to backend:', err);
+            // Continue with local theme even if sync fails
+          });
+        }
+
         return newTheme;
       });
+    },
+
+    loadFromBackend: (theme: Theme) => {
+      // Load theme from backend (called after login)
+      if (browser) {
+        localStorage.setItem(STORAGE_KEY, theme);
+        applyTheme(theme);
+      }
+      set(theme);
     },
 
     getResolvedTheme: (): 'light' | 'dark' => {

@@ -47,7 +47,7 @@ impl MetadataStore {
     pub async fn find_user_by_email(&self, email: &str) -> Result<Option<User>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, created_at, updated_at FROM users WHERE email = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at FROM users WHERE email = $1"#,
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -62,6 +62,7 @@ impl MetadataStore {
                 display_name: row.try_get("display_name")?,
                 is_admin: row.try_get("is_admin")?,
                 storage_quota: row.try_get("storage_quota")?,
+                theme: row.try_get::<String, _>("theme")?.parse().unwrap_or_default(),
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
             };
@@ -75,7 +76,7 @@ impl MetadataStore {
     pub async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, created_at, updated_at FROM users WHERE id = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at FROM users WHERE id = $1"#,
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -90,6 +91,7 @@ impl MetadataStore {
                 display_name: row.try_get("display_name")?,
                 is_admin: row.try_get("is_admin")?,
                 storage_quota: row.try_get("storage_quota")?,
+                theme: row.try_get::<String, _>("theme")?.parse().unwrap_or_default(),
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
             };
@@ -108,6 +110,19 @@ impl MetadataStore {
 
         let count: i64 = row.try_get("count")?;
         Ok(count > 0)
+    }
+
+    /// Update user's theme preference
+    pub async fn update_user_theme(&self, user_id: Uuid, theme: &str) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE users SET theme = $1, updated_at = NOW() WHERE id = $2"#,
+        )
+        .bind(theme)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 
     /// Create a new file in the projection table
