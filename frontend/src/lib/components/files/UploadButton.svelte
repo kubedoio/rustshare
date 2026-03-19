@@ -25,6 +25,7 @@
 </script>
 
 <input
+  id="upload-file-input"
   bind:this={fileInput}
   type="file"
   class="hidden"

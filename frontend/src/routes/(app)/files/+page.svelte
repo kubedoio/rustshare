@@ -19,6 +19,7 @@
   import VersionHistoryModal from '$lib/components/modals/VersionHistoryModal.svelte';
   import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
   import Breadcrumbs from '$lib/components/layout/Breadcrumbs.svelte';
+  import { showKeyboardShortcuts } from '$lib/stores/ui';
   import type { File, Folder } from '$lib/api/types';
   import type { UploadTask } from '$lib/components/files/UploadProgress.svelte';
 
@@ -387,11 +388,47 @@
     // Refresh current folder contents
     queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
   }
+
+  // Keyboard shortcuts handler
+  function handleKeyDown(event: KeyboardEvent) {
+    // Ignore if typing in input field
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+      return;
+    }
+
+    switch (event.key.toLowerCase()) {
+      case '?':
+        event.preventDefault();
+        showKeyboardShortcuts.set(true);
+        break;
+      case 'u':
+        event.preventDefault();
+        document.getElementById('upload-file-input')?.click();
+        break;
+      case 'n':
+        event.preventDefault();
+        showCreateFolderModal = true;
+        break;
+      case 'escape':
+        event.preventDefault();
+        // Close any open modal
+        showRenameModal = false;
+        showDeleteModal = false;
+        showShareModal = false;
+        showCreateFolderModal = false;
+        showVersionHistoryModal = false;
+        showFilePreviewModal = false;
+        showKeyboardShortcuts.set(false);
+        break;
+    }
+  }
 </script>
 
 <svelte:head>
   <title>My Files - RustShare</title>
 </svelte:head>
+
+<svelte:window on:keydown={handleKeyDown} />
 
 <DropZone
   on:filesDropped={(e) => handleFilesSelected(e.detail)}
