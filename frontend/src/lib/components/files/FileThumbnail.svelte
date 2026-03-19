@@ -37,11 +37,11 @@
     }
 
     try {
+      const apiBase = import.meta.env.VITE_API_URL || '/api/v1';
+
       // Get download URL from backend
-      const response = await fetch(`/api/files/${file.id}/download`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
+      const response = await fetch(`${apiBase}/files/${file.id}/download`, {
+        credentials: 'include'
       });
 
       if (!response.ok) {

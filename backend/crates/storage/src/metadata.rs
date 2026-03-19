@@ -5,6 +5,7 @@
 //! This will be migrated to compile-time queries after Docker Compose is set up in Task 11.
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use rustshare_core::domain::{File, FileVersion, Folder, Share, SharePermissions, User};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -12,6 +13,17 @@ use uuid::Uuid;
 /// Metadata store for querying projection tables
 pub struct MetadataStore {
     pool: PgPool,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserSession {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub token_hash: String,
+    pub expires_at: DateTime<Utc>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub last_accessed_at: DateTime<Utc>,
 }
 
 impl MetadataStore {
@@ -125,6 +137,88 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Create a new user session.
+    pub async fn create_user_session(
+        &self,
+        session_id: Uuid,
+        user_id: Uuid,
+        token_hash: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<UserSession> {
+        let row = sqlx::query(
+            r#"
+            INSERT INTO user_sessions (id, user_id, token_hash, expires_at)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id, user_id, token_hash, expires_at, revoked_at, created_at, last_accessed_at
+            "#,
+        )
+        .bind(session_id)
+        .bind(user_id)
+        .bind(token_hash)
+        .bind(expires_at)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(UserSession {
+            id: row.try_get("id")?,
+            user_id: row.try_get("user_id")?,
+            token_hash: row.try_get("token_hash")?,
+            expires_at: row.try_get("expires_at")?,
+            revoked_at: row.try_get("revoked_at")?,
+            created_at: row.try_get("created_at")?,
+            last_accessed_at: row.try_get("last_accessed_at")?,
+        })
+    }
+
+    /// Find an active user session by token hash.
+    pub async fn find_active_user_session_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<UserSession>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, user_id, token_hash, expires_at, revoked_at, created_at, last_accessed_at
+            FROM user_sessions
+            WHERE token_hash = $1
+              AND revoked_at IS NULL
+              AND expires_at > NOW()
+            "#,
+        )
+        .bind(token_hash)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            Ok(Some(UserSession {
+                id: row.try_get("id")?,
+                user_id: row.try_get("user_id")?,
+                token_hash: row.try_get("token_hash")?,
+                expires_at: row.try_get("expires_at")?,
+                revoked_at: row.try_get("revoked_at")?,
+                created_at: row.try_get("created_at")?,
+                last_accessed_at: row.try_get("last_accessed_at")?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Revoke a session by its token hash.
+    pub async fn revoke_user_session_by_token_hash(&self, token_hash: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE user_sessions
+            SET revoked_at = NOW()
+            WHERE token_hash = $1 AND revoked_at IS NULL
+            "#,
+        )
+        .bind(token_hash)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// Create a new file in the projection table
     pub async fn create_file(&self, file: &File) -> Result<()> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
@@ -159,6 +253,40 @@ impl MetadataStore {
             r#"SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at FROM files WHERE id = $1"#,
         )
         .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let file = File {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                size: row.try_get("size")?,
+                mime_type: row.try_get("mime_type")?,
+                content_hash: row.try_get("content_hash")?,
+                owner_id: row.try_get("owner_id")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                current_version: row.try_get("current_version")?,
+                created_at: row.try_get("created_at")?,
+                modified_at: row.try_get("modified_at")?,
+            };
+            Ok(Some(file))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Find file by canonical path for a specific owner.
+    pub async fn find_file_by_path(&self, path: &str, owner_id: Uuid) -> Result<Option<File>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at
+            FROM files
+            WHERE owner_id = $1 AND path = $2
+            "#,
+        )
+        .bind(owner_id)
+        .bind(path)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -382,6 +510,36 @@ impl MetadataStore {
             "#,
         )
         .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let folder = Folder {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                owner_id: row.try_get("owner_id")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            };
+            Ok(Some(folder))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Find folder by canonical path for a specific owner.
+    pub async fn find_folder_by_path(&self, path: &str, owner_id: Uuid) -> Result<Option<Folder>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
+            FROM folders
+            WHERE owner_id = $1 AND path = $2
+            "#,
+        )
+        .bind(owner_id)
+        .bind(path)
         .fetch_optional(&self.pool)
         .await?;
 

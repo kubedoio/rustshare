@@ -4,15 +4,9 @@ export class ApiClient {
   constructor(private baseURL: string) {}
 
   async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
-    const token = localStorage.getItem('token');
     const headers: Record<string, string> = {
       ...((options?.headers as Record<string, string>) || {})
     };
-
-    // Add Authorization header if token exists and not already set
-    if (token && !headers['Authorization']) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
 
     // Add Content-Type for JSON bodies (unless multipart form)
     if (options?.body && !(options.body instanceof FormData)) {
@@ -21,17 +15,14 @@ export class ApiClient {
 
     const response = await fetch(`${this.baseURL}${endpoint}`, {
       ...options,
+      credentials: 'include',
       headers
     });
 
-    // Handle 401 Unauthorized
     if (response.status === 401) {
-      // Clear the token but let the auth store handle redirect
-      localStorage.removeItem('token');
       throw new ApiError(401, 'Unauthorized');
     }
 
-    // Handle other errors
     if (!response.ok) {
       let errorMessage = 'Request failed';
       try {
@@ -82,5 +73,5 @@ export class ApiClient {
 }
 
 // Create singleton instance
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
+const API_URL = import.meta.env.VITE_API_URL || '/api/v1';
 export const apiClient = new ApiClient(API_URL);

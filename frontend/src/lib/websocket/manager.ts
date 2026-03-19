@@ -7,10 +7,10 @@ let currentUserId: string | null = null;
 let eventHandlersRegistered = false;
 
 /**
- * Initialize WebSocket connection with authentication token
+ * Initialize WebSocket connection for the current session cookie.
  * Sets up all event handlers for real-time sync
  */
-export async function initializeWebSocket(token: string, userId: string): Promise<void> {
+export async function initializeWebSocket(userId: string): Promise<void> {
   currentUserId = userId;
   const wsClient = getWebSocketClient();
 
@@ -21,7 +21,7 @@ export async function initializeWebSocket(token: string, userId: string): Promis
   }
 
   try {
-    await wsClient.connect(token);
+    await wsClient.connect();
     console.log('[WebSocket Manager] Connected successfully');
   } catch (error) {
     console.error('[WebSocket Manager] Failed to connect:', error);

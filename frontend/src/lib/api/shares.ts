@@ -98,7 +98,7 @@ export async function revokeShare(shareId: string): Promise<void> {
  */
 export async function getPublicShareInfo(token: string): Promise<ShareInfo> {
   // Use request directly without automatic auth header
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
+  const API_URL = import.meta.env.VITE_API_URL || '/api/v1';
   const response = await fetch(`${API_URL}/public/share/${token}/info`);
 
   if (!response.ok) {
@@ -134,7 +134,7 @@ export async function createShareSession(
   request: ShareSessionRequest
 ): Promise<ShareSessionResponse> {
   // Use request directly without automatic auth header
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
+  const API_URL = import.meta.env.VITE_API_URL || '/api/v1';
   const response = await fetch(`${API_URL}/public/share/${token}/session`, {
     method: 'POST',
     headers: {
@@ -167,7 +167,7 @@ export async function downloadPublicShareFile(
   sessionToken: string
 ): Promise<Blob> {
   // Use request with session token in Authorization header
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
+  const API_URL = import.meta.env.VITE_API_URL || '/api/v1';
   const response = await fetch(`${API_URL}/public/share/${token}/file`, {
     headers: {
       Authorization: `Bearer ${sessionToken}`
