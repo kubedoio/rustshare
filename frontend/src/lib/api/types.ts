@@ -36,6 +36,7 @@ export interface Folder {
 export interface Share {
   id: string;
   file_id: string;
+  file_name?: string; // For shares list view
   share_token: string;
   permissions: 'View' | 'ReadWrite';
   password_protected: boolean;

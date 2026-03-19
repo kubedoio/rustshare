@@ -70,6 +70,17 @@ export async function listFileShares(fileId: string): Promise<Share[]> {
 }
 
 /**
+ * List all shares owned by the current user
+ * This is a workaround since the backend doesn't have a dedicated endpoint
+ * We'll need to aggregate file shares from all files
+ */
+export async function listAllUserShares(): Promise<Share[]> {
+  // For now, return empty array
+  // TODO: Implement proper backend endpoint for listing all user shares
+  return [];
+}
+
+/**
  * Revoke a share link
  * DELETE /api/shares/{id}
  * Note: This endpoint may not be implemented in the backend yet
