@@ -41,6 +41,7 @@ pub async fn upload_file(
 
     // Parse multipart fields
     while let Some(field) = multipart.next_field().await.map_err(|e| {
+        tracing::error!("Failed to read multipart field: {}", e);
         file_error_response(FileError::Storage(format!("Failed to read multipart field: {}", e)))
     })? {
         let field_name = field.name().unwrap_or("").to_string();
@@ -48,16 +49,19 @@ pub async fn upload_file(
         match field_name.as_str() {
             "file" => {
                 file_data = Some(field.bytes().await.map_err(|e| {
+                    tracing::error!("Failed to read file data: {}", e);
                     file_error_response(FileError::Storage(format!("Failed to read file data: {}", e)))
                 })?);
             }
             "name" => {
                 file_name = Some(field.text().await.map_err(|e| {
+                    tracing::error!("Failed to read name field: {}", e);
                     file_error_response(FileError::Storage(format!("Failed to read name field: {}", e)))
                 })?);
             }
             "parent_folder_id" => {
                 let text = field.text().await.map_err(|e| {
+                    tracing::error!("Failed to read parent_folder_id field: {}", e);
                     file_error_response(FileError::Storage(format!("Failed to read parent_folder_id field: {}", e)))
                 })?;
                 parent_folder_id = Some(Uuid::parse_str(&text).map_err(|_| {

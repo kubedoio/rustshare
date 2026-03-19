@@ -42,6 +42,7 @@ mod middleware;
 
 use anyhow::Result;
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
@@ -273,8 +274,9 @@ async fn main() -> Result<()> {
         // WebSocket sync endpoint (Task Phase 3A)
         .route("/api/sync", get(handlers::sync_handler))
         .with_state(state.clone())
-        // Increase body size limit for file uploads (100MB)
-        .layer(tower_http::limit::RequestBodyLimitLayer::new(100 * 1024 * 1024))
+        // Increase body size limit for file uploads (500MB)
+        // This must be applied BEFORE other middleware layers
+        .layer(DefaultBodyLimit::max(500 * 1024 * 1024))
         // Apply rate limiting middleware after state is set
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

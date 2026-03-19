@@ -2,6 +2,7 @@
   import type { File, Folder } from '$lib/api/types';
   import { formatFileSize, formatDate, getMimeTypeIcon } from '$lib/utils/format';
   import { createEventDispatcher } from 'svelte';
+  import FileThumbnail from './FileThumbnail.svelte';
 
   export let item: File | Folder;
   export let isFolder: boolean;
@@ -71,7 +72,14 @@
           on:click|stopPropagation={onSelect}
         />
       {/if}
-      <span class="text-2xl lg:text-3xl">{icon}</span>
+
+      <!-- Thumbnail or icon -->
+      {#if isFolder}
+        <span class="text-2xl lg:text-3xl">{icon}</span>
+      {:else}
+        <FileThumbnail file={item} size={'md'} />
+      {/if}
+
       <div class="flex-1 min-w-0">
         <h3 class="font-semibold truncate text-sm lg:text-base">{item.name}</h3>
         <div class="text-xs lg:text-sm text-base-content/60 flex gap-2 lg:gap-4">
