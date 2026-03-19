@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { GET } from './+server';
+import { GET } from './+server.js';
 
 describe('Health Check Endpoint', () => {
   it('should return healthy status', async () => {
