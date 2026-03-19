@@ -63,6 +63,8 @@ RustShare is a fully-featured, production-ready file sharing platform with compl
 - **Breadcrumb Navigation**: Clear location indicator
 - **Touch Gestures**: Optimized for mobile devices
 - **Drag & Drop**: Visual feedback overlay during drag
+- **Keyboard Shortcuts**: Full keyboard navigation with help modal (`?`, `u`, `n`, `Escape`)
+- **Help Button**: Discoverable keyboard shortcuts via header button
 
 ### Infrastructure
 - **Backend**: Rust/Axum API server
@@ -83,6 +85,7 @@ RustShare is a fully-featured, production-ready file sharing platform with compl
 8. **Manage**: Right-click for all operations
 9. **History**: Right-click → Version History
 10. **Mobile**: Works great on phones and tablets! 📱
+11. **Shortcuts**: Press `?` or click help button for keyboard shortcuts ⌨️
 
 ## 📊 Service Status
 
@@ -130,7 +133,6 @@ These features have UI components ready but need backend integration:
 
 - **Search**: SearchBar component exists, needs backend endpoint
 - **Storage Stats**: StorageStats component exists, needs user quota API
-- **Keyboard Shortcuts**: Component exists, needs event handlers
 - **Admin Panel**: User management, system settings
 - **WebSocket Auth**: Backend needs to accept token via query param or subprotocol
 
@@ -150,7 +152,7 @@ These features have UI components ready but need backend integration:
 
 ---
 
-**Last Updated**: 2026-03-19 00:45
+**Last Updated**: 2026-03-19 09:05
 **Status**: ✅ **PRODUCTION READY** - Polished, complete web application!
 
 ## 🎊 Implementation Complete!
@@ -169,9 +171,10 @@ These features have UI components ready but need backend integration:
 ✅ **Beautiful UI** with polish and feedback
 
 ### Statistics:
-- **56+ commits** of frontend development
+- **57+ commits** of frontend development
 - **30+ components** created
 - **100%** of planned features implemented
+- **Keyboard shortcuts** fully functional
 - **Mobile-first** responsive design
 - **Production-ready** deployment
 
