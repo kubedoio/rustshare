@@ -20,6 +20,7 @@
   import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
   import Breadcrumbs from '$lib/components/layout/Breadcrumbs.svelte';
   import { showKeyboardShortcuts } from '$lib/stores/ui';
+  import { searchQuery } from '$lib/stores/search';
   import type { File, Folder } from '$lib/api/types';
   import type { UploadTask } from '$lib/components/files/UploadProgress.svelte';
 
@@ -341,6 +342,19 @@
     $createFolderMutation.mutate(event.detail.name);
   }
 
+  // Filter files and folders based on search query
+  $: filteredFolders = $searchQuery
+    ? ($filesQuery.data?.folders || []).filter((folder) =>
+        folder.name.toLowerCase().includes($searchQuery.toLowerCase())
+      )
+    : ($filesQuery.data?.folders || []);
+
+  $: filteredFiles = $searchQuery
+    ? ($filesQuery.data?.files || []).filter((file) =>
+        file.name.toLowerCase().includes($searchQuery.toLowerCase())
+      )
+    : ($filesQuery.data?.files || []);
+
   $: isUploading = uploadTasks.some(
     (t) => t.status === 'uploading' || t.status === 'pending'
   );
@@ -475,18 +489,33 @@
         <span>Failed to load files: {$filesQuery.error?.message}</span>
       </div>
     {:else if $filesQuery.data}
-      <FileGrid
-        folders={$filesQuery.data.folders}
-        files={$filesQuery.data.files}
-        onFolderClick={handleFolderClick}
-        onFileClick={handleFileClick}
-        onRenameFolder={handleRenameFolder}
-        onDeleteFolder={handleDeleteFolder}
-        onRenameFile={handleRenameFile}
-        onDeleteFile={handleDeleteFile}
-        onShareFile={handleShareFile}
-        onVersionHistory={handleVersionHistory}
-      />
+      {#if $searchQuery && filteredFiles.length === 0 && filteredFolders.length === 0}
+        <div class="flex flex-col items-center justify-center py-16 text-center">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-16 h-16 text-base-content/30 mb-4">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+          </svg>
+          <h3 class="text-lg font-semibold mb-2">No results found</h3>
+          <p class="text-base-content/70 mb-4">
+            No files or folders match "{$searchQuery}"
+          </p>
+          <button class="btn btn-sm" on:click={() => searchQuery.set('')}>
+            Clear search
+          </button>
+        </div>
+      {:else}
+        <FileGrid
+          folders={filteredFolders}
+          files={filteredFiles}
+          onFolderClick={handleFolderClick}
+          onFileClick={handleFileClick}
+          onRenameFolder={handleRenameFolder}
+          onDeleteFolder={handleDeleteFolder}
+          onRenameFile={handleRenameFile}
+          onDeleteFile={handleDeleteFile}
+          onShareFile={handleShareFile}
+          onVersionHistory={handleVersionHistory}
+        />
+      {/if}
     {/if}
   </div>
 </DropZone>

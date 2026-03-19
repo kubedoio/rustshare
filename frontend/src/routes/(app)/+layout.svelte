@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import { authStore } from '$lib/stores/auth';
   import { showKeyboardShortcuts } from '$lib/stores/ui';
+  import { searchQuery } from '$lib/stores/search';
   import Sidebar from '$lib/components/layout/Sidebar.svelte';
   import Header from '$lib/components/layout/Header.svelte';
   import KeyboardShortcuts from '$lib/components/common/KeyboardShortcuts.svelte';
@@ -28,6 +30,14 @@
     goto('/login');
   }
 
+  // Show search only on files page
+  $: showSearch = $page.url.pathname === '/files';
+
+  // Clear search when navigating away from files page
+  $: if (!showSearch) {
+    searchQuery.set('');
+  }
+
   function toggleMobileMenu() {
     mobileMenuOpen = !mobileMenuOpen;
   }
@@ -39,6 +49,10 @@
   function showHelp() {
     showKeyboardShortcuts.set(true);
   }
+
+  function handleSearchChange(query: string) {
+    searchQuery.set(query);
+  }
 </script>
 
 {#if checkComplete}
@@ -47,7 +61,11 @@
       <Sidebar mobileOpen={mobileMenuOpen} onClose={closeMobileMenu} />
 
       <div class="flex-1 flex flex-col overflow-hidden">
-        <Header onMenuClick={toggleMobileMenu} onHelpClick={showHelp}>
+        <Header
+          onMenuClick={toggleMobileMenu}
+          onHelpClick={showHelp}
+          onSearchChange={showSearch ? handleSearchChange : null}
+        >
           <slot slot="breadcrumbs" name="breadcrumbs" />
         </Header>
 

@@ -1,15 +1,37 @@
 <script lang="ts">
   import { currentUser } from '$lib/stores/auth';
+  import { createEventDispatcher } from 'svelte';
 
   export let onMenuClick: () => void = () => {};
   export let onHelpClick: () => void = () => {};
+  export let onSearchChange: ((query: string) => void) | null = null;
+  export let searchQuery = '';
+
+  const dispatch = createEventDispatcher();
+
+  function handleSearchInput(event: Event) {
+    const target = event.target as HTMLInputElement;
+    searchQuery = target.value;
+    if (onSearchChange) {
+      onSearchChange(searchQuery);
+    }
+    dispatch('search', { query: searchQuery });
+  }
+
+  function clearSearch() {
+    searchQuery = '';
+    if (onSearchChange) {
+      onSearchChange('');
+    }
+    dispatch('search', { query: '' });
+  }
 </script>
 
-<header class="h-16 bg-base-100 border-b border-base-300 flex items-center justify-between px-4 lg:px-6">
-  <div class="flex items-center gap-4">
+<header class="h-16 bg-base-100 border-b border-base-300 flex items-center justify-between px-4 lg:px-6 gap-4">
+  <div class="flex items-center gap-4 min-w-0 flex-1">
     <!-- Hamburger menu (mobile only) -->
     <button
-      class="btn btn-ghost btn-square lg:hidden"
+      class="btn btn-ghost btn-square lg:hidden flex-shrink-0"
       on:click={onMenuClick}
     >
       <svg
@@ -28,12 +50,72 @@
       </svg>
     </button>
 
-    <div class="overflow-x-auto">
+    <div class="overflow-x-auto flex-shrink min-w-0">
       <slot name="breadcrumbs" />
     </div>
+
+    <!-- Search bar (desktop) -->
+    {#if onSearchChange !== null}
+      <div class="hidden lg:flex flex-1 max-w-md">
+        <div class="form-control w-full">
+          <div class="input-group">
+            <span class="bg-base-200">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+              </svg>
+            </span>
+            <input
+              type="text"
+              placeholder="Search files and folders..."
+              class="input input-bordered w-full input-sm"
+              bind:value={searchQuery}
+              on:input={handleSearchInput}
+            />
+            {#if searchQuery}
+              <button class="btn btn-square btn-sm" on:click={clearSearch}>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            {/if}
+          </div>
+        </div>
+      </div>
+    {/if}
   </div>
 
-  <div class="flex items-center gap-2 lg:gap-4">
+  <div class="flex items-center gap-2 lg:gap-4 flex-shrink-0">
+    <!-- Search button (mobile) -->
+    {#if onSearchChange !== null}
+      <div class="dropdown dropdown-end lg:hidden">
+        <label tabindex="0" class="btn btn-ghost btn-circle btn-sm">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+          </svg>
+        </label>
+        <div tabindex="0" class="dropdown-content z-[1] card card-compact w-64 p-2 shadow bg-base-100 mt-3">
+          <div class="form-control">
+            <div class="input-group">
+              <input
+                type="text"
+                placeholder="Search..."
+                class="input input-bordered w-full input-sm"
+                bind:value={searchQuery}
+                on:input={handleSearchInput}
+              />
+              {#if searchQuery}
+                <button class="btn btn-square btn-sm" on:click={clearSearch}>
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              {/if}
+            </div>
+          </div>
+        </div>
+      </div>
+    {/if}
+
     <!-- Help button -->
     <button
       class="btn btn-ghost btn-circle btn-sm"
