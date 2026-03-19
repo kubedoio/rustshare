@@ -21,7 +21,7 @@ export interface UpdateThemeResponse {
  * Get the current user's profile.
  */
 export async function getUserProfile(): Promise<UserProfile> {
-  const response = await apiClient.get<UserProfile>('/api/users/me');
+  const response = await apiClient.get<UserProfile>('/users/me');
   return response;
 }
 
@@ -29,6 +29,6 @@ export async function getUserProfile(): Promise<UserProfile> {
  * Update the current user's theme preference.
  */
 export async function updateUserTheme(theme: Theme): Promise<UpdateThemeResponse> {
-  const response = await apiClient.patch<UpdateThemeResponse>('/api/users/me/theme', { theme });
+  const response = await apiClient.patch<UpdateThemeResponse>('/users/me/theme', { theme });
   return response;
 }

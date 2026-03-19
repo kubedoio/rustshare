@@ -74,6 +74,13 @@ export class ApiClient {
   async delete<T>(endpoint: string): Promise<T> {
     return this.request<T>(endpoint, { method: 'DELETE' });
   }
+
+  async patch<T>(endpoint: string, body?: Record<string, unknown> | FormData | null): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: 'PATCH',
+      body: body instanceof FormData ? body : JSON.stringify(body)
+    });
+  }
 }
 
 // Create singleton instance
