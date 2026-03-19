@@ -119,12 +119,12 @@ pub async fn get_root_contents(
 ///
 /// GET /api/folders/tree
 ///
-/// Returns the user's root folder and all descendants.
+/// Returns a virtual root folder containing all user's root-level folders as subfolders.
 pub async fn get_folder_tree(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
 ) -> Result<Json<FolderTree>, Response> {
-    // Find user's root folder (folders with no parent)
+    // Find all user's root-level folders (folders with no parent)
     let root_folders = state
         .metadata_store
         .list_folders(None, auth.user_id)
@@ -134,12 +134,35 @@ pub async fn get_folder_tree(
             (StatusCode::INTERNAL_SERVER_ERROR, Json(super::ErrorResponse::new("Internal server error"))).into_response()
         })?;
 
-    let root_folder = root_folders
-        .into_iter()
-        .next()
-        .ok_or_else(|| folder_error_response(FolderError::NotFound(Uuid::nil())))?;
+    // Build subtrees for each root folder
+    let mut subtrees = Vec::new();
+    for folder in root_folders {
+        let subtree = state.folder_service.get_tree(folder.id, auth.user_id).await.map_err(folder_error_response)?;
+        subtrees.push(subtree);
+    }
 
-    let tree = state.folder_service.get_tree(root_folder.id, auth.user_id).await.map_err(folder_error_response)?;
+    // Create a virtual root folder to contain all root-level folders
+    let virtual_root = Folder {
+        id: Uuid::nil(), // Use nil UUID for virtual root
+        name: "Root".to_string(),
+        path: "/".to_string(),
+        parent_folder_id: None,
+        owner_id: auth.user_id,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+
+    // Get files at root level (files with no parent folder)
+    let root_files = state
+        .metadata_store
+        .list_files(None, auth.user_id)
+        .await
+        .map_err(|_| {
+            use axum::{http::StatusCode, response::IntoResponse, Json};
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(super::ErrorResponse::new("Internal server error"))).into_response()
+        })?;
+
+    let tree = FolderTree::with_contents(virtual_root, root_files, subtrees);
     Ok(Json(tree))
 }
 

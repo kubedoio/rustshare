@@ -16,6 +16,7 @@
   export let onMoveFolder: (folder: Folder) => void = () => {};
   export let onMoveFile: (file: File) => void = () => {};
   export let onDownloadFile: (file: File) => void = () => {};
+  export let onReplaceFile: (file: File) => void = () => {};
   export let selectionMode = false;
 
   function handleFileToggle(file: File) {
@@ -24,6 +25,11 @@
 
   function handleFolderToggle(folder: Folder) {
     selectionStore.toggleFolder(folder.id);
+  }
+
+  function handleVersionHistoryClick(e: CustomEvent) {
+    console.log('[FileGrid] Version History event received:', e.detail);
+    onVersionHistory(e.detail.item);
   }
 </script>
 
@@ -71,9 +77,10 @@
         on:rename={(e) => !e.detail.isFolder && onRenameFile(file)}
         on:delete={(e) => !e.detail.isFolder && onDeleteFile(file)}
         on:share={(e) => onShareFile(e.detail.item)}
-        on:versionHistory={(e) => onVersionHistory(e.detail.item)}
+        on:versionHistory={handleVersionHistoryClick}
         on:move={(e) => !e.detail.isFolder && onMoveFile(file)}
         on:download={(e) => onDownloadFile(e.detail.item)}
+        on:replace={(e) => onReplaceFile(e.detail.item)}
       />
     {/each}
   </div>

@@ -294,15 +294,19 @@ pub struct FileRestoreResponse {
 /// POST /api/files/{id}/move
 ///
 /// Request body: { "target_folder_id": "uuid" }
-///
-/// TODO: Implement FileService::move_file method
 pub async fn move_file(
-    _state: State<AppState>,
-    _auth: AuthenticatedUser,
-    _file_id: Path<Uuid>,
-    _req: Json<MoveFileRequest>,
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(file_id): Path<Uuid>,
+    Json(req): Json<MoveFileRequest>,
 ) -> Result<Json<File>, Response> {
-    Err(file_error_response(FileError::Storage("Not implemented yet".to_string())))
+    let file = state
+        .file_service
+        .move_file(file_id, req.target_folder_id, auth.user_id)
+        .await
+        .map_err(file_error_response)?;
+
+    Ok(Json(file))
 }
 
 #[derive(Debug, Deserialize)]

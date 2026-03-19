@@ -64,6 +64,7 @@ pub fn file_error_response(err: FileError) -> Response {
         FileError::PermissionDenied { .. } => (StatusCode::FORBIDDEN, err.to_string()),
         FileError::VersionConflict { .. } => (StatusCode::CONFLICT, err.to_string()),
         FileError::ParentFolderNotFound(_) => (StatusCode::BAD_REQUEST, err.to_string()),
+        FileError::FolderNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
         FileError::QuotaExceeded { .. } => (StatusCode::FORBIDDEN, err.to_string()),
         FileError::InvalidName(_) => (StatusCode::BAD_REQUEST, err.to_string()),
         FileError::VersionNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),

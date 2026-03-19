@@ -2,7 +2,7 @@
   import { createEventDispatcher } from 'svelte';
   import { createQuery } from '@tanstack/svelte-query';
   import { getFolderTree } from '$lib/api/folders';
-  import type { FolderTreeNode } from '$lib/api/folders';
+  import type { FolderTree } from '$lib/api/folders';
   import FolderTreeItem from './FolderTreeItem.svelte';
 
   export let open = false;
@@ -29,46 +29,35 @@
   });
 
   // Build set of invalid folder IDs (folder itself + all descendants) to prevent circular moves
-  function getDescendantIds(node: FolderTreeNode, folderId: string): Set<string> {
+  function getDescendantIds(tree: FolderTree, folderId: string): Set<string> {
     const ids = new Set<string>();
 
-    function traverse(n: FolderTreeNode) {
-      if (n.id === folderId) {
-        ids.add(n.id);
+    function traverse(t: FolderTree): boolean {
+      if (t.folder.id === folderId) {
+        ids.add(t.folder.id);
         // Add all descendants
-        if (n.children) {
-          n.children.forEach(child => traverseAll(child));
-        }
+        t.subfolders.forEach(child => traverseAll(child));
         return true;
       }
-      // Continue searching in children
-      if (n.children) {
-        for (const child of n.children) {
-          if (traverse(child)) return true;
-        }
+      // Continue searching in subfolders
+      for (const child of t.subfolders) {
+        if (traverse(child)) return true;
       }
       return false;
     }
 
-    function traverseAll(n: FolderTreeNode) {
-      ids.add(n.id);
-      if (n.children) {
-        n.children.forEach(child => traverseAll(child));
-      }
+    function traverseAll(t: FolderTree) {
+      ids.add(t.folder.id);
+      t.subfolders.forEach(child => traverseAll(child));
     }
 
-    traverse(node);
+    traverse(tree);
     return ids;
   }
 
   // Update invalid folder IDs when folder tree loads
   $: if ($folderTreeQuery.data && itemType === 'folder' && itemId) {
-    const allInvalidIds = new Set<string>();
-    $folderTreeQuery.data.forEach(node => {
-      const descendantIds = getDescendantIds(node, itemId);
-      descendantIds.forEach(id => allInvalidIds.add(id));
-    });
-    invalidFolderIds = allInvalidIds;
+    invalidFolderIds = getDescendantIds($folderTreeQuery.data, itemId);
   } else {
     invalidFolderIds = new Set();
   }
@@ -104,12 +93,12 @@
     }
   }
 
-  function toggleFolder(node: FolderTreeNode, expandedFolders: Set<string>): Set<string> {
+  function toggleFolder(node: FolderTree, expandedFolders: Set<string>): Set<string> {
     const newSet = new Set(expandedFolders);
-    if (newSet.has(node.id)) {
-      newSet.delete(node.id);
+    if (newSet.has(node.folder.id)) {
+      newSet.delete(node.folder.id);
     } else {
-      newSet.add(node.id);
+      newSet.add(node.folder.id);
     }
     return newSet;
   }
@@ -171,22 +160,20 @@
           {/if}
         </button>
 
-        <!-- Folder tree -->
-        {#each $folderTreeQuery.data as node}
-          <FolderTreeItem
-            {node}
-            {selectedFolderId}
-            {currentFolderId}
-            {expandedFolders}
-            {invalidFolderIds}
-            on:select={(e) => (selectedFolderId = e.detail)}
-            on:toggle={(e) => (expandedFolders = toggleFolder(e.detail, expandedFolders))}
-            level={0}
-          />
-        {/each}
-
-        {#if $folderTreeQuery.data.length === 0}
-          <p class="text-center text-base-content/60 py-4">No folders available</p>
+        <!-- Folder tree - render subfolders of virtual root directly -->
+        {#if $folderTreeQuery.data && $folderTreeQuery.data.subfolders}
+          {#each $folderTreeQuery.data.subfolders as subfolder (subfolder.folder.id)}
+            <FolderTreeItem
+              node={subfolder}
+              {selectedFolderId}
+              {currentFolderId}
+              {expandedFolders}
+              {invalidFolderIds}
+              on:select={(e) => (selectedFolderId = e.detail)}
+              on:toggle={(e) => (expandedFolders = toggleFolder(e.detail, expandedFolders))}
+              level={0}
+            />
+          {/each}
         {/if}
       {/if}
     </div>

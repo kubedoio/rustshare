@@ -69,6 +69,7 @@ export interface FileVersion {
   content_hash: string;
   created_at: string;
   created_by_user_id: string;
+  change_description?: string;
 }
 
 export class ApiError extends Error {

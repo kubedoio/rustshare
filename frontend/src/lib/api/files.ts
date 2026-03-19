@@ -38,6 +38,36 @@ export async function deleteFile(fileId: string): Promise<void> {
   return apiClient.delete<void>(`/files/${fileId}`);
 }
 
+export async function updateFile(
+  fileId: string,
+  file: globalThis.File,
+  currentVersion: number
+): Promise<File> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const token = localStorage.getItem('token');
+  const headers: Record<string, string> = {
+    'If-Match': currentVersion.toString()
+  };
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${import.meta.env.VITE_API_URL}/files/${fileId}`, {
+    method: 'PUT',
+    headers,
+    body: formData
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to update file: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
 export async function getFileVersions(fileId: string): Promise<FileVersion[]> {
   return apiClient.get<FileVersion[]>(`/files/${fileId}/versions`);
 }

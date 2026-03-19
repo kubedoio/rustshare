@@ -26,6 +26,10 @@ pub enum FileError {
     #[error("Parent folder not found: {0}")]
     ParentFolderNotFound(FolderId),
 
+    /// Target folder does not exist.
+    #[error("Folder not found: {0}")]
+    FolderNotFound(FolderId),
+
     /// User's storage quota has been exceeded.
     #[error("Quota exceeded for user {user_id}: using {used} bytes of {quota} bytes quota")]
     QuotaExceeded {

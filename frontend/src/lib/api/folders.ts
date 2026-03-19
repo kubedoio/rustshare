@@ -14,6 +14,20 @@ export interface FolderTreeNode {
   children: FolderTreeNode[];
 }
 
+export interface FolderTree {
+  folder: {
+    id: string;
+    name: string;
+    path: string;
+    parent_folder_id: string | null;
+    owner_id: string;
+    created_at: string;
+    updated_at: string;
+  };
+  subfolders: FolderTree[];
+  files: any[];
+}
+
 export async function createFolder(name: string, parentFolderId: string | null): Promise<Folder> {
   return apiClient.post<Folder>('/folders', {
     name,
@@ -33,8 +47,8 @@ export async function getFolderContents(folderId: string | null): Promise<Folder
   return apiClient.get<FolderContents>(`/folders/${folderId}/contents`);
 }
 
-export async function getFolderTree(): Promise<FolderTreeNode[]> {
-  return apiClient.get<FolderTreeNode[]>('/folders/tree');
+export async function getFolderTree(): Promise<FolderTree> {
+  return apiClient.get<FolderTree>('/folders/tree');
 }
 
 export async function renameFolder(folderId: string, newName: string): Promise<void> {

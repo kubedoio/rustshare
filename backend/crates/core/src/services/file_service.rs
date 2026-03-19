@@ -15,7 +15,7 @@ use std::sync::Arc;
 use crate::domain::{File, FileVersion, Folder, FolderId, UserId};
 use crate::events::{
     AggregateType, Event, EventBroadcaster, EventType, FileDeletedPayload, FileModifiedPayload,
-    FileRestoredPayload, FileUploadedPayload,
+    FileMovedPayload, FileRestoredPayload, FileUploadedPayload,
 };
 use crate::services::FileError;
 
@@ -581,6 +581,88 @@ where
         // 7. Return updated file
         // Note: content is already in S3, we just needed to read it to verify it exists
         drop(content);
+        Ok(file)
+    }
+
+    /// Move a file to a different folder.
+    ///
+    /// # Arguments
+    /// * `file_id` - The UUID of the file to move
+    /// * `target_folder_id` - The UUID of the destination folder, or None for root
+    /// * `user_id` - The user requesting the move
+    ///
+    /// # Returns
+    /// The updated file with new path and parent_folder_id
+    ///
+    /// # Errors
+    /// - `FileError::NotFound` if the file doesn't exist
+    /// - `FileError::PermissionDenied` if the user doesn't own the file
+    /// - `FileError::FolderNotFound` if the target folder doesn't exist
+    /// - `FileError::Database` if database operations fail
+    pub async fn move_file(
+        &self,
+        file_id: uuid::Uuid,
+        target_folder_id: Option<FolderId>,
+        user_id: UserId,
+    ) -> Result<File, FileError> {
+        // 1. Get file and verify ownership
+        let mut file = self.get_file(file_id, user_id).await?;
+
+        // 2. If target folder is specified, verify it exists
+        let new_path = if let Some(folder_id) = target_folder_id {
+            let folder = self
+                .metadata_store
+                .find_folder_by_id(folder_id)
+                .await
+                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+                .ok_or(FileError::FolderNotFound(folder_id))?;
+            format!("{}/{}", folder.path, file.name)
+        } else {
+            format!("/{}", file.name)
+        };
+
+        // 3. Store old values for event
+        let old_parent_folder_id = file.parent_folder_id;
+        let old_path = file.path.clone();
+
+        // 4. Update file
+        file.parent_folder_id = target_folder_id;
+        file.path = new_path.clone();
+
+        // 5. Persist updated file
+        self.metadata_store
+            .update_file(&file)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        // 6. Create FileMoved event
+        let payload = FileMovedPayload {
+            file_id,
+            old_parent_folder_id,
+            new_parent_folder_id: target_folder_id,
+            old_path,
+            new_path,
+            moved_by: user_id,
+        };
+
+        let event = Event {
+            id: uuid::Uuid::new_v4(),
+            event_type: EventType::FileMoved,
+            aggregate_id: file_id,
+            aggregate_type: AggregateType::File,
+            payload: serde_json::to_value(&payload)
+                .map_err(|e| FileError::Storage(format!("Failed to serialize event: {}", e)))?,
+            user_id,
+            timestamp: chrono::Utc::now(),
+            version: file.current_version,
+        };
+
+        // 7. Append event to event store
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
         Ok(file)
     }
 
@@ -1652,6 +1734,143 @@ mod tests {
         // Plus the new restored version
         assert!(versions.iter().any(|v| v.version_number == 3));
         assert_eq!(versions.iter().filter(|v| v.file_id == file.id).count(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_move_file_to_folder() {
+        let (service, event_store, metadata_store, _) = setup_file_service();
+        let owner_id = uuid::Uuid::new_v4();
+
+        // Create target folder
+        let target_folder = Folder::new_child(
+            "Target".to_string(),
+            "/Target".to_string(),
+            uuid::Uuid::new_v4(), // parent id
+            owner_id,
+        );
+        metadata_store.add_folder(target_folder.clone());
+
+        // Create a file at root
+        let file = File::new(
+            "moveme.txt".to_string(),
+            "/moveme.txt".to_string(),
+            "hash123".to_string(),
+            100,
+            "text/plain".to_string(),
+            None, // root
+            owner_id,
+        );
+        metadata_store.add_file(file.clone());
+
+        // Move file to target folder
+        let moved_file = service
+            .move_file(file.id, Some(target_folder.id), owner_id)
+            .await
+            .expect("Failed to move file");
+
+        // Verify file is now in target folder
+        assert_eq!(moved_file.parent_folder_id, Some(target_folder.id));
+        assert_eq!(moved_file.path, "/Target/moveme.txt");
+        assert_eq!(moved_file.name, "moveme.txt"); // Name unchanged
+
+        // Verify event was emitted
+        let events = event_store.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, EventType::FileMoved);
+    }
+
+    #[tokio::test]
+    async fn test_move_file_to_root() {
+        let (service, _, metadata_store, _) = setup_file_service();
+        let owner_id = uuid::Uuid::new_v4();
+
+        // Create source folder
+        let source_folder = Folder::new_child(
+            "Source".to_string(),
+            "/Source".to_string(),
+            uuid::Uuid::new_v4(),
+            owner_id,
+        );
+        metadata_store.add_folder(source_folder.clone());
+
+        // Create a file in source folder
+        let file = File::new(
+            "moveme.txt".to_string(),
+            "/Source/moveme.txt".to_string(),
+            "hash123".to_string(),
+            100,
+            "text/plain".to_string(),
+            Some(source_folder.id),
+            owner_id,
+        );
+        metadata_store.add_file(file.clone());
+
+        // Move file to root (None parent)
+        let moved_file = service
+            .move_file(file.id, None, owner_id)
+            .await
+            .expect("Failed to move file to root");
+
+        // Verify file is now at root
+        assert_eq!(moved_file.parent_folder_id, None);
+        assert_eq!(moved_file.path, "/moveme.txt");
+    }
+
+    #[tokio::test]
+    async fn test_move_file_permission_denied() {
+        let (service, _, metadata_store, _) = setup_file_service();
+        let owner_id = uuid::Uuid::new_v4();
+        let other_user = uuid::Uuid::new_v4();
+
+        // Create a file owned by owner_id
+        let file = File::new(
+            "private.txt".to_string(),
+            "/private.txt".to_string(),
+            "hash".to_string(),
+            100,
+            "text/plain".to_string(),
+            None,
+            owner_id,
+        );
+        metadata_store.add_file(file.clone());
+
+        // Try to move with different user - should fail
+        let result = service.move_file(file.id, None, other_user).await;
+        assert!(matches!(result, Err(FileError::PermissionDenied { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_move_file_not_found() {
+        let (service, _, _, _) = setup_file_service();
+        let user_id = uuid::Uuid::new_v4();
+        let nonexistent_id = uuid::Uuid::new_v4();
+
+        // Try to move non-existent file
+        let result = service.move_file(nonexistent_id, None, user_id).await;
+        assert!(matches!(result, Err(FileError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_move_file_to_nonexistent_folder() {
+        let (service, _, metadata_store, _) = setup_file_service();
+        let owner_id = uuid::Uuid::new_v4();
+
+        // Create a file at root
+        let file = File::new(
+            "moveme.txt".to_string(),
+            "/moveme.txt".to_string(),
+            "hash".to_string(),
+            100,
+            "text/plain".to_string(),
+            None,
+            owner_id,
+        );
+        metadata_store.add_file(file.clone());
+
+        // Try to move to non-existent folder
+        let nonexistent_folder = uuid::Uuid::new_v4();
+        let result = service.move_file(file.id, Some(nonexistent_folder), owner_id).await;
+        assert!(matches!(result, Err(FileError::FolderNotFound(_))));
     }
 }
 

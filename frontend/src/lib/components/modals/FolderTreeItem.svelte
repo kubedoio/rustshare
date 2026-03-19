@@ -1,8 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import type { FolderTreeNode } from '$lib/api/folders';
+  import type { FolderTree } from '$lib/api/folders';
 
-  export let node: FolderTreeNode;
+  export let node: FolderTree;
   export let selectedFolderId: string | null;
   export let currentFolderId: string | null;
   export let expandedFolders: Set<string>;
@@ -11,14 +11,14 @@
 
   const dispatch = createEventDispatcher<{
     select: string;
-    toggle: FolderTreeNode;
+    toggle: FolderTree;
   }>();
 
-  $: isExpanded = expandedFolders.has(node.id);
-  $: hasChildren = node.children && node.children.length > 0;
-  $: isSelected = selectedFolderId === node.id;
-  $: isCurrent = currentFolderId === node.id;
-  $: isDisabled = invalidFolderIds.has(node.id);
+  $: isExpanded = expandedFolders.has(node.folder.id);
+  $: hasChildren = node.subfolders && node.subfolders.length > 0;
+  $: isSelected = selectedFolderId === node.folder.id;
+  $: isCurrent = currentFolderId === node.folder.id;
+  $: isDisabled = invalidFolderIds.has(node.folder.id);
 
   function handleToggle(e: Event) {
     e.stopPropagation();
@@ -29,7 +29,7 @@
 
   function handleSelect() {
     if (!isDisabled) {
-      dispatch('select', node.id);
+      dispatch('select', node.folder.id);
     }
   }
 </script>
@@ -87,7 +87,7 @@
       />
     </svg>
 
-    <span class="truncate flex-1">{node.name}</span>
+    <span class="truncate flex-1">{node.folder.name}</span>
 
     {#if isCurrent}
       <span class="badge badge-sm ml-auto">Current</span>
@@ -97,17 +97,19 @@
   </button>
 
   {#if isExpanded && hasChildren}
-    {#each node.children as child}
-      <svelte:self
-        node={child}
-        {selectedFolderId}
-        {currentFolderId}
-        {expandedFolders}
-        {invalidFolderIds}
-        on:select
-        on:toggle
-        level={level + 1}
-      />
-    {/each}
+    <div class="ml-4">
+      {#each node.subfolders as child (child.folder.id)}
+        <svelte:self
+          node={child}
+          {selectedFolderId}
+          {currentFolderId}
+          {expandedFolders}
+          {invalidFolderIds}
+          on:select
+          on:toggle
+          level={level + 1}
+        />
+      {/each}
+    </div>
   {/if}
 </div>

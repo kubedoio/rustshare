@@ -20,15 +20,15 @@
     restored: { version: number };
   }>();
 
-  // Query for file details to get current version
-  const fileQuery = createQuery({
+  // Reactive query for file details
+  $: fileQuery = createQuery({
     queryKey: ['file', fileId],
     queryFn: () => getFile(fileId),
     enabled: open && !!fileId
   });
 
-  // Query for version history
-  const versionsQuery = createQuery({
+  // Reactive query for version history
+  $: versionsQuery = createQuery({
     queryKey: ['file-versions', fileId],
     queryFn: () => getFileVersions(fileId),
     enabled: open && !!fileId
@@ -101,10 +101,19 @@
 
   // Get current version
   $: currentVersionNumber = $fileQuery.data?.current_version;
+
+  $: console.log('[VersionHistoryModal] Props:', { open, fileId, fileName });
+  $: console.log('[VersionHistoryModal] Query states:', {
+    versionsLoading: $versionsQuery.isLoading,
+    versionsError: $versionsQuery.isError,
+    versionsData: $versionsQuery.data,
+    sortedVersions
+  });
 </script>
 
-<dialog class="modal" class:modal-open={open}>
-  <div class="modal-box max-w-3xl">
+{#if open && fileId}
+  <div class="modal modal-open">
+    <div class="modal-box max-w-3xl">
     <h3 class="font-bold text-lg mb-4">Version History: {fileName}</h3>
 
     {#if $versionsQuery.isLoading || $fileQuery.isLoading}
@@ -123,7 +132,8 @@
               <th>Version</th>
               <th>Date</th>
               <th>Size</th>
-              <th>Hash</th>
+              <th>Content Hash</th>
+              <th>Description</th>
               <th>Action</th>
             </tr>
           </thead>
@@ -139,13 +149,13 @@
                 </td>
                 <td>
                   <div class="text-sm">{formatDate(version.created_at)}</div>
-                  <div class="text-xs text-base-content/60">
-                    {new Date(version.created_at).toLocaleString()}
-                  </div>
                 </td>
                 <td>{formatFileSize(version.size)}</td>
                 <td>
-                  <code class="text-xs">{version.content_hash.substring(0, 16)}...</code>
+                  <code class="text-xs bg-base-200 px-2 py-1 rounded">{version.content_hash.substring(0, 12)}...</code>
+                </td>
+                <td class="text-sm text-base-content/70">
+                  {version.change_description || '-'}
                 </td>
                 <td>
                   {#if !isCurrent}
@@ -182,17 +192,13 @@
       </button>
     </div>
   </div>
-
-  <form method="dialog" class="modal-backdrop">
-    <button type="button" on:click={handleClose} disabled={$restoreMutation.isPending}>
-      close
-    </button>
-  </form>
-</dialog>
+</div>
+{/if}
 
 <!-- Restore Confirmation Modal -->
-<dialog class="modal" class:modal-open={showRestoreConfirm}>
-  <div class="modal-box">
+{#if showRestoreConfirm}
+  <div class="modal modal-open">
+    <div class="modal-box">
     <h3 class="font-bold text-lg mb-4">Confirm Restore</h3>
 
     {#if conflictError}
@@ -270,10 +276,5 @@
       </div>
     {/if}
   </div>
-
-  <form method="dialog" class="modal-backdrop">
-    <button type="button" on:click={cancelRestore} disabled={$restoreMutation.isPending && !conflictError}>
-      close
-    </button>
-  </form>
-</dialog>
+</div>
+{/if}

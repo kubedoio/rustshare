@@ -18,6 +18,7 @@
   import CreateFolderModal from '$lib/components/modals/CreateFolderModal.svelte';
   import VersionHistoryModal from '$lib/components/modals/VersionHistoryModal.svelte';
   import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
+  import ReplaceFileModal from '$lib/components/modals/ReplaceFileModal.svelte';
   import Breadcrumbs from '$lib/components/layout/Breadcrumbs.svelte';
   import { showKeyboardShortcuts } from '$lib/stores/ui';
   import { searchQuery } from '$lib/stores/search';
@@ -45,6 +46,7 @@
   let showCreateFolderModal = false;
   let showVersionHistoryModal = false;
   let showFilePreviewModal = false;
+  let showReplaceFileModal = false;
   let renameTarget: File | Folder | null = null;
   let renameType: 'file' | 'folder' = 'file';
   let deleteTarget: File | Folder | null = null;
@@ -59,6 +61,7 @@
   let shareTarget: File | null = null;
   let versionHistoryTarget: File | null = null;
   let previewTarget: File | null = null;
+  let replaceFileTarget: File | null = null;
 
   // Query for folder contents (or root contents if at root)
   // Use $: to make the query reactive to currentFolderId changes
@@ -439,8 +442,11 @@
   }
 
   function handleVersionHistory(file: File) {
+    console.log('[Page] handleVersionHistory called with file:', file);
     versionHistoryTarget = file;
     showVersionHistoryModal = true;
+    console.log('[Page] showVersionHistoryModal set to:', showVersionHistoryModal);
+    console.log('[Page] versionHistoryTarget set to:', versionHistoryTarget);
   }
 
   function handleMoveFile(file: File) {
@@ -499,6 +505,32 @@
     // Refresh the file list after version restore
     queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
     showNotification('File version restored successfully', 'success');
+  }
+
+  function handleReplaceFile(file: File) {
+    replaceFileTarget = file;
+    showReplaceFileModal = true;
+  }
+
+  function handleReplaceSuccess() {
+    // Refresh the file list after file replacement
+    queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+
+    // Truncate file name if longer than 10 characters
+    const fileName = replaceFileTarget?.name || 'File';
+    const displayName = fileName.length > 10
+      ? fileName.substring(0, 10) + '...'
+      : fileName;
+
+    showNotification(`${displayName} was modified`, 'success');
+
+    if (replaceFileTarget) {
+      activityStore.addActivity('file_modified', replaceFileTarget.name);
+    }
+
+    // Close the modal
+    showReplaceFileModal = false;
+    replaceFileTarget = null;
   }
 
   function handleDeleteConfirm() {
@@ -896,6 +928,7 @@
             onDeleteFile={handleDeleteFile}
             onMoveFile={handleMoveFile}
             onDownloadFile={handleDownloadFile}
+            onReplaceFile={handleReplaceFile}
             onShareFile={handleShareFile}
             onVersionHistory={handleVersionHistory}
           />
@@ -913,6 +946,7 @@
             onDeleteFile={handleDeleteFile}
             onMoveFile={handleMoveFile}
             onDownloadFile={handleDownloadFile}
+            onReplaceFile={handleReplaceFile}
             onShareFile={handleShareFile}
             onVersionHistory={handleVersionHistory}
           />
@@ -1002,6 +1036,16 @@
     showFilePreviewModal = false;
     previewTarget = null;
   }}
+/>
+
+<ReplaceFileModal
+  open={showReplaceFileModal}
+  file={replaceFileTarget}
+  on:close={() => {
+    showReplaceFileModal = false;
+    replaceFileTarget = null;
+  }}
+  on:success={handleReplaceSuccess}
 />
 
 <!-- Toast Notifications -->

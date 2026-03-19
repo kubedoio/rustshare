@@ -295,3 +295,176 @@ async fn test_file_deduplication() {
 
     cleanup_user(&pool, user.id).await;
 }
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_move_file_to_folder() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+
+    // Create test user
+    let user = create_test_user(&metadata_store, "fileops_move_user").await;
+
+    // Create root folder
+    let root_folder = rustshare_core::domain::Folder::new_root(user.id);
+    metadata_store
+        .create_folder(&root_folder)
+        .await
+        .expect("Failed to create root folder");
+
+    // Create target folder
+    let target_folder = rustshare_core::domain::Folder::new_child(
+        "Target".to_string(),
+        "/Target".to_string(),
+        root_folder.id,
+        user.id,
+    );
+    metadata_store
+        .create_folder(&target_folder)
+        .await
+        .expect("Failed to create target folder");
+
+    // Create FileService
+    let file_service = FileService::new(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+    );
+
+    // Upload a file at root (no parent folder)
+    let file_content = Bytes::from("File to be moved");
+    let uploaded_file = file_service
+        .upload_file(
+            user.id,
+            "moveme.txt".to_string(),
+            None,
+            file_content.clone(),
+            "text/plain".to_string(),
+        )
+        .await
+        .expect("Failed to upload file");
+
+    // Verify file is at root
+    assert_eq!(uploaded_file.parent_folder_id, None);
+    assert_eq!(uploaded_file.path, "/moveme.txt");
+
+    // Move file to target folder
+    let moved_file = file_service
+        .move_file(uploaded_file.id, Some(target_folder.id), user.id)
+        .await
+        .expect("Failed to move file");
+
+    // Verify file is now in target folder
+    assert_eq!(moved_file.parent_folder_id, Some(target_folder.id));
+    assert_eq!(moved_file.path, "/Target/moveme.txt");
+    assert_eq!(moved_file.name, "moveme.txt"); // Name unchanged
+
+    // Verify by fetching the file again
+    let fetched_file = file_service
+        .get_file(uploaded_file.id, user.id)
+        .await
+        .expect("Failed to get file");
+    assert_eq!(fetched_file.parent_folder_id, Some(target_folder.id));
+    assert_eq!(fetched_file.path, "/Target/moveme.txt");
+
+    // Cleanup
+    file_service
+        .delete_file(uploaded_file.id, user.id)
+        .await
+        .expect("Failed to delete file");
+
+    sqlx::query("DELETE FROM folders WHERE id = $1")
+        .bind(target_folder.id)
+        .execute(&pool)
+        .await
+        .expect("Failed to cleanup target folder");
+
+    sqlx::query("DELETE FROM folders WHERE id = $1")
+        .bind(root_folder.id)
+        .execute(&pool)
+        .await
+        .expect("Failed to cleanup root folder");
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_move_file_to_root() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+
+    // Create test user
+    let user = create_test_user(&metadata_store, "fileops_move_root_user").await;
+
+    // Create root folder
+    let root_folder = rustshare_core::domain::Folder::new_root(user.id);
+    metadata_store
+        .create_folder(&root_folder)
+        .await
+        .expect("Failed to create root folder");
+
+    // Create source folder
+    let source_folder = rustshare_core::domain::Folder::new_child(
+        "Source".to_string(),
+        "/Source".to_string(),
+        root_folder.id,
+        user.id,
+    );
+    metadata_store
+        .create_folder(&source_folder)
+        .await
+        .expect("Failed to create source folder");
+
+    // Create FileService
+    let file_service = FileService::new(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+    );
+
+    // Upload a file in source folder
+    let file_content = Bytes::from("File to move to root");
+    let uploaded_file = file_service
+        .upload_file(
+            user.id,
+            "moveme.txt".to_string(),
+            Some(source_folder.id),
+            file_content.clone(),
+            "text/plain".to_string(),
+        )
+        .await
+        .expect("Failed to upload file");
+
+    // Verify file is in source folder
+    assert_eq!(uploaded_file.parent_folder_id, Some(source_folder.id));
+    assert_eq!(uploaded_file.path, "/Source/moveme.txt");
+
+    // Move file to root (None parent)
+    let moved_file = file_service
+        .move_file(uploaded_file.id, None, user.id)
+        .await
+        .expect("Failed to move file to root");
+
+    // Verify file is now at root
+    assert_eq!(moved_file.parent_folder_id, None);
+    assert_eq!(moved_file.path, "/moveme.txt");
+
+    // Cleanup
+    file_service
+        .delete_file(uploaded_file.id, user.id)
+        .await
+        .expect("Failed to delete file");
+
+    sqlx::query("DELETE FROM folders WHERE id = $1")
+        .bind(source_folder.id)
+        .execute(&pool)
+        .await
+        .expect("Failed to cleanup source folder");
+
+    sqlx::query("DELETE FROM folders WHERE id = $1")
+        .bind(root_folder.id)
+        .execute(&pool)
+        .await
+        .expect("Failed to cleanup root folder");
+
+    cleanup_user(&pool, user.id).await;
+}

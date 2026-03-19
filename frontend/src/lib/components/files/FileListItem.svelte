@@ -17,6 +17,7 @@
     versionHistory: { item: File };
     move: { item: File | Folder; isFolder: boolean };
     download: { item: File };
+    replace: { item: File };
   }>();
 
   const icon = isFolder ? '📁' : getMimeTypeIcon((item as File).mime_type || '');
@@ -38,6 +39,7 @@
   function handleVersionHistory(e: Event) {
     e.stopPropagation();
     e.preventDefault();
+    console.log('[FileListItem] Version History clicked for:', item);
     dispatch('versionHistory', { item: item as File });
   }
 
@@ -58,16 +60,18 @@
     e.preventDefault();
     dispatch('download', { item: item as File });
   }
+
+  function handleReplace(e: Event) {
+    e.stopPropagation();
+    e.preventDefault();
+    dispatch('replace', { item: item as File });
+  }
 </script>
 
 <div
-  class="card bg-base-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer relative group touch-manipulation"
+  class="card bg-base-100 shadow-sm hover:shadow-md transition-shadow relative group touch-manipulation"
   class:ring-2={selectionMode && selected}
   class:ring-primary={selectionMode && selected}
-  on:click={onSelect}
-  on:keydown={(e) => e.key === 'Enter' && onSelect()}
-  role="button"
-  tabindex="0"
 >
   <div class="card-body p-3 lg:p-4">
     <div class="flex items-center gap-2 lg:gap-3">
@@ -82,13 +86,29 @@
 
       <!-- Thumbnail or icon -->
       {#if isFolder}
-        <span class="text-2xl lg:text-3xl">{icon}</span>
+        <span class="text-2xl lg:text-3xl cursor-pointer" on:click={onSelect} on:keydown={(e) => e.key === 'Enter' && onSelect()} role="button" tabindex="0">{icon}</span>
       {:else}
         <FileThumbnail file={item} size={'md'} />
       {/if}
 
       <div class="flex-1 min-w-0">
-        <h3 class="font-semibold truncate text-sm lg:text-base">{item.name}</h3>
+        {#if isFolder}
+          <button
+            type="button"
+            class="text-left w-full"
+            on:click|stopPropagation={onSelect}
+          >
+            <h3 class="font-semibold truncate text-sm lg:text-base hover:text-primary cursor-pointer">{item.name}</h3>
+          </button>
+        {:else}
+          <button
+            type="button"
+            class="text-left w-full"
+            on:click|stopPropagation={onSelect}
+          >
+            <h3 class="font-semibold truncate text-sm lg:text-base hover:text-primary cursor-pointer">{item.name}</h3>
+          </button>
+        {/if}
         <div class="text-xs lg:text-sm text-base-content/60 flex gap-2 lg:gap-4">
           <span>{displaySize}</span>
           <span class="hidden sm:inline">{displayDate}</span>
@@ -96,7 +116,7 @@
       </div>
 
       <!-- Actions Menu -->
-      <div class="dropdown dropdown-end">
+      <div class="dropdown dropdown-end" on:click|stopPropagation on:keydown|stopPropagation>
         <label
           tabindex="0"
           role="button"
@@ -124,7 +144,7 @@
           class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52"
         >
             <li>
-              <button type="button" on:click={handleRename}>
+              <button type="button" on:click|stopPropagation={handleRename}>
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   fill="none"
@@ -144,7 +164,7 @@
             </li>
             {#if !isFolder}
               <li>
-                <button type="button" on:click={handleDownload}>
+                <button type="button" on:click|stopPropagation={handleDownload}>
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
                     fill="none"
@@ -163,7 +183,26 @@
                 </button>
               </li>
               <li>
-                <button type="button" on:click={handleShare}>
+                <button type="button" on:click|stopPropagation={handleReplace}>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke-width="1.5"
+                    stroke="currentColor"
+                    class="w-4 h-4"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"
+                    />
+                  </svg>
+                  Replace File
+                </button>
+              </li>
+              <li>
+                <button type="button" on:click|stopPropagation={handleShare}>
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
                     fill="none"
@@ -182,7 +221,7 @@
                 </button>
               </li>
               <li>
-                <button type="button" on:click={handleVersionHistory}>
+                <button type="button" on:click|stopPropagation={handleVersionHistory}>
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
                     fill="none"
@@ -202,7 +241,7 @@
               </li>
             {/if}
             <li>
-              <button type="button" on:click={handleMove}>
+              <button type="button" on:click|stopPropagation={handleMove}>
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   fill="none"
@@ -221,7 +260,7 @@
               </button>
             </li>
             <li>
-              <button type="button" on:click={handleDelete} class="text-error">
+              <button type="button" on:click|stopPropagation={handleDelete} class="text-error">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   fill="none"

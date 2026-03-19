@@ -15,6 +15,7 @@
   export let onMoveFolder: (folder: Folder) => void = () => {};
   export let onMoveFile: (file: File) => void = () => {};
   export let onDownloadFile: (file: File) => void = () => {};
+  export let onReplaceFile: (file: File) => void = () => {};
   export let selectionMode = false;
 
   function handleFileToggle(file: File) {
@@ -77,7 +78,7 @@
     <tbody>
       <!-- Folders -->
       {#each folders as folder}
-        <tr class="hover cursor-pointer" on:click={() => selectionMode ? handleFolderToggle(folder) : onFolderClick(folder)}>
+        <tr class="hover">
           <td>
             <div class="flex items-center gap-3">
               {#if selectionMode}
@@ -88,8 +89,14 @@
                   on:click|stopPropagation={() => handleFolderToggle(folder)}
                 />
               {/if}
-              <span class="text-2xl">📁</span>
-              <span class="font-medium">{folder.name}</span>
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm"
+                on:click|stopPropagation={() => onFolderClick(folder)}
+              >
+                <span class="text-2xl">📁</span>
+                <span class="font-medium">{folder.name}</span>
+              </button>
             </div>
           </td>
           <td>
@@ -98,7 +105,7 @@
           <td>—</td>
           <td>{formatDate(folder.updated_at)}</td>
           <td class="text-right">
-            <div class="dropdown dropdown-end">
+            <div class="dropdown dropdown-end" on:click|stopPropagation>
               <label tabindex="0" class="btn btn-ghost btn-xs" on:click|stopPropagation>
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" />
@@ -116,7 +123,7 @@
 
       <!-- Files -->
       {#each files as file}
-        <tr class="hover cursor-pointer" on:click={() => selectionMode ? handleFileToggle(file) : onFileClick(file)}>
+        <tr class="hover">
           <td>
             <div class="flex items-center gap-3">
               {#if selectionMode}
@@ -128,7 +135,13 @@
                 />
               {/if}
               <span class="text-2xl">{getFileIcon(file.mime_type)}</span>
-              <span class="font-medium">{file.name}</span>
+              <button
+                type="button"
+                class="font-medium hover:text-primary cursor-pointer text-left"
+                on:click|stopPropagation={() => onFileClick(file)}
+              >
+                {file.name}
+              </button>
             </div>
           </td>
           <td>
@@ -137,7 +150,7 @@
           <td>{formatBytes(file.size)}</td>
           <td>{formatDate(file.modified_at)}</td>
           <td class="text-right">
-            <div class="dropdown dropdown-end">
+            <div class="dropdown dropdown-end" on:click|stopPropagation>
               <label tabindex="0" class="btn btn-ghost btn-xs" on:click|stopPropagation>
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" />
@@ -146,6 +159,7 @@
               <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52">
                 <li><button on:click|stopPropagation={() => onRenameFile(file)}>Rename</button></li>
                 <li><button on:click|stopPropagation={() => onDownloadFile(file)}>Download</button></li>
+                <li><button on:click|stopPropagation={() => onReplaceFile(file)}>Replace File</button></li>
                 <li><button on:click|stopPropagation={() => onShareFile(file)}>Share</button></li>
                 <li><button on:click|stopPropagation={() => onVersionHistory(file)}>Version History</button></li>
                 <li><button on:click|stopPropagation={() => onMoveFile(file)}>Move</button></li>
