@@ -191,6 +191,14 @@ pub struct FolderDeletedPayload {
     pub deleted_by: UserId,
 }
 
+/// File deleted event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileDeletedPayload {
+    pub file_id: FileId,
+    pub file_name: String,
+    pub folder_id: Option<FolderId>,
+}
+
 /// File restored event payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileRestoredPayload {

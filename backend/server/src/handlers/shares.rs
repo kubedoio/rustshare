@@ -52,12 +52,28 @@ pub async fn create_share(
         .await
         .map_err(share_error_response)?;
 
+    // Extract share_token - it should always be Some for public shares
+    let share_token = share.share_token.ok_or_else(|| {
+        tracing::error!("Share token is None after create_share for share {}", share.id);
+        share_error_response(rustshare_core::services::ShareError::Database(
+            sqlx::Error::PoolClosed
+        ))
+    })?;
+
+    // Extract file_id - it should always be Some for file shares
+    let response_file_id = share.file_id.ok_or_else(|| {
+        tracing::error!("File ID is None after create_share for share {}", share.id);
+        share_error_response(rustshare_core::services::ShareError::Database(
+            sqlx::Error::PoolClosed
+        ))
+    })?;
+
     Ok((
         StatusCode::CREATED,
         Json(ShareResponse {
             id: share.id,
-            file_id: share.file_id.unwrap_or_else(|| file_id), // Should always be Some for public shares
-            share_token: share.share_token.unwrap_or_default(), // Should always be Some for public shares
+            file_id: response_file_id,
+            share_token,
             permissions: share.permissions,
             password_protected: share.password_hash.is_some(),
             expires_at: share.expires_at,

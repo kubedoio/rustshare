@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use crate::domain::{File, FileVersion, Folder, FolderId, UserId};
 use crate::events::{
-    AggregateType, Event, EventBroadcaster, EventType, FileModifiedPayload, FileRestoredPayload,
-    FileUploadedPayload,
+    AggregateType, Event, EventBroadcaster, EventType, FileDeletedPayload, FileModifiedPayload,
+    FileRestoredPayload, FileUploadedPayload,
 };
 use crate::services::FileError;
 
@@ -583,6 +583,65 @@ where
         drop(content);
         Ok(file)
     }
+
+    /// Delete a file.
+    ///
+    /// # Arguments
+    /// * `file_id` - The UUID of the file to delete
+    /// * `user_id` - The user requesting the deletion
+    ///
+    /// # Returns
+    /// Ok(()) if successful
+    ///
+    /// # Errors
+    /// - `FileError::NotFound` if the file doesn't exist
+    /// - `FileError::PermissionDenied` if the user doesn't own the file
+    /// - `FileError::Database` if database operations fail
+    pub async fn delete_file(
+        &self,
+        file_id: uuid::Uuid,
+        user_id: UserId,
+    ) -> Result<(), FileError> {
+        // 1. Get file and verify ownership
+        let file = self.get_file(file_id, user_id).await?;
+
+        // 2. Create FileDeleted event
+        let payload = FileDeletedPayload {
+            file_id,
+            file_name: file.name.clone(),
+            folder_id: file.parent_folder_id,
+        };
+
+        let event = Event {
+            id: uuid::Uuid::new_v4(),
+            event_type: EventType::FileDeleted,
+            aggregate_id: file_id,
+            aggregate_type: AggregateType::File,
+            payload: serde_json::to_value(&payload)
+                .map_err(|e| FileError::Storage(format!("Failed to serialize event: {}", e)))?,
+            user_id,
+            timestamp: chrono::Utc::now(),
+            version: file.current_version,
+        };
+
+        // 3. Append event to event store
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        // 4. Delete file from metadata store (CASCADE will handle file_versions)
+        self.metadata_store
+            .delete_file(file_id)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        // Note: We don't delete from S3 (blob storage) because of deduplication
+        // The same content hash might be used by other files or versions
+
+        Ok(())
+    }
+
     fn validate_file_name(&self, name: &str) -> Result<(), FileError> {
         if name.is_empty() {
             return Err(FileError::InvalidName("File name cannot be empty".to_string()));

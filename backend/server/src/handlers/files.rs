@@ -146,14 +146,18 @@ pub struct DownloadUrlResponse {
 /// Delete a file.
 ///
 /// DELETE /api/files/{id}
-///
-/// TODO: Implement FileService::delete_file method
 pub async fn delete_file(
-    _state: State<AppState>,
-    _auth: AuthenticatedUser,
-    _file_id: Path<Uuid>,
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(file_id): Path<Uuid>,
 ) -> Result<StatusCode, Response> {
-    Err(file_error_response(FileError::Storage("Not implemented yet".to_string())))
+    state
+        .file_service
+        .delete_file(file_id, auth.user_id)
+        .await
+        .map_err(file_error_response)?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ============================================================================
