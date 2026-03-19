@@ -33,6 +33,11 @@ function createAuthStore() {
           })
           .catch(err => {
             console.error('Failed to load user profile:', err);
+            // If 401, token was cleared by API client, logout the store
+            if (err.statusCode === 401) {
+              localStorage.removeItem('token');
+              // Will be handled by layout's reactive statement
+            }
             // Continue with local theme if API fails
           });
       }

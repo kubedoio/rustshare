@@ -26,10 +26,8 @@ export class ApiClient {
 
     // Handle 401 Unauthorized
     if (response.status === 401) {
+      // Clear the token but let the auth store handle redirect
       localStorage.removeItem('token');
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
-      }
       throw new ApiError(401, 'Unauthorized');
     }
 
