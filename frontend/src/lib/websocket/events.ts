@@ -16,8 +16,9 @@ export type WebSocketEventType =
 
 export interface WebSocketEvent {
   event_id: string;
-  type: WebSocketEventType;
+  event_type: WebSocketEventType;  // Backend sends 'event_type', not 'type'
   aggregate_id: string;
+  aggregate_type: string;  // Added: backend includes this field
   user_id: string;
   timestamp: string;
   payload: FileUploadedPayload | FileModifiedPayload | FileRenamedPayload | FileMovedPayload | FileDeletedPayload | FileRestoredPayload | FolderCreatedPayload | FolderRenamedPayload | FolderMovedPayload | FolderDeletedPayload | ShareCreatedPayload | ShareRevokedPayload | ShareUpdatedPayload;

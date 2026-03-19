@@ -118,18 +118,29 @@ export class WebSocketClient {
   }
 
   private handleEvent(event: WebSocketEvent): void {
-    console.log('[WebSocket] Received event:', event.type, event);
+    console.log('[WebSocket] Received event:', event);
 
-    const handlers = this.handlers.get(event.type);
+    // Backend sends 'event_type' field, not 'type'
+    const eventType = (event as any).event_type || event.type;
+
+    if (!eventType) {
+      console.error('[WebSocket] Event missing event_type field:', event);
+      return;
+    }
+
+    const handlers = this.handlers.get(eventType);
 
     if (handlers) {
+      console.log(`[WebSocket] Dispatching ${eventType} to ${handlers.size} handlers`);
       handlers.forEach((handler) => {
         try {
           handler(event);
         } catch (error) {
-          console.error(`[WebSocket] Handler error for ${event.type}:`, error);
+          console.error(`[WebSocket] Handler error for ${eventType}:`, error);
         }
       });
+    } else {
+      console.warn(`[WebSocket] No handlers registered for event type: ${eventType}`);
     }
   }
 

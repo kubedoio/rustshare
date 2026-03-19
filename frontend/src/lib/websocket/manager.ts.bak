@@ -71,22 +71,27 @@ function isOwnEvent(event: WebSocketEvent): boolean {
 function handleFileUploaded(event: WebSocketEvent): void {
   console.log('[WebSocket Manager] FileUploaded event:', event);
 
-  // Backend doesn't send file details in the event payload for generic events
-  // We just have aggregate_id (file ID) and need to invalidate queries to refetch
-  const fileId = (event as any).aggregate_id;
-  console.log('[WebSocket Manager] File ID from aggregate_id:', fileId);
+  // Backend sends payload fields directly on the event object, not nested in 'payload'
+  const payload = event.payload || (event as any);
+  console.log('[WebSocket Manager] Payload:', payload);
+  console.log('[WebSocket Manager] folder_id:', payload.folder_id);
 
-  // Invalidate ALL folder contents queries to refetch
-  console.log('[WebSocket Manager] Invalidating all folder-contents queries');
-  queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
+  // Invalidate folder contents where file was uploaded
+  console.log('[WebSocket Manager] Invalidating query:', ['folder-contents', payload.folder_id]);
+  queryClient.invalidateQueries({ queryKey: ['folder-contents', payload.folder_id] });
+
+  // Also invalidate root if folder_id is null
+  if (!payload.folder_id) {
+    queryClient.invalidateQueries({ queryKey: ['folder-contents', null] });
+  }
 
   if (!isOwnEvent(event)) {
-    toastStore.show(`New file was uploaded`, 'info');
+    toastStore.show(`File "${payload.file_name}" was uploaded`, 'info');
   }
 }
 
 function handleFileModified(event: WebSocketEvent): void {
-  const payload = event.payload || (event as any);
+  const payload = event.payload as any;
 
   // Invalidate file details and folder contents
   queryClient.invalidateQueries({ queryKey: ['file', payload.file_id] });
@@ -98,7 +103,7 @@ function handleFileModified(event: WebSocketEvent): void {
 }
 
 function handleFileRenamed(event: WebSocketEvent): void {
-  const payload = event.payload || (event as any);
+  const payload = event.payload as any;
 
   // Invalidate file details and folder contents
   queryClient.invalidateQueries({ queryKey: ['file', payload.file_id] });
@@ -110,7 +115,7 @@ function handleFileRenamed(event: WebSocketEvent): void {
 }
 
 function handleFileMoved(event: WebSocketEvent): void {
-  const payload = event.payload || (event as any);
+  const payload = event.payload as any;
 
   // Invalidate both old and new folder contents
   queryClient.invalidateQueries({ queryKey: ['folder-contents', payload.old_folder_id] });
@@ -128,7 +133,7 @@ function handleFileMoved(event: WebSocketEvent): void {
 }
 
 function handleFileDeleted(event: WebSocketEvent): void {
-  const payload = event.payload || (event as any);
+  const payload = event.payload as any;
 
   // Invalidate file details and folder contents
   queryClient.invalidateQueries({ queryKey: ['file', payload.file_id] });
@@ -145,7 +150,7 @@ function handleFileDeleted(event: WebSocketEvent): void {
 }
 
 function handleFileRestored(event: WebSocketEvent): void {
-  const payload = event.payload || (event as any);
+  const payload = event.payload as any;
 
   // Invalidate file details and folder contents
   queryClient.invalidateQueries({ queryKey: ['file', payload.file_id] });
@@ -162,7 +167,7 @@ function handleFileRestored(event: WebSocketEvent): void {
 
 // Folder Event Handlers
 function handleFolderCreated(event: WebSocketEvent): void {
-  const payload = event.payload || (event as any);
+  const payload = event.payload as any;
 
   // Invalidate parent folder contents and folder tree
   queryClient.invalidateQueries({ queryKey: ['folder-contents', payload.parent_folder_id] });
@@ -178,7 +183,7 @@ function handleFolderCreated(event: WebSocketEvent): void {
 }
 
 function handleFolderRenamed(event: WebSocketEvent): void {
-  const payload = event.payload || (event as any);
+  const payload = event.payload as any;
 
   // Invalidate folder tree and all folder contents
   queryClient.invalidateQueries({ queryKey: ['folders'] });
@@ -190,7 +195,7 @@ function handleFolderRenamed(event: WebSocketEvent): void {
 }
 
 function handleFolderMoved(event: WebSocketEvent): void {
-  const payload = event.payload || (event as any);
+  const payload = event.payload as any;
 
   // Invalidate both old and new parent folder contents and folder tree
   queryClient.invalidateQueries({ queryKey: ['folder-contents', payload.old_parent_id] });
@@ -207,7 +212,7 @@ function handleFolderMoved(event: WebSocketEvent): void {
 }
 
 function handleFolderDeleted(event: WebSocketEvent): void {
-  const payload = event.payload || (event as any);
+  const payload = event.payload as any;
 
   // Invalidate parent folder contents and folder tree
   queryClient.invalidateQueries({ queryKey: ['folder-contents', payload.parent_folder_id] });
@@ -224,7 +229,7 @@ function handleFolderDeleted(event: WebSocketEvent): void {
 
 // Share Event Handlers
 function handleShareCreated(event: WebSocketEvent): void {
-  const payload = event.payload || (event as any);
+  const payload = event.payload as any;
 
   // Invalidate shares list and file details
   queryClient.invalidateQueries({ queryKey: ['user-shares'] });
@@ -236,7 +241,7 @@ function handleShareCreated(event: WebSocketEvent): void {
 }
 
 function handleShareRevoked(event: WebSocketEvent): void {
-  const payload = event.payload || (event as any);
+  const payload = event.payload as any;
 
   // Invalidate shares list and file details
   queryClient.invalidateQueries({ queryKey: ['user-shares'] });
@@ -248,7 +253,7 @@ function handleShareRevoked(event: WebSocketEvent): void {
 }
 
 function handleShareUpdated(event: WebSocketEvent): void {
-  const payload = event.payload || (event as any);
+  const payload = event.payload as any;
 
   // Invalidate shares list and file details
   queryClient.invalidateQueries({ queryKey: ['user-shares'] });
