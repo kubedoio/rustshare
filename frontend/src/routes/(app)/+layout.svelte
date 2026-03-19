@@ -10,16 +10,18 @@
   import { browser } from '$app/environment';
 
   let mobileMenuOpen = false;
+  let mounted = false;
 
   // Check authentication on mount
   onMount(() => {
+    mounted = true;
     if (!$isAuthenticated) {
       goto('/login');
     }
   });
 
-  // Redirect if auth state changes (only in browser)
-  $: if (browser && !$isAuthenticated) {
+  // Redirect if auth state changes (only in browser after mount)
+  $: if (browser && mounted && !$isAuthenticated) {
     goto('/login');
   }
 
