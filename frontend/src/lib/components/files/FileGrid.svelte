@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { File, Folder } from '$lib/api/types';
   import FileListItem from './FileListItem.svelte';
+  import { selectionStore } from '$lib/stores/selection';
 
   export let folders: Folder[] = [];
   export let files: File[] = [];
@@ -12,6 +13,15 @@
   export let onDeleteFile: (file: File) => void = () => {};
   export let onShareFile: (file: File) => void = () => {};
   export let onVersionHistory: (file: File) => void = () => {};
+  export let selectionMode = false;
+
+  function handleFileToggle(file: File) {
+    selectionStore.toggleFile(file.id);
+  }
+
+  function handleFolderToggle(folder: Folder) {
+    selectionStore.toggleFolder(folder.id);
+  }
 </script>
 
 {#if folders.length === 0 && files.length === 0}
@@ -39,7 +49,9 @@
       <FileListItem
         item={folder}
         isFolder={true}
-        onSelect={() => onFolderClick(folder)}
+        onSelect={() => selectionMode ? handleFolderToggle(folder) : onFolderClick(folder)}
+        selected={selectionMode && $selectionStore.selectedFolderIds.has(folder.id)}
+        {selectionMode}
         on:rename={(e) => e.detail.isFolder && onRenameFolder(folder)}
         on:delete={(e) => e.detail.isFolder && onDeleteFolder(folder)}
       />
@@ -49,7 +61,9 @@
       <FileListItem
         item={file}
         isFolder={false}
-        onSelect={() => onFileClick(file)}
+        onSelect={() => selectionMode ? handleFileToggle(file) : onFileClick(file)}
+        selected={selectionMode && $selectionStore.selectedFileIds.has(file.id)}
+        {selectionMode}
         on:rename={(e) => !e.detail.isFolder && onRenameFile(file)}
         on:delete={(e) => !e.detail.isFolder && onDeleteFile(file)}
         on:share={(e) => onShareFile(e.detail.item)}

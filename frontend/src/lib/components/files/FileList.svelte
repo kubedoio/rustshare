@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { File, Folder } from '$lib/api/types';
+  import { selectionStore } from '$lib/stores/selection';
 
   export let folders: Folder[] = [];
   export let files: File[] = [];
@@ -11,6 +12,15 @@
   export let onDeleteFile: (file: File) => void = () => {};
   export let onShareFile: (file: File) => void = () => {};
   export let onVersionHistory: (file: File) => void = () => {};
+  export let selectionMode = false;
+
+  function handleFileToggle(file: File) {
+    selectionStore.toggleFile(file.id);
+  }
+
+  function handleFolderToggle(folder: Folder) {
+    selectionStore.toggleFolder(folder.id);
+  }
 
   function formatBytes(bytes: number): string {
     if (bytes === 0) return '0 Bytes';
@@ -64,9 +74,17 @@
     <tbody>
       <!-- Folders -->
       {#each folders as folder}
-        <tr class="hover cursor-pointer" on:click={() => onFolderClick(folder)}>
+        <tr class="hover cursor-pointer" on:click={() => selectionMode ? handleFolderToggle(folder) : onFolderClick(folder)}>
           <td>
             <div class="flex items-center gap-3">
+              {#if selectionMode}
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-sm"
+                  checked={$selectionStore.selectedFolderIds.has(folder.id)}
+                  on:click|stopPropagation={() => handleFolderToggle(folder)}
+                />
+              {/if}
               <span class="text-2xl">📁</span>
               <span class="font-medium">{folder.name}</span>
             </div>
@@ -94,9 +112,17 @@
 
       <!-- Files -->
       {#each files as file}
-        <tr class="hover cursor-pointer" on:click={() => onFileClick(file)}>
+        <tr class="hover cursor-pointer" on:click={() => selectionMode ? handleFileToggle(file) : onFileClick(file)}>
           <td>
             <div class="flex items-center gap-3">
+              {#if selectionMode}
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-sm"
+                  checked={$selectionStore.selectedFileIds.has(file.id)}
+                  on:click|stopPropagation={() => handleFileToggle(file)}
+                />
+              {/if}
               <span class="text-2xl">{getFileIcon(file.mime_type)}</span>
               <span class="font-medium">{file.name}</span>
             </div>

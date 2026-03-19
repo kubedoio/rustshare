@@ -23,6 +23,7 @@
   import { showKeyboardShortcuts } from '$lib/stores/ui';
   import { searchQuery } from '$lib/stores/search';
   import { fileSortState, setSortField, setViewMode, type SortField } from '$lib/stores/fileSort';
+  import { selectionStore, selectionCount, hasSelection } from '$lib/stores/selection';
   import type { File, Folder } from '$lib/api/types';
   import type { UploadTask } from '$lib/components/files/UploadProgress.svelte';
 
@@ -30,6 +31,7 @@
   let showToast = false;
   let toastMessage = '';
   let toastType: 'success' | 'error' | 'info' = 'info';
+  let selectionMode = false;
 
   // Current folder navigation state
   let currentFolderId: string | null = null;
@@ -344,6 +346,130 @@
     $createFolderMutation.mutate(event.detail.name);
   }
 
+  function toggleSelectionMode() {
+    selectionMode = !selectionMode;
+    if (!selectionMode) {
+      selectionStore.clear();
+    }
+  }
+
+  function handleSelectAll() {
+    selectionStore.selectAll(sortedFiles, sortedFolders);
+  }
+
+  function handleDeselectAll() {
+    selectionStore.deselectAll();
+  }
+
+  async function handleBulkDelete() {
+    if (!$hasSelection) return;
+
+    const fileIds = Array.from($selectionStore.selectedFileIds);
+    const folderIds = Array.from($selectionStore.selectedFolderIds);
+
+    const confirmed = confirm(
+      `Delete ${fileIds.length} file(s) and ${folderIds.length} folder(s)?`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      // Delete files
+      for (const fileId of fileIds) {
+        await deleteFile(fileId);
+      }
+      // Delete folders
+      for (const folderId of folderIds) {
+        await deleteFolder(folderId);
+      }
+
+      selectionStore.clear();
+      selectionMode = false;
+      queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
+      displayToast(`Deleted ${fileIds.length + folderIds.length} item(s)`, 'success');
+    } catch (error) {
+      console.error('Bulk delete error:', error);
+      displayToast('Failed to delete some items', 'error');
+    }
+  }
+
+
+  // Filter files and folders based on search query
+  $: filteredFolders = $searchQuery
+    ? ($filesQuery.data?.folders || []).filter((folder) =>
+        folder.name.toLowerCase().includes($searchQuery.toLowerCase())
+      )
+    : ($filesQuery.data?.folders || []);
+
+  $: filteredFiles = $searchQuery
+    ? ($filesQuery.data?.files || []).filter((file) =>
+        file.name.toLowerCase().includes($searchQuery.toLowerCase())
+      )
+    : ($filesQuery.data?.files || []);
+
+  // Sort files and folders
+  $: sortedFolders = (() => {
+    const folders = [...filteredFolders];
+    folders.sort((a, b) => {
+      if ($fileSortState.field === 'name') {
+        return $fileSortState.order === 'asc'
+          ? a.name.localeCompare(b.name)
+          : b.name.localeCompare(a.name);
+      } else if ($fileSortState.field === 'modified_at') {
+        const aTime = new Date(a.updated_at).getTime();
+        const bTime = new Date(b.updated_at).getTime();
+        return $fileSortState.order === 'asc' ? aTime - bTime : bTime - aTime;
+      }
+      return 0;
+    });
+    return folders;
+  })();
+
+  $: sortedFiles = (() => {
+    const files = [...filteredFiles];
+    files.sort((a, b) => {
+      if ($fileSortState.field === 'name') {
+        return $fileSortState.order === 'asc'
+          ? a.name.localeCompare(b.name)
+          : b.name.localeCompare(a.name);
+      } else if ($fileSortState.field === 'modified_at') {
+        const aTime = new Date(a.modified_at).getTime();
+        const bTime = new Date(b.modified_at).getTime();
+        return $fileSortState.order === 'asc' ? aTime - bTime : bTime - aTime;
+      } else if ($fileSortState.field === 'size') {
+        return $fileSortState.order === 'asc' ? a.size - b.size : b.size - a.size;
+      } else if ($fileSortState.field === 'mime_type') {
+        return $fileSortState.order === 'asc'
+          ? a.mime_type.localeCompare(b.mime_type)
+          : b.mime_type.localeCompare(a.mime_type);
+      }
+      return 0;
+    });
+    return files;
+  })();
+
+  // Handle real-time updates from WebSocket
+  function handleWebSocketEvent(event: WebSocketEvent) {
+    console.log('Received WebSocket event:', event);
+
+    // Invalidate queries to refetch data based on event type
+    switch (event.type) {
+      case 'FileUploaded':
+      case 'FileModified':
+      case 'FileRenamed':
+      case 'FileMoved':
+      case 'FileDeleted':
+      case 'FileRestored':
+      case 'FolderCreated':
+      case 'FolderRenamed':
+      case 'FolderMoved':
+      case 'FolderDeleted':
+        // Refresh current folder contents
+        queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+        break;
+    }
+  }
+
   // Filter files and folders based on search query
   $: filteredFolders = $searchQuery
     ? ($filesQuery.data?.folders || []).filter((folder) =>
@@ -505,8 +631,51 @@
         {currentFolderId ? folderPath[folderPath.length - 1]?.name || 'My Files' : 'My Files'}
       </h1>
       <div class="flex gap-2">
-        <!-- Sort dropdown -->
-        <div class="dropdown dropdown-end">
+        {#if selectionMode}
+          <!-- Selection mode toolbar -->
+          <div class="flex items-center gap-2 bg-base-200 rounded-lg px-3 py-2">
+            <span class="text-sm font-medium">{$selectionCount} selected</span>
+            <button
+              class="btn btn-ghost btn-xs"
+              on:click={handleSelectAll}
+            >
+              Select All
+            </button>
+            <button
+              class="btn btn-ghost btn-xs"
+              on:click={handleDeselectAll}
+            >
+              Clear
+            </button>
+            <button
+              class="btn btn-error btn-xs"
+              on:click={handleBulkDelete}
+              disabled={!$hasSelection}
+            >
+              Delete
+            </button>
+            <button
+              class="btn btn-ghost btn-xs"
+              on:click={toggleSelectionMode}
+            >
+              Cancel
+            </button>
+          </div>
+        {:else}
+          <!-- Normal toolbar -->
+          <button
+            class="btn btn-ghost btn-sm lg:btn-md"
+            on:click={toggleSelectionMode}
+            title="Select multiple items"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 lg:w-5 lg:h-5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span class="hidden sm:inline">Select</span>
+          </button>
+
+          <!-- Sort dropdown -->
+          <div class="dropdown dropdown-end">
           <label tabindex="0" class="btn btn-ghost btn-sm lg:btn-md">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 lg:w-5 lg:h-5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5" />
@@ -597,7 +766,7 @@
         <button
           class="btn btn-outline btn-sm lg:btn-md"
           on:click={() => showCreateFolderModal = true}
-          disabled={isUploading}
+          disabled={isUploading || selectionMode}
         >
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 lg:w-5 lg:h-5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 10.5v6m3-3H9m4.06-7.19l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
@@ -606,8 +775,9 @@
         </button>
         <UploadButton
           on:filesSelected={(e) => handleFilesSelected(e.detail)}
-          disabled={isUploading}
+          disabled={isUploading || selectionMode}
         />
+        {/if}
       </div>
     </div>
 
@@ -639,6 +809,7 @@
           <FileGrid
             folders={sortedFolders}
             files={sortedFiles}
+            {selectionMode}
             onFolderClick={handleFolderClick}
             onFileClick={handleFileClick}
             onRenameFolder={handleRenameFolder}
@@ -652,6 +823,7 @@
           <FileList
             folders={sortedFolders}
             files={sortedFiles}
+            {selectionMode}
             onFolderClick={handleFolderClick}
             onFileClick={handleFileClick}
             onRenameFolder={handleRenameFolder}

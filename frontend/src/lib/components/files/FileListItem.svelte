@@ -6,6 +6,8 @@
   export let item: File | Folder;
   export let isFolder: boolean;
   export let onSelect: () => void;
+  export let selectionMode = false;
+  export let selected = false;
 
   const dispatch = createEventDispatcher<{
     rename: { item: File | Folder; isFolder: boolean };
@@ -52,6 +54,8 @@
 
 <div
   class="card bg-base-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer relative group touch-manipulation"
+  class:ring-2={selectionMode && selected}
+  class:ring-primary={selectionMode && selected}
   on:click={onSelect}
   on:keydown={(e) => e.key === 'Enter' && onSelect()}
   role="button"
@@ -59,6 +63,14 @@
 >
   <div class="card-body p-3 lg:p-4">
     <div class="flex items-center gap-2 lg:gap-3">
+      {#if selectionMode}
+        <input
+          type="checkbox"
+          class="checkbox checkbox-sm"
+          checked={selected}
+          on:click|stopPropagation={onSelect}
+        />
+      {/if}
       <span class="text-2xl lg:text-3xl">{icon}</span>
       <div class="flex-1 min-w-0">
         <h3 class="font-semibold truncate text-sm lg:text-base">{item.name}</h3>
