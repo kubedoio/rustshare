@@ -16,10 +16,15 @@
 2. **Folder Navigation** ✅ - Clicking folders now properly navigates into them
 3. **Console Errors** ✅ - WebSocket errors removed from browser console
 
-### Changes:
-- Fixed auth redirect loop with mounted flag
-- Made TanStack Query reactive for folder navigation
+### Technical Changes:
+- Fixed auth redirect loop by using full auth store instead of derived store
+- Made TanStack Query reactive ($: filesQuery) for folder navigation
 - Temporarily disabled WebSocket (browser limitation documented)
+
+### Root Causes:
+1. **Auth Issue**: Derived store ($isAuthenticated) had timing issues with reactivity during localStorage hydration
+2. **Folder Navigation**: Query was declared as const instead of reactive ($:)
+3. **WebSocket Errors**: Browser WebSocket API cannot send Authorization header
 
 ---
 
