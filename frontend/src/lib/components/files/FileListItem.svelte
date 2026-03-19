@@ -23,54 +23,40 @@
   const displaySize = isFolder ? '-' : formatFileSize((item as File).size);
   const displayDate = formatDate(isFolder ? (item as Folder).updated_at : (item as File).modified_at);
 
-  let showMenu = false;
-
   function handleRename(e: Event) {
     e.stopPropagation();
     e.preventDefault();
-    showMenu = false;
     dispatch('rename', { item, isFolder });
   }
 
   function handleShare(e: Event) {
     e.stopPropagation();
     e.preventDefault();
-    showMenu = false;
     dispatch('share', { item: item as File });
   }
 
   function handleVersionHistory(e: Event) {
     e.stopPropagation();
     e.preventDefault();
-    showMenu = false;
     dispatch('versionHistory', { item: item as File });
   }
 
   function handleDelete(e: Event) {
     e.stopPropagation();
     e.preventDefault();
-    showMenu = false;
     dispatch('delete', { item, isFolder });
   }
 
   function handleMove(e: Event) {
     e.stopPropagation();
     e.preventDefault();
-    showMenu = false;
     dispatch('move', { item, isFolder });
   }
 
   function handleDownload(e: Event) {
     e.stopPropagation();
     e.preventDefault();
-    showMenu = false;
     dispatch('download', { item: item as File });
-  }
-
-  function handleMenuToggle(e: Event) {
-    e.stopPropagation();
-    e.preventDefault();
-    showMenu = !showMenu;
   }
 </script>
 
@@ -110,12 +96,13 @@
       </div>
 
       <!-- Actions Menu -->
-      <div class="dropdown dropdown-end" on:click|stopPropagation on:keydown|stopPropagation>
-        <button
-          type="button"
+      <div class="dropdown dropdown-end">
+        <label
           tabindex="0"
+          role="button"
           class="btn btn-ghost btn-sm btn-circle opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity min-h-[44px] min-w-[44px] lg:min-h-0 lg:min-w-0"
-          on:click|stopPropagation={handleMenuToggle}
+          on:click|stopPropagation
+          on:keydown|stopPropagation
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -131,12 +118,11 @@
               d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z"
             />
           </svg>
-        </button>
-        {#if showMenu}
-          <ul
-            tabindex="0"
-            class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52"
-          >
+        </label>
+        <ul
+          tabindex="0"
+          class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52"
+        >
             <li>
               <button type="button" on:click={handleRename}>
                 <svg
@@ -254,8 +240,7 @@
               </button>
             </li>
           </ul>
-        {/if}
+        </div>
       </div>
-    </div>
   </div>
 </div>
