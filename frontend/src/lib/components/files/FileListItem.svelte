@@ -25,31 +25,41 @@
 
   function handleRename(e: Event) {
     e.stopPropagation();
+    e.preventDefault();
     showMenu = false;
     dispatch('rename', { item, isFolder });
   }
 
   function handleShare(e: Event) {
     e.stopPropagation();
+    e.preventDefault();
     showMenu = false;
     dispatch('share', { item: item as File });
   }
 
   function handleVersionHistory(e: Event) {
     e.stopPropagation();
+    e.preventDefault();
     showMenu = false;
     dispatch('versionHistory', { item: item as File });
   }
 
   function handleDelete(e: Event) {
     e.stopPropagation();
+    e.preventDefault();
     showMenu = false;
     dispatch('delete', { item, isFolder });
   }
 
   function handleMenuToggle(e: Event) {
     e.stopPropagation();
+    e.preventDefault();
     showMenu = !showMenu;
+  }
+
+  function handleDropdownClick(e: Event) {
+    e.stopPropagation();
+    e.preventDefault();
   }
 </script>
 
@@ -89,12 +99,12 @@
       </div>
 
       <!-- Actions Menu -->
-      <div class="dropdown dropdown-end" on:click|stopPropagation>
+      <div class="dropdown dropdown-end" on:click={handleDropdownClick} on:keydown|stopPropagation>
         <button
           type="button"
           tabindex="0"
           class="btn btn-ghost btn-sm btn-circle opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity min-h-[44px] min-w-[44px] lg:min-h-0 lg:min-w-0"
-          on:click|stopPropagation={handleMenuToggle}
+          on:click={handleMenuToggle}
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
