@@ -1,11 +1,25 @@
-# RustShare Production Deployment v1.0.0
+# RustShare Production Deployment v1.0.1
 
 ## 🚀 Deployment Status: LIVE
 
 **Date**: March 19, 2026
-**Version**: v1.0.0-production
-**Tag**: v1.0.0-production
+**Version**: v1.0.1-production (Critical Fixes)
+**Tag**: v1.0.1-production
 **Repository**: https://github.com/senolcolak/rustshare
+
+---
+
+## ✅ v1.0.1 Critical Fixes
+
+### Issues Resolved:
+1. **Auth Persistence** ✅ - Users now stay logged in after page refresh
+2. **Folder Navigation** ✅ - Clicking folders now properly navigates into them
+3. **Console Errors** ✅ - WebSocket errors removed from browser console
+
+### Changes:
+- Fixed auth redirect loop with mounted flag
+- Made TanStack Query reactive for folder navigation
+- Temporarily disabled WebSocket (browser limitation documented)
 
 ---
 
