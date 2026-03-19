@@ -81,12 +81,12 @@
       </div>
 
       <!-- Actions Menu -->
-      <div class="dropdown dropdown-end">
+      <div class="dropdown dropdown-end" on:click|stopPropagation>
         <button
           type="button"
           tabindex="0"
           class="btn btn-ghost btn-sm btn-circle opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity min-h-[44px] min-w-[44px] lg:min-h-0 lg:min-w-0"
-          on:click={handleMenuToggle}
+          on:click|stopPropagation={handleMenuToggle}
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
