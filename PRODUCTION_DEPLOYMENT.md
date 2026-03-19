@@ -1,31 +1,41 @@
-# RustShare Production Deployment v1.1.0
+# RustShare Production Deployment v0.1.2
 
 ## 🚀 Deployment Status: LIVE
 
 **Date**: March 19, 2026
-**Version**: v1.1.0-production (New Features)
-**Tag**: v1.1.0-production
+**Version**: v0.1.2-production (Dashboard & Enhancements)
+**Tag**: v0.1.2-production
 **Repository**: https://github.com/senolcolak/rustshare
 
 ---
 
-## 🎉 v1.1.0 New Features
+## 🎉 v0.1.2 New Features
 
 ### Features Added:
-1. **Settings Page** ✅ - User profile, storage stats, theme toggle
-2. **Search Functionality** ✅ - Real-time client-side search for files/folders
-3. **Theme Management** ✅ - Light/dark mode with localStorage persistence
+1. **Dashboard Page** ✅ - Activity overview with stats, recent files, quick actions
+2. **Settings Page** ✅ - User profile, storage stats, theme toggle
+3. **Search Functionality** ✅ - Real-time client-side search for files/folders
+4. **Theme Management** ✅ - Light/dark mode with localStorage persistence
+
+### Dashboard Components:
+- Time-based greeting with user personalization
+- Quick stats cards (files, storage, shares)
+- Recent files table with smart sorting
+- Quick action buttons for common tasks
+- Helpful tips section for feature discovery
+- Mobile-responsive design throughout
 
 ### Implementation Details:
-- Settings page with profile display, storage visualization, and account management
+- Dashboard serves as new home page at /dashboard
+- Settings page with profile display and theme toggle
 - Real-time search bar in header (desktop inline, mobile dropdown)
-- Client-side filtering for instant results without backend API
+- Client-side filtering for instant results
 - Theme toggle persists across sessions
-- Mobile-responsive design for all new features
+- All features fully mobile-responsive
 
 ---
 
-## ✅ v1.0.1 Critical Fixes (Previous Release)
+## ✅ v0.1.1 Critical Fixes (Previous Release)
 
 ### Issues Resolved:
 1. **Auth Persistence** ✅ - Users now stay logged in after page refresh
