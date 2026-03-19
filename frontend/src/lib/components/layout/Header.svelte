@@ -1,6 +1,7 @@
 <script lang="ts">
   import { currentUser } from '$lib/stores/auth';
   import { createEventDispatcher } from 'svelte';
+  import ThemeToggle from '$lib/components/common/ThemeToggle.svelte';
 
   export let onMenuClick: () => void = () => {};
   export let onHelpClick: () => void = () => {};
@@ -85,6 +86,9 @@
   </div>
 
   <div class="flex items-center gap-2 lg:gap-4 flex-shrink-0">
+    <!-- Theme toggle -->
+    <ThemeToggle />
+
     <!-- Search button (mobile) -->
     {#if onSearchChange !== null}
       <div class="dropdown dropdown-end lg:hidden">
