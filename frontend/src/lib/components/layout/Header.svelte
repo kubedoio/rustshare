@@ -2,6 +2,7 @@
   import { currentUser } from '$lib/stores/auth';
   import { createEventDispatcher } from 'svelte';
   import ThemeToggle from '$lib/components/common/ThemeToggle.svelte';
+  import WebSocketStatus from '$lib/components/common/WebSocketStatus.svelte';
 
   export let onMenuClick: () => void = () => {};
   export let onHelpClick: () => void = () => {};
@@ -86,6 +87,9 @@
   </div>
 
   <div class="flex items-center gap-2 lg:gap-4 flex-shrink-0">
+    <!-- WebSocket status indicator -->
+    <WebSocketStatus />
+
     <!-- Theme toggle -->
     <ThemeToggle />
 

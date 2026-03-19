@@ -44,7 +44,24 @@ export async function getFileVersions(fileId: string): Promise<FileVersion[]> {
 
 export async function restoreFileVersion(
   fileId: string,
-  versionNumber: number
-): Promise<void> {
-  return apiClient.post<void>(`/files/${fileId}/restore`, { version: versionNumber });
+  versionNumber: number,
+  currentVersion: number
+): Promise<File> {
+  const token = localStorage.getItem('token');
+  const headers: Record<string, string> = {
+    'If-Match': currentVersion.toString(),
+    'Content-Type': 'application/json'
+  };
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await apiClient.request<File>(`/files/${fileId}/restore`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ version: versionNumber })
+  });
+
+  return response;
 }

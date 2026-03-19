@@ -17,7 +17,7 @@
   }>();
 
   // Form state for new share
-  let permissions: 'View' | 'ReadWrite' = 'View';
+  let permissions: 'View' | 'Edit' | 'Admin' = 'View';
   let password = '';
   let expiresAt = '';
   let showCreateForm = false;
@@ -172,8 +172,9 @@
                 bind:value={permissions}
                 disabled={isLoading}
               >
-                <option value="View">View Only</option>
-                <option value="ReadWrite">View & Download</option>
+                <option value="View">View Only (Read, No Download)</option>
+                <option value="Edit">View & Download</option>
+                <option value="Admin">Full Access (View, Download, Manage)</option>
               </select>
             </div>
 
@@ -281,7 +282,7 @@
                     <div class="text-sm text-base-content/70 space-y-1">
                       <div class="flex gap-4 flex-wrap">
                         <span class="badge badge-sm">
-                          {share.permissions === 'View' ? 'View Only' : 'View & Download'}
+                          {share.permissions === 'View' ? 'View Only' : share.permissions === 'Edit' ? 'View & Download' : 'Full Access'}
                         </span>
                         {#if share.password_protected}
                           <span class="badge badge-sm badge-warning">Password Protected</span>

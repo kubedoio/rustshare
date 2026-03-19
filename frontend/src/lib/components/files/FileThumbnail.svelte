@@ -50,6 +50,15 @@
 
       const { url } = await response.json();
 
+      // Convert MinIO URL to nginx proxy path
+      // MinIO returns: http://rustfs:9000/rustshare-files/path/to/file
+      // We want: /storage/path/to/file
+      let imageUrl = url;
+      if (url.includes('/rustshare-files/')) {
+        const path = url.split('/rustshare-files/')[1];
+        imageUrl = `/storage/${path}`;
+      }
+
       // Load image
       const img = new Image();
       img.crossOrigin = 'anonymous';
@@ -97,7 +106,7 @@
         loading = false;
       };
 
-      img.src = url;
+      img.src = imageUrl;
     } catch (err) {
       console.error('Failed to generate thumbnail:', err);
       error = true;

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { createQuery } from '@tanstack/svelte-query';
+  import { onMount } from 'svelte';
   import {
     getPublicShareInfo,
     createShareSession,
@@ -11,6 +12,7 @@
   import { formatFileSize, getMimeTypeIcon } from '$lib/utils/format';
 
   const token = $page.params.token;
+  const SESSION_STORAGE_KEY = `share_session_${token}`;
 
   // Query for share info
   $: shareQuery = createQuery({
@@ -23,12 +25,62 @@
   let passwordError = '';
   let isSubmittingPassword = false;
   let isDownloading = false;
+  let errorType: 'not-found' | 'expired' | 'general' | null = null;
+  let hasTriedAutoSession = false;
+
+  // Load session token from localStorage on mount
+  onMount(() => {
+    const stored = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (stored) {
+      sessionToken = stored;
+    }
+  });
+
+  // Auto-create session for non-password-protected shares
+  $: if (
+    $shareQuery.data &&
+    !$shareQuery.data.password_protected &&
+    !sessionToken &&
+    !isSubmittingPassword &&
+    !hasTriedAutoSession
+  ) {
+    createSessionAutomatically();
+  }
+
+  async function createSessionAutomatically() {
+    hasTriedAutoSession = true;
+    isSubmittingPassword = true;
+    try {
+      const response = await createShareSession(token, {});
+      sessionToken = response.session_token;
+      localStorage.setItem(SESSION_STORAGE_KEY, response.session_token);
+    } catch (error) {
+      console.error('Failed to create session:', error);
+    } finally {
+      isSubmittingPassword = false;
+    }
+  }
 
   // Check if password is required
   $: needsPassword = $shareQuery.data?.password_protected && !sessionToken;
-  $: canDownload = $shareQuery.data && (!$shareQuery.data.password_protected || sessionToken);
+  $: canDownload = $shareQuery.data && sessionToken;
 
-  // Check if share is expired
+  // Parse error type from query error
+  $: if ($shareQuery.error) {
+    const error = $shareQuery.error as any;
+    const status = error?.status;
+    const message = error?.message?.toLowerCase() || '';
+
+    if (status === 410 || message.includes('expired')) {
+      errorType = 'expired';
+    } else if (status === 404 || message.includes('not found')) {
+      errorType = 'not-found';
+    } else {
+      errorType = 'general';
+    }
+  }
+
+  // Check if share is expired (client-side check)
   function isExpired(shareInfo: ShareInfo | undefined): boolean {
     if (!shareInfo?.expires_at) return false;
     return new Date(shareInfo.expires_at) < new Date();
@@ -42,6 +94,7 @@
     try {
       const response = await createShareSession(token, { password });
       sessionToken = response.session_token;
+      localStorage.setItem(SESSION_STORAGE_KEY, response.session_token);
       password = ''; // Clear password input
     } catch (error) {
       passwordError = error instanceof Error ? error.message : 'Invalid password';
@@ -90,13 +143,27 @@
         </div>
       {:else if $shareQuery.isError}
         <div class="flex flex-col items-center justify-center py-8">
-          <div class="text-6xl mb-4">🚫</div>
-          <h2 class="card-title text-error mb-2">Share Not Found</h2>
-          <p class="text-center text-base-content/70">
-            {$shareQuery.error instanceof Error
-              ? $shareQuery.error.message
-              : 'This share link is invalid or has expired.'}
-          </p>
+          {#if errorType === 'expired'}
+            <div class="text-6xl mb-4">⏰</div>
+            <h2 class="card-title text-error mb-2">Share Expired</h2>
+            <p class="text-center text-base-content/70">
+              This share link has expired and is no longer available.
+            </p>
+          {:else if errorType === 'not-found'}
+            <div class="text-6xl mb-4">🔍</div>
+            <h2 class="card-title text-error mb-2">Share Not Found</h2>
+            <p class="text-center text-base-content/70">
+              This share link is invalid or has been revoked.
+            </p>
+          {:else}
+            <div class="text-6xl mb-4">⚠️</div>
+            <h2 class="card-title text-error mb-2">Error Loading Share</h2>
+            <p class="text-center text-base-content/70">
+              {$shareQuery.error instanceof Error
+                ? $shareQuery.error.message
+                : 'Failed to load share information. Please try again later.'}
+            </p>
+          {/if}
         </div>
       {:else if $shareQuery.data}
         {@const shareInfo = $shareQuery.data}
@@ -223,7 +290,7 @@
               {/if}
             </button>
 
-            {#if sessionToken}
+            {#if $shareQuery.data.password_protected && sessionToken}
               <p class="text-xs text-base-content/60 mt-4 text-center">
                 Password verified. Click to download.
               </p>

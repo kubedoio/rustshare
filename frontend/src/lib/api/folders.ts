@@ -43,7 +43,7 @@ export async function renameFolder(folderId: string, newName: string): Promise<v
 
 export async function moveFolder(folderId: string, targetFolderId: string | null): Promise<void> {
   return apiClient.post<void>(`/folders/${folderId}/move`, {
-    target_folder_id: targetFolderId
+    target_parent_id: targetFolderId
   });
 }
 

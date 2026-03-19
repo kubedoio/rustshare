@@ -15,6 +15,8 @@
     delete: { item: File | Folder; isFolder: boolean };
     share: { item: File };
     versionHistory: { item: File };
+    move: { item: File | Folder; isFolder: boolean };
+    download: { item: File };
   }>();
 
   const icon = isFolder ? '📁' : getMimeTypeIcon((item as File).mime_type || '');
@@ -51,15 +53,24 @@
     dispatch('delete', { item, isFolder });
   }
 
+  function handleMove(e: Event) {
+    e.stopPropagation();
+    e.preventDefault();
+    showMenu = false;
+    dispatch('move', { item, isFolder });
+  }
+
+  function handleDownload(e: Event) {
+    e.stopPropagation();
+    e.preventDefault();
+    showMenu = false;
+    dispatch('download', { item: item as File });
+  }
+
   function handleMenuToggle(e: Event) {
     e.stopPropagation();
     e.preventDefault();
     showMenu = !showMenu;
-  }
-
-  function handleDropdownClick(e: Event) {
-    e.stopPropagation();
-    e.preventDefault();
   }
 </script>
 
@@ -99,12 +110,12 @@
       </div>
 
       <!-- Actions Menu -->
-      <div class="dropdown dropdown-end" on:click={handleDropdownClick} on:keydown|stopPropagation>
+      <div class="dropdown dropdown-end" on:click|stopPropagation on:keydown|stopPropagation>
         <button
           type="button"
           tabindex="0"
           class="btn btn-ghost btn-sm btn-circle opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity min-h-[44px] min-w-[44px] lg:min-h-0 lg:min-w-0"
-          on:click={handleMenuToggle}
+          on:click|stopPropagation={handleMenuToggle}
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -147,6 +158,25 @@
             </li>
             {#if !isFolder}
               <li>
+                <button type="button" on:click={handleDownload}>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke-width="1.5"
+                    stroke="currentColor"
+                    class="w-4 h-4"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"
+                    />
+                  </svg>
+                  Download
+                </button>
+              </li>
+              <li>
                 <button type="button" on:click={handleShare}>
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
@@ -185,6 +215,25 @@
                 </button>
               </li>
             {/if}
+            <li>
+              <button type="button" on:click={handleMove}>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke-width="1.5"
+                  stroke="currentColor"
+                  class="w-4 h-4"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776"
+                  />
+                </svg>
+                Move
+              </button>
+            </li>
             <li>
               <button type="button" on:click={handleDelete} class="text-error">
                 <svg

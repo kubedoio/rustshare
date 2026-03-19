@@ -1,9 +1,10 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { createQuery, createMutation } from '@tanstack/svelte-query';
-  import { getFileVersions, restoreFileVersion } from '$lib/api/files';
+  import { getFileVersions, restoreFileVersion, getFile } from '$lib/api/files';
   import { formatFileSize, formatDate } from '$lib/utils/format';
   import type { FileVersion } from '$lib/api/types';
+  import { ApiError } from '$lib/api/types';
 
   export let open = false;
   export let fileId: string;
@@ -11,11 +12,20 @@
 
   let selectedVersion: FileVersion | null = null;
   let showRestoreConfirm = false;
+  let conflictError = false;
+  let errorMessage = '';
 
   const dispatch = createEventDispatcher<{
     close: void;
     restored: { version: number };
   }>();
+
+  // Query for file details to get current version
+  const fileQuery = createQuery({
+    queryKey: ['file', fileId],
+    queryFn: () => getFile(fileId),
+    enabled: open && !!fileId
+  });
 
   // Query for version history
   const versionsQuery = createQuery({
@@ -27,14 +37,28 @@
   // Mutation for restoring version
   const restoreMutation = createMutation({
     mutationFn: async (versionNumber: number) => {
-      await restoreFileVersion(fileId, versionNumber);
-      return versionNumber;
+      const currentVersion = $fileQuery.data?.current_version;
+      if (currentVersion === undefined) {
+        throw new Error('Current version not available');
+      }
+      const result = await restoreFileVersion(fileId, versionNumber, currentVersion);
+      return { version: versionNumber, result };
     },
-    onSuccess: (version) => {
+    onSuccess: ({ version }) => {
       dispatch('restored', { version });
       showRestoreConfirm = false;
       selectedVersion = null;
+      conflictError = false;
+      errorMessage = '';
       handleClose();
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        conflictError = true;
+        errorMessage = 'The file has been modified since you viewed the version history. Please reload and try again.';
+      } else {
+        errorMessage = error instanceof Error ? error.message : 'Failed to restore version';
+      }
     }
   });
 
@@ -42,11 +66,15 @@
     dispatch('close');
     selectedVersion = null;
     showRestoreConfirm = false;
+    conflictError = false;
+    errorMessage = '';
   }
 
   function handleRestore(version: FileVersion) {
     selectedVersion = version;
     showRestoreConfirm = true;
+    conflictError = false;
+    errorMessage = '';
   }
 
   function confirmRestore() {
@@ -57,16 +85,29 @@
   function cancelRestore() {
     showRestoreConfirm = false;
     selectedVersion = null;
+    conflictError = false;
+    errorMessage = '';
   }
 
-  $: currentVersion = $versionsQuery.data?.find((v) => v.version_number === ($versionsQuery.data?.length || 0));
+  function reloadVersions() {
+    conflictError = false;
+    errorMessage = '';
+    $versionsQuery.refetch();
+    $fileQuery.refetch();
+  }
+
+  // Sort versions in descending order (newest first)
+  $: sortedVersions = $versionsQuery.data ? [...$versionsQuery.data].sort((a, b) => b.version_number - a.version_number) : [];
+
+  // Get current version
+  $: currentVersionNumber = $fileQuery.data?.current_version;
 </script>
 
 <dialog class="modal" class:modal-open={open}>
   <div class="modal-box max-w-3xl">
     <h3 class="font-bold text-lg mb-4">Version History: {fileName}</h3>
 
-    {#if $versionsQuery.isLoading}
+    {#if $versionsQuery.isLoading || $fileQuery.isLoading}
       <div class="flex justify-center py-8">
         <span class="loading loading-spinner loading-lg"></span>
       </div>
@@ -74,7 +115,7 @@
       <div class="alert alert-error">
         <span>Failed to load version history: {$versionsQuery.error?.message}</span>
       </div>
-    {:else if $versionsQuery.data && $versionsQuery.data.length > 0}
+    {:else if sortedVersions.length > 0}
       <div class="overflow-x-auto">
         <table class="table table-zebra">
           <thead>
@@ -87,8 +128,8 @@
             </tr>
           </thead>
           <tbody>
-            {#each $versionsQuery.data as version (version.id)}
-              {@const isCurrent = version.version_number === currentVersion?.version_number}
+            {#each sortedVersions as version (version.id)}
+              {@const isCurrent = version.version_number === currentVersionNumber}
               <tr class:font-bold={isCurrent}>
                 <td>
                   v{version.version_number}
@@ -97,7 +138,7 @@
                   {/if}
                 </td>
                 <td>
-                  {formatDate(version.created_at)}
+                  <div class="text-sm">{formatDate(version.created_at)}</div>
                   <div class="text-xs text-base-content/60">
                     {new Date(version.created_at).toLocaleString()}
                   </div>
@@ -154,50 +195,84 @@
   <div class="modal-box">
     <h3 class="font-bold text-lg mb-4">Confirm Restore</h3>
 
-    <p class="mb-4">
-      Are you sure you want to restore <strong>{fileName}</strong> to version <strong>v{selectedVersion?.version_number}</strong>?
-    </p>
+    {#if conflictError}
+      <div class="alert alert-error mb-4">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        <div>
+          <div class="font-bold">Version Conflict</div>
+          <div class="text-sm">{errorMessage}</div>
+        </div>
+      </div>
+      <div class="modal-action">
+        <button
+          type="button"
+          class="btn btn-ghost"
+          on:click={cancelRestore}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary"
+          on:click={reloadVersions}
+        >
+          Reload
+        </button>
+      </div>
+    {:else}
+      <p class="mb-4">
+        Are you sure you want to restore <strong>{fileName}</strong> to version <strong>v{selectedVersion?.version_number}</strong>?
+      </p>
 
-    <div class="alert alert-warning mb-4">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
-      </svg>
-      <span>This will replace the current file content with the selected version.</span>
-    </div>
+      <div class="alert alert-warning mb-4">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+        </svg>
+        <span>This will replace the current file content with the selected version.</span>
+      </div>
 
-    {#if selectedVersion}
-      <div class="bg-base-200 p-3 rounded text-sm mb-4">
-        <div><strong>Date:</strong> {formatDate(selectedVersion.created_at)}</div>
-        <div><strong>Size:</strong> {formatFileSize(selectedVersion.size)}</div>
-        <div><strong>Hash:</strong> <code class="text-xs">{selectedVersion.content_hash.substring(0, 32)}...</code></div>
+      {#if selectedVersion}
+        <div class="bg-base-200 p-3 rounded text-sm mb-4">
+          <div><strong>Date:</strong> {formatDate(selectedVersion.created_at)}</div>
+          <div><strong>Size:</strong> {formatFileSize(selectedVersion.size)}</div>
+          <div><strong>Hash:</strong> <code class="text-xs">{selectedVersion.content_hash.substring(0, 32)}...</code></div>
+        </div>
+      {/if}
+
+      {#if errorMessage && !conflictError}
+        <div class="alert alert-error mb-4">
+          <span>{errorMessage}</span>
+        </div>
+      {/if}
+
+      <div class="modal-action">
+        <button
+          type="button"
+          class="btn btn-ghost"
+          on:click={cancelRestore}
+          disabled={$restoreMutation.isPending}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="btn btn-warning"
+          on:click={confirmRestore}
+          disabled={$restoreMutation.isPending}
+        >
+          {#if $restoreMutation.isPending}
+            <span class="loading loading-spinner loading-sm"></span>
+          {/if}
+          Restore Version
+        </button>
       </div>
     {/if}
-
-    <div class="modal-action">
-      <button
-        type="button"
-        class="btn btn-ghost"
-        on:click={cancelRestore}
-        disabled={$restoreMutation.isPending}
-      >
-        Cancel
-      </button>
-      <button
-        type="button"
-        class="btn btn-warning"
-        on:click={confirmRestore}
-        disabled={$restoreMutation.isPending}
-      >
-        {#if $restoreMutation.isPending}
-          <span class="loading loading-spinner loading-sm"></span>
-        {/if}
-        Restore Version
-      </button>
-    </div>
   </div>
 
   <form method="dialog" class="modal-backdrop">
-    <button type="button" on:click={cancelRestore} disabled={$restoreMutation.isPending}>
+    <button type="button" on:click={cancelRestore} disabled={$restoreMutation.isPending && !conflictError}>
       close
     </button>
   </form>

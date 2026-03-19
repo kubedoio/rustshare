@@ -4,7 +4,7 @@ import type { Share } from './types';
 // Request/Response Types
 
 export interface CreateShareRequest {
-  permissions: 'View' | 'ReadWrite';
+  permissions: 'View' | 'Edit' | 'Admin';
   password?: string;
   expires_at?: string; // ISO 8601
 }
@@ -12,7 +12,7 @@ export interface CreateShareRequest {
 export interface CreateShareResponse {
   id: string;
   share_token: string;
-  permissions: 'View' | 'ReadWrite';
+  permissions: 'View' | 'Edit' | 'Admin';
   password_protected: boolean;
   expires_at: string | null;
   share_url: string;
@@ -107,9 +107,18 @@ export async function getPublicShareInfo(token: string): Promise<ShareInfo> {
       const errorData = await response.json();
       errorMessage = errorData.error || errorData.message || errorMessage;
     } catch {
-      errorMessage = response.statusText || errorMessage;
+      // If parsing fails, use status-based messages
+      if (response.status === 404) {
+        errorMessage = 'Share not found';
+      } else if (response.status === 410) {
+        errorMessage = 'Share has expired';
+      } else {
+        errorMessage = response.statusText || errorMessage;
+      }
     }
-    throw new Error(errorMessage);
+    const error = new Error(errorMessage) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
   }
 
   return response.json();

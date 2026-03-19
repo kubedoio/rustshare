@@ -2,6 +2,7 @@ use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         State,
+        Query,
     },
     http::StatusCode,
     response::Response,
@@ -41,6 +42,12 @@ struct SyncRequest {
     #[serde(rename = "type")]
     msg_type: String,
     last_seen_event_id: Option<String>,
+}
+
+/// Query parameters for WebSocket authentication
+#[derive(Debug, Deserialize)]
+pub struct SyncQuery {
+    pub token: Option<String>,
 }
 
 /// Notification message sent to client
@@ -120,13 +127,29 @@ async fn validate_client_token(
 }
 
 /// WebSocket handler for real-time sync
+/// Supports authentication via:
+/// - Authorization header: `Authorization: Bearer <token>`
+/// - Query parameter: `?token=<token>` (for browser WebSocket API compatibility)
 pub async fn sync_handler(
     State(state): State<AppState>,
     ws: WebSocketUpgrade,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    auth_header: Option<TypedHeader<Authorization<Bearer>>>,
+    Query(query): Query<SyncQuery>,
 ) -> Result<Response, (StatusCode, String)> {
+    // Extract token from header or query parameter
+    let token = if let Some(TypedHeader(auth)) = auth_header {
+        auth.token().to_string()
+    } else if let Some(token) = query.token {
+        token
+    } else {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "Missing authentication token (provide via Authorization header or ?token= query parameter)".to_string(),
+        ));
+    };
+
     // Validate token and determine client identity
-    let client_identity = validate_client_token(auth.token(), &state.jwt_manager).await?;
+    let client_identity = validate_client_token(&token, &state.jwt_manager).await?;
 
     match &client_identity {
         ClientIdentity::User(user_id) => {

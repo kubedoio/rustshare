@@ -1,11 +1,9 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { createQuery, createMutation } from '@tanstack/svelte-query';
-  import { listAllFiles, downloadFile, uploadFile, renameFile, deleteFile } from '$lib/api/files';
-  import { getFolderContents, createFolder, renameFolder, deleteFolder } from '$lib/api/folders';
+  import { listAllFiles, downloadFile, uploadFile, renameFile, deleteFile, moveFile } from '$lib/api/files';
+  import { getFolderContents, createFolder, renameFolder, deleteFolder, moveFolder } from '$lib/api/folders';
   import { queryClient } from '$lib/query-client';
-  import { getWebSocketClient, disconnectWebSocket } from '$lib/websocket/client';
-  import type { WebSocketEvent } from '$lib/websocket/client';
   import FileGrid from '$lib/components/files/FileGrid.svelte';
   import FileList from '$lib/components/files/FileList.svelte';
   import FileGridSkeleton from '$lib/components/files/FileGridSkeleton.svelte';
@@ -15,6 +13,7 @@
   import Toast from '$lib/components/common/Toast.svelte';
   import RenameModal from '$lib/components/modals/RenameModal.svelte';
   import DeleteConfirmation from '$lib/components/modals/DeleteConfirmation.svelte';
+  import MoveModal from '$lib/components/modals/MoveModal.svelte';
   import ShareModal from '$lib/components/modals/ShareModal.svelte';
   import CreateFolderModal from '$lib/components/modals/CreateFolderModal.svelte';
   import VersionHistoryModal from '$lib/components/modals/VersionHistoryModal.svelte';
@@ -41,6 +40,7 @@
   // Modal states
   let showRenameModal = false;
   let showDeleteModal = false;
+  let showMoveModal = false;
   let showShareModal = false;
   let showCreateFolderModal = false;
   let showVersionHistoryModal = false;
@@ -49,6 +49,13 @@
   let renameType: 'file' | 'folder' = 'file';
   let deleteTarget: File | Folder | null = null;
   let deleteType: 'file' | 'folder' = 'file';
+  let moveTarget: File | Folder | null = null;
+  let moveType: 'file' | 'folder' = 'file';
+
+  // Compute current folder ID for move modal
+  $: moveCurrentFolderId = moveType === 'file'
+    ? (moveTarget as File | null)?.parent_folder_id
+    : (moveTarget as Folder | null)?.parent_folder_id;
   let shareTarget: File | null = null;
   let versionHistoryTarget: File | null = null;
   let previewTarget: File | null = null;
@@ -81,6 +88,7 @@
     },
     onSuccess: (folder) => {
       queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+      queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
       showCreateFolderModal = false;
       showNotification('Folder created successfully', 'success');
       activityStore.addActivity('folder_created', folder.name);
@@ -122,6 +130,7 @@
     onSuccess: (_, { newName }) => {
       const oldName = renameTarget?.name || 'Folder';
       queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+      queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
       showRenameModal = false;
       renameTarget = null;
       showNotification('Folder renamed successfully', 'success');
@@ -164,6 +173,7 @@
     onSuccess: () => {
       const folderName = deleteTarget?.name || 'Folder';
       queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+      queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
       showDeleteModal = false;
       deleteTarget = null;
       showNotification('Folder deleted successfully', 'success');
@@ -172,6 +182,51 @@
     onError: (error) => {
       showNotification(
         error instanceof Error ? error.message : 'Failed to delete folder',
+        'error'
+      );
+    }
+  });
+
+  // Move file mutation
+  const moveFileMutation = createMutation({
+    mutationFn: async ({ fileId, targetFolderId }: { fileId: string; targetFolderId: string | null }) => {
+      return moveFile(fileId, targetFolderId);
+    },
+    onSuccess: (_, { targetFolderId }) => {
+      const fileName = moveTarget?.name || 'File';
+      queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+      queryClient.invalidateQueries({ queryKey: ['folder-contents', targetFolderId] });
+      showMoveModal = false;
+      moveTarget = null;
+      showNotification('File moved successfully', 'success');
+      activityStore.addActivity('file_moved', fileName);
+    },
+    onError: (error) => {
+      showNotification(
+        error instanceof Error ? error.message : 'Failed to move file',
+        'error'
+      );
+    }
+  });
+
+  // Move folder mutation
+  const moveFolderMutation = createMutation({
+    mutationFn: async ({ folderId, targetFolderId }: { folderId: string; targetFolderId: string | null }) => {
+      return moveFolder(folderId, targetFolderId);
+    },
+    onSuccess: (_, { targetFolderId }) => {
+      const folderName = moveTarget?.name || 'Folder';
+      queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+      queryClient.invalidateQueries({ queryKey: ['folder-contents', targetFolderId] });
+      queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
+      showMoveModal = false;
+      moveTarget = null;
+      showNotification('Folder moved successfully', 'success');
+      activityStore.addActivity('folder_moved', folderName);
+    },
+    onError: (error) => {
+      showNotification(
+        error instanceof Error ? error.message : 'Failed to move folder',
         'error'
       );
     }
@@ -214,14 +269,65 @@
   async function handleFilesSelected(files: globalThis.File[]) {
     if (files.length === 0) return;
 
-    // Create upload tasks
-    const newTasks: UploadTask[] = files.map((file) => ({
-      id: `${file.name}-${Date.now()}-${Math.random()}`,
-      fileName: file.name,
-      size: file.size,
-      status: 'pending' as const,
-      progress: 0
-    }));
+    // Helper function to generate preview URL for images
+    async function generatePreview(file: globalThis.File): Promise<string | undefined> {
+      if (!file.type.startsWith('image/')) return undefined;
+
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            // Create canvas for thumbnail
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              resolve(undefined);
+              return;
+            }
+
+            // Calculate thumbnail size (max 96px)
+            const maxSize = 96;
+            let width = img.width;
+            let height = img.height;
+
+            if (width > height) {
+              if (width > maxSize) {
+                height = (height * maxSize) / width;
+                width = maxSize;
+              }
+            } else {
+              if (height > maxSize) {
+                width = (width * maxSize) / height;
+                height = maxSize;
+              }
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            ctx.drawImage(img, 0, 0, width, height);
+
+            resolve(canvas.toDataURL('image/jpeg', 0.8));
+          };
+          img.onerror = () => resolve(undefined);
+          img.src = e.target?.result as string;
+        };
+        reader.onerror = () => resolve(undefined);
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // Create upload tasks with preview generation
+    const newTasks: UploadTask[] = await Promise.all(
+      files.map(async (file) => ({
+        id: `${file.name}-${Date.now()}-${Math.random()}`,
+        fileName: file.name,
+        size: file.size,
+        status: 'pending' as const,
+        progress: 0,
+        previewUrl: await generatePreview(file)
+      }))
+    );
 
     uploadTasks = [...uploadTasks, ...newTasks];
 
@@ -337,6 +443,58 @@
     showVersionHistoryModal = true;
   }
 
+  function handleMoveFile(file: File) {
+    moveTarget = file;
+    moveType = 'file';
+    showMoveModal = true;
+  }
+
+  function handleMoveFolder(folder: Folder) {
+    moveTarget = folder;
+    moveType = 'folder';
+    showMoveModal = true;
+  }
+
+  function handleMoveConfirm(event: CustomEvent<{ targetFolderId: string | null }>) {
+    if (!moveTarget) return;
+
+    if (moveType === 'file') {
+      $moveFileMutation.mutate({
+        fileId: moveTarget.id,
+        targetFolderId: event.detail.targetFolderId
+      });
+    } else {
+      $moveFolderMutation.mutate({
+        folderId: moveTarget.id,
+        targetFolderId: event.detail.targetFolderId
+      });
+    }
+  }
+
+  async function handleDownloadFile(file: File) {
+    try {
+      const response = await downloadFile(file.id);
+      // Convert MinIO URL to /storage/ path (same pattern as thumbnails)
+      // MinIO returns: http://rustfs:9000/rustshare-files/path/to/file
+      // We want: /storage/path/to/file
+      let downloadUrl = response.url;
+      if (downloadUrl.includes('/rustshare-files/')) {
+        const path = downloadUrl.split('/rustshare-files/')[1];
+        downloadUrl = `/storage/${path}`;
+      }
+
+      // Trigger download
+      window.open(downloadUrl, '_blank');
+      showNotification('Download started', 'success');
+      activityStore.addActivity('file_downloaded', file.name);
+    } catch (error) {
+      showNotification(
+        error instanceof Error ? error.message : 'Failed to download file',
+        'error'
+      );
+    }
+  }
+
   function handleVersionRestored() {
     // Refresh the file list after version restore
     queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
@@ -397,10 +555,10 @@
       selectionStore.clear();
       selectionMode = false;
       queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
-      displayToast(`Deleted ${fileIds.length + folderIds.length} item(s)`, 'success');
+      showNotification(`Deleted ${fileIds.length + folderIds.length} item(s)`, 'success');
     } catch (error) {
       console.error('Bulk delete error:', error);
-      displayToast('Failed to delete some items', 'error');
+      showNotification('Failed to delete some items', 'error');
     }
   }
 
@@ -481,108 +639,15 @@
     }
   }
 
-  // Filter files and folders based on search query
-  $: filteredFolders = $searchQuery
-    ? ($filesQuery.data?.folders || []).filter((folder) =>
-        folder.name.toLowerCase().includes($searchQuery.toLowerCase())
-      )
-    : ($filesQuery.data?.folders || []);
-
-  $: filteredFiles = $searchQuery
-    ? ($filesQuery.data?.files || []).filter((file) =>
-        file.name.toLowerCase().includes($searchQuery.toLowerCase())
-      )
-    : ($filesQuery.data?.files || []);
-
-  // Sort files and folders
-  $: sortedFolders = (() => {
-    const folders = [...filteredFolders];
-    folders.sort((a, b) => {
-      if ($fileSortState.field === 'name') {
-        return $fileSortState.order === 'asc'
-          ? a.name.localeCompare(b.name)
-          : b.name.localeCompare(a.name);
-      } else if ($fileSortState.field === 'modified_at') {
-        const aTime = new Date(a.updated_at).getTime();
-        const bTime = new Date(b.updated_at).getTime();
-        return $fileSortState.order === 'asc' ? aTime - bTime : bTime - aTime;
-      }
-      return 0;
-    });
-    return folders;
-  })();
-
-  $: sortedFiles = (() => {
-    const files = [...filteredFiles];
-    files.sort((a, b) => {
-      if ($fileSortState.field === 'name') {
-        return $fileSortState.order === 'asc'
-          ? a.name.localeCompare(b.name)
-          : b.name.localeCompare(a.name);
-      } else if ($fileSortState.field === 'modified_at') {
-        const aTime = new Date(a.modified_at).getTime();
-        const bTime = new Date(b.modified_at).getTime();
-        return $fileSortState.order === 'asc' ? aTime - bTime : bTime - aTime;
-      } else if ($fileSortState.field === 'size') {
-        return $fileSortState.order === 'asc' ? a.size - b.size : b.size - a.size;
-      } else if ($fileSortState.field === 'mime_type') {
-        return $fileSortState.order === 'asc'
-          ? a.mime_type.localeCompare(b.mime_type)
-          : b.mime_type.localeCompare(a.mime_type);
-      }
-      return 0;
-    });
-    return files;
-  })();
-
   $: isUploading = uploadTasks.some(
     (t) => t.status === 'uploading' || t.status === 'pending'
   );
   $: isRenameLoading = renameType === 'file' ? $renameFileMutation.isPending : $renameFolderMutation.isPending;
   $: isDeleteLoading = deleteType === 'file' ? $deleteFileMutation.isPending : $deleteFolderMutation.isPending;
+  $: isMoveLoading = moveType === 'file' ? $moveFileMutation.isPending : $moveFolderMutation.isPending;
 
-  // WebSocket setup
-  onMount(() => {
-    const ws = getWebSocketClient();
-
-    // Connect to WebSocket
-    ws.connect().then(() => {
-      console.log('[Files] WebSocket connected');
-
-      // Listen for file events
-      ws.on('FileUploaded', handleFileEvent);
-      ws.on('FileModified', handleFileEvent);
-      ws.on('FileRenamed', handleFileEvent);
-      ws.on('FileMoved', handleFileEvent);
-      ws.on('FileDeleted', handleFileEvent);
-      ws.on('FileRestored', handleFileEvent);
-
-      // Listen for folder events
-      ws.on('FolderCreated', handleFolderEvent);
-      ws.on('FolderRenamed', handleFolderEvent);
-      ws.on('FolderMoved', handleFolderEvent);
-      ws.on('FolderDeleted', handleFolderEvent);
-    }).catch((error) => {
-      console.error('[Files] WebSocket connection failed:', error);
-    });
-  });
-
-  onDestroy(() => {
-    // Cleanup - disconnect WebSocket when leaving page
-    disconnectWebSocket();
-  });
-
-  function handleFileEvent(event: WebSocketEvent) {
-    console.log('[Files] File event received:', event.type);
-    // Refresh current folder contents
-    queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
-  }
-
-  function handleFolderEvent(event: WebSocketEvent) {
-    console.log('[Files] Folder event received:', event.type);
-    // Refresh current folder contents
-    queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
-  }
+  // WebSocket is managed by auth.ts and websocket/manager.ts
+  // Event handlers are registered globally, no setup needed here
 
   // Keyboard shortcuts handler
   function handleKeyDown(event: KeyboardEvent) {
@@ -609,6 +674,7 @@
         // Close any open modal
         showRenameModal = false;
         showDeleteModal = false;
+        showMoveModal = false;
         showShareModal = false;
         showCreateFolderModal = false;
         showVersionHistoryModal = false;
@@ -825,8 +891,11 @@
             onFileClick={handleFileClick}
             onRenameFolder={handleRenameFolder}
             onDeleteFolder={handleDeleteFolder}
+            onMoveFolder={handleMoveFolder}
             onRenameFile={handleRenameFile}
             onDeleteFile={handleDeleteFile}
+            onMoveFile={handleMoveFile}
+            onDownloadFile={handleDownloadFile}
             onShareFile={handleShareFile}
             onVersionHistory={handleVersionHistory}
           />
@@ -839,8 +908,11 @@
             onFileClick={handleFileClick}
             onRenameFolder={handleRenameFolder}
             onDeleteFolder={handleDeleteFolder}
+            onMoveFolder={handleMoveFolder}
             onRenameFile={handleRenameFile}
             onDeleteFile={handleDeleteFile}
+            onMoveFile={handleMoveFile}
+            onDownloadFile={handleDownloadFile}
             onShareFile={handleShareFile}
             onVersionHistory={handleVersionHistory}
           />
@@ -876,6 +948,20 @@
     deleteTarget = null;
   }}
   on:confirm={handleDeleteConfirm}
+/>
+
+<MoveModal
+  open={showMoveModal}
+  loading={isMoveLoading}
+  itemName={moveTarget?.name || ''}
+  itemType={moveType}
+  itemId={moveTarget?.id || null}
+  currentFolderId={moveCurrentFolderId}
+  on:close={() => {
+    showMoveModal = false;
+    moveTarget = null;
+  }}
+  on:confirm={handleMoveConfirm}
 />
 
 <CreateFolderModal

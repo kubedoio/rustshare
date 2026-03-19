@@ -38,7 +38,7 @@ export interface Share {
   file_id: string;
   file_name?: string; // For shares list view
   share_token: string;
-  permissions: 'View' | 'ReadWrite';
+  permissions: 'View' | 'Edit' | 'Admin';
   password_protected: boolean;
   expires_at: string | null;
   created_at: string;
@@ -63,10 +63,12 @@ export interface Notification {
 }
 
 export interface FileVersion {
+  id: string;
   version_number: number;
   size: number;
   content_hash: string;
   created_at: string;
+  created_by_user_id: string;
 }
 
 export class ApiError extends Error {

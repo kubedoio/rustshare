@@ -13,6 +13,9 @@
   export let onDeleteFile: (file: File) => void = () => {};
   export let onShareFile: (file: File) => void = () => {};
   export let onVersionHistory: (file: File) => void = () => {};
+  export let onMoveFolder: (folder: Folder) => void = () => {};
+  export let onMoveFile: (file: File) => void = () => {};
+  export let onDownloadFile: (file: File) => void = () => {};
   export let selectionMode = false;
 
   function handleFileToggle(file: File) {
@@ -54,6 +57,7 @@
         {selectionMode}
         on:rename={(e) => e.detail.isFolder && onRenameFolder(folder)}
         on:delete={(e) => e.detail.isFolder && onDeleteFolder(folder)}
+        on:move={(e) => e.detail.isFolder && onMoveFolder(folder)}
       />
     {/each}
 
@@ -68,6 +72,8 @@
         on:delete={(e) => !e.detail.isFolder && onDeleteFile(file)}
         on:share={(e) => onShareFile(e.detail.item)}
         on:versionHistory={(e) => onVersionHistory(e.detail.item)}
+        on:move={(e) => !e.detail.isFolder && onMoveFile(file)}
+        on:download={(e) => onDownloadFile(e.detail.item)}
       />
     {/each}
   </div>

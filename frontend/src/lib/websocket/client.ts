@@ -1,80 +1,47 @@
-import { authStore } from '$lib/stores/auth';
 import { get } from 'svelte/store';
-
-export type WebSocketEventType =
-  | 'FileUploaded'
-  | 'FileModified'
-  | 'FileRenamed'
-  | 'FileMoved'
-  | 'FileDeleted'
-  | 'FileRestored'
-  | 'FolderCreated'
-  | 'FolderRenamed'
-  | 'FolderMoved'
-  | 'FolderDeleted'
-  | 'ShareCreated'
-  | 'ShareRevoked'
-  | 'ShareUpdated';
-
-export interface WebSocketEvent {
-  event_id: string;
-  type: WebSocketEventType;
-  aggregate_id: string;
-  user_id: string;
-  timestamp: string;
-  payload: any;
-}
-
-export type EventHandler = (event: WebSocketEvent) => void;
+import { websocketStore } from '$lib/stores/websocket';
+import type { WebSocketEvent, WebSocketEventType, EventHandler } from './events';
 
 export class WebSocketClient {
   private ws: WebSocket | null = null;
   private url: string;
+  private token: string | null = null;
   private handlers: Map<WebSocketEventType, Set<EventHandler>> = new Map();
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
-  private reconnectDelay = 1000; // Start with 1 second
+  private maxReconnectAttempts = 10;
+  private baseReconnectDelay = 1000; // Start with 1 second
+  private maxReconnectDelay = 30000; // Max 30 seconds
   private isManualClose = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(url: string) {
     // Convert http/https to ws/wss
     this.url = url.replace(/^http/, 'ws');
   }
 
-  connect(): Promise<void> {
+  connect(token: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const token = get(authStore);
-
       if (!token) {
         reject(new Error('No authentication token available'));
         return;
       }
 
-      // TEMPORARY: Disable WebSocket connection due to browser limitation
-      // Browser WebSocket API doesn't support custom headers (Authorization)
-      // Backend requires JWT in Authorization header which we cannot send
-      //
-      // Known limitation documented in STATUS.md:
-      // - Browser WebSocket API limitation prevents sending Authorization header
-      // - Backend needs modification to accept token via:
-      //   1. Query parameter: ws://host/api/sync?token=<jwt>
-      //   2. Subprotocol: new WebSocket(url, token)
-      //   3. First message: send token in first WebSocket message
-      //
-      // For now, reject immediately to prevent console errors
-      console.warn('[WebSocket] Connection disabled: Backend authentication not compatible with browser WebSocket API');
-      console.warn('[WebSocket] See STATUS.md "Known Limitations" section for details');
-      reject(new Error('WebSocket authentication not yet supported in browser'));
-      return;
+      this.token = token;
+      this.isManualClose = false;
 
-      /* Commented out until backend supports browser WebSocket auth
+      // Use token as query parameter for browser WebSocket compatibility
+      const wsUrlWithToken = `${this.url}?token=${encodeURIComponent(token)}`;
+
       try {
-        this.ws = new WebSocket(this.url);
+        websocketStore.setState('connecting');
+
+        this.ws = new WebSocket(wsUrlWithToken);
 
         this.ws.onopen = () => {
           console.log('[WebSocket] Connected');
+          websocketStore.setState('connected');
+          websocketStore.resetReconnectAttempts();
           this.reconnectAttempts = 0;
-          this.reconnectDelay = 1000;
           resolve();
         };
 
@@ -89,41 +56,70 @@ export class WebSocketClient {
 
         this.ws.onerror = (error) => {
           console.error('[WebSocket] Error:', error);
+          websocketStore.setError('WebSocket connection error');
         };
 
         this.ws.onclose = (event) => {
           console.log('[WebSocket] Disconnected', event.code, event.reason);
 
-          if (!this.isManualClose && this.reconnectAttempts < this.maxReconnectAttempts) {
-            // Don't retry if unauthorized (401/403)
-            if (event.code !== 1008) {
+          if (!this.isManualClose) {
+            // Handle different close codes
+            if (event.code === 1008 || event.code === 1002) {
+              // 1008: Policy Violation (auth failure)
+              // 1002: Protocol error
+              console.error('[WebSocket] Authentication failed or protocol error');
+              websocketStore.setError('WebSocket authentication failed');
+              websocketStore.setState('error');
+            } else if (this.reconnectAttempts < this.maxReconnectAttempts) {
+              // Attempt reconnection with exponential backoff
               this.reconnect();
+            } else {
+              console.error('[WebSocket] Max reconnection attempts reached');
+              websocketStore.setError('Failed to reconnect after multiple attempts');
+              websocketStore.setState('error');
             }
+          } else {
+            websocketStore.setState('disconnected');
           }
         };
       } catch (error) {
+        console.error('[WebSocket] Failed to create connection:', error);
+        websocketStore.setError('Failed to create WebSocket connection');
         reject(error);
       }
-      */
     });
   }
 
   private reconnect(): void {
+    if (this.isManualClose || !this.token) {
+      return;
+    }
+
     this.reconnectAttempts++;
-    const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+    websocketStore.incrementReconnectAttempts();
+
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (max)
+    const delay = Math.min(
+      this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts - 1),
+      this.maxReconnectDelay
+    );
 
     console.log(
       `[WebSocket] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`
     );
 
-    setTimeout(() => {
-      this.connect().catch((error) => {
+    websocketStore.setState('reconnecting');
+
+    this.reconnectTimer = setTimeout(() => {
+      this.connect(this.token!).catch((error) => {
         console.error('[WebSocket] Reconnection failed:', error);
       });
     }, delay);
   }
 
   private handleEvent(event: WebSocketEvent): void {
+    console.log('[WebSocket] Received event:', event.type, event);
+
     const handlers = this.handlers.get(event.type);
 
     if (handlers) {
@@ -156,14 +152,27 @@ export class WebSocketClient {
   disconnect(): void {
     this.isManualClose = true;
 
+    // Clear any pending reconnection timer
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
+
+    this.token = null;
+    websocketStore.reset();
   }
 
   get isConnected(): boolean {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+
+  get connectionState(): number | null {
+    return this.ws?.readyState ?? null;
   }
 }
 
@@ -172,8 +181,19 @@ let wsClient: WebSocketClient | null = null;
 
 export function getWebSocketClient(): WebSocketClient {
   if (!wsClient) {
-    const baseUrl = import.meta.env.VITE_API_URL || '/api';
-    const wsUrl = `${baseUrl}/sync`.replace(/^\/api/, 'http://localhost/api');
+    // Prefer VITE_WS_URL, fallback to deriving from VITE_API_URL
+    let wsUrl = import.meta.env.VITE_WS_URL;
+
+    if (!wsUrl) {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost/api';
+      wsUrl = apiUrl.replace(/^http/, 'ws');
+    }
+
+    // Append /sync endpoint
+    if (!wsUrl.endsWith('/sync')) {
+      wsUrl = `${wsUrl}/sync`;
+    }
+
     wsClient = new WebSocketClient(wsUrl);
   }
 

@@ -12,6 +12,9 @@
   export let onDeleteFile: (file: File) => void = () => {};
   export let onShareFile: (file: File) => void = () => {};
   export let onVersionHistory: (file: File) => void = () => {};
+  export let onMoveFolder: (folder: Folder) => void = () => {};
+  export let onMoveFile: (file: File) => void = () => {};
+  export let onDownloadFile: (file: File) => void = () => {};
   export let selectionMode = false;
 
   function handleFileToggle(file: File) {
@@ -103,6 +106,7 @@
               </label>
               <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52">
                 <li><button on:click|stopPropagation={() => onRenameFolder(folder)}>Rename</button></li>
+                <li><button on:click|stopPropagation={() => onMoveFolder(folder)}>Move</button></li>
                 <li><button on:click|stopPropagation={() => onDeleteFolder(folder)} class="text-error">Delete</button></li>
               </ul>
             </div>
@@ -141,8 +145,10 @@
               </label>
               <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52">
                 <li><button on:click|stopPropagation={() => onRenameFile(file)}>Rename</button></li>
+                <li><button on:click|stopPropagation={() => onDownloadFile(file)}>Download</button></li>
                 <li><button on:click|stopPropagation={() => onShareFile(file)}>Share</button></li>
                 <li><button on:click|stopPropagation={() => onVersionHistory(file)}>Version History</button></li>
+                <li><button on:click|stopPropagation={() => onMoveFile(file)}>Move</button></li>
                 <li><button on:click|stopPropagation={() => onDeleteFile(file)} class="text-error">Delete</button></li>
               </ul>
             </div>
