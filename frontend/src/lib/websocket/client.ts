@@ -50,18 +50,25 @@ export class WebSocketClient {
         return;
       }
 
-      try {
-        // LIMITATION: Browser WebSocket API doesn't support custom headers
-        // The backend expects Authorization header, which we cannot set from browser
-        // Workaround: Use Sec-WebSocket-Protocol to pass token
-        // Backend would need to be modified to extract token from subprotocol
-        // For now, this is a known limitation - connection will fail with 401
-        //
-        // TODO: Modify backend to accept token via:
-        // 1. Query parameter: ws://host/api/sync?token=<jwt>
-        // 2. Subprotocol: new WebSocket(url, token)
-        // 3. First message: send token in first WebSocket message
+      // TEMPORARY: Disable WebSocket connection due to browser limitation
+      // Browser WebSocket API doesn't support custom headers (Authorization)
+      // Backend requires JWT in Authorization header which we cannot send
+      //
+      // Known limitation documented in STATUS.md:
+      // - Browser WebSocket API limitation prevents sending Authorization header
+      // - Backend needs modification to accept token via:
+      //   1. Query parameter: ws://host/api/sync?token=<jwt>
+      //   2. Subprotocol: new WebSocket(url, token)
+      //   3. First message: send token in first WebSocket message
+      //
+      // For now, reject immediately to prevent console errors
+      console.warn('[WebSocket] Connection disabled: Backend authentication not compatible with browser WebSocket API');
+      console.warn('[WebSocket] See STATUS.md "Known Limitations" section for details');
+      reject(new Error('WebSocket authentication not yet supported in browser'));
+      return;
 
+      /* Commented out until backend supports browser WebSocket auth
+      try {
         this.ws = new WebSocket(this.url);
 
         this.ws.onopen = () => {
@@ -97,6 +104,7 @@ export class WebSocketClient {
       } catch (error) {
         reject(error);
       }
+      */
     });
   }
 
