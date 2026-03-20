@@ -46,6 +46,19 @@ export interface Share {
 	created_by: string;
 }
 
+export interface ReceivedShare {
+	share_id: string;
+	resource_id: string;
+	resource_type: 'file' | 'folder';
+	resource_name: string;
+	resource_path: string;
+	permission: 'View' | 'Edit' | 'Admin';
+	shared_by: string;
+	shared_by_name: string;
+	shared_by_email: string;
+	created_at: string;
+}
+
 export interface FolderContents {
 	folders: Folder[];
 	files: File[];

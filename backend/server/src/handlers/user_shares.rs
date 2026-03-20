@@ -56,8 +56,12 @@ pub struct ReceivedShareResponse {
     pub share_id: Uuid,
     pub resource_id: Uuid,
     pub resource_type: String,
+    pub resource_name: String,
+    pub resource_path: String,
     pub permission: SharePermissions,
     pub shared_by: Uuid,
+    pub shared_by_name: String,
+    pub shared_by_email: String,
     pub created_at: String,
 }
 
@@ -190,26 +194,60 @@ pub async fn list_received_shares(
         .await
         .map_err(share_error_response)?;
 
-    let response: Vec<ReceivedShareResponse> = shares
-        .into_iter()
-        .map(|s| {
-            let resource_id = s.file_id.or(s.folder_id).unwrap_or_else(Uuid::nil);
-            let resource_type = if s.file_id.is_some() {
-                "file"
-            } else {
-                "folder"
+    let mut response = Vec::with_capacity(shares.len());
+    for share in shares {
+        let resource_id = share.file_id.or(share.folder_id).unwrap_or_else(Uuid::nil);
+        let resource_type = if share.file_id.is_some() {
+            "file"
+        } else {
+            "folder"
+        };
+
+        let (resource_name, resource_path) = if let Some(file_id) = share.file_id {
+            match state.metadata_store.find_file_by_id(file_id).await {
+                Ok(Some(file)) => (file.name, file.path),
+                Ok(None) => continue,
+                Err(error) => {
+                    tracing::warn!("failed to load shared file {}: {}", file_id, error);
+                    continue;
+                }
+            }
+        } else if let Some(folder_id) = share.folder_id {
+            match state.metadata_store.find_folder_by_id(folder_id).await {
+                Ok(Some(folder)) => (folder.name, folder.path),
+                Ok(None) => continue,
+                Err(error) => {
+                    tracing::warn!("failed to load shared folder {}: {}", folder_id, error);
+                    continue;
+                }
+            }
+        } else {
+            continue;
+        };
+
+        let (shared_by_name, shared_by_email) =
+            match state.metadata_store.find_user_by_id(share.created_by).await {
+                Ok(Some(user)) => (user.display_name, user.email),
+                Ok(None) => ("Unknown user".to_string(), String::new()),
+                Err(error) => {
+                    tracing::warn!("failed to load share creator {}: {}", share.created_by, error);
+                    ("Unknown user".to_string(), String::new())
+                }
             };
 
-            ReceivedShareResponse {
-                share_id: s.id,
-                resource_id,
-                resource_type: resource_type.to_string(),
-                permission: s.permissions,
-                shared_by: s.created_by,
-                created_at: s.created_at.to_rfc3339(),
-            }
-        })
-        .collect();
+        response.push(ReceivedShareResponse {
+            share_id: share.id,
+            resource_id,
+            resource_type: resource_type.to_string(),
+            resource_name,
+            resource_path,
+            permission: share.permissions,
+            shared_by: share.created_by,
+            shared_by_name,
+            shared_by_email,
+            created_at: share.created_at.to_rfc3339(),
+        });
+    }
 
     Ok(Json(response).into_response())
 }
@@ -369,14 +407,14 @@ mod tests {
     fn test_create_file_share_request_deserialization() {
         let json = serde_json::json!({
             "recipient_email": "user@example.com",
-            "permission": "ReadWrite"
+            "permission": "Edit"
         });
 
         let req: Result<CreateFileShareRequest, _> = serde_json::from_value(json);
         assert!(req.is_ok());
         let req = req.unwrap();
         assert_eq!(req.recipient_email, "user@example.com");
-        assert_eq!(req.permission, SharePermissions::ReadWrite);
+        assert_eq!(req.permission, SharePermissions::Edit);
     }
 
     #[test]

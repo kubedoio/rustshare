@@ -373,14 +373,30 @@ async fn main() -> Result<()> {
         .route("/api/users/me/theme", patch(handlers::update_user_theme))
         .route("/api/v1/users/me/theme", patch(handlers::update_user_theme))
         .route("/api/v1/me/theme", patch(handlers::update_user_theme))
-        // User share routes (Task 14) - Phase 3A (not MVP)
-        // .route("/api/files/:id/share", post(handlers::create_file_share))
-        // .route("/api/folders/:id/share", post(handlers::create_folder_share))
-        // .route("/api/shares/received", get(handlers::list_received_shares))
-        // .route("/api/files/:id/recipients", get(handlers::list_file_recipients))
-        // .route("/api/folders/:id/recipients", get(handlers::list_folder_recipients))
-        // .route("/api/shares/:id/permission", put(handlers::update_recipient_permission))
-        // .route("/api/shares/:id/recipient", delete(handlers::remove_recipient))
+        // Internal user share routes
+        .route("/api/files/:id/share", post(handlers::create_file_share))
+        .route("/api/v1/files/:id/share", post(handlers::create_file_share))
+        .route("/api/folders/:id/share", post(handlers::create_folder_share))
+        .route("/api/v1/folders/:id/share", post(handlers::create_folder_share))
+        .route("/api/shares/received", get(handlers::list_received_shares))
+        .route("/api/v1/shares/received", get(handlers::list_received_shares))
+        .route("/api/files/:id/recipients", get(handlers::list_file_recipients))
+        .route("/api/v1/files/:id/recipients", get(handlers::list_file_recipients))
+        .route("/api/folders/:id/recipients", get(handlers::list_folder_recipients))
+        .route(
+            "/api/v1/folders/:id/recipients",
+            get(handlers::list_folder_recipients),
+        )
+        .route("/api/shares/:id/permission", put(handlers::update_recipient_permission))
+        .route(
+            "/api/v1/shares/:id/permission",
+            put(handlers::update_recipient_permission),
+        )
+        .route("/api/shares/:id/recipient", delete(handlers::remove_recipient))
+        .route(
+            "/api/v1/shares/:id/recipient",
+            delete(handlers::remove_recipient),
+        )
         // Notification routes (Task 15) - Phase 3A (not MVP)
         // .route("/api/notifications", get(handlers::list_notifications))
         // .route("/api/notifications/:id/read", put(handlers::mark_notification_read))

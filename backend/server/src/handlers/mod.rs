@@ -6,6 +6,7 @@ mod folders;
 mod public_shares;
 mod shares;
 mod sync;
+mod user_shares;
 mod users;
 
 pub use extractors::{AuthenticatedUser, ShareSessionAuth};
@@ -20,6 +21,10 @@ pub use folders::{
 pub use public_shares::{create_session, download_shared_file, get_share_info};
 pub use shares::{create_share, list_file_shares};
 pub use sync::sync_handler;
+pub use user_shares::{
+    create_file_share, create_folder_share, list_file_recipients, list_folder_recipients,
+    list_received_shares, remove_recipient, update_recipient_permission,
+};
 pub use users::{get_user_profile, update_user_theme};
 
 use axum::{

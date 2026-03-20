@@ -1,5 +1,5 @@
 import { apiClient } from "./client";
-import type { Share } from "./types";
+import type { ReceivedShare, Share } from "./types";
 
 // Request/Response Types
 
@@ -76,6 +76,14 @@ export async function listFileShares(fileId: string): Promise<Share[]> {
  */
 export async function listAllUserShares(): Promise<Share[]> {
   return apiClient.get<Share[]>("/shares");
+}
+
+/**
+ * List shares received by the current user.
+ * GET /api/shares/received
+ */
+export async function listReceivedShares(): Promise<ReceivedShare[]> {
+  return apiClient.get<ReceivedShare[]>("/shares/received");
 }
 
 /**
