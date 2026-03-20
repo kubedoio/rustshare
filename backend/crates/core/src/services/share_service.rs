@@ -15,7 +15,10 @@ use std::sync::Arc;
 use rustshare_crypto::PasswordHasher;
 
 use crate::domain::{File, Folder, Share, SharePermissions, UserId};
-use crate::events::{AggregateType, Event, EventBroadcaster, EventType, ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload};
+use crate::events::{
+    AggregateType, Event, EventBroadcaster, EventType, ShareCreatedPayload, ShareRevokedPayload,
+    ShareUpdatedPayload,
+};
 use crate::services::ShareError;
 
 /// Trait for JWT operations needed by ShareService.
@@ -44,6 +47,7 @@ pub struct ShareSession {
     pub file_id: Option<uuid::Uuid>,
     pub folder_id: Option<uuid::Uuid>,
     pub permissions: SharePermissions,
+    pub upload_only: bool,
     pub expires_at: DateTime<Utc>,
 }
 
@@ -142,10 +146,9 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
 
     fn hash_share_password(password: Option<String>) -> Result<Option<String>, ShareError> {
         if let Some(password) = password {
-            Ok(Some(
-                PasswordHasher::hash(&password)
-                    .map_err(|error| ShareError::PasswordHash(error.to_string()))?,
-            ))
+            Ok(Some(PasswordHasher::hash(&password).map_err(|error| {
+                ShareError::PasswordHash(error.to_string())
+            })?))
         } else {
             Ok(None)
         }
@@ -177,10 +180,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
 
         // Verify user owns the file
         if file.owner_id != user_id {
-            return Err(ShareError::PermissionDenied {
-                file_id,
-                user_id,
-            });
+            return Err(ShareError::PermissionDenied { file_id, user_id });
         }
 
         let password_hash = Self::hash_share_password(password)?;
@@ -208,7 +208,10 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         let payload = ShareCreatedPayload {
             share_id: share.id,
             file_id: share.file_id.expect("public share must have file_id"),
-            share_token: share.share_token.clone().expect("public share must have share_token"),
+            share_token: share
+                .share_token
+                .clone()
+                .expect("public share must have share_token"),
             permissions: share.permissions,
             password_protected: share.password_hash.is_some(),
             expires_at: share.expires_at,
@@ -219,9 +222,8 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             EventType::ShareCreated,
             share.id,
             AggregateType::Share,
-            serde_json::to_value(&payload).map_err(|_e| {
-                ShareError::Database(sqlx::Error::PoolClosed)
-            })?,
+            serde_json::to_value(&payload)
+                .map_err(|_e| ShareError::Database(sqlx::Error::PoolClosed))?,
             user_id,
         );
 
@@ -241,6 +243,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         permissions: SharePermissions,
         password: Option<String>,
         expires_at: Option<DateTime<Utc>>,
+        upload_only: bool,
     ) -> Result<Share, ShareError> {
         let folder = self
             .metadata_store
@@ -250,13 +253,16 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             .ok_or(ShareError::NotFoundById(folder_id))?;
 
         if folder.owner_id != user_id {
-            return Err(ShareError::PermissionDenied { file_id: folder_id, user_id });
+            return Err(ShareError::PermissionDenied {
+                file_id: folder_id,
+                user_id,
+            });
         }
 
         let password_hash = Self::hash_share_password(password)?;
         let token = Self::generate_token();
 
-        let share = Share::new_folder(
+        let mut share = Share::new_folder(
             folder_id,
             token.clone(),
             user_id,
@@ -264,6 +270,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             password_hash,
             expires_at,
         );
+        share.upload_only = upload_only;
 
         self.metadata_store
             .create_share(&share)
@@ -272,8 +279,13 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
 
         let payload = ShareCreatedPayload {
             share_id: share.id,
-            file_id: share.folder_id.expect("public folder share must have folder_id"),
-            share_token: share.share_token.clone().expect("public share must have share_token"),
+            file_id: share
+                .folder_id
+                .expect("public folder share must have folder_id"),
+            share_token: share
+                .share_token
+                .clone()
+                .expect("public share must have share_token"),
             permissions: share.permissions,
             password_protected: share.password_hash.is_some(),
             expires_at: share.expires_at,
@@ -355,6 +367,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             "file_id": share.file_id,
             "folder_id": share.folder_id,
             "permissions": share.permissions,
+            "upload_only": share.upload_only,
             "iat": Utc::now().timestamp(),
             "exp": (Utc::now() + chrono::Duration::hours(1)).timestamp(),
         });
@@ -374,6 +387,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             file_id: share.file_id,
             folder_id: share.folder_id,
             permissions: share.permissions,
+            upload_only: share.upload_only,
             expires_at,
         })
     }
@@ -419,7 +433,10 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         };
 
         if owner_id != user_id {
-            return Err(ShareError::PermissionDenied { file_id: share.resource_id(), user_id });
+            return Err(ShareError::PermissionDenied {
+                file_id: share.resource_id(),
+                user_id,
+            });
         }
 
         // Revoke the share
@@ -439,9 +456,8 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             EventType::ShareRevoked,
             share.id,
             AggregateType::Share,
-            serde_json::to_value(&payload).map_err(|_e| {
-                ShareError::Database(sqlx::Error::PoolClosed)
-            })?,
+            serde_json::to_value(&payload)
+                .map_err(|_e| ShareError::Database(sqlx::Error::PoolClosed))?,
             user_id,
         );
 
@@ -497,7 +513,10 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         };
 
         if owner_id != user_id {
-            return Err(ShareError::PermissionDenied { file_id: share.resource_id(), user_id });
+            return Err(ShareError::PermissionDenied {
+                file_id: share.resource_id(),
+                user_id,
+            });
         }
 
         // Track what was changed for the event
@@ -507,8 +526,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         // Update password if provided
         if let Some(pwd) = new_password {
             share.password_hash = Some(
-                PasswordHasher::hash(&pwd)
-                    .map_err(|e| ShareError::PasswordHash(e.to_string()))?
+                PasswordHasher::hash(&pwd).map_err(|e| ShareError::PasswordHash(e.to_string()))?,
             );
             password_changed = true;
         }
@@ -539,9 +557,8 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             EventType::ShareUpdated,
             share.id,
             AggregateType::Share,
-            serde_json::to_value(&payload).map_err(|_e| {
-                ShareError::Database(sqlx::Error::PoolClosed)
-            })?,
+            serde_json::to_value(&payload)
+                .map_err(|_e| ShareError::Database(sqlx::Error::PoolClosed))?,
             user_id,
         );
 
@@ -596,7 +613,10 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             .ok_or(ShareError::NotFoundById(folder_id))?;
 
         if folder.owner_id != user_id {
-            return Err(ShareError::PermissionDenied { file_id: folder_id, user_id });
+            return Err(ShareError::PermissionDenied {
+                file_id: folder_id,
+                user_id,
+            });
         }
 
         self.metadata_store
@@ -665,8 +685,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         current_folder_id: Option<uuid::Uuid>,
     ) -> Result<(Share, Folder, Vec<Folder>, Vec<File>), ShareError> {
         let (share, _file, root_folder) = self.get_public_share_info(share_token).await?;
-        let root_folder =
-            root_folder.ok_or(ShareError::Database(sqlx::Error::PoolClosed))?;
+        let root_folder = root_folder.ok_or(ShareError::Database(sqlx::Error::PoolClosed))?;
         let target_folder_id = current_folder_id.unwrap_or(root_folder.id);
 
         let descendants = self
@@ -748,7 +767,13 @@ mod tests {
 
     impl MetadataStoreOps for MockMetadataStore {
         async fn find_file_by_id(&self, id: Uuid) -> Result<Option<File>> {
-            Ok(self.files.lock().unwrap().iter().find(|f| f.id == id).cloned())
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|f| f.id == id)
+                .cloned())
         }
 
         async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<Folder>> {
@@ -767,15 +792,34 @@ mod tests {
         }
 
         async fn get_share_by_id(&self, id: Uuid) -> Result<Option<Share>> {
-            Ok(self.shares.lock().unwrap().iter().find(|s| s.id == id).cloned())
+            Ok(self
+                .shares
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.id == id)
+                .cloned())
         }
 
         async fn get_share_by_token(&self, token: &str) -> Result<Option<Share>> {
-            Ok(self.shares.lock().unwrap().iter().find(|s| s.share_token.as_deref() == Some(token)).cloned())
+            Ok(self
+                .shares
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.share_token.as_deref() == Some(token))
+                .cloned())
         }
 
         async fn get_file_shares(&self, file_id: Uuid) -> Result<Vec<Share>> {
-            Ok(self.shares.lock().unwrap().iter().filter(|s| s.file_id == Some(file_id)).cloned().collect())
+            Ok(self
+                .shares
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|s| s.file_id == Some(file_id))
+                .cloned()
+                .collect())
         }
 
         async fn get_folder_shares(&self, folder_id: Uuid) -> Result<Vec<Share>> {
@@ -789,11 +833,7 @@ mod tests {
                 .collect())
         }
 
-        async fn list_files(
-            &self,
-            parent_id: Option<Uuid>,
-            owner_id: Uuid,
-        ) -> Result<Vec<File>> {
+        async fn list_files(&self, parent_id: Option<Uuid>, owner_id: Uuid) -> Result<Vec<File>> {
             Ok(self
                 .files
                 .lock()
@@ -842,7 +882,13 @@ mod tests {
         }
 
         async fn revoke_share(&self, share_id: Uuid) -> Result<()> {
-            if let Some(share) = self.shares.lock().unwrap().iter_mut().find(|s| s.id == share_id) {
+            if let Some(share) = self
+                .shares
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|s| s.id == share_id)
+            {
                 share.revoked_at = Some(Utc::now());
                 Ok(())
             } else {
@@ -879,7 +925,12 @@ mod tests {
         let broadcaster = Arc::new(EventBroadcaster::new(100));
         let jwt_manager = Arc::new(MockJwtManager);
 
-        let service = ShareService::new(event_store.clone(), metadata_store.clone(), broadcaster, jwt_manager);
+        let service = ShareService::new(
+            event_store.clone(),
+            metadata_store.clone(),
+            broadcaster,
+            jwt_manager,
+        );
 
         (service, event_store, metadata_store)
     }
@@ -889,7 +940,8 @@ mod tests {
         let mut tokens = std::collections::HashSet::new();
 
         for _ in 0..1000 {
-            let token = ShareService::<MockEventStore, MockMetadataStore, MockJwtManager>::generate_token();
+            let token =
+                ShareService::<MockEventStore, MockMetadataStore, MockJwtManager>::generate_token();
 
             // Verify token length is 32
             assert_eq!(token.len(), 32, "Token length should be 32");
@@ -935,13 +987,7 @@ mod tests {
 
         // Create share
         let share = service
-            .create_share(
-                file_id,
-                owner_id,
-                SharePermissions::View,
-                None,
-                None,
-            )
+            .create_share(file_id, owner_id, SharePermissions::View, None, None)
             .await
             .unwrap();
 
@@ -988,19 +1034,10 @@ mod tests {
 
         // Try to create share as different user
         let result = service
-            .create_share(
-                file_id,
-                other_user,
-                SharePermissions::View,
-                None,
-                None,
-            )
+            .create_share(file_id, other_user, SharePermissions::View, None, None)
             .await;
 
-        assert!(matches!(
-            result,
-            Err(ShareError::PermissionDenied { .. })
-        ));
+        assert!(matches!(result, Err(ShareError::PermissionDenied { .. })));
     }
 
     #[tokio::test]
@@ -1024,13 +1061,7 @@ mod tests {
 
         // Create share without password
         let share = service
-            .create_share(
-                file_id,
-                owner_id,
-                SharePermissions::View,
-                None,
-                None,
-            )
+            .create_share(file_id, owner_id, SharePermissions::View, None, None)
             .await
             .unwrap();
 
@@ -1132,13 +1163,7 @@ mod tests {
 
         // Create share
         let share = service
-            .create_share(
-                file_id,
-                owner_id,
-                SharePermissions::View,
-                None,
-                None,
-            )
+            .create_share(file_id, owner_id, SharePermissions::View, None, None)
             .await
             .unwrap();
 
@@ -1189,13 +1214,7 @@ mod tests {
 
         // Create share without password
         let share = service
-            .create_share(
-                file_id,
-                owner_id,
-                SharePermissions::View,
-                None,
-                None,
-            )
+            .create_share(file_id, owner_id, SharePermissions::View, None, None)
             .await
             .unwrap();
 
@@ -1255,23 +1274,15 @@ mod tests {
 
         // Create share
         let share = service
-            .create_share(
-                file_id,
-                owner_id,
-                SharePermissions::View,
-                None,
-                None,
-            )
+            .create_share(file_id, owner_id, SharePermissions::View, None, None)
             .await
             .unwrap();
 
         let share_token = share.share_token.clone().unwrap();
 
         // Get public share info
-        let (returned_share, returned_file, returned_folder) = service
-            .get_public_share_info(&share_token)
-            .await
-            .unwrap();
+        let (returned_share, returned_file, returned_folder) =
+            service.get_public_share_info(&share_token).await.unwrap();
 
         // Verify share and file are returned correctly
         assert_eq!(returned_share.id, share.id);
@@ -1315,13 +1326,7 @@ mod tests {
 
         // Create share
         let share = service
-            .create_share(
-                file_id,
-                owner_id,
-                SharePermissions::View,
-                None,
-                None,
-            )
+            .create_share(file_id, owner_id, SharePermissions::View, None, None)
             .await
             .unwrap();
 

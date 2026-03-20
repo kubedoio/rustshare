@@ -40,7 +40,12 @@
 	$: folderContentsQuery = createQuery({
 		queryKey: ['public-share-folder', token, currentFolderId, sessionToken],
 		queryFn: () => getPublicFolderContents(token, sessionToken, currentFolderId || undefined),
-		enabled: Boolean(token && sessionToken && $shareQuery.data?.resource_type === 'folder')
+		enabled: Boolean(
+			token &&
+			sessionToken &&
+			$shareQuery.data?.resource_type === 'folder' &&
+			!$shareQuery.data?.upload_only
+		)
 	});
 
 	let sessionToken = '';
@@ -88,13 +93,12 @@
 
 	$: needsPassword = $shareQuery.data?.password_protected && !sessionToken;
 	$: canAccessShare = Boolean($shareQuery.data && sessionToken);
-	$: canUploadToFolder =
-		Boolean(
-			$shareQuery.data &&
-			$shareQuery.data.resource_type === 'folder' &&
-			$shareQuery.data.permissions !== 'View' &&
-			sessionToken
-		);
+	$: canUploadToFolder = Boolean(
+		$shareQuery.data &&
+		$shareQuery.data.resource_type === 'folder' &&
+		($shareQuery.data.upload_only || $shareQuery.data.permissions !== 'View') &&
+		sessionToken
+	);
 
 	$: if ($shareQuery.error) {
 		const error = $shareQuery.error as { status?: number; message?: string };
@@ -164,10 +168,7 @@
 		uploadInput?.click();
 	}
 
-	function updateUploadQueue(
-		id: string,
-		patch: Partial<UploadQueueItem>
-	) {
+	function updateUploadQueue(id: string, patch: Partial<UploadQueueItem>) {
 		uploadQueue = uploadQueue.map((item) => (item.id === id ? { ...item, ...patch } : item));
 	}
 
@@ -178,7 +179,9 @@
 		}
 
 		isUploading = true;
-		const targetFolderId = currentFolderId || $folderContentsQuery.data?.root_folder_id;
+		const targetFolderId = $shareQuery.data?.upload_only
+			? undefined
+			: currentFolderId || $folderContentsQuery.data?.root_folder_id;
 
 		const queuedItems = fileList.map((file) => ({
 			id: `${file.name}-${file.size}-${crypto.randomUUID()}`,
@@ -314,7 +317,7 @@
 
 					<p class="text-base-content/70 mb-4">
 						{#if shareInfo.resource_type === 'folder'}
-							Shared folder
+							{shareInfo.upload_only ? 'Upload-only folder drop' : 'Shared folder'}
 						{:else if shareInfo.file_size !== null}
 							{formatFileSize(shareInfo.file_size)}
 						{/if}
@@ -357,7 +360,7 @@
 							</p>
 						</div>
 					{:else if needsPassword}
-						<form on:submit={handlePasswordSubmit} class="w-full max-w-md">
+						<form on:submit={handlePasswordSubmit} class="max-w-md w-full">
 							<div class="form-control w-full">
 								<label for="password" class="label">
 									<span class="label-text">This share is password protected</span>
@@ -393,7 +396,7 @@
 					{:else if shareInfo.resource_type === 'file' && canAccessShare}
 						<button
 							type="button"
-							class="btn btn-primary btn-lg w-full max-w-md"
+							class="btn btn-primary btn-lg max-w-md w-full"
 							on:click={handleFileDownload}
 							disabled={isDownloading}
 						>
@@ -406,7 +409,99 @@
 						</button>
 					{:else if shareInfo.resource_type === 'folder' && canAccessShare}
 						<div class="w-full">
-							{#if $folderContentsQuery.isLoading}
+							{#if shareInfo.upload_only}
+								<div class="space-y-4">
+									<div class="alert alert-info">
+										<span>
+											This link accepts uploads into <strong>{shareInfo.name}</strong> but does not allow
+											browsing or downloading existing files.
+										</span>
+									</div>
+
+									<div class="gap-3 flex items-center justify-between">
+										<div class="text-sm text-base-content/60">
+											Upload files directly to the shared folder root.
+										</div>
+										{#if canUploadToFolder}
+											<div>
+												<input
+													bind:this={uploadInput}
+													type="file"
+													multiple
+													class="hidden"
+													on:change={handleFolderUpload}
+												/>
+												<button
+													type="button"
+													class="btn btn-primary btn-sm"
+													on:click={promptFolderUpload}
+													disabled={isUploading}
+												>
+													{#if isUploading}
+														<span class="loading loading-spinner loading-xs"></span>
+														Uploading...
+													{:else}
+														Upload Files
+													{/if}
+												</button>
+											</div>
+										{/if}
+									</div>
+
+									{#if canUploadToFolder}
+										<div
+											role="region"
+											aria-label="Drag and drop upload area"
+											class={`rounded-lg p-4 border-2 border-dashed text-center transition-colors ${
+												isDragActive ? 'border-primary bg-primary/5' : 'border-base-300'
+											}`}
+											on:dragenter|preventDefault={() => (isDragActive = true)}
+											on:dragover|preventDefault={() => (isDragActive = true)}
+											on:dragleave|preventDefault={() => (isDragActive = false)}
+											on:drop={handleDrop}
+										>
+											<p class="font-medium">Drag files here to upload</p>
+											<p class="text-sm text-base-content/60">
+												Files will be uploaded into {shareInfo.name}.
+											</p>
+										</div>
+									{/if}
+
+									{#if uploadQueue.length > 0}
+										<div class="rounded-lg border-base-300 p-4 space-y-3 border">
+											<div class="font-medium">Upload Queue</div>
+											{#each uploadQueue as item}
+												<div class="space-y-1">
+													<div class="gap-3 flex items-center justify-between">
+														<div class="text-sm truncate">{item.name}</div>
+														<div class="text-xs text-base-content/60">
+															{#if item.status === 'done'}
+																Done
+															{:else if item.status === 'error'}
+																Failed
+															{:else if item.status === 'uploading'}
+																{item.progress}%
+															{:else}
+																Queued
+															{/if}
+														</div>
+													</div>
+													<progress
+														class="progress w-full {item.status === 'error'
+															? 'progress-error'
+															: 'progress-primary'}"
+														value={item.status === 'error' ? 100 : item.progress}
+														max="100"
+													></progress>
+													{#if item.error}
+														<div class="text-xs text-error">{item.error}</div>
+													{/if}
+												</div>
+											{/each}
+										</div>
+									{/if}
+								</div>
+							{:else if $folderContentsQuery.isLoading}
 								<div class="py-8 flex flex-col items-center justify-center">
 									<span class="loading loading-spinner loading-lg"></span>
 									<p class="mt-4 text-base-content/70">Loading shared folder...</p>
@@ -421,7 +516,7 @@
 								</div>
 							{:else if $folderContentsQuery.data}
 								<div class="space-y-4">
-									<div class="flex items-center justify-between gap-3">
+									<div class="gap-3 flex items-center justify-between">
 										<div>
 											<div class="text-sm text-base-content/60">
 												{$folderContentsQuery.data.path}
@@ -437,7 +532,7 @@
 										{/if}
 									</div>
 
-									<div class="flex items-center justify-between gap-3">
+									<div class="gap-3 flex items-center justify-between">
 										<div class="text-sm text-base-content/60">
 											{#if shareInfo.permissions === 'View'}
 												This link is view-only.
@@ -475,10 +570,8 @@
 										<div
 											role="region"
 											aria-label="Drag and drop upload area"
-											class={`rounded-lg border-2 border-dashed p-4 text-center transition-colors ${
-												isDragActive
-													? 'border-primary bg-primary/5'
-													: 'border-base-300'
+											class={`rounded-lg p-4 border-2 border-dashed text-center transition-colors ${
+												isDragActive ? 'border-primary bg-primary/5' : 'border-base-300'
 											}`}
 											on:dragenter|preventDefault={() => (isDragActive = true)}
 											on:dragover|preventDefault={() => (isDragActive = true)}
@@ -493,12 +586,12 @@
 									{/if}
 
 									{#if uploadQueue.length > 0}
-										<div class="rounded-lg border border-base-300 p-4 space-y-3">
+										<div class="rounded-lg border-base-300 p-4 space-y-3 border">
 											<div class="font-medium">Upload Queue</div>
 											{#each uploadQueue as item}
 												<div class="space-y-1">
-													<div class="flex items-center justify-between gap-3">
-														<div class="truncate text-sm">{item.name}</div>
+													<div class="gap-3 flex items-center justify-between">
+														<div class="text-sm truncate">{item.name}</div>
 														<div class="text-xs text-base-content/60">
 															{#if item.status === 'done'}
 																Done
@@ -512,7 +605,9 @@
 														</div>
 													</div>
 													<progress
-														class="progress w-full {item.status === 'error' ? 'progress-error' : 'progress-primary'}"
+														class="progress w-full {item.status === 'error'
+															? 'progress-error'
+															: 'progress-primary'}"
 														value={item.status === 'error' ? 100 : item.progress}
 														max="100"
 													></progress>
@@ -524,7 +619,7 @@
 										</div>
 									{/if}
 
-									<div class="overflow-x-auto rounded-lg border border-base-300">
+									<div class="rounded-lg border-base-300 overflow-x-auto border">
 										<table class="table">
 											<thead>
 												<tr>
@@ -539,7 +634,7 @@
 														<td>
 															<button
 																type="button"
-																class="btn btn-ghost btn-sm normal-case px-0"
+																class="btn btn-ghost btn-sm px-0 normal-case"
 																on:click={() => openFolder(folder.id)}
 															>
 																📁 {folder.name}
@@ -575,7 +670,7 @@
 												{/each}
 												{#if $folderContentsQuery.data.folders.length === 0 && $folderContentsQuery.data.files.length === 0}
 													<tr>
-														<td colspan="3" class="text-center text-base-content/60 py-8">
+														<td colspan="3" class="text-base-content/60 py-8 text-center">
 															This folder is empty.
 														</td>
 													</tr>

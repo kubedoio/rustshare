@@ -48,7 +48,9 @@
 	}
 
 	function handleRevokeShare(share: Share) {
-		if (confirm(`Revoke share link for "${share.resource_name || `this ${share.resource_type}`}"?`)) {
+		if (
+			confirm(`Revoke share link for "${share.resource_name || `this ${share.resource_type}`}"?`)
+		) {
 			$revokeShareMutation.mutate(share.id);
 		}
 	}
@@ -188,6 +190,9 @@
 												<span class="badge badge-xs badge-ghost">
 													{share.resource_type === 'folder' ? 'Folder' : 'File'}
 												</span>
+												{#if share.upload_only}
+													<span class="badge badge-xs badge-warning">Upload Only</span>
+												{/if}
 												{#if share.password_protected}
 													<span class="badge badge-xs badge-ghost">🔒 Password</span>
 												{/if}
@@ -248,7 +253,11 @@
 												</button>
 											</li>
 											<li>
-												<button type="button" on:click={() => handleRevokeShare(share)} class="text-error">
+												<button
+													type="button"
+													on:click={() => handleRevokeShare(share)}
+													class="text-error"
+												>
 													<svg
 														xmlns="http://www.w3.org/2000/svg"
 														fill="none"

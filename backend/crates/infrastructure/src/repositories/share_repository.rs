@@ -24,7 +24,7 @@ impl ShareRepository {
         let result = sqlx::query_as::<_, Share>(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
-                   expires_at, access_count, recipient_user_id, created_by,
+                   expires_at, upload_only, access_count, recipient_user_id, created_by,
                    created_at, revoked_at
             FROM shares
             WHERE recipient_user_id = $1
@@ -53,7 +53,7 @@ impl ShareRepository {
         let shares = sqlx::query_as::<_, Share>(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
-                   expires_at, access_count, recipient_user_id, created_by,
+                   expires_at, upload_only, access_count, recipient_user_id, created_by,
                    created_at, revoked_at
             FROM shares
             WHERE recipient_user_id = $1
@@ -80,7 +80,7 @@ impl ShareRepository {
         let shares = sqlx::query_as::<_, Share>(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
-                   expires_at, access_count, recipient_user_id, created_by,
+                   expires_at, upload_only, access_count, recipient_user_id, created_by,
                    created_at, revoked_at
             FROM shares
             WHERE recipient_user_id IS NOT NULL
@@ -114,12 +114,12 @@ impl ShareRepository {
             r#"
             INSERT INTO shares (
                 id, file_id, folder_id, share_token, permissions,
-                password_hash, expires_at, access_count,
+                password_hash, expires_at, upload_only, access_count,
                 recipient_user_id, created_by, created_at, revoked_at
             )
-            VALUES ($1, $2, $3, NULL, $4, NULL, NULL, 0, $5, $6, $7, NULL)
+            VALUES ($1, $2, $3, NULL, $4, NULL, NULL, FALSE, 0, $5, $6, $7, NULL)
             RETURNING id, file_id, folder_id, share_token, permissions, password_hash,
-                      expires_at, access_count, recipient_user_id, created_by,
+                      expires_at, upload_only, access_count, recipient_user_id, created_by,
                       created_at, revoked_at
             "#,
         )
@@ -146,7 +146,7 @@ impl ShareRepository {
             SET permissions = $2
             WHERE id = $1
             RETURNING id, file_id, folder_id, share_token, permissions, password_hash,
-                      expires_at, access_count, recipient_user_id, created_by,
+                      expires_at, upload_only, access_count, recipient_user_id, created_by,
                       created_at, revoked_at
             "#,
         )
@@ -181,7 +181,7 @@ impl ShareRepository {
         let result = sqlx::query_as::<_, Share>(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
-                   expires_at, access_count, recipient_user_id, created_by,
+                   expires_at, upload_only, access_count, recipient_user_id, created_by,
                    created_at, revoked_at
             FROM shares
             WHERE id = $1
@@ -213,7 +213,8 @@ impl rustshare_core::services::ShareOps for ShareRepository {
         folder_id: Option<rustshare_core::domain::FolderId>,
         recipient_user_id: rustshare_core::domain::UserId,
     ) -> Result<Option<rustshare_core::domain::Share>, sqlx::Error> {
-        self.find_user_share(file_id, folder_id, recipient_user_id).await
+        self.find_user_share(file_id, folder_id, recipient_user_id)
+            .await
     }
 
     async fn create_user_share(
@@ -224,7 +225,14 @@ impl rustshare_core::services::ShareOps for ShareRepository {
         permissions: rustshare_core::domain::SharePermissions,
         created_by: rustshare_core::domain::UserId,
     ) -> Result<rustshare_core::domain::Share, sqlx::Error> {
-        self.create_user_share(file_id, folder_id, recipient_user_id, permissions, created_by).await
+        self.create_user_share(
+            file_id,
+            folder_id,
+            recipient_user_id,
+            permissions,
+            created_by,
+        )
+        .await
     }
 
     async fn update_share_permission(
@@ -235,7 +243,10 @@ impl rustshare_core::services::ShareOps for ShareRepository {
         self.update_share_permission(share_id, new_permission).await
     }
 
-    async fn get_by_id(&self, share_id: rustshare_core::domain::ShareId) -> Result<Option<rustshare_core::domain::Share>, sqlx::Error> {
+    async fn get_by_id(
+        &self,
+        share_id: rustshare_core::domain::ShareId,
+    ) -> Result<Option<rustshare_core::domain::Share>, sqlx::Error> {
         self.get_by_id(share_id).await
     }
 
@@ -256,7 +267,10 @@ impl rustshare_core::services::ShareOps for ShareRepository {
         self.list_share_recipients(file_id, folder_id).await
     }
 
-    async fn revoke_share(&self, share_id: rustshare_core::domain::ShareId) -> Result<(), sqlx::Error> {
+    async fn revoke_share(
+        &self,
+        share_id: rustshare_core::domain::ShareId,
+    ) -> Result<(), sqlx::Error> {
         self.revoke_share(share_id).await
     }
 }

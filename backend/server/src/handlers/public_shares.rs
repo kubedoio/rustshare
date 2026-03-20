@@ -31,6 +31,7 @@ pub struct SessionResponse {
     pub session_token: String,
     pub expires_at: chrono::DateTime<chrono::Utc>,
     pub permissions: SharePermissions,
+    pub upload_only: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -39,6 +40,7 @@ pub struct ShareInfoResponse {
     pub resource_type: String,
     pub name: String,
     pub permissions: SharePermissions,
+    pub upload_only: bool,
     pub file_size: Option<i64>,
     pub mime_type: Option<String>,
     pub password_protected: bool,
@@ -79,6 +81,7 @@ pub async fn create_session(
             session_token: session.token,
             expires_at: session.expires_at,
             permissions: session.permissions,
+            upload_only: session.upload_only,
         }),
     )
         .into_response())
@@ -101,6 +104,7 @@ pub async fn get_share_info(
             resource_type: "file".to_string(),
             name: file.name,
             permissions: share.permissions,
+            upload_only: share.upload_only,
             file_size: Some(file.size),
             mime_type: Some(file.mime_type),
             password_protected: share.password_hash.is_some(),
@@ -113,6 +117,7 @@ pub async fn get_share_info(
             resource_type: "folder".to_string(),
             name: folder.name,
             permissions: share.permissions,
+            upload_only: share.upload_only,
             file_size: None,
             mime_type: None,
             password_protected: share.password_hash.is_some(),
@@ -234,7 +239,9 @@ pub async fn download_shared_file(
             )
                 .into_response()
         })?
-        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::NotFound))?;
+        .ok_or_else(|| {
+            super::share_error_response(rustshare_core::services::ShareError::NotFound)
+        })?;
 
     // Verify JWT share_id matches the share we're accessing
     ensure_share_session_matches(&share, &claims)?;
@@ -259,7 +266,9 @@ pub async fn download_shared_file(
             )
                 .into_response()
         })?
-        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::FileNotFound(file_id)))?;
+        .ok_or_else(|| {
+            super::share_error_response(rustshare_core::services::ShareError::FileNotFound(file_id))
+        })?;
 
     // Get file content from storage
     let content = state
@@ -287,13 +296,17 @@ pub async fn download_shared_file(
     }
 
     // Log access with request metadata
-    if let Err(e) = state.metadata_store.log_share_access(
-        share.id,
-        ip_address,
-        user_agent,
-        "download".to_string(),
-        true,
-    ).await {
+    if let Err(e) = state
+        .metadata_store
+        .log_share_access(
+            share.id,
+            ip_address,
+            user_agent,
+            "download".to_string(),
+            true,
+        )
+        .await
+    {
         tracing::warn!("Failed to log share access: {}", e);
     }
 
@@ -302,7 +315,10 @@ pub async fn download_shared_file(
         StatusCode::OK,
         [
             ("Content-Type", file.mime_type.as_str()),
-            ("Content-Disposition", &format!("attachment; filename=\"{}\"", file.name)),
+            (
+                "Content-Disposition",
+                &format!("attachment; filename=\"{}\"", file.name),
+            ),
             ("Content-Length", &content.len().to_string()),
         ],
         content,
@@ -328,7 +344,9 @@ pub async fn get_shared_folder_contents(
             )
                 .into_response()
         })?
-        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::NotFound))?;
+        .ok_or_else(|| {
+            super::share_error_response(rustshare_core::services::ShareError::NotFound)
+        })?;
 
     ensure_share_session_matches(&share, &claims)?;
 
@@ -336,6 +354,14 @@ pub async fn get_shared_folder_contents(
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "This share is not for a folder"})),
+        )
+            .into_response());
+    }
+
+    if share.upload_only {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "This share is upload-only"})),
         )
             .into_response());
     }
@@ -376,7 +402,9 @@ pub async fn download_shared_folder_file(
             )
                 .into_response()
         })?
-        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::NotFound))?;
+        .ok_or_else(|| {
+            super::share_error_response(rustshare_core::services::ShareError::NotFound)
+        })?;
 
     ensure_share_session_matches(&share, &claims)?;
 
@@ -387,6 +415,14 @@ pub async fn download_shared_folder_file(
         )
             .into_response()
     })?;
+
+    if share.upload_only {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "This share is upload-only"})),
+        )
+            .into_response());
+    }
 
     let descendants = state
         .metadata_store
@@ -411,7 +447,9 @@ pub async fn download_shared_folder_file(
             )
                 .into_response()
         })?
-        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::FileNotFound(file_id)))?;
+        .ok_or_else(|| {
+            super::share_error_response(rustshare_core::services::ShareError::FileNotFound(file_id))
+        })?;
 
     let allowed_folder_ids: Vec<Uuid> = descendants.into_iter().map(|folder| folder.id).collect();
     if !allowed_folder_ids.contains(&file.parent_folder_id.unwrap_or(Uuid::nil())) {
@@ -446,7 +484,13 @@ pub async fn download_shared_folder_file(
 
     if let Err(e) = state
         .metadata_store
-        .log_share_access(share.id, ip_address, user_agent, "download".to_string(), true)
+        .log_share_access(
+            share.id,
+            ip_address,
+            user_agent,
+            "download".to_string(),
+            true,
+        )
         .await
     {
         tracing::warn!("Failed to log share access: {}", e);
@@ -456,7 +500,10 @@ pub async fn download_shared_folder_file(
         StatusCode::OK,
         [
             ("Content-Type", file.mime_type.as_str()),
-            ("Content-Disposition", &format!("attachment; filename=\"{}\"", file.name)),
+            (
+                "Content-Disposition",
+                &format!("attachment; filename=\"{}\"", file.name),
+            ),
             ("Content-Length", &content.len().to_string()),
         ],
         content,
@@ -484,7 +531,9 @@ pub async fn upload_shared_folder_file(
             )
                 .into_response()
         })?
-        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::NotFound))?;
+        .ok_or_else(|| {
+            super::share_error_response(rustshare_core::services::ShareError::NotFound)
+        })?;
 
     ensure_share_session_matches(&share, &claims)?;
 
@@ -496,7 +545,7 @@ pub async fn upload_shared_folder_file(
             .into_response()
     })?;
 
-    if claims.permissions < SharePermissions::Edit {
+    if !share.upload_only && claims.permissions < SharePermissions::Edit {
         return Err((
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({"error": "This share does not allow uploads"})),
@@ -504,7 +553,8 @@ pub async fn upload_shared_folder_file(
             .into_response());
     }
 
-    let (file_data, file_name, requested_folder_id, mime_type) = parse_upload_multipart(multipart).await?;
+    let (file_data, file_name, requested_folder_id, mime_type) =
+        parse_upload_multipart(multipart).await?;
 
     let root_folder = state
         .metadata_store
@@ -517,7 +567,24 @@ pub async fn upload_shared_folder_file(
             )
                 .into_response()
         })?
-        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::NotFoundById(root_folder_id)))?;
+        .ok_or_else(|| {
+            super::share_error_response(rustshare_core::services::ShareError::NotFoundById(
+                root_folder_id,
+            ))
+        })?;
+
+    if share.upload_only
+        && requested_folder_id.is_some()
+        && requested_folder_id != Some(root_folder_id)
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "Upload-only shares can only upload to the shared root folder"
+            })),
+        )
+            .into_response());
+    }
 
     let target_folder_id = requested_folder_id.unwrap_or(root_folder_id);
     let descendants = state
@@ -532,7 +599,10 @@ pub async fn upload_shared_folder_file(
                 .into_response()
         })?;
 
-    if !descendants.iter().any(|folder| folder.id == target_folder_id) {
+    if !descendants
+        .iter()
+        .any(|folder| folder.id == target_folder_id)
+    {
         return Err((
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({"error": "Target folder is outside the shared folder"})),
@@ -613,11 +683,13 @@ mod tests {
                 .unwrap()
                 .with_timezone(&chrono::Utc),
             permissions: SharePermissions::Edit,
+            upload_only: true,
         };
 
         let json = serde_json::to_value(&response).unwrap();
         assert_eq!(json["session_token"], "test_token_123");
         assert_eq!(json["permissions"], "Edit");
+        assert_eq!(json["upload_only"], true);
         assert!(json["expires_at"].is_string());
     }
 
@@ -629,6 +701,7 @@ mod tests {
             resource_type: "file".to_string(),
             name: "test.pdf".to_string(),
             permissions: SharePermissions::View,
+            upload_only: false,
             file_size: Some(1024),
             mime_type: Some("application/pdf".to_string()),
             password_protected: true,
@@ -642,6 +715,7 @@ mod tests {
         let json = serde_json::to_value(&response).unwrap();
         assert_eq!(json["name"], "test.pdf");
         assert_eq!(json["permissions"], "View");
+        assert_eq!(json["upload_only"], false);
         assert_eq!(json["file_size"], 1024);
         assert_eq!(json["mime_type"], "application/pdf");
         assert_eq!(json["password_protected"], true);

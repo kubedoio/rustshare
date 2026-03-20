@@ -47,6 +47,7 @@ describe('shares API', () => {
 				resource_type: 'file' as const,
 				share_token: 'abc123',
 				permissions: 'View' as const,
+				upload_only: false,
 				password_protected: true,
 				expires_at: '2024-12-31T23:59:59Z'
 			};
@@ -74,6 +75,7 @@ describe('shares API', () => {
 				resource_type: 'file' as const,
 				share_token: 'xyz789',
 				permissions: 'Edit' as const,
+				upload_only: false,
 				password_protected: false,
 				expires_at: null
 			};
@@ -97,6 +99,7 @@ describe('shares API', () => {
 				resource_type: 'file' as const,
 				share_token: 'token123',
 				permissions: 'View' as const,
+				upload_only: false,
 				password_protected: false,
 				expires_at: null
 			};
@@ -115,6 +118,7 @@ describe('shares API', () => {
 				resource_type: 'folder' as const,
 				share_token: 'folder123',
 				permissions: 'View' as const,
+				upload_only: false,
 				password_protected: false,
 				expires_at: null
 			};
@@ -138,6 +142,7 @@ describe('shares API', () => {
 					resource_type: 'file' as const,
 					share_token: 'abc123',
 					permissions: 'View' as const,
+					upload_only: false,
 					password_protected: true,
 					expires_at: '2024-12-31T23:59:59Z',
 					created_at: '2024-01-01T00:00:00Z',
@@ -149,6 +154,7 @@ describe('shares API', () => {
 					resource_type: 'file' as const,
 					share_token: 'xyz789',
 					permissions: 'Edit' as const,
+					upload_only: false,
 					password_protected: false,
 					expires_at: null,
 					created_at: '2024-01-02T00:00:00Z',
@@ -184,6 +190,7 @@ describe('shares API', () => {
 					resource_type: 'folder' as const,
 					share_token: 'folder123',
 					permissions: 'View' as const,
+					upload_only: true,
 					password_protected: false,
 					expires_at: null,
 					created_at: '2024-01-02T00:00:00Z'
@@ -225,6 +232,7 @@ describe('shares API', () => {
 					resource_name: 'Quarterly Plan.pdf',
 					share_token: 'abc123',
 					permissions: 'View' as const,
+					upload_only: false,
 					password_protected: false,
 					expires_at: null,
 					created_at: '2024-01-01T00:00:00Z',
@@ -378,6 +386,7 @@ describe('shares API', () => {
 				resource_type: 'file' as const,
 				share_token: 'abc123',
 				permissions: 'View' as const,
+				upload_only: false,
 				password_protected: false,
 				expires_at: null
 			};
@@ -396,6 +405,7 @@ describe('shares API', () => {
 				resource_type: 'file' as const,
 				share_token: 'xyz789',
 				permissions: 'Edit' as const,
+				upload_only: false,
 				password_protected: false,
 				expires_at: null
 			};

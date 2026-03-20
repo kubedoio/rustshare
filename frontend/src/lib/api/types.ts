@@ -41,6 +41,7 @@ export interface Share {
 	resource_name?: string;
 	share_token: string;
 	permissions: 'View' | 'Edit' | 'Admin';
+	upload_only: boolean;
 	password_protected: boolean;
 	expires_at: string | null;
 	created_at: string;

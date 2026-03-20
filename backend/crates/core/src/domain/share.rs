@@ -65,6 +65,8 @@ pub struct Share {
     pub password_hash: Option<String>,
     /// Expiration time for public shares only
     pub expires_at: Option<DateTime<Utc>>,
+    /// Public folder share that allows uploads but not browsing/downloads.
+    pub upload_only: bool,
     /// Access count for public shares only
     pub access_count: i32,
     /// Recipient user for user shares (None for public shares)
@@ -92,6 +94,7 @@ impl Share {
             share_token: Some(share_token),
             password_hash,
             expires_at,
+            upload_only: false,
             created_by,
             created_at: Utc::now(),
             permissions,
@@ -118,6 +121,7 @@ impl Share {
             share_token: Some(share_token),
             password_hash,
             expires_at,
+            upload_only: false,
             created_by,
             created_at: Utc::now(),
             permissions,
@@ -203,6 +207,7 @@ mod tests {
             permissions: SharePermissions::View,
             password_hash: None,
             expires_at: Some(Utc::now() + Duration::hours(1)),
+            upload_only: false,
             access_count: 0,
             recipient_user_id: None,
             created_by: Uuid::new_v4(),
@@ -223,6 +228,7 @@ mod tests {
             permissions: SharePermissions::View,
             password_hash: None,
             expires_at: Some(Utc::now() - Duration::hours(1)),
+            upload_only: false,
             access_count: 5,
             recipient_user_id: None,
             created_by: Uuid::new_v4(),
@@ -243,6 +249,7 @@ mod tests {
             permissions: SharePermissions::Edit,
             password_hash: None,
             expires_at: None,
+            upload_only: false,
             access_count: 0,
             recipient_user_id: None,
             created_by: Uuid::new_v4(),
@@ -263,6 +270,7 @@ mod tests {
             permissions: SharePermissions::View,
             password_hash: Some("hashed_password".to_string()),
             expires_at: None,
+            upload_only: false,
             access_count: 0,
             recipient_user_id: None,
             created_by: Uuid::new_v4(),
@@ -292,6 +300,7 @@ mod tests {
         assert_eq!(share.created_by, created_by);
         assert_eq!(share.permissions, SharePermissions::View);
         assert_eq!(share.password_hash, Some("hashed_password".to_string()));
+        assert!(!share.upload_only);
         assert_eq!(share.access_count, 0);
         assert!(!share.id.is_nil());
         assert!(share.is_password_protected());
@@ -308,6 +317,7 @@ mod tests {
             permissions: SharePermissions::View,
             password_hash: None,
             expires_at: None,
+            upload_only: false,
             access_count: 0,
             recipient_user_id: Some(Uuid::new_v4()),
             created_by: Uuid::new_v4(),
@@ -331,6 +341,7 @@ mod tests {
             permissions: SharePermissions::Edit,
             password_hash: None,
             expires_at: None,
+            upload_only: false,
             access_count: 0,
             recipient_user_id: Some(Uuid::new_v4()),
             created_by: Uuid::new_v4(),
@@ -353,6 +364,7 @@ mod tests {
             permissions: SharePermissions::View,
             password_hash: None,
             expires_at: None,
+            upload_only: false,
             access_count: 0,
             recipient_user_id: Some(Uuid::new_v4()),
             created_by: Uuid::new_v4(),

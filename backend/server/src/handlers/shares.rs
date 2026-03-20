@@ -21,6 +21,8 @@ pub struct CreateShareRequest {
     pub password: Option<String>,
     #[serde(default)]
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub upload_only: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -30,6 +32,7 @@ pub struct ShareResponse {
     pub resource_type: &'static str,
     pub share_token: String,
     pub permissions: SharePermissions,
+    pub upload_only: bool,
     pub password_protected: bool,
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -41,6 +44,14 @@ pub async fn create_public_file_share(
     auth: AuthenticatedUser,
     Json(req): Json<CreateShareRequest>,
 ) -> Result<Response, Response> {
+    if req.upload_only {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Upload-only links are only supported for folders"})),
+        )
+            .into_response());
+    }
+
     let share = state
         .share_service
         .create_share(
@@ -79,6 +90,7 @@ pub async fn create_public_file_share(
             resource_type: "file",
             share_token,
             permissions: share.permissions,
+            upload_only: share.upload_only,
             password_protected: share.password_hash.is_some(),
             expires_at: share.expires_at,
             created_at: share.created_at,
@@ -101,6 +113,7 @@ pub async fn create_public_folder_share(
             req.permissions,
             req.password,
             req.expires_at,
+            req.upload_only,
         )
         .await
         .map_err(share_error_response)?;
@@ -116,7 +129,10 @@ pub async fn create_public_folder_share(
     })?;
 
     let resource_id = share.folder_id.ok_or_else(|| {
-        tracing::error!("Folder ID is None after create_folder_share for share {}", share.id);
+        tracing::error!(
+            "Folder ID is None after create_folder_share for share {}",
+            share.id
+        );
         share_error_response(rustshare_core::services::ShareError::Database(
             sqlx::Error::PoolClosed,
         ))
@@ -130,6 +146,7 @@ pub async fn create_public_folder_share(
             resource_type: "folder",
             share_token,
             permissions: share.permissions,
+            upload_only: share.upload_only,
             password_protected: share.password_hash.is_some(),
             expires_at: share.expires_at,
             created_at: share.created_at,
@@ -160,6 +177,7 @@ pub async fn list_public_file_shares(
                     resource_type: "file",
                     share_token,
                     permissions: s.permissions,
+                    upload_only: s.upload_only,
                     password_protected: s.password_hash.is_some(),
                     expires_at: s.expires_at,
                     created_at: s.created_at,
@@ -187,7 +205,8 @@ pub async fn list_public_folder_shares(
     let response: Vec<ShareResponse> = shares
         .into_iter()
         .filter_map(|share| {
-            let (Some(resource_id), Some(share_token)) = (share.folder_id, share.share_token) else {
+            let (Some(resource_id), Some(share_token)) = (share.folder_id, share.share_token)
+            else {
                 return None;
             };
 
@@ -197,6 +216,7 @@ pub async fn list_public_folder_shares(
                 resource_type: "folder",
                 share_token,
                 permissions: share.permissions,
+                upload_only: share.upload_only,
                 password_protected: share.password_hash.is_some(),
                 expires_at: share.expires_at,
                 created_at: share.created_at,
@@ -240,7 +260,8 @@ mod tests {
         let json = serde_json::json!({
             "permissions": "View",
             "password": "test123",
-            "expires_at": "2026-12-31T23:59:59Z"
+            "expires_at": "2026-12-31T23:59:59Z",
+            "upload_only": true
         });
 
         let req: Result<CreateShareRequest, _> = serde_json::from_value(json);
@@ -249,6 +270,7 @@ mod tests {
         assert_eq!(req.permissions, SharePermissions::View);
         assert_eq!(req.password, Some("test123".to_string()));
         assert!(req.expires_at.is_some());
+        assert!(req.upload_only);
     }
 
     #[test]
@@ -264,5 +286,6 @@ mod tests {
         assert_eq!(req.permissions, SharePermissions::Edit);
         assert_eq!(req.password, None);
         assert_eq!(req.expires_at, None);
+        assert!(!req.upload_only);
     }
 }

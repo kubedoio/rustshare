@@ -1178,8 +1178,8 @@ impl MetadataStore {
 
         sqlx::query(
             r#"
-            INSERT INTO shares (id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, access_count, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            INSERT INTO shares (id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             "#,
         )
         .bind(share.id)
@@ -1191,6 +1191,7 @@ impl MetadataStore {
         .bind(permissions)
         .bind(&share.password_hash)
         .bind(share.expires_at)
+        .bind(share.upload_only)
         .bind(share.access_count)
         .bind(share.created_at)
         .execute(&self.pool)
@@ -1204,7 +1205,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, access_count, created_at, revoked_at
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at
             FROM shares
             WHERE share_token = $1
             "#,
@@ -1231,6 +1232,7 @@ impl MetadataStore {
                 permissions,
                 password_hash: row.try_get("password_hash")?,
                 expires_at: row.try_get("expires_at")?,
+                upload_only: row.try_get("upload_only")?,
                 access_count: row.try_get("access_count")?,
                 created_at: row.try_get("created_at")?,
                 revoked_at: row.try_get("revoked_at")?,
@@ -1246,7 +1248,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, access_count, created_at, revoked_at
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at
             FROM shares
             WHERE id = $1
             "#,
@@ -1273,6 +1275,7 @@ impl MetadataStore {
                 permissions,
                 password_hash: row.try_get("password_hash")?,
                 expires_at: row.try_get("expires_at")?,
+                upload_only: row.try_get("upload_only")?,
                 access_count: row.try_get("access_count")?,
                 created_at: row.try_get("created_at")?,
                 revoked_at: row.try_get("revoked_at")?,
@@ -1288,7 +1291,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, access_count, created_at, revoked_at
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at
             FROM shares
             WHERE file_id = $1 AND revoked_at IS NULL
             ORDER BY created_at DESC
@@ -1317,6 +1320,7 @@ impl MetadataStore {
                 permissions,
                 password_hash: row.try_get("password_hash")?,
                 expires_at: row.try_get("expires_at")?,
+                upload_only: row.try_get("upload_only")?,
                 access_count: row.try_get("access_count")?,
                 created_at: row.try_get("created_at")?,
                 revoked_at: row.try_get("revoked_at")?,
@@ -1331,7 +1335,7 @@ impl MetadataStore {
     pub async fn get_folder_shares(&self, folder_id: Uuid) -> Result<Vec<Share>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, access_count, created_at, revoked_at
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at
             FROM shares
             WHERE folder_id = $1 AND revoked_at IS NULL
             ORDER BY created_at DESC
@@ -1360,6 +1364,7 @@ impl MetadataStore {
                 permissions,
                 password_hash: row.try_get("password_hash")?,
                 expires_at: row.try_get("expires_at")?,
+                upload_only: row.try_get("upload_only")?,
                 access_count: row.try_get("access_count")?,
                 created_at: row.try_get("created_at")?,
                 revoked_at: row.try_get("revoked_at")?,
@@ -1383,6 +1388,7 @@ impl MetadataStore {
                 s.permissions,
                 s.password_hash,
                 s.expires_at,
+                s.upload_only,
                 s.access_count,
                 s.created_at,
                 s.revoked_at,
@@ -1425,6 +1431,7 @@ impl MetadataStore {
                     permissions,
                     password_hash: row.try_get("password_hash")?,
                     expires_at: row.try_get("expires_at")?,
+                    upload_only: row.try_get("upload_only")?,
                     access_count: row.try_get("access_count")?,
                     created_at: row.try_get("created_at")?,
                     revoked_at: row.try_get("revoked_at")?,
