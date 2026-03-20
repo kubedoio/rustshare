@@ -145,13 +145,13 @@
 
 #### Data Backup
 - [x] No server-side frontend state (localStorage only)
-- [ ] Database backup strategy (backend)
-- [ ] File storage backup (MinIO/S3)
-- [ ] Configuration backup (nginx, docker-compose)
+- [x] Database backup strategy (backend)
+- [x] File storage backup (MinIO/S3)
+- [x] Configuration backup (nginx, docker-compose)
 
 #### Disaster Recovery
 - [ ] Rollback procedure documented
-- [ ] Database restore procedure
+- [x] Database restore procedure
 - [ ] RTO/RPO defined
 - [ ] Failover strategy
 
@@ -184,7 +184,7 @@
 - [x] Deployment guide (DEPLOYMENT.md)
 - [x] Architecture overview
 - [ ] API documentation
-- [ ] Runbook for operations team
+- [x] Runbook for operations team
 
 ### 📋 Compliance (If Required)
 

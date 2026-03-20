@@ -21,6 +21,9 @@ docker-compose.override.yml
 # Logs
 *.log
 
+# Local backup artifacts
+backups/
+
 # Note: Cargo.lock IS committed for applications (not libraries)
 # to ensure reproducible builds
 .worktrees/

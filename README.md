@@ -711,24 +711,19 @@ VITE_WS_URL=wss://files.example.com/api
 
 #### Database Backup
 ```bash
-# Backup
-docker-compose exec postgres pg_dump -U rustshare rustshare > backup.sql
-
-# Restore
-docker-compose exec -T postgres psql -U rustshare rustshare < backup.sql
+scripts/backup-stack.sh
+scripts/restore-stack.sh backups/<timestamp>
 ```
 
-#### MinIO Backup
+#### Included Artifacts
 ```bash
-# Using MinIO client (mc)
-docker run --rm -it --network rustshare_default \
-  -v $(pwd)/minio-backup:/backup \
-  minio/mc alias set myminio http://rustfs:9000 rustfsadmin rustfsadmin
-
-docker run --rm -it --network rustshare_default \
-  -v $(pwd)/minio-backup:/backup \
-  minio/mc cp --recursive myminio/rustshare-files /backup/
+backups/<timestamp>/postgres.sql.gz
+backups/<timestamp>/rustfs-data.tar.gz
+backups/<timestamp>/config.tar.gz
+backups/<timestamp>/manifest.env
 ```
+
+Detailed recovery steps: [docs/2026-03-20-backup-restore-runbook.md](docs/2026-03-20-backup-restore-runbook.md)
 
 ### Monitoring & Logs
 
