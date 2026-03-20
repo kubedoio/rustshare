@@ -191,6 +191,8 @@ async fn main() -> Result<()> {
     spawn_replication_worker(
         Arc::clone(&metadata_store),
         Arc::clone(&object_store),
+        Arc::clone(&event_store),
+        Arc::clone(&broadcaster),
         replication_worker_config,
     );
 
@@ -299,6 +301,8 @@ async fn main() -> Result<()> {
         .route("/api/public/share/:token/info", get(handlers::get_share_info))
         .route("/api/public/share/:token/file", get(handlers::download_shared_file))
         // WebSocket sync endpoint (Task Phase 3A)
+        .route("/api/ws", get(handlers::sync_handler))
+        .route("/api/v1/ws", get(handlers::sync_handler))
         .route("/api/sync", get(handlers::sync_handler))
         .with_state(state.clone())
         // Increase body size limit for file uploads (500MB)

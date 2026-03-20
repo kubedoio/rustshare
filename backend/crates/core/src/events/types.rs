@@ -55,6 +55,7 @@ pub enum EventType {
     // Sync events
     ConflictDetected,
     ConflictResolved,
+    ReplicationStateChanged,
 }
 
 impl EventType {
@@ -83,6 +84,7 @@ impl EventType {
             EventType::NotificationCreated => "NotificationCreated",
             EventType::ConflictDetected => "ConflictDetected",
             EventType::ConflictResolved => "ConflictResolved",
+            EventType::ReplicationStateChanged => "ReplicationStateChanged",
         }
     }
 }
@@ -294,6 +296,18 @@ pub struct NotificationCreatedPayload {
     pub timestamp: DateTime<Utc>,
 }
 
+/// Replication state changed event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicationStateChangedPayload {
+    pub file_id: FileId,
+    pub file_version_id: VersionId,
+    pub replication_state: ReplicationState,
+    pub job_status: Option<String>,
+    pub attempt_count: i32,
+    pub next_attempt_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    pub updated_at: DateTime<Utc>,
+}
 
 #[cfg(test)]
 mod tests {

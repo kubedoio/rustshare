@@ -17,7 +17,7 @@ use crate::domain::{
 };
 use crate::events::{
     AggregateType, Event, EventBroadcaster, EventType, FileDeletedPayload, FileModifiedPayload,
-    FileMovedPayload, FileRestoredPayload, FileUploadedPayload,
+    FileMovedPayload, FileRestoredPayload, FileUploadedPayload, ReplicationStateChangedPayload,
 };
 use crate::services::FileError;
 
@@ -279,7 +279,8 @@ where
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
-        self.queue_replication_if_needed(file.id, &version).await?;
+        self.queue_replication_if_needed(file.id, owner_id, &version)
+            .await?;
 
         // 9. Return File
         Ok(file)
@@ -431,7 +432,8 @@ where
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
-        self.queue_replication_if_needed(file.id, &version).await?;
+        self.queue_replication_if_needed(file.id, user_id, &version)
+            .await?;
 
         // 7. Emit FileModified event
         let payload = FileModifiedPayload {
@@ -571,7 +573,8 @@ where
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
-        self.queue_replication_if_needed(file.id, &version).await?;
+        self.queue_replication_if_needed(file.id, user_id, &version)
+            .await?;
 
         // 6. Emit FileRestored event
         let payload = FileRestoredPayload {
@@ -774,6 +777,7 @@ where
     async fn queue_replication_if_needed(
         &self,
         file_id: uuid::Uuid,
+        owner_id: UserId,
         version: &FileVersion,
     ) -> Result<(), FileError> {
         let target_count = self
@@ -797,6 +801,57 @@ where
             .update_file_version_replication_state(version.id, ReplicationState::Queued)
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        self.publish_replication_state_event(
+            file_id,
+            owner_id,
+            version.id,
+            ReplicationState::Queued,
+            Some(job.status.as_str().to_string()),
+            job.attempt_count,
+            Some(job.next_attempt_at),
+            None,
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    async fn publish_replication_state_event(
+        &self,
+        file_id: uuid::Uuid,
+        owner_id: UserId,
+        file_version_id: uuid::Uuid,
+        replication_state: ReplicationState,
+        job_status: Option<String>,
+        attempt_count: i32,
+        next_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
+        last_error: Option<String>,
+    ) -> Result<(), FileError> {
+        let payload = ReplicationStateChangedPayload {
+            file_id,
+            file_version_id,
+            replication_state,
+            job_status,
+            attempt_count,
+            next_attempt_at,
+            last_error,
+            updated_at: chrono::Utc::now(),
+        };
+
+        let event = Event::new(
+            EventType::ReplicationStateChanged,
+            file_id,
+            AggregateType::File,
+            serde_json::to_value(payload)
+                .map_err(|e| FileError::Storage(format!("Failed to serialize payload: {}", e)))?,
+            owner_id,
+        );
+
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
 
         Ok(())
     }

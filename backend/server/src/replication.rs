@@ -3,8 +3,11 @@ use std::{sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 use aws_sdk_s3::{config::Credentials, primitives::ByteStream, Client as S3Client};
 use chrono::Utc;
-use rustshare_core::domain::{ReplicationJob, ReplicationState, ReplicationTarget};
-use rustshare_storage::{MetadataStore, ObjectStore};
+use rustshare_core::{
+    domain::{ReplicationJob, ReplicationState, ReplicationTarget},
+    events::{AggregateType, Event, EventBroadcaster, EventType, ReplicationStateChangedPayload},
+};
+use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use serde::Deserialize;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -57,6 +60,8 @@ struct TargetAuthConfig {
 pub fn spawn_replication_worker(
     metadata_store: Arc<MetadataStore>,
     object_store: Arc<ObjectStore>,
+    event_store: Arc<EventStore>,
+    broadcaster: Arc<EventBroadcaster>,
     config: ReplicationWorkerConfig,
 ) {
     if !config.enabled {
@@ -73,8 +78,14 @@ pub fn spawn_replication_worker(
         );
 
         loop {
-            if let Err(error) =
-                tick_replication_worker(&metadata_store, &object_store, &config).await
+            if let Err(error) = tick_replication_worker(
+                &metadata_store,
+                &object_store,
+                &event_store,
+                &broadcaster,
+                &config,
+            )
+            .await
             {
                 error!(error = %error, "Replication worker tick failed");
             }
@@ -87,6 +98,8 @@ pub fn spawn_replication_worker(
 async fn tick_replication_worker(
     metadata_store: &MetadataStore,
     object_store: &ObjectStore,
+    event_store: &EventStore,
+    broadcaster: &EventBroadcaster,
     config: &ReplicationWorkerConfig,
 ) -> Result<()> {
     let lease_token = Uuid::new_v4();
@@ -123,10 +136,31 @@ async fn tick_replication_worker(
                         job.file_version_id
                     )
                 })?;
+            publish_replication_event(
+                metadata_store,
+                event_store,
+                broadcaster,
+                &job,
+                ReplicationState::FullyReplicated,
+                Some("completed".to_string()),
+                job.attempt_count,
+                None,
+                None,
+            )
+            .await?;
             continue;
         }
 
-        process_replication_job(metadata_store, object_store, config, &job, &targets).await?;
+        process_replication_job(
+            metadata_store,
+            object_store,
+            event_store,
+            broadcaster,
+            config,
+            &job,
+            &targets,
+        )
+        .await?;
     }
 
     Ok(())
@@ -135,6 +169,8 @@ async fn tick_replication_worker(
 async fn process_replication_job(
     metadata_store: &MetadataStore,
     object_store: &ObjectStore,
+    event_store: &EventStore,
+    broadcaster: &EventBroadcaster,
     config: &ReplicationWorkerConfig,
     job: &ReplicationJob,
     targets: &[ReplicationTarget],
@@ -143,6 +179,18 @@ async fn process_replication_job(
         .update_file_version_replication_state(job.file_version_id, ReplicationState::Syncing)
         .await
         .with_context(|| format!("failed to mark version {} syncing", job.file_version_id))?;
+    publish_replication_event(
+        metadata_store,
+        event_store,
+        broadcaster,
+        job,
+        ReplicationState::Syncing,
+        Some("syncing".to_string()),
+        job.attempt_count,
+        None,
+        None,
+    )
+    .await?;
 
     let blob = object_store
         .get(&job.storage_key)
@@ -248,6 +296,18 @@ async fn process_replication_job(
                     job.file_version_id
                 )
             })?;
+        publish_replication_event(
+            metadata_store,
+            event_store,
+            broadcaster,
+            job,
+            ReplicationState::FullyReplicated,
+            Some("completed".to_string()),
+            job.attempt_count,
+            None,
+            None,
+        )
+        .await?;
 
         info!(job_id = %job.id, "Replication job completed");
         return Ok(());
@@ -271,6 +331,18 @@ async fn process_replication_job(
                     job.file_version_id
                 )
             })?;
+        publish_replication_event(
+            metadata_store,
+            event_store,
+            broadcaster,
+            job,
+            ReplicationState::Degraded,
+            Some("retrying".to_string()),
+            job.attempt_count,
+            Some(next_attempt_at),
+            Some(error_text.clone()),
+        )
+        .await?;
 
         warn!(
             job_id = %job.id,
@@ -289,8 +361,64 @@ async fn process_replication_job(
         .update_file_version_replication_state(job.file_version_id, ReplicationState::Failed)
         .await
         .with_context(|| format!("failed to mark file version {} failed", job.file_version_id))?;
+    publish_replication_event(
+        metadata_store,
+        event_store,
+        broadcaster,
+        job,
+        ReplicationState::Failed,
+        Some("failed".to_string()),
+        job.attempt_count,
+        None,
+        Some(error_text),
+    )
+    .await?;
 
     error!(job_id = %job.id, "Replication job exhausted retries");
+    Ok(())
+}
+
+async fn publish_replication_event(
+    metadata_store: &MetadataStore,
+    event_store: &EventStore,
+    broadcaster: &EventBroadcaster,
+    job: &ReplicationJob,
+    replication_state: ReplicationState,
+    job_status: Option<String>,
+    attempt_count: i32,
+    next_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
+    last_error: Option<String>,
+) -> Result<()> {
+    let file = metadata_store
+        .find_file_by_id(job.file_id)
+        .await
+        .with_context(|| format!("failed to load file {} for replication event", job.file_id))?
+        .context("replication job references missing file")?;
+
+    let payload = ReplicationStateChangedPayload {
+        file_id: job.file_id,
+        file_version_id: job.file_version_id,
+        replication_state,
+        job_status,
+        attempt_count,
+        next_attempt_at,
+        last_error,
+        updated_at: chrono::Utc::now(),
+    };
+
+    let event = Event::new(
+        EventType::ReplicationStateChanged,
+        job.file_id,
+        AggregateType::File,
+        serde_json::to_value(payload).context("failed to serialize replication payload")?,
+        file.owner_id,
+    );
+
+    event_store
+        .append(&event, broadcaster)
+        .await
+        .context("failed to append replication event")?;
+
     Ok(())
 }
 

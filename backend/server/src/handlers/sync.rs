@@ -1,21 +1,23 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
-        Query,
+        Query, State,
     },
     http::StatusCode,
     response::Response,
 };
 use axum_extra::{
-    headers::{Authorization, authorization::Bearer},
+    headers::{authorization::Bearer, Authorization},
     TypedHeader,
 };
 use chrono::{DateTime, Utc};
-use futures_util::{StreamExt, SinkExt};
+use futures_util::{SinkExt, StreamExt};
 use rustshare_auth::ShareSessionClaims;
-use rustshare_core::events::{Event, EventType, ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload};
-use rustshare_core::domain::{UserId, ShareId, FileId, SharePermissions};
+use rustshare_core::domain::{FileId, ShareId, SharePermissions, UserId};
+use rustshare_core::events::{
+    Event, EventType, ReplicationStateChangedPayload, ShareCreatedPayload, ShareRevokedPayload,
+    ShareUpdatedPayload,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
@@ -73,10 +75,7 @@ enum SyncMessage {
         expires_at: Option<DateTime<Utc>>,
     },
     /// Share revoked notification
-    ShareRevoked {
-        share_id: Uuid,
-        file_id: Uuid,
-    },
+    ShareRevoked { share_id: Uuid, file_id: Uuid },
     /// Share updated notification
     ShareUpdated {
         share_id: Uuid,
@@ -84,6 +83,17 @@ enum SyncMessage {
         password_changed: bool,
         expires_at_changed: bool,
         new_expires_at: Option<DateTime<Utc>>,
+    },
+    /// Replication state update for a file version
+    ReplicationStateChanged {
+        file_id: Uuid,
+        file_version_id: Uuid,
+        replication_state: String,
+        job_status: Option<String>,
+        attempt_count: i32,
+        next_attempt_at: Option<DateTime<Utc>>,
+        last_error: Option<String>,
+        updated_at: DateTime<Utc>,
     },
 }
 
@@ -155,7 +165,11 @@ pub async fn sync_handler(
         ClientIdentity::User(user_id) => {
             info!("WebSocket connection established for user {}", user_id);
         }
-        ClientIdentity::ShareViewer { share_id, file_id, permissions } => {
+        ClientIdentity::ShareViewer {
+            share_id,
+            file_id,
+            permissions,
+        } => {
             info!(
                 "WebSocket connection established for share viewer: share_id={}, file_id={}, permissions={:?}",
                 share_id, file_id, permissions
@@ -235,7 +249,13 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
             match event_rx.recv().await {
                 Ok(event) => {
                     // Check if this event is relevant to this client
-                    match should_send_event_to_client(&event, &client_identity_for_task, &metadata_store).await {
+                    match should_send_event_to_client(
+                        &event,
+                        &client_identity_for_task,
+                        &metadata_store,
+                    )
+                    .await
+                    {
                         Ok(true) => {
                             // Convert event to sync message
                             match event_to_sync_message(&event, &metadata_store).await {
@@ -286,8 +306,15 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
         ClientIdentity::User(user_id) => {
             info!("WebSocket connection closed for user {}", user_id);
         }
-        ClientIdentity::ShareViewer { share_id, permissions: _, .. } => {
-            info!("WebSocket connection closed for share viewer: share_id={}", share_id);
+        ClientIdentity::ShareViewer {
+            share_id,
+            permissions: _,
+            ..
+        } => {
+            info!(
+                "WebSocket connection closed for share viewer: share_id={}",
+                share_id
+            );
         }
     }
 }
@@ -303,7 +330,11 @@ async fn should_send_event_to_client(
             // For authenticated users, use existing logic
             should_send_event_to_user(event, *user_id, metadata_store).await
         }
-        ClientIdentity::ShareViewer { share_id, file_id, permissions: _ } => {
+        ClientIdentity::ShareViewer {
+            share_id,
+            file_id,
+            permissions: _,
+        } => {
             // Share viewers receive:
             // 1. Events for their specific file
             // 2. ShareRevoked/ShareUpdated events for their share
@@ -339,18 +370,24 @@ async fn should_send_event_to_user(
             // Deserialize payload to get file_id
             let file_id = match event.event_type {
                 EventType::ShareCreated => {
-                    let payload: ShareCreatedPayload = serde_json::from_value(event.payload.clone())
-                        .map_err(|e| format!("Failed to deserialize ShareCreatedPayload: {}", e))?;
+                    let payload: ShareCreatedPayload =
+                        serde_json::from_value(event.payload.clone()).map_err(|e| {
+                            format!("Failed to deserialize ShareCreatedPayload: {}", e)
+                        })?;
                     payload.file_id
                 }
                 EventType::ShareRevoked => {
-                    let payload: ShareRevokedPayload = serde_json::from_value(event.payload.clone())
-                        .map_err(|e| format!("Failed to deserialize ShareRevokedPayload: {}", e))?;
+                    let payload: ShareRevokedPayload =
+                        serde_json::from_value(event.payload.clone()).map_err(|e| {
+                            format!("Failed to deserialize ShareRevokedPayload: {}", e)
+                        })?;
                     payload.file_id
                 }
                 EventType::ShareUpdated => {
-                    let payload: ShareUpdatedPayload = serde_json::from_value(event.payload.clone())
-                        .map_err(|e| format!("Failed to deserialize ShareUpdatedPayload: {}", e))?;
+                    let payload: ShareUpdatedPayload =
+                        serde_json::from_value(event.payload.clone()).map_err(|e| {
+                            format!("Failed to deserialize ShareUpdatedPayload: {}", e)
+                        })?;
                     payload.file_id
                 }
                 _ => return Ok(false),
@@ -414,6 +451,26 @@ async fn event_to_sync_message(
                 new_expires_at: payload.new_expires_at,
             })
         }
+        EventType::ReplicationStateChanged => {
+            let payload: ReplicationStateChangedPayload =
+                serde_json::from_value(event.payload.clone()).map_err(|e| {
+                    format!(
+                        "Failed to deserialize ReplicationStateChangedPayload: {}",
+                        e
+                    )
+                })?;
+
+            Ok(SyncMessage::ReplicationStateChanged {
+                file_id: payload.file_id.into(),
+                file_version_id: payload.file_version_id.into(),
+                replication_state: payload.replication_state.as_str().to_string(),
+                job_status: payload.job_status,
+                attempt_count: payload.attempt_count,
+                next_attempt_at: payload.next_attempt_at,
+                last_error: payload.last_error,
+                updated_at: payload.updated_at,
+            })
+        }
         _ => {
             // For other events, use generic event message
             Ok(SyncMessage::Event {
@@ -436,15 +493,19 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use rustshare_core::domain::{File, SharePermissions};
-    use rustshare_core::events::{AggregateType, Event, EventType, ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload, FileModifiedPayload};
+    use rustshare_core::events::{
+        AggregateType, Event, EventType, FileModifiedPayload, ShareCreatedPayload,
+        ShareRevokedPayload, ShareUpdatedPayload,
+    };
     use rustshare_storage::MetadataStore;
     use sqlx::PgPool;
     use uuid::Uuid;
 
     /// Helper to create a test metadata store
     async fn create_test_metadata_store() -> (MetadataStore, PgPool) {
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
+        });
 
         let pool = PgPool::connect(&database_url)
             .await
@@ -495,13 +556,20 @@ mod tests {
         );
 
         // File owner should receive the event
-        let should_send = should_send_event_to_user(&event, owner_id, &metadata_store).await.unwrap();
+        let should_send = should_send_event_to_user(&event, owner_id, &metadata_store)
+            .await
+            .unwrap();
         assert!(should_send, "File owner should receive ShareCreated event");
 
         // Other users should not receive the event
         let other_user = Uuid::new_v4();
-        let should_send = should_send_event_to_user(&event, other_user, &metadata_store).await.unwrap();
-        assert!(!should_send, "Other users should not receive ShareCreated event");
+        let should_send = should_send_event_to_user(&event, other_user, &metadata_store)
+            .await
+            .unwrap();
+        assert!(
+            !should_send,
+            "Other users should not receive ShareCreated event"
+        );
     }
 
     #[tokio::test]
@@ -541,13 +609,20 @@ mod tests {
         );
 
         // File owner should receive the event
-        let should_send = should_send_event_to_user(&event, owner_id, &metadata_store).await.unwrap();
+        let should_send = should_send_event_to_user(&event, owner_id, &metadata_store)
+            .await
+            .unwrap();
         assert!(should_send, "File owner should receive ShareRevoked event");
 
         // Other users should not receive the event
         let other_user = Uuid::new_v4();
-        let should_send = should_send_event_to_user(&event, other_user, &metadata_store).await.unwrap();
-        assert!(!should_send, "Other users should not receive ShareRevoked event");
+        let should_send = should_send_event_to_user(&event, other_user, &metadata_store)
+            .await
+            .unwrap();
+        assert!(
+            !should_send,
+            "Other users should not receive ShareRevoked event"
+        );
     }
 
     #[tokio::test]
@@ -590,13 +665,20 @@ mod tests {
         );
 
         // File owner should receive the event
-        let should_send = should_send_event_to_user(&event, owner_id, &metadata_store).await.unwrap();
+        let should_send = should_send_event_to_user(&event, owner_id, &metadata_store)
+            .await
+            .unwrap();
         assert!(should_send, "File owner should receive ShareUpdated event");
 
         // Other users should not receive the event
         let other_user = Uuid::new_v4();
-        let should_send = should_send_event_to_user(&event, other_user, &metadata_store).await.unwrap();
-        assert!(!should_send, "Other users should not receive ShareUpdated event");
+        let should_send = should_send_event_to_user(&event, other_user, &metadata_store)
+            .await
+            .unwrap();
+        assert!(
+            !should_send,
+            "Other users should not receive ShareUpdated event"
+        );
     }
 
     #[tokio::test]
@@ -625,8 +707,9 @@ mod tests {
 
         // We don't need actual database connection for this test
         // as event_to_sync_message doesn't use metadata_store for ShareCreated events
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
+        });
 
         // Skip test if database is not available
         let Ok(pool) = PgPool::connect(&database_url).await else {
@@ -635,7 +718,9 @@ mod tests {
         };
         let metadata_store = MetadataStore::new(pool);
 
-        let message = event_to_sync_message(&event, &metadata_store).await.unwrap();
+        let message = event_to_sync_message(&event, &metadata_store)
+            .await
+            .unwrap();
 
         match message {
             SyncMessage::ShareCreated {
@@ -677,8 +762,9 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
+        });
 
         // Skip test if database is not available
         let Ok(pool) = PgPool::connect(&database_url).await else {
@@ -687,7 +773,9 @@ mod tests {
         };
         let metadata_store = MetadataStore::new(pool);
 
-        let message = event_to_sync_message(&event, &metadata_store).await.unwrap();
+        let message = event_to_sync_message(&event, &metadata_store)
+            .await
+            .unwrap();
 
         match message {
             SyncMessage::ShareRevoked {
@@ -725,8 +813,9 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
+        });
 
         // Skip test if database is not available
         let Ok(pool) = PgPool::connect(&database_url).await else {
@@ -735,7 +824,9 @@ mod tests {
         };
         let metadata_store = MetadataStore::new(pool);
 
-        let message = event_to_sync_message(&event, &metadata_store).await.unwrap();
+        let message = event_to_sync_message(&event, &metadata_store)
+            .await
+            .unwrap();
 
         match message {
             SyncMessage::ShareUpdated {
@@ -773,8 +864,9 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
+        });
 
         // Skip test if database is not available
         let Ok(pool) = PgPool::connect(&database_url).await else {
@@ -783,7 +875,9 @@ mod tests {
         };
         let metadata_store = MetadataStore::new(pool);
 
-        let message = event_to_sync_message(&event, &metadata_store).await.unwrap();
+        let message = event_to_sync_message(&event, &metadata_store)
+            .await
+            .unwrap();
 
         match message {
             SyncMessage::Event {
@@ -818,10 +912,7 @@ mod tests {
         assert!(json.contains("token123"));
 
         // Test ShareRevoked serialization
-        let msg = SyncMessage::ShareRevoked {
-            share_id,
-            file_id,
-        };
+        let msg = SyncMessage::ShareRevoked { share_id, file_id };
 
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"ShareRevoked\""));
@@ -867,8 +958,9 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
+        });
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -880,7 +972,10 @@ mod tests {
         let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
             .await
             .unwrap();
-        assert!(should_send, "Share viewer should receive ShareRevoked event for their share");
+        assert!(
+            should_send,
+            "Share viewer should receive ShareRevoked event for their share"
+        );
     }
 
     #[tokio::test]
@@ -913,8 +1008,9 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
+        });
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -926,7 +1022,10 @@ mod tests {
         let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
             .await
             .unwrap();
-        assert!(should_send, "Share viewer should receive ShareUpdated event for their share");
+        assert!(
+            should_send,
+            "Share viewer should receive ShareUpdated event for their share"
+        );
     }
 
     #[tokio::test]
@@ -962,8 +1061,9 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
+        });
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -975,7 +1075,10 @@ mod tests {
         let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
             .await
             .unwrap();
-        assert!(should_send, "Share viewer should receive FileModified event for their file");
+        assert!(
+            should_send,
+            "Share viewer should receive FileModified event for their file"
+        );
     }
 
     #[tokio::test]
@@ -1012,8 +1115,9 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
+        });
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -1025,7 +1129,10 @@ mod tests {
         let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
             .await
             .unwrap();
-        assert!(!should_send, "Share viewer should not receive FileModified event for other files");
+        assert!(
+            !should_send,
+            "Share viewer should not receive FileModified event for other files"
+        );
     }
 
     #[tokio::test]
@@ -1056,8 +1163,9 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
+        });
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -1069,7 +1177,10 @@ mod tests {
         let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
             .await
             .unwrap();
-        assert!(!should_send, "Share viewer should not receive ShareRevoked event for other shares");
+        assert!(
+            !should_send,
+            "Share viewer should not receive ShareRevoked event for other shares"
+        );
     }
 
     #[tokio::test]
@@ -1098,8 +1209,9 @@ mod tests {
             user_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://rustshare:rustshare@localhost/rustshare_test".to_string());
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
+        });
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -1111,6 +1223,9 @@ mod tests {
         let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
             .await
             .unwrap();
-        assert!(!should_send, "Share viewer should not receive UserCreated event");
+        assert!(
+            !should_send,
+            "Share viewer should not receive UserCreated event"
+        );
     }
 }
