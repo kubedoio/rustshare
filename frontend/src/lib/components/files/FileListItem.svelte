@@ -1,5 +1,10 @@
 <script lang="ts">
   import type { File, Folder } from '$lib/api/types';
+  import {
+    formatReplicationStateLabel,
+    replicationStateBadgeClass,
+    type ReplicationStatus
+  } from '$lib/stores/replication';
   import { formatFileSize, formatDate, getMimeTypeIcon } from '$lib/utils/format';
   import { createEventDispatcher } from 'svelte';
   import FileThumbnail from './FileThumbnail.svelte';
@@ -9,6 +14,7 @@
   export let onSelect: () => void;
   export let selectionMode = false;
   export let selected = false;
+  export let replicationStatus: ReplicationStatus | null = null;
 
   const dispatch = createEventDispatcher<{
     rename: { item: File | Folder; isFolder: boolean };
@@ -113,6 +119,13 @@
           <span>{displaySize}</span>
           <span class="hidden sm:inline">{displayDate}</span>
         </div>
+        {#if !isFolder && replicationStatus}
+          <div class="mt-1">
+            <span class={`badge badge-xs ${replicationStateBadgeClass(replicationStatus.replicationState)}`}>
+              {formatReplicationStateLabel(replicationStatus.replicationState)}
+            </span>
+          </div>
+        {/if}
       </div>
 
       <!-- Actions Menu -->

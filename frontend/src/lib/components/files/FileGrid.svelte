@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { File, Folder } from '$lib/api/types';
+  import type { ReplicationStatus } from '$lib/stores/replication';
   import FileListItem from './FileListItem.svelte';
   import { selectionStore } from '$lib/stores/selection';
 
@@ -18,6 +19,7 @@
   export let onDownloadFile: (file: File) => void = () => {};
   export let onReplaceFile: (file: File) => void = () => {};
   export let selectionMode = false;
+  export let replicationStatuses: Record<string, ReplicationStatus> = {};
 
   function handleFileToggle(file: File) {
     selectionStore.toggleFile(file.id);
@@ -71,6 +73,7 @@
       <FileListItem
         item={file}
         isFolder={false}
+        replicationStatus={replicationStatuses[file.id] ?? null}
         onSelect={() => selectionMode ? handleFileToggle(file) : onFileClick(file)}
         selected={selectionMode && $selectionStore.selectedFileIds.has(file.id)}
         {selectionMode}

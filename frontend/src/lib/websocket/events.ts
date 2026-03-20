@@ -1,28 +1,59 @@
 // WebSocket event type definitions
 export type WebSocketEventType =
-  | 'FileUploaded'
-  | 'FileModified'
-  | 'FileRenamed'
-  | 'FileMoved'
-  | 'FileDeleted'
-  | 'FileRestored'
-  | 'FolderCreated'
-  | 'FolderRenamed'
-  | 'FolderMoved'
-  | 'FolderDeleted'
-  | 'ShareCreated'
-  | 'ShareRevoked'
-  | 'ShareUpdated';
+  | "FileUploaded"
+  | "FileModified"
+  | "FileRenamed"
+  | "FileMoved"
+  | "FileDeleted"
+  | "FileRestored"
+  | "FolderCreated"
+  | "FolderRenamed"
+  | "FolderMoved"
+  | "FolderDeleted"
+  | "ShareCreated"
+  | "ShareRevoked"
+  | "ShareUpdated"
+  | "ReplicationStateChanged";
 
 export interface WebSocketEvent {
-  event_id: string;
-  event_type: WebSocketEventType;  // Backend sends 'event_type', not 'type'
-  aggregate_id: string;
-  aggregate_type: string;  // Added: backend includes this field
-  user_id: string;
-  timestamp: string;
-  payload: FileUploadedPayload | FileModifiedPayload | FileRenamedPayload | FileMovedPayload | FileDeletedPayload | FileRestoredPayload | FolderCreatedPayload | FolderRenamedPayload | FolderMovedPayload | FolderDeletedPayload | ShareCreatedPayload | ShareRevokedPayload | ShareUpdatedPayload;
+  event_id?: string;
+  event_type?: WebSocketEventType;
+  type?: WebSocketEventType;
+  aggregate_id?: string;
+  aggregate_type?: string;
+  user_id?: string;
+  timestamp?: string;
+  payload?:
+    | FileUploadedPayload
+    | FileModifiedPayload
+    | FileRenamedPayload
+    | FileMovedPayload
+    | FileDeletedPayload
+    | FileRestoredPayload
+    | FolderCreatedPayload
+    | FolderRenamedPayload
+    | FolderMovedPayload
+    | FolderDeletedPayload
+    | ShareCreatedPayload
+    | ShareRevokedPayload
+    | ShareUpdatedPayload;
+  file_id?: string;
+  file_version_id?: string;
+  replication_state?: ReplicationStateValue;
+  job_status?: string | null;
+  attempt_count?: number;
+  next_attempt_at?: string | null;
+  last_error?: string | null;
+  updated_at?: string;
 }
+
+export type ReplicationStateValue =
+  | "primary_written"
+  | "queued"
+  | "syncing"
+  | "fully_replicated"
+  | "degraded"
+  | "failed";
 
 // Event payload interfaces
 export interface FileUploadedPayload {

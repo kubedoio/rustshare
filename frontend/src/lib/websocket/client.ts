@@ -1,6 +1,10 @@
-import { get } from 'svelte/store';
-import { websocketStore } from '$lib/stores/websocket';
-import type { WebSocketEvent, WebSocketEventType, EventHandler } from './events';
+import { get } from "svelte/store";
+import { websocketStore } from "$lib/stores/websocket";
+import type {
+  WebSocketEvent,
+  WebSocketEventType,
+  EventHandler,
+} from "./events";
 
 export class WebSocketClient {
   private ws: WebSocket | null = null;
@@ -16,13 +20,13 @@ export class WebSocketClient {
 
   constructor(url: string) {
     // Convert http/https to ws/wss
-    this.url = url.replace(/^http/, 'ws');
+    this.url = url.replace(/^http/, "ws");
   }
 
   connect(token: string): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!token) {
-        reject(new Error('No authentication token available'));
+        reject(new Error("No authentication token available"));
         return;
       }
 
@@ -33,13 +37,13 @@ export class WebSocketClient {
       const wsUrlWithToken = `${this.url}?token=${encodeURIComponent(token)}`;
 
       try {
-        websocketStore.setState('connecting');
+        websocketStore.setState("connecting");
 
         this.ws = new WebSocket(wsUrlWithToken);
 
         this.ws.onopen = () => {
-          console.log('[WebSocket] Connected');
-          websocketStore.setState('connected');
+          console.log("[WebSocket] Connected");
+          websocketStore.setState("connected");
           websocketStore.resetReconnectAttempts();
           this.reconnectAttempts = 0;
           resolve();
@@ -50,41 +54,45 @@ export class WebSocketClient {
             const data: WebSocketEvent = JSON.parse(event.data);
             this.handleEvent(data);
           } catch (error) {
-            console.error('[WebSocket] Failed to parse message:', error);
+            console.error("[WebSocket] Failed to parse message:", error);
           }
         };
 
         this.ws.onerror = (error) => {
-          console.error('[WebSocket] Error:', error);
-          websocketStore.setError('WebSocket connection error');
+          console.error("[WebSocket] Error:", error);
+          websocketStore.setError("WebSocket connection error");
         };
 
         this.ws.onclose = (event) => {
-          console.log('[WebSocket] Disconnected', event.code, event.reason);
+          console.log("[WebSocket] Disconnected", event.code, event.reason);
 
           if (!this.isManualClose) {
             // Handle different close codes
             if (event.code === 1008 || event.code === 1002) {
               // 1008: Policy Violation (auth failure)
               // 1002: Protocol error
-              console.error('[WebSocket] Authentication failed or protocol error');
-              websocketStore.setError('WebSocket authentication failed');
-              websocketStore.setState('error');
+              console.error(
+                "[WebSocket] Authentication failed or protocol error",
+              );
+              websocketStore.setError("WebSocket authentication failed");
+              websocketStore.setState("error");
             } else if (this.reconnectAttempts < this.maxReconnectAttempts) {
               // Attempt reconnection with exponential backoff
               this.reconnect();
             } else {
-              console.error('[WebSocket] Max reconnection attempts reached');
-              websocketStore.setError('Failed to reconnect after multiple attempts');
-              websocketStore.setState('error');
+              console.error("[WebSocket] Max reconnection attempts reached");
+              websocketStore.setError(
+                "Failed to reconnect after multiple attempts",
+              );
+              websocketStore.setState("error");
             }
           } else {
-            websocketStore.setState('disconnected');
+            websocketStore.setState("disconnected");
           }
         };
       } catch (error) {
-        console.error('[WebSocket] Failed to create connection:', error);
-        websocketStore.setError('Failed to create WebSocket connection');
+        console.error("[WebSocket] Failed to create connection:", error);
+        websocketStore.setError("Failed to create WebSocket connection");
         reject(error);
       }
     });
@@ -101,37 +109,39 @@ export class WebSocketClient {
     // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (max)
     const delay = Math.min(
       this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts - 1),
-      this.maxReconnectDelay
+      this.maxReconnectDelay,
     );
 
     console.log(
-      `[WebSocket] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`
+      `[WebSocket] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`,
     );
 
-    websocketStore.setState('reconnecting');
+    websocketStore.setState("reconnecting");
 
     this.reconnectTimer = setTimeout(() => {
       this.connect(this.token!).catch((error) => {
-        console.error('[WebSocket] Reconnection failed:', error);
+        console.error("[WebSocket] Reconnection failed:", error);
       });
     }, delay);
   }
 
   private handleEvent(event: WebSocketEvent): void {
-    console.log('[WebSocket] Received event:', event);
+    console.log("[WebSocket] Received event:", event);
 
     // Backend sends 'event_type' field, not 'type'
     const eventType = (event as any).event_type || event.type;
 
     if (!eventType) {
-      console.error('[WebSocket] Event missing event_type field:', event);
+      console.error("[WebSocket] Event missing event_type field:", event);
       return;
     }
 
     const handlers = this.handlers.get(eventType);
 
     if (handlers) {
-      console.log(`[WebSocket] Dispatching ${eventType} to ${handlers.size} handlers`);
+      console.log(
+        `[WebSocket] Dispatching ${eventType} to ${handlers.size} handlers`,
+      );
       handlers.forEach((handler) => {
         try {
           handler(event);
@@ -140,7 +150,9 @@ export class WebSocketClient {
         }
       });
     } else {
-      console.warn(`[WebSocket] No handlers registered for event type: ${eventType}`);
+      console.warn(
+        `[WebSocket] No handlers registered for event type: ${eventType}`,
+      );
     }
   }
 
@@ -196,13 +208,13 @@ export function getWebSocketClient(): WebSocketClient {
     let wsUrl = import.meta.env.VITE_WS_URL;
 
     if (!wsUrl) {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost/api';
-      wsUrl = apiUrl.replace(/^http/, 'ws');
+      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost/api";
+      wsUrl = apiUrl.replace(/^http/, "ws");
     }
 
-    // Append /sync endpoint
-    if (!wsUrl.endsWith('/sync')) {
-      wsUrl = `${wsUrl}/sync`;
+    // Prefer the canonical websocket endpoint
+    if (!wsUrl.endsWith("/ws")) {
+      wsUrl = `${wsUrl}/ws`;
     }
 
     wsClient = new WebSocketClient(wsUrl);

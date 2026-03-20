@@ -1,5 +1,10 @@
 <script lang="ts">
   import type { File, Folder } from '$lib/api/types';
+  import {
+    formatReplicationStateLabel,
+    replicationStateBadgeClass,
+    type ReplicationStatus
+  } from '$lib/stores/replication';
   import { selectionStore } from '$lib/stores/selection';
 
   export let folders: Folder[] = [];
@@ -17,6 +22,7 @@
   export let onDownloadFile: (file: File) => void = () => {};
   export let onReplaceFile: (file: File) => void = () => {};
   export let selectionMode = false;
+  export let replicationStatuses: Record<string, ReplicationStatus> = {};
 
   function handleFileToggle(file: File) {
     selectionStore.toggleFile(file.id);
@@ -142,6 +148,13 @@
               >
                 {file.name}
               </button>
+              {#if replicationStatuses[file.id]}
+                <div class="mt-1">
+                  <span class={`badge badge-xs ${replicationStateBadgeClass(replicationStatuses[file.id].replicationState)}`}>
+                    {formatReplicationStateLabel(replicationStatuses[file.id].replicationState)}
+                  </span>
+                </div>
+              {/if}
             </div>
           </td>
           <td>

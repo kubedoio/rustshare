@@ -21,6 +21,7 @@
   import ReplaceFileModal from '$lib/components/modals/ReplaceFileModal.svelte';
   import Breadcrumbs from '$lib/components/layout/Breadcrumbs.svelte';
   import { showKeyboardShortcuts } from '$lib/stores/ui';
+  import { replicationStore, type ReplicationStatus } from '$lib/stores/replication';
   import { searchQuery } from '$lib/stores/search';
   import { fileSortState, setSortField, setViewMode, type SortField } from '$lib/stores/fileSort';
   import { selectionStore, selectionCount, hasSelection } from '$lib/stores/selection';
@@ -29,6 +30,7 @@
   import type { UploadTask } from '$lib/components/files/UploadProgress.svelte';
 
   let uploadTasks: UploadTask[] = [];
+  let replicationStatuses: Record<string, ReplicationStatus> = {};
   let showToast = false;
   let toastMessage = '';
   let toastType: 'success' | 'error' | 'info' = 'info';
@@ -649,6 +651,8 @@
     return files;
   })();
 
+  $: replicationStatuses = $replicationStore;
+
   // Handle real-time updates from WebSocket
   function handleWebSocketEvent(event: WebSocketEvent) {
     console.log('Received WebSocket event:', event);
@@ -918,6 +922,7 @@
           <FileGrid
             folders={sortedFolders}
             files={sortedFiles}
+            {replicationStatuses}
             {selectionMode}
             onFolderClick={handleFolderClick}
             onFileClick={handleFileClick}
@@ -936,6 +941,7 @@
           <FileList
             folders={sortedFolders}
             files={sortedFiles}
+            {replicationStatuses}
             {selectionMode}
             onFolderClick={handleFolderClick}
             onFileClick={handleFileClick}
