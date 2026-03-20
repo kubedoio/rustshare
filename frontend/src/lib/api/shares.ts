@@ -75,9 +75,7 @@ export async function listFileShares(fileId: string): Promise<Share[]> {
  * We'll need to aggregate file shares from all files
  */
 export async function listAllUserShares(): Promise<Share[]> {
-  // For now, return empty array
-  // TODO: Implement proper backend endpoint for listing all user shares
-  return [];
+  return apiClient.get<Share[]>("/shares");
 }
 
 /**

@@ -58,7 +58,7 @@ use axum::{
 };
 use rustshare_auth::{JwtManager, PasswordHasher};
 use rustshare_core::{
-    domain::User,
+    domain::{SharePermissions, User},
     events::EventBroadcaster,
     services::{
         FileService, FolderService, NotificationService, PermissionResolver, ShareService,
@@ -362,6 +362,10 @@ async fn main() -> Result<()> {
             "/api/v1/files/:file_id/shares",
             get(handlers::list_file_shares),
         )
+        .route("/api/shares", get(list_user_shares))
+        .route("/api/v1/shares", get(list_user_shares))
+        .route("/api/shares/:id", delete(revoke_share))
+        .route("/api/v1/shares/:id", delete(revoke_share))
         // User routes
         .route("/api/users/me", get(handlers::get_user_profile))
         .route("/api/v1/users/me", get(handlers::get_user_profile))
@@ -496,6 +500,113 @@ struct UserResponse {
     email: String,
     display_name: String,
     is_admin: bool,
+}
+
+#[derive(Serialize)]
+struct OwnedShareResponse {
+    id: uuid::Uuid,
+    file_id: uuid::Uuid,
+    file_name: String,
+    share_token: String,
+    permissions: SharePermissions,
+    password_protected: bool,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+async fn list_user_shares(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    handlers::AuthenticatedUser { user_id }: handlers::AuthenticatedUser,
+) -> Result<Json<Vec<OwnedShareResponse>>, (StatusCode, String)> {
+    let shares = state
+        .metadata_store
+        .get_user_public_shares(user_id)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to list shares: {error}"),
+            )
+        })?;
+
+    let response = shares
+        .into_iter()
+        .filter_map(|entry| {
+            let share = entry.share;
+            let (Some(file_id), Some(share_token)) = (share.file_id, share.share_token) else {
+                return None;
+            };
+
+            Some(OwnedShareResponse {
+                id: share.id,
+                file_id,
+                file_name: entry.file_name,
+                share_token,
+                permissions: share.permissions,
+                password_protected: share.password_hash.is_some(),
+                expires_at: share.expires_at,
+                created_at: share.created_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(response))
+}
+
+async fn revoke_share(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    axum::extract::Path(share_id): axum::extract::Path<uuid::Uuid>,
+    handlers::AuthenticatedUser { user_id }: handlers::AuthenticatedUser,
+) -> Result<StatusCode, (StatusCode, String)> {
+    state
+        .share_service
+        .revoke_share(share_id, user_id)
+        .await
+        .map_err(|error| match error {
+            rustshare_core::services::ShareError::NotFound => {
+                (StatusCode::NOT_FOUND, error.to_string())
+            }
+            rustshare_core::services::ShareError::NotFoundById(_) => {
+                (StatusCode::NOT_FOUND, error.to_string())
+            }
+            rustshare_core::services::ShareError::PermissionDenied { .. } => {
+                (StatusCode::FORBIDDEN, error.to_string())
+            }
+            rustshare_core::services::ShareError::FileNotFound(_) => {
+                (StatusCode::NOT_FOUND, error.to_string())
+            }
+            rustshare_core::services::ShareError::Revoked => (StatusCode::GONE, error.to_string()),
+            rustshare_core::services::ShareError::Expired => (StatusCode::GONE, error.to_string()),
+            rustshare_core::services::ShareError::PasswordRequired => {
+                (StatusCode::UNAUTHORIZED, error.to_string())
+            }
+            rustshare_core::services::ShareError::InvalidPassword => {
+                (StatusCode::UNAUTHORIZED, error.to_string())
+            }
+            rustshare_core::services::ShareError::RecipientNotFound(_) => {
+                (StatusCode::NOT_FOUND, error.to_string())
+            }
+            rustshare_core::services::ShareError::InsufficientPermission { .. } => {
+                (StatusCode::FORBIDDEN, error.to_string())
+            }
+            rustshare_core::services::ShareError::CannotShareWithSelf => {
+                (StatusCode::BAD_REQUEST, error.to_string())
+            }
+            rustshare_core::services::ShareError::ShareAlreadyExists(_) => {
+                (StatusCode::CONFLICT, error.to_string())
+            }
+            rustshare_core::services::ShareError::CannotRemoveOwner => {
+                (StatusCode::FORBIDDEN, error.to_string())
+            }
+            rustshare_core::services::ShareError::Database(_)
+            | rustshare_core::services::ShareError::PasswordHash(_)
+            | rustshare_core::services::ShareError::Jwt(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal server error".to_string(),
+            ),
+        })?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Login handler

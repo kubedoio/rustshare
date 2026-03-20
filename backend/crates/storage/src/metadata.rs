@@ -18,6 +18,12 @@ pub struct MetadataStore {
     pool: PgPool,
 }
 
+#[derive(Debug, Clone)]
+pub struct OwnedPublicShare {
+    pub share: Share,
+    pub file_name: String,
+}
+
 impl MetadataStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -1250,6 +1256,67 @@ impl MetadataStore {
                 revoked_at: row.try_get("revoked_at")?,
             };
             shares.push(share);
+        }
+
+        Ok(shares)
+    }
+
+    /// Get all active public shares created by a specific user, with file names.
+    pub async fn get_user_public_shares(&self, user_id: Uuid) -> Result<Vec<OwnedPublicShare>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                s.id,
+                s.file_id,
+                s.folder_id,
+                s.share_token,
+                s.recipient_user_id,
+                s.created_by,
+                s.permissions,
+                s.password_hash,
+                s.expires_at,
+                s.access_count,
+                s.created_at,
+                s.revoked_at,
+                f.name AS file_name
+            FROM shares s
+            INNER JOIN files f ON f.id = s.file_id
+            WHERE s.created_by = $1
+              AND s.recipient_user_id IS NULL
+              AND s.revoked_at IS NULL
+            ORDER BY s.created_at DESC
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut shares = Vec::with_capacity(rows.len());
+        for row in rows {
+            let permissions_str: String = row.try_get("permissions")?;
+            let permissions = match permissions_str.as_str() {
+                "edit" => SharePermissions::Edit,
+                "admin" => SharePermissions::Admin,
+                _ => SharePermissions::View,
+            };
+
+            shares.push(OwnedPublicShare {
+                share: Share {
+                    id: row.try_get("id")?,
+                    file_id: row.try_get("file_id")?,
+                    folder_id: row.try_get("folder_id")?,
+                    share_token: row.try_get("share_token")?,
+                    recipient_user_id: row.try_get("recipient_user_id")?,
+                    created_by: row.try_get("created_by")?,
+                    permissions,
+                    password_hash: row.try_get("password_hash")?,
+                    expires_at: row.try_get("expires_at")?,
+                    access_count: row.try_get("access_count")?,
+                    created_at: row.try_get("created_at")?,
+                    revoked_at: row.try_get("revoked_at")?,
+                },
+                file_name: row.try_get("file_name")?,
+            });
         }
 
         Ok(shares)
