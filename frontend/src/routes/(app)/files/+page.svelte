@@ -489,6 +489,7 @@
         downloadUrl = `/storage/${path}`;
       }
 
+      // Trigger download
       window.open(downloadUrl, '_blank');
       showNotification('Download started', 'success');
       activityStore.addActivity('file_downloaded', file.name);

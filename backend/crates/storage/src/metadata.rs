@@ -6,19 +6,13 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rustshare_core::domain::{File, FileVersion, Folder, ReplicationState, Share, SharePermissions, User};
+use rustshare_core::domain::{File, FileVersion, Folder, Share, SharePermissions, User};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 /// Metadata store for querying projection tables
 pub struct MetadataStore {
     pool: PgPool,
-}
-
-fn parse_replication_state(value: String) -> Result<ReplicationState> {
-    value
-        .parse::<ReplicationState>()
-        .map_err(anyhow::Error::msg)
 }
 
 #[derive(Debug, Clone)]
@@ -399,11 +393,8 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         sqlx::query(
             r#"
-            INSERT INTO file_versions (
-                id, file_id, version_number, content_hash, storage_key, size,
-                replication_state, created_by, created_at, change_description
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO file_versions (id, file_id, version_number, content_hash, storage_key, size, created_by, created_at, change_description)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             "#,
         )
         .bind(version.id)
@@ -412,7 +403,6 @@ impl MetadataStore {
         .bind(&version.content_hash)
         .bind(version.storage_key())
         .bind(version.size)
-        .bind(version.replication_state.to_string())
         .bind(version.created_by)
         .bind(version.created_at)
         .bind(&version.change_description)
@@ -427,7 +417,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
-            SELECT id, file_id, version_number, content_hash, size, replication_state, created_by, created_at, change_description
+            SELECT id, file_id, version_number, content_hash, size, created_by, created_at, change_description
             FROM file_versions
             WHERE file_id = $1
             ORDER BY version_number DESC
@@ -445,7 +435,6 @@ impl MetadataStore {
                 version_number: row.try_get("version_number")?,
                 content_hash: row.try_get("content_hash")?,
                 size: row.try_get("size")?,
-                replication_state: parse_replication_state(row.try_get("replication_state")?)?,
                 created_by: row.try_get("created_by")?,
                 created_at: row.try_get("created_at")?,
                 change_description: row.try_get("change_description")?,
@@ -461,7 +450,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, file_id, version_number, content_hash, size, replication_state, created_by, created_at, change_description
+            SELECT id, file_id, version_number, content_hash, size, created_by, created_at, change_description
             FROM file_versions
             WHERE file_id = $1 AND version_number = $2
             "#,
@@ -478,7 +467,6 @@ impl MetadataStore {
                 version_number: row.try_get("version_number")?,
                 content_hash: row.try_get("content_hash")?,
                 size: row.try_get("size")?,
-                replication_state: parse_replication_state(row.try_get("replication_state")?)?,
                 created_by: row.try_get("created_by")?,
                 created_at: row.try_get("created_at")?,
                 change_description: row.try_get("change_description")?,

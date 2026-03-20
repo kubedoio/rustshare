@@ -210,17 +210,6 @@ pub struct FileMovedPayload {
     pub moved_by: UserId,
 }
 
-/// File renamed event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileRenamedPayload {
-    pub file_id: FileId,
-    pub old_name: String,
-    pub new_name: String,
-    pub old_path: String,
-    pub new_path: String,
-    pub renamed_by: UserId,
-}
-
 /// File restored event payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileRestoredPayload {

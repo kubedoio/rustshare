@@ -47,7 +47,7 @@ impl ObjectStore {
         Ok(Self {
             client,
             bucket,
-            public_endpoint: Some(presign_client),
+            public_endpoint: Some(presign_client)
         })
     }
 
@@ -66,8 +66,7 @@ impl ObjectStore {
 
     /// Get object from storage
     pub async fn get(&self, key: &str) -> Result<Bytes> {
-        let output = self
-            .client
+        let output = self.client
             .get_object()
             .bucket(&self.bucket)
             .key(key)
@@ -92,8 +91,7 @@ impl ObjectStore {
 
     /// Check if object exists
     pub async fn exists(&self, key: &str) -> Result<bool> {
-        match self
-            .client
+        match self.client
             .head_object()
             .bucket(&self.bucket)
             .key(key)

@@ -7,7 +7,7 @@ mod share;
 mod user;
 
 pub use file::File;
-pub use file_version::{FileVersion, ReplicationState};
+pub use file_version::FileVersion;
 pub use folder::Folder;
 pub use notification::{Notification, NotificationId, NotificationType, ResourceType};
 pub use response_types::{FolderContents, FolderTree};
