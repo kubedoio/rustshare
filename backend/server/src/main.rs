@@ -403,6 +403,14 @@ async fn main() -> Result<()> {
         .route("/api/notifications", get(handlers::list_notifications))
         .route("/api/v1/notifications", get(handlers::list_notifications))
         .route(
+            "/api/notifications/unread-count",
+            get(handlers::count_unread_notifications),
+        )
+        .route(
+            "/api/v1/notifications/unread-count",
+            get(handlers::count_unread_notifications),
+        )
+        .route(
             "/api/notifications/:id/read",
             put(handlers::mark_notification_read),
         )

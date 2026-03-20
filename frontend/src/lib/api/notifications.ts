@@ -12,6 +12,10 @@ export interface ListNotificationsResponse {
   total: number;
 }
 
+export interface UnreadNotificationCountResponse {
+  count: number;
+}
+
 export async function listNotifications(
   params: ListNotificationsParams = {}
 ): Promise<ListNotificationsResponse> {
@@ -41,4 +45,8 @@ export async function markNotificationRead(notificationId: string): Promise<Noti
 
 export async function deleteNotification(notificationId: string): Promise<void> {
   return apiClient.delete<void>(`/notifications/${notificationId}`);
+}
+
+export async function getUnreadNotificationCount(): Promise<UnreadNotificationCountResponse> {
+  return apiClient.get<UnreadNotificationCountResponse>('/notifications/unread-count');
 }

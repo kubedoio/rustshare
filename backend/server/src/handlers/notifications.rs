@@ -78,6 +78,12 @@ pub struct ListNotificationsResponse {
     pub total: usize,
 }
 
+/// Response for unread notification count.
+#[derive(Debug, Serialize)]
+pub struct UnreadNotificationCountResponse {
+    pub count: i64,
+}
+
 // ============================================================================
 // Error Handler
 // ============================================================================
@@ -133,6 +139,22 @@ pub async fn list_notifications(
     };
 
     Ok(Json(response).into_response())
+}
+
+/// Count unread notifications for the authenticated user.
+///
+/// GET /api/notifications/unread-count
+pub async fn count_unread_notifications(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+) -> Result<Response, Response> {
+    let count = state
+        .notification_service
+        .count_unread(auth.user_id)
+        .await
+        .map_err(notification_error_response)?;
+
+    Ok(Json(UnreadNotificationCountResponse { count }).into_response())
 }
 
 // ============================================================================

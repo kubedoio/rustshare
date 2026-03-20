@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   deleteNotification,
+  getUnreadNotificationCount,
   listNotifications,
   markNotificationRead
 } from '$lib/api/notifications';
@@ -80,5 +81,15 @@ describe('notifications API', () => {
     await deleteNotification('notification-1');
 
     expect(apiClient.delete).toHaveBeenCalledWith('/notifications/notification-1');
+  });
+
+  it('gets unread notification count', async () => {
+    const response = { count: 7 };
+    vi.mocked(apiClient.get).mockResolvedValue(response);
+
+    const result = await getUnreadNotificationCount();
+
+    expect(apiClient.get).toHaveBeenCalledWith('/notifications/unread-count');
+    expect(result).toEqual(response);
   });
 });
