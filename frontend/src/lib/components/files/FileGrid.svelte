@@ -10,6 +10,7 @@
   export let onFileClick: (file: File) => void;
   export let onRenameFolder: (folder: Folder) => void = () => {};
   export let onDeleteFolder: (folder: Folder) => void = () => {};
+  export let onShareFolder: (folder: Folder) => void = () => {};
   export let onRenameFile: (file: File) => void = () => {};
   export let onDeleteFile: (file: File) => void = () => {};
   export let onShareFile: (file: File) => void = () => {};
@@ -65,6 +66,7 @@
         {selectionMode}
         on:rename={(e) => e.detail.isFolder && onRenameFolder(folder)}
         on:delete={(e) => e.detail.isFolder && onDeleteFolder(folder)}
+        on:share={(e) => e.detail.isFolder && onShareFolder(folder)}
         on:move={(e) => e.detail.isFolder && onMoveFolder(folder)}
       />
     {/each}
@@ -79,7 +81,7 @@
         {selectionMode}
         on:rename={(e) => !e.detail.isFolder && onRenameFile(file)}
         on:delete={(e) => !e.detail.isFolder && onDeleteFile(file)}
-        on:share={(e) => onShareFile(e.detail.item)}
+        on:share={(e) => !e.detail.isFolder && onShareFile(file)}
         on:versionHistory={handleVersionHistoryClick}
         on:move={(e) => !e.detail.isFolder && onMoveFile(file)}
         on:download={(e) => onDownloadFile(e.detail.item)}

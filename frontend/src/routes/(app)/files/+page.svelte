@@ -84,7 +84,8 @@
 		moveType === 'file'
 			? (moveTarget as File | null)?.parent_folder_id
 			: (moveTarget as Folder | null)?.parent_folder_id;
-	let shareTarget: File | null = null;
+	let shareTarget: File | Folder | null = null;
+	let shareType: 'file' | 'folder' = 'file';
 	let versionHistoryTarget: File | null = null;
 	let previewTarget: File | null = null;
 	let replaceFileTarget: File | null = null;
@@ -448,6 +449,13 @@
 
 	function handleShareFile(file: File) {
 		shareTarget = file;
+		shareType = 'file';
+		showShareModal = true;
+	}
+
+	function handleShareFolder(folder: Folder) {
+		shareTarget = folder;
+		shareType = 'folder';
 		showShareModal = true;
 	}
 
@@ -1018,6 +1026,7 @@
 					onFileClick={handleFileClick}
 					onRenameFolder={handleRenameFolder}
 					onDeleteFolder={handleDeleteFolder}
+					onShareFolder={handleShareFolder}
 					onMoveFolder={handleMoveFolder}
 					onRenameFile={handleRenameFile}
 					onDeleteFile={handleDeleteFile}
@@ -1037,6 +1046,7 @@
 					onFileClick={handleFileClick}
 					onRenameFolder={handleRenameFolder}
 					onDeleteFolder={handleDeleteFolder}
+					onShareFolder={handleShareFolder}
 					onMoveFolder={handleMoveFolder}
 					onRenameFile={handleRenameFile}
 					onDeleteFile={handleDeleteFile}
@@ -1104,8 +1114,9 @@
 
 <ShareModal
 	open={showShareModal}
-	fileId={shareTarget?.id || ''}
-	fileName={shareTarget?.name || ''}
+	resourceId={shareTarget?.id || ''}
+	resourceName={shareTarget?.name || ''}
+	resourceType={shareType}
 	on:close={() => {
 		showShareModal = false;
 		shareTarget = null;

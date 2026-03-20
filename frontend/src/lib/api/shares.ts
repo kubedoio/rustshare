@@ -107,11 +107,30 @@ export async function createFileUserShare(
 }
 
 /**
+ * Share a folder with another user.
+ * POST /api/folders/{folder_id}/share
+ */
+export async function createFolderUserShare(
+  folderId: string,
+  request: CreateUserShareRequest,
+): Promise<void> {
+  return apiClient.post<void>(`/folders/${folderId}/share`, request);
+}
+
+/**
  * List recipients for a shared file.
  * GET /api/files/{file_id}/recipients
  */
 export async function listFileRecipients(fileId: string): Promise<ShareRecipient[]> {
   return apiClient.get<ShareRecipient[]>(`/files/${fileId}/recipients`);
+}
+
+/**
+ * List recipients for a shared folder.
+ * GET /api/folders/{folder_id}/recipients
+ */
+export async function listFolderRecipients(folderId: string): Promise<ShareRecipient[]> {
+  return apiClient.get<ShareRecipient[]>(`/folders/${folderId}/recipients`);
 }
 
 /**

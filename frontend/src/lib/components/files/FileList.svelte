@@ -13,6 +13,7 @@
   export let onFileClick: (file: File) => void = () => {};
   export let onRenameFolder: (folder: Folder) => void = () => {};
   export let onDeleteFolder: (folder: Folder) => void = () => {};
+  export let onShareFolder: (folder: Folder) => void = () => {};
   export let onRenameFile: (file: File) => void = () => {};
   export let onDeleteFile: (file: File) => void = () => {};
   export let onShareFile: (file: File) => void = () => {};
@@ -119,6 +120,7 @@
               </button>
               <ul class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52">
                 <li><button type="button" on:click|stopPropagation={() => onRenameFolder(folder)}>Rename</button></li>
+                <li><button type="button" on:click|stopPropagation={() => onShareFolder(folder)}>Share</button></li>
                 <li><button type="button" on:click|stopPropagation={() => onMoveFolder(folder)}>Move</button></li>
                 <li><button type="button" on:click|stopPropagation={() => onDeleteFolder(folder)} class="text-error">Delete</button></li>
               </ul>

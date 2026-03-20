@@ -2,7 +2,9 @@
   import { createQuery, createMutation } from '@tanstack/svelte-query';
   import {
     createFileUserShare,
+    createFolderUserShare,
     createShare,
+    listFolderRecipients,
     listFileRecipients,
     listFileShares,
     removeShareRecipient,
@@ -16,8 +18,9 @@
   import { createEventDispatcher } from 'svelte';
 
   export let open = false;
-  export let fileId: string;
-  export let fileName: string;
+  export let resourceId: string;
+  export let resourceName: string;
+  export let resourceType: 'file' | 'folder' = 'file';
 
   const dispatch = createEventDispatcher<{
     close: void;
@@ -36,24 +39,27 @@
 
   // Query for existing shares
   $: sharesQuery = createQuery({
-    queryKey: ['file-shares', fileId],
-    queryFn: () => listFileShares(fileId),
-    enabled: open
+    queryKey: ['file-shares', resourceId],
+    queryFn: () => listFileShares(resourceId),
+    enabled: open && resourceType === 'file'
   });
 
   $: recipientsQuery = createQuery({
-    queryKey: ['file-share-recipients', fileId],
-    queryFn: () => listFileRecipients(fileId),
+    queryKey: ['share-recipients', resourceType, resourceId],
+    queryFn: () =>
+      resourceType === 'folder'
+        ? listFolderRecipients(resourceId)
+        : listFileRecipients(resourceId),
     enabled: open
   });
 
   // Mutation for creating share
   const createShareMutation = createMutation({
     mutationFn: async (request: CreateShareRequest) => {
-      return createShare(fileId, request);
+      return createShare(resourceId, request);
     },
     onSuccess: (response) => {
-      queryClient.invalidateQueries({ queryKey: ['file-shares', fileId] });
+      queryClient.invalidateQueries({ queryKey: ['file-shares', resourceId] });
       dispatch('notification', {
         message: 'Share link created successfully',
         type: 'success'
@@ -76,16 +82,23 @@
 
   const createUserShareMutation = createMutation({
     mutationFn: async () => {
-      return createFileUserShare(fileId, {
+      if (resourceType === 'folder') {
+        return createFolderUserShare(resourceId, {
+          recipient_email: recipientEmail.trim(),
+          permission: recipientPermission
+        });
+      }
+
+      return createFileUserShare(resourceId, {
         recipient_email: recipientEmail.trim(),
         permission: recipientPermission
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['file-share-recipients', fileId] });
+      queryClient.invalidateQueries({ queryKey: ['share-recipients', resourceType, resourceId] });
       queryClient.invalidateQueries({ queryKey: ['received-shares'] });
       dispatch('notification', {
-        message: 'File shared successfully',
+        message: `${resourceType === 'folder' ? 'Folder' : 'File'} shared successfully`,
         type: 'success'
       });
       recipientEmail = '';
@@ -105,7 +118,7 @@
       return revokeShare(shareId);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['file-shares', fileId] });
+      queryClient.invalidateQueries({ queryKey: ['file-shares', resourceId] });
       dispatch('notification', {
         message: 'Share link revoked successfully',
         type: 'success'
@@ -126,7 +139,7 @@
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['file-share-recipients', fileId] });
+      queryClient.invalidateQueries({ queryKey: ['share-recipients', resourceType, resourceId] });
       queryClient.invalidateQueries({ queryKey: ['received-shares'] });
       dispatch('notification', {
         message: 'Permission updated',
@@ -146,7 +159,7 @@
       return removeShareRecipient(shareId);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['file-share-recipients', fileId] });
+      queryClient.invalidateQueries({ queryKey: ['share-recipients', resourceType, resourceId] });
       queryClient.invalidateQueries({ queryKey: ['received-shares'] });
       dispatch('notification', {
         message: 'Access removed successfully',
@@ -269,6 +282,9 @@
 
   function handleClose() {
     activeTab = 'public';
+    if (resourceType === 'folder') {
+      activeTab = 'people';
+    }
     showCreateForm = false;
     permissions = 'View';
     password = '';
@@ -281,6 +297,10 @@
   function getShareUrl(token: string): string {
     const baseUrl = window.location.origin;
     return `${baseUrl}/share/${token}`;
+  }
+
+  $: if (resourceType === 'folder' && activeTab === 'public') {
+    activeTab = 'people';
   }
 
   $: if ($recipientsQuery.data) {
@@ -304,17 +324,19 @@
 
 <dialog class="modal" class:modal-open={open}>
   <div class="modal-box max-w-2xl">
-    <h3 class="font-bold text-lg mb-4">Share "{fileName}"</h3>
+    <h3 class="font-bold text-lg mb-4">Share "{resourceName}"</h3>
 
     <div class="tabs tabs-boxed mb-6">
-      <button
-        type="button"
-        class:tab-active={activeTab === 'public'}
-        class="tab"
-        on:click={() => (activeTab = 'public')}
-      >
-        Public Link
-      </button>
+      {#if resourceType === 'file'}
+        <button
+          type="button"
+          class:tab-active={activeTab === 'public'}
+          class="tab"
+          on:click={() => (activeTab = 'public')}
+        >
+          Public Link
+        </button>
+      {/if}
       <button
         type="button"
         class:tab-active={activeTab === 'people'}
@@ -325,7 +347,7 @@
       </button>
     </div>
 
-    {#if activeTab === 'public'}
+    {#if activeTab === 'public' && resourceType === 'file'}
     <!-- Create new share form -->
     <div class="mb-6">
       {#if !showCreateForm}

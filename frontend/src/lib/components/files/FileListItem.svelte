@@ -19,7 +19,7 @@
 	const dispatch = createEventDispatcher<{
 		rename: { item: File | Folder; isFolder: boolean };
 		delete: { item: File | Folder; isFolder: boolean };
-		share: { item: File };
+		share: { item: File | Folder; isFolder: boolean };
 		versionHistory: { item: File };
 		move: { item: File | Folder; isFolder: boolean };
 		download: { item: File };
@@ -46,7 +46,7 @@
 	function handleShare(e: Event) {
 		e.stopPropagation();
 		e.preventDefault();
-		dispatch('share', { item: item as File });
+		dispatch('share', { item, isFolder });
 	}
 
 	function handleVersionHistory(e: Event) {
@@ -185,6 +185,25 @@
 							Rename
 						</button>
 					</li>
+					<li>
+						<button type="button" on:click|stopPropagation={handleShare}>
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke-width="1.5"
+								stroke="currentColor"
+								class="w-4 h-4"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"
+								/>
+							</svg>
+							Share
+						</button>
+					</li>
 					{#if !isFolder}
 						<li>
 							<button type="button" on:click|stopPropagation={handleDownload}>
@@ -222,25 +241,6 @@
 									/>
 								</svg>
 								Replace File
-							</button>
-						</li>
-						<li>
-							<button type="button" on:click|stopPropagation={handleShare}>
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke-width="1.5"
-									stroke="currentColor"
-									class="w-4 h-4"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"
-									/>
-								</svg>
-								Share
 							</button>
 						</li>
 						<li>

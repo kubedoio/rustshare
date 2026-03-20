@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
 	createFileUserShare,
+	createFolderUserShare,
 	createShare,
 	listAllUserShares,
+	listFolderRecipients,
 	listFileRecipients,
 	listFileShares,
 	listReceivedShares,
@@ -238,6 +240,39 @@ describe('shares API', () => {
 			const result = await listFileRecipients('file-1');
 
 			expect(apiClient.get).toHaveBeenCalledWith('/files/file-1/recipients');
+			expect(result).toEqual(mockRecipients);
+		});
+
+		it('should create a folder user share', async () => {
+			vi.mocked(apiClient.post).mockResolvedValue(undefined);
+
+			await createFolderUserShare('folder-1', {
+				recipient_email: 'teammate@example.com',
+				permission: 'View'
+			});
+
+			expect(apiClient.post).toHaveBeenCalledWith('/folders/folder-1/share', {
+				recipient_email: 'teammate@example.com',
+				permission: 'View'
+			});
+		});
+
+		it('should list folder recipients', async () => {
+			const mockRecipients = [
+				{
+					share_id: 'share-2',
+					user_id: 'user-2',
+					email: 'teammate@example.com',
+					permission: 'View' as const,
+					added_at: '2024-01-01T00:00:00Z',
+					added_by: 'user-1'
+				}
+			];
+			vi.mocked(apiClient.get).mockResolvedValue(mockRecipients);
+
+			const result = await listFolderRecipients('folder-1');
+
+			expect(apiClient.get).toHaveBeenCalledWith('/folders/folder-1/recipients');
 			expect(result).toEqual(mockRecipients);
 		});
 
