@@ -70,6 +70,10 @@ impl NotificationRepositoryOps for NotificationRepository {
         self.list_for_user(user_id, unread_only, limit, offset).await
     }
 
+    async fn count_for_user(&self, user_id: UserId, unread_only: bool) -> Result<i64, sqlx::Error> {
+        self.count_for_user(user_id, unread_only).await
+    }
+
     async fn count_unread(&self, user_id: UserId) -> Result<i64, sqlx::Error> {
         self.count_unread(user_id).await
     }

@@ -133,6 +133,39 @@ impl NotificationRepository {
         Ok(result.0)
     }
 
+    /// Count notifications for a user with optional unread filtering.
+    pub async fn count_for_user(
+        &self,
+        user_id: UserId,
+        unread_only: bool,
+    ) -> Result<i64, sqlx::Error> {
+        let result: (i64,) = if unread_only {
+            sqlx::query_as(
+                r#"
+                SELECT COUNT(*)
+                FROM notifications
+                WHERE user_id = $1 AND read = FALSE
+                "#,
+            )
+            .bind(user_id)
+            .fetch_one(&self.pool)
+            .await?
+        } else {
+            sqlx::query_as(
+                r#"
+                SELECT COUNT(*)
+                FROM notifications
+                WHERE user_id = $1
+                "#,
+            )
+            .bind(user_id)
+            .fetch_one(&self.pool)
+            .await?
+        };
+
+        Ok(result.0)
+    }
+
     /// Mark a notification as read.
     pub async fn mark_as_read(
         &self,

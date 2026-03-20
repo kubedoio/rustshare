@@ -117,7 +117,11 @@ pub async fn list_notifications(
         .await
         .map_err(notification_error_response)?;
 
-    let total = notifications.len();
+    let total = state
+        .notification_service
+        .count_notifications(auth.user_id, query.unread_only)
+        .await
+        .map_err(notification_error_response)? as usize;
     let response_list: Vec<NotificationResponse> = notifications
         .into_iter()
         .map(NotificationResponse::from)

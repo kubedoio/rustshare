@@ -44,6 +44,10 @@ pub trait NotificationRepositoryOps: Send + Sync {
         offset: i64,
     ) -> Result<Vec<Notification>, sqlx::Error>;
 
+    /// Count notifications for a user with optional unread filtering.
+    async fn count_for_user(&self, user_id: UserId, unread_only: bool)
+        -> Result<i64, sqlx::Error>;
+
     /// Count unread notifications for a user.
     async fn count_unread(&self, user_id: UserId) -> Result<i64, sqlx::Error>;
 
@@ -150,6 +154,18 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
     pub async fn count_unread(&self, user_id: UserId) -> Result<i64, NotificationError> {
         self.repository
             .count_unread(user_id)
+            .await
+            .map_err(NotificationError::Database)
+    }
+
+    /// Count notifications for a user with optional unread filtering.
+    pub async fn count_notifications(
+        &self,
+        user_id: UserId,
+        unread_only: bool,
+    ) -> Result<i64, NotificationError> {
+        self.repository
+            .count_for_user(user_id, unread_only)
             .await
             .map_err(NotificationError::Database)
     }
@@ -296,6 +312,22 @@ mod tests {
             let result = filtered.into_iter().skip(start).take(limit as usize).collect();
 
             Ok(result)
+        }
+
+        async fn count_for_user(
+            &self,
+            user_id: UserId,
+            unread_only: bool,
+        ) -> Result<i64, sqlx::Error> {
+            let count = self
+                .notifications
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|n| n.user_id == user_id && (!unread_only || !n.read))
+                .count();
+
+            Ok(count as i64)
         }
 
         async fn count_unread(&self, user_id: UserId) -> Result<i64, sqlx::Error> {
@@ -616,6 +648,47 @@ mod tests {
         // Count should be 1
         let count = service.count_unread(user_id).await.unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_count_notifications_total_and_unread() {
+        let service = setup_service();
+        let user_id = Uuid::new_v4();
+        let resource_id = Uuid::new_v4();
+
+        let first = service
+            .create_notification(
+                user_id,
+                NotificationType::ShareReceived,
+                "First".to_string(),
+                "Message 1".to_string(),
+                resource_id,
+                ResourceType::File,
+                None,
+            )
+            .await
+            .unwrap();
+
+        service
+            .create_notification(
+                user_id,
+                NotificationType::PermissionChanged,
+                "Second".to_string(),
+                "Message 2".to_string(),
+                resource_id,
+                ResourceType::Folder,
+                None,
+            )
+            .await
+            .unwrap();
+
+        service.mark_as_read(first.id, user_id).await.unwrap();
+
+        let total = service.count_notifications(user_id, false).await.unwrap();
+        let unread = service.count_notifications(user_id, true).await.unwrap();
+
+        assert_eq!(total, 2);
+        assert_eq!(unread, 1);
     }
 
     #[tokio::test]
