@@ -106,6 +106,19 @@ where
     N: crate::services::NotificationRepositoryOps,
     E: crate::services::ShareEventStoreOps,
 {
+    fn shared_resource_action_url(
+        resource_type: crate::domain::ResourceType,
+        resource_id: uuid::Uuid,
+    ) -> String {
+        let resource_path = match resource_type {
+            crate::domain::ResourceType::File => "file",
+            crate::domain::ResourceType::Folder => "folder",
+            crate::domain::ResourceType::Share => "file",
+        };
+
+        format!("/shared-with-me/{resource_path}/{resource_id}")
+    }
+
     pub fn new(
         share_repo: Arc<SR>,
         user_repo: Arc<UR>,
@@ -242,7 +255,10 @@ where
                 format!("{} shared '{}' with you", creator_email, file.name),
                 file_id.into(),
                 crate::domain::ResourceType::File,
-                Some(format!("/files/{}", file_id)),
+                Some(Self::shared_resource_action_url(
+                    crate::domain::ResourceType::File,
+                    file_id.into(),
+                )),
             )
             .await
         {
@@ -326,7 +342,10 @@ where
                 format!("{} shared folder '{}' with you", creator_email, folder.name),
                 folder_id.into(),
                 crate::domain::ResourceType::Folder,
-                Some(format!("/folders/{}", folder_id)),
+                Some(Self::shared_resource_action_url(
+                    crate::domain::ResourceType::Folder,
+                    folder_id.into(),
+                )),
             )
             .await
         {
@@ -490,7 +509,14 @@ where
                     } else {
                         crate::domain::ResourceType::Folder
                     },
-                    None,
+                    Some(Self::shared_resource_action_url(
+                        if share.is_file_share() {
+                            crate::domain::ResourceType::File
+                        } else {
+                            crate::domain::ResourceType::Folder
+                        },
+                        share.resource_id(),
+                    )),
                 )
                 .await
             {
@@ -601,7 +627,7 @@ where
                     } else {
                         crate::domain::ResourceType::Folder
                     },
-                    None,
+                    Some("/shared-with-me".to_string()),
                 )
                 .await
             {

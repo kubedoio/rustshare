@@ -2,6 +2,7 @@
 	import { createQuery } from '@tanstack/svelte-query';
 	import { goto } from '$app/navigation';
 	import { listReceivedShares } from '$lib/api/shares';
+	import { sharedResourcePath } from '$lib/utils/shared';
 	import { formatDate } from '$lib/utils/format';
 
 	const receivedSharesQuery = createQuery({
@@ -17,6 +18,10 @@
 
 	function resourceIcon(resourceType: 'file' | 'folder'): string {
 		return resourceType === 'folder' ? '📁' : '📄';
+	}
+
+	function openShare(resourceType: 'file' | 'folder', resourceId: string) {
+		goto(sharedResourcePath(resourceType, resourceId));
 	}
 </script>
 
@@ -73,7 +78,13 @@
 								<div class="flex items-center gap-3">
 									<span class="text-2xl">{resourceIcon(share.resource_type)}</span>
 									<div>
-										<div class="font-medium">{share.resource_name}</div>
+										<button
+											type="button"
+											class="font-medium text-left hover:text-primary"
+											on:click={() => openShare(share.resource_type, share.resource_id)}
+										>
+											{share.resource_name}
+										</button>
 										<div class="text-xs text-base-content/60">{share.resource_path}</div>
 									</div>
 								</div>
@@ -89,7 +100,18 @@
 							<td>
 								<span class="badge badge-ghost">{permissionLabel(share.permission)}</span>
 							</td>
-							<td>{formatDate(share.created_at)}</td>
+							<td>
+								<div class="flex items-center justify-between gap-4">
+									<span>{formatDate(share.created_at)}</span>
+									<button
+										type="button"
+										class="btn btn-sm btn-outline"
+										on:click={() => openShare(share.resource_type, share.resource_id)}
+									>
+										Open
+									</button>
+								</div>
+							</td>
 						</tr>
 					{/each}
 				</tbody>

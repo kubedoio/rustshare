@@ -6,8 +6,10 @@
     listNotifications,
     markNotificationRead
   } from '$lib/api/notifications';
+  import type { Notification } from '$lib/api/types';
   import { queryClient } from '$lib/query-client';
   import { toastStore } from '$lib/stores/toast';
+  import { resolveNotificationTarget } from '$lib/utils/shared';
   import { formatDate } from '$lib/utils/format';
 
   let unreadOnly = false;
@@ -77,18 +79,8 @@
     return 'Notification';
   }
 
-  function handleOpenNotification(actionUrl: string | null) {
-    if (!actionUrl) {
-      goto('/shared-with-me');
-      return;
-    }
-
-    if (actionUrl.startsWith('/files/') || actionUrl.startsWith('/folders/')) {
-      goto('/shared-with-me');
-      return;
-    }
-
-    goto(actionUrl);
+  function handleOpenNotification(notification: Notification) {
+    goto(resolveNotificationTarget(notification));
   }
 </script>
 
@@ -185,7 +177,7 @@
 
                   <button
                     class="btn btn-outline btn-sm"
-                    on:click={() => handleOpenNotification(notification.action_url)}
+                    on:click={() => handleOpenNotification(notification)}
                   >
                     Open
                   </button>
