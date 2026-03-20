@@ -59,6 +59,15 @@ export interface ReceivedShare {
 	created_at: string;
 }
 
+export interface ShareRecipient {
+	share_id: string;
+	user_id: string;
+	email: string;
+	permission: 'View' | 'Edit' | 'Admin';
+	added_at: string;
+	added_by: string;
+}
+
 export interface FolderContents {
 	folders: Folder[];
 	files: File[];

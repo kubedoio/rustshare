@@ -514,6 +514,12 @@
 		showNotification('File version restored successfully', 'success');
 	}
 
+	function handleShareNotification(
+		e: CustomEvent<{ message: string; type: 'success' | 'error' | 'info' }>
+	) {
+		showNotification(e.detail.message, e.detail.type);
+	}
+
 	function handleReplaceFile(file: File) {
 		replaceFileTarget = file;
 		showReplaceFileModal = true;
@@ -1104,7 +1110,7 @@
 		showShareModal = false;
 		shareTarget = null;
 	}}
-	on:notification={(e) => showNotification(e.detail.message, e.detail.type)}
+	on:notification={handleShareNotification}
 />
 
 <VersionHistoryModal

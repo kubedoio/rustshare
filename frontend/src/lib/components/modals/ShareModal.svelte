@@ -1,8 +1,16 @@
 <script lang="ts">
   import { createQuery, createMutation } from '@tanstack/svelte-query';
-  import { createShare, listFileShares, revokeShare } from '$lib/api/shares';
+  import {
+    createFileUserShare,
+    createShare,
+    listFileRecipients,
+    listFileShares,
+    removeShareRecipient,
+    revokeShare,
+    updateSharePermission
+  } from '$lib/api/shares';
   import type { CreateShareRequest } from '$lib/api/shares';
-  import type { Share } from '$lib/api/types';
+  import type { Share, ShareRecipient } from '$lib/api/types';
   import { queryClient } from '$lib/query-client';
   import { formatDate } from '$lib/utils/format';
   import { createEventDispatcher } from 'svelte';
@@ -20,12 +28,22 @@
   let permissions: 'View' | 'Edit' | 'Admin' = 'View';
   let password = '';
   let expiresAt = '';
+  let recipientEmail = '';
+  let recipientPermission: 'View' | 'Edit' | 'Admin' = 'View';
   let showCreateForm = false;
+  let activeTab: 'public' | 'people' = 'public';
+  let recipientPermissionDrafts: Record<string, 'View' | 'Edit' | 'Admin'> = {};
 
   // Query for existing shares
   $: sharesQuery = createQuery({
     queryKey: ['file-shares', fileId],
     queryFn: () => listFileShares(fileId),
+    enabled: open
+  });
+
+  $: recipientsQuery = createQuery({
+    queryKey: ['file-share-recipients', fileId],
+    queryFn: () => listFileRecipients(fileId),
     enabled: open
   });
 
@@ -56,6 +74,31 @@
     }
   });
 
+  const createUserShareMutation = createMutation({
+    mutationFn: async () => {
+      return createFileUserShare(fileId, {
+        recipient_email: recipientEmail.trim(),
+        permission: recipientPermission
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['file-share-recipients', fileId] });
+      queryClient.invalidateQueries({ queryKey: ['received-shares'] });
+      dispatch('notification', {
+        message: 'File shared successfully',
+        type: 'success'
+      });
+      recipientEmail = '';
+      recipientPermission = 'View';
+    },
+    onError: (error) => {
+      dispatch('notification', {
+        message: error instanceof Error ? error.message : 'Failed to share file',
+        type: 'error'
+      });
+    }
+  });
+
   // Mutation for revoking share
   const revokeShareMutation = createMutation({
     mutationFn: async (shareId: string) => {
@@ -71,6 +114,48 @@
     onError: (error) => {
       dispatch('notification', {
         message: error instanceof Error ? error.message : 'Failed to revoke share',
+        type: 'error'
+      });
+    }
+  });
+
+  const updateRecipientPermissionMutation = createMutation({
+    mutationFn: async (payload: { shareId: string; permission: 'View' | 'Edit' | 'Admin' }) => {
+      return updateSharePermission(payload.shareId, {
+        permission: payload.permission
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['file-share-recipients', fileId] });
+      queryClient.invalidateQueries({ queryKey: ['received-shares'] });
+      dispatch('notification', {
+        message: 'Permission updated',
+        type: 'success'
+      });
+    },
+    onError: (error) => {
+      dispatch('notification', {
+        message: error instanceof Error ? error.message : 'Failed to update permission',
+        type: 'error'
+      });
+    }
+  });
+
+  const removeRecipientMutation = createMutation({
+    mutationFn: async (shareId: string) => {
+      return removeShareRecipient(shareId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['file-share-recipients', fileId] });
+      queryClient.invalidateQueries({ queryKey: ['received-shares'] });
+      dispatch('notification', {
+        message: 'Access removed successfully',
+        type: 'success'
+      });
+    },
+    onError: (error) => {
+      dispatch('notification', {
+        message: error instanceof Error ? error.message : 'Failed to remove access',
         type: 'error'
       });
     }
@@ -110,17 +195,86 @@
     $createShareMutation.mutate(request);
   }
 
+  function handleCreateUserShare() {
+    if (!recipientEmail.trim()) {
+      dispatch('notification', {
+        message: 'Recipient email is required',
+        type: 'error'
+      });
+      return;
+    }
+
+    $createUserShareMutation.mutate();
+  }
+
   function handleRevoke(shareId: string) {
     if (confirm('Are you sure you want to revoke this share link?')) {
       $revokeShareMutation.mutate(shareId);
     }
   }
 
+  function handleRecipientPermissionChange(
+    shareId: string,
+    permission: 'View' | 'Edit' | 'Admin'
+  ) {
+    recipientPermissionDrafts = {
+      ...recipientPermissionDrafts,
+      [shareId]: permission
+    };
+  }
+
+  function handleRecipientPermissionSelect(
+    shareId: string,
+    event: Event
+  ) {
+    const permission = (event.currentTarget as HTMLSelectElement).value as
+      | 'View'
+      | 'Edit'
+      | 'Admin';
+    handleRecipientPermissionChange(shareId, permission);
+  }
+
+  function currentRecipientPermission(recipient: ShareRecipient): 'View' | 'Edit' | 'Admin' {
+    return recipientPermissionDrafts[recipient.share_id] || recipient.permission;
+  }
+
+  function recipientDraftsChanged(nextDrafts: Record<string, 'View' | 'Edit' | 'Admin'>): boolean {
+    const currentKeys = Object.keys(recipientPermissionDrafts);
+    const nextKeys = Object.keys(nextDrafts);
+
+    if (currentKeys.length !== nextKeys.length) {
+      return true;
+    }
+
+    return nextKeys.some((key) => recipientPermissionDrafts[key] !== nextDrafts[key]);
+  }
+
+  function handleSaveRecipientPermission(recipient: ShareRecipient) {
+    const permission = currentRecipientPermission(recipient);
+    if (permission === recipient.permission) {
+      return;
+    }
+
+    $updateRecipientPermissionMutation.mutate({
+      shareId: recipient.share_id,
+      permission
+    });
+  }
+
+  function handleRemoveRecipient(recipient: ShareRecipient) {
+    if (confirm(`Remove access for "${recipient.email}"?`)) {
+      $removeRecipientMutation.mutate(recipient.share_id);
+    }
+  }
+
   function handleClose() {
+    activeTab = 'public';
     showCreateForm = false;
     permissions = 'View';
     password = '';
     expiresAt = '';
+    recipientEmail = '';
+    recipientPermission = 'View';
     dispatch('close');
   }
 
@@ -129,17 +283,53 @@
     return `${baseUrl}/share/${token}`;
   }
 
-  $: isLoading = $createShareMutation.isPending || $revokeShareMutation.isPending;
+  $: if ($recipientsQuery.data) {
+    const nextDrafts: Record<string, 'View' | 'Edit' | 'Admin'> = {};
+    for (const recipient of $recipientsQuery.data) {
+      nextDrafts[recipient.share_id] =
+        recipientPermissionDrafts[recipient.share_id] || recipient.permission;
+    }
+    if (recipientDraftsChanged(nextDrafts)) {
+      recipientPermissionDrafts = nextDrafts;
+    }
+  }
+
+  $: isLoading =
+    $createShareMutation.isPending ||
+    $revokeShareMutation.isPending ||
+    $createUserShareMutation.isPending ||
+    $updateRecipientPermissionMutation.isPending ||
+    $removeRecipientMutation.isPending;
 </script>
 
 <dialog class="modal" class:modal-open={open}>
   <div class="modal-box max-w-2xl">
     <h3 class="font-bold text-lg mb-4">Share "{fileName}"</h3>
 
+    <div class="tabs tabs-boxed mb-6">
+      <button
+        type="button"
+        class:tab-active={activeTab === 'public'}
+        class="tab"
+        on:click={() => (activeTab = 'public')}
+      >
+        Public Link
+      </button>
+      <button
+        type="button"
+        class:tab-active={activeTab === 'people'}
+        class="tab"
+        on:click={() => (activeTab = 'people')}
+      >
+        People
+      </button>
+    </div>
+
+    {#if activeTab === 'public'}
     <!-- Create new share form -->
     <div class="mb-6">
       {#if !showCreateForm}
-        <button class="btn btn-primary" on:click={() => (showCreateForm = true)}>
+        <button type="button" class="btn btn-primary" on:click={() => (showCreateForm = true)}>
           <svg
             xmlns="http://www.w3.org/2000/svg"
             fill="none"
@@ -322,6 +512,114 @@
         </div>
       {/if}
     </div>
+    {:else}
+    <div class="space-y-6">
+      <div class="card bg-base-200 p-4">
+        <h4 class="font-semibold mb-3">Share with a Person</h4>
+        <form on:submit|preventDefault={handleCreateUserShare} class="space-y-4">
+          <div class="form-control">
+            <label class="label" for="recipient-email">
+              <span class="label-text">Recipient Email</span>
+            </label>
+            <input
+              id="recipient-email"
+              type="email"
+              class="input input-bordered"
+              placeholder="teammate@example.com"
+              bind:value={recipientEmail}
+              disabled={isLoading}
+            />
+          </div>
+          <div class="form-control">
+            <label class="label" for="recipient-permission">
+              <span class="label-text">Permission</span>
+            </label>
+            <select
+              id="recipient-permission"
+              class="select select-bordered"
+              bind:value={recipientPermission}
+              disabled={isLoading}
+            >
+              <option value="View">View</option>
+              <option value="Edit">Edit</option>
+              <option value="Admin">Manage</option>
+            </select>
+          </div>
+          <div class="flex justify-end">
+            <button type="submit" class="btn btn-primary" disabled={isLoading}>
+              {#if $createUserShareMutation.isPending}
+                <span class="loading loading-spinner loading-sm"></span>
+              {/if}
+              Share with Person
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div>
+        <h4 class="font-semibold mb-3">People with Access</h4>
+        {#if $recipientsQuery.isLoading}
+          <div class="flex justify-center py-8">
+            <span class="loading loading-spinner loading-md"></span>
+          </div>
+        {:else if $recipientsQuery.isError}
+          <div class="alert alert-error">
+            <span>Failed to load recipients: {$recipientsQuery.error?.message}</span>
+          </div>
+        {:else if $recipientsQuery.data && $recipientsQuery.data.length > 0}
+          <div class="space-y-3">
+            {#each $recipientsQuery.data as recipient}
+              <div class="card bg-base-200">
+                <div class="card-body p-4">
+                  <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div class="min-w-0">
+                      <div class="font-medium truncate">{recipient.email}</div>
+                      <div class="text-sm text-base-content/60">
+                        Added {formatDate(recipient.added_at)}
+                      </div>
+                    </div>
+                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <select
+                        class="select select-bordered select-sm"
+                        value={currentRecipientPermission(recipient)}
+                        disabled={isLoading}
+                        on:change={(event) =>
+                          handleRecipientPermissionSelect(recipient.share_id, event)}
+                      >
+                        <option value="View">View</option>
+                        <option value="Edit">Edit</option>
+                        <option value="Admin">Manage</option>
+                      </select>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-ghost"
+                        on:click={() => handleSaveRecipientPermission(recipient)}
+                        disabled={isLoading || currentRecipientPermission(recipient) === recipient.permission}
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-error"
+                        on:click={() => handleRemoveRecipient(recipient)}
+                        disabled={isLoading}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="text-center py-8 text-base-content/60">
+            <p>No people have access to this file yet</p>
+          </div>
+        {/if}
+      </div>
+    </div>
+    {/if}
 
     <div class="modal-action">
       <button type="button" class="btn" on:click={handleClose} disabled={isLoading}>

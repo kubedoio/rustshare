@@ -1,5 +1,5 @@
 import { apiClient } from "./client";
-import type { ReceivedShare, Share } from "./types";
+import type { ReceivedShare, Share, ShareRecipient } from "./types";
 
 // Request/Response Types
 
@@ -34,6 +34,15 @@ export interface ShareSessionRequest {
 export interface ShareSessionResponse {
   session_token: string;
   expires_at: string;
+}
+
+export interface CreateUserShareRequest {
+  recipient_email: string;
+  permission: "View" | "Edit" | "Admin";
+}
+
+export interface UpdateSharePermissionRequest {
+  permission: "View" | "Edit" | "Admin";
 }
 
 // Authenticated Share Operations
@@ -84,6 +93,44 @@ export async function listAllUserShares(): Promise<Share[]> {
  */
 export async function listReceivedShares(): Promise<ReceivedShare[]> {
   return apiClient.get<ReceivedShare[]>("/shares/received");
+}
+
+/**
+ * Share a file with another user.
+ * POST /api/files/{file_id}/share
+ */
+export async function createFileUserShare(
+  fileId: string,
+  request: CreateUserShareRequest,
+): Promise<void> {
+  return apiClient.post<void>(`/files/${fileId}/share`, request);
+}
+
+/**
+ * List recipients for a shared file.
+ * GET /api/files/{file_id}/recipients
+ */
+export async function listFileRecipients(fileId: string): Promise<ShareRecipient[]> {
+  return apiClient.get<ShareRecipient[]>(`/files/${fileId}/recipients`);
+}
+
+/**
+ * Update an internal share permission.
+ * PUT /api/shares/{share_id}/permission
+ */
+export async function updateSharePermission(
+  shareId: string,
+  request: UpdateSharePermissionRequest,
+): Promise<void> {
+  return apiClient.put<void>(`/shares/${shareId}/permission`, request);
+}
+
+/**
+ * Remove a recipient from an internal share.
+ * DELETE /api/shares/{share_id}/recipient
+ */
+export async function removeShareRecipient(shareId: string): Promise<void> {
+  return apiClient.delete<void>(`/shares/${shareId}/recipient`);
 }
 
 /**

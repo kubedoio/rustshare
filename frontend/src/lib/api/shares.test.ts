@@ -1,5 +1,15 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createShare, listFileShares, revokeShare, listAllUserShares } from '$lib/api/shares';
+import {
+	createFileUserShare,
+	createShare,
+	listAllUserShares,
+	listFileRecipients,
+	listFileShares,
+	listReceivedShares,
+	removeShareRecipient,
+	revokeShare,
+	updateSharePermission
+} from '$lib/api/shares';
 import type { CreateShareRequest } from '$lib/api/shares';
 
 // Mock the API client
@@ -171,6 +181,82 @@ describe('shares API', () => {
 
 			expect(apiClient.get).toHaveBeenCalledWith('/shares');
 			expect(result).toEqual(mockShares);
+		});
+	});
+
+	describe('internal shares', () => {
+		it('should create a file user share', async () => {
+			vi.mocked(apiClient.post).mockResolvedValue(undefined);
+
+			await createFileUserShare('file-1', {
+				recipient_email: 'teammate@example.com',
+				permission: 'Edit'
+			});
+
+			expect(apiClient.post).toHaveBeenCalledWith('/files/file-1/share', {
+				recipient_email: 'teammate@example.com',
+				permission: 'Edit'
+			});
+		});
+
+		it('should list received shares', async () => {
+			const mockShares = [
+				{
+					share_id: 'share-1',
+					resource_id: 'file-1',
+					resource_type: 'file' as const,
+					resource_name: 'Roadmap.pdf',
+					resource_path: '/Roadmap.pdf',
+					permission: 'View' as const,
+					shared_by: 'user-1',
+					shared_by_name: 'Alice',
+					shared_by_email: 'alice@example.com',
+					created_at: '2024-01-01T00:00:00Z'
+				}
+			];
+			vi.mocked(apiClient.get).mockResolvedValue(mockShares);
+
+			const result = await listReceivedShares();
+
+			expect(apiClient.get).toHaveBeenCalledWith('/shares/received');
+			expect(result).toEqual(mockShares);
+		});
+
+		it('should list file recipients', async () => {
+			const mockRecipients = [
+				{
+					share_id: 'share-1',
+					user_id: 'user-2',
+					email: 'teammate@example.com',
+					permission: 'Edit' as const,
+					added_at: '2024-01-01T00:00:00Z',
+					added_by: 'user-1'
+				}
+			];
+			vi.mocked(apiClient.get).mockResolvedValue(mockRecipients);
+
+			const result = await listFileRecipients('file-1');
+
+			expect(apiClient.get).toHaveBeenCalledWith('/files/file-1/recipients');
+			expect(result).toEqual(mockRecipients);
+		});
+
+		it('should update recipient permission', async () => {
+			vi.mocked(apiClient.put).mockResolvedValue(undefined);
+
+			await updateSharePermission('share-1', { permission: 'Admin' });
+
+			expect(apiClient.put).toHaveBeenCalledWith('/shares/share-1/permission', {
+				permission: 'Admin'
+			});
+		});
+
+		it('should remove a share recipient', async () => {
+			vi.mocked(apiClient.delete).mockResolvedValue(undefined);
+
+			await removeShareRecipient('share-1');
+
+			expect(apiClient.delete).toHaveBeenCalledWith('/shares/share-1/recipient');
 		});
 	});
 
