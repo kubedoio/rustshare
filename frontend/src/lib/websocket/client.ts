@@ -1,4 +1,3 @@
-import { get } from "svelte/store";
 import { websocketStore } from "$lib/stores/websocket";
 import type {
   WebSocketEvent,
@@ -23,18 +22,14 @@ export class WebSocketClient {
     this.url = url.replace(/^http/, "ws");
   }
 
-  connect(token: string): Promise<void> {
+  connect(token?: string | null): Promise<void> {
     return new Promise((resolve, reject) => {
-      if (!token) {
-        reject(new Error("No authentication token available"));
-        return;
-      }
-
-      this.token = token;
+      this.token = token ?? null;
       this.isManualClose = false;
 
-      // Use token as query parameter for browser WebSocket compatibility
-      const wsUrlWithToken = `${this.url}?token=${encodeURIComponent(token)}`;
+      const wsUrlWithToken = this.token
+        ? `${this.url}?token=${encodeURIComponent(this.token)}`
+        : this.url;
 
       try {
         websocketStore.setState("connecting");
@@ -99,7 +94,7 @@ export class WebSocketClient {
   }
 
   private reconnect(): void {
-    if (this.isManualClose || !this.token) {
+    if (this.isManualClose) {
       return;
     }
 
@@ -119,7 +114,7 @@ export class WebSocketClient {
     websocketStore.setState("reconnecting");
 
     this.reconnectTimer = setTimeout(() => {
-      this.connect(this.token!).catch((error) => {
+      this.connect(this.token).catch((error) => {
         console.error("[WebSocket] Reconnection failed:", error);
       });
     }, delay);

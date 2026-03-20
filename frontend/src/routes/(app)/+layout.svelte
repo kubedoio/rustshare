@@ -18,23 +18,14 @@
   // Check authentication on mount
   onMount(() => {
     console.log('[Layout] onMount - authStore:', $authStore);
-    console.log('[Layout] onMount - localStorage token:', localStorage.getItem('token'));
-
-    // Give the auth store a moment to initialize from localStorage
-    setTimeout(() => {
-      console.log('[Layout] setTimeout - authStore:', $authStore);
-      checkComplete = true;
-      if (!$authStore.isAuthenticated) {
-        console.log('[Layout] Redirecting to login - not authenticated');
-        goto('/login');
-      } else {
-        console.log('[Layout] User is authenticated, staying on page');
-      }
-    }, 0);
   });
 
+  $: if (!$authStore.isLoading) {
+    checkComplete = true;
+  }
+
   // Redirect if auth state changes (only after initial check)
-  $: if (browser && checkComplete && !$authStore.isAuthenticated) {
+  $: if (browser && checkComplete && !$authStore.isLoading && !$authStore.isAuthenticated) {
     console.log('[Layout] Reactive redirect - auth state changed to unauthenticated');
     goto('/login');
   }

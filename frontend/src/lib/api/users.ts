@@ -1,5 +1,5 @@
-import { apiClient } from './client';
-import type { Theme } from '$lib/stores/theme';
+import { apiClient } from "./client";
+import type { Theme } from "$lib/stores/theme";
 
 export interface UserProfile {
   id: string;
@@ -21,14 +21,18 @@ export interface UpdateThemeResponse {
  * Get the current user's profile.
  */
 export async function getUserProfile(): Promise<UserProfile> {
-  const response = await apiClient.get<UserProfile>('/users/me');
+  const response = await apiClient.get<UserProfile>("/me");
   return response;
 }
 
 /**
  * Update the current user's theme preference.
  */
-export async function updateUserTheme(theme: Theme): Promise<UpdateThemeResponse> {
-  const response = await apiClient.patch<UpdateThemeResponse>('/users/me/theme', { theme });
+export async function updateUserTheme(
+  theme: Theme,
+): Promise<UpdateThemeResponse> {
+  const response = await apiClient.patch<UpdateThemeResponse>("/me/theme", {
+    theme,
+  });
   return response;
 }

@@ -38,10 +38,8 @@
 
     try {
       // Get download URL from backend
-      const response = await fetch(`/api/files/${file.id}/download`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
+      const response = await fetch(`/api/v1/files/${file.id}/download`, {
+        credentials: 'include'
       });
 
       if (!response.ok) {

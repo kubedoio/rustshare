@@ -3,7 +3,7 @@
 use axum::{
     async_trait,
     extract::FromRequestParts,
-    http::{request::Parts, StatusCode},
+    http::{request::Parts, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json, RequestPartsExt,
 };
@@ -14,6 +14,7 @@ use axum_extra::{
 use rustshare_auth::ShareSessionClaims;
 use uuid::Uuid;
 
+use crate::web_session::{extract_cookie_value, resolve_user_session};
 use crate::AppState;
 
 /// Authenticated user extracted from JWT token.
@@ -34,38 +35,31 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        // Extract Authorization header
+        if let Some(session_token) =
+            extract_cookie_value(&parts.headers, rustshare_auth::WEB_SESSION_COOKIE_NAME)
+        {
+            if let Some(session) = resolve_user_session(state, &session_token)
+                .await
+                .map_err(session_auth_error)?
+            {
+                return Ok(AuthenticatedUser {
+                    user_id: session.user_id,
+                });
+            }
+        }
+
         let TypedHeader(Authorization(bearer)) = parts
             .extract::<TypedHeader<Authorization<Bearer>>>()
             .await
-            .map_err(|_| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({"error": "Missing or invalid Authorization header"})),
-                )
-                    .into_response()
-            })?;
+            .map_err(|_| auth_error("Missing or invalid authentication"))?;
 
-        // Validate JWT token
         let claims = state
             .jwt_manager
             .validate(bearer.token())
-            .map_err(|e| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({"error": format!("Invalid token: {}", e)})),
-                )
-                    .into_response()
-            })?;
+            .map_err(|e| auth_error(&format!("Invalid token: {}", e)))?;
 
-        // Parse user ID from claims
-        let user_id = Uuid::parse_str(&claims.sub).map_err(|_| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "Invalid user ID in token"})),
-            )
-                .into_response()
-        })?;
+        let user_id =
+            Uuid::parse_str(&claims.sub).map_err(|_| auth_error("Invalid user ID in token"))?;
 
         Ok(AuthenticatedUser { user_id })
     }
@@ -121,4 +115,29 @@ impl FromRequestParts<AppState> for ShareSessionAuth {
 
         Ok(ShareSessionAuth(claims))
     }
+}
+
+pub(crate) fn bearer_token_from_headers(headers: &HeaderMap) -> Option<String> {
+    let value = headers
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?;
+    let bearer = value.strip_prefix("Bearer ")?;
+    Some(bearer.to_string())
+}
+
+fn auth_error(message: &str) -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({ "error": message })),
+    )
+        .into_response()
+}
+
+fn session_auth_error(error: String) -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({ "error": format!("Session validation failed: {}", error) })),
+    )
+        .into_response()
 }

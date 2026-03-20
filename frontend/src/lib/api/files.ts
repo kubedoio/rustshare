@@ -1,21 +1,24 @@
-import { apiClient } from './client';
-import type { File, FileVersion } from './types';
+import { apiClient } from "./client";
+import type { File, FileVersion } from "./types";
 
 export async function listAllFiles(): Promise<File[]> {
-  return apiClient.get<File[]>('/files');
+  return apiClient.get<File[]>("/files");
 }
 
-export async function uploadFile(folderId: string | null, file: globalThis.File): Promise<File> {
+export async function uploadFile(
+  folderId: string | null,
+  file: globalThis.File,
+): Promise<File> {
   const formData = new FormData();
-  formData.append('file', file);
-  formData.append('name', file.name);
+  formData.append("file", file);
+  formData.append("name", file.name);
 
   // Only append parent_folder_id if it's not null
   if (folderId) {
-    formData.append('parent_folder_id', folderId);
+    formData.append("parent_folder_id", folderId);
   }
 
-  return apiClient.post<File>('/files/upload', formData);
+  return apiClient.post<File>("/files/upload", formData);
 }
 
 export async function getFile(fileId: string): Promise<File> {
@@ -26,12 +29,20 @@ export async function downloadFile(fileId: string): Promise<{ url: string }> {
   return apiClient.get<{ url: string }>(`/files/${fileId}/download`);
 }
 
-export async function renameFile(fileId: string, newName: string): Promise<void> {
+export async function renameFile(
+  fileId: string,
+  newName: string,
+): Promise<void> {
   return apiClient.post<void>(`/files/${fileId}/rename`, { new_name: newName });
 }
 
-export async function moveFile(fileId: string, targetFolderId: string | null): Promise<void> {
-  return apiClient.post<void>(`/files/${fileId}/move`, { target_folder_id: targetFolderId });
+export async function moveFile(
+  fileId: string,
+  targetFolderId: string | null,
+): Promise<void> {
+  return apiClient.post<void>(`/files/${fileId}/move`, {
+    target_folder_id: targetFolderId,
+  });
 }
 
 export async function deleteFile(fileId: string): Promise<void> {
@@ -41,25 +52,23 @@ export async function deleteFile(fileId: string): Promise<void> {
 export async function updateFile(
   fileId: string,
   file: globalThis.File,
-  currentVersion: number
+  currentVersion: number,
 ): Promise<File> {
   const formData = new FormData();
-  formData.append('file', file);
-
-  const token = localStorage.getItem('token');
+  formData.append("file", file);
   const headers: Record<string, string> = {
-    'If-Match': currentVersion.toString()
+    "If-Match": currentVersion.toString(),
   };
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const response = await fetch(`${import.meta.env.VITE_API_URL}/files/${fileId}`, {
-    method: 'PUT',
-    headers,
-    body: formData
-  });
+  const response = await fetch(
+    `${import.meta.env.VITE_API_URL || "http://localhost:8080/api/v1"}/files/${fileId}`,
+    {
+      method: "PUT",
+      headers,
+      body: formData,
+      credentials: "include",
+    },
+  );
 
   if (!response.ok) {
     throw new Error(`Failed to update file: ${response.statusText}`);
@@ -75,22 +84,17 @@ export async function getFileVersions(fileId: string): Promise<FileVersion[]> {
 export async function restoreFileVersion(
   fileId: string,
   versionNumber: number,
-  currentVersion: number
+  currentVersion: number,
 ): Promise<File> {
-  const token = localStorage.getItem('token');
   const headers: Record<string, string> = {
-    'If-Match': currentVersion.toString(),
-    'Content-Type': 'application/json'
+    "If-Match": currentVersion.toString(),
+    "Content-Type": "application/json",
   };
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
   const response = await apiClient.request<File>(`/files/${fileId}/restore`, {
-    method: 'POST',
+    method: "POST",
     headers,
-    body: JSON.stringify({ version: versionNumber })
+    body: JSON.stringify({ version: versionNumber }),
   });
 
   return response;

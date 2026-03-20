@@ -8,7 +8,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
     File, FileVersion, Folder, ReplicationJob, ReplicationJobStatus, ReplicationState,
-    ReplicationTarget, Share, SharePermissions, User,
+    ReplicationTarget, Share, SharePermissions, User, UserSession,
 };
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -55,6 +55,103 @@ impl MetadataStore {
         .bind(user.updated_at)
         .execute(&self.pool)
         .await?;
+
+        Ok(())
+    }
+
+    /// Create a new opaque browser session.
+    pub async fn create_user_session(&self, session: &UserSession) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO user_sessions (
+                id,
+                user_id,
+                session_token_hash,
+                expires_at,
+                created_at,
+                last_seen_at,
+                user_agent,
+                ip_address
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+        )
+        .bind(session.id)
+        .bind(session.user_id)
+        .bind(&session.session_token_hash)
+        .bind(session.expires_at)
+        .bind(session.created_at)
+        .bind(session.last_seen_at)
+        .bind(&session.user_agent)
+        .bind(&session.ip_address)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Find a browser session by hashed token.
+    pub async fn find_user_session_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<UserSession>> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                id,
+                user_id,
+                session_token_hash,
+                expires_at,
+                created_at,
+                last_seen_at,
+                user_agent,
+                ip_address
+            FROM user_sessions
+            WHERE session_token_hash = $1
+            "#,
+        )
+        .bind(token_hash)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            Ok(Some(UserSession {
+                id: row.try_get("id")?,
+                user_id: row.try_get("user_id")?,
+                session_token_hash: row.try_get("session_token_hash")?,
+                expires_at: row.try_get("expires_at")?,
+                created_at: row.try_get("created_at")?,
+                last_seen_at: row.try_get("last_seen_at")?,
+                user_agent: row.try_get("user_agent")?,
+                ip_address: row.try_get("ip_address")?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Touch session activity for active browser sessions.
+    pub async fn touch_user_session(&self, session_id: Uuid) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE user_sessions
+            SET last_seen_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(session_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Delete a browser session by hashed token.
+    pub async fn delete_user_session_by_token_hash(&self, token_hash: &str) -> Result<()> {
+        sqlx::query("DELETE FROM user_sessions WHERE session_token_hash = $1")
+            .bind(token_hash)
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { authStore } from '$lib/stores/auth';
-  import { login as apiLogin } from '$lib/api/auth';
   import { goto } from '$app/navigation';
   import Toast from '$lib/components/common/Toast.svelte';
 
@@ -21,8 +20,7 @@
     authStore.setLoading(true);
 
     try {
-      const response = await apiLogin(email, password);
-      authStore.login(response.token, response.user);
+      await authStore.login(email, password);
       goto('/files');
     } catch (error: any) {
       showError = true;

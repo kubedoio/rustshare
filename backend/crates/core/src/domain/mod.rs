@@ -6,18 +6,19 @@ mod replication;
 mod response_types;
 mod share;
 mod user;
+mod user_session;
 
 pub use file::File;
 pub use file_version::{FileVersion, ReplicationState};
 pub use folder::Folder;
 pub use notification::{Notification, NotificationId, NotificationType, ResourceType};
 pub use replication::{
-    ReplicationJob, ReplicationJobId, ReplicationJobStatus, ReplicationTarget,
-    ReplicationTargetId,
+    ReplicationJob, ReplicationJobId, ReplicationJobStatus, ReplicationTarget, ReplicationTargetId,
 };
 pub use response_types::{FolderContents, FolderTree};
 pub use share::{Share, SharePermissions, ShareRecipient};
 pub use user::{Theme, User};
+pub use user_session::UserSession;
 
 use uuid::Uuid;
 

@@ -1,6 +1,10 @@
 use chrono::{Duration, Utc};
+use rand::{distributions::Alphanumeric, Rng};
 use rustshare_core::domain::*;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+pub const WEB_SESSION_COOKIE_NAME: &str = "rustshare_session";
 
 /// Share session claims for JWT
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +44,25 @@ impl ShareSessionClaims {
     }
 }
 
+pub fn generate_web_session_token() -> String {
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(48)
+        .map(char::from)
+        .collect()
+}
+
+pub fn hash_web_session_token(token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,4 +89,3 @@ mod tests {
         assert!(claims.is_expired());
     }
 }
-

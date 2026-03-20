@@ -1,46 +1,5 @@
-import type { User } from '../api/types';
+// Web authentication now uses opaque HTTP-only cookie sessions issued by the backend.
+// This module remains as a placeholder until share-session helpers are split into
+// their own utility path, so app code does not reintroduce browser JWT decoding.
 
-interface JWTPayload {
-  sub: string;  // user ID
-  email: string;
-  display_name: string;
-  is_admin: boolean;
-  exp: number;
-  iat: number;
-}
-
-export function decodeJWT(token: string): User | null {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-
-    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-
-    // Validate required fields
-    if (!payload.sub || !payload.email || !payload.display_name) {
-      return null;
-    }
-
-    return {
-      id: payload.sub,
-      email: payload.email,
-      display_name: payload.display_name,
-      is_admin: payload.is_admin || false
-    };
-  } catch (error) {
-    console.error('Failed to decode JWT:', error);
-    return null;
-  }
-}
-
-export function isTokenExpired(token: string): boolean {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return true;
-
-    const payload: JWTPayload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-    return Date.now() >= payload.exp * 1000;
-  } catch {
-    return true;
-  }
-}
+export {};

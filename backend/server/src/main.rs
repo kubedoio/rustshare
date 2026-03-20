@@ -41,10 +41,17 @@ mod handlers;
 mod middleware;
 mod replication;
 mod replication_handlers;
+mod web_session;
 
+use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
+use crate::web_session::{
+    build_expired_session_cookie, build_session_cookie, create_user_session, extract_cookie_value,
+};
 use anyhow::Result;
 use axum::{
     extract::DefaultBodyLimit,
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
@@ -52,16 +59,20 @@ use rustshare_auth::{JwtManager, PasswordHasher};
 use rustshare_core::{
     domain::User,
     events::EventBroadcaster,
-    services::{FileService, FolderService, NotificationService, PermissionResolver, ShareService, UserShareService},
+    services::{
+        FileService, FolderService, NotificationService, PermissionResolver, ShareService,
+        UserShareService,
+    },
 };
-use rustshare_infrastructure::repositories::{NotificationRepository, ShareRepository, UserRepository, FileRepository, FolderRepository};
+use rustshare_infrastructure::repositories::{
+    FileRepository, FolderRepository, NotificationRepository, ShareRepository, UserRepository,
+};
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 use tracing::info;
-use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -75,9 +86,21 @@ pub struct AppState {
     pub file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore>>,
     pub folder_service: Arc<FolderService<EventStore, MetadataStore>>,
     pub share_service: Arc<ShareService<EventStore, MetadataStore, JwtManager>>,
-    pub permission_resolver: Arc<PermissionResolver<ShareRepository, FileRepository, FolderRepository>>,
+    pub permission_resolver:
+        Arc<PermissionResolver<ShareRepository, FileRepository, FolderRepository>>,
     pub notification_service: Arc<NotificationService<NotificationRepository>>,
-    pub user_share_service: Arc<UserShareService<ShareRepository, UserRepository, FileRepository, FolderRepository, ShareRepository, FileRepository, FolderRepository, NotificationRepository>>,
+    pub user_share_service: Arc<
+        UserShareService<
+            ShareRepository,
+            UserRepository,
+            FileRepository,
+            FolderRepository,
+            ShareRepository,
+            FileRepository,
+            FolderRepository,
+            NotificationRepository,
+        >,
+    >,
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
 }
 
@@ -102,9 +125,7 @@ async fn main() -> Result<()> {
     info!("Connected to database");
 
     // Run migrations (path relative to workspace root)
-    sqlx::migrate!("../migrations")
-        .run(&db_pool)
-        .await?;
+    sqlx::migrate!("../migrations").run(&db_pool).await?;
 
     info!("Database migrations applied");
 
@@ -117,9 +138,8 @@ async fn main() -> Result<()> {
     let rustfs_region = std::env::var("RUSTFS_REGION")?;
     let rustfs_bucket = std::env::var("RUSTFS_BUCKET")?;
 
-    let object_store = Arc::new(
-        ObjectStore::new(rustfs_endpoint, rustfs_region, rustfs_bucket).await?,
-    );
+    let object_store =
+        Arc::new(ObjectStore::new(rustfs_endpoint, rustfs_region, rustfs_bucket).await?);
 
     info!("Object store initialized");
 
@@ -240,21 +260,43 @@ async fn main() -> Result<()> {
         .route("/health", get(health_check))
         // Auth
         .route("/api/auth/login", post(login))
+        .route("/api/auth/logout", post(logout))
+        .route("/api/v1/auth/login", post(login))
+        .route("/api/v1/auth/logout", post(logout))
         // File routes (Task 15-19)
         .route("/api/files", get(handlers::list_files))
+        .route("/api/v1/files", get(handlers::list_files))
         .route("/api/files/upload", post(handlers::upload_file))
+        .route("/api/v1/files/upload", post(handlers::upload_file))
         .route("/api/files/:id", get(handlers::get_file))
+        .route("/api/v1/files/:id", get(handlers::get_file))
         .route("/api/files/:id", put(handlers::update_file))
+        .route("/api/v1/files/:id", put(handlers::update_file))
         .route("/api/files/:id", delete(handlers::delete_file))
+        .route("/api/v1/files/:id", delete(handlers::delete_file))
         .route("/api/files/:id/download", get(handlers::download_file))
+        .route("/api/v1/files/:id/download", get(handlers::download_file))
         .route(
             "/api/files/:id/replication",
             get(replication_handlers::get_file_replication_status),
         )
         .route("/api/files/:id/versions", get(handlers::get_file_versions))
-        .route("/api/files/:id/restore", post(handlers::restore_file_version))
+        .route(
+            "/api/v1/files/:id/versions",
+            get(handlers::get_file_versions),
+        )
+        .route(
+            "/api/files/:id/restore",
+            post(handlers::restore_file_version),
+        )
+        .route(
+            "/api/v1/files/:id/restore",
+            post(handlers::restore_file_version),
+        )
         .route("/api/files/:id/move", post(handlers::move_file))
+        .route("/api/v1/files/:id/move", post(handlers::move_file))
         .route("/api/files/:id/rename", post(handlers::rename_file))
+        .route("/api/v1/files/:id/rename", post(handlers::rename_file))
         .route(
             "/api/admin/replication/jobs",
             get(replication_handlers::list_replication_jobs),
@@ -271,19 +313,54 @@ async fn main() -> Result<()> {
         // Folder routes (Task 20-22)
         // NOTE: More specific routes (with literal path segments) must come BEFORE parameterized routes
         .route("/api/folders", post(handlers::create_folder))
-        .route("/api/folders/root/contents", get(handlers::get_root_contents))
+        .route("/api/v1/folders", post(handlers::create_folder))
+        .route(
+            "/api/folders/root/contents",
+            get(handlers::get_root_contents),
+        )
+        .route(
+            "/api/v1/folders/root/contents",
+            get(handlers::get_root_contents),
+        )
         .route("/api/folders/tree", get(handlers::get_folder_tree))
-        .route("/api/folders/:id/contents", get(handlers::get_folder_contents))
+        .route("/api/v1/folders/tree", get(handlers::get_folder_tree))
+        .route(
+            "/api/folders/:id/contents",
+            get(handlers::get_folder_contents),
+        )
+        .route(
+            "/api/v1/folders/:id/contents",
+            get(handlers::get_folder_contents),
+        )
         .route("/api/folders/:id/move", post(handlers::move_folder))
+        .route("/api/v1/folders/:id/move", post(handlers::move_folder))
         .route("/api/folders/:id/rename", post(handlers::rename_folder))
+        .route("/api/v1/folders/:id/rename", post(handlers::rename_folder))
         .route("/api/folders/:id", get(handlers::get_folder))
+        .route("/api/v1/folders/:id", get(handlers::get_folder))
         .route("/api/folders/:id", delete(handlers::delete_folder))
+        .route("/api/v1/folders/:id", delete(handlers::delete_folder))
         // Share routes (Task 9)
         .route("/api/files/:file_id/shares", post(handlers::create_share))
-        .route("/api/files/:file_id/shares", get(handlers::list_file_shares))
+        .route(
+            "/api/v1/files/:file_id/shares",
+            post(handlers::create_share),
+        )
+        .route(
+            "/api/files/:file_id/shares",
+            get(handlers::list_file_shares),
+        )
+        .route(
+            "/api/v1/files/:file_id/shares",
+            get(handlers::list_file_shares),
+        )
         // User routes
         .route("/api/users/me", get(handlers::get_user_profile))
+        .route("/api/v1/users/me", get(handlers::get_user_profile))
+        .route("/api/v1/me", get(handlers::get_user_profile))
         .route("/api/users/me/theme", patch(handlers::update_user_theme))
+        .route("/api/v1/users/me/theme", patch(handlers::update_user_theme))
+        .route("/api/v1/me/theme", patch(handlers::update_user_theme))
         // User share routes (Task 14) - Phase 3A (not MVP)
         // .route("/api/files/:id/share", post(handlers::create_file_share))
         // .route("/api/folders/:id/share", post(handlers::create_folder_share))
@@ -297,9 +374,30 @@ async fn main() -> Result<()> {
         // .route("/api/notifications/:id/read", put(handlers::mark_notification_read))
         // .route("/api/notifications/:id", delete(handlers::delete_notification))
         // Public share routes (Task 10 - no authentication required for session creation and info)
-        .route("/api/public/share/:token/session", post(handlers::create_session))
-        .route("/api/public/share/:token/info", get(handlers::get_share_info))
-        .route("/api/public/share/:token/file", get(handlers::download_shared_file))
+        .route(
+            "/api/public/share/:token/session",
+            post(handlers::create_session),
+        )
+        .route(
+            "/api/v1/public/share/:token/session",
+            post(handlers::create_session),
+        )
+        .route(
+            "/api/public/share/:token/info",
+            get(handlers::get_share_info),
+        )
+        .route(
+            "/api/v1/public/share/:token/info",
+            get(handlers::get_share_info),
+        )
+        .route(
+            "/api/public/share/:token/file",
+            get(handlers::download_shared_file),
+        )
+        .route(
+            "/api/v1/public/share/:token/file",
+            get(handlers::download_shared_file),
+        )
         // WebSocket sync endpoint (Task Phase 3A)
         .route("/api/ws", get(handlers::sync_handler))
         .route("/api/v1/ws", get(handlers::sync_handler))
@@ -370,45 +468,85 @@ struct UserResponse {
 /// Login handler
 async fn login(
     axum::extract::State(state): axum::extract::State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, (axum::http::StatusCode, String)> {
+) -> Result<Response, (StatusCode, String)> {
     // Find user
     let user = state
         .metadata_store
         .find_user_by_email(&req.email)
         .await
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| {
-            (
-                axum::http::StatusCode::UNAUTHORIZED,
-                "Invalid credentials".to_string(),
-            )
-        })?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()))?;
 
     // Verify password
     let is_valid = PasswordHasher::verify(&req.password, &user.password_hash)
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if !is_valid {
-        return Err((
-            axum::http::StatusCode::UNAUTHORIZED,
-            "Invalid credentials".to_string(),
-        ));
+        return Err((StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()));
     }
 
-    // Generate JWT
+    // Keep JWT generation temporarily for compatibility while the web app migrates to cookies.
     let token = state
         .jwt_manager
         .generate(user.id, user.email.clone())
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok(Json(LoginResponse {
-        token,
-        user: UserResponse {
-            id: user.id.to_string(),
-            email: user.email,
-            display_name: user.display_name,
-            is_admin: user.is_admin,
-        },
-    }))
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
+    let ip_address = middleware::extract_client_ip(&headers, None).map(|value| value.to_string());
+    let session_token = create_user_session(&state, user.id, user_agent, ip_address)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        header::SET_COOKIE,
+        build_session_cookie(&session_token)
+            .parse()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
+    );
+
+    Ok((
+        response_headers,
+        Json(LoginResponse {
+            token,
+            user: UserResponse {
+                id: user.id.to_string(),
+                email: user.email,
+                display_name: user.display_name,
+                is_admin: user.is_admin,
+            },
+        }),
+    )
+        .into_response())
+}
+
+async fn logout(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, (StatusCode, String)> {
+    if let Some(session_token) =
+        extract_cookie_value(&headers, rustshare_auth::WEB_SESSION_COOKIE_NAME)
+    {
+        let token_hash = rustshare_auth::hash_web_session_token(&session_token);
+        state
+            .metadata_store
+            .delete_user_session_by_token_hash(&token_hash)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        header::SET_COOKIE,
+        build_expired_session_cookie()
+            .parse()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
+    );
+
+    Ok((response_headers, StatusCode::NO_CONTENT).into_response())
 }

@@ -11,11 +11,11 @@ let currentUserId: string | null = null;
 let eventHandlersRegistered = false;
 
 /**
- * Initialize WebSocket connection with authentication token
+ * Initialize WebSocket connection for the authenticated browser session.
  * Sets up all event handlers for real-time sync
  */
 export async function initializeWebSocket(
-  token: string,
+  token: string | null,
   userId: string,
 ): Promise<void> {
   currentUserId = userId;
