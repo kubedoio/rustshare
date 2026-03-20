@@ -39,6 +39,7 @@
 
 mod handlers;
 mod middleware;
+mod oidc;
 mod replication;
 mod replication_handlers;
 mod web_session;
@@ -260,10 +261,16 @@ async fn main() -> Result<()> {
         // Health check
         .route("/health", get(health_check))
         // Auth
+        .route("/api/auth/config", get(oidc::auth_config))
         .route("/api/auth/login", post(login))
         .route("/api/auth/logout", post(logout))
+        .route("/api/auth/oidc/login", get(oidc::oidc_login))
+        .route("/api/auth/oidc/callback", get(oidc::oidc_callback))
+        .route("/api/v1/auth/config", get(oidc::auth_config))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/logout", post(logout))
+        .route("/api/v1/auth/oidc/login", get(oidc::oidc_login))
+        .route("/api/v1/auth/oidc/callback", get(oidc::oidc_callback))
         // File routes (Task 15-19)
         .route("/api/files", get(handlers::list_files))
         .route("/api/v1/files", get(handlers::list_files))
@@ -496,6 +503,13 @@ async fn login(
     headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> Result<Response, (StatusCode, String)> {
+    if !oidc::password_login_enabled() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Password login is disabled for this deployment".to_string(),
+        ));
+    }
+
     // Find user
     let user = state
         .metadata_store

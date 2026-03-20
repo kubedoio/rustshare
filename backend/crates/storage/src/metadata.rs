@@ -7,8 +7,8 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
-    File, FileVersion, Folder, ReplicationJob, ReplicationJobStatus, ReplicationState,
-    ReplicationTarget, Share, SharePermissions, User, UserSession,
+    File, FileVersion, Folder, OidcLoginState, ReplicationJob, ReplicationJobStatus,
+    ReplicationState, ReplicationTarget, Share, SharePermissions, User, UserSession,
 };
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -156,6 +156,76 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Persist a short-lived OIDC login state.
+    pub async fn create_oidc_login_state(&self, login_state: &OidcLoginState) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO oidc_login_states (
+                state,
+                pkce_verifier,
+                nonce,
+                redirect_to,
+                expires_at,
+                created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6)
+            "#,
+        )
+        .bind(&login_state.state)
+        .bind(&login_state.pkce_verifier)
+        .bind(&login_state.nonce)
+        .bind(&login_state.redirect_to)
+        .bind(login_state.expires_at)
+        .bind(login_state.created_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Load an OIDC login state by the opaque state token.
+    pub async fn find_oidc_login_state(&self, state: &str) -> Result<Option<OidcLoginState>> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                state,
+                pkce_verifier,
+                nonce,
+                redirect_to,
+                expires_at,
+                created_at
+            FROM oidc_login_states
+            WHERE state = $1
+            "#,
+        )
+        .bind(state)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            Ok(Some(OidcLoginState {
+                state: row.try_get("state")?,
+                pkce_verifier: row.try_get("pkce_verifier")?,
+                nonce: row.try_get("nonce")?,
+                redirect_to: row.try_get("redirect_to")?,
+                expires_at: row.try_get("expires_at")?,
+                created_at: row.try_get("created_at")?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Delete a consumed or expired OIDC login state.
+    pub async fn delete_oidc_login_state(&self, state: &str) -> Result<()> {
+        sqlx::query("DELETE FROM oidc_login_states WHERE state = $1")
+            .bind(state)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
     /// Find user by email
     pub async fn find_user_by_email(&self, email: &str) -> Result<Option<User>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
@@ -183,6 +253,33 @@ impl MetadataStore {
                 updated_at: row.try_get("updated_at")?,
             };
             Ok(Some(user))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Find user by username.
+    pub async fn find_user_by_username(&self, username: &str) -> Result<Option<User>> {
+        let row = sqlx::query(
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at FROM users WHERE username = $1"#,
+        )
+        .bind(username)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            Ok(Some(User {
+                id: row.try_get("id")?,
+                username: row.try_get("username")?,
+                email: row.try_get("email")?,
+                password_hash: row.try_get("password_hash")?,
+                display_name: row.try_get("display_name")?,
+                is_admin: row.try_get("is_admin")?,
+                storage_quota: row.try_get("storage_quota")?,
+                theme: row.try_get("theme")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            }))
         } else {
             Ok(None)
         }

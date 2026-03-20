@@ -2,6 +2,7 @@ mod file;
 mod file_version;
 mod folder;
 mod notification;
+mod oidc_login_state;
 mod replication;
 mod response_types;
 mod share;
@@ -12,6 +13,7 @@ pub use file::File;
 pub use file_version::{FileVersion, ReplicationState};
 pub use folder::Folder;
 pub use notification::{Notification, NotificationId, NotificationType, ResourceType};
+pub use oidc_login_state::OidcLoginState;
 pub use replication::{
     ReplicationJob, ReplicationJobId, ReplicationJobStatus, ReplicationTarget, ReplicationTargetId,
 };

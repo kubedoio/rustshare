@@ -31,6 +31,7 @@ futures-util = "0.3"
 dotenv = "0.15"
 governor = "0.6"
 nonzero_ext = "0.3"
+openidconnect = "4.0.1"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"

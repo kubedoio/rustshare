@@ -11,11 +11,31 @@ interface LoginResponse {
   user: User;
 }
 
+export interface AuthConfig {
+  password_login_enabled: boolean;
+  oidc_enabled: boolean;
+  oidc_login_label?: string | null;
+}
+
 export async function login(
   email: string,
   password: string,
 ): Promise<LoginResponse> {
   return apiClient.post<LoginResponse>("/auth/login", { email, password });
+}
+
+export async function getAuthConfig(): Promise<AuthConfig> {
+  return apiClient.get<AuthConfig>("/auth/config");
+}
+
+export function beginOidcLogin(redirectTo = "/files"): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const target = new URL("/api/v1/auth/oidc/login", window.location.origin);
+  target.searchParams.set("redirect_to", redirectTo);
+  window.location.href = target.toString();
 }
 
 export async function logout(): Promise<void> {
