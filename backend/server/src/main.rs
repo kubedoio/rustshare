@@ -397,10 +397,21 @@ async fn main() -> Result<()> {
             "/api/v1/shares/:id/recipient",
             delete(handlers::remove_recipient),
         )
-        // Notification routes (Task 15) - Phase 3A (not MVP)
-        // .route("/api/notifications", get(handlers::list_notifications))
-        // .route("/api/notifications/:id/read", put(handlers::mark_notification_read))
-        // .route("/api/notifications/:id", delete(handlers::delete_notification))
+        .route("/api/notifications", get(handlers::list_notifications))
+        .route("/api/v1/notifications", get(handlers::list_notifications))
+        .route(
+            "/api/notifications/:id/read",
+            put(handlers::mark_notification_read),
+        )
+        .route(
+            "/api/v1/notifications/:id/read",
+            put(handlers::mark_notification_read),
+        )
+        .route("/api/notifications/:id", delete(handlers::delete_notification))
+        .route(
+            "/api/v1/notifications/:id",
+            delete(handlers::delete_notification),
+        )
         // Public share routes (Task 10 - no authentication required for session creation and info)
         .route(
             "/api/public/share/:token/session",

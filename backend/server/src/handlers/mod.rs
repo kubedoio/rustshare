@@ -3,6 +3,7 @@
 mod extractors;
 mod files;
 mod folders;
+mod notifications;
 mod public_shares;
 mod shares;
 mod sync;
@@ -18,6 +19,7 @@ pub use folders::{
     create_folder, delete_folder, get_folder, get_folder_contents, get_folder_tree,
     get_root_contents, move_folder, rename_folder,
 };
+pub use notifications::{delete_notification, list_notifications, mark_notification_read};
 pub use public_shares::{create_session, download_shared_file, get_share_info};
 pub use shares::{create_share, list_file_shares};
 pub use sync::sync_handler;

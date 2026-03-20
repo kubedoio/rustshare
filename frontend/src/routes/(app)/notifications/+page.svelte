@@ -1,6 +1,95 @@
 <script lang="ts">
-  import { activityStore } from '$lib/stores/activity';
-  import ActivityFeed from '$lib/components/activity/ActivityFeed.svelte';
+  import { createMutation, createQuery } from '@tanstack/svelte-query';
+  import { goto } from '$app/navigation';
+  import {
+    deleteNotification,
+    listNotifications,
+    markNotificationRead
+  } from '$lib/api/notifications';
+  import { queryClient } from '$lib/query-client';
+  import { toastStore } from '$lib/stores/toast';
+  import { formatDate } from '$lib/utils/format';
+
+  let unreadOnly = false;
+
+  $: notificationsQuery = createQuery({
+    queryKey: ['notifications', unreadOnly],
+    queryFn: () => listNotifications({ unreadOnly, limit: 100 })
+  });
+
+  const markReadMutation = createMutation({
+    mutationFn: markNotificationRead,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    },
+    onError: (error) => {
+      toastStore.show(
+        error instanceof Error ? error.message : 'Failed to mark notification as read',
+        'error'
+      );
+    }
+  });
+
+  const deleteNotificationMutation = createMutation({
+    mutationFn: deleteNotification,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      toastStore.show('Notification removed', 'success');
+    },
+    onError: (error) => {
+      toastStore.show(
+        error instanceof Error ? error.message : 'Failed to remove notification',
+        'error'
+      );
+    }
+  });
+
+  function notificationIcon(notificationType: string): string {
+    switch (notificationType) {
+      case 'share_received':
+        return '📨';
+      case 'permission_changed':
+        return '🔐';
+      case 'share_revoked':
+        return '🚫';
+      default:
+        return '🔔';
+    }
+  }
+
+  function notificationBadgeClass(notificationType: string): string {
+    switch (notificationType) {
+      case 'share_received':
+        return 'badge-info';
+      case 'permission_changed':
+        return 'badge-warning';
+      case 'share_revoked':
+        return 'badge-error';
+      default:
+        return 'badge-ghost';
+    }
+  }
+
+  function notificationLabel(notificationType: string): string {
+    if (notificationType === 'share_received') return 'Share received';
+    if (notificationType === 'permission_changed') return 'Permission changed';
+    if (notificationType === 'share_revoked') return 'Share revoked';
+    return 'Notification';
+  }
+
+  function handleOpenNotification(actionUrl: string | null) {
+    if (!actionUrl) {
+      goto('/shared-with-me');
+      return;
+    }
+
+    if (actionUrl.startsWith('/files/') || actionUrl.startsWith('/folders/')) {
+      goto('/shared-with-me');
+      return;
+    }
+
+    goto(actionUrl);
+  }
 </script>
 
 <svelte:head>
@@ -8,28 +97,112 @@
 </svelte:head>
 
 <div class="space-y-6">
-  <div class="flex items-center justify-between">
-    <h1 class="text-3xl font-bold">Notifications</h1>
-  </div>
-
-  <!-- Activity as Notifications -->
-  <div class="card bg-base-100 shadow-xl">
-    <div class="card-body">
-      <h2 class="card-title">Recent Activity</h2>
-      <p class="text-sm text-base-content/70 mb-4">
-        Track your file operations and system events.
+  <div class="flex items-start justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold">Notifications</h1>
+      <p class="mt-1 text-base-content/70">
+        Persistent share and permission updates for your account
       </p>
-      <ActivityFeed maxItems={50} showClearButton={true} />
     </div>
+
+    <label class="label cursor-pointer gap-3">
+      <span class="label-text">Unread only</span>
+      <input type="checkbox" class="toggle" bind:checked={unreadOnly} />
+    </label>
   </div>
 
-  <!-- Info -->
-  <div class="alert alert-info">
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-    </svg>
-    <span>
-      Real-time notifications for shares, collaborations, and system events will be added in a future update.
-    </span>
-  </div>
+  {#if $notificationsQuery.isLoading}
+    <div class="py-12 flex justify-center">
+      <span class="loading loading-spinner loading-lg"></span>
+    </div>
+  {:else if $notificationsQuery.isError}
+    <div class="alert alert-error">
+      <span>Failed to load notifications: {$notificationsQuery.error?.message}</span>
+    </div>
+  {:else if $notificationsQuery.data && $notificationsQuery.data.notifications.length === 0}
+    <div class="card bg-base-100 shadow-xl">
+      <div class="card-body flex flex-col items-center justify-center py-16 text-center">
+        <div class="text-6xl mb-4">🔔</div>
+        <h2 class="text-2xl font-bold mb-2">No notifications yet</h2>
+        <p class="max-w-md text-base-content/70 mb-6">
+          When someone shares a file or folder with you, changes your permission, or revokes
+          access, it will appear here.
+        </p>
+        <button class="btn btn-primary" on:click={() => goto('/shared-with-me')}>
+          Go to Shared with Me
+        </button>
+      </div>
+    </div>
+  {:else if $notificationsQuery.data}
+    <div class="card bg-base-100 shadow-xl">
+      <div class="card-body p-0">
+        <div class="px-6 pt-6 pb-2 flex items-center justify-between gap-4">
+          <div>
+            <h2 class="card-title">Inbox</h2>
+            <p class="text-sm text-base-content/70">
+              {$notificationsQuery.data.total} notification{$notificationsQuery.data.total === 1 ? '' : 's'}
+            </p>
+          </div>
+          <button class="btn btn-outline btn-sm" on:click={() => goto('/shared-with-me')}>
+            Shared with Me
+          </button>
+        </div>
+
+        <div class="divide-y divide-base-200">
+          {#each $notificationsQuery.data.notifications as notification}
+            <div class={`px-6 py-5 ${notification.read ? '' : 'bg-base-200/40'}`}>
+              <div class="flex items-start gap-4">
+                <div class="text-2xl leading-none pt-1">{notificationIcon(notification.notification_type)}</div>
+
+                <div class="flex-1 min-w-0 space-y-2">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <h3 class="font-semibold">{notification.title}</h3>
+                    <span class={`badge badge-sm ${notificationBadgeClass(notification.notification_type)}`}>
+                      {notificationLabel(notification.notification_type)}
+                    </span>
+                    {#if !notification.read}
+                      <span class="badge badge-sm badge-primary">Unread</span>
+                    {/if}
+                  </div>
+
+                  <p class="text-sm text-base-content/80">{notification.message}</p>
+
+                  <div class="text-xs text-base-content/60">
+                    {formatDate(notification.created_at)}
+                  </div>
+                </div>
+
+                <div class="flex items-center gap-2">
+                  {#if !notification.read}
+                    <button
+                      class="btn btn-ghost btn-sm"
+                      on:click={() => $markReadMutation.mutate(notification.id)}
+                      disabled={$markReadMutation.isPending}
+                    >
+                      Mark read
+                    </button>
+                  {/if}
+
+                  <button
+                    class="btn btn-outline btn-sm"
+                    on:click={() => handleOpenNotification(notification.action_url)}
+                  >
+                    Open
+                  </button>
+
+                  <button
+                    class="btn btn-ghost btn-sm text-error"
+                    on:click={() => $deleteNotificationMutation.mutate(notification.id)}
+                    disabled={$deleteNotificationMutation.isPending}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
