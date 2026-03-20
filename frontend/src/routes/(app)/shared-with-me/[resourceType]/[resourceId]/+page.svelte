@@ -7,6 +7,7 @@
 	import { listReceivedShares } from '$lib/api/shares';
 	import type { File, Folder, ReceivedShare } from '$lib/api/types';
 	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
+	import { toastStore } from '$lib/stores/toast';
 	import { sharedResourcePath } from '$lib/utils/shared';
 	import { formatDate, formatFileSize, getMimeTypeIcon } from '$lib/utils/format';
 
@@ -131,6 +132,22 @@
 		}
 	}
 
+	async function copyCurrentLocationLink() {
+		try {
+			const relativePath =
+				resourceType === 'folder' && rootFolderId
+					? sharedResourcePath('folder', rootFolderId, { folderId: currentFolderId })
+					: sharedResourcePath('file', resourceId);
+			const url = `${window.location.origin}${relativePath}`;
+
+			await navigator.clipboard.writeText(url);
+			toastStore.show('Link copied to clipboard', 'success');
+		} catch (error) {
+			console.error('Failed to copy shared link', error);
+			toastStore.show('Failed to copy link', 'error');
+		}
+	}
+
 	$: if (
 		resourceType === 'folder' &&
 		currentFolderId &&
@@ -212,7 +229,7 @@
 								</div>
 							</div>
 
-							<div class="grid gap-4 sm:grid-cols-2">
+					<div class="grid gap-4 sm:grid-cols-2">
 								<div class="rounded-lg bg-base-200 p-4">
 									<div class="text-sm text-base-content/60">Type</div>
 									<div class="font-medium">{$fileQuery.data.mime_type}</div>
@@ -232,6 +249,9 @@
 							</div>
 
 							<div class="flex gap-3">
+								<button class="btn btn-ghost" on:click={copyCurrentLocationLink}>
+									Copy Link
+								</button>
 								<button class="btn btn-primary" on:click={() => openPreview($fileQuery.data)}>
 									Preview
 								</button>
@@ -314,6 +334,9 @@
 								</ul>
 							</div>
 						</div>
+						<button class="btn btn-outline btn-sm" on:click={copyCurrentLocationLink}>
+							Copy Current Link
+						</button>
 					</div>
 
 					{#if $folderContentsQuery.isLoading}
