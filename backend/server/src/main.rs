@@ -39,6 +39,8 @@
 
 mod handlers;
 mod middleware;
+mod replication;
+mod replication_handlers;
 
 use anyhow::Result;
 use axum::{
@@ -59,6 +61,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 use tracing::info;
+use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -184,6 +187,13 @@ async fn main() -> Result<()> {
 
     info!("Rate limiting initialized");
 
+    let replication_worker_config = ReplicationWorkerConfig::from_env();
+    spawn_replication_worker(
+        Arc::clone(&metadata_store),
+        Arc::clone(&object_store),
+        replication_worker_config,
+    );
+
     // Bootstrap admin user if no users exist
     if !metadata_store.has_users().await? {
         let admin_username = std::env::var("RUSTSHARE_ADMIN_USERNAME")?;
@@ -235,10 +245,27 @@ async fn main() -> Result<()> {
         .route("/api/files/:id", put(handlers::update_file))
         .route("/api/files/:id", delete(handlers::delete_file))
         .route("/api/files/:id/download", get(handlers::download_file))
+        .route(
+            "/api/files/:id/replication",
+            get(replication_handlers::get_file_replication_status),
+        )
         .route("/api/files/:id/versions", get(handlers::get_file_versions))
         .route("/api/files/:id/restore", post(handlers::restore_file_version))
         .route("/api/files/:id/move", post(handlers::move_file))
         .route("/api/files/:id/rename", post(handlers::rename_file))
+        .route(
+            "/api/admin/replication/jobs",
+            get(replication_handlers::list_replication_jobs),
+        )
+        // Forward-compatible v1 aliases for new replication visibility endpoints
+        .route(
+            "/api/v1/files/:id/replication",
+            get(replication_handlers::get_file_replication_status),
+        )
+        .route(
+            "/api/v1/admin/replication/jobs",
+            get(replication_handlers::list_replication_jobs),
+        )
         // Folder routes (Task 20-22)
         // NOTE: More specific routes (with literal path segments) must come BEFORE parameterized routes
         .route("/api/folders", post(handlers::create_folder))

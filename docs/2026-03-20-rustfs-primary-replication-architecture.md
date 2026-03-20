@@ -41,7 +41,7 @@ Background workers will:
 - copy from RustFS primary storage to configured replica targets
 - retry transient failures with backoff
 - update file version state to `syncing`, `fully_replicated`, `degraded`, or `failed`
-- publish progress over `/api/ws`
+- expose operator visibility over `/api/files/:id/replication` and `/api/admin/replication/jobs`
 
 The database is the source of truth for replication progress and recovery.
 
@@ -59,6 +59,9 @@ This slice introduces:
 - `file_versions.replication_state`
 - `replication_targets`
 - `replication_jobs`
+- `replication_attempts`
 - service-layer queueing after successful primary RustFS writes
+- a background replication worker with DB leasing and retry backoff
+- admin and per-file read APIs for replication visibility
 
-Worker leasing, retry execution, and admin replication views are still to be implemented.
+WebSocket replication progress fan-out and richer replica management are still to be implemented.

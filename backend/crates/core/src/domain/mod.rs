@@ -12,7 +12,8 @@ pub use file_version::{FileVersion, ReplicationState};
 pub use folder::Folder;
 pub use notification::{Notification, NotificationId, NotificationType, ResourceType};
 pub use replication::{
-    ReplicationJob, ReplicationJobId, ReplicationJobStatus, ReplicationTargetId,
+    ReplicationJob, ReplicationJobId, ReplicationJobStatus, ReplicationTarget,
+    ReplicationTargetId,
 };
 pub use response_types::{FolderContents, FolderTree};
 pub use share::{Share, SharePermissions, ShareRecipient};

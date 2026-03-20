@@ -5,8 +5,10 @@
 //! This will be migrated to compile-time queries after Docker Compose is set up in Task 11.
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
-    File, FileVersion, Folder, ReplicationJob, ReplicationState, Share, SharePermissions, User,
+    File, FileVersion, Folder, ReplicationJob, ReplicationJobStatus, ReplicationState,
+    ReplicationTarget, Share, SharePermissions, User,
 };
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -24,6 +26,12 @@ impl MetadataStore {
     fn parse_replication_state(value: &str) -> Result<ReplicationState> {
         value.parse().map_err(|error: String| {
             anyhow::anyhow!("invalid replication state `{value}`: {error}")
+        })
+    }
+
+    fn parse_replication_job_status(value: &str) -> Result<ReplicationJobStatus> {
+        value.parse().map_err(|error: String| {
+            anyhow::anyhow!("invalid replication job status `{value}`: {error}")
         })
     }
 
@@ -447,6 +455,275 @@ impl MetadataStore {
         )
         .bind(version_id)
         .bind(state.as_str())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// List enabled replication targets that workers should copy into.
+    pub async fn list_enabled_replication_targets(&self) -> Result<Vec<ReplicationTarget>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                id,
+                name,
+                destination_type,
+                endpoint,
+                bucket,
+                region,
+                base_path,
+                is_required,
+                enabled,
+                auth_config,
+                health_status,
+                last_healthy_at,
+                last_error,
+                created_at,
+                updated_at
+            FROM replication_targets
+            WHERE enabled = TRUE
+            ORDER BY created_at ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut targets = Vec::with_capacity(rows.len());
+        for row in rows {
+            targets.push(ReplicationTarget {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                destination_type: row.try_get("destination_type")?,
+                endpoint: row.try_get("endpoint")?,
+                bucket: row.try_get("bucket")?,
+                region: row.try_get("region")?,
+                base_path: row.try_get("base_path")?,
+                is_required: row.try_get("is_required")?,
+                enabled: row.try_get("enabled")?,
+                auth_config: row.try_get("auth_config")?,
+                health_status: row.try_get("health_status")?,
+                last_healthy_at: row.try_get("last_healthy_at")?,
+                last_error: row.try_get("last_error")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            });
+        }
+
+        Ok(targets)
+    }
+
+    /// Lease due replication jobs for background processing.
+    pub async fn lease_replication_jobs(
+        &self,
+        limit: i64,
+        lease_timeout_secs: i64,
+        lease_token: Uuid,
+    ) -> Result<Vec<ReplicationJob>> {
+        let rows = sqlx::query(
+            r#"
+            WITH candidates AS (
+                SELECT id
+                FROM replication_jobs
+                WHERE status IN ('queued', 'retrying')
+                  AND next_attempt_at <= NOW()
+                  AND (
+                    leased_at IS NULL
+                    OR leased_at < NOW() - make_interval(secs => $2)
+                  )
+                ORDER BY next_attempt_at ASC, created_at ASC
+                LIMIT $1
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE replication_jobs
+            SET
+                status = 'syncing',
+                leased_at = NOW(),
+                lease_token = $3,
+                last_attempt_at = NOW(),
+                attempt_count = attempt_count + 1,
+                updated_at = NOW()
+            WHERE id IN (SELECT id FROM candidates)
+            RETURNING
+                id,
+                file_id,
+                file_version_id,
+                storage_key,
+                status,
+                attempt_count,
+                next_attempt_at,
+                last_attempt_at,
+                leased_at,
+                lease_token,
+                last_error,
+                created_at,
+                updated_at
+            "#,
+        )
+        .bind(limit)
+        .bind(lease_timeout_secs)
+        .bind(lease_token)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut jobs = Vec::with_capacity(rows.len());
+        for row in rows {
+            let status: String = row.try_get("status")?;
+            jobs.push(ReplicationJob {
+                id: row.try_get("id")?,
+                file_id: row.try_get("file_id")?,
+                file_version_id: row.try_get("file_version_id")?,
+                storage_key: row.try_get("storage_key")?,
+                status: Self::parse_replication_job_status(&status)?,
+                attempt_count: row.try_get("attempt_count")?,
+                next_attempt_at: row.try_get("next_attempt_at")?,
+                last_attempt_at: row.try_get("last_attempt_at")?,
+                leased_at: row.try_get("leased_at")?,
+                lease_token: row.try_get("lease_token")?,
+                last_error: row.try_get("last_error")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            });
+        }
+
+        Ok(jobs)
+    }
+
+    /// Mark a replication job as completed and release its lease.
+    pub async fn mark_replication_job_completed(&self, job_id: Uuid) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE replication_jobs
+            SET
+                status = 'completed',
+                leased_at = NULL,
+                lease_token = NULL,
+                last_error = NULL,
+                updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(job_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Mark a replication job for retry after a transient failure.
+    pub async fn mark_replication_job_retrying(
+        &self,
+        job_id: Uuid,
+        last_error: &str,
+        next_attempt_at: DateTime<Utc>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE replication_jobs
+            SET
+                status = 'retrying',
+                leased_at = NULL,
+                lease_token = NULL,
+                last_error = $2,
+                next_attempt_at = $3,
+                updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(job_id)
+        .bind(last_error)
+        .bind(next_attempt_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Mark a replication job as terminally failed.
+    pub async fn mark_replication_job_failed(&self, job_id: Uuid, last_error: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE replication_jobs
+            SET
+                status = 'failed',
+                leased_at = NULL,
+                lease_token = NULL,
+                last_error = $2,
+                updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(job_id)
+        .bind(last_error)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Record the result of a single target replication attempt.
+    pub async fn create_replication_attempt(
+        &self,
+        job_id: Uuid,
+        target_id: Uuid,
+        attempt_number: i32,
+        status: &str,
+        error_message: Option<&str>,
+        started_at: DateTime<Utc>,
+        completed_at: DateTime<Utc>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO replication_attempts (
+                id,
+                job_id,
+                target_id,
+                attempt_number,
+                status,
+                error_message,
+                started_at,
+                completed_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(job_id)
+        .bind(target_id)
+        .bind(attempt_number)
+        .bind(status)
+        .bind(error_message)
+        .bind(started_at)
+        .bind(completed_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update target health after a replication attempt.
+    pub async fn update_replication_target_health(
+        &self,
+        target_id: Uuid,
+        health_status: &str,
+        last_error: Option<&str>,
+        last_healthy_at: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE replication_targets
+            SET
+                health_status = $2,
+                last_error = $3,
+                last_healthy_at = COALESCE($4, last_healthy_at),
+                updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(target_id)
+        .bind(health_status)
+        .bind(last_error)
+        .bind(last_healthy_at)
         .execute(&self.pool)
         .await?;
 

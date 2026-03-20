@@ -1,11 +1,31 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{fmt, str::FromStr};
 
 use super::{FileId, VersionId};
 
 pub type ReplicationJobId = uuid::Uuid;
 pub type ReplicationTargetId = uuid::Uuid;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReplicationTarget {
+    pub id: ReplicationTargetId,
+    pub name: String,
+    pub destination_type: String,
+    pub endpoint: String,
+    pub bucket: Option<String>,
+    pub region: Option<String>,
+    pub base_path: Option<String>,
+    pub is_required: bool,
+    pub enabled: bool,
+    pub auth_config: Option<Value>,
+    pub health_status: String,
+    pub last_healthy_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
