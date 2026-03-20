@@ -1,9 +1,12 @@
 import { ApiError } from "./types";
 
+const CSRF_HEADER_NAME = "X-Rustshare-Csrf";
+
 export class ApiClient {
   constructor(private baseURL: string) {}
 
   async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
+    const method = (options?.method || "GET").toUpperCase();
     const headers: Record<string, string> = {
       ...((options?.headers as Record<string, string>) || {}),
     };
@@ -11,6 +14,10 @@ export class ApiClient {
     // Add Content-Type for JSON bodies (unless multipart form)
     if (options?.body && !(options.body instanceof FormData)) {
       headers["Content-Type"] = "application/json";
+    }
+
+    if (requiresCsrfHeader(method) && !headers[CSRF_HEADER_NAME]) {
+      headers[CSRF_HEADER_NAME] = "1";
     }
 
     const response = await fetch(`${this.baseURL}${endpoint}`, {
@@ -81,6 +88,10 @@ export class ApiClient {
       body: body instanceof FormData ? body : JSON.stringify(body),
     });
   }
+}
+
+function requiresCsrfHeader(method: string): boolean {
+  return !["GET", "HEAD", "OPTIONS", "TRACE"].includes(method);
 }
 
 // Create singleton instance

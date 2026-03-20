@@ -416,6 +416,7 @@ async fn main() -> Result<()> {
         // Increase body size limit for file uploads (500MB)
         // This must be applied BEFORE other middleware layers
         .layer(DefaultBodyLimit::max(500 * 1024 * 1024))
+        .layer(axum::middleware::from_fn(middleware::csrf_middleware))
         // Apply rate limiting middleware after state is set
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

@@ -58,6 +58,7 @@ export async function updateFile(
   formData.append("file", file);
   const headers: Record<string, string> = {
     "If-Match": currentVersion.toString(),
+    "X-Rustshare-Csrf": "1",
   };
 
   const response = await fetch(

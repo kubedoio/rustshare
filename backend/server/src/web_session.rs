@@ -4,6 +4,8 @@ use rustshare_core::domain::UserSession;
 
 use crate::AppState;
 
+pub const WEB_CSRF_HEADER_NAME: &str = "X-Rustshare-Csrf";
+
 pub fn extract_cookie_value(headers: &HeaderMap, cookie_name: &str) -> Option<String> {
     let cookie_header = headers.get(header::COOKIE)?.to_str().ok()?;
 
