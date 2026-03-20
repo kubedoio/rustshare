@@ -14,7 +14,10 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
 
-use rustshare_core::{domain::SharePermissions, services::FileError};
+use rustshare_core::{
+    domain::SharePermissions,
+    services::{FileError, FileUploadActor},
+};
 
 use crate::{handlers::ShareSessionAuth, AppState};
 
@@ -150,10 +153,11 @@ fn ensure_share_session_matches(
 
 async fn parse_upload_multipart(
     mut multipart: Multipart,
-) -> Result<(Bytes, String, Option<Uuid>, String), Response> {
+) -> Result<(Bytes, String, Option<Uuid>, String, Option<String>), Response> {
     let mut file_data: Option<Bytes> = None;
     let mut file_name: Option<String> = None;
     let mut parent_folder_id: Option<Uuid> = None;
+    let mut uploader_name: Option<String> = None;
     let mut mime_type = "application/octet-stream".to_string();
 
     while let Some(field) = multipart.next_field().await.map_err(|e| {
@@ -205,6 +209,24 @@ async fn parse_upload_multipart(
                     })?);
                 }
             }
+            "uploader_name" => {
+                let text = field.text().await.map_err(|e| {
+                    super::file_error_response(FileError::Storage(format!(
+                        "Failed to read uploader_name field: {}",
+                        e
+                    )))
+                })?;
+
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    if trimmed.len() > 120 {
+                        return Err(super::file_error_response(FileError::InvalidName(
+                            "Uploader name must be 120 characters or fewer".to_string(),
+                        )));
+                    }
+                    uploader_name = Some(trimmed.to_string());
+                }
+            }
             _ => {}
         }
     }
@@ -216,7 +238,13 @@ async fn parse_upload_multipart(
         super::file_error_response(FileError::InvalidName("Missing file name".to_string()))
     })?;
 
-    Ok((file_data, file_name, parent_folder_id, mime_type))
+    Ok((
+        file_data,
+        file_name,
+        parent_folder_id,
+        mime_type,
+        uploader_name,
+    ))
 }
 
 /// Download shared file (requires session JWT)
@@ -304,6 +332,10 @@ pub async fn download_shared_file(
             user_agent,
             "download".to_string(),
             true,
+            Some("public_share_session".to_string()),
+            None,
+            Some(claims.session_id),
+            Some(claims.sub.clone()),
         )
         .await
     {
@@ -490,6 +522,10 @@ pub async fn download_shared_folder_file(
             user_agent,
             "download".to_string(),
             true,
+            Some("public_share_session".to_string()),
+            None,
+            Some(claims.session_id),
+            Some(claims.sub.clone()),
         )
         .await
     {
@@ -553,7 +589,7 @@ pub async fn upload_shared_folder_file(
             .into_response());
     }
 
-    let (file_data, file_name, requested_folder_id, mime_type) =
+    let (file_data, file_name, requested_folder_id, mime_type, uploader_name) =
         parse_upload_multipart(multipart).await?;
 
     let root_folder = state
@@ -610,12 +646,17 @@ pub async fn upload_shared_folder_file(
             .into_response());
     }
 
-    // Public-share uploads are currently attributed to the share owner until
-    // we introduce an external uploader principal in the event/audit model.
     let file = state
         .file_service
-        .upload_file(
+        .upload_file_with_actor(
             root_folder.owner_id,
+            FileUploadActor {
+                actor_type: "public_share_session".to_string(),
+                actor_user_id: None,
+                actor_share_id: Some(share.id),
+                actor_share_session_id: Some(claims.session_id),
+                actor_display_name: uploader_name.clone(),
+            },
             file_name,
             Some(target_folder_id),
             file_data,
@@ -636,7 +677,17 @@ pub async fn upload_shared_folder_file(
 
     if let Err(e) = state
         .metadata_store
-        .log_share_access(share.id, ip_address, user_agent, "upload".to_string(), true)
+        .log_share_access(
+            share.id,
+            ip_address,
+            user_agent,
+            "upload".to_string(),
+            true,
+            Some("public_share_session".to_string()),
+            uploader_name,
+            Some(claims.session_id),
+            Some(claims.sub.clone()),
+        )
         .await
     {
         tracing::warn!("Failed to log share upload: {}", e);

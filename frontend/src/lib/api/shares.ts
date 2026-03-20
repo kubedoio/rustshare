@@ -57,6 +57,7 @@ export interface PublicShareUploadResponse {
 
 export interface PublicShareUploadOptions {
 	parentFolderId?: string;
+	uploaderName?: string;
 	onProgress?: (progress: number) => void;
 }
 
@@ -368,6 +369,9 @@ export async function uploadToPublicFolder(
 	formData.append('name', file.name);
 	if (options.parentFolderId) {
 		formData.append('parent_folder_id', options.parentFolderId);
+	}
+	if (options.uploaderName?.trim()) {
+		formData.append('uploader_name', options.uploaderName.trim());
 	}
 
 	return new Promise((resolve, reject) => {

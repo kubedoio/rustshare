@@ -1506,6 +1506,10 @@ impl MetadataStore {
         user_agent: Option<String>,
         action: String,
         success: bool,
+        actor_type: Option<String>,
+        actor_label: Option<String>,
+        share_session_id: Option<Uuid>,
+        share_session_subject: Option<String>,
     ) -> Result<()> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         // Validate IP address format before storage
@@ -1514,8 +1518,11 @@ impl MetadataStore {
 
         sqlx::query(
             r#"
-            INSERT INTO share_access_log (share_id, ip_address, user_agent, action, success)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO share_access_log (
+                share_id, ip_address, user_agent, action, success,
+                actor_type, actor_label, share_session_id, share_session_subject
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             "#,
         )
         .bind(share_id)
@@ -1523,6 +1530,10 @@ impl MetadataStore {
         .bind(user_agent)
         .bind(action)
         .bind(success)
+        .bind(actor_type)
+        .bind(actor_label)
+        .bind(share_session_id)
+        .bind(share_session_subject)
         .execute(&self.pool)
         .await?;
 
@@ -2003,6 +2014,10 @@ mod tests {
                 Some("Mozilla/5.0".to_string()),
                 "access".to_string(),
                 true,
+                Some("public_share_session".to_string()),
+                Some("Uploader".to_string()),
+                Some(Uuid::new_v4()),
+                Some("share:test".to_string()),
             )
             .await
             .unwrap();

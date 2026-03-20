@@ -10,6 +10,7 @@ pub const WEB_SESSION_COOKIE_NAME: &str = "rustshare_session";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShareSessionClaims {
     pub sub: String, // Format: "share:{share_id}"
+    pub session_id: uuid::Uuid,
     pub share_id: ShareId,
     pub file_id: Option<FileId>,
     pub folder_id: Option<FolderId>,
@@ -32,6 +33,7 @@ impl ShareSessionClaims {
 
         Self {
             sub: format!("share:{}", share_id),
+            session_id: uuid::Uuid::new_v4(),
             share_id,
             file_id,
             folder_id,
@@ -78,6 +80,7 @@ mod tests {
             ShareSessionClaims::new(share_id, Some(file_id), None, SharePermissions::View, 3600);
 
         assert_eq!(claims.sub, format!("share:{}", share_id));
+        assert!(!claims.session_id.is_nil());
         assert_eq!(claims.share_id, share_id);
         assert_eq!(claims.file_id, Some(file_id));
         assert_eq!(claims.folder_id, None);

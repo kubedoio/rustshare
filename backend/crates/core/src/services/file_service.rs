@@ -22,6 +22,15 @@ use crate::events::{
 };
 use crate::services::FileError;
 
+#[derive(Debug, Clone, Default)]
+pub struct FileUploadActor {
+    pub actor_type: String,
+    pub actor_user_id: Option<UserId>,
+    pub actor_share_id: Option<uuid::Uuid>,
+    pub actor_share_session_id: Option<uuid::Uuid>,
+    pub actor_display_name: Option<String>,
+}
+
 /// Trait for event store operations needed by FileService.
 ///
 /// This trait abstracts the event store to allow for testing without database dependencies.
@@ -169,6 +178,27 @@ where
         content: Bytes,
         mime_type: String,
     ) -> Result<File, FileError> {
+        let actor = FileUploadActor {
+            actor_type: "user".to_string(),
+            actor_user_id: Some(owner_id),
+            actor_share_id: None,
+            actor_share_session_id: None,
+            actor_display_name: None,
+        };
+
+        self.upload_file_with_actor(owner_id, actor, name, parent_folder_id, content, mime_type)
+            .await
+    }
+
+    pub async fn upload_file_with_actor(
+        &self,
+        owner_id: UserId,
+        actor: FileUploadActor,
+        name: String,
+        parent_folder_id: Option<FolderId>,
+        content: Bytes,
+        mime_type: String,
+    ) -> Result<File, FileError> {
         // 1. Validate file name
         self.validate_file_name(&name)?;
 
@@ -242,6 +272,11 @@ where
             mime_type: mime_type.clone(),
             owner_id,
             parent_folder_id,
+            actor_type: actor.actor_type.clone(),
+            actor_user_id: actor.actor_user_id,
+            actor_share_id: actor.actor_share_id,
+            actor_share_session_id: actor.actor_share_session_id,
+            actor_display_name: actor.actor_display_name.clone(),
         };
         let payload_json = serde_json::to_value(&payload)
             .map_err(|e| FileError::Storage(format!("Failed to serialize payload: {}", e)))?;
@@ -272,7 +307,15 @@ where
             content_hash,
             size,
             owner_id,
-            Some("Initial upload".to_string()),
+            Some(match actor.actor_type.as_str() {
+                "public_share_session" => match actor.actor_display_name.as_deref() {
+                    Some(name) if !name.is_empty() => {
+                        format!("Uploaded via public share by {}", name)
+                    }
+                    _ => "Uploaded via public share".to_string(),
+                },
+                _ => "Initial upload".to_string(),
+            }),
         );
 
         self.metadata_store
@@ -997,7 +1040,6 @@ mod tests {
         fn add_file_version(&self, version: FileVersion) {
             self.versions.lock().unwrap().push(version);
         }
-
     }
 
     impl MetadataStoreOps for MockMetadataStore {

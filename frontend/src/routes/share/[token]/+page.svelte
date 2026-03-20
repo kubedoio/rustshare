@@ -28,6 +28,7 @@
 
 	const token = $page.params.token ?? '';
 	const SESSION_STORAGE_KEY = `share_session_${token}`;
+	const UPLOADER_NAME_STORAGE_KEY = `share_uploader_name_${token}`;
 
 	$: currentFolderId = $page.url.searchParams.get('folder');
 
@@ -59,13 +60,23 @@
 	let uploadInput: HTMLInputElement | null = null;
 	let isDragActive = false;
 	let uploadQueue: UploadQueueItem[] = [];
+	let uploaderName = '';
 
 	onMount(() => {
 		const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
 		if (stored) {
 			sessionToken = stored;
 		}
+
+		const storedUploaderName = sessionStorage.getItem(UPLOADER_NAME_STORAGE_KEY);
+		if (storedUploaderName) {
+			uploaderName = storedUploaderName;
+		}
 	});
+
+	$: if (typeof sessionStorage !== 'undefined') {
+		sessionStorage.setItem(UPLOADER_NAME_STORAGE_KEY, uploaderName);
+	}
 
 	$: if (
 		$shareQuery.data &&
@@ -198,6 +209,7 @@
 			try {
 				await uploadToPublicFolder(token, sessionToken, file, {
 					parentFolderId: targetFolderId,
+					uploaderName,
 					onProgress: (progress) => updateUploadQueue(itemId, { progress })
 				});
 				updateUploadQueue(itemId, { status: 'done', progress: 100 });
@@ -447,6 +459,22 @@
 											</div>
 										{/if}
 									</div>
+
+									{#if canUploadToFolder}
+										<label class="form-control w-full">
+											<div class="label">
+												<span class="label-text">Your name (optional)</span>
+												<span class="label-text-alt">Shown in upload audit history</span>
+											</div>
+											<input
+												type="text"
+												class="input input-bordered w-full"
+												bind:value={uploaderName}
+												maxlength="120"
+												placeholder="Jane from Marketing"
+											/>
+										</label>
+									{/if}
 
 									{#if canUploadToFolder}
 										<div
