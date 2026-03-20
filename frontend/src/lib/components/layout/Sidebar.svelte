@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { createQuery } from '@tanstack/svelte-query';
   import { page } from '$app/stores';
+  import { listNotifications } from '$lib/api/notifications';
   import { authStore } from '$lib/stores/auth';
 
   export let mobileOpen = false;
@@ -12,6 +14,15 @@
     { href: '/notifications', label: 'Notifications', icon: '🔔' },
     { href: '/settings', label: 'Settings', icon: '⚙️' }
   ];
+
+  const unreadNotificationsQuery = createQuery({
+    queryKey: ['notifications', 'sidebar-unread-count'],
+    queryFn: () =>
+      listNotifications({
+        unreadOnly: true,
+        limit: 20
+      })
+  });
 
   function handleLogout() {
     authStore.logout();
@@ -76,6 +87,11 @@
           >
             <span>{item.icon}</span>
             <span>{item.label}</span>
+            {#if item.href === '/notifications' && $unreadNotificationsQuery.data && $unreadNotificationsQuery.data.total > 0}
+              <span class="badge badge-primary badge-sm ml-auto">
+                {$unreadNotificationsQuery.data.total}
+              </span>
+            {/if}
           </a>
         </li>
       {/each}
