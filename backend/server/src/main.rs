@@ -52,7 +52,7 @@ use axum::{
     extract::DefaultBodyLimit,
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, patch, post, put},
+    routing::{any, delete, get, patch, post, put},
     Json, Router,
 };
 use rustshare_auth::{JwtManager, PasswordHasher};
@@ -70,7 +70,8 @@ use rustshare_infrastructure::repositories::{
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
+use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
@@ -402,6 +403,8 @@ async fn main() -> Result<()> {
         .route("/api/ws", get(handlers::sync_handler))
         .route("/api/v1/ws", get(handlers::sync_handler))
         .route("/api/sync", get(handlers::sync_handler))
+        .route("/api", any(api_not_found))
+        .route("/api/{*path}", any(api_not_found))
         .with_state(state.clone())
         // Increase body size limit for file uploads (500MB)
         // This must be applied BEFORE other middleware layers
@@ -412,7 +415,9 @@ async fn main() -> Result<()> {
             middleware::rate_limit_middleware,
         ))
         // Tracing
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http())
+        // All non-API requests are served by the compiled SPA bundle.
+        .fallback_service(frontend_service());
 
     // Start server
     let host = std::env::var("SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
@@ -436,6 +441,26 @@ async fn health_check() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok".to_string(),
     })
+}
+
+fn frontend_service() -> ServeDir {
+    let dist_dir = frontend_dist_dir();
+    let fallback_file = dist_dir.join("200.html");
+
+    ServeDir::new(dist_dir).fallback(ServeFile::new(fallback_file))
+}
+
+fn frontend_dist_dir() -> PathBuf {
+    std::env::var("FRONTEND_DIST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/app/frontend-build"))
+}
+
+async fn api_not_found() -> impl IntoResponse {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({ "error": "API route not found" })),
+    )
 }
 
 #[derive(Serialize)]
