@@ -101,6 +101,7 @@ pub struct AppState {
             FileRepository,
             FolderRepository,
             NotificationRepository,
+            EventStore,
         >,
     >,
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
@@ -202,6 +203,8 @@ async fn main() -> Result<()> {
         Arc::clone(&folder_repository),
         Arc::clone(&permission_resolver),
         Arc::clone(&notification_service),
+        Arc::clone(&event_store),
+        Arc::clone(&broadcaster),
     ));
 
     // Initialize rate limiting configuration

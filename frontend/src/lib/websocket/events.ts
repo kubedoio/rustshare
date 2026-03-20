@@ -13,7 +13,8 @@ export type WebSocketEventType =
   | "ShareCreated"
   | "ShareRevoked"
   | "ShareUpdated"
-  | "ReplicationStateChanged";
+  | "ReplicationStateChanged"
+  | "NotificationCreated";
 
 export interface WebSocketEvent {
   event_id?: string;
@@ -45,6 +46,9 @@ export interface WebSocketEvent {
   next_attempt_at?: string | null;
   last_error?: string | null;
   updated_at?: string;
+  notification_id?: string;
+  notification_type?: string;
+  message?: string;
 }
 
 export type ReplicationStateValue =

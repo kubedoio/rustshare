@@ -1,8 +1,12 @@
 use anyhow::Result;
 use std::sync::Arc;
+use tracing::warn;
 
 use crate::domain::{
     File, Folder, Share, ShareId, SharePermissions, ShareRecipient, User, FileId, FolderId, UserId,
+};
+use crate::events::{
+    AggregateType, Event, EventBroadcaster, EventType, NotificationCreatedPayload,
 };
 use crate::services::{NotificationService, PermissionResolver, Resource, ShareError};
 
@@ -68,7 +72,7 @@ pub trait FolderOps: Send + Sync {
     async fn get_by_id(&self, folder_id: FolderId) -> Result<Option<Folder>, sqlx::Error>;
 }
 
-pub struct UserShareService<SR, UR, FR, DR, S, F, D, N>
+pub struct UserShareService<SR, UR, FR, DR, S, F, D, N, E>
 where
     SR: ShareOps,
     UR: UserOps,
@@ -78,6 +82,7 @@ where
     F: crate::services::FileResolverOps,
     D: crate::services::FolderResolverOps,
     N: crate::services::NotificationRepositoryOps,
+    E: crate::services::ShareEventStoreOps,
 {
     share_repo: Arc<SR>,
     user_repo: Arc<UR>,
@@ -85,9 +90,11 @@ where
     folder_repo: Arc<DR>,
     permission_resolver: Arc<PermissionResolver<S, F, D>>,
     notification_service: Arc<NotificationService<N>>,
+    event_store: Arc<E>,
+    broadcaster: Arc<EventBroadcaster>,
 }
 
-impl<SR, UR, FR, DR, S, F, D, N> UserShareService<SR, UR, FR, DR, S, F, D, N>
+impl<SR, UR, FR, DR, S, F, D, N, E> UserShareService<SR, UR, FR, DR, S, F, D, N, E>
 where
     SR: ShareOps,
     UR: UserOps,
@@ -97,6 +104,7 @@ where
     F: crate::services::FileResolverOps,
     D: crate::services::FolderResolverOps,
     N: crate::services::NotificationRepositoryOps,
+    E: crate::services::ShareEventStoreOps,
 {
     pub fn new(
         share_repo: Arc<SR>,
@@ -105,6 +113,8 @@ where
         folder_repo: Arc<DR>,
         permission_resolver: Arc<PermissionResolver<S, F, D>>,
         notification_service: Arc<NotificationService<N>>,
+        event_store: Arc<E>,
+        broadcaster: Arc<EventBroadcaster>,
     ) -> Self {
         Self {
             share_repo,
@@ -113,6 +123,48 @@ where
             folder_repo,
             permission_resolver,
             notification_service,
+            event_store,
+            broadcaster,
+        }
+    }
+
+    async fn emit_notification_created_event(
+        &self,
+        notification: &crate::domain::Notification,
+    ) {
+        let notification_type = serde_json::to_string(&notification.notification_type)
+            .unwrap_or_else(|_| "\"notification\"".to_string())
+            .trim_matches('"')
+            .to_string();
+
+        let payload = NotificationCreatedPayload {
+            notification_id: notification.id,
+            user_id: notification.user_id,
+            message: notification.message.clone(),
+            notification_type: notification_type.clone(),
+            timestamp: notification.created_at,
+        };
+
+        let event = Event::new(
+            EventType::NotificationCreated,
+            notification.user_id,
+            AggregateType::User,
+            serde_json::to_value(&payload).unwrap_or(serde_json::json!({
+                "notification_id": notification.id,
+                "user_id": notification.user_id,
+                "message": notification.message.clone(),
+                "notification_type": notification_type,
+                "timestamp": notification.created_at,
+            })),
+            notification.user_id,
+        );
+
+        if let Err(error) = self.event_store.append(&event, &self.broadcaster).await {
+            warn!(
+                notification_id = %notification.id,
+                user_id = %notification.user_id,
+                "failed to append notification event: {error}"
+            );
         }
     }
 
@@ -181,7 +233,7 @@ where
         let creator = self.user_repo.get_by_id(created_by).await.ok().flatten();
         let creator_email = creator.map(|u| u.email).unwrap_or_else(|| "Someone".to_string());
 
-        let _ = self
+        if let Ok(notification) = self
             .notification_service
             .create_notification(
                 recipient.id,
@@ -192,7 +244,10 @@ where
                 crate::domain::ResourceType::File,
                 Some(format!("/files/{}", file_id)),
             )
-            .await;
+            .await
+        {
+            self.emit_notification_created_event(&notification).await;
+        }
 
         Ok(share)
     }
@@ -262,7 +317,7 @@ where
         let creator = self.user_repo.get_by_id(created_by).await.ok().flatten();
         let creator_email = creator.map(|u| u.email).unwrap_or_else(|| "Someone".to_string());
 
-        let _ = self
+        if let Ok(notification) = self
             .notification_service
             .create_notification(
                 recipient.id,
@@ -273,7 +328,10 @@ where
                 crate::domain::ResourceType::Folder,
                 Some(format!("/folders/{}", folder_id)),
             )
-            .await;
+            .await
+        {
+            self.emit_notification_created_event(&notification).await;
+        }
 
         Ok(share)
     }
@@ -416,7 +474,7 @@ where
                 "a resource".to_string()
             };
 
-            let _ = self
+            if let Ok(notification) = self
                 .notification_service
                 .create_notification(
                     recipient_id,
@@ -434,7 +492,10 @@ where
                     },
                     None,
                 )
-                .await;
+                .await
+            {
+                self.emit_notification_created_event(&notification).await;
+            }
         }
 
         Ok(updated_share)
@@ -527,7 +588,7 @@ where
                 "a resource".to_string()
             };
 
-            let _ = self
+            if let Ok(notification) = self
                 .notification_service
                 .create_notification(
                     recipient_id,
@@ -542,7 +603,10 @@ where
                     },
                     None,
                 )
-                .await;
+                .await
+            {
+                self.emit_notification_created_event(&notification).await;
+            }
         }
 
         Ok(())

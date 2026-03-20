@@ -11,8 +11,8 @@ use futures_util::{SinkExt, StreamExt};
 use rustshare_auth::ShareSessionClaims;
 use rustshare_core::domain::{FileId, ShareId, SharePermissions, UserId};
 use rustshare_core::events::{
-    Event, EventType, ReplicationStateChangedPayload, ShareCreatedPayload, ShareRevokedPayload,
-    ShareUpdatedPayload,
+    Event, EventType, NotificationCreatedPayload, ReplicationStateChangedPayload,
+    ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -92,6 +92,14 @@ enum SyncMessage {
         next_attempt_at: Option<DateTime<Utc>>,
         last_error: Option<String>,
         updated_at: DateTime<Utc>,
+    },
+    /// Persistent notification created for a user
+    NotificationCreated {
+        notification_id: Uuid,
+        user_id: Uuid,
+        notification_type: String,
+        message: String,
+        timestamp: DateTime<Utc>,
     },
 }
 
@@ -475,6 +483,20 @@ async fn event_to_sync_message(
                 next_attempt_at: payload.next_attempt_at,
                 last_error: payload.last_error,
                 updated_at: payload.updated_at,
+            })
+        }
+        EventType::NotificationCreated => {
+            let payload: NotificationCreatedPayload =
+                serde_json::from_value(event.payload.clone()).map_err(|e| {
+                    format!("Failed to deserialize NotificationCreatedPayload: {}", e)
+                })?;
+
+            Ok(SyncMessage::NotificationCreated {
+                notification_id: payload.notification_id,
+                user_id: payload.user_id,
+                notification_type: payload.notification_type,
+                message: payload.message,
+                timestamp: payload.timestamp,
             })
         }
         _ => {

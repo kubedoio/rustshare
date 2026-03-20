@@ -70,6 +70,7 @@ function registerEventHandlers(
   wsClient.on("ShareRevoked", handleShareRevoked);
   wsClient.on("ShareUpdated", handleShareUpdated);
   wsClient.on("ReplicationStateChanged", handleReplicationStateChanged);
+  wsClient.on("NotificationCreated", handleNotificationCreated);
 }
 
 // Helper to check if event is from current user
@@ -337,4 +338,28 @@ function handleReplicationStateChanged(event: WebSocketEvent): void {
   } else if (replicationState === "failed") {
     toastStore.show("Replication failed for a file version", "error");
   }
+}
+
+function handleNotificationCreated(event: WebSocketEvent): void {
+  queryClient.invalidateQueries({ queryKey: ["notifications"] });
+  queryClient.invalidateQueries({ queryKey: ["received-shares"] });
+
+  if (!isOwnOrSystemEvent(event)) {
+    return;
+  }
+
+  const message = event.message;
+  const notificationType = event.notification_type;
+
+  if (notificationType === "share_revoked") {
+    toastStore.show(message || "Access to a shared resource was revoked", "info");
+    return;
+  }
+
+  if (notificationType === "permission_changed") {
+    toastStore.show(message || "A shared resource permission changed", "info");
+    return;
+  }
+
+  toastStore.show(message || "A new share notification arrived", "success");
 }
