@@ -24,7 +24,7 @@ pub use notifications::{
 };
 pub use public_shares::{
     create_session, download_shared_file, download_shared_folder_file, get_share_info,
-    get_shared_folder_contents,
+    get_shared_folder_contents, upload_shared_folder_file,
 };
 pub use shares::{
     create_public_file_share, create_public_folder_share, list_public_file_shares,

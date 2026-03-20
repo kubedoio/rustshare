@@ -10,9 +10,12 @@
 		downloadPublicShareFile,
 		getPublicFolderContents,
 		getPublicShareInfo,
+		uploadToPublicFolder,
 		triggerFileDownload,
 		type ShareInfo
 	} from '$lib/api/shares';
+	import { queryClient } from '$lib/query-client';
+	import { toastStore } from '$lib/stores/toast';
 	import { formatFileSize, getMimeTypeIcon } from '$lib/utils/format';
 
 	const token = $page.params.token ?? '';
@@ -37,8 +40,10 @@
 	let passwordError = '';
 	let isSubmittingPassword = false;
 	let isDownloading = false;
+	let isUploading = false;
 	let errorType: 'not-found' | 'expired' | 'general' | null = null;
 	let hasTriedAutoSession = false;
+	let uploadInput: HTMLInputElement | null = null;
 
 	onMount(() => {
 		const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
@@ -73,6 +78,13 @@
 
 	$: needsPassword = $shareQuery.data?.password_protected && !sessionToken;
 	$: canAccessShare = Boolean($shareQuery.data && sessionToken);
+	$: canUploadToFolder =
+		Boolean(
+			$shareQuery.data &&
+			$shareQuery.data.resource_type === 'folder' &&
+			$shareQuery.data.permissions !== 'View' &&
+			sessionToken
+		);
 
 	$: if ($shareQuery.error) {
 		const error = $shareQuery.error as { status?: number; message?: string };
@@ -135,6 +147,36 @@
 			alert(error instanceof Error ? error.message : 'Failed to download file');
 		} finally {
 			isDownloading = false;
+		}
+	}
+
+	function promptFolderUpload() {
+		uploadInput?.click();
+	}
+
+	async function handleFolderUpload(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const selectedFile = input.files?.[0];
+		if (!selectedFile || !sessionToken) {
+			return;
+		}
+
+		isUploading = true;
+		try {
+			const targetFolderId = currentFolderId || $folderContentsQuery.data?.root_folder_id;
+			await uploadToPublicFolder(token, sessionToken, selectedFile, targetFolderId);
+			await queryClient.invalidateQueries({
+				queryKey: ['public-share-folder', token]
+			});
+			toastStore.show(`Uploaded "${selectedFile.name}"`, 'success');
+		} catch (error) {
+			toastStore.show(
+				error instanceof Error ? error.message : 'Failed to upload file',
+				'error'
+			);
+		} finally {
+			isUploading = false;
+			input.value = '';
 		}
 	}
 
@@ -331,6 +373,39 @@
 											<button type="button" class="btn btn-sm btn-ghost" on:click={openRootFolder}>
 												Back to shared root
 											</button>
+										{/if}
+									</div>
+
+									<div class="flex items-center justify-between gap-3">
+										<div class="text-sm text-base-content/60">
+											{#if shareInfo.permissions === 'View'}
+												This link is view-only.
+											{:else}
+												This link allows uploads into the current shared folder.
+											{/if}
+										</div>
+										{#if canUploadToFolder}
+											<div>
+												<input
+													bind:this={uploadInput}
+													type="file"
+													class="hidden"
+													on:change={handleFolderUpload}
+												/>
+												<button
+													type="button"
+													class="btn btn-primary btn-sm"
+													on:click={promptFolderUpload}
+													disabled={isUploading}
+												>
+													{#if isUploading}
+														<span class="loading loading-spinner loading-xs"></span>
+														Uploading...
+													{:else}
+														Upload File
+													{/if}
+												</button>
+											</div>
 										{/if}
 									</div>
 

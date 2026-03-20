@@ -29,6 +29,7 @@ export interface ShareInfo {
 	resource_id: string;
 	resource_type: 'file' | 'folder';
 	name: string;
+	permissions: 'View' | 'Edit' | 'Admin';
 	file_size: number | null;
 	mime_type: string | null;
 	password_protected: boolean;
@@ -40,8 +41,19 @@ export interface ShareSessionRequest {
 }
 
 export interface ShareSessionResponse {
-  session_token: string;
-  expires_at: string;
+	session_token: string;
+	expires_at: string;
+	permissions: 'View' | 'Edit' | 'Admin';
+}
+
+export interface PublicShareUploadResponse {
+	id: string;
+	name: string;
+	size: number;
+	mime_type: string;
+	content_hash: string;
+	current_version: number;
+	created_at: string;
 }
 
 export interface CreateUserShareRequest {
@@ -341,4 +353,40 @@ export async function downloadPublicFolderFile(
 	}
 
 	return response.blob();
+}
+
+export async function uploadToPublicFolder(
+	token: string,
+	sessionToken: string,
+	file: globalThis.File,
+	parentFolderId?: string
+): Promise<PublicShareUploadResponse> {
+	const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
+	const formData = new FormData();
+	formData.append('file', file);
+	formData.append('name', file.name);
+	if (parentFolderId) {
+		formData.append('parent_folder_id', parentFolderId);
+	}
+
+	const response = await fetch(`${API_URL}/public/share/${token}/folder/upload`, {
+		method: 'POST',
+		headers: {
+			Authorization: `Bearer ${sessionToken}`
+		},
+		body: formData
+	});
+
+	if (!response.ok) {
+		let errorMessage = 'Failed to upload file';
+		try {
+			const errorData = await response.json();
+			errorMessage = errorData.error || errorData.message || errorMessage;
+		} catch {
+			errorMessage = response.statusText || errorMessage;
+		}
+		throw new Error(errorMessage);
+	}
+
+	return response.json();
 }

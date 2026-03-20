@@ -480,6 +480,14 @@ async fn main() -> Result<()> {
             "/api/v1/public/share/:token/folder/files/:file_id",
             get(handlers::download_shared_folder_file),
         )
+        .route(
+            "/api/public/share/:token/folder/upload",
+            post(handlers::upload_shared_folder_file),
+        )
+        .route(
+            "/api/v1/public/share/:token/folder/upload",
+            post(handlers::upload_shared_folder_file),
+        )
         // WebSocket sync endpoint (Task Phase 3A)
         .route("/api/ws", get(handlers::sync_handler))
         .route("/api/v1/ws", get(handlers::sync_handler))
