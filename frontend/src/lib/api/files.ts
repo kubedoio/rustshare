@@ -46,14 +46,17 @@ export async function updateFile(
   const formData = new FormData();
   formData.append('file', file);
 
+  const token = localStorage.getItem('token');
   const headers: Record<string, string> = {
     'If-Match': currentVersion.toString()
   };
 
-  const apiBase = import.meta.env.VITE_API_URL || '/api/v1';
-  const response = await fetch(`${apiBase}/files/${fileId}`, {
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${import.meta.env.VITE_API_URL}/files/${fileId}`, {
     method: 'PUT',
-    credentials: 'include',
     headers,
     body: formData
   });
@@ -74,10 +77,15 @@ export async function restoreFileVersion(
   versionNumber: number,
   currentVersion: number
 ): Promise<File> {
+  const token = localStorage.getItem('token');
   const headers: Record<string, string> = {
     'If-Match': currentVersion.toString(),
     'Content-Type': 'application/json'
   };
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
 
   const response = await apiClient.request<File>(`/files/${fileId}/restore`, {
     method: 'POST',

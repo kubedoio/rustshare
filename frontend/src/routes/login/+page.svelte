@@ -22,7 +22,7 @@
 
     try {
       const response = await apiLogin(email, password);
-      await authStore.login(response.user);
+      authStore.login(response.token, response.user);
       goto('/files');
     } catch (error: any) {
       showError = true;

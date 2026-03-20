@@ -1,4 +1,4 @@
-//! Authentication extractors for session-cookie and token validation.
+//! Authentication extractors for JWT token validation.
 
 use axum::{
     async_trait,
@@ -8,14 +8,13 @@ use axum::{
     Json, RequestPartsExt,
 };
 use axum_extra::{
-    extract::cookie::CookieJar,
     headers::{authorization::Bearer, Authorization},
     TypedHeader,
 };
 use rustshare_auth::ShareSessionClaims;
 use uuid::Uuid;
 
-use crate::{session, AppState};
+use crate::AppState;
 
 /// Authenticated user extracted from JWT token.
 ///
@@ -35,46 +34,31 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let cookie_jar = CookieJar::from_headers(&parts.headers);
-        if let Some(session_cookie) = cookie_jar.get(session::SESSION_COOKIE_NAME) {
-            let token_hash = session::hash_session_token(session_cookie.value());
-            if let Some(user_session) = state
-                .metadata_store
-                .find_active_user_session_by_token_hash(&token_hash)
-                .await
-                .map_err(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({"error": format!("Failed to validate session: {e}")})),
-                    )
-                        .into_response()
-                })?
-            {
-                return Ok(AuthenticatedUser {
-                    user_id: user_session.user_id,
-                });
-            }
-        }
-
+        // Extract Authorization header
         let TypedHeader(Authorization(bearer)) = parts
             .extract::<TypedHeader<Authorization<Bearer>>>()
             .await
             .map_err(|_| {
                 (
                     StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({"error": "Missing or invalid session cookie"})),
+                    Json(serde_json::json!({"error": "Missing or invalid Authorization header"})),
                 )
                     .into_response()
             })?;
 
-        let claims = state.jwt_manager.validate(bearer.token()).map_err(|e| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": format!("Invalid token: {}", e)})),
-            )
-                .into_response()
-        })?;
+        // Validate JWT token
+        let claims = state
+            .jwt_manager
+            .validate(bearer.token())
+            .map_err(|e| {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({"error": format!("Invalid token: {}", e)})),
+                )
+                    .into_response()
+            })?;
 
+        // Parse user ID from claims
         let user_id = Uuid::parse_str(&claims.sub).map_err(|_| {
             (
                 StatusCode::UNAUTHORIZED,

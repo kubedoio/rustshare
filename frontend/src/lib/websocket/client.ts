@@ -1,9 +1,11 @@
+import { get } from 'svelte/store';
 import { websocketStore } from '$lib/stores/websocket';
 import type { WebSocketEvent, WebSocketEventType, EventHandler } from './events';
 
 export class WebSocketClient {
   private ws: WebSocket | null = null;
   private url: string;
+  private token: string | null = null;
   private handlers: Map<WebSocketEventType, Set<EventHandler>> = new Map();
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
@@ -13,39 +15,27 @@ export class WebSocketClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(url: string) {
-    if (url.startsWith('ws://') || url.startsWith('wss://')) {
-      this.url = url;
-      return;
-    }
-
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      this.url = url.replace(/^http/, 'ws');
-      return;
-    }
-
-    if (typeof window !== 'undefined') {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const path = url.startsWith('/') ? url : `/${url}`;
-      this.url = `${protocol}//${window.location.host}${path}`;
-      return;
-    }
-
-    this.url = url;
+    // Convert http/https to ws/wss
+    this.url = url.replace(/^http/, 'ws');
   }
 
-  connect(): Promise<void> {
+  connect(token: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        resolve();
+      if (!token) {
+        reject(new Error('No authentication token available'));
         return;
       }
 
+      this.token = token;
       this.isManualClose = false;
+
+      // Use token as query parameter for browser WebSocket compatibility
+      const wsUrlWithToken = `${this.url}?token=${encodeURIComponent(token)}`;
 
       try {
         websocketStore.setState('connecting');
 
-        this.ws = new WebSocket(this.url);
+        this.ws = new WebSocket(wsUrlWithToken);
 
         this.ws.onopen = () => {
           console.log('[WebSocket] Connected');
@@ -101,7 +91,7 @@ export class WebSocketClient {
   }
 
   private reconnect(): void {
-    if (this.isManualClose) {
+    if (this.isManualClose || !this.token) {
       return;
     }
 
@@ -121,7 +111,7 @@ export class WebSocketClient {
     websocketStore.setState('reconnecting');
 
     this.reconnectTimer = setTimeout(() => {
-      this.connect().catch((error) => {
+      this.connect(this.token!).catch((error) => {
         console.error('[WebSocket] Reconnection failed:', error);
       });
     }, delay);
@@ -184,6 +174,7 @@ export class WebSocketClient {
       this.ws = null;
     }
 
+    this.token = null;
     websocketStore.reset();
   }
 
@@ -201,15 +192,17 @@ let wsClient: WebSocketClient | null = null;
 
 export function getWebSocketClient(): WebSocketClient {
   if (!wsClient) {
+    // Prefer VITE_WS_URL, fallback to deriving from VITE_API_URL
     let wsUrl = import.meta.env.VITE_WS_URL;
 
     if (!wsUrl) {
-      const apiUrl = import.meta.env.VITE_API_URL || '/api/v1';
-      wsUrl = apiUrl.replace(/\/v1\/?$/, '').replace(/^http/, 'ws');
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost/api';
+      wsUrl = apiUrl.replace(/^http/, 'ws');
     }
 
-    if (!wsUrl.endsWith('/ws')) {
-      wsUrl = `${wsUrl.replace(/\/$/, '')}/ws`;
+    // Append /sync endpoint
+    if (!wsUrl.endsWith('/sync')) {
+      wsUrl = `${wsUrl}/sync`;
     }
 
     wsClient = new WebSocketClient(wsUrl);

@@ -4,7 +4,7 @@ use axum::{
         State,
         Query,
     },
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::Response,
 };
 use axum_extra::{
@@ -21,7 +21,7 @@ use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::{session, AppState};
+use crate::AppState;
 
 /// Identifies the client connected to WebSocket
 #[derive(Debug, Clone)]
@@ -133,28 +133,10 @@ async fn validate_client_token(
 pub async fn sync_handler(
     State(state): State<AppState>,
     ws: WebSocketUpgrade,
-    headers: HeaderMap,
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     Query(query): Query<SyncQuery>,
 ) -> Result<Response, (StatusCode, String)> {
-    if let Some(session_token) = session::get_session_token_from_headers(&headers) {
-        let token_hash = session::hash_session_token(&session_token);
-        if let Some(user_session) = state
-            .metadata_store
-            .find_active_user_session_by_token_hash(&token_hash)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to validate session: {e}")))?
-        {
-            let client_identity = ClientIdentity::User(UserId::from(user_session.user_id));
-            info!(
-                "WebSocket connection established for user {} via session cookie",
-                user_session.user_id
-            );
-
-            return Ok(ws.on_upgrade(move |socket| handle_socket(socket, client_identity, state)));
-        }
-    }
-
+    // Extract token from header or query parameter
     let token = if let Some(TypedHeader(auth)) = auth_header {
         auth.token().to_string()
     } else if let Some(token) = query.token {
@@ -162,7 +144,7 @@ pub async fn sync_handler(
     } else {
         return Err((
             StatusCode::UNAUTHORIZED,
-            "Missing authentication session or token".to_string(),
+            "Missing authentication token (provide via Authorization header or ?token= query parameter)".to_string(),
         ));
     };
 
@@ -498,7 +480,7 @@ mod tests {
             share_id,
             file_id,
             share_token: "token123".to_string(),
-            permissions: SharePermissions::View,
+            permissions: SharePermissions::Read,
             password_protected: false,
             expires_at: None,
             created_by: owner_id,
@@ -627,7 +609,7 @@ mod tests {
             share_id,
             file_id,
             share_token: "token123".to_string(),
-            permissions: SharePermissions::View,
+            permissions: SharePermissions::Read,
             password_protected: false,
             expires_at: None,
             created_by: owner_id,
@@ -667,7 +649,7 @@ mod tests {
                 assert_eq!(msg_share_id, share_id);
                 assert_eq!(msg_file_id, file_id);
                 assert_eq!(share_token, "token123");
-                assert_eq!(permissions, SharePermissions::View);
+                assert_eq!(permissions, SharePermissions::Read);
                 assert!(!password_protected);
                 assert!(expires_at.is_none());
             }
@@ -826,7 +808,7 @@ mod tests {
             share_id,
             file_id,
             share_token: "token123".to_string(),
-            permissions: SharePermissions::View,
+            permissions: SharePermissions::Read,
             password_protected: false,
             expires_at: None,
         };
@@ -867,7 +849,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
-            permissions: SharePermissions::View,
+            permissions: SharePermissions::Read,
         };
 
         // Create ShareRevoked event for this share
@@ -910,7 +892,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
-            permissions: SharePermissions::View,
+            permissions: SharePermissions::Read,
         };
 
         // Create ShareUpdated event for this share
@@ -956,7 +938,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
-            permissions: SharePermissions::View,
+            permissions: SharePermissions::Read,
         };
 
         // Create FileModified event for this file
@@ -1006,7 +988,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
-            permissions: SharePermissions::View,
+            permissions: SharePermissions::Read,
         };
 
         // Create FileModified event for a different file
@@ -1056,7 +1038,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
-            permissions: SharePermissions::View,
+            permissions: SharePermissions::Read,
         };
 
         // Create ShareRevoked event for a different share
@@ -1099,7 +1081,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
-            permissions: SharePermissions::View,
+            permissions: SharePermissions::Read,
         };
 
         // Create UserCreated event

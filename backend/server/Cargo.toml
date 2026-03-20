@@ -2,7 +2,6 @@
 name = "rustshare-server"
 version.workspace = true
 edition.workspace = true
-autotests = false
 
 [[bin]]
 name = "rustshare-server"
@@ -16,7 +15,7 @@ rustshare-infrastructure = { path = "../crates/infrastructure" }
 
 tokio.workspace = true
 axum = { workspace = true, features = ["multipart", "ws"] }
-axum-extra = { version = "0.9", features = ["typed-header", "cookie"] }
+axum-extra = { version = "0.9", features = ["typed-header"] }
 tower.workspace = true
 tower-http.workspace = true
 sqlx.workspace = true
@@ -28,8 +27,6 @@ anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 bytes.workspace = true
-url.workspace = true
-sha2.workspace = true
 futures-util = "0.3"
 dotenv = "0.15"
 governor = "0.6"
@@ -38,3 +35,4 @@ nonzero_ext = "0.3"
 [dev-dependencies]
 tokio-tungstenite = "0.24"
 reqwest = { version = "0.11", features = ["multipart"] }
+

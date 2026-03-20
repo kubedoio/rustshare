@@ -39,17 +39,13 @@
 
 mod handlers;
 mod middleware;
-mod session;
 
 use anyhow::Result;
 use axum::{
     extract::DefaultBodyLimit,
-    http::StatusCode,
-    response::IntoResponse,
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
-use axum_extra::extract::cookie::CookieJar;
 use rustshare_auth::{JwtManager, PasswordHasher};
 use rustshare_core::{
     domain::User,
@@ -60,13 +56,9 @@ use rustshare_infrastructure::repositories::{NotificationRepository, ShareReposi
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use std::{path::PathBuf, sync::Arc};
-use tower_http::{
-    services::{ServeDir, ServeFile},
-    trace::TraceLayer,
-};
-use tracing::{info, warn};
-use uuid::Uuid;
+use std::sync::Arc;
+use tower_http::trace::TraceLayer;
+use tracing::info;
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -84,8 +76,6 @@ pub struct AppState {
     pub notification_service: Arc<NotificationService<NotificationRepository>>,
     pub user_share_service: Arc<UserShareService<ShareRepository, UserRepository, FileRepository, FolderRepository, ShareRepository, FileRepository, FolderRepository, NotificationRepository>>,
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
-    pub session_cookie_secure: bool,
-    pub session_ttl_hours: i64,
 }
 
 #[tokio::main]
@@ -191,14 +181,6 @@ async fn main() -> Result<()> {
 
     // Initialize rate limiting configuration
     let rate_limit_config = Arc::new(middleware::RateLimitConfig::new());
-    let session_cookie_secure = std::env::var("SESSION_COOKIE_SECURE")
-        .ok()
-        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "on"))
-        .unwrap_or(false);
-    let session_ttl_hours = std::env::var("SESSION_TTL_HOURS")
-        .ok()
-        .and_then(|value| value.parse::<i64>().ok())
-        .unwrap_or(24 * 14);
 
     info!("Rate limiting initialized");
 
@@ -238,91 +220,59 @@ async fn main() -> Result<()> {
         notification_service,
         user_share_service,
         rate_limit_config,
-        session_cookie_secure,
-        session_ttl_hours,
     };
 
-    let legacy_api_routes = Router::new()
-        .route("/auth/login", post(login))
-        .route("/auth/logout", post(logout))
-        .route("/files", get(handlers::list_files))
-        .route("/files/upload", post(handlers::upload_file))
-        .route("/files/:id", get(handlers::get_file))
-        .route("/files/:id", put(handlers::update_file))
-        .route("/files/:id", delete(handlers::delete_file))
-        .route("/files/:id/download", get(handlers::download_file))
-        .route("/files/:id/versions", get(handlers::get_file_versions))
-        .route("/files/:id/restore", post(handlers::restore_file_version))
-        .route("/files/:id/move", post(handlers::move_file))
-        .route("/files/:id/rename", post(handlers::rename_file))
-        .route("/folders", post(handlers::create_folder))
-        .route("/folders/root/contents", get(handlers::get_root_contents))
-        .route("/folders/tree", get(handlers::get_folder_tree))
-        .route("/folders/:id/contents", get(handlers::get_folder_contents))
-        .route("/folders/:id/move", post(handlers::move_folder))
-        .route("/folders/:id/rename", post(handlers::rename_folder))
-        .route("/folders/:id", get(handlers::get_folder))
-        .route("/folders/:id", delete(handlers::delete_folder))
-        .route("/files/:file_id/shares", post(handlers::create_share))
-        .route("/files/:file_id/shares", get(handlers::list_file_shares))
-        .route("/users/me", get(handlers::get_user_profile))
-        .route("/users/me/theme", patch(handlers::update_user_theme))
-        .route("/public/share/:token/session", post(handlers::create_session))
-        .route("/public/share/:token/info", get(handlers::get_share_info))
-        .route("/public/share/:token/file", get(handlers::download_shared_file))
-        .route("/sync", get(handlers::sync_handler));
-
-    let v1_api_routes = Router::new()
-        .route("/auth/login", post(login))
-        .route("/auth/logout", post(logout))
-        .route("/me", get(handlers::get_user_profile))
-        .route("/files", get(handlers::list_files))
-        .route("/files/upload", post(handlers::upload_file))
-        .route("/files/:id", get(handlers::get_file))
-        .route("/files/:id", put(handlers::update_file))
-        .route("/files/:id", delete(handlers::delete_file))
-        .route("/files/:id/download", get(handlers::download_file))
-        .route("/files/:id/versions", get(handlers::get_file_versions))
-        .route("/files/:id/restore", post(handlers::restore_file_version))
-        .route("/files/:id/move", post(handlers::move_file))
-        .route("/files/:id/rename", post(handlers::rename_file))
-        .route("/folders", post(handlers::create_folder))
-        .route("/folders/root/contents", get(handlers::get_root_contents))
-        .route("/folders/tree", get(handlers::get_folder_tree))
-        .route("/folders/:id/contents", get(handlers::get_folder_contents))
-        .route("/folders/:id/move", post(handlers::move_folder))
-        .route("/folders/:id/rename", post(handlers::rename_folder))
-        .route("/folders/:id", get(handlers::get_folder))
-        .route("/folders/:id", delete(handlers::delete_folder))
-        .route("/files/:file_id/shares", post(handlers::create_share))
-        .route("/files/:file_id/shares", get(handlers::list_file_shares))
-        .route("/users/me", get(handlers::get_user_profile))
-        .route("/users/me/theme", patch(handlers::update_user_theme))
-        .route("/public/share/:token/session", post(handlers::create_session))
-        .route("/public/share/:token/info", get(handlers::get_share_info))
-        .route("/public/share/:token/file", get(handlers::download_shared_file));
-
-    let api_router = Router::new()
-        .route("/health", get(health_check))
-        .route("/ws", get(handlers::sync_handler))
-        .merge(legacy_api_routes)
-        .nest("/v1", v1_api_routes);
-
-    let frontend_dist_dir = resolve_frontend_dist_dir();
-    let frontend_index_path = frontend_dist_dir.join("index.html");
-    if !frontend_index_path.exists() {
-        warn!(
-            "Frontend build artifact not found at {}. Non-API SPA routes will 404 until the frontend is built.",
-            frontend_index_path.display()
-        );
-    }
-
-    let spa_service =
-        ServeDir::new(frontend_dist_dir).not_found_service(ServeFile::new(frontend_index_path));
-
+    // Build router
     let app = Router::new()
-        .nest("/api", api_router)
-        .fallback_service(spa_service)
+        // Health check
+        .route("/health", get(health_check))
+        // Auth
+        .route("/api/auth/login", post(login))
+        // File routes (Task 15-19)
+        .route("/api/files", get(handlers::list_files))
+        .route("/api/files/upload", post(handlers::upload_file))
+        .route("/api/files/:id", get(handlers::get_file))
+        .route("/api/files/:id", put(handlers::update_file))
+        .route("/api/files/:id", delete(handlers::delete_file))
+        .route("/api/files/:id/download", get(handlers::download_file))
+        .route("/api/files/:id/versions", get(handlers::get_file_versions))
+        .route("/api/files/:id/restore", post(handlers::restore_file_version))
+        .route("/api/files/:id/move", post(handlers::move_file))
+        .route("/api/files/:id/rename", post(handlers::rename_file))
+        // Folder routes (Task 20-22)
+        // NOTE: More specific routes (with literal path segments) must come BEFORE parameterized routes
+        .route("/api/folders", post(handlers::create_folder))
+        .route("/api/folders/root/contents", get(handlers::get_root_contents))
+        .route("/api/folders/tree", get(handlers::get_folder_tree))
+        .route("/api/folders/:id/contents", get(handlers::get_folder_contents))
+        .route("/api/folders/:id/move", post(handlers::move_folder))
+        .route("/api/folders/:id/rename", post(handlers::rename_folder))
+        .route("/api/folders/:id", get(handlers::get_folder))
+        .route("/api/folders/:id", delete(handlers::delete_folder))
+        // Share routes (Task 9)
+        .route("/api/files/:file_id/shares", post(handlers::create_share))
+        .route("/api/files/:file_id/shares", get(handlers::list_file_shares))
+        // User routes
+        .route("/api/users/me", get(handlers::get_user_profile))
+        .route("/api/users/me/theme", patch(handlers::update_user_theme))
+        // User share routes (Task 14) - Phase 3A (not MVP)
+        // .route("/api/files/:id/share", post(handlers::create_file_share))
+        // .route("/api/folders/:id/share", post(handlers::create_folder_share))
+        // .route("/api/shares/received", get(handlers::list_received_shares))
+        // .route("/api/files/:id/recipients", get(handlers::list_file_recipients))
+        // .route("/api/folders/:id/recipients", get(handlers::list_folder_recipients))
+        // .route("/api/shares/:id/permission", put(handlers::update_recipient_permission))
+        // .route("/api/shares/:id/recipient", delete(handlers::remove_recipient))
+        // Notification routes (Task 15) - Phase 3A (not MVP)
+        // .route("/api/notifications", get(handlers::list_notifications))
+        // .route("/api/notifications/:id/read", put(handlers::mark_notification_read))
+        // .route("/api/notifications/:id", delete(handlers::delete_notification))
+        // Public share routes (Task 10 - no authentication required for session creation and info)
+        .route("/api/public/share/:token/session", post(handlers::create_session))
+        .route("/api/public/share/:token/info", get(handlers::get_share_info))
+        .route("/api/public/share/:token/file", get(handlers::download_shared_file))
+        // WebSocket sync endpoint (Task Phase 3A)
+        .route("/api/sync", get(handlers::sync_handler))
         .with_state(state.clone())
         // Increase body size limit for file uploads (500MB)
         // This must be applied BEFORE other middleware layers
@@ -359,23 +309,6 @@ async fn health_check() -> Json<HealthResponse> {
     })
 }
 
-fn resolve_frontend_dist_dir() -> PathBuf {
-    let candidates = [
-        std::env::var("FRONTEND_DIST_DIR").ok(),
-        Some("../frontend/build".to_string()),
-        Some("frontend/build".to_string()),
-    ];
-
-    for candidate in candidates.into_iter().flatten() {
-        let path = PathBuf::from(candidate);
-        if path.exists() {
-            return path;
-        }
-    }
-
-    PathBuf::from("../frontend/build")
-}
-
 #[derive(Serialize)]
 struct HealthResponse {
     status: String,
@@ -391,8 +324,8 @@ struct LoginRequest {
 /// Login response
 #[derive(Serialize)]
 struct LoginResponse {
+    token: String,
     user: UserResponse,
-    session_expires_at: String,
 }
 
 #[derive(Serialize)]
@@ -406,72 +339,45 @@ struct UserResponse {
 /// Login handler
 async fn login(
     axum::extract::State(state): axum::extract::State<AppState>,
-    jar: CookieJar,
     Json(req): Json<LoginRequest>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<Json<LoginResponse>, (axum::http::StatusCode, String)> {
     // Find user
     let user = state
         .metadata_store
         .find_user_by_email(&req.email)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| {
             (
-                StatusCode::UNAUTHORIZED,
+                axum::http::StatusCode::UNAUTHORIZED,
                 "Invalid credentials".to_string(),
             )
         })?;
 
     // Verify password
     let is_valid = PasswordHasher::verify(&req.password, &user.password_hash)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if !is_valid {
-        return Err((StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()));
+        return Err((
+            axum::http::StatusCode::UNAUTHORIZED,
+            "Invalid credentials".to_string(),
+        ));
     }
 
-    let session_token = session::generate_session_token();
-    let session_token_hash = session::hash_session_token(&session_token);
-    let expires_at = chrono::Utc::now() + chrono::Duration::hours(state.session_ttl_hours);
+    // Generate JWT
+    let token = state
+        .jwt_manager
+        .generate(user.id, user.email.clone())
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    state
-        .metadata_store
-        .create_user_session(Uuid::new_v4(), user.id, &session_token_hash, expires_at)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create session: {e}")))?;
-
-    Ok((
-        jar.add(session::build_session_cookie(
-            &session_token,
-            state.session_cookie_secure,
-        )),
-        Json(LoginResponse {
-            user: UserResponse {
-                id: user.id.to_string(),
-                email: user.email,
-                display_name: user.display_name,
-                is_admin: user.is_admin,
-            },
-            session_expires_at: expires_at.to_rfc3339(),
-        }),
-    ))
-}
-
-async fn logout(
-    axum::extract::State(state): axum::extract::State<AppState>,
-    jar: CookieJar,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    if let Some(session_cookie) = jar.get(session::SESSION_COOKIE_NAME) {
-        let token_hash = session::hash_session_token(session_cookie.value());
-        state
-            .metadata_store
-            .revoke_user_session_by_token_hash(&token_hash)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to revoke session: {e}")))?;
-    }
-
-    Ok((
-        jar.add(session::build_expired_session_cookie(state.session_cookie_secure)),
-        StatusCode::NO_CONTENT,
-    ))
+    Ok(Json(LoginResponse {
+        token,
+        user: UserResponse {
+            id: user.id.to_string(),
+            email: user.email,
+            display_name: user.display_name,
+            is_admin: user.is_admin,
+        },
+    }))
 }
