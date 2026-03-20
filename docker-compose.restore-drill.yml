@@ -8,7 +8,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "15432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rustshare"]
       interval: 10s
@@ -21,12 +21,12 @@ services:
       MINIO_ROOT_USER: rustfsadmin
       MINIO_ROOT_PASSWORD: rustfsadmin
       MINIO_DOMAIN: localhost
-      MINIO_SERVER_URL: http://localhost:9000
+      MINIO_SERVER_URL: http://localhost:19000
     volumes:
       - rustfs_data:/data
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "19000:9000"
+      - "19001:9001"
     command: server /data --console-address ":9001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
@@ -42,12 +42,12 @@ services:
         VITE_API_URL: /api/v1
         VITE_WS_URL: /api/v1
     ports:
-      - "8080:8080"
+      - "18081:8080"
     environment:
       DATABASE_URL: postgres://rustshare:changeme@postgres:5432/rustshare
       RUST_LOG: debug
       RUSTFS_ENDPOINT: http://rustfs:9000
-      RUSTFS_PUBLIC_ENDPOINT: http://localhost:9000
+      RUSTFS_PUBLIC_ENDPOINT: http://localhost:19000
       RUSTFS_REGION: us-east-1
       RUSTFS_BUCKET: rustshare-files
       AWS_ACCESS_KEY_ID: rustfsadmin
@@ -75,7 +75,7 @@ services:
   nginx:
     image: nginx:alpine
     ports:
-      - "80:80"
+      - "18080:80"
     volumes:
       - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:

@@ -539,7 +539,7 @@ async fn main() -> Result<()> {
         .route("/api/v1/ws", get(handlers::sync_handler))
         .route("/api/sync", get(handlers::sync_handler))
         .route("/api", any(api_not_found))
-        .route("/api/{*path}", any(api_not_found))
+        .route("/api/*path", any(api_not_found))
         .with_state(state.clone())
         // Increase body size limit for file uploads (500MB)
         // This must be applied BEFORE other middleware layers

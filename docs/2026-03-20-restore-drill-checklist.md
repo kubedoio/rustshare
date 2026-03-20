@@ -25,6 +25,14 @@ scripts/verify-backup-bundle.sh backups/<timestamp>
 scripts/restore-stack.sh backups/<timestamp>
 ```
 
+Preferred automated path for an isolated local drill:
+
+```bash
+scripts/run-restore-drill.sh backups/<timestamp>
+```
+
+That path restores into a separate Docker Compose project on alternate ports and runs the smoke checks automatically.
+
 3. Run the app-level smoke test:
 
 ```bash
@@ -58,6 +66,7 @@ curl -f http://localhost:8080/health
 - restore duration
 - validation result
 - any repair steps needed
+- generated report file from `restore-drill-reports/` when using the scripted drill
 
 ## Exit Criteria
 
@@ -69,4 +78,4 @@ The drill passes only if:
 ## Current Follow-Ups
 
 This checklist still needs:
-- a dedicated disposable restore environment template
+- a recorded drill history from real backup artifacts over time

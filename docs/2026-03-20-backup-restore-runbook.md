@@ -18,6 +18,7 @@ The repository now includes:
 - `scripts/restore-stack.sh`
 - `scripts/verify-backup-bundle.sh`
 - `scripts/post-restore-smoke.sh`
+- `scripts/run-restore-drill.sh`
 
 ## Create A Backup
 
@@ -88,6 +89,18 @@ Or run the automated smoke test:
 scripts/post-restore-smoke.sh
 ```
 
+For an isolated, non-destructive restore drill on alternate ports, run:
+
+```bash
+scripts/run-restore-drill.sh backups/<timestamp>
+```
+
+This uses:
+- `docker-compose.restore-drill.yml`
+- a separate Docker Compose project
+- alternate host ports so the primary stack does not need to be reused for the drill
+- a fresh backend image build from the current workspace before restore, so the drill validates the code you are preparing to ship
+
 ## Failure Modes
 
 If PostgreSQL restore fails:
@@ -114,3 +127,7 @@ It does not yet provide:
 
 Run a periodic restore drill using:
 - [2026-03-20-restore-drill-checklist.md](/Users/scolak/Projects/x/rustshare/docs/2026-03-20-restore-drill-checklist.md)
+
+Recommended default:
+- use `scripts/run-restore-drill.sh` first
+- keep the manual checklist for human verification and drill notes

@@ -173,6 +173,12 @@ Current operator docs live here:
 - [Replication Observability](/Users/scolak/Projects/x/rustshare/docs/2026-03-20-replication-observability.md)
 - [Rate Limit Hardening](/Users/scolak/Projects/x/rustshare/docs/2026-03-20-rate-limit-hardening.md)
 
+Restore-drill helper:
+
+```bash
+scripts/run-restore-drill.sh backups/<timestamp>
+```
+
 ## Known Remaining Gaps
 
 - Light mobile client with photo backup and offline flows

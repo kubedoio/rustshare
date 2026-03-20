@@ -46,6 +46,31 @@ require_service_running() {
 	fi
 }
 
+require_container_id() {
+	local service="$1"
+	local container_id
+	container_id="$(compose ps -q "${service}")"
+	if [[ -z "${container_id}" ]]; then
+		echo "Could not determine container ID for service '${service}'." >&2
+		exit 1
+	fi
+
+	echo "${container_id}"
+}
+
+require_named_volume_for_mount() {
+	local container_id="$1"
+	local mount_path="$2"
+	local volume_name
+	volume_name="$(docker inspect --format "{{range .Mounts}}{{if eq .Destination \"${mount_path}\"}}{{.Name}}{{end}}{{end}}" "${container_id}")"
+	if [[ -z "${volume_name}" ]]; then
+		echo "Could not determine named volume mounted at '${mount_path}'." >&2
+		exit 1
+	fi
+
+	echo "${volume_name}"
+}
+
 POSTGRES_SERVICE="${POSTGRES_SERVICE:-postgres}"
 POSTGRES_DB="${POSTGRES_DB:-rustshare}"
 POSTGRES_USER="${POSTGRES_USER:-rustshare}"
@@ -66,7 +91,12 @@ compose exec -T "${POSTGRES_SERVICE}" \
 	pg_dump -U "${POSTGRES_USER}" "${POSTGRES_DB}" | gzip -c >"${TARGET_DIR}/postgres.sql.gz"
 
 echo "Creating RustFS volume snapshot..."
-compose exec -T "${RUSTFS_SERVICE}" \
+RUSTFS_CONTAINER_ID="$(require_container_id "${RUSTFS_SERVICE}")"
+RUSTFS_VOLUME_NAME="$(require_named_volume_for_mount "${RUSTFS_CONTAINER_ID}" "/data")"
+
+docker run --rm \
+	-v "${RUSTFS_VOLUME_NAME}:/data:ro" \
+	alpine:3.21 \
 	sh -lc 'tar -czf - -C /data .' >"${TARGET_DIR}/rustfs-data.tar.gz"
 
 echo "Creating configuration snapshot..."

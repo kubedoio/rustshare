@@ -75,6 +75,7 @@ Current confidence by area:
 - [x] Restore script exists
 - [x] Backup bundle verification script exists
 - [x] Post-restore smoke script exists
+- [x] Isolated restore-drill runner exists
 - [x] Backup and restore runbook exists
 - [x] Restore drill checklist exists
 - [ ] A real restore drill against an actual backup artifact should still be performed and recorded

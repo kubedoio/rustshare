@@ -48,6 +48,40 @@ require_file() {
 	fi
 }
 
+wait_for_healthy() {
+	local service="$1"
+	local timeout_seconds="${2:-60}"
+	local container_id
+	local started_at
+	local health_status
+
+	started_at="$(date +%s)"
+	while true; do
+		container_id="$(compose ps -q "${service}")"
+		if [[ -z "${container_id}" ]]; then
+			if (( $(date +%s) - started_at >= timeout_seconds )); then
+				echo "Could not determine container ID for service '${service}'." >&2
+				exit 1
+			fi
+
+			sleep 2
+			continue
+		fi
+
+		health_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_id}")"
+		if [[ "${health_status}" == "healthy" || "${health_status}" == "running" ]]; then
+			return
+		fi
+
+		if (( $(date +%s) - started_at >= timeout_seconds )); then
+			echo "Service '${service}' did not become healthy within ${timeout_seconds}s." >&2
+			exit 1
+		fi
+
+		sleep 2
+	done
+}
+
 BACKUP_DIR="$(cd "$1" && pwd)"
 POSTGRES_SERVICE="${POSTGRES_SERVICE:-postgres}"
 POSTGRES_DB="${POSTGRES_DB:-rustshare}"
@@ -63,6 +97,8 @@ cd "${PROJECT_ROOT}"
 
 echo "Starting core services..."
 compose up -d "${POSTGRES_SERVICE}" "${RUSTFS_SERVICE}"
+wait_for_healthy "${POSTGRES_SERVICE}"
+wait_for_healthy "${RUSTFS_SERVICE}"
 
 echo "Stopping application traffic..."
 compose stop "${BACKEND_SERVICE}" "${EDGE_SERVICE}" >/dev/null 2>&1 || true
@@ -100,5 +136,8 @@ docker run --rm -i \
 
 echo "Restarting services..."
 compose up -d "${RUSTFS_SERVICE}" "${BACKEND_SERVICE}" "${EDGE_SERVICE}"
+wait_for_healthy "${RUSTFS_SERVICE}"
+wait_for_healthy "${BACKEND_SERVICE}"
+wait_for_healthy "${EDGE_SERVICE}"
 
 echo "Restore completed from ${BACKUP_DIR}"

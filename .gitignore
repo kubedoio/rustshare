@@ -23,6 +23,7 @@ docker-compose.override.yml
 
 # Local backup artifacts
 backups/
+restore-drill-reports/
 
 # Note: Cargo.lock IS committed for applications (not libraries)
 # to ensure reproducible builds
