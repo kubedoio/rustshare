@@ -2,72 +2,81 @@
 
 ## Summary
 
-The frontend is significantly more complete than the older MVP notes in this repository suggest. It already includes the main file-management workflow, folder navigation, preview flows, share-link flows, and WebSocket-driven refresh behavior.
+The frontend is no longer a partial shell. It is a substantially implemented SvelteKit SPA that covers the main web file-sharing product, including authenticated browsing, sharing, notifications, public-link access, and realtime updates.
 
-The frontend should currently be described as:
+The current frontend should be described as:
 
-**Substantially implemented, with a few incomplete sections and some backend integration gaps**
+**Substantially implemented and near MVP-complete for the web app**
+
+## Current Frontend Architecture
+
+- SvelteKit SPA using `@sveltejs/adapter-static`
+- compiled static assets served by Axum
+- primary browser auth flow based on server-managed HTTP-only session cookies
+- websocket updates over `/api/ws`
+- no production Node.js frontend server requirement
 
 ## Implemented
 
-### Core app flow
+### App shell and session flow
 
-- Root redirect and authenticated app layout
-- Login page with token-based auth
-- Sidebar, header, search UI, keyboard shortcuts, and toast system
+- authenticated app layout
+- login flow
+- session bootstrap from the backend
+- sidebar, header, search UI, keyboard shortcuts, and toast system
 
 ### File and folder workflows
 
-- Folder-aware file browser
-- File grid and list views
-- Upload with progress and drag-and-drop
-- Rename, delete, move, and replace flows
-- Folder create, rename, delete, and move flows
-- Breadcrumb navigation
-- File preview modal
-- Version history modal
+- folder-aware file browser
+- grid and list views
+- upload with progress and drag-and-drop
+- rename, delete, move, and replace flows
+- folder create, rename, delete, and move flows
+- breadcrumb navigation
+- file preview modal
+- version history modal
+- live replication-state badges
 
-### Sharing and sync
+### Sharing and collaboration
 
-- Public share creation UI
-- Public share access page
-- WebSocket client and event handlers
-- Query invalidation after realtime events
+- internal user-to-user sharing from the share modal
+- recipient listing, permission updates, and recipient removal
+- shared-with-me list
+- dedicated shared file and shared folder routes
+- shared-folder nested navigation with URL-backed state
+- public file links
+- public folder links
+- upload-only public folder links
 
-### Supporting routes
+### Public share UX
 
-- Dashboard page
-- Shares page
-- Notifications page
-- Settings page
+- password-protected public access flow
+- public file download view
+- public shared-folder browsing
+- multi-file uploads to editable public folder links
+- drag-and-drop uploads for public folder links
+- upload progress in the public share UI
 
-## Partially Implemented
+### Notifications and realtime
 
-### Shares page
+- backend-backed notifications page
+- unread notification count in navigation
+- websocket-driven invalidation and toasts
+- clickable realtime toasts that open the correct shared resource
 
-The page exists, but `listAllUserShares()` still returns a placeholder empty array in `frontend/src/lib/api/shares.ts`. The revoke action also assumes an endpoint that is not mounted by the backend.
+## Still Partial
 
-### Notifications page
+- some account-management surfaces in settings remain lighter than a full production account console
+- deeper admin/operator dashboards are not a frontend focus yet
+- the mobile client does not exist yet, so responsive web support is not the same as a native mobile product
 
-The page exists, but it currently uses local activity data rather than the backend notification API.
+## Not In Scope Yet
 
-### Settings page
-
-Theme and profile display exist, but account-management actions such as password change are still placeholder UI.
-
-## Not Yet Complete
-
-- Shared-with-me workflow
-- Backend-backed notifications UX
-- Real aggregate "all my shares" management
-- Search backend integration
-- Full frontend verification in this workspace
+- desktop sync client UX
+- full-text search product
+- collaborative document editing
+- a plugin-style extension surface
 
 ## Documentation Note
 
-Older docs in this repository conflict with the current code:
-
-- The old "flat list only / no preview / no realtime" description is outdated
-- The old "fully production-ready / 100% complete" description is too strong
-
-Use `STATUS.md` as the top-level source of truth and keep this file focused on frontend-specific gaps.
+Older notes that mention token-based browser auth, placeholder notifications, or a missing shared-with-me flow are outdated. Use [STATUS.md](/Users/scolak/Projects/x/rustshare/STATUS.md) for overall project state and this document only for frontend-specific maturity.

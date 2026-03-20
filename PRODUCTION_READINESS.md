@@ -1,229 +1,137 @@
-# Production Readiness Checklist
+# Production Readiness
 
-## Frontend Deployment
+This document is the current production-hardening checklist for RustShare. It replaces older notes that described a separate frontend runtime, JWT-only browser auth, or a fully finished production rollout.
 
-### ✅ Build Configuration
-- [x] Multi-stage Docker build configured
-- [x] Production dependencies only in final image
-- [x] Non-root user for security
-- [x] Health check in Dockerfile
-- [x] `.dockerignore` configured to exclude dev files
-- [x] Environment variables properly configured
-- [x] SvelteKit adapter-node configured
+## Current Position
 
-### ✅ Nginx Configuration
-- [x] Reverse proxy setup for frontend, backend, storage
-- [x] WebSocket support enabled (HMR + real-time sync)
-- [x] Security headers configured
-  - [x] X-Frame-Options
-  - [x] X-Content-Type-Options
-  - [x] X-XSS-Protection
-- [x] Gzip compression enabled
-- [x] No client body size limit (for large uploads)
-- [x] Proper timeouts configured
-- [x] Health check endpoint (`/health`)
-- [x] Request buffering disabled for uploads
+RustShare is close to production-ready for a careful, file-sharing-focused launch, but it is not “done everywhere.”
 
-### ✅ Application Features
-- [x] Authentication with JWT
-- [x] File upload/download
-- [x] Folder management
-- [x] File operations (rename, delete, move)
-- [x] Share links with password protection
-- [x] Real-time WebSocket sync
-- [x] Activity history tracking
-- [x] File versioning UI
-- [x] File preview modal
-- [x] Search functionality
-- [x] Sorting and filtering
-- [x] Bulk operations
-- [x] Keyboard shortcuts
-- [x] Mobile responsive design
+Current confidence by area:
 
-### ✅ Testing
-- [x] Unit tests for stores (activity, auth, fileSort, selection, search, ui)
-- [x] Unit tests for components (KeyboardShortcuts)
-- [x] Unit tests for API health endpoint
-- [x] Test coverage for core functionality
+- Web file-sharing product: high
+- Core auth/session/runtime model: high
+- Async replication foundation: medium-high
+- Operator recovery/runbooks: medium-high
+- Mobile sync/photos product: not ready
+- Deep alerting / long-term observability: partial
 
-### 📋 Security Checklist
+## Runtime Checklist
 
-#### Application Security
-- [x] JWT authentication implemented
-- [x] CSRF protection via SvelteKit ORIGIN check
-- [x] Password-protected share links
-- [x] Input validation on forms
-- [ ] Rate limiting (recommended to add)
-- [ ] Session timeout configuration
-- [ ] Brute force protection on login
+### Architecture
 
-#### Infrastructure Security
-- [x] Non-root user in Docker container
-- [x] Security headers in nginx
-- [x] No direct backend access (proxied)
-- [ ] HTTPS/TLS configuration (production requirement)
-- [ ] Secrets management (use vault in production)
-- [ ] Firewall rules for internal ports
+- [x] All backend routes live under `/api/...`
+- [x] Primary versioned API routes exist under `/api/v1/...`
+- [x] Axum serves the compiled SvelteKit SPA for non-API routes
+- [x] WebSocket endpoint is available on `/api/ws`
+- [x] The production-style runtime does not require a separate Node.js frontend server
 
-#### Dependency Security
-- [ ] Regular dependency updates
-- [ ] Vulnerability scanning (npm audit)
-- [ ] Pinned versions in package-lock.json
+### Authentication and Sessions
 
-### 📋 Performance Checklist
+- [x] Primary web auth uses secure HTTP-only cookie sessions
+- [x] Session records are persisted server-side
+- [x] CSRF protection is enforced for cookie-authenticated browser mutations
+- [x] OIDC login flow groundwork exists
+- [x] Password login can be enabled or disabled by configuration
+- [ ] OIDC production rollout has been exercised against the chosen identity provider
 
-#### Build Optimization
-- [x] Code splitting (automatic via SvelteKit)
-- [x] Tree shaking (Vite production build)
-- [x] Minification (automatic)
-- [x] Gzip compression in nginx
-- [ ] Asset caching headers (recommended)
-- [ ] CDN for static assets (production)
+### File Sharing Product
 
-#### Runtime Optimization
-- [x] Lazy loading of modals
-- [x] Virtual scrolling (if needed for large lists)
-- [x] Debounced search
-- [x] Optimistic UI updates
-- [x] TanStack Query caching
-- [ ] Service worker for offline support (future)
+- [x] File and folder CRUD
+- [x] Upload, download, move, rename, delete, restore, and version history
+- [x] Internal user-to-user sharing
+- [x] Public file links
+- [x] Public folder links
+- [x] Upload-only public folder links
+- [x] Shared-with-me views
+- [x] Notification inbox and unread badge
+- [x] Realtime user-visible events over WebSocket
 
-#### Monitoring
-- [x] Health check endpoints
-- [x] Docker health checks
-- [x] Replication operator summary endpoints
-- [ ] Application metrics (future)
-- [ ] Error tracking (Sentry, etc.) (recommended)
-- [ ] Performance monitoring (recommended)
+## Storage and Replication Checklist
 
-### 📋 Deployment Checklist
+- [x] Primary file writes go to RustFS-compatible object storage
+- [x] Upload success is decoupled from cross-node replication
+- [x] Replication state is tracked in the database
+- [x] Replication worker processes queued jobs asynchronously
+- [x] Retry and degraded/failure states are tracked
+- [x] Replication summary and target-health operator endpoints exist
+- [ ] End-to-end degraded-replication incident drills have been run on real infrastructure
+- [ ] Alerting is wired to replication-health thresholds
 
-#### Pre-Deployment
-- [ ] Update environment variables
-  - [ ] Set secure JWT_SECRET
-  - [ ] Update database credentials
-  - [ ] Configure storage credentials
-  - [ ] Set ORIGIN to production domain
-- [ ] Review nginx.conf for production domain
-- [ ] Test build locally: `docker compose build`
-- [ ] Run tests: `docker compose exec frontend npm test`
-- [ ] Verify health checks work
+## Security Checklist
 
-#### Deployment
-- [ ] Tag release: `git tag v0.1.0`
-- [ ] Build production images
-- [ ] Push to container registry
-- [ ] Deploy to production environment
-- [ ] Run database migrations (backend)
-- [ ] Verify all services are healthy
-- [ ] Test critical user flows
+- [x] Passwords use Argon2id hashing
+- [x] Share links support password protection and expiry
+- [x] Rate limiting is enabled for high-risk auth and public-share routes
+- [x] Reverse-proxy deployment path is documented
+- [x] Session cookies are HttpOnly and server-managed
+- [x] Browser auth does not rely on localStorage JWTs
+- [ ] HTTPS/TLS termination must be configured for production
+- [ ] Secrets must be rotated out of default local-development values
+- [ ] External security review / penetration testing has not been completed yet
 
-#### Post-Deployment
-- [ ] Monitor logs for errors
-- [ ] Verify health endpoints respond
-- [ ] Test authentication flow
-- [ ] Test file upload/download
-- [ ] Test share link creation/access
-- [ ] Test WebSocket real-time sync
-- [ ] Monitor resource usage
+## Recovery Checklist
 
-### 📋 Scaling Checklist
+- [x] Backup bundle script exists
+- [x] Restore script exists
+- [x] Backup bundle verification script exists
+- [x] Post-restore smoke script exists
+- [x] Backup and restore runbook exists
+- [x] Restore drill checklist exists
+- [ ] A real restore drill against an actual backup artifact should still be performed and recorded
+- [ ] RPO/RTO targets should be formally defined before launch
 
-#### Horizontal Scaling
-- [x] Stateless frontend (can scale horizontally)
-- [x] Docker Compose supports `--scale frontend=N`
-- [x] Nginx load balances automatically
-- [ ] Session management (if needed)
-- [ ] Shared storage for uploads
+## Observability Checklist
 
-#### Vertical Scaling
-- [ ] Monitor CPU/memory usage
-- [ ] Adjust worker_processes in nginx
-- [ ] Increase worker_connections if needed
-- [ ] Tune Node.js memory limits
+- [x] Health endpoints exist
+- [x] Replication summary endpoint exists
+- [x] Replication target-health endpoint exists
+- [x] CLI replication health helper exists
+- [ ] Centralized metrics and dashboards are still partial
+- [ ] Centralized alerting is still partial
+- [ ] Error tracking / incident paging is not yet documented as complete
 
-### 📋 Backup and Recovery
+## Deployment Checklist
 
-#### Data Backup
-- [x] No server-side frontend state (localStorage only)
-- [x] Database backup strategy (backend)
-- [x] File storage backup (MinIO/S3)
-- [x] Configuration backup (nginx, docker-compose)
+### Before launch
 
-#### Disaster Recovery
-- [ ] Rollback procedure documented
-- [x] Database restore procedure
-- [x] Backup bundle verification procedure
-- [x] Post-restore smoke procedure
-- [ ] RTO/RPO defined
-- [ ] Failover strategy
+- [ ] Replace local-development secrets
+- [ ] Configure production OIDC values if SSO is required at launch
+- [ ] Configure TLS and production reverse proxy settings
+- [ ] Validate backup, restore, verify, and smoke scripts in the target environment
+- [ ] Run current validation suite
+- [ ] Verify critical user journeys: login, upload, internal share, public link, upload-only link, restore, and replication recovery
 
-### 📋 Monitoring and Alerting
+### Recommended validations
 
-#### Metrics to Track
-- [ ] Response time (p50, p95, p99)
-- [ ] Error rate
-- [ ] Uptime
-- [ ] CPU/Memory usage
-- [ ] Disk usage
-- [ ] Active WebSocket connections
-- [ ] File upload/download throughput
+```bash
+cd /Users/scolak/Projects/x/rustshare/backend
+cargo check --workspace
+cargo test --workspace
 
-#### Alerting
-- [ ] Health check failures
-- [ ] High error rate
-- [ ] High response time
-- [ ] Resource exhaustion
-- [ ] SSL certificate expiration
+cd /Users/scolak/Projects/x/rustshare/frontend
+npm run check
+npm test
 
-### 📋 Documentation
+cd /Users/scolak/Projects/x/rustshare
+docker compose config
+```
 
-#### User Documentation
-- [ ] User guide
-- [ ] FAQ
-- [ ] Troubleshooting guide
+## Honest Remaining Risks
 
-#### Technical Documentation
-- [x] Deployment guide (DEPLOYMENT.md)
-- [x] Architecture overview
-- [ ] API documentation
-- [x] Runbook for operations team
+- Mobile client work is still outstanding, so the broader product vision is not yet launch-ready.
+- Anonymous/public uploads still need stronger attribution semantics in audit trails.
+- Some older repository docs outside the current runbook set may still reflect previous architecture phases.
+- Replication observability is meaningfully better than before, but not yet at a full “mature ops dashboard + automated alerts” level.
 
-### 📋 Compliance (If Required)
+## Launch Recommendation
 
-#### Data Privacy
-- [ ] GDPR compliance (if EU users)
-- [ ] Data retention policy
-- [ ] User data export
-- [ ] Right to be forgotten
+Reasonable recommendation today:
 
-#### Security Compliance
-- [ ] Security audit
-- [ ] Penetration testing
-- [ ] Compliance certifications (SOC 2, ISO 27001, etc.)
+**Proceed only with a careful web-first launch or pilot, not with a broad “finished platform” claim.**
 
-## Summary
+That means:
 
-**Production Ready**: ✅ Core features complete, deployment configured
-
-**Before Production Launch**:
-1. Configure HTTPS/TLS
-2. Set production secrets (JWT_SECRET, DB passwords)
-3. Add rate limiting
-4. Configure monitoring and alerting
-5. Set up backup strategy
-6. Perform security audit
-7. Load testing
-
-**Nice to Have**:
-- Error tracking (Sentry)
-- Performance monitoring (New Relic, Datadog)
-- CDN for static assets
-- Asset caching headers
-- Regular dependency updates
-
-## Current Status
-
-✅ **Complete**: MVP features, Docker setup, nginx config, tests
-⚠️ **In Progress**: Production hardening, monitoring setup
-📋 **TODO**: HTTPS, secrets management, rate limiting, monitoring
+- launch the web file-sharing product first
+- keep scope narrow
+- verify backups/restores on real infrastructure
+- treat mobile as the next product phase, not part of the current completion claim
