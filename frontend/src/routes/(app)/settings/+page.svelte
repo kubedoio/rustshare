@@ -105,16 +105,16 @@
         <!-- User Details -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label class="label">
+            <div class="label">
               <span class="label-text font-semibold">User ID</span>
-            </label>
+            </div>
             <div class="text-sm text-base-content/70 font-mono">{$currentUser?.id}</div>
           </div>
 
           <div>
-            <label class="label">
+            <div class="label">
               <span class="label-text font-semibold">Account Type</span>
-            </label>
+            </div>
             <div class="text-sm">
               {#if $currentUser?.is_admin}
                 <span class="badge badge-primary">Administrator</span>
@@ -125,16 +125,16 @@
           </div>
 
           <div>
-            <label class="label">
+            <div class="label">
               <span class="label-text font-semibold">Member Since</span>
-            </label>
+            </div>
             <div class="text-sm text-base-content/70">{formatDate($currentUser?.created_at)}</div>
           </div>
 
           <div>
-            <label class="label">
+            <div class="label">
               <span class="label-text font-semibold">Last Updated</span>
-            </label>
+            </div>
             <div class="text-sm text-base-content/70">{formatDate($currentUser?.updated_at)}</div>
           </div>
         </div>

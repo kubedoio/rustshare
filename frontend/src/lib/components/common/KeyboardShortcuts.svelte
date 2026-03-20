@@ -22,8 +22,7 @@
       shortcuts: [
         { keys: ['?'], description: 'Show this help menu' },
         { keys: ['g', 'h'], description: 'Go to Home/Dashboard' },
-        { keys: ['g', 'f'], description: 'Go to Files' },
-        { keys: ['g', 's'], description: 'Go to Shared Links' }
+        { keys: ['g', 'f'], description: 'Go to Files' }
       ]
     },
     {

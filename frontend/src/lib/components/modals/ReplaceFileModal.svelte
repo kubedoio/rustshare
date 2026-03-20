@@ -71,10 +71,11 @@
       </p>
 
       <div class="form-control w-full mb-4">
-        <label class="label">
+        <label class="label" for="replacement-file">
           <span class="label-text">Select new file</span>
         </label>
         <input
+          id="replacement-file"
           type="file"
           class="file-input file-input-bordered w-full"
           on:change={handleFileSelect}

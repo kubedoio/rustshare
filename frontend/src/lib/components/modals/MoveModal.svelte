@@ -85,14 +85,6 @@
     dispatch('close');
   }
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !loading) {
-      handleSubmit();
-    } else if (e.key === 'Escape') {
-      handleClose();
-    }
-  }
-
   function toggleFolder(node: FolderTree, expandedFolders: Set<string>): Set<string> {
     const newSet = new Set(expandedFolders);
     if (newSet.has(node.folder.id)) {
@@ -112,7 +104,7 @@
   }
 </script>
 
-<dialog class="modal" class:modal-open={open} on:keydown={handleKeydown}>
+<dialog class="modal" class:modal-open={open}>
   <div class="modal-box max-w-2xl">
     <h3 class="font-bold text-lg mb-4">
       Move {itemType === 'folder' ? 'Folder' : 'File'}

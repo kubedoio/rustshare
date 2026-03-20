@@ -117,8 +117,7 @@ describe('Keyboard Shortcuts Functionality', () => {
       navigation: [
         { key: '?', description: 'Show help menu' },
         { keys: ['g', 'h'], description: 'Go to dashboard' },
-        { keys: ['g', 'f'], description: 'Go to files' },
-        { keys: ['g', 's'], description: 'Go to shares' }
+        { keys: ['g', 'f'], description: 'Go to files' }
       ],
       fileOperations: [
         { key: 'u', description: 'Upload file' },
@@ -136,7 +135,7 @@ describe('Keyboard Shortcuts Functionality', () => {
     };
 
     it('should have navigation shortcuts', () => {
-      expect(shortcuts.navigation).toHaveLength(4);
+      expect(shortcuts.navigation).toHaveLength(3);
       expect(shortcuts.navigation[0].key).toBe('?');
     });
 

@@ -19,16 +19,9 @@
     dispatch('close');
   }
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !loading) {
-      handleConfirm();
-    } else if (e.key === 'Escape') {
-      handleClose();
-    }
-  }
 </script>
 
-<dialog class="modal" class:modal-open={open} on:keydown={handleKeydown}>
+<dialog class="modal" class:modal-open={open}>
   <div class="modal-box">
     <h3 class="font-bold text-lg mb-4">
       Delete {itemType === 'folder' ? 'Folder' : 'File'}?

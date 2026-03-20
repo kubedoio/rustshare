@@ -96,12 +96,12 @@
     <!-- Search button (mobile) -->
     {#if onSearchChange !== null}
       <div class="dropdown dropdown-end lg:hidden">
-        <label tabindex="0" class="btn btn-ghost btn-circle btn-sm">
+        <button type="button" class="btn btn-ghost btn-circle btn-sm">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
           </svg>
-        </label>
-        <div tabindex="0" class="dropdown-content z-[1] card card-compact w-64 p-2 shadow bg-base-100 mt-3">
+        </button>
+        <div class="dropdown-content z-[1] card card-compact w-64 p-2 shadow bg-base-100 mt-3">
           <div class="form-control">
             <div class="input-group">
               <input
@@ -148,13 +148,12 @@
 
     {#if $currentUser}
       <div class="dropdown dropdown-end">
-        <label tabindex="0" class="btn btn-ghost btn-circle avatar placeholder">
+        <button type="button" class="btn btn-ghost btn-circle avatar placeholder">
           <div class="bg-neutral-focus text-neutral-content rounded-full w-8 lg:w-10">
             <span class="text-lg lg:text-xl">{$currentUser.display_name[0].toUpperCase()}</span>
           </div>
-        </label>
+        </button>
         <ul
-          tabindex="0"
           class="mt-3 p-2 shadow menu menu-compact dropdown-content bg-base-100 rounded-box w-52"
         >
           <li class="menu-title">
