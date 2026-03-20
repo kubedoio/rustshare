@@ -79,7 +79,15 @@
     return 'Notification';
   }
 
-  function handleOpenNotification(notification: Notification) {
+  async function handleOpenNotification(notification: Notification) {
+    if (!notification.read) {
+      try {
+        await $markReadMutation.mutateAsync(notification.id);
+      } catch {
+        // Navigation still provides value even if the mark-read call fails.
+      }
+    }
+
     goto(resolveNotificationTarget(notification));
   }
 </script>
