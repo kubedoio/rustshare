@@ -36,14 +36,15 @@ export interface Folder {
 
 export interface Share {
 	id: string;
-	file_id: string;
-	file_name?: string; // For shares list view
+	resource_id: string;
+	resource_type: 'file' | 'folder';
+	resource_name?: string;
 	share_token: string;
 	permissions: 'View' | 'Edit' | 'Admin';
 	password_protected: boolean;
 	expires_at: string | null;
 	created_at: string;
-	created_by: string;
+	created_by?: string;
 }
 
 export interface ReceivedShare {
@@ -71,6 +72,13 @@ export interface ShareRecipient {
 export interface FolderContents {
 	folders: Folder[];
 	files: File[];
+}
+
+export interface SharedFolderContents extends FolderContents {
+	root_folder_id: string;
+	current_folder_id: string;
+	current_folder_name: string;
+	path: string;
 }
 
 export interface Notification {

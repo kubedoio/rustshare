@@ -31,7 +31,7 @@ enum ClientIdentity {
     /// Anonymous share viewer with session token
     ShareViewer {
         share_id: ShareId,
-        file_id: FileId,
+        file_id: Option<FileId>,
         permissions: SharePermissions,
     },
 }
@@ -190,7 +190,11 @@ pub async fn sync_handler(
         } => {
             info!(
                 "WebSocket connection established for share viewer: share_id={}, file_id={}, permissions={:?}",
-                share_id, file_id, permissions
+                share_id,
+                file_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                permissions
             );
         }
     }
@@ -363,7 +367,7 @@ async fn should_send_event_to_client(
                 }
                 EventType::FileModified | EventType::FileDeleted | EventType::FileRenamed => {
                     // Check if this event is for their file
-                    Ok(event.aggregate_id == *file_id)
+                    Ok(file_id.is_some_and(|id| event.aggregate_id == id))
                 }
                 _ => Ok(false),
             }
@@ -975,7 +979,7 @@ mod tests {
 
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
-            file_id,
+            file_id: Some(file_id),
             permissions: SharePermissions::View,
         };
 
@@ -1022,7 +1026,7 @@ mod tests {
 
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
-            file_id,
+            file_id: Some(file_id),
             permissions: SharePermissions::View,
         };
 
@@ -1072,7 +1076,7 @@ mod tests {
 
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
-            file_id,
+            file_id: Some(file_id),
             permissions: SharePermissions::View,
         };
 
@@ -1126,7 +1130,7 @@ mod tests {
 
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
-            file_id,
+            file_id: Some(file_id),
             permissions: SharePermissions::View,
         };
 
@@ -1180,7 +1184,7 @@ mod tests {
 
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
-            file_id,
+            file_id: Some(file_id),
             permissions: SharePermissions::View,
         };
 
@@ -1227,7 +1231,7 @@ mod tests {
 
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
-            file_id,
+            file_id: Some(file_id),
             permissions: SharePermissions::View,
         };
 

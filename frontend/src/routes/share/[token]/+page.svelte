@@ -1,11 +1,15 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { onMount } from 'svelte';
+	import type { File } from '$lib/api/types';
 	import {
-		getPublicShareInfo,
 		createShareSession,
+		downloadPublicFolderFile,
 		downloadPublicShareFile,
+		getPublicFolderContents,
+		getPublicShareInfo,
 		triggerFileDownload,
 		type ShareInfo
 	} from '$lib/api/shares';
@@ -14,11 +18,18 @@
 	const token = $page.params.token ?? '';
 	const SESSION_STORAGE_KEY = `share_session_${token}`;
 
-	// Query for share info
+	$: currentFolderId = $page.url.searchParams.get('folder');
+
 	$: shareQuery = createQuery({
 		queryKey: ['public-share', token],
 		queryFn: () => getPublicShareInfo(token),
 		enabled: Boolean(token)
+	});
+
+	$: folderContentsQuery = createQuery({
+		queryKey: ['public-share-folder', token, currentFolderId, sessionToken],
+		queryFn: () => getPublicFolderContents(token, sessionToken, currentFolderId || undefined),
+		enabled: Boolean(token && sessionToken && $shareQuery.data?.resource_type === 'folder')
 	});
 
 	let sessionToken = '';
@@ -29,15 +40,13 @@
 	let errorType: 'not-found' | 'expired' | 'general' | null = null;
 	let hasTriedAutoSession = false;
 
-	// Load session token from localStorage on mount
 	onMount(() => {
-		const stored = localStorage.getItem(SESSION_STORAGE_KEY);
+		const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
 		if (stored) {
 			sessionToken = stored;
 		}
 	});
 
-	// Auto-create session for non-password-protected shares
 	$: if (
 		$shareQuery.data &&
 		!$shareQuery.data.password_protected &&
@@ -54,7 +63,7 @@
 		try {
 			const response = await createShareSession(token, {});
 			sessionToken = response.session_token;
-			localStorage.setItem(SESSION_STORAGE_KEY, response.session_token);
+			sessionStorage.setItem(SESSION_STORAGE_KEY, response.session_token);
 		} catch (error) {
 			console.error('Failed to create session:', error);
 		} finally {
@@ -62,13 +71,11 @@
 		}
 	}
 
-	// Check if password is required
 	$: needsPassword = $shareQuery.data?.password_protected && !sessionToken;
-	$: canDownload = $shareQuery.data && sessionToken;
+	$: canAccessShare = Boolean($shareQuery.data && sessionToken);
 
-	// Parse error type from query error
 	$: if ($shareQuery.error) {
-		const error = $shareQuery.error as any;
+		const error = $shareQuery.error as { status?: number; message?: string };
 		const status = error?.status;
 		const message = error?.message?.toLowerCase() || '';
 
@@ -81,22 +88,21 @@
 		}
 	}
 
-	// Check if share is expired (client-side check)
 	function isExpired(shareInfo: ShareInfo | undefined): boolean {
 		if (!shareInfo?.expires_at) return false;
 		return new Date(shareInfo.expires_at) < new Date();
 	}
 
-	async function handlePasswordSubmit(e: Event) {
-		e.preventDefault();
+	async function handlePasswordSubmit(event: Event) {
+		event.preventDefault();
 		passwordError = '';
 		isSubmittingPassword = true;
 
 		try {
 			const response = await createShareSession(token, { password });
 			sessionToken = response.session_token;
-			localStorage.setItem(SESSION_STORAGE_KEY, response.session_token);
-			password = ''; // Clear password input
+			sessionStorage.setItem(SESSION_STORAGE_KEY, response.session_token);
+			password = '';
 		} catch (error) {
 			passwordError = error instanceof Error ? error.message : 'Invalid password';
 		} finally {
@@ -104,18 +110,40 @@
 		}
 	}
 
-	async function handleDownload() {
+	async function handleFileDownload() {
 		if (!$shareQuery.data || !sessionToken) return;
 
 		isDownloading = true;
 		try {
 			const blob = await downloadPublicShareFile(token, sessionToken);
-			triggerFileDownload(blob, $shareQuery.data.file_name);
+			triggerFileDownload(blob, $shareQuery.data.name);
 		} catch (error) {
 			alert(error instanceof Error ? error.message : 'Failed to download file');
 		} finally {
 			isDownloading = false;
 		}
+	}
+
+	async function handleFolderFileDownload(file: File) {
+		if (!sessionToken) return;
+
+		isDownloading = true;
+		try {
+			const blob = await downloadPublicFolderFile(token, file.id, sessionToken);
+			triggerFileDownload(blob, file.name);
+		} catch (error) {
+			alert(error instanceof Error ? error.message : 'Failed to download file');
+		} finally {
+			isDownloading = false;
+		}
+	}
+
+	function openFolder(folderId: string) {
+		goto(`/share/${token}?folder=${folderId}`);
+	}
+
+	function openRootFolder() {
+		goto(`/share/${token}`);
 	}
 
 	function formatExpiryDate(dateString: string): string {
@@ -131,11 +159,11 @@
 </script>
 
 <svelte:head>
-	<title>Shared File - RustShare</title>
+	<title>Shared Resource - RustShare</title>
 </svelte:head>
 
 <div class="bg-base-200 p-4 flex min-h-screen items-center justify-center">
-	<div class="card max-w-md bg-base-100 shadow-xl w-full">
+	<div class="card max-w-4xl bg-base-100 shadow-xl w-full">
 		<div class="card-body">
 			{#if $shareQuery.isLoading}
 				<div class="py-8 flex flex-col items-center justify-center">
@@ -171,22 +199,24 @@
 				{@const expired = isExpired(shareInfo)}
 
 				<div class="flex flex-col items-center">
-					<!-- File Icon -->
 					<div class="text-6xl mb-4">
-						{getMimeTypeIcon(shareInfo.mime_type)}
+						{#if shareInfo.resource_type === 'folder'}
+							📁
+						{:else}
+							{getMimeTypeIcon(shareInfo.mime_type || 'application/octet-stream')}
+						{/if}
 					</div>
 
-					<!-- File Name -->
-					<h2 class="card-title mb-2 text-center break-all">
-						{shareInfo.file_name}
-					</h2>
+					<h2 class="card-title mb-2 text-center break-all">{shareInfo.name}</h2>
 
-					<!-- File Size -->
 					<p class="text-base-content/70 mb-4">
-						{formatFileSize(shareInfo.file_size)}
+						{#if shareInfo.resource_type === 'folder'}
+							Shared folder
+						{:else if shareInfo.file_size !== null}
+							{formatFileSize(shareInfo.file_size)}
+						{/if}
 					</p>
 
-					<!-- Expiry Warning -->
 					{#if shareInfo.expires_at}
 						<div class="alert {expired ? 'alert-error' : 'alert-info'} mb-4 w-full">
 							<svg
@@ -217,19 +247,17 @@
 					{/if}
 
 					{#if expired}
-						<!-- Expired State -->
 						<div class="py-4 text-center">
 							<p class="text-error font-semibold">This share has expired</p>
 							<p class="text-base-content/70 text-sm mt-2">
-								The file is no longer available for download.
+								The shared resource is no longer available.
 							</p>
 						</div>
 					{:else if needsPassword}
-						<!-- Password Form -->
-						<form on:submit={handlePasswordSubmit} class="w-full">
+						<form on:submit={handlePasswordSubmit} class="w-full max-w-md">
 							<div class="form-control w-full">
 								<label for="password" class="label">
-									<span class="label-text">This file is password protected</span>
+									<span class="label-text">This share is password protected</span>
 								</label>
 								<input
 									type="password"
@@ -255,49 +283,122 @@
 									<span class="loading loading-spinner loading-sm"></span>
 									Verifying...
 								{:else}
-									Unlock File
+									Unlock Share
 								{/if}
 							</button>
 						</form>
-					{:else if canDownload}
-						<!-- Download Button -->
+					{:else if shareInfo.resource_type === 'file' && canAccessShare}
 						<button
 							type="button"
-							class="btn btn-primary btn-lg w-full"
-							on:click={handleDownload}
+							class="btn btn-primary btn-lg w-full max-w-md"
+							on:click={handleFileDownload}
 							disabled={isDownloading}
 						>
 							{#if isDownloading}
 								<span class="loading loading-spinner loading-sm"></span>
 								Downloading...
 							{:else}
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									class="h-6 w-6"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-									/>
-								</svg>
 								Download File
 							{/if}
 						</button>
+					{:else if shareInfo.resource_type === 'folder' && canAccessShare}
+						<div class="w-full">
+							{#if $folderContentsQuery.isLoading}
+								<div class="py-8 flex flex-col items-center justify-center">
+									<span class="loading loading-spinner loading-lg"></span>
+									<p class="mt-4 text-base-content/70">Loading shared folder...</p>
+								</div>
+							{:else if $folderContentsQuery.isError}
+								<div class="alert alert-error">
+									<span>
+										{$folderContentsQuery.error instanceof Error
+											? $folderContentsQuery.error.message
+											: 'Failed to load folder contents'}
+									</span>
+								</div>
+							{:else if $folderContentsQuery.data}
+								<div class="space-y-4">
+									<div class="flex items-center justify-between gap-3">
+										<div>
+											<div class="text-sm text-base-content/60">
+												{$folderContentsQuery.data.path}
+											</div>
+											<div class="font-medium">
+												{$folderContentsQuery.data.current_folder_name}
+											</div>
+										</div>
+										{#if currentFolderId}
+											<button type="button" class="btn btn-sm btn-ghost" on:click={openRootFolder}>
+												Back to shared root
+											</button>
+										{/if}
+									</div>
 
-						{#if $shareQuery.data.password_protected && sessionToken}
-							<p class="text-xs text-base-content/60 mt-4 text-center">
-								Password verified. Click to download.
-							</p>
-						{/if}
+									<div class="overflow-x-auto rounded-lg border border-base-300">
+										<table class="table">
+											<thead>
+												<tr>
+													<th>Name</th>
+													<th>Type</th>
+													<th class="text-right">Action</th>
+												</tr>
+											</thead>
+											<tbody>
+												{#each $folderContentsQuery.data.folders as folder}
+													<tr>
+														<td>
+															<button
+																type="button"
+																class="btn btn-ghost btn-sm normal-case px-0"
+																on:click={() => openFolder(folder.id)}
+															>
+																📁 {folder.name}
+															</button>
+														</td>
+														<td>Folder</td>
+														<td class="text-right">
+															<button
+																type="button"
+																class="btn btn-ghost btn-sm"
+																on:click={() => openFolder(folder.id)}
+															>
+																Open
+															</button>
+														</td>
+													</tr>
+												{/each}
+												{#each $folderContentsQuery.data.files as file}
+													<tr>
+														<td>📄 {file.name}</td>
+														<td>{formatFileSize(file.size)}</td>
+														<td class="text-right">
+															<button
+																type="button"
+																class="btn btn-primary btn-sm"
+																on:click={() => handleFolderFileDownload(file)}
+																disabled={isDownloading}
+															>
+																Download
+															</button>
+														</td>
+													</tr>
+												{/each}
+												{#if $folderContentsQuery.data.folders.length === 0 && $folderContentsQuery.data.files.length === 0}
+													<tr>
+														<td colspan="3" class="text-center text-base-content/60 py-8">
+															This folder is empty.
+														</td>
+													</tr>
+												{/if}
+											</tbody>
+										</table>
+									</div>
+								</div>
+							{/if}
+						</div>
 					{/if}
 				</div>
 
-				<!-- Powered by RustShare -->
 				<div class="divider"></div>
 				<div class="text-center">
 					<p class="text-xs text-base-content/60">

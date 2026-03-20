@@ -352,18 +352,34 @@ async fn main() -> Result<()> {
         .route("/api/folders/:id", delete(handlers::delete_folder))
         .route("/api/v1/folders/:id", delete(handlers::delete_folder))
         // Share routes (Task 9)
-        .route("/api/files/:file_id/shares", post(handlers::create_share))
+        .route("/api/files/:file_id/shares", post(handlers::create_public_file_share))
         .route(
             "/api/v1/files/:file_id/shares",
-            post(handlers::create_share),
+            post(handlers::create_public_file_share),
+        )
+        .route(
+            "/api/folders/:folder_id/shares",
+            post(handlers::create_public_folder_share),
+        )
+        .route(
+            "/api/v1/folders/:folder_id/shares",
+            post(handlers::create_public_folder_share),
         )
         .route(
             "/api/files/:file_id/shares",
-            get(handlers::list_file_shares),
+            get(handlers::list_public_file_shares),
         )
         .route(
             "/api/v1/files/:file_id/shares",
-            get(handlers::list_file_shares),
+            get(handlers::list_public_file_shares),
+        )
+        .route(
+            "/api/folders/:folder_id/shares",
+            get(handlers::list_public_folder_shares),
+        )
+        .route(
+            "/api/v1/folders/:folder_id/shares",
+            get(handlers::list_public_folder_shares),
         )
         .route("/api/shares", get(list_user_shares))
         .route("/api/v1/shares", get(list_user_shares))
@@ -447,6 +463,22 @@ async fn main() -> Result<()> {
         .route(
             "/api/v1/public/share/:token/file",
             get(handlers::download_shared_file),
+        )
+        .route(
+            "/api/public/share/:token/folder/contents",
+            get(handlers::get_shared_folder_contents),
+        )
+        .route(
+            "/api/v1/public/share/:token/folder/contents",
+            get(handlers::get_shared_folder_contents),
+        )
+        .route(
+            "/api/public/share/:token/folder/files/:file_id",
+            get(handlers::download_shared_folder_file),
+        )
+        .route(
+            "/api/v1/public/share/:token/folder/files/:file_id",
+            get(handlers::download_shared_folder_file),
         )
         // WebSocket sync endpoint (Task Phase 3A)
         .route("/api/ws", get(handlers::sync_handler))
@@ -543,8 +575,9 @@ struct UserResponse {
 #[derive(Serialize)]
 struct OwnedShareResponse {
     id: uuid::Uuid,
-    file_id: uuid::Uuid,
-    file_name: String,
+    resource_id: uuid::Uuid,
+    resource_type: String,
+    resource_name: String,
     share_token: String,
     permissions: SharePermissions,
     password_protected: bool,
@@ -571,14 +604,15 @@ async fn list_user_shares(
         .into_iter()
         .filter_map(|entry| {
             let share = entry.share;
-            let (Some(file_id), Some(share_token)) = (share.file_id, share.share_token) else {
+            let Some(share_token) = share.share_token else {
                 return None;
             };
 
             Some(OwnedShareResponse {
                 id: share.id,
-                file_id,
-                file_name: entry.file_name,
+                resource_id: entry.resource_id,
+                resource_type: entry.resource_type,
+                resource_name: entry.resource_name,
                 share_token,
                 permissions: share.permissions,
                 password_protected: share.password_hash.is_some(),

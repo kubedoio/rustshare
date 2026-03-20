@@ -22,8 +22,14 @@ pub use folders::{
 pub use notifications::{
     count_unread_notifications, delete_notification, list_notifications, mark_notification_read,
 };
-pub use public_shares::{create_session, download_shared_file, get_share_info};
-pub use shares::{create_share, list_file_shares};
+pub use public_shares::{
+    create_session, download_shared_file, download_shared_folder_file, get_share_info,
+    get_shared_folder_contents,
+};
+pub use shares::{
+    create_public_file_share, create_public_folder_share, list_public_file_shares,
+    list_public_folder_shares,
+};
 pub use sync::sync_handler;
 pub use user_shares::{
     create_file_share, create_folder_share, list_file_recipients, list_folder_recipients,

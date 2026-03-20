@@ -4,6 +4,7 @@
     createFileUserShare,
     createFolderUserShare,
     createShare,
+    listFolderShares,
     listFolderRecipients,
     listFileRecipients,
     listFileShares,
@@ -39,9 +40,10 @@
 
   // Query for existing shares
   $: sharesQuery = createQuery({
-    queryKey: ['file-shares', resourceId],
-    queryFn: () => listFileShares(resourceId),
-    enabled: open && resourceType === 'file'
+    queryKey: ['public-shares', resourceType, resourceId],
+    queryFn: () =>
+      resourceType === 'folder' ? listFolderShares(resourceId) : listFileShares(resourceId),
+    enabled: open
   });
 
   $: recipientsQuery = createQuery({
@@ -56,10 +58,10 @@
   // Mutation for creating share
   const createShareMutation = createMutation({
     mutationFn: async (request: CreateShareRequest) => {
-      return createShare(resourceId, request);
+      return createShare(resourceType, resourceId, request);
     },
     onSuccess: (response) => {
-      queryClient.invalidateQueries({ queryKey: ['file-shares', resourceId] });
+      queryClient.invalidateQueries({ queryKey: ['public-shares', resourceType, resourceId] });
       dispatch('notification', {
         message: 'Share link created successfully',
         type: 'success'
@@ -119,6 +121,7 @@
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['file-shares', resourceId] });
+      queryClient.invalidateQueries({ queryKey: ['public-shares', resourceType, resourceId] });
       dispatch('notification', {
         message: 'Share link revoked successfully',
         type: 'success'
@@ -282,9 +285,6 @@
 
   function handleClose() {
     activeTab = 'public';
-    if (resourceType === 'folder') {
-      activeTab = 'people';
-    }
     showCreateForm = false;
     permissions = 'View';
     password = '';
@@ -297,10 +297,6 @@
   function getShareUrl(token: string): string {
     const baseUrl = window.location.origin;
     return `${baseUrl}/share/${token}`;
-  }
-
-  $: if (resourceType === 'folder' && activeTab === 'public') {
-    activeTab = 'people';
   }
 
   $: if ($recipientsQuery.data) {
@@ -327,16 +323,14 @@
     <h3 class="font-bold text-lg mb-4">Share "{resourceName}"</h3>
 
     <div class="tabs tabs-boxed mb-6">
-      {#if resourceType === 'file'}
-        <button
-          type="button"
-          class:tab-active={activeTab === 'public'}
-          class="tab"
-          on:click={() => (activeTab = 'public')}
-        >
-          Public Link
-        </button>
-      {/if}
+      <button
+        type="button"
+        class:tab-active={activeTab === 'public'}
+        class="tab"
+        on:click={() => (activeTab = 'public')}
+      >
+        Public Link
+      </button>
       <button
         type="button"
         class:tab-active={activeTab === 'people'}
@@ -347,7 +341,7 @@
       </button>
     </div>
 
-    {#if activeTab === 'public' && resourceType === 'file'}
+    {#if activeTab === 'public'}
     <!-- Create new share form -->
     <div class="mb-6">
       {#if !showCreateForm}
@@ -370,7 +364,9 @@
         </button>
       {:else}
         <div class="card bg-base-200 p-4">
-          <h4 class="font-semibold mb-3">Create Share Link</h4>
+          <h4 class="font-semibold mb-3">
+            Create {resourceType === 'folder' ? 'Folder' : 'Share'} Link
+          </h4>
 
           <form on:submit|preventDefault={handleCreateShare} class="space-y-4">
             <!-- Permission selector -->
@@ -384,8 +380,12 @@
                 bind:value={permissions}
                 disabled={isLoading}
               >
-                <option value="View">View Only (Read, No Download)</option>
-                <option value="Edit">View & Download</option>
+                <option value="View">
+                  {resourceType === 'folder' ? 'View & Download' : 'View Only (Read, No Download)'}
+                </option>
+                <option value="Edit">
+                  {resourceType === 'folder' ? 'View & Upload' : 'View & Download'}
+                </option>
                 <option value="Admin">Full Access (View, Download, Manage)</option>
               </select>
             </div>
@@ -530,7 +530,7 @@
         </div>
       {:else}
         <div class="text-center py-8 text-base-content/60">
-          <p>No active shares for this file</p>
+          <p>No active shares for this {resourceType}</p>
         </div>
       {/if}
     </div>

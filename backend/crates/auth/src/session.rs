@@ -11,7 +11,8 @@ pub const WEB_SESSION_COOKIE_NAME: &str = "rustshare_session";
 pub struct ShareSessionClaims {
     pub sub: String, // Format: "share:{share_id}"
     pub share_id: ShareId,
-    pub file_id: FileId,
+    pub file_id: Option<FileId>,
+    pub folder_id: Option<FolderId>,
     pub permissions: SharePermissions,
     pub iat: i64,
     pub exp: i64,
@@ -21,7 +22,8 @@ impl ShareSessionClaims {
     /// Create new share session claims
     pub fn new(
         share_id: ShareId,
-        file_id: FileId,
+        file_id: Option<FileId>,
+        folder_id: Option<FolderId>,
         permissions: SharePermissions,
         ttl_seconds: i64,
     ) -> Self {
@@ -32,6 +34,7 @@ impl ShareSessionClaims {
             sub: format!("share:{}", share_id),
             share_id,
             file_id,
+            folder_id,
             permissions,
             iat: now.timestamp(),
             exp: exp.timestamp(),
@@ -71,11 +74,13 @@ mod tests {
     fn test_share_session_claims_creation() {
         let share_id = uuid::Uuid::new_v4();
         let file_id = uuid::Uuid::new_v4();
-        let claims = ShareSessionClaims::new(share_id, file_id, SharePermissions::View, 3600);
+        let claims =
+            ShareSessionClaims::new(share_id, Some(file_id), None, SharePermissions::View, 3600);
 
         assert_eq!(claims.sub, format!("share:{}", share_id));
         assert_eq!(claims.share_id, share_id);
-        assert_eq!(claims.file_id, file_id);
+        assert_eq!(claims.file_id, Some(file_id));
+        assert_eq!(claims.folder_id, None);
         assert_eq!(claims.permissions, SharePermissions::View);
         assert!(claims.exp > claims.iat);
     }
@@ -84,7 +89,8 @@ mod tests {
     fn test_share_session_claims_expiration() {
         let share_id = uuid::Uuid::new_v4();
         let file_id = uuid::Uuid::new_v4();
-        let claims = ShareSessionClaims::new(share_id, file_id, SharePermissions::View, -1);
+        let claims =
+            ShareSessionClaims::new(share_id, Some(file_id), None, SharePermissions::View, -1);
 
         assert!(claims.is_expired());
     }

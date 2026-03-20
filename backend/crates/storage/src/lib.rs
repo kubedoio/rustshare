@@ -171,6 +171,13 @@ impl ShareMetadataStoreOps for MetadataStore {
         self.find_file_by_id(id).await
     }
 
+    async fn find_folder_by_id(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<Option<rustshare_core::domain::Folder>> {
+        self.find_folder_by_id(id).await
+    }
+
     async fn create_share(&self, share: &rustshare_core::domain::Share) -> Result<()> {
         self.create_share(share).await
     }
@@ -194,6 +201,36 @@ impl ShareMetadataStoreOps for MetadataStore {
         file_id: uuid::Uuid,
     ) -> Result<Vec<rustshare_core::domain::Share>> {
         self.get_file_shares(file_id).await
+    }
+
+    async fn get_folder_shares(
+        &self,
+        folder_id: uuid::Uuid,
+    ) -> Result<Vec<rustshare_core::domain::Share>> {
+        self.get_folder_shares(folder_id).await
+    }
+
+    async fn list_files(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        owner_id: uuid::Uuid,
+    ) -> Result<Vec<rustshare_core::domain::File>> {
+        self.list_files(parent_id, owner_id).await
+    }
+
+    async fn list_folders(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        owner_id: uuid::Uuid,
+    ) -> Result<Vec<rustshare_core::domain::Folder>> {
+        self.list_folders(parent_id, owner_id).await
+    }
+
+    async fn find_descendant_folders(
+        &self,
+        folder_id: uuid::Uuid,
+    ) -> Result<Vec<rustshare_core::domain::Folder>> {
+        self.find_descendant_folders(folder_id).await
     }
 
     async fn revoke_share(&self, share_id: uuid::Uuid) -> Result<()> {

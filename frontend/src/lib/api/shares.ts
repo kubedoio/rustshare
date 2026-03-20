@@ -1,5 +1,10 @@
-import { apiClient } from "./client";
-import type { ReceivedShare, Share, ShareRecipient } from "./types";
+import { apiClient } from './client';
+import type {
+	ReceivedShare,
+	Share,
+	SharedFolderContents,
+	ShareRecipient
+} from './types';
 
 // Request/Response Types
 
@@ -10,21 +15,24 @@ export interface CreateShareRequest {
 }
 
 export interface CreateShareResponse {
-  id: string;
-  share_token: string;
-  permissions: "View" | "Edit" | "Admin";
-  password_protected: boolean;
-  expires_at: string | null;
-  share_url: string;
+	id: string;
+	resource_id: string;
+	resource_type: 'file' | 'folder';
+	share_token: string;
+	permissions: 'View' | 'Edit' | 'Admin';
+	password_protected: boolean;
+	expires_at: string | null;
+	share_url: string;
 }
 
 export interface ShareInfo {
-  file_id: string;
-  file_name: string;
-  file_size: number;
-  mime_type: string;
-  password_protected: boolean;
-  expires_at: string | null;
+	resource_id: string;
+	resource_type: 'file' | 'folder';
+	name: string;
+	file_size: number | null;
+	mime_type: string | null;
+	password_protected: boolean;
+	expires_at: string | null;
 }
 
 export interface ShareSessionRequest {
@@ -52,22 +60,21 @@ export interface UpdateSharePermissionRequest {
  * POST /api/files/{file_id}/shares
  */
 export async function createShare(
-  fileId: string,
-  request: CreateShareRequest,
+	resourceType: 'file' | 'folder',
+	resourceId: string,
+	request: CreateShareRequest
 ): Promise<CreateShareResponse> {
-  const response = await apiClient.post<Omit<CreateShareResponse, "share_url">>(
-    `/files/${fileId}/shares`,
-    request,
-  );
+	const endpoint =
+		resourceType === 'folder' ? `/folders/${resourceId}/shares` : `/files/${resourceId}/shares`;
+	const response = await apiClient.post<Omit<CreateShareResponse, 'share_url'>>(endpoint, request);
 
-  // Generate the full share URL on the client side
-  const baseUrl = window.location.origin;
-  const share_url = `${baseUrl}/share/${response.share_token}`;
+	const baseUrl = window.location.origin;
+	const share_url = `${baseUrl}/share/${response.share_token}`;
 
-  return {
-    ...response,
-    share_url,
-  };
+	return {
+		...response,
+		share_url
+	};
 }
 
 /**
@@ -75,7 +82,15 @@ export async function createShare(
  * GET /api/files/{file_id}/shares
  */
 export async function listFileShares(fileId: string): Promise<Share[]> {
-  return apiClient.get<Share[]>(`/files/${fileId}/shares`);
+	return apiClient.get<Share[]>(`/files/${fileId}/shares`);
+}
+
+/**
+ * List all share links for a folder
+ * GET /api/folders/{folder_id}/shares
+ */
+export async function listFolderShares(folderId: string): Promise<Share[]> {
+	return apiClient.get<Share[]>(`/folders/${folderId}/shares`);
 }
 
 /**
@@ -84,7 +99,7 @@ export async function listFileShares(fileId: string): Promise<Share[]> {
  * We'll need to aggregate file shares from all files
  */
 export async function listAllUserShares(): Promise<Share[]> {
-  return apiClient.get<Share[]>("/shares");
+	return apiClient.get<Share[]>('/shares');
 }
 
 /**
@@ -92,7 +107,7 @@ export async function listAllUserShares(): Promise<Share[]> {
  * GET /api/shares/received
  */
 export async function listReceivedShares(): Promise<ReceivedShare[]> {
-  return apiClient.get<ReceivedShare[]>("/shares/received");
+	return apiClient.get<ReceivedShare[]>('/shares/received');
 }
 
 /**
@@ -103,7 +118,7 @@ export async function createFileUserShare(
   fileId: string,
   request: CreateUserShareRequest,
 ): Promise<void> {
-  return apiClient.post<void>(`/files/${fileId}/share`, request);
+	return apiClient.post<void>(`/files/${fileId}/share`, request);
 }
 
 /**
@@ -114,7 +129,7 @@ export async function createFolderUserShare(
   folderId: string,
   request: CreateUserShareRequest,
 ): Promise<void> {
-  return apiClient.post<void>(`/folders/${folderId}/share`, request);
+	return apiClient.post<void>(`/folders/${folderId}/share`, request);
 }
 
 /**
@@ -122,7 +137,7 @@ export async function createFolderUserShare(
  * GET /api/files/{file_id}/recipients
  */
 export async function listFileRecipients(fileId: string): Promise<ShareRecipient[]> {
-  return apiClient.get<ShareRecipient[]>(`/files/${fileId}/recipients`);
+	return apiClient.get<ShareRecipient[]>(`/files/${fileId}/recipients`);
 }
 
 /**
@@ -130,7 +145,7 @@ export async function listFileRecipients(fileId: string): Promise<ShareRecipient
  * GET /api/folders/{folder_id}/recipients
  */
 export async function listFolderRecipients(folderId: string): Promise<ShareRecipient[]> {
-  return apiClient.get<ShareRecipient[]>(`/folders/${folderId}/recipients`);
+	return apiClient.get<ShareRecipient[]>(`/folders/${folderId}/recipients`);
 }
 
 /**
@@ -141,7 +156,7 @@ export async function updateSharePermission(
   shareId: string,
   request: UpdateSharePermissionRequest,
 ): Promise<void> {
-  return apiClient.put<void>(`/shares/${shareId}/permission`, request);
+	return apiClient.put<void>(`/shares/${shareId}/permission`, request);
 }
 
 /**
@@ -149,7 +164,7 @@ export async function updateSharePermission(
  * DELETE /api/shares/{share_id}/recipient
  */
 export async function removeShareRecipient(shareId: string): Promise<void> {
-  return apiClient.delete<void>(`/shares/${shareId}/recipient`);
+	return apiClient.delete<void>(`/shares/${shareId}/recipient`);
 }
 
 /**
@@ -158,7 +173,7 @@ export async function removeShareRecipient(shareId: string): Promise<void> {
  * Note: This endpoint may not be implemented in the backend yet
  */
 export async function revokeShare(shareId: string): Promise<void> {
-  return apiClient.delete<void>(`/shares/${shareId}`);
+	return apiClient.delete<void>(`/shares/${shareId}`);
 }
 
 // Public Share Access (No Authentication)
@@ -169,22 +184,20 @@ export async function revokeShare(shareId: string): Promise<void> {
  * This endpoint does not require authentication
  */
 export async function getPublicShareInfo(token: string): Promise<ShareInfo> {
-  // Use request directly without automatic auth header
-  const API_URL =
-    import.meta.env.VITE_API_URL || "http://localhost:8080/api/v1";
-  const response = await fetch(`${API_URL}/public/share/${token}/info`);
+	const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
+	const response = await fetch(`${API_URL}/public/share/${token}/info`);
 
   if (!response.ok) {
-    let errorMessage = "Failed to get share info";
+    let errorMessage = 'Failed to get share info';
     try {
       const errorData = await response.json();
       errorMessage = errorData.error || errorData.message || errorMessage;
     } catch {
       // If parsing fails, use status-based messages
       if (response.status === 404) {
-        errorMessage = "Share not found";
+        errorMessage = 'Share not found';
       } else if (response.status === 410) {
-        errorMessage = "Share has expired";
+        errorMessage = 'Share has expired';
       } else {
         errorMessage = response.statusText || errorMessage;
       }
@@ -206,19 +219,17 @@ export async function createShareSession(
   token: string,
   request: ShareSessionRequest,
 ): Promise<ShareSessionResponse> {
-  // Use request directly without automatic auth header
-  const API_URL =
-    import.meta.env.VITE_API_URL || "http://localhost:8080/api/v1";
-  const response = await fetch(`${API_URL}/public/share/${token}/session`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
-  });
+	const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
+	const response = await fetch(`${API_URL}/public/share/${token}/session`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify(request)
+	});
 
   if (!response.ok) {
-    let errorMessage = "Failed to create share session";
+    let errorMessage = 'Failed to create share session';
     try {
       const errorData = await response.json();
       errorMessage = errorData.error || errorData.message || errorMessage;
@@ -240,17 +251,15 @@ export async function downloadPublicShareFile(
   token: string,
   sessionToken: string,
 ): Promise<Blob> {
-  // Use request with session token in Authorization header
-  const API_URL =
-    import.meta.env.VITE_API_URL || "http://localhost:8080/api/v1";
-  const response = await fetch(`${API_URL}/public/share/${token}/file`, {
-    headers: {
-      Authorization: `Bearer ${sessionToken}`,
-    },
-  });
+	const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
+	const response = await fetch(`${API_URL}/public/share/${token}/file`, {
+		headers: {
+			Authorization: `Bearer ${sessionToken}`
+		}
+	});
 
   if (!response.ok) {
-    let errorMessage = "Failed to download file";
+    let errorMessage = 'Failed to download file';
     try {
       const errorData = await response.json();
       errorMessage = errorData.error || errorData.message || errorMessage;
@@ -267,12 +276,69 @@ export async function downloadPublicShareFile(
  * Helper function to trigger file download in the browser
  */
 export function triggerFileDownload(blob: Blob, fileName: string): void {
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  window.URL.revokeObjectURL(url);
-  document.body.removeChild(a);
+	const url = window.URL.createObjectURL(blob);
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = fileName;
+	document.body.appendChild(a);
+	a.click();
+	window.URL.revokeObjectURL(url);
+	document.body.removeChild(a);
+}
+
+export async function getPublicFolderContents(
+	token: string,
+	sessionToken: string,
+	folderId?: string
+): Promise<SharedFolderContents> {
+	const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
+	const url = new URL(`${API_URL}/public/share/${token}/folder/contents`);
+	if (folderId) {
+		url.searchParams.set('folder_id', folderId);
+	}
+
+	const response = await fetch(url, {
+		headers: {
+			Authorization: `Bearer ${sessionToken}`
+		}
+	});
+
+	if (!response.ok) {
+		let errorMessage = 'Failed to load shared folder';
+		try {
+			const errorData = await response.json();
+			errorMessage = errorData.error || errorData.message || errorMessage;
+		} catch {
+			errorMessage = response.statusText || errorMessage;
+		}
+		throw new Error(errorMessage);
+	}
+
+	return response.json();
+}
+
+export async function downloadPublicFolderFile(
+	token: string,
+	fileId: string,
+	sessionToken: string
+): Promise<Blob> {
+	const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
+	const response = await fetch(`${API_URL}/public/share/${token}/folder/files/${fileId}`, {
+		headers: {
+			Authorization: `Bearer ${sessionToken}`
+		}
+	});
+
+	if (!response.ok) {
+		let errorMessage = 'Failed to download file';
+		try {
+			const errorData = await response.json();
+			errorMessage = errorData.error || errorData.message || errorMessage;
+		} catch {
+			errorMessage = response.statusText || errorMessage;
+		}
+		throw new Error(errorMessage);
+	}
+
+	return response.blob();
 }

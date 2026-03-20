@@ -26,7 +26,8 @@ pub struct CreateShareRequest {
 #[derive(Debug, Serialize)]
 pub struct ShareResponse {
     pub id: Uuid,
-    pub file_id: Uuid,
+    pub resource_id: Uuid,
+    pub resource_type: &'static str,
     pub share_token: String,
     pub permissions: SharePermissions,
     pub password_protected: bool,
@@ -34,7 +35,7 @@ pub struct ShareResponse {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-pub async fn create_share(
+pub async fn create_public_file_share(
     State(state): State<AppState>,
     Path(file_id): Path<Uuid>,
     auth: AuthenticatedUser,
@@ -63,8 +64,7 @@ pub async fn create_share(
         ))
     })?;
 
-    // Extract file_id - it should always be Some for file shares
-    let response_file_id = share.file_id.ok_or_else(|| {
+    let resource_id = share.file_id.ok_or_else(|| {
         tracing::error!("File ID is None after create_share for share {}", share.id);
         share_error_response(rustshare_core::services::ShareError::Database(
             sqlx::Error::PoolClosed,
@@ -75,7 +75,8 @@ pub async fn create_share(
         StatusCode::CREATED,
         Json(ShareResponse {
             id: share.id,
-            file_id: response_file_id,
+            resource_id,
+            resource_type: "file",
             share_token,
             permissions: share.permissions,
             password_protected: share.password_hash.is_some(),
@@ -86,7 +87,58 @@ pub async fn create_share(
         .into_response())
 }
 
-pub async fn list_file_shares(
+pub async fn create_public_folder_share(
+    State(state): State<AppState>,
+    Path(folder_id): Path<Uuid>,
+    auth: AuthenticatedUser,
+    Json(req): Json<CreateShareRequest>,
+) -> Result<Response, Response> {
+    let share = state
+        .share_service
+        .create_folder_share(
+            folder_id,
+            auth.user_id,
+            req.permissions,
+            req.password,
+            req.expires_at,
+        )
+        .await
+        .map_err(share_error_response)?;
+
+    let share_token = share.share_token.ok_or_else(|| {
+        tracing::error!(
+            "Share token is None after create_folder_share for share {}",
+            share.id
+        );
+        share_error_response(rustshare_core::services::ShareError::Database(
+            sqlx::Error::PoolClosed,
+        ))
+    })?;
+
+    let resource_id = share.folder_id.ok_or_else(|| {
+        tracing::error!("Folder ID is None after create_folder_share for share {}", share.id);
+        share_error_response(rustshare_core::services::ShareError::Database(
+            sqlx::Error::PoolClosed,
+        ))
+    })?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(ShareResponse {
+            id: share.id,
+            resource_id,
+            resource_type: "folder",
+            share_token,
+            permissions: share.permissions,
+            password_protected: share.password_hash.is_some(),
+            expires_at: share.expires_at,
+            created_at: share.created_at,
+        }),
+    )
+        .into_response())
+}
+
+pub async fn list_public_file_shares(
     State(state): State<AppState>,
     Path(file_id): Path<Uuid>,
     auth: AuthenticatedUser,
@@ -104,7 +156,8 @@ pub async fn list_file_shares(
             if let (Some(file_id), Some(share_token)) = (s.file_id, s.share_token.clone()) {
                 Some(ShareResponse {
                     id: s.id,
-                    file_id,
+                    resource_id: file_id,
+                    resource_type: "file",
                     share_token,
                     permissions: s.permissions,
                     password_protected: s.password_hash.is_some(),
@@ -114,6 +167,40 @@ pub async fn list_file_shares(
             } else {
                 None
             }
+        })
+        .collect();
+
+    Ok(Json(response).into_response())
+}
+
+pub async fn list_public_folder_shares(
+    State(state): State<AppState>,
+    Path(folder_id): Path<Uuid>,
+    auth: AuthenticatedUser,
+) -> Result<Response, Response> {
+    let shares = state
+        .share_service
+        .list_folder_shares(folder_id, auth.user_id)
+        .await
+        .map_err(share_error_response)?;
+
+    let response: Vec<ShareResponse> = shares
+        .into_iter()
+        .filter_map(|share| {
+            let (Some(resource_id), Some(share_token)) = (share.folder_id, share.share_token) else {
+                return None;
+            };
+
+            Some(ShareResponse {
+                id: share.id,
+                resource_id,
+                resource_type: "folder",
+                share_token,
+                permissions: share.permissions,
+                password_protected: share.password_hash.is_some(),
+                expires_at: share.expires_at,
+                created_at: share.created_at,
+            })
         })
         .collect();
 

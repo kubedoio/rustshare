@@ -101,6 +101,32 @@ impl Share {
         }
     }
 
+    /// Creates a new public share link for a folder.
+    pub fn new_folder(
+        folder_id: FolderId,
+        share_token: String,
+        created_by: UserId,
+        permissions: SharePermissions,
+        password_hash: Option<String>,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> Self {
+        use uuid::Uuid;
+        Self {
+            id: Uuid::new_v4(),
+            file_id: None,
+            folder_id: Some(folder_id),
+            share_token: Some(share_token),
+            password_hash,
+            expires_at,
+            created_by,
+            created_at: Utc::now(),
+            permissions,
+            access_count: 0,
+            recipient_user_id: None,
+            revoked_at: None,
+        }
+    }
+
     /// Checks if this is a public share (anonymous access)
     pub fn is_public_share(&self) -> bool {
         self.recipient_user_id.is_none()

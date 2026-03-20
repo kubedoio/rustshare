@@ -21,7 +21,9 @@ pub struct MetadataStore {
 #[derive(Debug, Clone)]
 pub struct OwnedPublicShare {
     pub share: Share,
-    pub file_name: String,
+    pub resource_id: Uuid,
+    pub resource_type: String,
+    pub resource_name: String,
 }
 
 impl MetadataStore {
@@ -1325,6 +1327,48 @@ impl MetadataStore {
         Ok(shares)
     }
 
+    /// Get all active (non-revoked) shares for a folder.
+    pub async fn get_folder_shares(&self, folder_id: Uuid) -> Result<Vec<Share>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, access_count, created_at, revoked_at
+            FROM shares
+            WHERE folder_id = $1 AND revoked_at IS NULL
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut shares = Vec::new();
+        for row in rows {
+            let permissions_str: String = row.try_get("permissions")?;
+            let permissions = match permissions_str.as_str() {
+                "edit" => SharePermissions::Edit,
+                "admin" => SharePermissions::Admin,
+                _ => SharePermissions::View,
+            };
+
+            shares.push(Share {
+                id: row.try_get("id")?,
+                file_id: row.try_get("file_id")?,
+                folder_id: row.try_get("folder_id")?,
+                share_token: row.try_get("share_token")?,
+                recipient_user_id: row.try_get("recipient_user_id")?,
+                created_by: row.try_get("created_by")?,
+                permissions,
+                password_hash: row.try_get("password_hash")?,
+                expires_at: row.try_get("expires_at")?,
+                access_count: row.try_get("access_count")?,
+                created_at: row.try_get("created_at")?,
+                revoked_at: row.try_get("revoked_at")?,
+            });
+        }
+
+        Ok(shares)
+    }
+
     /// Get all active public shares created by a specific user, with file names.
     pub async fn get_user_public_shares(&self, user_id: Uuid) -> Result<Vec<OwnedPublicShare>> {
         let rows = sqlx::query(
@@ -1342,9 +1386,15 @@ impl MetadataStore {
                 s.access_count,
                 s.created_at,
                 s.revoked_at,
-                f.name AS file_name
+                COALESCE(s.file_id, s.folder_id) AS resource_id,
+                CASE
+                    WHEN s.file_id IS NOT NULL THEN 'file'
+                    ELSE 'folder'
+                END AS resource_type,
+                COALESCE(f.name, fo.name) AS resource_name
             FROM shares s
-            INNER JOIN files f ON f.id = s.file_id
+            LEFT JOIN files f ON f.id = s.file_id
+            LEFT JOIN folders fo ON fo.id = s.folder_id
             WHERE s.created_by = $1
               AND s.recipient_user_id IS NULL
               AND s.revoked_at IS NULL
@@ -1379,7 +1429,9 @@ impl MetadataStore {
                     created_at: row.try_get("created_at")?,
                     revoked_at: row.try_get("revoked_at")?,
                 },
-                file_name: row.try_get("file_name")?,
+                resource_id: row.try_get("resource_id")?,
+                resource_type: row.try_get("resource_type")?,
+                resource_name: row.try_get("resource_name")?,
             });
         }
 

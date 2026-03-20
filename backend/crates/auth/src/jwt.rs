@@ -134,7 +134,8 @@ mod tests {
 
         let claims = ShareSessionClaims::new(
             share_id,
-            file_id,
+            Some(file_id),
+            None,
             SharePermissions::View,
             3600,
         );
@@ -143,7 +144,6 @@ mod tests {
         let decoded: ShareSessionClaims = manager.decode_custom(&token).unwrap();
 
         assert_eq!(decoded.share_id, share_id);
-        assert_eq!(decoded.file_id, file_id);
+        assert_eq!(decoded.file_id, Some(file_id));
     }
 }
-

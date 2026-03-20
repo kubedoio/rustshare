@@ -4,7 +4,7 @@
 //! It includes session creation with password validation and file download.
 
 use axum::{
-    extract::{ConnectInfo, Path, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -29,12 +29,29 @@ pub struct SessionResponse {
 
 #[derive(Debug, Serialize)]
 pub struct ShareInfoResponse {
-    pub file_id: Uuid,
-    pub file_name: String,
-    pub file_size: i64,
-    pub mime_type: String,
+    pub resource_id: Uuid,
+    pub resource_type: String,
+    pub name: String,
+    pub file_size: Option<i64>,
+    pub mime_type: Option<String>,
     pub password_protected: bool,
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SharedFolderContentsResponse {
+    pub root_folder_id: Uuid,
+    pub current_folder_id: Uuid,
+    pub current_folder_name: String,
+    pub path: String,
+    pub folders: Vec<rustshare_core::domain::Folder>,
+    pub files: Vec<rustshare_core::domain::File>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SharedFolderContentsQuery {
+    #[serde(default)]
+    pub folder_id: Option<Uuid>,
 }
 
 /// Create anonymous session for share access
@@ -64,21 +81,41 @@ pub async fn get_share_info(
     State(state): State<AppState>,
     Path(token): Path<String>,
 ) -> Result<Response, Response> {
-    let (share, file) = state
+    let (share, file, folder) = state
         .share_service
         .get_public_share_info(&token)
         .await
         .map_err(super::share_error_response)?;
 
-    Ok(Json(ShareInfoResponse {
-        file_id: file.id,
-        file_name: file.name,
-        file_size: file.size,
-        mime_type: file.mime_type,
-        password_protected: share.password_hash.is_some(),
-        expires_at: share.expires_at,
-    })
-    .into_response())
+    if let Some(file) = file {
+        Ok(Json(ShareInfoResponse {
+            resource_id: file.id,
+            resource_type: "file".to_string(),
+            name: file.name,
+            file_size: Some(file.size),
+            mime_type: Some(file.mime_type),
+            password_protected: share.password_hash.is_some(),
+            expires_at: share.expires_at,
+        })
+        .into_response())
+    } else if let Some(folder) = folder {
+        Ok(Json(ShareInfoResponse {
+            resource_id: folder.id,
+            resource_type: "folder".to_string(),
+            name: folder.name,
+            file_size: None,
+            mime_type: None,
+            password_protected: share.password_hash.is_some(),
+            expires_at: share.expires_at,
+        })
+        .into_response())
+    } else {
+        Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "Share resource is missing"})),
+        )
+            .into_response())
+    }
 }
 
 /// Download shared file (requires session JWT)
@@ -186,6 +223,172 @@ pub async fn download_shared_file(
         .into_response())
 }
 
+/// List contents of a shared folder.
+pub async fn get_shared_folder_contents(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+    ShareSessionAuth(claims): ShareSessionAuth,
+    Query(query): Query<SharedFolderContentsQuery>,
+) -> Result<Response, Response> {
+    let share = state
+        .metadata_store
+        .get_share_by_token(&token)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Database error: {}", e)})),
+            )
+                .into_response()
+        })?
+        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::NotFound))?;
+
+    if share.id != claims.share_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "Token is not valid for this share"})),
+        )
+            .into_response());
+    }
+
+    if share.folder_id.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "This share is not for a folder"})),
+        )
+            .into_response());
+    }
+
+    let (_share, current_folder, folders, files) = state
+        .share_service
+        .list_public_folder_contents(&token, query.folder_id)
+        .await
+        .map_err(super::share_error_response)?;
+
+    Ok(Json(SharedFolderContentsResponse {
+        root_folder_id: share.folder_id.expect("checked above"),
+        current_folder_id: current_folder.id,
+        current_folder_name: current_folder.name,
+        path: current_folder.path,
+        folders,
+        files,
+    })
+    .into_response())
+}
+
+/// Download a file from a shared folder.
+pub async fn download_shared_folder_file(
+    State(state): State<AppState>,
+    Path((token, file_id)): Path<(String, Uuid)>,
+    ShareSessionAuth(claims): ShareSessionAuth,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Result<Response, Response> {
+    let share = state
+        .metadata_store
+        .get_share_by_token(&token)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Database error: {}", e)})),
+            )
+                .into_response()
+        })?
+        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::NotFound))?;
+
+    if share.id != claims.share_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "Token is not valid for this share"})),
+        )
+            .into_response());
+    }
+
+    let root_folder_id = share.folder_id.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "This share is not for a folder"})),
+        )
+            .into_response()
+    })?;
+
+    let descendants = state
+        .metadata_store
+        .find_descendant_folders(root_folder_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Database error: {}", e)})),
+            )
+                .into_response()
+        })?;
+
+    let file = state
+        .metadata_store
+        .find_file_by_id(file_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Database error: {}", e)})),
+            )
+                .into_response()
+        })?
+        .ok_or_else(|| super::share_error_response(rustshare_core::services::ShareError::FileNotFound(file_id)))?;
+
+    let allowed_folder_ids: Vec<Uuid> = descendants.into_iter().map(|folder| folder.id).collect();
+    if !allowed_folder_ids.contains(&file.parent_folder_id.unwrap_or(Uuid::nil())) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "File is not inside the shared folder"})),
+        )
+            .into_response());
+    }
+
+    let content = state
+        .object_store
+        .get(&file.storage_key())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Failed to retrieve file: {}", e)})),
+            )
+                .into_response()
+        })?;
+
+    let ip_address = Some(addr.ip().to_string());
+    let user_agent = headers
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(String::from);
+
+    if let Err(e) = state.metadata_store.increment_share_access(share.id).await {
+        tracing::warn!("Failed to increment share access count: {}", e);
+    }
+
+    if let Err(e) = state
+        .metadata_store
+        .log_share_access(share.id, ip_address, user_agent, "download".to_string(), true)
+        .await
+    {
+        tracing::warn!("Failed to log share access: {}", e);
+    }
+
+    Ok((
+        StatusCode::OK,
+        [
+            ("Content-Type", file.mime_type.as_str()),
+            ("Content-Disposition", &format!("attachment; filename=\"{}\"", file.name)),
+            ("Content-Length", &content.len().to_string()),
+        ],
+        content,
+    )
+        .into_response())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,10 +425,11 @@ mod tests {
     fn test_share_info_response_serialization() {
         let file_id = Uuid::new_v4();
         let response = ShareInfoResponse {
-            file_id,
-            file_name: "test.pdf".to_string(),
-            file_size: 1024,
-            mime_type: "application/pdf".to_string(),
+            resource_id: file_id,
+            resource_type: "file".to_string(),
+            name: "test.pdf".to_string(),
+            file_size: Some(1024),
+            mime_type: Some("application/pdf".to_string()),
             password_protected: true,
             expires_at: Some(
                 chrono::DateTime::parse_from_rfc3339("2026-12-31T23:59:59Z")
@@ -235,7 +439,7 @@ mod tests {
         };
 
         let json = serde_json::to_value(&response).unwrap();
-        assert_eq!(json["file_name"], "test.pdf");
+        assert_eq!(json["name"], "test.pdf");
         assert_eq!(json["file_size"], 1024);
         assert_eq!(json["mime_type"], "application/pdf");
         assert_eq!(json["password_protected"], true);

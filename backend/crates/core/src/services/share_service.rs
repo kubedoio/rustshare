@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use rustshare_crypto::PasswordHasher;
 
-use crate::domain::{File, Share, SharePermissions, UserId};
+use crate::domain::{File, Folder, Share, SharePermissions, UserId};
 use crate::events::{AggregateType, Event, EventBroadcaster, EventType, ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload};
 use crate::services::ShareError;
 
@@ -41,7 +41,8 @@ pub trait EventStoreOps: Send + Sync {
 pub struct ShareSession {
     pub token: String,
     pub share_id: uuid::Uuid,
-    pub file_id: uuid::Uuid,
+    pub file_id: Option<uuid::Uuid>,
+    pub folder_id: Option<uuid::Uuid>,
     pub permissions: SharePermissions,
     pub expires_at: DateTime<Utc>,
 }
@@ -54,6 +55,9 @@ pub trait MetadataStoreOps: Send + Sync {
     /// Find a file by ID.
     async fn find_file_by_id(&self, id: uuid::Uuid) -> Result<Option<File>>;
 
+    /// Find a folder by ID.
+    async fn find_folder_by_id(&self, id: uuid::Uuid) -> Result<Option<Folder>>;
+
     /// Create a share in the metadata store.
     async fn create_share(&self, share: &Share) -> Result<()>;
 
@@ -65,6 +69,26 @@ pub trait MetadataStoreOps: Send + Sync {
 
     /// Get all shares for a file.
     async fn get_file_shares(&self, file_id: uuid::Uuid) -> Result<Vec<Share>>;
+
+    /// Get all shares for a folder.
+    async fn get_folder_shares(&self, folder_id: uuid::Uuid) -> Result<Vec<Share>>;
+
+    /// List files in a folder for an owner.
+    async fn list_files(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        owner_id: uuid::Uuid,
+    ) -> Result<Vec<File>>;
+
+    /// List folders in a folder for an owner.
+    async fn list_folders(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        owner_id: uuid::Uuid,
+    ) -> Result<Vec<Folder>>;
+
+    /// List all descendant folders, including the root folder.
+    async fn find_descendant_folders(&self, folder_id: uuid::Uuid) -> Result<Vec<Folder>>;
 
     /// Revoke a share by ID.
     async fn revoke_share(&self, share_id: uuid::Uuid) -> Result<()>;
@@ -116,6 +140,17 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             .collect()
     }
 
+    fn hash_share_password(password: Option<String>) -> Result<Option<String>, ShareError> {
+        if let Some(password) = password {
+            Ok(Some(
+                PasswordHasher::hash(&password)
+                    .map_err(|error| ShareError::PasswordHash(error.to_string()))?,
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Create a new share link for a file.
     ///
     /// Verifies that:
@@ -148,13 +183,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             });
         }
 
-        // Hash password if provided
-        let password_hash = if let Some(pwd) = password {
-            Some(PasswordHasher::hash(&pwd)
-                .map_err(|e| ShareError::PasswordHash(e.to_string()))?)
-        } else {
-            None
-        };
+        let password_hash = Self::hash_share_password(password)?;
 
         // Generate unique token
         let token = Self::generate_token();
@@ -193,6 +222,70 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             serde_json::to_value(&payload).map_err(|_e| {
                 ShareError::Database(sqlx::Error::PoolClosed)
             })?,
+            user_id,
+        );
+
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+
+        Ok(share)
+    }
+
+    /// Create a new share link for a folder.
+    pub async fn create_folder_share(
+        &self,
+        folder_id: uuid::Uuid,
+        user_id: UserId,
+        permissions: SharePermissions,
+        password: Option<String>,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> Result<Share, ShareError> {
+        let folder = self
+            .metadata_store
+            .find_folder_by_id(folder_id)
+            .await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .ok_or(ShareError::NotFoundById(folder_id))?;
+
+        if folder.owner_id != user_id {
+            return Err(ShareError::PermissionDenied { file_id: folder_id, user_id });
+        }
+
+        let password_hash = Self::hash_share_password(password)?;
+        let token = Self::generate_token();
+
+        let share = Share::new_folder(
+            folder_id,
+            token.clone(),
+            user_id,
+            permissions,
+            password_hash,
+            expires_at,
+        );
+
+        self.metadata_store
+            .create_share(&share)
+            .await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+
+        let payload = ShareCreatedPayload {
+            share_id: share.id,
+            file_id: share.folder_id.expect("public folder share must have folder_id"),
+            share_token: share.share_token.clone().expect("public share must have share_token"),
+            permissions: share.permissions,
+            password_protected: share.password_hash.is_some(),
+            expires_at: share.expires_at,
+            created_by: user_id,
+        };
+
+        let event = Event::new(
+            EventType::ShareCreated,
+            share.id,
+            AggregateType::Share,
+            serde_json::to_value(&payload)
+                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?,
             user_id,
         );
 
@@ -260,6 +353,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             "sub": format!("share:{}", share.id),
             "share_id": share.id,
             "file_id": share.file_id,
+            "folder_id": share.folder_id,
             "permissions": share.permissions,
             "iat": Utc::now().timestamp(),
             "exp": (Utc::now() + chrono::Duration::hours(1)).timestamp(),
@@ -277,7 +371,8 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         Ok(ShareSession {
             token,
             share_id: share.id,
-            file_id: share.file_id.expect("public share must have file_id"),
+            file_id: share.file_id,
+            folder_id: share.folder_id,
             permissions: share.permissions,
             expires_at,
         })
@@ -303,20 +398,28 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
             .ok_or(ShareError::NotFoundById(share_id))?;
 
-        // Get file to verify ownership
-        let file = self
-            .metadata_store
-            .find_file_by_id(share.file_id.expect("public share must have file_id"))
-            .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-            .ok_or(ShareError::FileNotFound(share.file_id.expect("public share must have file_id")))?;
+        let owner_id = if let Some(file_id) = share.file_id {
+            let file = self
+                .metadata_store
+                .find_file_by_id(file_id)
+                .await
+                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .ok_or(ShareError::FileNotFound(file_id))?;
+            file.owner_id
+        } else if let Some(folder_id) = share.folder_id {
+            let folder = self
+                .metadata_store
+                .find_folder_by_id(folder_id)
+                .await
+                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .ok_or(ShareError::NotFoundById(folder_id))?;
+            folder.owner_id
+        } else {
+            return Err(ShareError::Database(sqlx::Error::PoolClosed));
+        };
 
-        // Check user owns file
-        if file.owner_id != user_id {
-            return Err(ShareError::PermissionDenied {
-                file_id: share.file_id.expect("public share must have file_id"),
-                user_id,
-            });
+        if owner_id != user_id {
+            return Err(ShareError::PermissionDenied { file_id: share.resource_id(), user_id });
         }
 
         // Revoke the share
@@ -328,7 +431,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         // Emit ShareRevoked event
         let payload = ShareRevokedPayload {
             share_id: share.id,
-            file_id: share.file_id.expect("public share must have file_id"),
+            file_id: share.resource_id(),
             revoked_by: user_id,
         };
 
@@ -373,20 +476,28 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
             .ok_or(ShareError::NotFoundById(share_id))?;
 
-        // Get file to verify ownership
-        let file = self
-            .metadata_store
-            .find_file_by_id(share.file_id.expect("public share must have file_id"))
-            .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-            .ok_or(ShareError::FileNotFound(share.file_id.expect("public share must have file_id")))?;
+        let owner_id = if let Some(file_id) = share.file_id {
+            let file = self
+                .metadata_store
+                .find_file_by_id(file_id)
+                .await
+                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .ok_or(ShareError::FileNotFound(file_id))?;
+            file.owner_id
+        } else if let Some(folder_id) = share.folder_id {
+            let folder = self
+                .metadata_store
+                .find_folder_by_id(folder_id)
+                .await
+                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .ok_or(ShareError::NotFoundById(folder_id))?;
+            folder.owner_id
+        } else {
+            return Err(ShareError::Database(sqlx::Error::PoolClosed));
+        };
 
-        // Check user owns file
-        if file.owner_id != user_id {
-            return Err(ShareError::PermissionDenied {
-                file_id: share.file_id.expect("public share must have file_id"),
-                user_id,
-            });
+        if owner_id != user_id {
+            return Err(ShareError::PermissionDenied { file_id: share.resource_id(), user_id });
         }
 
         // Track what was changed for the event
@@ -417,7 +528,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         // Emit ShareUpdated event
         let payload = ShareUpdatedPayload {
             share_id: share.id,
-            file_id: share.file_id.expect("public share must have file_id"),
+            file_id: share.resource_id(),
             password_changed,
             expires_at_changed,
             new_expires_at: share.expires_at,
@@ -471,6 +582,29 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))
     }
 
+    /// List all shares for a folder.
+    pub async fn list_folder_shares(
+        &self,
+        folder_id: uuid::Uuid,
+        user_id: UserId,
+    ) -> Result<Vec<Share>, ShareError> {
+        let folder = self
+            .metadata_store
+            .find_folder_by_id(folder_id)
+            .await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .ok_or(ShareError::NotFoundById(folder_id))?;
+
+        if folder.owner_id != user_id {
+            return Err(ShareError::PermissionDenied { file_id: folder_id, user_id });
+        }
+
+        self.metadata_store
+            .get_folder_shares(folder_id)
+            .await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))
+    }
+
     /// Get public share info for anonymous access.
     ///
     /// Checks revocation and expiration, returns file metadata.
@@ -480,7 +614,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
     pub async fn get_public_share_info(
         &self,
         share_token: &str,
-    ) -> Result<(Share, File), ShareError> {
+    ) -> Result<(Share, Option<File>, Option<Folder>), ShareError> {
         // Get share by token
         let share = self
             .metadata_store
@@ -501,15 +635,64 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             }
         }
 
-        // Get file info
-        let file = self
-            .metadata_store
-            .find_file_by_id(share.file_id.expect("public share must have file_id"))
-            .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-            .ok_or(ShareError::FileNotFound(share.file_id.expect("public share must have file_id")))?;
+        if let Some(file_id) = share.file_id {
+            let file = self
+                .metadata_store
+                .find_file_by_id(file_id)
+                .await
+                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .ok_or(ShareError::FileNotFound(file_id))?;
 
-        Ok((share, file))
+            Ok((share, Some(file), None))
+        } else if let Some(folder_id) = share.folder_id {
+            let folder = self
+                .metadata_store
+                .find_folder_by_id(folder_id)
+                .await
+                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .ok_or(ShareError::NotFoundById(folder_id))?;
+
+            Ok((share, None, Some(folder)))
+        } else {
+            Err(ShareError::Database(sqlx::Error::PoolClosed))
+        }
+    }
+
+    /// List contents of a publicly shared folder.
+    pub async fn list_public_folder_contents(
+        &self,
+        share_token: &str,
+        current_folder_id: Option<uuid::Uuid>,
+    ) -> Result<(Share, Folder, Vec<Folder>, Vec<File>), ShareError> {
+        let (share, _file, root_folder) = self.get_public_share_info(share_token).await?;
+        let root_folder =
+            root_folder.ok_or(ShareError::Database(sqlx::Error::PoolClosed))?;
+        let target_folder_id = current_folder_id.unwrap_or(root_folder.id);
+
+        let descendants = self
+            .metadata_store
+            .find_descendant_folders(root_folder.id)
+            .await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+
+        let target_folder = descendants
+            .into_iter()
+            .find(|folder| folder.id == target_folder_id)
+            .ok_or(ShareError::NotFoundById(target_folder_id))?;
+
+        let folders = self
+            .metadata_store
+            .list_folders(Some(target_folder.id), root_folder.owner_id)
+            .await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+
+        let files = self
+            .metadata_store
+            .list_files(Some(target_folder.id), root_folder.owner_id)
+            .await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+
+        Ok((share, target_folder, folders, files))
     }
 }
 
@@ -540,6 +723,7 @@ mod tests {
 
     struct MockMetadataStore {
         files: Mutex<Vec<File>>,
+        folders: Mutex<Vec<Folder>>,
         shares: Mutex<Vec<Share>>,
     }
 
@@ -547,6 +731,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 files: Mutex::new(Vec::new()),
+                folders: Mutex::new(Vec::new()),
                 shares: Mutex::new(Vec::new()),
             }
         }
@@ -554,11 +739,26 @@ mod tests {
         fn add_file(&self, file: File) {
             self.files.lock().unwrap().push(file);
         }
+
+        #[allow(dead_code)]
+        fn add_folder(&self, folder: Folder) {
+            self.folders.lock().unwrap().push(folder);
+        }
     }
 
     impl MetadataStoreOps for MockMetadataStore {
         async fn find_file_by_id(&self, id: Uuid) -> Result<Option<File>> {
             Ok(self.files.lock().unwrap().iter().find(|f| f.id == id).cloned())
+        }
+
+        async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<Folder>> {
+            Ok(self
+                .folders
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|folder| folder.id == id)
+                .cloned())
         }
 
         async fn create_share(&self, share: &Share) -> Result<()> {
@@ -576,6 +776,69 @@ mod tests {
 
         async fn get_file_shares(&self, file_id: Uuid) -> Result<Vec<Share>> {
             Ok(self.shares.lock().unwrap().iter().filter(|s| s.file_id == Some(file_id)).cloned().collect())
+        }
+
+        async fn get_folder_shares(&self, folder_id: Uuid) -> Result<Vec<Share>> {
+            Ok(self
+                .shares
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|s| s.folder_id == Some(folder_id))
+                .cloned()
+                .collect())
+        }
+
+        async fn list_files(
+            &self,
+            parent_id: Option<Uuid>,
+            owner_id: Uuid,
+        ) -> Result<Vec<File>> {
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|file| file.owner_id == owner_id && file.parent_folder_id == parent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_folders(
+            &self,
+            parent_id: Option<Uuid>,
+            owner_id: Uuid,
+        ) -> Result<Vec<Folder>> {
+            Ok(self
+                .folders
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|folder| {
+                    folder.owner_id == owner_id && folder.parent_folder_id == parent_id
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn find_descendant_folders(&self, folder_id: Uuid) -> Result<Vec<Folder>> {
+            let folders = self.folders.lock().unwrap().clone();
+            let mut result = Vec::new();
+            let mut stack = vec![folder_id];
+
+            while let Some(current) = stack.pop() {
+                if let Some(folder) = folders.iter().find(|folder| folder.id == current).cloned() {
+                    stack.extend(
+                        folders
+                            .iter()
+                            .filter(|child| child.parent_folder_id == Some(current))
+                            .map(|child| child.id),
+                    );
+                    result.push(folder);
+                }
+            }
+
+            Ok(result)
         }
 
         async fn revoke_share(&self, share_id: Uuid) -> Result<()> {
@@ -781,7 +1044,7 @@ mod tests {
 
         // Verify session properties
         assert_eq!(session.share_id, share.id);
-        assert_eq!(session.file_id, file_id);
+        assert_eq!(session.file_id, Some(file_id));
         assert_eq!(session.permissions, SharePermissions::View);
         assert!(!session.token.is_empty());
 
@@ -1005,7 +1268,7 @@ mod tests {
         let share_token = share.share_token.clone().unwrap();
 
         // Get public share info
-        let (returned_share, returned_file) = service
+        let (returned_share, returned_file, returned_folder) = service
             .get_public_share_info(&share_token)
             .await
             .unwrap();
@@ -1013,6 +1276,8 @@ mod tests {
         // Verify share and file are returned correctly
         assert_eq!(returned_share.id, share.id);
         assert_eq!(returned_share.file_id, Some(file_id));
+        assert!(returned_folder.is_none());
+        let returned_file = returned_file.expect("file share should include file");
         assert_eq!(returned_file.id, file_id);
         assert_eq!(returned_file.name, "document.pdf");
     }

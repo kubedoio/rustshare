@@ -4,6 +4,7 @@ import {
 	createFolderUserShare,
 	createShare,
 	listAllUserShares,
+	listFolderShares,
 	listFolderRecipients,
 	listFileRecipients,
 	listFileShares,
@@ -42,6 +43,8 @@ describe('shares API', () => {
 		it('should create a share with password and expiry', async () => {
 			const mockResponse = {
 				id: 'share-1',
+				resource_id: 'file-1',
+				resource_type: 'file' as const,
 				share_token: 'abc123',
 				permissions: 'View' as const,
 				password_protected: true,
@@ -56,7 +59,7 @@ describe('shares API', () => {
 				expires_at: '2024-12-31T23:59:59Z'
 			};
 
-			const result = await createShare('file-1', request);
+			const result = await createShare('file', 'file-1', request);
 
 			expect(apiClient.post).toHaveBeenCalledWith('/files/file-1/shares', request);
 			expect(result.share_url).toBe('http://localhost:3000/share/abc123');
@@ -67,6 +70,8 @@ describe('shares API', () => {
 		it('should create a share without password', async () => {
 			const mockResponse = {
 				id: 'share-2',
+				resource_id: 'file-2',
+				resource_type: 'file' as const,
 				share_token: 'xyz789',
 				permissions: 'Edit' as const,
 				password_protected: false,
@@ -79,7 +84,7 @@ describe('shares API', () => {
 				permissions: 'Edit'
 			};
 
-			const result = await createShare('file-2', request);
+			const result = await createShare('file', 'file-2', request);
 
 			expect(result.password_protected).toBe(false);
 			expect(result.expires_at).toBeNull();
@@ -88,6 +93,8 @@ describe('shares API', () => {
 		it('should generate correct share URL', async () => {
 			const mockResponse = {
 				id: 'share-3',
+				resource_id: 'file-3',
+				resource_type: 'file' as const,
 				share_token: 'token123',
 				permissions: 'View' as const,
 				password_protected: false,
@@ -96,9 +103,29 @@ describe('shares API', () => {
 
 			vi.mocked(apiClient.post).mockResolvedValue(mockResponse);
 
-			const result = await createShare('file-3', { permissions: 'View' });
+			const result = await createShare('file', 'file-3', { permissions: 'View' });
 
 			expect(result.share_url).toBe('http://localhost:3000/share/token123');
+		});
+
+		it('should create a folder share', async () => {
+			const mockResponse = {
+				id: 'share-folder-1',
+				resource_id: 'folder-1',
+				resource_type: 'folder' as const,
+				share_token: 'folder123',
+				permissions: 'View' as const,
+				password_protected: false,
+				expires_at: null
+			};
+
+			vi.mocked(apiClient.post).mockResolvedValue(mockResponse);
+
+			await createShare('folder', 'folder-1', { permissions: 'View' });
+
+			expect(apiClient.post).toHaveBeenCalledWith('/folders/folder-1/shares', {
+				permissions: 'View'
+			});
 		});
 	});
 
@@ -107,7 +134,8 @@ describe('shares API', () => {
 			const mockShares = [
 				{
 					id: 'share-1',
-					file_id: 'file-1',
+					resource_id: 'file-1',
+					resource_type: 'file' as const,
 					share_token: 'abc123',
 					permissions: 'View' as const,
 					password_protected: true,
@@ -117,7 +145,8 @@ describe('shares API', () => {
 				},
 				{
 					id: 'share-2',
-					file_id: 'file-1',
+					resource_id: 'file-1',
+					resource_type: 'file' as const,
 					share_token: 'xyz789',
 					permissions: 'Edit' as const,
 					password_protected: false,
@@ -146,6 +175,30 @@ describe('shares API', () => {
 		});
 	});
 
+	describe('listFolderShares', () => {
+		it('should fetch all shares for a folder', async () => {
+			const mockShares = [
+				{
+					id: 'share-folder-1',
+					resource_id: 'folder-1',
+					resource_type: 'folder' as const,
+					share_token: 'folder123',
+					permissions: 'View' as const,
+					password_protected: false,
+					expires_at: null,
+					created_at: '2024-01-02T00:00:00Z'
+				}
+			];
+
+			vi.mocked(apiClient.get).mockResolvedValue(mockShares);
+
+			const result = await listFolderShares('folder-1');
+
+			expect(apiClient.get).toHaveBeenCalledWith('/folders/folder-1/shares');
+			expect(result).toEqual(mockShares);
+		});
+	});
+
 	describe('revokeShare', () => {
 		it('should delete a share', async () => {
 			vi.mocked(apiClient.delete).mockResolvedValue(undefined);
@@ -167,8 +220,9 @@ describe('shares API', () => {
 			const mockShares = [
 				{
 					id: 'share-1',
-					file_id: 'file-1',
-					file_name: 'Quarterly Plan.pdf',
+					resource_id: 'file-1',
+					resource_type: 'file' as const,
+					resource_name: 'Quarterly Plan.pdf',
 					share_token: 'abc123',
 					permissions: 'View' as const,
 					password_protected: false,
@@ -299,14 +353,16 @@ describe('shares API', () => {
 		it('should propagate API errors', async () => {
 			vi.mocked(apiClient.post).mockRejectedValue(new Error('Network error'));
 
-			await expect(createShare('file-1', { permissions: 'View' })).rejects.toThrow('Network error');
+			await expect(createShare('file', 'file-1', { permissions: 'View' })).rejects.toThrow(
+				'Network error'
+			);
 		});
 
 		it('should handle validation errors', async () => {
 			vi.mocked(apiClient.post).mockRejectedValue(new Error('Invalid expiry date'));
 
 			await expect(
-				createShare('file-1', {
+				createShare('file', 'file-1', {
 					permissions: 'View',
 					expires_at: 'invalid-date'
 				})
@@ -318,6 +374,8 @@ describe('shares API', () => {
 		it('should support View permission', async () => {
 			const mockResponse = {
 				id: 'share-1',
+				resource_id: 'file-1',
+				resource_type: 'file' as const,
 				share_token: 'abc123',
 				permissions: 'View' as const,
 				password_protected: false,
@@ -326,7 +384,7 @@ describe('shares API', () => {
 
 			vi.mocked(apiClient.post).mockResolvedValue(mockResponse);
 
-			const result = await createShare('file-1', { permissions: 'View' });
+			const result = await createShare('file', 'file-1', { permissions: 'View' });
 
 			expect(result.permissions).toBe('View');
 		});
@@ -334,6 +392,8 @@ describe('shares API', () => {
 		it('should support Edit permission', async () => {
 			const mockResponse = {
 				id: 'share-2',
+				resource_id: 'file-2',
+				resource_type: 'file' as const,
 				share_token: 'xyz789',
 				permissions: 'Edit' as const,
 				password_protected: false,
@@ -342,7 +402,7 @@ describe('shares API', () => {
 
 			vi.mocked(apiClient.post).mockResolvedValue(mockResponse);
 
-			const result = await createShare('file-2', { permissions: 'Edit' });
+			const result = await createShare('file', 'file-2', { permissions: 'Edit' });
 
 			expect(result.permissions).toBe('Edit');
 		});

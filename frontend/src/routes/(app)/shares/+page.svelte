@@ -48,7 +48,7 @@
 	}
 
 	function handleRevokeShare(share: Share) {
-		if (confirm(`Revoke share link for "${share.file_name || 'this file'}"?`)) {
+		if (confirm(`Revoke share link for "${share.resource_name || `this ${share.resource_type}`}"?`)) {
 			$revokeShareMutation.mutate(share.id);
 		}
 	}
@@ -93,7 +93,7 @@
 		<div class="flex items-center justify-between">
 			<div>
 				<h1 class="text-2xl lg:text-3xl font-bold">Shared Links</h1>
-				<p class="text-base-content/70 mt-1">Manage public links created from individual files</p>
+				<p class="text-base-content/70 mt-1">Manage public links created from files and folders</p>
 			</div>
 		</div>
 
@@ -113,7 +113,7 @@
 			</svg>
 			<span>
 				Global shared-link management is still being finished. For now, the reliable way to create
-				and manage links is from the Share action on individual files.
+				and manage links is from the Share action on individual files and folders.
 			</span>
 		</div>
 
@@ -158,7 +158,7 @@
 				</svg>
 				<h3 class="text-lg font-semibold mb-2">No shared links yet</h3>
 				<p class="text-base-content/70 mb-4">
-					Create and manage share links from the Share action on any file in My Files
+					Create and manage share links from the Share action on any file or folder in My Files
 				</p>
 				<a href="/files" class="btn btn-primary"> Go to My Files </a>
 			</div>
@@ -168,7 +168,7 @@
 				<table class="table-zebra table">
 					<thead>
 						<tr>
-							<th>File Name</th>
+							<th>Resource</th>
 							<th>Created</th>
 							<th>Expires</th>
 							<th>Status</th>
@@ -181,10 +181,13 @@
 							<tr class="hover">
 								<td>
 									<div class="gap-3 flex items-center">
-										<span class="text-2xl">📄</span>
+										<span class="text-2xl">{share.resource_type === 'folder' ? '📁' : '📄'}</span>
 										<div>
-											<div class="font-medium">{share.file_name || 'Unknown File'}</div>
+											<div class="font-medium">{share.resource_name || 'Unknown Resource'}</div>
 											<div class="text-xs text-base-content/60 gap-2 flex">
+												<span class="badge badge-xs badge-ghost">
+													{share.resource_type === 'folder' ? 'Folder' : 'File'}
+												</span>
 												{#if share.password_protected}
 													<span class="badge badge-xs badge-ghost">🔒 Password</span>
 												{/if}
