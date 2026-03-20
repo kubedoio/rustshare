@@ -3,10 +3,11 @@
 	import { goto } from '$app/navigation';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { downloadFile, getFile } from '$lib/api/files';
-	import { getFolderContents } from '$lib/api/folders';
+	import { getFolder, getFolderContents } from '$lib/api/folders';
 	import { listReceivedShares } from '$lib/api/shares';
 	import type { File, Folder, ReceivedShare } from '$lib/api/types';
 	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
+	import { sharedResourcePath } from '$lib/utils/shared';
 	import { formatDate, formatFileSize, getMimeTypeIcon } from '$lib/utils/format';
 
 	type SharedResourceType = 'file' | 'folder';
@@ -14,11 +15,11 @@
 	let showPreviewModal = false;
 	let previewFile: File | null = null;
 	let currentFolderId: string | null = null;
-	let activeSharedFolderId: string | null = null;
 	let nestedPath: Folder[] = [];
 
 	$: resourceId = $page.params.resourceId ?? '';
 	$: resourceType = (($page.params.resourceType as SharedResourceType | undefined) ?? 'file');
+	$: requestedFolderId = $page.url.searchParams.get('folder');
 
 	const receivedSharesQuery = createQuery({
 		queryKey: ['received-shares'],
@@ -27,15 +28,22 @@
 
 	$: shareEntry = findShare($receivedSharesQuery.data, resourceType, resourceId);
 	$: rootFolderId = resourceType === 'folder' ? resourceId : null;
+	$: activeFolderId = resourceType === 'folder' ? requestedFolderId || rootFolderId : null;
 
-	$: if (resourceType === 'folder' && rootFolderId && activeSharedFolderId !== rootFolderId) {
-		activeSharedFolderId = rootFolderId;
-		currentFolderId = rootFolderId;
-		nestedPath = [];
+	$: if (resourceType === 'folder' && activeFolderId && currentFolderId !== activeFolderId) {
+		currentFolderId = activeFolderId;
+
+		if (rootFolderId && activeFolderId === rootFolderId) {
+			nestedPath = [];
+		} else {
+			const existingIndex = nestedPath.findIndex((folder) => folder.id === activeFolderId);
+			if (existingIndex !== -1) {
+				nestedPath = nestedPath.slice(0, existingIndex + 1);
+			}
+		}
 	}
 
 	$: if (resourceType !== 'folder') {
-		activeSharedFolderId = null;
 		currentFolderId = null;
 		nestedPath = [];
 	}
@@ -52,6 +60,16 @@
 		enabled: resourceType === 'folder' && !!shareEntry && !!currentFolderId
 	});
 
+	$: currentFolderQuery = createQuery({
+		queryKey: ['shared-folder-meta', currentFolderId],
+		queryFn: () => getFolder(currentFolderId as string),
+		enabled:
+			resourceType === 'folder' &&
+			!!shareEntry &&
+			!!currentFolderId &&
+			currentFolderId !== rootFolderId
+	});
+
 	function findShare(
 		shares: ReceivedShare[] | undefined,
 		type: SharedResourceType,
@@ -66,22 +84,30 @@
 		return 'View';
 	}
 
+	function navigateWithinSharedFolder(folderId: string, nextPath: Folder[]) {
+		if (!rootFolderId) return;
+
+		currentFolderId = folderId;
+		nestedPath = nextPath;
+		goto(sharedResourcePath('folder', rootFolderId, { folderId }), {
+			keepFocus: true,
+			noScroll: true
+		});
+	}
+
 	function navigateToRootFolder() {
 		if (!rootFolderId) return;
-		currentFolderId = rootFolderId;
-		nestedPath = [];
+		navigateWithinSharedFolder(rootFolderId, []);
 	}
 
 	function navigateToNestedFolder(index: number) {
 		const target = nestedPath[index];
 		if (!target) return;
-		currentFolderId = target.id;
-		nestedPath = nestedPath.slice(0, index + 1);
+		navigateWithinSharedFolder(target.id, nestedPath.slice(0, index + 1));
 	}
 
 	function openNestedFolder(folder: Folder) {
-		currentFolderId = folder.id;
-		nestedPath = [...nestedPath, folder];
+		navigateWithinSharedFolder(folder.id, [...nestedPath, folder]);
 	}
 
 	function openPreview(file: File) {
@@ -102,6 +128,21 @@
 			window.open(downloadUrl, '_blank');
 		} catch (error) {
 			console.error('Failed to download shared file', error);
+		}
+	}
+
+	$: if (
+		resourceType === 'folder' &&
+		currentFolderId &&
+		currentFolderId !== rootFolderId &&
+		$currentFolderQuery.data
+	) {
+		const existingIndex = nestedPath.findIndex((folder) => folder.id === currentFolderId);
+
+		if (existingIndex !== -1) {
+			nestedPath = nestedPath.slice(0, existingIndex + 1);
+		} else {
+			nestedPath = [$currentFolderQuery.data];
 		}
 	}
 

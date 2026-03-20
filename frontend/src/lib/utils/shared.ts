@@ -2,9 +2,21 @@ import type { Notification, ReceivedShare } from '$lib/api/types';
 
 export function sharedResourcePath(
   resourceType: ReceivedShare['resource_type'],
-  resourceId: string
+  resourceId: string,
+  options?: { folderId?: string | null }
 ): string {
-  return `/shared-with-me/${resourceType}/${resourceId}`;
+  const basePath = `/shared-with-me/${resourceType}/${resourceId}`;
+
+  if (
+    resourceType === 'folder' &&
+    options?.folderId &&
+    options.folderId !== resourceId
+  ) {
+    const searchParams = new URLSearchParams({ folder: options.folderId });
+    return `${basePath}?${searchParams.toString()}`;
+  }
+
+  return basePath;
 }
 
 export function resolveNotificationTarget(notification: Notification): string {
