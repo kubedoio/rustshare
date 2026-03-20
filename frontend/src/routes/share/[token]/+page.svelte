@@ -3,7 +3,7 @@
 	import { page } from '$app/stores';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { onMount } from 'svelte';
-	import type { File } from '$lib/api/types';
+	import type { File as SharedFile } from '$lib/api/types';
 	import {
 		createShareSession,
 		downloadPublicFolderFile,
@@ -17,6 +17,14 @@
 	import { queryClient } from '$lib/query-client';
 	import { toastStore } from '$lib/stores/toast';
 	import { formatFileSize, getMimeTypeIcon } from '$lib/utils/format';
+
+	type UploadQueueItem = {
+		id: string;
+		name: string;
+		progress: number;
+		status: 'queued' | 'uploading' | 'done' | 'error';
+		error?: string;
+	};
 
 	const token = $page.params.token ?? '';
 	const SESSION_STORAGE_KEY = `share_session_${token}`;
@@ -44,6 +52,8 @@
 	let errorType: 'not-found' | 'expired' | 'general' | null = null;
 	let hasTriedAutoSession = false;
 	let uploadInput: HTMLInputElement | null = null;
+	let isDragActive = false;
+	let uploadQueue: UploadQueueItem[] = [];
 
 	onMount(() => {
 		const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
@@ -136,7 +146,7 @@
 		}
 	}
 
-	async function handleFolderFileDownload(file: File) {
+	async function handleFolderFileDownload(file: SharedFile) {
 		if (!sessionToken) return;
 
 		isDownloading = true;
@@ -154,30 +164,81 @@
 		uploadInput?.click();
 	}
 
-	async function handleFolderUpload(event: Event) {
-		const input = event.currentTarget as HTMLInputElement;
-		const selectedFile = input.files?.[0];
-		if (!selectedFile || !sessionToken) {
+	function updateUploadQueue(
+		id: string,
+		patch: Partial<UploadQueueItem>
+	) {
+		uploadQueue = uploadQueue.map((item) => (item.id === id ? { ...item, ...patch } : item));
+	}
+
+	async function uploadFiles(files: FileList | globalThis.File[]) {
+		const fileList = Array.from(files);
+		if (fileList.length === 0 || !sessionToken) {
 			return;
 		}
 
 		isUploading = true;
+		const targetFolderId = currentFolderId || $folderContentsQuery.data?.root_folder_id;
+
+		const queuedItems = fileList.map((file) => ({
+			id: `${file.name}-${file.size}-${crypto.randomUUID()}`,
+			name: file.name,
+			progress: 0,
+			status: 'queued' as const
+		}));
+		uploadQueue = [...queuedItems, ...uploadQueue];
+
+		for (const [index, file] of fileList.entries()) {
+			const itemId = queuedItems[index].id;
+			updateUploadQueue(itemId, { status: 'uploading', progress: 0 });
+
+			try {
+				await uploadToPublicFolder(token, sessionToken, file, {
+					parentFolderId: targetFolderId,
+					onProgress: (progress) => updateUploadQueue(itemId, { progress })
+				});
+				updateUploadQueue(itemId, { status: 'done', progress: 100 });
+				toastStore.show(`Uploaded "${file.name}"`, 'success');
+			} catch (error) {
+				updateUploadQueue(itemId, {
+					status: 'error',
+					error: error instanceof Error ? error.message : 'Failed to upload file'
+				});
+				toastStore.show(
+					error instanceof Error ? error.message : `Failed to upload "${file.name}"`,
+					'error'
+				);
+			}
+		}
+
+		await queryClient.invalidateQueries({
+			queryKey: ['public-share-folder', token]
+		});
+		isUploading = false;
+	}
+
+	async function handleFolderUpload(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		if (!input.files?.length) {
+			return;
+		}
+
 		try {
-			const targetFolderId = currentFolderId || $folderContentsQuery.data?.root_folder_id;
-			await uploadToPublicFolder(token, sessionToken, selectedFile, targetFolderId);
-			await queryClient.invalidateQueries({
-				queryKey: ['public-share-folder', token]
-			});
-			toastStore.show(`Uploaded "${selectedFile.name}"`, 'success');
-		} catch (error) {
-			toastStore.show(
-				error instanceof Error ? error.message : 'Failed to upload file',
-				'error'
-			);
+			await uploadFiles(input.files);
 		} finally {
 			isUploading = false;
 			input.value = '';
 		}
+	}
+
+	async function handleDrop(event: DragEvent) {
+		event.preventDefault();
+		isDragActive = false;
+		if (!event.dataTransfer?.files?.length) {
+			return;
+		}
+
+		await uploadFiles(event.dataTransfer.files);
 	}
 
 	function openFolder(folderId: string) {
@@ -389,6 +450,7 @@
 												<input
 													bind:this={uploadInput}
 													type="file"
+													multiple
 													class="hidden"
 													on:change={handleFolderUpload}
 												/>
@@ -408,6 +470,59 @@
 											</div>
 										{/if}
 									</div>
+
+									{#if canUploadToFolder}
+										<div
+											role="region"
+											aria-label="Drag and drop upload area"
+											class={`rounded-lg border-2 border-dashed p-4 text-center transition-colors ${
+												isDragActive
+													? 'border-primary bg-primary/5'
+													: 'border-base-300'
+											}`}
+											on:dragenter|preventDefault={() => (isDragActive = true)}
+											on:dragover|preventDefault={() => (isDragActive = true)}
+											on:dragleave|preventDefault={() => (isDragActive = false)}
+											on:drop={handleDrop}
+										>
+											<p class="font-medium">Drag files here to upload</p>
+											<p class="text-sm text-base-content/60">
+												Files will be uploaded into {$folderContentsQuery.data.current_folder_name}.
+											</p>
+										</div>
+									{/if}
+
+									{#if uploadQueue.length > 0}
+										<div class="rounded-lg border border-base-300 p-4 space-y-3">
+											<div class="font-medium">Upload Queue</div>
+											{#each uploadQueue as item}
+												<div class="space-y-1">
+													<div class="flex items-center justify-between gap-3">
+														<div class="truncate text-sm">{item.name}</div>
+														<div class="text-xs text-base-content/60">
+															{#if item.status === 'done'}
+																Done
+															{:else if item.status === 'error'}
+																Failed
+															{:else if item.status === 'uploading'}
+																{item.progress}%
+															{:else}
+																Queued
+															{/if}
+														</div>
+													</div>
+													<progress
+														class="progress w-full {item.status === 'error' ? 'progress-error' : 'progress-primary'}"
+														value={item.status === 'error' ? 100 : item.progress}
+														max="100"
+													></progress>
+													{#if item.error}
+														<div class="text-xs text-error">{item.error}</div>
+													{/if}
+												</div>
+											{/each}
+										</div>
+									{/if}
 
 									<div class="overflow-x-auto rounded-lg border border-base-300">
 										<table class="table">

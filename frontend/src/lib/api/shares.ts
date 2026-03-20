@@ -56,6 +56,11 @@ export interface PublicShareUploadResponse {
 	created_at: string;
 }
 
+export interface PublicShareUploadOptions {
+	parentFolderId?: string;
+	onProgress?: (progress: number) => void;
+}
+
 export interface CreateUserShareRequest {
   recipient_email: string;
   permission: "View" | "Edit" | "Admin";
@@ -359,34 +364,47 @@ export async function uploadToPublicFolder(
 	token: string,
 	sessionToken: string,
 	file: globalThis.File,
-	parentFolderId?: string
+	options: PublicShareUploadOptions = {}
 ): Promise<PublicShareUploadResponse> {
 	const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
 	const formData = new FormData();
 	formData.append('file', file);
 	formData.append('name', file.name);
-	if (parentFolderId) {
-		formData.append('parent_folder_id', parentFolderId);
+	if (options.parentFolderId) {
+		formData.append('parent_folder_id', options.parentFolderId);
 	}
 
-	const response = await fetch(`${API_URL}/public/share/${token}/folder/upload`, {
-		method: 'POST',
-		headers: {
-			Authorization: `Bearer ${sessionToken}`
-		},
-		body: formData
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		xhr.open('POST', `${API_URL}/public/share/${token}/folder/upload`);
+		xhr.setRequestHeader('Authorization', `Bearer ${sessionToken}`);
+		xhr.responseType = 'json';
+
+		xhr.upload.onprogress = (event) => {
+			if (!event.lengthComputable) {
+				return;
+			}
+			const progress = Math.round((event.loaded / event.total) * 100);
+			options.onProgress?.(progress);
+		};
+
+		xhr.onerror = () => {
+			reject(new Error('Network error during upload'));
+		};
+
+		xhr.onload = () => {
+			if (xhr.status >= 200 && xhr.status < 300) {
+				options.onProgress?.(100);
+				resolve(xhr.response as PublicShareUploadResponse);
+				return;
+			}
+
+			const response = xhr.response as { error?: string; message?: string } | null;
+			reject(
+				new Error(response?.error || response?.message || xhr.statusText || 'Failed to upload file')
+			);
+		};
+
+		xhr.send(formData);
 	});
-
-	if (!response.ok) {
-		let errorMessage = 'Failed to upload file';
-		try {
-			const errorData = await response.json();
-			errorMessage = errorData.error || errorData.message || errorMessage;
-		} catch {
-			errorMessage = response.statusText || errorMessage;
-		}
-		throw new Error(errorMessage);
-	}
-
-	return response.json();
 }
