@@ -714,6 +714,7 @@ VITE_WS_URL=wss://files.example.com/api
 scripts/backup-stack.sh
 scripts/verify-backup-bundle.sh backups/<timestamp>
 scripts/restore-stack.sh backups/<timestamp>
+scripts/post-restore-smoke.sh
 ```
 
 #### Included Artifacts

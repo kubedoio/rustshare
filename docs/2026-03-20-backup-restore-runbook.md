@@ -17,6 +17,7 @@ The repository now includes:
 - `scripts/backup-stack.sh`
 - `scripts/restore-stack.sh`
 - `scripts/verify-backup-bundle.sh`
+- `scripts/post-restore-smoke.sh`
 
 ## Create A Backup
 
@@ -80,6 +81,12 @@ Then verify application-level behavior:
 - download a known file
 - open a known public share
 - confirm RustFS object count and DB metadata roughly match expectations
+
+Or run the automated smoke test:
+
+```bash
+scripts/post-restore-smoke.sh
+```
 
 ## Failure Modes
 

@@ -153,6 +153,7 @@
 - [ ] Rollback procedure documented
 - [x] Database restore procedure
 - [x] Backup bundle verification procedure
+- [x] Post-restore smoke procedure
 - [ ] RTO/RPO defined
 - [ ] Failover strategy
 
