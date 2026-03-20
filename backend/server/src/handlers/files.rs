@@ -86,7 +86,7 @@ pub async fn upload_file(
         .map_err(|e| file_error_response(e))?;
 
     Ok((
-        StatusCode::CREATED,
+        StatusCode::OK,
         Json(FileUploadResponse {
             id: file.id,
             name: file.name,
@@ -322,12 +322,18 @@ pub struct MoveFileRequest {
 ///
 /// TODO: Implement FileService::rename_file method
 pub async fn rename_file(
-    _state: State<AppState>,
-    _auth: AuthenticatedUser,
-    _file_id: Path<Uuid>,
-    _req: Json<RenameFileRequest>,
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(file_id): Path<Uuid>,
+    Json(req): Json<RenameFileRequest>,
 ) -> Result<Json<File>, Response> {
-    Err(file_error_response(FileError::Storage("Not implemented yet".to_string())))
+    let file = state
+        .file_service
+        .rename_file(file_id, req.new_name, auth.user_id)
+        .await
+        .map_err(file_error_response)?;
+
+    Ok(Json(file))
 }
 
 #[derive(Debug, Deserialize)]

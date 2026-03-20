@@ -15,7 +15,7 @@ use std::sync::Arc;
 use crate::domain::{File, FileVersion, Folder, FolderId, UserId};
 use crate::events::{
     AggregateType, Event, EventBroadcaster, EventType, FileDeletedPayload, FileModifiedPayload,
-    FileMovedPayload, FileRestoredPayload, FileUploadedPayload,
+    FileMovedPayload, FileRenamedPayload, FileRestoredPayload, FileUploadedPayload,
 };
 use crate::services::FileError;
 
@@ -666,6 +666,69 @@ where
         Ok(file)
     }
 
+    /// Rename a file while keeping it in the same parent folder.
+    pub async fn rename_file(
+        &self,
+        file_id: uuid::Uuid,
+        new_name: String,
+        user_id: UserId,
+    ) -> Result<File, FileError> {
+        self.validate_file_name(&new_name)?;
+
+        let mut file = self.get_file(file_id, user_id).await?;
+        if file.name == new_name {
+            return Ok(file);
+        }
+
+        let old_name = file.name.clone();
+        let old_path = file.path.clone();
+        let new_path = if let Some(parent_id) = file.parent_folder_id {
+            let parent = self
+                .metadata_store
+                .find_folder_by_id(parent_id)
+                .await
+                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+                .ok_or(FileError::ParentFolderNotFound(parent_id))?;
+            format!("{}/{}", parent.path.trim_end_matches('/'), new_name)
+        } else {
+            format!("/{}", new_name)
+        };
+
+        file.name = new_name.clone();
+        file.path = new_path.clone();
+        file.modified_at = chrono::Utc::now();
+
+        self.metadata_store
+            .update_file(&file)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        let payload = FileRenamedPayload {
+            file_id,
+            old_name,
+            new_name,
+            old_path,
+            new_path,
+            renamed_by: user_id,
+        };
+
+        let event = Event::new(
+            EventType::FileRenamed,
+            file_id,
+            AggregateType::File,
+            serde_json::to_value(payload)
+                .map_err(|e| FileError::Storage(format!("Failed to serialize event: {}", e)))?,
+            user_id,
+        );
+
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(format!("Failed to append event: {}", e))))?;
+
+        Ok(file)
+    }
+
     /// Delete a file.
     ///
     /// # Arguments
@@ -718,8 +781,7 @@ where
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
-        // Note: We don't delete from S3 (blob storage) because of deduplication
-        // The same content hash might be used by other files or versions
+        // Storage cleanup will be coupled to trash/retention policy in a later phase.
 
         Ok(())
     }
