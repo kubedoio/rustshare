@@ -152,6 +152,7 @@
 #### Disaster Recovery
 - [ ] Rollback procedure documented
 - [x] Database restore procedure
+- [x] Backup bundle verification procedure
 - [ ] RTO/RPO defined
 - [ ] Failover strategy
 

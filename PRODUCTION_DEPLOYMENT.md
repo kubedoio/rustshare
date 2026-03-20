@@ -1,5 +1,10 @@
 # RustShare Production Deployment v0.1.2
 
+> Historical note: this document reflects an older deployment phase. For current backup,
+> restore, and recovery operations, use:
+> - [/Users/scolak/Projects/x/rustshare/docs/2026-03-20-backup-restore-runbook.md](/Users/scolak/Projects/x/rustshare/docs/2026-03-20-backup-restore-runbook.md)
+> - [/Users/scolak/Projects/x/rustshare/docs/2026-03-20-restore-drill-checklist.md](/Users/scolak/Projects/x/rustshare/docs/2026-03-20-restore-drill-checklist.md)
+
 ## 🚀 Deployment Status: LIVE
 
 **Date**: March 19, 2026

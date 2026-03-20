@@ -16,6 +16,7 @@ Rustshare is not recoverable from the database alone. A usable backup needs:
 The repository now includes:
 - `scripts/backup-stack.sh`
 - `scripts/restore-stack.sh`
+- `scripts/verify-backup-bundle.sh`
 
 ## Create A Backup
 
@@ -36,6 +37,12 @@ Recommended operator policy:
 - run at least daily for pilot and small production environments
 - copy finished backup directories off the host after creation
 - keep at least one verified restore point in a separate location
+
+Verify a backup bundle before trusting it:
+
+```bash
+scripts/verify-backup-bundle.sh backups/<timestamp>
+```
 
 ## Restore Procedure
 
@@ -95,3 +102,8 @@ It does not yet provide:
 - incremental object storage backups
 - multi-node RustFS recovery procedures
 - automated scheduled backup orchestration
+
+## Drill Discipline
+
+Run a periodic restore drill using:
+- [2026-03-20-restore-drill-checklist.md](/Users/scolak/Projects/x/rustshare/docs/2026-03-20-restore-drill-checklist.md)

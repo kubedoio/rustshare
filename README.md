@@ -712,6 +712,7 @@ VITE_WS_URL=wss://files.example.com/api
 #### Database Backup
 ```bash
 scripts/backup-stack.sh
+scripts/verify-backup-bundle.sh backups/<timestamp>
 scripts/restore-stack.sh backups/<timestamp>
 ```
 
@@ -723,7 +724,9 @@ backups/<timestamp>/config.tar.gz
 backups/<timestamp>/manifest.env
 ```
 
-Detailed recovery steps: [docs/2026-03-20-backup-restore-runbook.md](docs/2026-03-20-backup-restore-runbook.md)
+Detailed recovery steps:
+- [docs/2026-03-20-backup-restore-runbook.md](docs/2026-03-20-backup-restore-runbook.md)
+- [docs/2026-03-20-restore-drill-checklist.md](docs/2026-03-20-restore-drill-checklist.md)
 
 ### Monitoring & Logs
 
