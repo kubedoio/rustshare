@@ -547,7 +547,7 @@ mod tests {
             share_id,
             file_id,
             share_token: "token123".to_string(),
-            permissions: SharePermissions::Read,
+            permissions: SharePermissions::View,
             password_protected: false,
             expires_at: None,
             created_by: owner_id,
@@ -697,7 +697,7 @@ mod tests {
             share_id,
             file_id,
             share_token: "token123".to_string(),
-            permissions: SharePermissions::Read,
+            permissions: SharePermissions::View,
             password_protected: false,
             expires_at: None,
             created_by: owner_id,
@@ -740,7 +740,7 @@ mod tests {
                 assert_eq!(msg_share_id, share_id);
                 assert_eq!(msg_file_id, file_id);
                 assert_eq!(share_token, "token123");
-                assert_eq!(permissions, SharePermissions::Read);
+                assert_eq!(permissions, SharePermissions::View);
                 assert!(!password_protected);
                 assert!(expires_at.is_none());
             }
@@ -908,7 +908,7 @@ mod tests {
             share_id,
             file_id,
             share_token: "token123".to_string(),
-            permissions: SharePermissions::Read,
+            permissions: SharePermissions::View,
             password_protected: false,
             expires_at: None,
         };
@@ -946,7 +946,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
-            permissions: SharePermissions::Read,
+            permissions: SharePermissions::View,
         };
 
         // Create ShareRevoked event for this share
@@ -993,7 +993,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
-            permissions: SharePermissions::Read,
+            permissions: SharePermissions::View,
         };
 
         // Create ShareUpdated event for this share
@@ -1043,7 +1043,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
-            permissions: SharePermissions::Read,
+            permissions: SharePermissions::View,
         };
 
         // Create FileModified event for this file
@@ -1097,7 +1097,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
-            permissions: SharePermissions::Read,
+            permissions: SharePermissions::View,
         };
 
         // Create FileModified event for a different file
@@ -1151,7 +1151,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
-            permissions: SharePermissions::Read,
+            permissions: SharePermissions::View,
         };
 
         // Create ShareRevoked event for a different share
@@ -1198,7 +1198,7 @@ mod tests {
         let client_identity = ClientIdentity::ShareViewer {
             share_id,
             file_id,
-            permissions: SharePermissions::Read,
+            permissions: SharePermissions::View,
         };
 
         // Create UserCreated event

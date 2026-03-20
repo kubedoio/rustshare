@@ -1,13 +1,13 @@
 use axum::{
     extract::{Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
     Json,
 };
 use openidconnect::{
     core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata},
-    AccessTokenHash, AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce,
-    OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
+    AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
+    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
 };
 use rustshare_auth::generate_web_session_token;
 use rustshare_core::domain::{OidcLoginState, User};
@@ -82,7 +82,9 @@ impl OidcConfig {
             .collect()
     }
 
-    async fn build_client(&self) -> Result<(CoreClient, openidconnect::reqwest::Client), String> {
+    async fn discover_provider(
+        &self,
+    ) -> Result<(CoreProviderMetadata, openidconnect::reqwest::Client), String> {
         let http_client = openidconnect::reqwest::ClientBuilder::new()
             .redirect(openidconnect::reqwest::redirect::Policy::none())
             .build()
@@ -96,17 +98,7 @@ impl OidcConfig {
         .await
         .map_err(|error| format!("OIDC discovery failed: {error}"))?;
 
-        let client = CoreClient::from_provider_metadata(
-            provider_metadata,
-            ClientId::new(self.client_id.clone()),
-            Some(ClientSecret::new(self.client_secret.clone())),
-        )
-        .set_redirect_uri(
-            RedirectUrl::new(self.redirect_url.clone())
-                .map_err(|error| format!("Invalid OIDC redirect URL: {error}"))?,
-        );
-
-        Ok((client, http_client))
+        Ok((provider_metadata, http_client))
     }
 }
 
@@ -127,7 +119,23 @@ pub async fn oidc_login(
     let config = OidcConfig::from_env()
         .ok_or_else(|| (StatusCode::NOT_FOUND, "OIDC is not configured".to_string()))?;
     let redirect_to = sanitize_redirect_target(query.redirect_to.as_deref());
-    let (client, _) = config.build_client().await.map_err(internal_oidc_error)?;
+    let (provider_metadata, _http_client) = config
+        .discover_provider()
+        .await
+        .map_err(internal_oidc_error)?;
+    let client = CoreClient::from_provider_metadata(
+        provider_metadata,
+        ClientId::new(config.client_id.clone()),
+        Some(ClientSecret::new(config.client_secret.clone())),
+    )
+    .set_redirect_uri(
+        RedirectUrl::new(config.redirect_url.clone()).map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Invalid OIDC redirect URL: {error}"),
+            )
+        })?,
+    );
 
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
     let mut auth_request = client.authorize_url(
@@ -160,7 +168,8 @@ pub async fn oidc_login(
             )
         })?;
 
-    Ok(Redirect::temporary(auth_url.as_ref()))
+    let auth_url = auth_url.to_string();
+    Ok(Redirect::temporary(&auth_url))
 }
 
 pub async fn oidc_callback(
@@ -222,7 +231,23 @@ pub async fn oidc_callback(
 
     let config = OidcConfig::from_env()
         .ok_or_else(|| (StatusCode::NOT_FOUND, "OIDC is not configured".to_string()))?;
-    let (client, http_client) = config.build_client().await.map_err(internal_oidc_error)?;
+    let (provider_metadata, http_client) = config
+        .discover_provider()
+        .await
+        .map_err(internal_oidc_error)?;
+    let client = CoreClient::from_provider_metadata(
+        provider_metadata,
+        ClientId::new(config.client_id.clone()),
+        Some(ClientSecret::new(config.client_secret.clone())),
+    )
+    .set_redirect_uri(
+        RedirectUrl::new(config.redirect_url.clone()).map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Invalid OIDC redirect URL: {error}"),
+            )
+        })?,
+    );
     let token_response = client
         .exchange_code(AuthorizationCode::new(code))
         .map_err(|error| {
@@ -258,40 +283,11 @@ pub async fn oidc_callback(
             )
         })?;
 
-    if let Some(false) = claims.email_verified().copied() {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            "OIDC provider returned an unverified e-mail address".to_string(),
-        ));
-    }
-
-    if let Some(expected_access_token_hash) = claims.access_token_hash() {
-        let actual_access_token_hash = AccessTokenHash::from_token(
-            token_response.access_token(),
-            id_token.signing_alg().map_err(|error| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    format!("Invalid OIDC signing algorithm: {error}"),
-                )
-            })?,
-            id_token.signing_key(&id_token_verifier).map_err(|error| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    format!("Invalid OIDC signing key: {error}"),
-                )
-            })?,
-        )
-        .map_err(|error| {
-            (
-                StatusCode::UNAUTHORIZED,
-                format!("Invalid OIDC access token hash: {error}"),
-            )
-        })?;
-
-        if actual_access_token_hash != *expected_access_token_hash {
+    if let Some(email_verified) = claims.email_verified() {
+        if !email_verified {
             return Err((
                 StatusCode::UNAUTHORIZED,
-                "OIDC access token hash verification failed".to_string(),
+                "OIDC provider returned an unverified e-mail address".to_string(),
             ));
         }
     }
@@ -319,14 +315,12 @@ pub async fn oidc_callback(
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         header::SET_COOKIE,
-        build_session_cookie(&session_token)
-            .parse()
-            .map_err(|error| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to serialize session cookie: {error}"),
-                )
-            })?,
+        HeaderValue::from_str(&build_session_cookie(&session_token)).map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to serialize session cookie: {error}"),
+            )
+        })?,
     );
 
     Ok((response_headers, Redirect::to(&login_state.redirect_to)).into_response())

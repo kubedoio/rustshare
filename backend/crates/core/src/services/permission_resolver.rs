@@ -10,7 +10,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::domain::{File, Folder, SharePermissions, UserId, FileId, FolderId};
+use crate::domain::{File, FileId, Folder, FolderId, SharePermissions, UserId};
 
 /// Resource type for permission checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,7 +90,8 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
     ) -> Result<bool> {
         // Check cache first
         let cache_key = CacheKey::File(user_id, file_id);
-        if let Some(cached) = self.cache.lock().unwrap().get(&cache_key).copied() {
+        let cached = { self.cache.lock().unwrap().get(&cache_key).copied() };
+        if let Some(cached) = cached {
             return Ok(cached.map_or(false, |perm| perm >= required));
         }
 
@@ -103,12 +104,19 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
 
         // 1. Check ownership (implicit Admin permission)
         if file.owner_id == user_id {
-            self.cache.lock().unwrap().insert(cache_key, Some(SharePermissions::Admin));
+            self.cache
+                .lock()
+                .unwrap()
+                .insert(cache_key, Some(SharePermissions::Admin));
             return Ok(true);
         }
 
         // 2. Check direct share on file
-        if let Some(share) = self.share_ops.find_user_share(Some(file_id), None, user_id).await? {
+        if let Some(share) = self
+            .share_ops
+            .find_user_share(Some(file_id), None, user_id)
+            .await?
+        {
             if share.revoked_at.is_none() {
                 let perm = share.permissions;
                 self.cache.lock().unwrap().insert(cache_key, Some(perm));
@@ -118,8 +126,14 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
 
         // 3. Walk up folder ancestry for inherited permissions
         if let Some(parent_folder_id) = file.parent_folder_id {
-            if let Some(inherited_perm) = self.resolve_folder_ancestry(user_id, parent_folder_id).await? {
-                self.cache.lock().unwrap().insert(cache_key, Some(inherited_perm));
+            if let Some(inherited_perm) = self
+                .resolve_folder_ancestry(user_id, parent_folder_id)
+                .await?
+            {
+                self.cache
+                    .lock()
+                    .unwrap()
+                    .insert(cache_key, Some(inherited_perm));
                 return Ok(inherited_perm >= required);
             }
         }
@@ -145,7 +159,8 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
     ) -> Result<bool> {
         // Check cache first
         let cache_key = CacheKey::Folder(user_id, folder_id);
-        if let Some(cached) = self.cache.lock().unwrap().get(&cache_key).copied() {
+        let cached = { self.cache.lock().unwrap().get(&cache_key).copied() };
+        if let Some(cached) = cached {
             return Ok(cached.map_or(false, |perm| perm >= required));
         }
 
@@ -158,12 +173,19 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
 
         // 1. Check ownership (implicit Admin permission)
         if folder.owner_id == user_id {
-            self.cache.lock().unwrap().insert(cache_key, Some(SharePermissions::Admin));
+            self.cache
+                .lock()
+                .unwrap()
+                .insert(cache_key, Some(SharePermissions::Admin));
             return Ok(true);
         }
 
         // 2. Check direct share on folder
-        if let Some(share) = self.share_ops.find_user_share(None, Some(folder_id), user_id).await? {
+        if let Some(share) = self
+            .share_ops
+            .find_user_share(None, Some(folder_id), user_id)
+            .await?
+        {
             if share.revoked_at.is_none() {
                 let perm = share.permissions;
                 self.cache.lock().unwrap().insert(cache_key, Some(perm));
@@ -173,8 +195,14 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
 
         // 3. Walk up parent folder ancestry for inherited permissions
         if let Some(parent_folder_id) = folder.parent_folder_id {
-            if let Some(inherited_perm) = self.resolve_folder_ancestry(user_id, parent_folder_id).await? {
-                self.cache.lock().unwrap().insert(cache_key, Some(inherited_perm));
+            if let Some(inherited_perm) = self
+                .resolve_folder_ancestry(user_id, parent_folder_id)
+                .await?
+            {
+                self.cache
+                    .lock()
+                    .unwrap()
+                    .insert(cache_key, Some(inherited_perm));
                 return Ok(inherited_perm >= required);
             }
         }
@@ -199,14 +227,19 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
         while max_depth > 0 {
             // Check cache for this folder
             let cache_key = CacheKey::Folder(user_id, folder_id);
-            if let Some(cached) = self.cache.lock().unwrap().get(&cache_key).copied() {
+            let cached = { self.cache.lock().unwrap().get(&cache_key).copied() };
+            if let Some(cached) = cached {
                 if let Some(perm) = cached {
                     permissions.push(perm);
                 }
                 // If cached with no permission, continue walking up
             } else {
                 // Check for share on this folder
-                if let Some(share) = self.share_ops.find_user_share(None, Some(folder_id), user_id).await? {
+                if let Some(share) = self
+                    .share_ops
+                    .find_user_share(None, Some(folder_id), user_id)
+                    .await?
+                {
                     if share.revoked_at.is_none() {
                         let perm = share.permissions;
                         self.cache.lock().unwrap().insert(cache_key, Some(perm));
@@ -263,11 +296,20 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
         match resource {
             Resource::File(file_id) => {
                 // Check all permission levels from highest to lowest
-                if self.check_file_permission(user_id, file_id, SharePermissions::Admin).await? {
+                if self
+                    .check_file_permission(user_id, file_id, SharePermissions::Admin)
+                    .await?
+                {
                     Ok(Some(SharePermissions::Admin))
-                } else if self.check_file_permission(user_id, file_id, SharePermissions::Edit).await? {
+                } else if self
+                    .check_file_permission(user_id, file_id, SharePermissions::Edit)
+                    .await?
+                {
                     Ok(Some(SharePermissions::Edit))
-                } else if self.check_file_permission(user_id, file_id, SharePermissions::View).await? {
+                } else if self
+                    .check_file_permission(user_id, file_id, SharePermissions::View)
+                    .await?
+                {
                     Ok(Some(SharePermissions::View))
                 } else {
                     Ok(None)
@@ -275,11 +317,20 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
             }
             Resource::Folder(folder_id) => {
                 // Check all permission levels from highest to lowest
-                if self.check_folder_permission(user_id, folder_id, SharePermissions::Admin).await? {
+                if self
+                    .check_folder_permission(user_id, folder_id, SharePermissions::Admin)
+                    .await?
+                {
                     Ok(Some(SharePermissions::Admin))
-                } else if self.check_folder_permission(user_id, folder_id, SharePermissions::Edit).await? {
+                } else if self
+                    .check_folder_permission(user_id, folder_id, SharePermissions::Edit)
+                    .await?
+                {
                     Ok(Some(SharePermissions::Edit))
-                } else if self.check_folder_permission(user_id, folder_id, SharePermissions::View).await? {
+                } else if self
+                    .check_folder_permission(user_id, folder_id, SharePermissions::View)
+                    .await?
+                {
                     Ok(Some(SharePermissions::View))
                 } else {
                     Ok(None)
@@ -350,7 +401,13 @@ mod tests {
 
     impl FileResolverOps for MockFileOps {
         async fn find_file_by_id(&self, id: FileId) -> Result<Option<File>> {
-            Ok(self.files.lock().unwrap().iter().find(|f| f.id == id).cloned())
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|f| f.id == id)
+                .cloned())
         }
     }
 
@@ -372,7 +429,13 @@ mod tests {
 
     impl FolderResolverOps for MockFolderOps {
         async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>> {
-            Ok(self.folders.lock().unwrap().iter().find(|f| f.id == id).cloned())
+            Ok(self
+                .folders
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|f| f.id == id)
+                .cloned())
         }
     }
 
@@ -386,11 +449,8 @@ mod tests {
         let file_ops = Arc::new(MockFileOps::new());
         let folder_ops = Arc::new(MockFolderOps::new());
 
-        let resolver = PermissionResolver::new(
-            share_ops.clone(),
-            file_ops.clone(),
-            folder_ops.clone(),
-        );
+        let resolver =
+            PermissionResolver::new(share_ops.clone(), file_ops.clone(), folder_ops.clone());
 
         (resolver, share_ops, file_ops, folder_ops)
     }
@@ -413,9 +473,18 @@ mod tests {
         file_ops.add_file(file);
 
         // Owner should have Admin permission without any share record
-        assert!(resolver.check_file_permission(owner_id, file_id, SharePermissions::Admin).await.unwrap());
-        assert!(resolver.check_file_permission(owner_id, file_id, SharePermissions::Edit).await.unwrap());
-        assert!(resolver.check_file_permission(owner_id, file_id, SharePermissions::View).await.unwrap());
+        assert!(resolver
+            .check_file_permission(owner_id, file_id, SharePermissions::Admin)
+            .await
+            .unwrap());
+        assert!(resolver
+            .check_file_permission(owner_id, file_id, SharePermissions::Edit)
+            .await
+            .unwrap());
+        assert!(resolver
+            .check_file_permission(owner_id, file_id, SharePermissions::View)
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
@@ -455,9 +524,15 @@ mod tests {
         share_ops.add_share(share);
 
         // User should have View permission
-        assert!(resolver.check_file_permission(user_id, file_id, SharePermissions::View).await.unwrap());
+        assert!(resolver
+            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .await
+            .unwrap());
         // But not Edit permission
-        assert!(!resolver.check_file_permission(user_id, file_id, SharePermissions::Edit).await.unwrap());
+        assert!(!resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
@@ -521,9 +596,18 @@ mod tests {
         share_ops.add_share(share);
 
         // User should have Edit permission on file through inheritance
-        assert!(resolver.check_file_permission(user_id, file_id, SharePermissions::View).await.unwrap());
-        assert!(resolver.check_file_permission(user_id, file_id, SharePermissions::Edit).await.unwrap());
-        assert!(!resolver.check_file_permission(user_id, file_id, SharePermissions::Admin).await.unwrap());
+        assert!(resolver
+            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .await
+            .unwrap());
+        assert!(resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await
+            .unwrap());
+        assert!(!resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
@@ -563,7 +647,10 @@ mod tests {
         share_ops.add_share(share);
 
         // User should not have permission
-        assert!(!resolver.check_file_permission(user_id, file_id, SharePermissions::View).await.unwrap());
+        assert!(!resolver
+            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
@@ -603,10 +690,16 @@ mod tests {
         share_ops.add_share(share);
 
         // First call should populate cache
-        assert!(resolver.check_file_permission(user_id, file_id, SharePermissions::View).await.unwrap());
+        assert!(resolver
+            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .await
+            .unwrap());
 
         // Second call should use cache (we can verify this by checking cache size)
-        assert!(resolver.check_file_permission(user_id, file_id, SharePermissions::Edit).await.unwrap());
+        assert!(resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await
+            .unwrap());
         assert_eq!(resolver.cache.lock().unwrap().len(), 1);
 
         // Clear cache
@@ -634,7 +727,10 @@ mod tests {
         file_ops.add_file(file);
 
         // User has no share, should not have permission
-        assert!(!resolver.check_file_permission(user_id, file_id, SharePermissions::View).await.unwrap());
+        assert!(!resolver
+            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
@@ -648,9 +744,18 @@ mod tests {
         folder_ops.add_folder(folder);
 
         // Owner should have Admin permission
-        assert!(resolver.check_folder_permission(owner_id, folder_id, SharePermissions::Admin).await.unwrap());
-        assert!(resolver.check_folder_permission(owner_id, folder_id, SharePermissions::Edit).await.unwrap());
-        assert!(resolver.check_folder_permission(owner_id, folder_id, SharePermissions::View).await.unwrap());
+        assert!(resolver
+            .check_folder_permission(owner_id, folder_id, SharePermissions::Admin)
+            .await
+            .unwrap());
+        assert!(resolver
+            .check_folder_permission(owner_id, folder_id, SharePermissions::Edit)
+            .await
+            .unwrap());
+        assert!(resolver
+            .check_folder_permission(owner_id, folder_id, SharePermissions::View)
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
@@ -723,7 +828,13 @@ mod tests {
 
         // User should have View permission from direct share (direct share takes precedence)
         // This is correct because we check direct shares before ancestry
-        assert!(resolver.check_file_permission(user_id, file_id, SharePermissions::View).await.unwrap());
-        assert!(!resolver.check_file_permission(user_id, file_id, SharePermissions::Admin).await.unwrap());
+        assert!(resolver
+            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .await
+            .unwrap());
+        assert!(!resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .await
+            .unwrap());
     }
 }

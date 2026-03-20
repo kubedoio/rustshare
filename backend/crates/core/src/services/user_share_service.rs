@@ -548,11 +548,3 @@ where
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Note: Full tests require database setup
-    // Integration tests in server/tests/integration/
-}

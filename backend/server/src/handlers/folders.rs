@@ -11,11 +11,10 @@ use uuid::Uuid;
 
 use rustshare_core::{
     domain::{Folder, FolderContents, FolderTree},
-    services::FolderError,
 };
 
+use super::{folder_error_response, AuthenticatedUser};
 use crate::AppState;
-use super::{AuthenticatedUser, folder_error_response};
 
 // ============================================================================
 // Task 20: Folder CRUD
@@ -31,7 +30,8 @@ pub async fn create_folder(
     auth: AuthenticatedUser,
     Json(req): Json<CreateFolderRequest>,
 ) -> Result<(StatusCode, Json<Folder>), Response> {
-    let folder = state.folder_service
+    let folder = state
+        .folder_service
         .create_folder(req.name, req.parent_folder_id, auth.user_id)
         .await
         .map_err(folder_error_response)?;
@@ -53,7 +53,11 @@ pub async fn get_folder(
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
 ) -> Result<Json<Folder>, Response> {
-    let folder = state.folder_service.get_folder(folder_id, auth.user_id).await.map_err(folder_error_response)?;
+    let folder = state
+        .folder_service
+        .get_folder(folder_id, auth.user_id)
+        .await
+        .map_err(folder_error_response)?;
     Ok(Json(folder))
 }
 
@@ -65,7 +69,11 @@ pub async fn delete_folder(
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
 ) -> Result<StatusCode, Response> {
-    state.folder_service.delete_folder(folder_id, auth.user_id).await.map_err(folder_error_response)?;
+    state
+        .folder_service
+        .delete_folder(folder_id, auth.user_id)
+        .await
+        .map_err(folder_error_response)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -81,7 +89,11 @@ pub async fn get_folder_contents(
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
 ) -> Result<Json<FolderContents>, Response> {
-    let contents = state.folder_service.list_contents(folder_id, auth.user_id).await.map_err(folder_error_response)?;
+    let contents = state
+        .folder_service
+        .list_contents(folder_id, auth.user_id)
+        .await
+        .map_err(folder_error_response)?;
     Ok(Json(contents))
 }
 
@@ -99,7 +111,11 @@ pub async fn get_root_contents(
         .await
         .map_err(|_| {
             use axum::{http::StatusCode, response::IntoResponse, Json};
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(super::ErrorResponse::new("Internal server error"))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(super::ErrorResponse::new("Internal server error")),
+            )
+                .into_response()
         })?;
 
     // Get root files (parent_folder_id = null)
@@ -109,7 +125,11 @@ pub async fn get_root_contents(
         .await
         .map_err(|_| {
             use axum::{http::StatusCode, response::IntoResponse, Json};
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(super::ErrorResponse::new("Internal server error"))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(super::ErrorResponse::new("Internal server error")),
+            )
+                .into_response()
         })?;
 
     Ok(Json(FolderContents { folders, files }))
@@ -131,13 +151,21 @@ pub async fn get_folder_tree(
         .await
         .map_err(|_| {
             use axum::{http::StatusCode, response::IntoResponse, Json};
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(super::ErrorResponse::new("Internal server error"))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(super::ErrorResponse::new("Internal server error")),
+            )
+                .into_response()
         })?;
 
     // Build subtrees for each root folder
     let mut subtrees = Vec::new();
     for folder in root_folders {
-        let subtree = state.folder_service.get_tree(folder.id, auth.user_id).await.map_err(folder_error_response)?;
+        let subtree = state
+            .folder_service
+            .get_tree(folder.id, auth.user_id)
+            .await
+            .map_err(folder_error_response)?;
         subtrees.push(subtree);
     }
 
@@ -159,7 +187,11 @@ pub async fn get_folder_tree(
         .await
         .map_err(|_| {
             use axum::{http::StatusCode, response::IntoResponse, Json};
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(super::ErrorResponse::new("Internal server error"))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(super::ErrorResponse::new("Internal server error")),
+            )
+                .into_response()
         })?;
 
     let tree = FolderTree::with_contents(virtual_root, root_files, subtrees);
@@ -181,7 +213,8 @@ pub async fn move_folder(
     Path(folder_id): Path<Uuid>,
     Json(req): Json<MoveFolderRequest>,
 ) -> Result<Json<Folder>, Response> {
-    let folder = state.folder_service
+    let folder = state
+        .folder_service
         .move_folder(folder_id, req.target_parent_id, auth.user_id)
         .await
         .map_err(folder_error_response)?;
@@ -205,7 +238,8 @@ pub async fn rename_folder(
     Path(folder_id): Path<Uuid>,
     Json(req): Json<RenameFolderRequest>,
 ) -> Result<Json<Folder>, Response> {
-    let folder = state.folder_service
+    let folder = state
+        .folder_service
         .rename_folder(folder_id, req.new_name, auth.user_id)
         .await
         .map_err(folder_error_response)?;

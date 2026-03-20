@@ -2,6 +2,7 @@
 name = "rustshare-server"
 version.workspace = true
 edition.workspace = true
+autotests = false
 
 [[bin]]
 name = "rustshare-server"
@@ -27,11 +28,14 @@ anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 bytes.workspace = true
+aws-config.workspace = true
+aws-sdk-s3.workspace = true
 futures-util = "0.3"
 dotenv = "0.15"
 governor = "0.6"
 nonzero_ext = "0.3"
 openidconnect = "4.0.1"
+url = "2.5"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"

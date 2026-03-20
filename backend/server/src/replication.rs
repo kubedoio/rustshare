@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
+use aws_config::BehaviorVersion;
 use aws_sdk_s3::{config::Credentials, primitives::ByteStream, Client as S3Client};
 use chrono::Utc;
 use rustshare_core::{
@@ -463,7 +464,7 @@ async fn replicate_to_target(
 }
 
 async fn build_target_client(target: &ReplicationTarget, region: &str) -> Result<S3Client> {
-    let shared_config = aws_config::from_env()
+    let shared_config = aws_config::defaults(BehaviorVersion::latest())
         .endpoint_url(&target.endpoint)
         .region(aws_config::Region::new(region.to_string()))
         .load()

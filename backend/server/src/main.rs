@@ -51,7 +51,7 @@ use crate::web_session::{
 use anyhow::Result;
 use axum::{
     extract::DefaultBodyLimit,
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{any, delete, get, patch, post, put},
     Json, Router,
@@ -455,7 +455,7 @@ async fn health_check() -> Json<HealthResponse> {
     })
 }
 
-fn frontend_service() -> ServeDir {
+fn frontend_service() -> ServeDir<ServeFile> {
     let dist_dir = frontend_dist_dir();
     let fallback_file = dist_dir.join("200.html");
 
@@ -656,8 +656,7 @@ async fn login(
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         header::SET_COOKIE,
-        build_session_cookie(&session_token)
-            .parse()
+        HeaderValue::from_str(&build_session_cookie(&session_token))
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
     );
 
@@ -694,8 +693,7 @@ async fn logout(
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         header::SET_COOKIE,
-        build_expired_session_cookie()
-            .parse()
+        HeaderValue::from_str(&build_expired_session_cookie())
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
     );
 

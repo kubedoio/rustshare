@@ -1,5 +1,4 @@
 use thiserror::Error;
-use uuid::Uuid;
 use crate::domain::{NotificationId, UserId};
 
 /// Errors that can occur during notification operations.
@@ -25,6 +24,7 @@ pub enum NotificationError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn test_notification_error_not_found() {

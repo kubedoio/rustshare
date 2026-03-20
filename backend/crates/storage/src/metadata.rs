@@ -402,6 +402,40 @@ impl MetadataStore {
         }
     }
 
+    /// Find a file by its canonical path for a specific owner.
+    pub async fn find_file_by_path(&self, path: &str, owner_id: Uuid) -> Result<Option<File>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at
+            FROM files
+            WHERE path = $1 AND owner_id = $2
+            "#,
+        )
+        .bind(path)
+        .bind(owner_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let file = File {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                size: row.try_get("size")?,
+                mime_type: row.try_get("mime_type")?,
+                content_hash: row.try_get("content_hash")?,
+                owner_id: row.try_get("owner_id")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                current_version: row.try_get("current_version")?,
+                created_at: row.try_get("created_at")?,
+                modified_at: row.try_get("modified_at")?,
+            };
+            Ok(Some(file))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Update a file in the projection table
     pub async fn update_file(&self, file: &File) -> Result<()> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
@@ -963,6 +997,36 @@ impl MetadataStore {
             "#,
         )
         .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let folder = Folder {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                owner_id: row.try_get("owner_id")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            };
+            Ok(Some(folder))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Find a folder by its canonical path for a specific owner.
+    pub async fn find_folder_by_path(&self, path: &str, owner_id: Uuid) -> Result<Option<Folder>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
+            FROM folders
+            WHERE path = $1 AND owner_id = $2
+            "#,
+        )
+        .bind(path)
+        .bind(owner_id)
         .fetch_optional(&self.pool)
         .await?;
 

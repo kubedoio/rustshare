@@ -1,4 +1,5 @@
 use anyhow::Result;
+use aws_config::BehaviorVersion;
 use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
 use bytes::Bytes;
 
@@ -18,7 +19,7 @@ impl ObjectStore {
         // Use public endpoint for presigned URLs if configured
         let presign_endpoint = public_endpoint.clone().unwrap_or_else(|| endpoint.clone());
 
-        let config = aws_config::from_env()
+        let config = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&endpoint)
             .region(aws_config::Region::new(region))
             .load()
@@ -32,7 +33,7 @@ impl ObjectStore {
         let client = S3Client::from_conf(s3_config);
 
         // Create a second client for presigned URLs with public endpoint
-        let presign_config = aws_config::from_env()
+        let presign_config = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&presign_endpoint)
             .region(aws_config::Region::new(config.region().unwrap().to_string()))
             .load()

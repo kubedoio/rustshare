@@ -11,8 +11,8 @@ use uuid::Uuid;
 
 use rustshare_core::domain::SharePermissions;
 
+use super::{share_error_response, AuthenticatedUser};
 use crate::AppState;
-use super::{AuthenticatedUser, share_error_response};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateShareRequest {
@@ -54,9 +54,12 @@ pub async fn create_share(
 
     // Extract share_token - it should always be Some for public shares
     let share_token = share.share_token.ok_or_else(|| {
-        tracing::error!("Share token is None after create_share for share {}", share.id);
+        tracing::error!(
+            "Share token is None after create_share for share {}",
+            share.id
+        );
         share_error_response(rustshare_core::services::ShareError::Database(
-            sqlx::Error::PoolClosed
+            sqlx::Error::PoolClosed,
         ))
     })?;
 
@@ -64,7 +67,7 @@ pub async fn create_share(
     let response_file_id = share.file_id.ok_or_else(|| {
         tracing::error!("File ID is None after create_share for share {}", share.id);
         share_error_response(rustshare_core::services::ShareError::Database(
-            sqlx::Error::PoolClosed
+            sqlx::Error::PoolClosed,
         ))
     })?;
 
@@ -148,7 +151,7 @@ mod tests {
     fn test_share_request_deserialization() {
         // Test that CreateShareRequest can be deserialized
         let json = serde_json::json!({
-            "permissions": "Read",
+            "permissions": "View",
             "password": "test123",
             "expires_at": "2026-12-31T23:59:59Z"
         });
@@ -156,7 +159,7 @@ mod tests {
         let req: Result<CreateShareRequest, _> = serde_json::from_value(json);
         assert!(req.is_ok());
         let req = req.unwrap();
-        assert_eq!(req.permissions, SharePermissions::Read);
+        assert_eq!(req.permissions, SharePermissions::View);
         assert_eq!(req.password, Some("test123".to_string()));
         assert!(req.expires_at.is_some());
     }
@@ -165,13 +168,13 @@ mod tests {
     fn test_share_request_deserialization_minimal() {
         // Test that CreateShareRequest with minimal fields works
         let json = serde_json::json!({
-            "permissions": "ReadWrite"
+            "permissions": "Edit"
         });
 
         let req: Result<CreateShareRequest, _> = serde_json::from_value(json);
         assert!(req.is_ok());
         let req = req.unwrap();
-        assert_eq!(req.permissions, SharePermissions::ReadWrite);
+        assert_eq!(req.permissions, SharePermissions::Edit);
         assert_eq!(req.password, None);
         assert_eq!(req.expires_at, None);
     }

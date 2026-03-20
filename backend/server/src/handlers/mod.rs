@@ -3,33 +3,30 @@
 mod extractors;
 mod files;
 mod folders;
-mod notifications;
 mod public_shares;
 mod shares;
 mod sync;
-mod user_shares;
 mod users;
 
 pub use extractors::{AuthenticatedUser, ShareSessionAuth};
 pub use files::{
-    upload_file, get_file, download_file, delete_file,
-    update_file, get_file_versions, restore_file_version,
-    move_file, rename_file, list_files,
+    delete_file, download_file, get_file, get_file_versions, list_files, move_file, rename_file,
+    restore_file_version, update_file, upload_file,
 };
 pub use folders::{
-    create_folder, get_folder, delete_folder,
-    get_folder_contents, get_root_contents, get_folder_tree,
-    move_folder, rename_folder,
+    create_folder, delete_folder, get_folder, get_folder_contents, get_folder_tree,
+    get_root_contents, move_folder, rename_folder,
 };
-pub use notifications::{
-    list_notifications, mark_notification_read, delete_notification,
-};
-pub use public_shares::{create_session, get_share_info, download_shared_file};
+pub use public_shares::{create_session, download_shared_file, get_share_info};
 pub use shares::{create_share, list_file_shares};
 pub use sync::sync_handler;
-pub use users::{update_user_theme, get_user_profile};
+pub use users::{get_user_profile, update_user_theme};
 
-use axum::{http::StatusCode, response::{IntoResponse, Response}, Json};
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
 use rustshare_core::services::{FileError, FolderError, ShareError};
 use serde::Serialize;
 
@@ -48,13 +45,6 @@ impl ErrorResponse {
             details: None,
         }
     }
-
-    pub fn with_details(error: impl Into<String>, details: impl Into<String>) -> Self {
-        Self {
-            error: error.into(),
-            details: Some(details.into()),
-        }
-    }
 }
 
 /// Map FileError to HTTP response.
@@ -68,9 +58,10 @@ pub fn file_error_response(err: FileError) -> Response {
         FileError::QuotaExceeded { .. } => (StatusCode::FORBIDDEN, err.to_string()),
         FileError::InvalidName(_) => (StatusCode::BAD_REQUEST, err.to_string()),
         FileError::VersionNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        FileError::Database(_) | FileError::Storage(_) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
-        }
+        FileError::Database(_) | FileError::Storage(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal server error".to_string(),
+        ),
     };
 
     (status, Json(ErrorResponse::new(message))).into_response()
@@ -86,9 +77,10 @@ pub fn folder_error_response(err: FolderError) -> Response {
         FolderError::DuplicateName { .. } => (StatusCode::CONFLICT, err.to_string()),
         FolderError::InvalidName(_) => (StatusCode::BAD_REQUEST, err.to_string()),
         FolderError::CannotDeleteRoot(_) => (StatusCode::BAD_REQUEST, err.to_string()),
-        FolderError::Database(_) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
-        }
+        FolderError::Database(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal server error".to_string(),
+        ),
     };
 
     (status, Json(ErrorResponse::new(message))).into_response()
@@ -110,9 +102,10 @@ pub fn share_error_response(err: ShareError) -> Response {
         ShareError::CannotShareWithSelf => (StatusCode::BAD_REQUEST, err.to_string()),
         ShareError::ShareAlreadyExists(_) => (StatusCode::CONFLICT, err.to_string()),
         ShareError::CannotRemoveOwner => (StatusCode::FORBIDDEN, err.to_string()),
-        ShareError::Database(_) | ShareError::PasswordHash(_) | ShareError::Jwt(_) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
-        }
+        ShareError::Database(_) | ShareError::PasswordHash(_) | ShareError::Jwt(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal server error".to_string(),
+        ),
     };
 
     (status, Json(ErrorResponse::new(message))).into_response()

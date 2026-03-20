@@ -17,7 +17,8 @@ use crate::domain::{
 };
 use crate::events::{
     AggregateType, Event, EventBroadcaster, EventType, FileDeletedPayload, FileModifiedPayload,
-    FileMovedPayload, FileRestoredPayload, FileUploadedPayload, ReplicationStateChangedPayload,
+    FileMovedPayload, FileRenamedPayload, FileRestoredPayload, FileUploadedPayload,
+    ReplicationStateChangedPayload,
 };
 use crate::services::FileError;
 
@@ -690,6 +691,77 @@ where
         Ok(file)
     }
 
+    /// Rename a file while keeping its parent folder unchanged.
+    pub async fn rename_file(
+        &self,
+        file_id: uuid::Uuid,
+        new_name: String,
+        user_id: UserId,
+    ) -> Result<File, FileError> {
+        self.validate_file_name(&new_name)?;
+
+        let mut file = self.get_file(file_id, user_id).await?;
+        if file.name == new_name {
+            return Ok(file);
+        }
+
+        let old_name = file.name.clone();
+        let old_path = file.path.clone();
+        let new_path = if let Some(parent_id) = file.parent_folder_id {
+            let parent = self
+                .metadata_store
+                .find_folder_by_id(parent_id)
+                .await
+                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+                .ok_or(FileError::FolderNotFound(parent_id))?;
+
+            if parent.path == "/" {
+                format!("/{}", new_name)
+            } else {
+                format!("{}/{}", parent.path.trim_end_matches('/'), new_name)
+            }
+        } else {
+            format!("/{}", new_name)
+        };
+
+        file.name = new_name.clone();
+        file.path = new_path.clone();
+        file.modified_at = chrono::Utc::now();
+
+        self.metadata_store
+            .update_file(&file)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        let payload = FileRenamedPayload {
+            file_id,
+            old_name,
+            new_name,
+            old_path,
+            new_path,
+            renamed_by: user_id,
+        };
+
+        let event = Event {
+            id: uuid::Uuid::new_v4(),
+            event_type: EventType::FileRenamed,
+            aggregate_id: file_id,
+            aggregate_type: AggregateType::File,
+            payload: serde_json::to_value(&payload)
+                .map_err(|e| FileError::Storage(format!("Failed to serialize event: {}", e)))?,
+            user_id,
+            timestamp: chrono::Utc::now(),
+            version: file.current_version,
+        };
+
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        Ok(file)
+    }
+
     /// Delete a file.
     ///
     /// # Arguments
@@ -926,9 +998,6 @@ mod tests {
             self.versions.lock().unwrap().push(version);
         }
 
-        fn set_enabled_replication_targets(&self, count: i64) {
-            *self.enabled_replication_targets.lock().unwrap() = count;
-        }
     }
 
     impl MetadataStoreOps for MockMetadataStore {
@@ -2050,7 +2119,8 @@ mod tests {
 // Integration test (requires DB + S3)
 #[cfg(test)]
 mod integration_tests {
-    #[ignore] // Requires DB + S3
+    #[tokio::test]
+    #[ignore = "Requires DB + S3"]
     async fn test_upload_file_integration() {
         // This test requires:
         // 1. Running PostgreSQL database with schema
