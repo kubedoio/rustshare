@@ -153,8 +153,15 @@ where
         let payload = NotificationCreatedPayload {
             notification_id: notification.id,
             user_id: notification.user_id,
+            title: notification.title.clone(),
             message: notification.message.clone(),
             notification_type: notification_type.clone(),
+            resource_id: notification.resource_id,
+            resource_type: serde_json::to_string(&notification.resource_type)
+                .unwrap_or_else(|_| "\"resource\"".to_string())
+                .trim_matches('"')
+                .to_string(),
+            action_url: notification.action_url.clone(),
             timestamp: notification.created_at,
         };
 
@@ -165,8 +172,15 @@ where
             serde_json::to_value(&payload).unwrap_or(serde_json::json!({
                 "notification_id": notification.id,
                 "user_id": notification.user_id,
+                "title": notification.title.clone(),
                 "message": notification.message.clone(),
                 "notification_type": notification_type,
+                "resource_id": notification.resource_id,
+                "resource_type": serde_json::to_string(&notification.resource_type)
+                    .unwrap_or_else(|_| "\"resource\"".to_string())
+                    .trim_matches('"')
+                    .to_string(),
+                "action_url": notification.action_url.clone(),
                 "timestamp": notification.created_at,
             })),
             notification.user_id,

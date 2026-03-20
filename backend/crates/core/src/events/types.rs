@@ -302,8 +302,12 @@ pub struct ShareRevokedFromUserPayload {
 pub struct NotificationCreatedPayload {
     pub notification_id: Uuid,
     pub user_id: UserId,
+    pub title: String,
     pub message: String,
     pub notification_type: String,
+    pub resource_id: Uuid,
+    pub resource_type: String,
+    pub action_url: Option<String>,
     pub timestamp: DateTime<Utc>,
 }
 

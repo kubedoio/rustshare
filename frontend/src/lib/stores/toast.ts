@@ -5,6 +5,14 @@ export interface ToastNotification {
   message: string;
   type: 'success' | 'error' | 'info';
   duration?: number;
+  actionLabel?: string;
+  actionHref?: string;
+}
+
+export interface ToastOptions {
+  duration?: number;
+  actionLabel?: string;
+  actionHref?: string;
 }
 
 function createToastStore() {
@@ -12,16 +20,24 @@ function createToastStore() {
 
   return {
     subscribe,
-    show: (message: string, type: 'success' | 'error' | 'info' = 'info', duration = 3000) => {
+    show: (
+      message: string,
+      type: 'success' | 'error' | 'info' = 'info',
+      options: number | ToastOptions = 3000
+    ) => {
+      const normalized =
+        typeof options === 'number'
+          ? { duration: options }
+          : { duration: 3000, ...options };
       const id = `toast-${Date.now()}-${Math.random()}`;
-      const notification: ToastNotification = { id, message, type, duration };
+      const notification: ToastNotification = { id, message, type, ...normalized };
 
       update(toasts => [...toasts, notification]);
 
-      if (duration > 0) {
+      if ((normalized.duration ?? 0) > 0) {
         setTimeout(() => {
           update(toasts => toasts.filter(t => t.id !== id));
-        }, duration);
+        }, normalized.duration);
       }
 
       return id;

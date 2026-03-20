@@ -47,8 +47,12 @@ export interface WebSocketEvent {
   last_error?: string | null;
   updated_at?: string;
   notification_id?: string;
+  title?: string;
   notification_type?: string;
   message?: string;
+  resource_id?: string;
+  resource_type?: string;
+  action_url?: string | null;
 }
 
 export type ReplicationStateValue =

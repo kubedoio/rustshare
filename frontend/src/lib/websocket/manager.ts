@@ -5,6 +5,7 @@ import {
   type ReplicationStatus,
 } from "$lib/stores/replication";
 import { toastStore } from "$lib/stores/toast";
+import { resolveNotificationTarget } from "$lib/utils/shared";
 import type { WebSocketEvent } from "./events";
 
 let currentUserId: string | null = null;
@@ -350,16 +351,57 @@ function handleNotificationCreated(event: WebSocketEvent): void {
 
   const message = event.message;
   const notificationType = event.notification_type;
+  const target =
+    event.resource_id && event.resource_type
+      ? resolveNotificationTarget({
+          id: event.notification_id || "notification",
+          notification_type: notificationType || "notification",
+          title: event.title || "Notification",
+          message: message || "A new notification arrived",
+          resource_id: event.resource_id,
+          resource_type: event.resource_type,
+          action_url: event.action_url ?? null,
+          read: false,
+          created_at: event.timestamp || new Date().toISOString(),
+        })
+      : null;
 
   if (notificationType === "share_revoked") {
-    toastStore.show(message || "Access to a shared resource was revoked", "info");
+    toastStore.show(
+      message || "Access to a shared resource was revoked",
+      "info",
+      target
+        ? {
+            actionLabel: "View",
+            actionHref: target,
+          }
+        : undefined,
+    );
     return;
   }
 
   if (notificationType === "permission_changed") {
-    toastStore.show(message || "A shared resource permission changed", "info");
+    toastStore.show(
+      message || "A shared resource permission changed",
+      "info",
+      target
+        ? {
+            actionLabel: "Open",
+            actionHref: target,
+          }
+        : undefined,
+    );
     return;
   }
 
-  toastStore.show(message || "A new share notification arrived", "success");
+  toastStore.show(
+    message || "A new share notification arrived",
+    "success",
+    target
+      ? {
+          actionLabel: "Open",
+          actionHref: target,
+        }
+      : undefined,
+  );
 }

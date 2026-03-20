@@ -97,8 +97,12 @@ enum SyncMessage {
     NotificationCreated {
         notification_id: Uuid,
         user_id: Uuid,
+        title: String,
         notification_type: String,
         message: String,
+        resource_id: Uuid,
+        resource_type: String,
+        action_url: Option<String>,
         timestamp: DateTime<Utc>,
     },
 }
@@ -494,8 +498,12 @@ async fn event_to_sync_message(
             Ok(SyncMessage::NotificationCreated {
                 notification_id: payload.notification_id,
                 user_id: payload.user_id,
+                title: payload.title,
                 notification_type: payload.notification_type,
                 message: payload.message,
+                resource_id: payload.resource_id,
+                resource_type: payload.resource_type,
+                action_url: payload.action_url,
                 timestamp: payload.timestamp,
             })
         }
