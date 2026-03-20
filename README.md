@@ -729,6 +729,10 @@ Detailed recovery steps:
 - [docs/2026-03-20-backup-restore-runbook.md](docs/2026-03-20-backup-restore-runbook.md)
 - [docs/2026-03-20-restore-drill-checklist.md](docs/2026-03-20-restore-drill-checklist.md)
 
+Replication visibility:
+- `scripts/replication-health-check.sh`
+- [docs/2026-03-20-replication-observability.md](docs/2026-03-20-replication-observability.md)
+
 ### Monitoring & Logs
 
 ```bash

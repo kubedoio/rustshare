@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+	cat <<'EOF'
+Usage: scripts/replication-health-check.sh
+
+Logs in as an admin user, fetches replication summary and target health, and
+prints a concise operator-oriented status report.
+
+Environment overrides:
+- BASE_URL (default: http://localhost)
+- API_BASE_URL (default: ${BASE_URL}/api/v1)
+- ADMIN_EMAIL (default: admin@localhost)
+- ADMIN_PASSWORD (default: admin123)
+EOF
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+	usage
+	exit 0
+fi
+
+require_command() {
+	local command_name="$1"
+	if ! command -v "${command_name}" >/dev/null 2>&1; then
+		echo "Missing required command: ${command_name}" >&2
+		exit 1
+	fi
+}
+
+require_command curl
+require_command python3
+
+BASE_URL="${BASE_URL:-http://localhost}"
+API_BASE_URL="${API_BASE_URL:-${BASE_URL%/}/api/v1}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@localhost}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin123}"
+
+TMP_DIR="$(mktemp -d)"
+COOKIE_JAR="${TMP_DIR}/cookies.txt"
+LOGIN_RESPONSE="${TMP_DIR}/login.json"
+SUMMARY_RESPONSE="${TMP_DIR}/summary.json"
+TARGETS_RESPONSE="${TMP_DIR}/targets.json"
+
+cleanup() {
+	rm -rf "${TMP_DIR}"
+}
+trap cleanup EXIT
+
+login_payload="$(python3 - "$ADMIN_EMAIL" "$ADMIN_PASSWORD" <<'PY'
+import json
+import sys
+print(json.dumps({"email": sys.argv[1], "password": sys.argv[2]}))
+PY
+)"
+
+status="$(curl -sS -X POST -c "$COOKIE_JAR" -b "$COOKIE_JAR" -o "$LOGIN_RESPONSE" -w "%{http_code}" \
+	-H "Content-Type: application/json" \
+	--data "$login_payload" \
+	"${API_BASE_URL}/auth/login")"
+if [[ "$status" != 2* ]]; then
+	echo "Login failed with status ${status}" >&2
+	cat "$LOGIN_RESPONSE" >&2
+	exit 1
+fi
+
+for endpoint in summary targets; do
+	output_file="${TMP_DIR}/${endpoint}.json"
+	status="$(curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" -o "$output_file" -w "%{http_code}" \
+		"${API_BASE_URL}/admin/replication/${endpoint}")"
+	if [[ "$status" != 2* ]]; then
+		echo "Failed to fetch replication ${endpoint} with status ${status}" >&2
+		cat "$output_file" >&2
+		exit 1
+	fi
+done
+
+python3 - "$SUMMARY_RESPONSE" "$TARGETS_RESPONSE" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    summary = json.load(handle)
+
+with open(sys.argv[2], "r", encoding="utf-8") as handle:
+    targets = json.load(handle)
+
+job_states = summary["job_states"]
+target_states = summary["target_states"]
+version_states = summary["version_states"]
+
+health = "healthy"
+if target_states["failed"] > 0 or job_states["failed"] > 0 or version_states["failed"] > 0:
+    health = "failed"
+elif target_states["degraded"] > 0 or job_states["retrying"] > 0 or version_states["degraded"] > 0:
+    health = "degraded"
+
+print(f"Replication health: {health}")
+print(f"Generated at: {summary['generated_at']}")
+print(
+    "Jobs: queued={queued} syncing={syncing} retrying={retrying} failed={failed} completed={completed}".format(
+        **job_states
+    )
+)
+print(
+    "Versions: primary_written={primary_written} queued={queued} syncing={syncing} fully_replicated={fully_replicated} degraded={degraded} failed={failed}".format(
+        **version_states
+    )
+)
+print(
+    "Targets: enabled={enabled} required={required} healthy={healthy} degraded={degraded} failed={failed}".format(
+        **target_states
+    )
+)
+
+if summary.get("oldest_pending_job_age_seconds") is not None:
+    print(f"Oldest pending job age (s): {summary['oldest_pending_job_age_seconds']}")
+if summary.get("oldest_failed_job_age_seconds") is not None:
+    print(f"Oldest failed job age (s): {summary['oldest_failed_job_age_seconds']}")
+
+if targets:
+    print("Target detail:")
+    for target in targets:
+        state = target["health_status"]
+        last_error = target.get("last_error")
+        suffix = f" error={last_error}" if last_error else ""
+        print(
+            f"- {target['name']} [{target['destination_type']}] required={target['is_required']} enabled={target['enabled']} health={state}{suffix}"
+        )
+else:
+    print("Target detail: no replication targets configured")
+PY

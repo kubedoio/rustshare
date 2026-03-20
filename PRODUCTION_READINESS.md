@@ -91,6 +91,7 @@
 #### Monitoring
 - [x] Health check endpoints
 - [x] Docker health checks
+- [x] Replication operator summary endpoints
 - [ ] Application metrics (future)
 - [ ] Error tracking (Sentry, etc.) (recommended)
 - [ ] Performance monitoring (recommended)

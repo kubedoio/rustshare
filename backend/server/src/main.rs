@@ -312,6 +312,14 @@ async fn main() -> Result<()> {
             "/api/admin/replication/jobs",
             get(replication_handlers::list_replication_jobs),
         )
+        .route(
+            "/api/admin/replication/summary",
+            get(replication_handlers::get_replication_summary),
+        )
+        .route(
+            "/api/admin/replication/targets",
+            get(replication_handlers::list_replication_targets),
+        )
         // Forward-compatible v1 aliases for new replication visibility endpoints
         .route(
             "/api/v1/files/:id/replication",
@@ -320,6 +328,14 @@ async fn main() -> Result<()> {
         .route(
             "/api/v1/admin/replication/jobs",
             get(replication_handlers::list_replication_jobs),
+        )
+        .route(
+            "/api/v1/admin/replication/summary",
+            get(replication_handlers::get_replication_summary),
+        )
+        .route(
+            "/api/v1/admin/replication/targets",
+            get(replication_handlers::list_replication_targets),
         )
         // Folder routes (Task 20-22)
         // NOTE: More specific routes (with literal path segments) must come BEFORE parameterized routes
@@ -352,7 +368,10 @@ async fn main() -> Result<()> {
         .route("/api/folders/:id", delete(handlers::delete_folder))
         .route("/api/v1/folders/:id", delete(handlers::delete_folder))
         // Share routes (Task 9)
-        .route("/api/files/:file_id/shares", post(handlers::create_public_file_share))
+        .route(
+            "/api/files/:file_id/shares",
+            post(handlers::create_public_file_share),
+        )
         .route(
             "/api/v1/files/:file_id/shares",
             post(handlers::create_public_file_share),
@@ -395,23 +414,47 @@ async fn main() -> Result<()> {
         // Internal user share routes
         .route("/api/files/:id/share", post(handlers::create_file_share))
         .route("/api/v1/files/:id/share", post(handlers::create_file_share))
-        .route("/api/folders/:id/share", post(handlers::create_folder_share))
-        .route("/api/v1/folders/:id/share", post(handlers::create_folder_share))
+        .route(
+            "/api/folders/:id/share",
+            post(handlers::create_folder_share),
+        )
+        .route(
+            "/api/v1/folders/:id/share",
+            post(handlers::create_folder_share),
+        )
         .route("/api/shares/received", get(handlers::list_received_shares))
-        .route("/api/v1/shares/received", get(handlers::list_received_shares))
-        .route("/api/files/:id/recipients", get(handlers::list_file_recipients))
-        .route("/api/v1/files/:id/recipients", get(handlers::list_file_recipients))
-        .route("/api/folders/:id/recipients", get(handlers::list_folder_recipients))
+        .route(
+            "/api/v1/shares/received",
+            get(handlers::list_received_shares),
+        )
+        .route(
+            "/api/files/:id/recipients",
+            get(handlers::list_file_recipients),
+        )
+        .route(
+            "/api/v1/files/:id/recipients",
+            get(handlers::list_file_recipients),
+        )
+        .route(
+            "/api/folders/:id/recipients",
+            get(handlers::list_folder_recipients),
+        )
         .route(
             "/api/v1/folders/:id/recipients",
             get(handlers::list_folder_recipients),
         )
-        .route("/api/shares/:id/permission", put(handlers::update_recipient_permission))
+        .route(
+            "/api/shares/:id/permission",
+            put(handlers::update_recipient_permission),
+        )
         .route(
             "/api/v1/shares/:id/permission",
             put(handlers::update_recipient_permission),
         )
-        .route("/api/shares/:id/recipient", delete(handlers::remove_recipient))
+        .route(
+            "/api/shares/:id/recipient",
+            delete(handlers::remove_recipient),
+        )
         .route(
             "/api/v1/shares/:id/recipient",
             delete(handlers::remove_recipient),
@@ -434,7 +477,10 @@ async fn main() -> Result<()> {
             "/api/v1/notifications/:id/read",
             put(handlers::mark_notification_read),
         )
-        .route("/api/notifications/:id", delete(handlers::delete_notification))
+        .route(
+            "/api/notifications/:id",
+            delete(handlers::delete_notification),
+        )
         .route(
             "/api/v1/notifications/:id",
             delete(handlers::delete_notification),
