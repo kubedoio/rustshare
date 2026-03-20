@@ -3,7 +3,7 @@
 //! This service handles file uploads, including:
 //! - File name validation
 //! - SHA256 content hashing for deduplication
-//! - S3 object storage
+//! - RustFS object storage as the primary blob store
 //! - Event sourcing via EventStore
 //! - Metadata persistence via MetadataStore
 
@@ -12,7 +12,9 @@ use bytes::Bytes;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
-use crate::domain::{File, FileVersion, Folder, FolderId, UserId};
+use crate::domain::{
+    File, FileVersion, Folder, FolderId, ReplicationJob, ReplicationState, UserId,
+};
 use crate::events::{
     AggregateType, Event, EventBroadcaster, EventType, FileDeletedPayload, FileModifiedPayload,
     FileMovedPayload, FileRestoredPayload, FileUploadedPayload,
@@ -60,11 +62,24 @@ pub trait MetadataStoreOps: Send + Sync {
         file_id: uuid::Uuid,
         version_number: i32,
     ) -> Result<Option<FileVersion>>;
+
+    /// Count enabled replication targets.
+    async fn count_enabled_replication_targets(&self) -> Result<i64>;
+
+    /// Queue a new replication job.
+    async fn create_replication_job(&self, job: &ReplicationJob) -> Result<()>;
+
+    /// Update the replication state for a file version.
+    async fn update_file_version_replication_state(
+        &self,
+        version_id: uuid::Uuid,
+        state: ReplicationState,
+    ) -> Result<()>;
 }
 
 /// Trait for object store operations needed by FileService.
 ///
-/// This trait abstracts S3/object storage to allow for testing without S3 dependencies.
+/// This trait abstracts RustFS/object storage to allow for testing without storage dependencies.
 #[allow(async_fn_in_trait)]
 pub trait ObjectStoreOps: Send + Sync {
     /// Upload data to object storage.
@@ -113,7 +128,12 @@ where
     O: ObjectStoreOps,
 {
     /// Create a new FileService with the given stores.
-    pub fn new(event_store: Arc<E>, metadata_store: Arc<M>, object_store: Arc<O>, broadcaster: Arc<EventBroadcaster>) -> Self {
+    pub fn new(
+        event_store: Arc<E>,
+        metadata_store: Arc<M>,
+        object_store: Arc<O>,
+        broadcaster: Arc<EventBroadcaster>,
+    ) -> Self {
         Self {
             event_store,
             metadata_store,
@@ -138,7 +158,7 @@ where
     /// - `FileError::InvalidName` if the file name is invalid
     /// - `FileError::ParentFolderNotFound` if the parent folder doesn't exist
     /// - `FileError::PermissionDenied` if the user doesn't own the parent folder
-    /// - `FileError::Storage` if S3 upload fails
+    /// - `FileError::Storage` if the RustFS write fails
     /// - `FileError::Database` if database operations fail
     pub async fn upload_file(
         &self,
@@ -183,7 +203,7 @@ where
             format!("{}/{}", parent_path, name)
         };
 
-        // 5. Upload to S3 at "blobs/{hash}" (skip if exists - deduplication)
+        // 5. Write to RustFS at "blobs/{hash}" (skip if the blob already exists)
         let storage_key = format!("blobs/{}", content_hash);
         let blob_exists = self
             .object_store
@@ -259,6 +279,8 @@ where
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
+        self.queue_replication_if_needed(file.id, &version).await?;
+
         // 9. Return File
         Ok(file)
     }
@@ -275,11 +297,7 @@ where
     /// # Errors
     /// - `FileError::NotFound` if the file doesn't exist
     /// - `FileError::PermissionDenied` if the user doesn't own the file
-    pub async fn get_file(
-        &self,
-        file_id: uuid::Uuid,
-        user_id: UserId,
-    ) -> Result<File, FileError> {
+    pub async fn get_file(&self, file_id: uuid::Uuid, user_id: UserId) -> Result<File, FileError> {
         // Find file by ID
         let file = self
             .metadata_store
@@ -303,7 +321,7 @@ where
     /// * `user_id` - The ID of the user requesting the download
     ///
     /// # Returns
-    /// A presigned S3 URL valid for 1 hour.
+    /// A presigned object-storage URL valid for 1 hour.
     ///
     /// # Errors
     /// - `FileError::NotFound` if the file doesn't exist
@@ -343,7 +361,7 @@ where
     /// - `FileError::NotFound` if the file doesn't exist
     /// - `FileError::PermissionDenied` if the user doesn't own the file
     /// - `FileError::VersionConflict` if current_version != expected_version
-    /// - `FileError::Storage` if S3 upload fails
+    /// - `FileError::Storage` if the RustFS write fails
     /// - `FileError::Database` if database operations fail
     pub async fn update_file(
         &self,
@@ -371,7 +389,7 @@ where
         let new_content_hash = self.calculate_sha256(&content);
         let new_size = content.len() as i64;
 
-        // 4. Upload to S3 (skip if same content - deduplication)
+        // 4. Write to RustFS (skip if same content - deduplication)
         let storage_key = format!("blobs/{}", new_content_hash);
         let blob_exists = self
             .object_store
@@ -412,6 +430,8 @@ where
             .create_file_version(&version)
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        self.queue_replication_if_needed(file.id, &version).await?;
 
         // 7. Emit FileModified event
         let payload = FileModifiedPayload {
@@ -460,7 +480,7 @@ where
     /// - `FileError::Database` if database operations fail
     ///
     /// # Note
-    /// The blob in S3 is NOT deleted (content-addressed storage may be shared).
+    /// The blob in RustFS is NOT deleted (content-addressed storage may be shared).
     pub async fn list_versions(
         &self,
         file_id: uuid::Uuid,
@@ -496,7 +516,7 @@ where
     /// - `FileError::NotFound` if the file doesn't exist
     /// - `FileError::PermissionDenied` if the user doesn't own the file
     /// - `FileError::VersionNotFound` if the version doesn't exist
-    /// - `FileError::Storage` if S3 download/upload fails
+    /// - `FileError::Storage` if the RustFS read fails
     /// - `FileError::Database` if database operations fail
     pub async fn restore_version(
         &self,
@@ -516,16 +536,15 @@ where
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
             .ok_or(FileError::VersionNotFound(version_number))?;
 
-        // 3. Download content from S3 (using the old version's storage key)
+        // 3. Read content from RustFS (using the old version's storage key)
         let storage_key = old_file_version.storage_key();
-        let content = self
-            .object_store
-            .get(&storage_key)
-            .await
-            .map_err(|e| FileError::Storage(format!("Failed to download old version: {}", e)))?;
+        let content =
+            self.object_store.get(&storage_key).await.map_err(|e| {
+                FileError::Storage(format!("Failed to download old version: {}", e))
+            })?;
 
         // 4. Create new version with old content
-        // The blob already exists in S3 (same content hash), no need to re-upload
+        // The blob already exists in RustFS (same content hash), no need to re-upload
         let new_version_number = file.current_version + 1;
         file.current_version = new_version_number;
         file.content_hash = old_file_version.content_hash.clone();
@@ -551,6 +570,8 @@ where
             .create_file_version(&version)
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        self.queue_replication_if_needed(file.id, &version).await?;
 
         // 6. Emit FileRestored event
         let payload = FileRestoredPayload {
@@ -579,7 +600,7 @@ where
             .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
 
         // 7. Return updated file
-        // Note: content is already in S3, we just needed to read it to verify it exists
+        // Note: content is already in RustFS, we just needed to read it to verify it exists
         drop(content);
         Ok(file)
     }
@@ -679,11 +700,7 @@ where
     /// - `FileError::NotFound` if the file doesn't exist
     /// - `FileError::PermissionDenied` if the user doesn't own the file
     /// - `FileError::Database` if database operations fail
-    pub async fn delete_file(
-        &self,
-        file_id: uuid::Uuid,
-        user_id: UserId,
-    ) -> Result<(), FileError> {
+    pub async fn delete_file(&self, file_id: uuid::Uuid, user_id: UserId) -> Result<(), FileError> {
         // 1. Get file and verify ownership
         let file = self.get_file(file_id, user_id).await?;
 
@@ -718,7 +735,7 @@ where
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
-        // Note: We don't delete from S3 (blob storage) because of deduplication
+        // Note: We don't delete from RustFS (blob storage) because of deduplication
         // The same content hash might be used by other files or versions
 
         Ok(())
@@ -726,7 +743,9 @@ where
 
     fn validate_file_name(&self, name: &str) -> Result<(), FileError> {
         if name.is_empty() {
-            return Err(FileError::InvalidName("File name cannot be empty".to_string()));
+            return Err(FileError::InvalidName(
+                "File name cannot be empty".to_string(),
+            ));
         }
 
         if name.contains('/') {
@@ -750,6 +769,36 @@ where
         hasher.update(content);
         let result = hasher.finalize();
         hex::encode(result)
+    }
+
+    async fn queue_replication_if_needed(
+        &self,
+        file_id: uuid::Uuid,
+        version: &FileVersion,
+    ) -> Result<(), FileError> {
+        let target_count = self
+            .metadata_store
+            .count_enabled_replication_targets()
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        if target_count == 0 {
+            return Ok(());
+        }
+
+        let job = ReplicationJob::new(file_id, version.id, version.storage_key());
+
+        self.metadata_store
+            .create_replication_job(&job)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        self.metadata_store
+            .update_file_version_replication_state(version.id, ReplicationState::Queued)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        Ok(())
     }
 }
 
@@ -795,6 +844,8 @@ mod tests {
         files: Mutex<Vec<File>>,
         versions: Mutex<Vec<FileVersion>>,
         folders: Mutex<HashMap<uuid::Uuid, Folder>>,
+        replication_jobs: Mutex<Vec<ReplicationJob>>,
+        enabled_replication_targets: Mutex<i64>,
     }
 
     impl MockMetadataStore {
@@ -803,6 +854,8 @@ mod tests {
                 files: Mutex::new(Vec::new()),
                 versions: Mutex::new(Vec::new()),
                 folders: Mutex::new(HashMap::new()),
+                replication_jobs: Mutex::new(Vec::new()),
+                enabled_replication_targets: Mutex::new(0),
             }
         }
 
@@ -816,6 +869,10 @@ mod tests {
 
         fn add_file_version(&self, version: FileVersion) {
             self.versions.lock().unwrap().push(version);
+        }
+
+        fn set_enabled_replication_targets(&self, count: i64) {
+            *self.enabled_replication_targets.lock().unwrap() = count;
         }
     }
 
@@ -835,7 +892,13 @@ mod tests {
         }
 
         async fn find_file_by_id(&self, id: uuid::Uuid) -> Result<Option<File>> {
-            Ok(self.files.lock().unwrap().iter().find(|f| f.id == id).cloned())
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|f| f.id == id)
+                .cloned())
         }
 
         async fn update_file(&self, file: &File) -> Result<()> {
@@ -875,6 +938,33 @@ mod tests {
                 .find(|v| v.file_id == file_id && v.version_number == version_number)
                 .cloned())
         }
+
+        async fn count_enabled_replication_targets(&self) -> Result<i64> {
+            Ok(*self.enabled_replication_targets.lock().unwrap())
+        }
+
+        async fn create_replication_job(&self, job: &ReplicationJob) -> Result<()> {
+            self.replication_jobs.lock().unwrap().push(job.clone());
+            Ok(())
+        }
+
+        async fn update_file_version_replication_state(
+            &self,
+            version_id: uuid::Uuid,
+            state: ReplicationState,
+        ) -> Result<()> {
+            if let Some(version) = self
+                .versions
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|version| version.id == version_id)
+            {
+                version.replication_state = state;
+            }
+
+            Ok(())
+        }
     }
 
     struct MockObjectStore {
@@ -901,7 +991,10 @@ mod tests {
 
         async fn get_presigned_url(&self, key: &str, expiry_secs: u64) -> Result<String> {
             // Mock presigned URL generation
-            Ok(format!("https://mock-s3.example.com/{}?expiry={}", key, expiry_secs))
+            Ok(format!(
+                "https://mock-s3.example.com/{}?expiry={}",
+                key, expiry_secs
+            ))
         }
 
         async fn get(&self, key: &str) -> Result<Bytes> {
@@ -1290,7 +1383,9 @@ mod tests {
         let user_id = uuid::Uuid::new_v4();
         let non_existent_file_id = uuid::Uuid::new_v4();
 
-        let result = service.get_download_url(non_existent_file_id, user_id).await;
+        let result = service
+            .get_download_url(non_existent_file_id, user_id)
+            .await;
         assert!(matches!(result, Err(FileError::NotFound(_))));
     }
 
@@ -1392,14 +1487,15 @@ mod tests {
 
         // Try to update expecting version 1 (stale)
         let new_content = Bytes::from("My update");
-        let result = service
-            .update_file(file.id, owner_id, 1, new_content)
-            .await;
+        let result = service.update_file(file.id, owner_id, 1, new_content).await;
 
         // Should get version conflict
         assert!(matches!(result, Err(FileError::VersionConflict { .. })));
 
-        if let Err(FileError::VersionConflict { expected, actual, .. }) = result {
+        if let Err(FileError::VersionConflict {
+            expected, actual, ..
+        }) = result
+        {
             assert_eq!(expected, 1);
             assert_eq!(actual, 2);
         }
@@ -1487,20 +1583,6 @@ mod tests {
 
     // ==================== Task 9: Delete, Move, Rename Tests ====================
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     // ==================== Task 10: Version History & Restore Tests ====================
 
     #[tokio::test]
@@ -1520,9 +1602,30 @@ mod tests {
         metadata_store.add_file(file.clone());
 
         // Add versions (in arbitrary order)
-        let v1 = FileVersion::new(file.id, 1, "hash1".to_string(), 100, owner_id, Some("Initial".to_string()));
-        let v2 = FileVersion::new(file.id, 2, "hash2".to_string(), 200, owner_id, Some("Update 1".to_string()));
-        let v3 = FileVersion::new(file.id, 3, "hash3".to_string(), 300, owner_id, Some("Update 2".to_string()));
+        let v1 = FileVersion::new(
+            file.id,
+            1,
+            "hash1".to_string(),
+            100,
+            owner_id,
+            Some("Initial".to_string()),
+        );
+        let v2 = FileVersion::new(
+            file.id,
+            2,
+            "hash2".to_string(),
+            200,
+            owner_id,
+            Some("Update 1".to_string()),
+        );
+        let v3 = FileVersion::new(
+            file.id,
+            3,
+            "hash3".to_string(),
+            300,
+            owner_id,
+            Some("Update 2".to_string()),
+        );
         metadata_store.add_file_version(v2.clone());
         metadata_store.add_file_version(v1.clone());
         metadata_store.add_file_version(v3.clone());
@@ -1606,7 +1709,14 @@ mod tests {
         metadata_store.add_file(file.clone());
 
         // Add versions
-        let v1 = FileVersion::new(file.id, 1, "hash1".to_string(), 100, owner_id, Some("Initial".to_string()));
+        let v1 = FileVersion::new(
+            file.id,
+            1,
+            "hash1".to_string(),
+            100,
+            owner_id,
+            Some("Initial".to_string()),
+        );
         let v2 = FileVersion::new(file.id, 2, "hash2".to_string(), 200, owner_id, None);
         let v3 = FileVersion::new(file.id, 3, "hash3".to_string(), 300, owner_id, None);
         metadata_store.add_file_version(v1.clone());
@@ -1633,7 +1743,11 @@ mod tests {
         let v4 = versions.iter().find(|v| v.version_number == 4).unwrap();
         assert_eq!(v4.content_hash, "hash1");
         assert_eq!(v4.size, 100);
-        assert!(v4.change_description.as_ref().unwrap().contains("Restored from version 1"));
+        assert!(v4
+            .change_description
+            .as_ref()
+            .unwrap()
+            .contains("Restored from version 1"));
 
         // Verify FileRestored event was emitted
         let events = event_store.events.lock().unwrap();
@@ -1668,7 +1782,9 @@ mod tests {
         let user_id = uuid::Uuid::new_v4();
         let non_existent_file_id = uuid::Uuid::new_v4();
 
-        let result = service.restore_version(non_existent_file_id, 1, user_id).await;
+        let result = service
+            .restore_version(non_existent_file_id, 1, user_id)
+            .await;
         assert!(matches!(result, Err(FileError::NotFound(_))));
     }
 
@@ -1869,7 +1985,9 @@ mod tests {
 
         // Try to move to non-existent folder
         let nonexistent_folder = uuid::Uuid::new_v4();
-        let result = service.move_file(file.id, Some(nonexistent_folder), owner_id).await;
+        let result = service
+            .move_file(file.id, Some(nonexistent_folder), owner_id)
+            .await;
         assert!(matches!(result, Err(FileError::FolderNotFound(_))));
     }
 }

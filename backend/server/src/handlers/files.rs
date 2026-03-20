@@ -15,8 +15,8 @@ use rustshare_core::{
     services::FileError,
 };
 
+use super::{file_error_response, AuthenticatedUser};
 use crate::AppState;
-use super::{AuthenticatedUser, file_error_response};
 
 // ============================================================================
 // Task 15: File Upload
@@ -42,7 +42,10 @@ pub async fn upload_file(
     // Parse multipart fields
     while let Some(field) = multipart.next_field().await.map_err(|e| {
         tracing::error!("Failed to read multipart field: {}", e);
-        file_error_response(FileError::Storage(format!("Failed to read multipart field: {}", e)))
+        file_error_response(FileError::Storage(format!(
+            "Failed to read multipart field: {}",
+            e
+        )))
     })? {
         let field_name = field.name().unwrap_or("").to_string();
 
@@ -50,22 +53,33 @@ pub async fn upload_file(
             "file" => {
                 file_data = Some(field.bytes().await.map_err(|e| {
                     tracing::error!("Failed to read file data: {}", e);
-                    file_error_response(FileError::Storage(format!("Failed to read file data: {}", e)))
+                    file_error_response(FileError::Storage(format!(
+                        "Failed to read file data: {}",
+                        e
+                    )))
                 })?);
             }
             "name" => {
                 file_name = Some(field.text().await.map_err(|e| {
                     tracing::error!("Failed to read name field: {}", e);
-                    file_error_response(FileError::Storage(format!("Failed to read name field: {}", e)))
+                    file_error_response(FileError::Storage(format!(
+                        "Failed to read name field: {}",
+                        e
+                    )))
                 })?);
             }
             "parent_folder_id" => {
                 let text = field.text().await.map_err(|e| {
                     tracing::error!("Failed to read parent_folder_id field: {}", e);
-                    file_error_response(FileError::Storage(format!("Failed to read parent_folder_id field: {}", e)))
+                    file_error_response(FileError::Storage(format!(
+                        "Failed to read parent_folder_id field: {}",
+                        e
+                    )))
                 })?;
                 parent_folder_id = Some(Uuid::parse_str(&text).map_err(|_| {
-                    file_error_response(FileError::InvalidName("Invalid parent_folder_id".to_string()))
+                    file_error_response(FileError::InvalidName(
+                        "Invalid parent_folder_id".to_string(),
+                    ))
                 })?);
             }
             _ => {}
@@ -73,20 +87,31 @@ pub async fn upload_file(
     }
 
     // Validate required fields
-    let file_data = file_data.ok_or_else(|| file_error_response(FileError::InvalidName("Missing file data".to_string())))?;
-    let file_name = file_name.ok_or_else(|| file_error_response(FileError::InvalidName("Missing file name".to_string())))?;
+    let file_data = file_data.ok_or_else(|| {
+        file_error_response(FileError::InvalidName("Missing file data".to_string()))
+    })?;
+    let file_name = file_name.ok_or_else(|| {
+        file_error_response(FileError::InvalidName("Missing file name".to_string()))
+    })?;
 
     // Detect MIME type (simple version - can be enhanced)
     let mime_type = "application/octet-stream".to_string(); // TODO: Implement proper MIME detection
 
     // Upload file
-    let file = state.file_service
-        .upload_file(auth.user_id, file_name, parent_folder_id, file_data, mime_type)
+    let file = state
+        .file_service
+        .upload_file(
+            auth.user_id,
+            file_name,
+            parent_folder_id,
+            file_data,
+            mime_type,
+        )
         .await
         .map_err(|e| file_error_response(e))?;
 
     Ok((
-        StatusCode::CREATED,
+        StatusCode::OK,
         Json(FileUploadResponse {
             id: file.id,
             name: file.name,
@@ -122,7 +147,11 @@ pub async fn get_file(
     auth: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
 ) -> Result<Json<File>, Response> {
-    let file = state.file_service.get_file(file_id, auth.user_id).await.map_err(file_error_response)?;
+    let file = state
+        .file_service
+        .get_file(file_id, auth.user_id)
+        .await
+        .map_err(file_error_response)?;
     Ok(Json(file))
 }
 
@@ -134,7 +163,11 @@ pub async fn download_file(
     auth: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
 ) -> Result<Json<DownloadUrlResponse>, Response> {
-    let url = state.file_service.get_download_url(file_id, auth.user_id).await.map_err(file_error_response)?;
+    let url = state
+        .file_service
+        .get_download_url(file_id, auth.user_id)
+        .await
+        .map_err(file_error_response)?;
     Ok(Json(DownloadUrlResponse { url }))
 }
 
@@ -182,30 +215,45 @@ pub async fn update_file(
     let if_match = headers
         .get(header::IF_MATCH)
         .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| file_error_response(FileError::InvalidName("Missing If-Match header".to_string())))?;
+        .ok_or_else(|| {
+            file_error_response(FileError::InvalidName(
+                "Missing If-Match header".to_string(),
+            ))
+        })?;
 
     let expected_version: i32 = if_match.parse().map_err(|_| {
-        file_error_response(FileError::InvalidName("Invalid If-Match header: must be an integer".to_string()))
+        file_error_response(FileError::InvalidName(
+            "Invalid If-Match header: must be an integer".to_string(),
+        ))
     })?;
 
     // Extract file data from multipart
     let mut file_data: Option<Bytes> = None;
 
     while let Some(field) = multipart.next_field().await.map_err(|e| {
-        file_error_response(FileError::Storage(format!("Failed to read multipart field: {}", e)))
+        file_error_response(FileError::Storage(format!(
+            "Failed to read multipart field: {}",
+            e
+        )))
     })? {
         if field.name() == Some("file") {
             file_data = Some(field.bytes().await.map_err(|e| {
-                file_error_response(FileError::Storage(format!("Failed to read file data: {}", e)))
+                file_error_response(FileError::Storage(format!(
+                    "Failed to read file data: {}",
+                    e
+                )))
             })?);
             break;
         }
     }
 
-    let file_data = file_data.ok_or_else(|| file_error_response(FileError::InvalidName("Missing file data".to_string())))?;
+    let file_data = file_data.ok_or_else(|| {
+        file_error_response(FileError::InvalidName("Missing file data".to_string()))
+    })?;
 
     // Update file
-    let file = state.file_service
+    let file = state
+        .file_service
         .update_file(file_id, auth.user_id, expected_version, file_data)
         .await
         .map_err(file_error_response)?;
@@ -240,7 +288,11 @@ pub async fn get_file_versions(
     auth: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
 ) -> Result<Json<Vec<FileVersion>>, Response> {
-    let versions = state.file_service.list_versions(file_id, auth.user_id).await.map_err(file_error_response)?;
+    let versions = state
+        .file_service
+        .list_versions(file_id, auth.user_id)
+        .await
+        .map_err(file_error_response)?;
     Ok(Json(versions))
 }
 
@@ -255,7 +307,8 @@ pub async fn restore_file_version(
     Path(file_id): Path<Uuid>,
     Json(req): Json<RestoreVersionRequest>,
 ) -> Result<Json<FileRestoreResponse>, Response> {
-    let file = state.file_service
+    let file = state
+        .file_service
         .restore_version(file_id, req.version, auth.user_id)
         .await
         .map_err(file_error_response)?;
@@ -327,7 +380,9 @@ pub async fn rename_file(
     _file_id: Path<Uuid>,
     _req: Json<RenameFileRequest>,
 ) -> Result<Json<File>, Response> {
-    Err(file_error_response(FileError::Storage("Not implemented yet".to_string())))
+    Err(file_error_response(FileError::Storage(
+        "Not implemented yet".to_string(),
+    )))
 }
 
 #[derive(Debug, Deserialize)]
@@ -358,7 +413,7 @@ pub async fn list_files(
         FROM files
         WHERE owner_id = $1
         ORDER BY created_at DESC
-        "#
+        "#,
     )
     .bind(auth.user_id)
     .fetch_all(&state.db_pool)

@@ -5,7 +5,9 @@
 //! This will be migrated to compile-time queries after Docker Compose is set up in Task 11.
 
 use anyhow::Result;
-use rustshare_core::domain::{File, FileVersion, Folder, Share, SharePermissions, User};
+use rustshare_core::domain::{
+    File, FileVersion, Folder, ReplicationJob, ReplicationState, Share, SharePermissions, User,
+};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -17,6 +19,12 @@ pub struct MetadataStore {
 impl MetadataStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    fn parse_replication_state(value: &str) -> Result<ReplicationState> {
+        value.parse().map_err(|error: String| {
+            anyhow::anyhow!("invalid replication state `{value}`: {error}")
+        })
     }
 
     /// Create a new user in the projection table
@@ -62,7 +70,10 @@ impl MetadataStore {
                 display_name: row.try_get("display_name")?,
                 is_admin: row.try_get("is_admin")?,
                 storage_quota: row.try_get("storage_quota")?,
-                theme: row.try_get::<String, _>("theme")?.parse().unwrap_or_default(),
+                theme: row
+                    .try_get::<String, _>("theme")?
+                    .parse()
+                    .unwrap_or_default(),
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
             };
@@ -91,7 +102,10 @@ impl MetadataStore {
                 display_name: row.try_get("display_name")?,
                 is_admin: row.try_get("is_admin")?,
                 storage_quota: row.try_get("storage_quota")?,
-                theme: row.try_get::<String, _>("theme")?.parse().unwrap_or_default(),
+                theme: row
+                    .try_get::<String, _>("theme")?
+                    .parse()
+                    .unwrap_or_default(),
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
             };
@@ -114,13 +128,11 @@ impl MetadataStore {
 
     /// Update user's theme preference
     pub async fn update_user_theme(&self, user_id: Uuid, theme: &str) -> Result<()> {
-        sqlx::query(
-            r#"UPDATE users SET theme = $1, updated_at = NOW() WHERE id = $2"#,
-        )
-        .bind(theme)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query(r#"UPDATE users SET theme = $1, updated_at = NOW() WHERE id = $2"#)
+            .bind(theme)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }
@@ -265,8 +277,19 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         sqlx::query(
             r#"
-            INSERT INTO file_versions (id, file_id, version_number, content_hash, storage_key, size, created_by, created_at, change_description)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO file_versions (
+                id,
+                file_id,
+                version_number,
+                content_hash,
+                storage_key,
+                size,
+                replication_state,
+                created_by,
+                created_at,
+                change_description
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
         )
         .bind(version.id)
@@ -275,6 +298,7 @@ impl MetadataStore {
         .bind(&version.content_hash)
         .bind(version.storage_key())
         .bind(version.size)
+        .bind(version.replication_state.as_str())
         .bind(version.created_by)
         .bind(version.created_at)
         .bind(&version.change_description)
@@ -289,7 +313,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
-            SELECT id, file_id, version_number, content_hash, size, created_by, created_at, change_description
+            SELECT id, file_id, version_number, content_hash, size, replication_state, created_by, created_at, change_description
             FROM file_versions
             WHERE file_id = $1
             ORDER BY version_number DESC
@@ -301,12 +325,14 @@ impl MetadataStore {
 
         let mut versions = Vec::new();
         for row in rows {
+            let replication_state: String = row.try_get("replication_state")?;
             let version = FileVersion {
                 id: row.try_get("id")?,
                 file_id: row.try_get("file_id")?,
                 version_number: row.try_get("version_number")?,
                 content_hash: row.try_get("content_hash")?,
                 size: row.try_get("size")?,
+                replication_state: Self::parse_replication_state(&replication_state)?,
                 created_by: row.try_get("created_by")?,
                 created_at: row.try_get("created_at")?,
                 change_description: row.try_get("change_description")?,
@@ -318,11 +344,15 @@ impl MetadataStore {
     }
 
     /// Find a specific version of a file
-    pub async fn find_file_version(&self, file_id: Uuid, version: i32) -> Result<Option<FileVersion>> {
+    pub async fn find_file_version(
+        &self,
+        file_id: Uuid,
+        version: i32,
+    ) -> Result<Option<FileVersion>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, file_id, version_number, content_hash, size, created_by, created_at, change_description
+            SELECT id, file_id, version_number, content_hash, size, replication_state, created_by, created_at, change_description
             FROM file_versions
             WHERE file_id = $1 AND version_number = $2
             "#,
@@ -333,12 +363,14 @@ impl MetadataStore {
         .await?;
 
         if let Some(row) = row {
+            let replication_state: String = row.try_get("replication_state")?;
             let version = FileVersion {
                 id: row.try_get("id")?,
                 file_id: row.try_get("file_id")?,
                 version_number: row.try_get("version_number")?,
                 content_hash: row.try_get("content_hash")?,
                 size: row.try_get("size")?,
+                replication_state: Self::parse_replication_state(&replication_state)?,
                 created_by: row.try_get("created_by")?,
                 created_at: row.try_get("created_at")?,
                 change_description: row.try_get("change_description")?,
@@ -347,6 +379,78 @@ impl MetadataStore {
         } else {
             Ok(None)
         }
+    }
+
+    /// Count enabled replication targets.
+    pub async fn count_enabled_replication_targets(&self) -> Result<i64> {
+        let row =
+            sqlx::query("SELECT COUNT(*) AS count FROM replication_targets WHERE enabled = TRUE")
+                .fetch_one(&self.pool)
+                .await?;
+
+        row.try_get("count").map_err(Into::into)
+    }
+
+    /// Create a durable replication job for asynchronous workers.
+    pub async fn create_replication_job(&self, job: &ReplicationJob) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO replication_jobs (
+                id,
+                file_id,
+                file_version_id,
+                storage_key,
+                status,
+                attempt_count,
+                next_attempt_at,
+                last_attempt_at,
+                leased_at,
+                lease_token,
+                last_error,
+                created_at,
+                updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            "#,
+        )
+        .bind(job.id)
+        .bind(job.file_id)
+        .bind(job.file_version_id)
+        .bind(&job.storage_key)
+        .bind(job.status.as_str())
+        .bind(job.attempt_count)
+        .bind(job.next_attempt_at)
+        .bind(job.last_attempt_at)
+        .bind(job.leased_at)
+        .bind(job.lease_token)
+        .bind(&job.last_error)
+        .bind(job.created_at)
+        .bind(job.updated_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update replication state after queueing or worker progress.
+    pub async fn update_file_version_replication_state(
+        &self,
+        version_id: Uuid,
+        state: ReplicationState,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE file_versions
+            SET replication_state = $2
+            WHERE id = $1
+            "#,
+        )
+        .bind(version_id)
+        .bind(state.as_str())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 
     /// Create a new folder in the projection table
@@ -437,7 +541,11 @@ impl MetadataStore {
     ///
     /// Returns folders owned by the specified user, optionally filtered by parent folder.
     /// Pass `None` for parent_id to get folders in the root directory (no parent).
-    pub async fn list_folders(&self, parent_id: Option<Uuid>, owner_id: Uuid) -> Result<Vec<Folder>> {
+    pub async fn list_folders(
+        &self,
+        parent_id: Option<Uuid>,
+        owner_id: Uuid,
+    ) -> Result<Vec<Folder>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
@@ -740,9 +848,8 @@ impl MetadataStore {
     ) -> Result<()> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         // Validate IP address format before storage
-        let validated_ip = ip_address.and_then(|ip| {
-            ip.parse::<std::net::IpAddr>().ok().map(|_| ip)
-        });
+        let validated_ip =
+            ip_address.and_then(|ip| ip.parse::<std::net::IpAddr>().ok().map(|_| ip));
 
         sqlx::query(
             r#"
@@ -933,14 +1040,7 @@ mod tests {
         store.create_file_version(&version2).await.unwrap();
 
         // Create file version 3
-        let version3 = FileVersion::new(
-            file.id,
-            3,
-            "hash3".to_string(),
-            300,
-            user.id,
-            None,
-        );
+        let version3 = FileVersion::new(file.id, 3, "hash3".to_string(), 300, user.id, None);
         store.create_file_version(&version3).await.unwrap();
 
         // Test: list_file_versions (should be in DESC order: 3, 2, 1)
@@ -1071,10 +1171,7 @@ mod tests {
         assert_eq!(root_folders[0].name, "Root");
 
         // Test: find_descendant_folders (should find all descendants of Documents)
-        let descendants = store
-            .find_descendant_folders(docs_folder.id)
-            .await
-            .unwrap();
+        let descendants = store.find_descendant_folders(docs_folder.id).await.unwrap();
         // Should include: Documents, Work, Projects (3 folders)
         assert_eq!(descendants.len(), 3);
         assert!(descendants.iter().any(|f| f.name == "Documents"));
@@ -1106,17 +1203,11 @@ mod tests {
 
         // Test: delete_folder (delete leaf folder first)
         store.delete_folder(projects_folder.id).await.unwrap();
-        let not_found = store
-            .find_folder_by_id(projects_folder.id)
-            .await
-            .unwrap();
+        let not_found = store.find_folder_by_id(projects_folder.id).await.unwrap();
         assert!(not_found.is_none());
 
         // Verify descendants updated after deletion
-        let updated_descendants = store
-            .find_descendant_folders(docs_folder.id)
-            .await
-            .unwrap();
+        let updated_descendants = store.find_descendant_folders(docs_folder.id).await.unwrap();
         assert_eq!(updated_descendants.len(), 2); // Only Documents and Work remain
         assert!(!updated_descendants.iter().any(|f| f.name == "Projects"));
 
@@ -1201,7 +1292,10 @@ mod tests {
         assert_eq!(found_share.share_token, Some("sharetoken123".to_string()));
         assert_eq!(found_share.file_id, Some(file.id));
         assert_eq!(found_share.permissions, SharePermissions::View);
-        assert_eq!(found_share.password_hash, Some("hashed_password".to_string()));
+        assert_eq!(
+            found_share.password_hash,
+            Some("hashed_password".to_string())
+        );
         assert_eq!(found_share.access_count, 0);
 
         // Test: get_share
@@ -1209,7 +1303,10 @@ mod tests {
         assert!(found_by_id.is_some());
         let found_share_by_id = found_by_id.unwrap();
         assert_eq!(found_share_by_id.id, share.id);
-        assert_eq!(found_share_by_id.share_token, Some("sharetoken123".to_string()));
+        assert_eq!(
+            found_share_by_id.share_token,
+            Some("sharetoken123".to_string())
+        );
 
         // Create a second share for the same file
         let share2 = Share::new(
@@ -1225,8 +1322,12 @@ mod tests {
         // Test: get_file_shares
         let file_shares = store.get_file_shares(file.id).await.unwrap();
         assert_eq!(file_shares.len(), 2);
-        assert!(file_shares.iter().any(|s| s.share_token == Some("sharetoken123".to_string())));
-        assert!(file_shares.iter().any(|s| s.share_token == Some("sharetoken456".to_string())));
+        assert!(file_shares
+            .iter()
+            .any(|s| s.share_token == Some("sharetoken123".to_string())));
+        assert!(file_shares
+            .iter()
+            .any(|s| s.share_token == Some("sharetoken456".to_string())));
 
         // Test: increment_share_access
         store.increment_share_access(share.id).await.unwrap();
@@ -1262,7 +1363,9 @@ mod tests {
         // After revoke, share should not appear in get_file_shares (only active shares)
         let active_shares = store.get_file_shares(file.id).await.unwrap();
         assert_eq!(active_shares.len(), 1);
-        assert!(active_shares.iter().all(|s| s.share_token == Some("sharetoken456".to_string())));
+        assert!(active_shares
+            .iter()
+            .all(|s| s.share_token == Some("sharetoken456".to_string())));
 
         // But should still be retrievable by ID
         let revoked_share = store.get_share(share.id).await.unwrap();
