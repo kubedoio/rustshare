@@ -15,8 +15,8 @@ use uuid::Uuid;
 use rustshare_core::domain::Notification;
 use rustshare_core::services::NotificationError;
 
-use crate::AppState;
 use super::{AuthenticatedUser, ErrorResponse};
+use crate::AppState;
 
 // ============================================================================
 // Request/Response DTOs
@@ -59,11 +59,11 @@ impl From<Notification> for NotificationResponse {
     fn from(n: Notification) -> Self {
         Self {
             id: n.id,
-            notification_type: format!("{:?}", n.notification_type).to_lowercase(),
+            notification_type: n.notification_type.to_string(),
             title: n.title,
             message: n.message,
             resource_id: n.resource_id,
-            resource_type: format!("{:?}", n.resource_type).to_lowercase(),
+            resource_type: n.resource_type.to_string(),
             action_url: n.action_url,
             read: n.read,
             created_at: n.created_at.to_rfc3339(),
@@ -94,9 +94,10 @@ pub fn notification_error_response(err: NotificationError) -> Response {
         NotificationError::NotFound => (StatusCode::NOT_FOUND, err.to_string()),
         NotificationError::NotFoundById(_) => (StatusCode::NOT_FOUND, err.to_string()),
         NotificationError::NotOwned { .. } => (StatusCode::FORBIDDEN, err.to_string()),
-        NotificationError::Database(_) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
-        }
+        NotificationError::Database(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal server error".to_string(),
+        ),
     };
 
     (status, Json(ErrorResponse::new(message))).into_response()

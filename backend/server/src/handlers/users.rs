@@ -48,7 +48,11 @@ pub async fn update_user_theme(
     Json(req): Json<UpdateThemeRequest>,
 ) -> Response {
     // Update theme in database
-    if let Err(e) = state.metadata_store.update_user_theme(user_id, &req.theme.to_string()).await {
+    if let Err(e) = state
+        .metadata_store
+        .update_user_theme(user_id, &req.theme.to_string())
+        .await
+    {
         tracing::error!("Failed to update user theme: {:?}", e);
         return (
             StatusCode::INTERNAL_SERVER_ERROR,

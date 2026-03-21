@@ -1,9 +1,9 @@
 use anyhow::Result;
 use std::sync::Arc;
-use tracing::warn;
+use tracing::{error, warn};
 
 use crate::domain::{
-    File, Folder, Share, ShareId, SharePermissions, ShareRecipient, User, FileId, FolderId, UserId,
+    File, FileId, Folder, FolderId, Share, ShareId, SharePermissions, ShareRecipient, User, UserId,
 };
 use crate::events::{
     AggregateType, Event, EventBroadcaster, EventType, NotificationCreatedPayload,
@@ -141,10 +141,7 @@ where
         }
     }
 
-    async fn emit_notification_created_event(
-        &self,
-        notification: &crate::domain::Notification,
-    ) {
+    async fn emit_notification_created_event(&self, notification: &crate::domain::Notification) {
         let notification_type = serde_json::to_string(&notification.notification_type)
             .unwrap_or_else(|_| "\"notification\"".to_string())
             .trim_matches('"')
@@ -246,6 +243,15 @@ where
                     .share_repo
                     .update_share_permission(existing_share.id, permission)
                     .await
+                    .map_err(|error| {
+                        error!(
+                            share_id = %existing_share.id,
+                            file_id = %file_id,
+                            recipient_user_id = %recipient.id,
+                            "failed to update existing file share: {error}"
+                        );
+                        error
+                    })
                     .map_err(ShareError::from);
             }
         }
@@ -254,11 +260,22 @@ where
         let share = self
             .share_repo
             .create_user_share(Some(file_id), None, recipient.id, permission, created_by)
-            .await?;
+            .await
+            .map_err(|error| {
+                error!(
+                    file_id = %file_id,
+                    recipient_user_id = %recipient.id,
+                    created_by = %created_by,
+                    "failed to create file share: {error}"
+                );
+                error
+            })?;
 
         // Create notification for recipient (ignore errors - notifications are best-effort)
         let creator = self.user_repo.get_by_id(created_by).await.ok().flatten();
-        let creator_email = creator.map(|u| u.email).unwrap_or_else(|| "Someone".to_string());
+        let creator_email = creator
+            .map(|u| u.email)
+            .unwrap_or_else(|| "Someone".to_string());
 
         if let Ok(notification) = self
             .notification_service
@@ -333,6 +350,15 @@ where
                     .share_repo
                     .update_share_permission(existing_share.id, permission)
                     .await
+                    .map_err(|error| {
+                        error!(
+                            share_id = %existing_share.id,
+                            folder_id = %folder_id,
+                            recipient_user_id = %recipient.id,
+                            "failed to update existing folder share: {error}"
+                        );
+                        error
+                    })
                     .map_err(ShareError::from);
             }
         }
@@ -341,11 +367,22 @@ where
         let share = self
             .share_repo
             .create_user_share(None, Some(folder_id), recipient.id, permission, created_by)
-            .await?;
+            .await
+            .map_err(|error| {
+                error!(
+                    folder_id = %folder_id,
+                    recipient_user_id = %recipient.id,
+                    created_by = %created_by,
+                    "failed to create folder share: {error}"
+                );
+                error
+            })?;
 
         // Create notification for recipient
         let creator = self.user_repo.get_by_id(created_by).await.ok().flatten();
-        let creator_email = creator.map(|u| u.email).unwrap_or_else(|| "Someone".to_string());
+        let creator_email = creator
+            .map(|u| u.email)
+            .unwrap_or_else(|| "Someone".to_string());
 
         if let Ok(notification) = self
             .notification_service
@@ -400,7 +437,8 @@ where
         };
 
         // Check if requesting user has Admin permission
-        let permission = self.permission_resolver
+        let permission = self
+            .permission_resolver
             .resolve_permission(requesting_user, resource)
             .await
             .map_err(|e| ShareError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -423,7 +461,12 @@ where
         for share in shares {
             if let Some(recipient_user_id) = share.recipient_user_id {
                 // Fetch user email
-                if let Some(user) = self.user_repo.get_by_id(recipient_user_id).await.map_err(ShareError::Database)? {
+                if let Some(user) = self
+                    .user_repo
+                    .get_by_id(recipient_user_id)
+                    .await
+                    .map_err(ShareError::Database)?
+                {
                     recipients.push(ShareRecipient {
                         share_id: share.id,
                         user_id: recipient_user_id,
@@ -464,7 +507,8 @@ where
         };
 
         // Check if requesting user has Admin permission
-        let permission = self.permission_resolver
+        let permission = self
+            .permission_resolver
             .resolve_permission(requesting_user, resource)
             .await
             .map_err(|e| ShareError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -565,7 +609,8 @@ where
         };
 
         // Check if requesting user has Admin permission
-        let permission = self.permission_resolver
+        let permission = self
+            .permission_resolver
             .resolve_permission(requesting_user, resource)
             .await
             .map_err(|e| ShareError::Database(sqlx::Error::Protocol(e.to_string())))?;

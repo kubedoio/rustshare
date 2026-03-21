@@ -63,10 +63,12 @@ curl http://localhost/health
 - PostgreSQL: `localhost:5432`
 - Object storage console: `http://localhost:9001`
 
-### Default admin
+### Default local accounts
 
 - Email: `admin@localhost`
 - Password: `admin123`
+- Viewer email: `viewer@localhost`
+- Viewer password: `viewer123`
 
 ## Local Development
 
@@ -130,6 +132,11 @@ OIDC_REDIRECT_URL=
 OIDC_LOGIN_LABEL=
 OIDC_SCOPES=openid profile email
 
+# Optional mobile OIDC / PKCE
+OIDC_MOBILE_CLIENT_ID=
+OIDC_MOBILE_CLIENT_SECRET=
+OIDC_MOBILE_REDIRECT_URIS=rustshare://auth/callback
+
 # Rate limits
 RUSTSHARE_RATE_LIMIT_AUTH_LOGIN_PER_MINUTE=10
 RUSTSHARE_RATE_LIMIT_OIDC_LOGIN_PER_MINUTE=30
@@ -157,15 +164,27 @@ Examples:
 
 - `GET /api/v1/me`
 - `POST /api/auth/login`
+- `POST /api/v1/auth/oidc/mobile/authorize`
+- `POST /api/v1/auth/oidc/mobile/exchange`
 - `GET /api/v1/shares`
 - `GET /api/v1/admin/replication/summary`
 - `GET /api/ws`
+
+Mobile OIDC notes:
+
+- Web login keeps using backend-issued HTTP-only cookies.
+- Mobile login uses OIDC Authorization Code + PKCE against backend endpoints under `/api/v1/auth/oidc/mobile/*`.
+- The mobile app sends its `redirect_uri`, `code_challenge`, `state`, and `nonce` to `POST /api/v1/auth/oidc/mobile/authorize`.
+- The backend returns the provider authorization URL after validating the redirect URI against `OIDC_MOBILE_REDIRECT_URIS`.
+- After the provider redirects back to the mobile app, the app exchanges `code + code_verifier + nonce` through `POST /api/v1/auth/oidc/mobile/exchange`.
+- The backend validates the ID token and returns a Rustshare bearer token for mobile API access.
 
 ## Operations
 
 Current operator docs live here:
 
 - [Status](/Users/scolak/Projects/x/rustshare/STATUS.md)
+- [Mobile OIDC Contract](/Users/scolak/Projects/x/rustshare/docs/2026-03-20-mobile-oidc-contract.md)
 - [Frontend Status](/Users/scolak/Projects/x/rustshare/FRONTEND_STATUS.md)
 - [Production Readiness](/Users/scolak/Projects/x/rustshare/PRODUCTION_READINESS.md)
 - [Backup and Restore Runbook](/Users/scolak/Projects/x/rustshare/docs/2026-03-20-backup-restore-runbook.md)

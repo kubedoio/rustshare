@@ -494,10 +494,8 @@ async fn event_to_sync_message(
             })
         }
         EventType::NotificationCreated => {
-            let payload: NotificationCreatedPayload =
-                serde_json::from_value(event.payload.clone()).map_err(|e| {
-                    format!("Failed to deserialize NotificationCreatedPayload: {}", e)
-                })?;
+            let payload: NotificationCreatedPayload = serde_json::from_value(event.payload.clone())
+                .map_err(|e| format!("Failed to deserialize NotificationCreatedPayload: {}", e))?;
 
             Ok(SyncMessage::NotificationCreated {
                 notification_id: payload.notification_id,

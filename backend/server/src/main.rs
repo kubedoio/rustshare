@@ -234,13 +234,24 @@ async fn main() -> Result<()> {
             password_hash,
             admin_email.clone(),
             true,
-            10_737_418_240, // 10GB default quota
+            default_storage_quota_bytes(),
         );
 
         metadata_store.create_user(&admin_user).await?;
 
         info!("Admin user created: {} ({})", admin_username, admin_email);
     }
+
+    ensure_optional_seed_user(
+        &metadata_store,
+        "RUSTSHARE_DEMO_VIEWER_USERNAME",
+        "RUSTSHARE_DEMO_VIEWER_EMAIL",
+        "RUSTSHARE_DEMO_VIEWER_PASSWORD",
+        std::env::var("RUSTSHARE_DEMO_VIEWER_DISPLAY_NAME")
+            .unwrap_or_else(|_| "Viewer User".to_string()),
+        false,
+    )
+    .await?;
 
     // Build application state
     let state = AppState {
@@ -269,11 +280,27 @@ async fn main() -> Result<()> {
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/oidc/login", get(oidc::oidc_login))
         .route("/api/auth/oidc/callback", get(oidc::oidc_callback))
+        .route(
+            "/api/auth/oidc/mobile/authorize",
+            post(oidc::mobile_oidc_authorize),
+        )
+        .route(
+            "/api/auth/oidc/mobile/exchange",
+            post(oidc::mobile_oidc_exchange),
+        )
         .route("/api/v1/auth/config", get(oidc::auth_config))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/logout", post(logout))
         .route("/api/v1/auth/oidc/login", get(oidc::oidc_login))
         .route("/api/v1/auth/oidc/callback", get(oidc::oidc_callback))
+        .route(
+            "/api/v1/auth/oidc/mobile/authorize",
+            post(oidc::mobile_oidc_authorize),
+        )
+        .route(
+            "/api/v1/auth/oidc/mobile/exchange",
+            post(oidc::mobile_oidc_exchange),
+        )
         // File routes (Task 15-19)
         .route("/api/files", get(handlers::list_files))
         .route("/api/v1/files", get(handlers::list_files))
@@ -570,6 +597,56 @@ async fn main() -> Result<()> {
     .await?;
 
     Ok(())
+}
+
+async fn ensure_optional_seed_user(
+    metadata_store: &Arc<MetadataStore>,
+    username_env: &str,
+    email_env: &str,
+    password_env: &str,
+    display_name: String,
+    is_admin: bool,
+) -> Result<()> {
+    let username = std::env::var(username_env).ok();
+    let email = std::env::var(email_env).ok();
+    let password = std::env::var(password_env).ok();
+
+    if username.is_none() && email.is_none() && password.is_none() {
+        return Ok(());
+    }
+
+    let username =
+        username.ok_or_else(|| anyhow::anyhow!("Missing required env {}", username_env))?;
+    let email = email.ok_or_else(|| anyhow::anyhow!("Missing required env {}", email_env))?;
+    let password =
+        password.ok_or_else(|| anyhow::anyhow!("Missing required env {}", password_env))?;
+
+    if metadata_store.find_user_by_email(&email).await?.is_some() {
+        return Ok(());
+    }
+
+    let password_hash = PasswordHasher::hash(&password)?;
+    let user = User::new(
+        username.clone(),
+        display_name,
+        password_hash,
+        email.clone(),
+        is_admin,
+        default_storage_quota_bytes(),
+    );
+
+    metadata_store.create_user(&user).await?;
+
+    info!("Seed user created: {} ({})", username, email);
+
+    Ok(())
+}
+
+fn default_storage_quota_bytes() -> i64 {
+    std::env::var("RUSTSHARE_DEFAULT_STORAGE_QUOTA_BYTES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(10_737_418_240)
 }
 
 /// Health check endpoint

@@ -1,6 +1,6 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use aws_config::BehaviorVersion;
-use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
+use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use bytes::Bytes;
 
 /// Object storage abstraction for RustFS/S3
@@ -32,10 +32,14 @@ impl ObjectStore {
 
         let client = S3Client::from_conf(s3_config);
 
+        ensure_bucket_exists(&client, &bucket).await?;
+
         // Create a second client for presigned URLs with public endpoint
         let presign_config = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&presign_endpoint)
-            .region(aws_config::Region::new(config.region().unwrap().to_string()))
+            .region(aws_config::Region::new(
+                config.region().unwrap().to_string(),
+            ))
             .load()
             .await;
 
@@ -48,7 +52,7 @@ impl ObjectStore {
         Ok(Self {
             client,
             bucket,
-            public_endpoint: Some(presign_client)
+            public_endpoint: Some(presign_client),
         })
     }
 
@@ -67,7 +71,8 @@ impl ObjectStore {
 
     /// Get object from storage
     pub async fn get(&self, key: &str) -> Result<Bytes> {
-        let output = self.client
+        let output = self
+            .client
             .get_object()
             .bucket(&self.bucket)
             .key(key)
@@ -92,7 +97,8 @@ impl ObjectStore {
 
     /// Check if object exists
     pub async fn exists(&self, key: &str) -> Result<bool> {
-        match self.client
+        match self
+            .client
             .head_object()
             .bucket(&self.bucket)
             .key(key)
@@ -124,5 +130,31 @@ impl ObjectStore {
             .await?;
 
         Ok(presigned_request.uri().to_string())
+    }
+}
+
+async fn ensure_bucket_exists(client: &S3Client, bucket: &str) -> Result<()> {
+    match client.head_bucket().bucket(bucket).send().await {
+        Ok(_) => {
+            tracing::info!(bucket = %bucket, "Object storage bucket is ready");
+            Ok(())
+        }
+        Err(error) => {
+            tracing::warn!(
+                bucket = %bucket,
+                error = %error,
+                "Object storage bucket missing or inaccessible, attempting to create it"
+            );
+
+            client
+                .create_bucket()
+                .bucket(bucket)
+                .send()
+                .await
+                .with_context(|| format!("failed to create object storage bucket `{bucket}`"))?;
+
+            tracing::info!(bucket = %bucket, "Created object storage bucket");
+            Ok(())
+        }
     }
 }

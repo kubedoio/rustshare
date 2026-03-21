@@ -1,6 +1,6 @@
 use chrono::Utc;
 use rustshare_core::domain::{FileId, FolderId, Share, ShareId, SharePermissions, UserId};
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 /// Repository for share database operations.
@@ -9,6 +9,42 @@ pub struct ShareRepository {
 }
 
 impl ShareRepository {
+    fn permission_to_db_value(permission: SharePermissions) -> &'static str {
+        match permission {
+            SharePermissions::View => "View",
+            SharePermissions::Edit => "Edit",
+            SharePermissions::Admin => "Admin",
+        }
+    }
+
+    fn permission_from_db_value(value: &str) -> SharePermissions {
+        match value {
+            "Edit" | "edit" => SharePermissions::Edit,
+            "Admin" | "admin" => SharePermissions::Admin,
+            _ => SharePermissions::View,
+        }
+    }
+
+    fn map_share_row(row: sqlx::postgres::PgRow) -> Result<Share, sqlx::Error> {
+        let permissions = Self::permission_from_db_value(&row.try_get::<String, _>("permissions")?);
+
+        Ok(Share {
+            id: row.try_get("id")?,
+            file_id: row.try_get("file_id")?,
+            folder_id: row.try_get("folder_id")?,
+            share_token: row.try_get("share_token")?,
+            permissions,
+            password_hash: row.try_get("password_hash")?,
+            expires_at: row.try_get("expires_at")?,
+            upload_only: row.try_get("upload_only")?,
+            access_count: row.try_get("access_count")?,
+            recipient_user_id: row.try_get("recipient_user_id")?,
+            created_by: row.try_get("created_by")?,
+            created_at: row.try_get("created_at")?,
+            revoked_at: row.try_get("revoked_at")?,
+        })
+    }
+
     /// Create a new ShareRepository with the given database pool.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -21,15 +57,15 @@ impl ShareRepository {
         folder_id: Option<FolderId>,
         recipient_user_id: UserId,
     ) -> Result<Option<Share>, sqlx::Error> {
-        let result = sqlx::query_as::<_, Share>(
+        let result = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
                    expires_at, upload_only, access_count, recipient_user_id, created_by,
                    created_at, revoked_at
             FROM shares
             WHERE recipient_user_id = $1
-              AND file_id IS NOT DISTINCT FROM $2
-              AND folder_id IS NOT DISTINCT FROM $3
+              AND file_id IS NOT DISTINCT FROM $2::uuid
+              AND folder_id IS NOT DISTINCT FROM $3::uuid
               AND revoked_at IS NULL
             LIMIT 1
             "#,
@@ -40,7 +76,7 @@ impl ShareRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(result)
+        result.map(Self::map_share_row).transpose()
     }
 
     /// List all shares received by a user (paginated).
@@ -50,7 +86,7 @@ impl ShareRepository {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Share>, sqlx::Error> {
-        let shares = sqlx::query_as::<_, Share>(
+        let rows = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
                    expires_at, upload_only, access_count, recipient_user_id, created_by,
@@ -68,7 +104,7 @@ impl ShareRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(shares)
+        rows.into_iter().map(Self::map_share_row).collect()
     }
 
     /// List all recipients of a resource (for multi-user shares on same resource).
@@ -77,15 +113,15 @@ impl ShareRepository {
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
     ) -> Result<Vec<Share>, sqlx::Error> {
-        let shares = sqlx::query_as::<_, Share>(
+        let rows = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
                    expires_at, upload_only, access_count, recipient_user_id, created_by,
                    created_at, revoked_at
             FROM shares
             WHERE recipient_user_id IS NOT NULL
-              AND file_id IS NOT DISTINCT FROM $1
-              AND folder_id IS NOT DISTINCT FROM $2
+              AND file_id IS NOT DISTINCT FROM $1::uuid
+              AND folder_id IS NOT DISTINCT FROM $2::uuid
               AND revoked_at IS NULL
             ORDER BY created_at ASC
             "#,
@@ -95,7 +131,7 @@ impl ShareRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(shares)
+        rows.into_iter().map(Self::map_share_row).collect()
     }
 
     /// Create a new user share.
@@ -110,7 +146,7 @@ impl ShareRepository {
         let id = Uuid::new_v4();
         let created_at = Utc::now();
 
-        sqlx::query_as::<_, Share>(
+        let row = sqlx::query(
             r#"
             INSERT INTO shares (
                 id, file_id, folder_id, share_token, permissions,
@@ -126,12 +162,14 @@ impl ShareRepository {
         .bind(id)
         .bind(file_id)
         .bind(folder_id)
-        .bind(permissions)
+        .bind(Self::permission_to_db_value(permissions))
         .bind(recipient_user_id)
         .bind(created_by)
         .bind(created_at)
         .fetch_one(&self.pool)
-        .await
+        .await?;
+
+        Self::map_share_row(row)
     }
 
     /// Update recipient permission on a user share.
@@ -140,7 +178,7 @@ impl ShareRepository {
         share_id: ShareId,
         new_permission: SharePermissions,
     ) -> Result<Share, sqlx::Error> {
-        sqlx::query_as::<_, Share>(
+        let row = sqlx::query(
             r#"
             UPDATE shares
             SET permissions = $2
@@ -151,9 +189,11 @@ impl ShareRepository {
             "#,
         )
         .bind(share_id)
-        .bind(new_permission)
+        .bind(Self::permission_to_db_value(new_permission))
         .fetch_one(&self.pool)
-        .await
+        .await?;
+
+        Self::map_share_row(row)
     }
 
     /// Delete (revoke) a share by setting revoked_at timestamp.
@@ -178,7 +218,7 @@ impl ShareRepository {
 
     /// Find a share by its ID.
     pub async fn find_share_by_id(&self, share_id: ShareId) -> Result<Option<Share>, sqlx::Error> {
-        let result = sqlx::query_as::<_, Share>(
+        let result = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
                    expires_at, upload_only, access_count, recipient_user_id, created_by,
@@ -191,7 +231,7 @@ impl ShareRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(result)
+        result.map(Self::map_share_row).transpose()
     }
 
     /// Get a share by ID (alias for find_share_by_id).

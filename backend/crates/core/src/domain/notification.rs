@@ -16,6 +16,31 @@ pub enum NotificationType {
     ShareRevoked,
 }
 
+impl std::fmt::Display for NotificationType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NotificationType::ShareReceived => write!(f, "share_received"),
+            NotificationType::PermissionChanged => write!(f, "permission_changed"),
+            NotificationType::ShareRevoked => write!(f, "share_revoked"),
+        }
+    }
+}
+
+impl std::str::FromStr for NotificationType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let normalized = s.trim().to_lowercase().replace(['_', '-'], "");
+
+        match normalized.as_str() {
+            "sharereceived" => Ok(NotificationType::ShareReceived),
+            "permissionchanged" => Ok(NotificationType::PermissionChanged),
+            "sharerevoked" => Ok(NotificationType::ShareRevoked),
+            _ => Err(format!("Invalid notification type: {}", s)),
+        }
+    }
+}
+
 /// Type of resource referenced by notification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "TEXT")]
@@ -24,6 +49,29 @@ pub enum ResourceType {
     File,
     Folder,
     Share,
+}
+
+impl std::fmt::Display for ResourceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResourceType::File => write!(f, "file"),
+            ResourceType::Folder => write!(f, "folder"),
+            ResourceType::Share => write!(f, "share"),
+        }
+    }
+}
+
+impl std::str::FromStr for ResourceType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "file" => Ok(ResourceType::File),
+            "folder" => Ok(ResourceType::Folder),
+            "share" => Ok(ResourceType::Share),
+            _ => Err(format!("Invalid resource type: {}", s)),
+        }
+    }
 }
 
 /// In-app notification for a user.
@@ -96,7 +144,10 @@ mod tests {
 
         assert_eq!(notification.user_id, user_id);
         assert!(!notification.read);
-        assert_eq!(notification.notification_type, NotificationType::ShareReceived);
+        assert_eq!(
+            notification.notification_type,
+            NotificationType::ShareReceived
+        );
     }
 
     #[test]
@@ -116,5 +167,36 @@ mod tests {
         let json = serde_json::to_string(&ResourceType::Folder).unwrap();
         assert_eq!(json, r#""folder""#);
     }
-}
 
+    #[test]
+    fn test_notification_type_parsing() {
+        assert_eq!(
+            "share_received".parse::<NotificationType>().unwrap(),
+            NotificationType::ShareReceived
+        );
+        assert_eq!(
+            "ShareReceived".parse::<NotificationType>().unwrap(),
+            NotificationType::ShareReceived
+        );
+        assert_eq!(
+            "permission_changed".parse::<NotificationType>().unwrap(),
+            NotificationType::PermissionChanged
+        );
+        assert_eq!(
+            "PermissionChanged".parse::<NotificationType>().unwrap(),
+            NotificationType::PermissionChanged
+        );
+        assert!("invalid".parse::<NotificationType>().is_err());
+    }
+
+    #[test]
+    fn test_resource_type_parsing() {
+        assert_eq!("file".parse::<ResourceType>().unwrap(), ResourceType::File);
+        assert_eq!("File".parse::<ResourceType>().unwrap(), ResourceType::File);
+        assert_eq!(
+            "folder".parse::<ResourceType>().unwrap(),
+            ResourceType::Folder
+        );
+        assert!("invalid".parse::<ResourceType>().is_err());
+    }
+}

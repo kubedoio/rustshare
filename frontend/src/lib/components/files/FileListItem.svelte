@@ -52,7 +52,6 @@
 	function handleVersionHistory(e: Event) {
 		e.stopPropagation();
 		e.preventDefault();
-		console.log('[FileListItem] Version History clicked for:', item);
 		dispatch('versionHistory', { item: item as File });
 	}
 
@@ -79,12 +78,27 @@
 		e.preventDefault();
 		dispatch('replace', { item: item as File });
 	}
+
+	function handleCardActivate() {
+		onSelect();
+	}
+
+	function handleCardKeydown(event: KeyboardEvent) {
+		if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			onSelect();
+		}
+	}
 </script>
 
 <div
 	class="card bg-base-100 shadow-sm hover:shadow-md group relative touch-manipulation transition-shadow"
 	class:ring-2={selectionMode && selected}
 	class:ring-primary={selectionMode && selected}
+	on:click={handleCardActivate}
+	on:keydown={handleCardKeydown}
+	role="button"
+	tabindex="0"
 >
 	<div class="card-body p-3 lg:p-4">
 		<div class="gap-2 lg:gap-3 flex items-center">

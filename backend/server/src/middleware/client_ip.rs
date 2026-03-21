@@ -26,10 +26,7 @@ pub fn extract_client_ip(
                         tracing::debug!("Extracted client IP from X-Forwarded-For: {}", ip);
                         return Some(ip);
                     } else {
-                        tracing::debug!(
-                            "Rejected private IP from X-Forwarded-For: {}",
-                            ip
-                        );
+                        tracing::debug!("Rejected private IP from X-Forwarded-For: {}", ip);
                     }
                 }
             }
@@ -69,10 +66,7 @@ pub fn extract_client_ip(
                         tracing::debug!("Extracted client IP from Forwarded header: {}", ip);
                         return Some(ip);
                     } else {
-                        tracing::debug!(
-                            "Rejected private IP from Forwarded header: {}",
-                            ip
-                        );
+                        tracing::debug!("Rejected private IP from Forwarded header: {}", ip);
                     }
                 }
             }
@@ -222,10 +216,7 @@ mod tests {
     fn test_xff_priority_over_x_real_ip() {
         // X-Forwarded-For should take priority over X-Real-IP
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-forwarded-for",
-            HeaderValue::from_static("203.0.113.1"),
-        );
+        headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.1"));
         headers.insert("x-real-ip", HeaderValue::from_static("203.0.113.2"));
 
         let ip = extract_client_ip(&headers, None);

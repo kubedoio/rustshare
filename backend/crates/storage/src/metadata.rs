@@ -27,6 +27,22 @@ pub struct OwnedPublicShare {
 }
 
 impl MetadataStore {
+    fn permission_to_db_value(permission: SharePermissions) -> &'static str {
+        match permission {
+            SharePermissions::View => "View",
+            SharePermissions::Edit => "Edit",
+            SharePermissions::Admin => "Admin",
+        }
+    }
+
+    fn permission_from_db_value(value: &str) -> SharePermissions {
+        match value {
+            "Edit" | "edit" => SharePermissions::Edit,
+            "Admin" | "admin" => SharePermissions::Admin,
+            _ => SharePermissions::View,
+        }
+    }
+
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -1169,13 +1185,6 @@ impl MetadataStore {
 
     /// Create a new share link for a file
     pub async fn create_share(&self, share: &Share) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let permissions = match share.permissions {
-            SharePermissions::View => "view",
-            SharePermissions::Edit => "edit",
-            SharePermissions::Admin => "admin",
-        };
-
         sqlx::query(
             r#"
             INSERT INTO shares (id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at)
@@ -1188,7 +1197,7 @@ impl MetadataStore {
         .bind(&share.share_token)
         .bind(share.recipient_user_id)
         .bind(share.created_by)
-        .bind(permissions)
+        .bind(Self::permission_to_db_value(share.permissions))
         .bind(&share.password_hash)
         .bind(share.expires_at)
         .bind(share.upload_only)
@@ -1216,11 +1225,7 @@ impl MetadataStore {
 
         if let Some(row) = row {
             let permissions_str: String = row.try_get("permissions")?;
-            let permissions = match permissions_str.as_str() {
-                "edit" => SharePermissions::Edit,
-                "admin" => SharePermissions::Admin,
-                _ => SharePermissions::View,
-            };
+            let permissions = Self::permission_from_db_value(&permissions_str);
 
             let share = Share {
                 id: row.try_get("id")?,
@@ -1259,11 +1264,7 @@ impl MetadataStore {
 
         if let Some(row) = row {
             let permissions_str: String = row.try_get("permissions")?;
-            let permissions = match permissions_str.as_str() {
-                "edit" => SharePermissions::Edit,
-                "admin" => SharePermissions::Admin,
-                _ => SharePermissions::View,
-            };
+            let permissions = Self::permission_from_db_value(&permissions_str);
 
             let share = Share {
                 id: row.try_get("id")?,
@@ -1304,11 +1305,7 @@ impl MetadataStore {
         let mut shares = Vec::new();
         for row in rows {
             let permissions_str: String = row.try_get("permissions")?;
-            let permissions = match permissions_str.as_str() {
-                "edit" => SharePermissions::Edit,
-                "admin" => SharePermissions::Admin,
-                _ => SharePermissions::View,
-            };
+            let permissions = Self::permission_from_db_value(&permissions_str);
 
             let share = Share {
                 id: row.try_get("id")?,
@@ -1348,11 +1345,7 @@ impl MetadataStore {
         let mut shares = Vec::new();
         for row in rows {
             let permissions_str: String = row.try_get("permissions")?;
-            let permissions = match permissions_str.as_str() {
-                "edit" => SharePermissions::Edit,
-                "admin" => SharePermissions::Admin,
-                _ => SharePermissions::View,
-            };
+            let permissions = Self::permission_from_db_value(&permissions_str);
 
             shares.push(Share {
                 id: row.try_get("id")?,
@@ -1414,11 +1407,7 @@ impl MetadataStore {
         let mut shares = Vec::with_capacity(rows.len());
         for row in rows {
             let permissions_str: String = row.try_get("permissions")?;
-            let permissions = match permissions_str.as_str() {
-                "edit" => SharePermissions::Edit,
-                "admin" => SharePermissions::Admin,
-                _ => SharePermissions::View,
-            };
+            let permissions = Self::permission_from_db_value(&permissions_str);
 
             shares.push(OwnedPublicShare {
                 share: Share {

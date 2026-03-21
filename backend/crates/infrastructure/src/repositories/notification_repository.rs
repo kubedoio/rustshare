@@ -1,6 +1,8 @@
 use chrono::Utc;
-use rustshare_core::domain::{Notification, NotificationId, NotificationType, ResourceType, UserId};
-use sqlx::PgPool;
+use rustshare_core::domain::{
+    Notification, NotificationId, NotificationType, ResourceType, UserId,
+};
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 /// Repository for notification database operations.
@@ -9,6 +11,30 @@ pub struct NotificationRepository {
 }
 
 impl NotificationRepository {
+    fn map_notification_row(row: sqlx::postgres::PgRow) -> Result<Notification, sqlx::Error> {
+        let notification_type = row
+            .try_get::<String, _>("notification_type")?
+            .parse()
+            .map_err(|err: String| sqlx::Error::Decode(err.into()))?;
+        let resource_type = row
+            .try_get::<String, _>("resource_type")?
+            .parse()
+            .map_err(|err: String| sqlx::Error::Decode(err.into()))?;
+
+        Ok(Notification {
+            id: row.try_get("id")?,
+            user_id: row.try_get("user_id")?,
+            notification_type,
+            title: row.try_get("title")?,
+            message: row.try_get("message")?,
+            resource_id: row.try_get("resource_id")?,
+            resource_type,
+            action_url: row.try_get("action_url")?,
+            read: row.try_get("read")?,
+            created_at: row.try_get("created_at")?,
+        })
+    }
+
     /// Create a new NotificationRepository with the given database pool.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -28,7 +54,7 @@ impl NotificationRepository {
         let id = Uuid::new_v4();
         let created_at = Utc::now();
 
-        sqlx::query_as::<_, Notification>(
+        let row = sqlx::query(
             r#"
             INSERT INTO notifications (
                 id, user_id, notification_type, title, message,
@@ -41,15 +67,17 @@ impl NotificationRepository {
         )
         .bind(id)
         .bind(user_id)
-        .bind(notification_type)
+        .bind(notification_type.to_string())
         .bind(title)
         .bind(message)
         .bind(resource_id)
-        .bind(resource_type)
+        .bind(resource_type.to_string())
         .bind(action_url)
         .bind(created_at)
         .fetch_one(&self.pool)
-        .await
+        .await?;
+
+        Self::map_notification_row(row)
     }
 
     /// Get a notification by ID.
@@ -57,7 +85,7 @@ impl NotificationRepository {
         &self,
         notification_id: NotificationId,
     ) -> Result<Option<Notification>, sqlx::Error> {
-        let result = sqlx::query_as::<_, Notification>(
+        let row = sqlx::query(
             r#"
             SELECT id, user_id, notification_type, title, message,
                    resource_id, resource_type, action_url, read, created_at
@@ -69,7 +97,7 @@ impl NotificationRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(result)
+        row.map(Self::map_notification_row).transpose()
     }
 
     /// List notifications for a user (paginated, optional unread filter).
@@ -80,8 +108,8 @@ impl NotificationRepository {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Notification>, sqlx::Error> {
-        let notifications = if unread_only {
-            sqlx::query_as::<_, Notification>(
+        let rows = if unread_only {
+            sqlx::query(
                 r#"
                 SELECT id, user_id, notification_type, title, message,
                        resource_id, resource_type, action_url, read, created_at
@@ -97,7 +125,7 @@ impl NotificationRepository {
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, Notification>(
+            sqlx::query(
                 r#"
                 SELECT id, user_id, notification_type, title, message,
                        resource_id, resource_type, action_url, read, created_at
@@ -114,7 +142,7 @@ impl NotificationRepository {
             .await?
         };
 
-        Ok(notifications)
+        rows.into_iter().map(Self::map_notification_row).collect()
     }
 
     /// Count unread notifications for a user.
@@ -171,7 +199,7 @@ impl NotificationRepository {
         &self,
         notification_id: NotificationId,
     ) -> Result<Notification, sqlx::Error> {
-        sqlx::query_as::<_, Notification>(
+        let row = sqlx::query(
             r#"
             UPDATE notifications
             SET read = TRUE
@@ -182,7 +210,9 @@ impl NotificationRepository {
         )
         .bind(notification_id)
         .fetch_one(&self.pool)
-        .await
+        .await?;
+
+        Self::map_notification_row(row)
     }
 
     /// Delete a notification.

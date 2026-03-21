@@ -1,5 +1,5 @@
-use rustshare_core::domain::{User, UserId, Theme};
-use sqlx::PgPool;
+use rustshare_core::domain::{Theme, User, UserId};
+use sqlx::{PgPool, Row};
 
 /// Repository for user database operations.
 pub struct UserRepository {
@@ -7,6 +7,24 @@ pub struct UserRepository {
 }
 
 impl UserRepository {
+    fn map_user_row(row: sqlx::postgres::PgRow) -> Result<User, sqlx::Error> {
+        Ok(User {
+            id: row.try_get("id")?,
+            username: row.try_get("username")?,
+            display_name: row.try_get("display_name")?,
+            password_hash: row.try_get("password_hash")?,
+            email: row.try_get("email")?,
+            is_admin: row.try_get("is_admin")?,
+            storage_quota: row.try_get("storage_quota")?,
+            theme: row
+                .try_get::<String, _>("theme")?
+                .parse()
+                .unwrap_or_default(),
+            created_at: row.try_get("created_at")?,
+            updated_at: row.try_get("updated_at")?,
+        })
+    }
+
     /// Create a new UserRepository with the given database pool.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -16,7 +34,7 @@ impl UserRepository {
     pub async fn find_by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error> {
         let email_lower = email.trim().to_lowercase();
 
-        let user = sqlx::query_as::<_, User>(
+        let row = sqlx::query(
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
                    storage_quota, theme, created_at, updated_at
@@ -28,12 +46,12 @@ impl UserRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(user)
+        row.map(Self::map_user_row).transpose()
     }
 
     /// Find a user by ID.
     pub async fn get_by_id(&self, user_id: UserId) -> Result<Option<User>, sqlx::Error> {
-        let user = sqlx::query_as::<_, User>(
+        let row = sqlx::query(
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
                    storage_quota, theme, created_at, updated_at
@@ -45,7 +63,7 @@ impl UserRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(user)
+        row.map(Self::map_user_row).transpose()
     }
 
     /// Update user's theme preference.
@@ -68,11 +86,17 @@ impl UserRepository {
 
 // Implement UserOps trait for UserRepository
 impl rustshare_core::services::UserOps for UserRepository {
-    async fn find_by_email(&self, email: &str) -> Result<Option<rustshare_core::domain::User>, sqlx::Error> {
+    async fn find_by_email(
+        &self,
+        email: &str,
+    ) -> Result<Option<rustshare_core::domain::User>, sqlx::Error> {
         self.find_by_email(email).await
     }
 
-    async fn get_by_id(&self, user_id: rustshare_core::domain::UserId) -> Result<Option<rustshare_core::domain::User>, sqlx::Error> {
+    async fn get_by_id(
+        &self,
+        user_id: rustshare_core::domain::UserId,
+    ) -> Result<Option<rustshare_core::domain::User>, sqlx::Error> {
         self.get_by_id(user_id).await
     }
 }

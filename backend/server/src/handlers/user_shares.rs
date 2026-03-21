@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use rustshare_core::domain::SharePermissions;
 
+use super::{share_error_response, AuthenticatedUser};
 use crate::AppState;
-use super::{AuthenticatedUser, share_error_response};
 
 // ============================================================================
 // Request/Response DTOs
@@ -113,12 +113,7 @@ pub async fn create_file_share(
 ) -> Result<Response, Response> {
     let share = state
         .user_share_service
-        .create_file_share(
-            file_id,
-            &req.recipient_email,
-            req.permission,
-            auth.user_id,
-        )
+        .create_file_share(file_id, &req.recipient_email, req.permission, auth.user_id)
         .await
         .map_err(share_error_response)?;
 
@@ -230,7 +225,11 @@ pub async fn list_received_shares(
                 Ok(Some(user)) => (user.display_name, user.email),
                 Ok(None) => ("Unknown user".to_string(), String::new()),
                 Err(error) => {
-                    tracing::warn!("failed to load share creator {}: {}", share.created_by, error);
+                    tracing::warn!(
+                        "failed to load share creator {}: {}",
+                        share.created_by,
+                        error
+                    );
                     ("Unknown user".to_string(), String::new())
                 }
             };
@@ -346,7 +345,10 @@ pub async fn update_recipient_permission(
         .await
         .map_err(share_error_response)?;
 
-    let resource_id = updated_share.file_id.or(updated_share.folder_id).unwrap_or_else(Uuid::nil);
+    let resource_id = updated_share
+        .file_id
+        .or(updated_share.folder_id)
+        .unwrap_or_else(Uuid::nil);
     let resource_type = if updated_share.file_id.is_some() {
         "file"
     } else {
@@ -385,10 +387,7 @@ pub async fn remove_recipient(
         .await
         .map_err(share_error_response)?;
 
-    Ok((
-        StatusCode::NO_CONTENT,
-        (),
-    ).into_response())
+    Ok((StatusCode::NO_CONTENT, ()).into_response())
 }
 
 // ============================================================================

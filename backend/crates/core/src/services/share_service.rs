@@ -359,10 +359,9 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
 
-        // Create JWT session claims
-        // We use serde_json to create the claims since we're working with the JwtOps trait
         let claims = serde_json::json!({
             "sub": format!("share:{}", share.id),
+            "session_id": uuid::Uuid::new_v4(),
             "share_id": share.id,
             "file_id": share.file_id,
             "folder_id": share.folder_id,
