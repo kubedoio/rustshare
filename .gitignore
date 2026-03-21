@@ -1,15 +1,25 @@
 # Rust
 target/
+**/target/
+
+# Frontend
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
+frontend/.vite/
+coverage/
 
 # Environment
 .env
 .env.local
+.env.*.local
 
-# IDE
+# IDE and editor
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
 # OS
 .DS_Store
@@ -18,13 +28,15 @@ Thumbs.db
 # Docker
 docker-compose.override.yml
 
-# Logs
+# Logs and temp files
 *.log
+*.tmp
+tmp/
+temp/
 
 # Local backup artifacts
 backups/
 restore-drill-reports/
 
-# Note: Cargo.lock IS committed for applications (not libraries)
-# to ensure reproducible builds
+# Workspace helpers
 .worktrees/

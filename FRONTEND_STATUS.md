@@ -70,6 +70,12 @@ The current frontend should be described as:
 - deeper admin/operator dashboards are not a frontend focus yet
 - the mobile client does not exist yet, so responsive web support is not the same as a native mobile product
 
+## Current Technical Debt
+
+- Docker and local production builds still emit SvelteKit/Svelte runtime mismatch warnings
+- the app builds and runs, but the dependency alignment should be cleaned up before calling the frontend fully production-ready
+- some older UI surfaces still feel functional rather than polished, especially compared to dedicated desktop file manager UX
+
 ## Not In Scope Yet
 
 - desktop sync client UX

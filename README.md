@@ -34,7 +34,7 @@ RustShare should currently be described as:
 
 **Late MVP / pre-release**
 
-The web file-sharing product is close to launchable with careful operational discipline. The broader product vision is not complete yet, especially around mobile sync/photos and deeper production observability.
+The web file-sharing product is close to launchable with careful operational discipline. The broader product vision is not complete yet, especially around mobile sync/photos, desktop client maturity, and deeper production observability.
 
 ## Quick Start
 
@@ -89,6 +89,10 @@ npm run dev
 ```
 
 In production-style Docker builds, the frontend is compiled into static assets and served by Axum. There is no separate Node.js frontend server in the shipped runtime.
+
+Current note:
+
+- production frontend builds still emit SvelteKit/Svelte compatibility warnings that should be resolved as part of launch hardening
 
 ## Validation
 
