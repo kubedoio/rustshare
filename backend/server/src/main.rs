@@ -57,6 +57,7 @@ use axum::{
     Json, Router,
 };
 use rustshare_auth::{JwtManager, PasswordHasher};
+use rustshare_crypto::SecretEncryptionKey;
 use rustshare_core::{
     domain::{SharePermissions, User},
     events::EventBroadcaster,
@@ -105,6 +106,7 @@ pub struct AppState {
     pub notification_service: Arc<NotificationService<NotificationRepository>>,
     pub user_share_service: Arc<AppUserShareService>,
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
+    pub secret_key: SecretEncryptionKey,
 }
 
 #[tokio::main]
@@ -253,6 +255,10 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    // Load secret encryption key
+    let secret_key = SecretEncryptionKey::from_env()
+        .map_err(|e| anyhow::anyhow!("Secret encryption key error: {}", e))?;
+
     // Build application state
     let state = AppState {
         db_pool,
@@ -268,6 +274,7 @@ async fn main() -> Result<()> {
         notification_service,
         user_share_service,
         rate_limit_config,
+        secret_key,
     };
 
     // Build router.
