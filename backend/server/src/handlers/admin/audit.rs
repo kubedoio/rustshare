@@ -127,7 +127,7 @@ pub async fn list_audit_log(
                 COALESCE(sal.actor_label, 'anonymous')::text AS actor_label,
                 sal.action::text AS action_type,
                 sal.share_id::text AS target_label,
-                json_build_object('ip_address', sal.ip_address::text, 'success', sal.success) AS detail,
+                json_build_object('ip_address', sal.ip_address::text, 'success', sal.success)::jsonb AS detail,
                 NULL::uuid AS actor_id
             FROM share_access_log sal"
                 .to_string(),

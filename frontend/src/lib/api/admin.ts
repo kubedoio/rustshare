@@ -28,7 +28,7 @@ export const deleteAdminUser = (id: string) =>
 
 // Groups
 export const listAdminGroups = () =>
-	apiClient.get<{ groups: AdminGroup[] }>('/admin/groups');
+	apiClient.get<AdminGroup[]>('/admin/groups');
 
 export const createAdminGroup = (data: { name: string; description?: string }) =>
 	apiClient.post<AdminGroupDetail>('/admin/groups', data);

@@ -30,13 +30,23 @@ function uniqueSlug() {
 	return `e2e-${Date.now()}`;
 }
 
+/** Create a user via the admin users page. Assumes page is already on /admin/users. */
+async function createUser(page: Page, username: string, email: string, password: string) {
+	await page.click('button:has-text("New User")');
+	await page.waitForSelector('input#username', { timeout: 5_000 });
+	await page.fill('input#username', username);
+	await page.fill('input#email', email);
+	await page.fill('input#password', password);
+	await page.click('button:has-text("Create User")');
+	await expect(page.locator(`td:has-text("${username}")`).first()).toBeVisible({ timeout: 8_000 });
+}
+
 // ---------------------------------------------------------------------------
 // Test 1: create user → verify in list
 // ---------------------------------------------------------------------------
 
 test('admin creates a user and it appears in the user list', async ({ page }) => {
 	await loginAsAdmin(page);
-
 	await page.goto(`${BASE}/admin/users`);
 	await page.waitForSelector('text=Users', { timeout: 8_000 });
 
@@ -44,18 +54,7 @@ test('admin creates a user and it appears in the user list', async ({ page }) =>
 	const username = `testuser-${slug}`;
 	const email = `${slug}@example.com`;
 
-	// Open create modal
-	await page.click('button:has-text("Create User")');
-	await page.waitForSelector('input#username', { timeout: 5_000 });
-
-	await page.fill('input#username', username);
-	await page.fill('input#email', email);
-	await page.fill('input#password', 'TestPass123!');
-
-	await page.click('button:has-text("Create")');
-
-	// Modal should close and user should appear in list
-	await expect(page.locator(`text=${username}`)).toBeVisible({ timeout: 8_000 });
+	await createUser(page, username, email, 'TestPass123!');
 	await expect(page.locator(`text=${email}`)).toBeVisible();
 });
 
@@ -73,25 +72,11 @@ test('disabling a user blocks their login; re-enabling restores access', async (
 
 	// Create the user via the admin panel
 	await page.goto(`${BASE}/admin/users`);
-	await page.click('button:has-text("Create User")');
-	await page.waitForSelector('input#username');
+	await createUser(page, username, email, password);
 
-	await page.fill('input#username', username);
-	await page.fill('input#email', email);
-	await page.fill('input#password', password);
-	await page.click('button:has-text("Create")');
-	await expect(page.locator(`text=${username}`)).toBeVisible({ timeout: 8_000 });
-
-	// Navigate to the user detail page and disable
-	await page.click(`a[href*="/admin/users/"]:near(:text("${username}"))`);
-	await page.waitForURL(/\/admin\/users\/.+/);
-	await page.click('button:has-text("Disable")');
-	// Confirm if a dialog appears
-	const confirmBtn = page.locator('button:has-text("Confirm")');
-	if (await confirmBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-		await confirmBtn.click();
-	}
-	await expect(page.locator('text=disabled', { exact: false })).toBeVisible({ timeout: 5_000 });
+	// Disable from the user list row (no confirmation modal — direct action)
+	await page.locator(`tr:has-text("${username}") button:has-text("Disable")`).click();
+	await expect(page.locator(`tr:has-text("${username}")`).getByText('Disabled')).toBeVisible({ timeout: 5_000 });
 
 	// Try logging in as the disabled user in a new context
 	const ctx = await browser.newContext();
@@ -104,9 +89,9 @@ test('disabling a user blocks their login; re-enabling restores access', async (
 	await expect(userPage).not.toHaveURL(`${BASE}/files`, { timeout: 5_000 });
 	await ctx.close();
 
-	// Re-enable the user
-	await page.click('button:has-text("Enable")');
-	await expect(page.locator('text=active', { exact: false })).toBeVisible({ timeout: 5_000 });
+	// Re-enable the user from the list
+	await page.locator(`tr:has-text("${username}") button:has-text("Enable")`).click();
+	await expect(page.locator(`tr:has-text("${username}")`).getByText('Active')).toBeVisible({ timeout: 5_000 });
 
 	// Login should now succeed
 	const ctx2 = await browser.newContext();
@@ -134,20 +119,14 @@ test('group management: create, add member via typeahead, remove, delete', async
 	const memberUsername = `member-${slug}`;
 
 	await page.goto(`${BASE}/admin/users`);
-	await page.click('button:has-text("Create User")');
-	await page.waitForSelector('input#username');
-	await page.fill('input#username', memberUsername);
-	await page.fill('input#email', memberEmail);
-	await page.fill('input#password', 'TestPass123!');
-	await page.click('button:has-text("Create")');
-	await expect(page.locator(`text=${memberUsername}`)).toBeVisible({ timeout: 8_000 });
+	await createUser(page, memberUsername, memberEmail, 'TestPass123!');
 
 	// Create group
 	await page.goto(`${BASE}/admin/groups`);
+	await page.click('button:has-text("New Group")');
+	await page.waitForSelector('input#group-name');
+	await page.fill('input#group-name', groupName);
 	await page.click('button:has-text("Create Group")');
-	await page.waitForSelector('input#name');
-	await page.fill('input#name', groupName);
-	await page.click('button:has-text("Create")');
 	await expect(page.locator(`text=${groupName}`)).toBeVisible({ timeout: 8_000 });
 
 	// Open group detail
@@ -155,25 +134,24 @@ test('group management: create, add member via typeahead, remove, delete', async
 	await page.waitForURL(/\/admin\/groups\/.+/);
 
 	// Add member via typeahead
-	const searchInput = page.getByPlaceholder('Search users...');
+	const searchInput = page.getByPlaceholder('Search users to add...');
 	await searchInput.fill(memberUsername.slice(0, 6));
 	await expect(page.locator(`text=${memberUsername}`).first()).toBeVisible({ timeout: 5_000 });
 	await page.locator(`text=${memberUsername}`).first().click();
 
 	// Member should now appear in the member list
-	await expect(page.locator(`td:has-text("${memberUsername}")`)).toBeVisible({ timeout: 5_000 });
+	await expect(page.locator(`td:has-text("${memberUsername}")`).first()).toBeVisible({ timeout: 5_000 });
 
-	// Remove the member
+	// Remove the member (opens confirmation modal, then confirm)
 	await page.click(`tr:has-text("${memberUsername}") button:has-text("Remove")`);
-	await expect(page.locator(`td:has-text("${memberUsername}")`)).not.toBeVisible({ timeout: 5_000 });
+	await page.locator('.modal.modal-open button.btn-error').click();
+	await expect(page.locator(`td:has-text("${memberUsername}")`).first()).not.toBeVisible({ timeout: 5_000 });
 
 	// Delete the group
 	await page.goto(`${BASE}/admin/groups`);
 	await page.click(`tr:has-text("${groupName}") button:has-text("Delete")`);
-	const confirmBtn = page.locator('button:has-text("Confirm")');
-	if (await confirmBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-		await confirmBtn.click();
-	}
+	// Confirm in the modal (btn-error = red "Delete" button)
+	await page.locator('.modal.modal-open button.btn-error').click();
 	await expect(page.locator(`text=${groupName}`)).not.toBeVisible({ timeout: 5_000 });
 });
 
@@ -184,10 +162,16 @@ test('group management: create, add member via typeahead, remove, delete', async
 test('OIDC config values persist after save and page reload', async ({ page }) => {
 	await loginAsAdmin(page);
 	await page.goto(`${BASE}/admin/oidc`);
-	await page.waitForSelector('#issuer-url', { timeout: 8_000 });
+	await page.waitForSelector('input[type="checkbox"].toggle', { timeout: 8_000 });
 
 	const issuerUrl = 'https://accounts.e2e-test.example.com';
 	const providerId = `e2e-client-${uniqueSlug()}`;
+
+	// Enable OIDC so the fields become editable
+	const enableToggle = page.locator('input[type="checkbox"].toggle');
+	if (!(await enableToggle.isChecked())) {
+		await enableToggle.check();
+	}
 
 	// Fill in the form
 	await page.fill('#issuer-url', issuerUrl);
@@ -195,8 +179,8 @@ test('OIDC config values persist after save and page reload', async ({ page }) =
 	await page.fill('#provider-name', 'E2E Test Provider');
 
 	// Save
-	await page.click('button:has-text("Save")');
-	await expect(page.locator('text=saved', { exact: false })).toBeVisible({ timeout: 5_000 });
+	await page.click('button:has-text("Save Configuration")');
+	await expect(page.locator('text=Configuration saved')).toBeVisible({ timeout: 5_000 });
 
 	// Reload and verify values are still there
 	await page.reload();
@@ -205,10 +189,9 @@ test('OIDC config values persist after save and page reload', async ({ page }) =
 	await expect(page.locator('#client-id')).toHaveValue(providerId);
 
 	// Clean up: disable OIDC (restore to default state)
-	const enableToggle = page.locator('input[type="checkbox"].toggle');
 	if (await enableToggle.isChecked()) {
 		await enableToggle.uncheck();
-		await page.click('button:has-text("Save")');
+		await page.click('button:has-text("Save Configuration")');
 	}
 });
 
@@ -223,35 +206,18 @@ test('user.disabled action is recorded in the audit log', async ({ page }) => {
 	const username = `audituser-${slug}`;
 	const email = `${slug}-audit@example.com`;
 
-	// Create a user
+	// Create a user and disable them from the list
 	await page.goto(`${BASE}/admin/users`);
-	await page.click('button:has-text("Create User")');
-	await page.waitForSelector('input#username');
-	await page.fill('input#username', username);
-	await page.fill('input#email', email);
-	await page.fill('input#password', 'TestPass123!');
-	await page.click('button:has-text("Create")');
-	await expect(page.locator(`text=${username}`)).toBeVisible({ timeout: 8_000 });
-
-	// Navigate to user detail and disable
-	await page.click(`a[href*="/admin/users/"]:near(:text("${username}"))`);
-	await page.waitForURL(/\/admin\/users\/.+/);
-	await page.click('button:has-text("Disable")');
-	const confirmBtn = page.locator('button:has-text("Confirm")');
-	if (await confirmBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-		await confirmBtn.click();
-	}
-	await expect(page.locator('text=disabled', { exact: false })).toBeVisible({ timeout: 5_000 });
+	await createUser(page, username, email, 'TestPass123!');
+	await page.locator(`tr:has-text("${username}") button:has-text("Disable")`).click();
+	await expect(page.locator(`tr:has-text("${username}")`).getByText('Disabled')).toBeVisible({ timeout: 5_000 });
 
 	// Check audit log for the disable action
 	await page.goto(`${BASE}/admin/audit`);
 	await page.waitForSelector('table', { timeout: 8_000 });
 
 	// Filter by admin_action type to narrow results
-	const typeSelect = page.locator('select').first();
-	if (await typeSelect.isVisible()) {
-		await typeSelect.selectOption('admin_action');
-	}
+	await page.locator('#audit-type').selectOption('admin_action');
 
 	await expect(
 		page.locator('text=user.disabled', { exact: false }).first()

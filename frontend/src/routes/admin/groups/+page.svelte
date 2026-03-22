@@ -44,7 +44,7 @@
 		</div>
 	{:else if $groupsQuery.data}
 		<GroupTable
-			groups={$groupsQuery.data.groups}
+			groups={$groupsQuery.data}
 			onDelete={handleDelete}
 			onCreate={() => (showCreateModal = true)}
 		/>
