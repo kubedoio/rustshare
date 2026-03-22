@@ -8,6 +8,7 @@ CREATE TABLE admin_actions (
     performed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX admin_actions_actor_id_idx ON admin_actions(actor_id);
-CREATE INDEX admin_actions_performed_at_idx ON admin_actions(performed_at DESC);
-CREATE INDEX admin_actions_action_type_idx ON admin_actions(action_type);
+CREATE INDEX idx_admin_actions_actor_id ON admin_actions(actor_id);
+CREATE INDEX idx_admin_actions_performed_at ON admin_actions(performed_at DESC);
+CREATE INDEX idx_admin_actions_action_type ON admin_actions(action_type);
+CREATE INDEX idx_admin_actions_target_id ON admin_actions(target_id) WHERE target_id IS NOT NULL;

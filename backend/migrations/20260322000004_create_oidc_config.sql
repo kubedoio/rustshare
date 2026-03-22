@@ -10,3 +10,6 @@ CREATE TABLE oidc_config (
     updated_by           UUID REFERENCES users(id) ON DELETE SET NULL,
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+INSERT INTO oidc_config (id) VALUES ('00000000-0000-0000-0000-000000000001')
+ON CONFLICT DO NOTHING;
