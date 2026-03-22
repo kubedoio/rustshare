@@ -42,5 +42,38 @@ nonzero_ext = "0.3"
 openidconnect = "4.0.1"
 url = "2.5"
 
+[[test]]
+name = "admin_require_admin_test"
+path = "../tests/admin_require_admin_test.rs"
+
+[[test]]
+name = "admin_users_test"
+path = "../tests/admin_users_test.rs"
+
+[[test]]
+name = "admin_groups_test"
+path = "../tests/admin_groups_test.rs"
+
+[[test]]
+name = "admin_config_oidc_test"
+path = "../tests/admin_config_oidc_test.rs"
+
+[[test]]
+name = "admin_config_smtp_test"
+path = "../tests/admin_config_smtp_test.rs"
+
+[[test]]
+name = "admin_webhooks_test"
+path = "../tests/admin_webhooks_test.rs"
+
+[[test]]
+name = "admin_audit_test"
+path = "../tests/admin_audit_test.rs"
+
 [dev-dependencies]
 tokio-tungstenite = "0.24"
+rustshare-crypto = { path = "../crates/crypto" }
+hmac = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
