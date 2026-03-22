@@ -209,6 +209,19 @@ async fn test_admin_user_full_lifecycle() {
         "Expected at least 4 admin_actions for lifecycle (got {action_count})"
     );
 
+    // Verify each specific action type was logged
+    for action_type in &["user.created", "user.quota_changed", "user.disabled", "user.enabled"] {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM admin_actions WHERE actor_id = $1 AND action_type = $2"
+        )
+        .bind(actor_id)
+        .bind(action_type)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1, "Expected 1 row for action_type={}", action_type);
+    }
+
     // --- HARD DELETE ---
     sqlx::query(
         "INSERT INTO admin_actions (actor_id, action_type, target_type, target_id, detail)

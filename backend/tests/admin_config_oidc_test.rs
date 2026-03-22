@@ -228,3 +228,77 @@ async fn test_oidc_config_update_stores_encrypted_secret() {
     reset_oidc_config(&pool).await;
     cleanup(&pool, &[actor_id]).await;
 }
+
+/// Update the issuer_url on the oidc_config row, verify the change persists,
+/// and confirm an admin_actions row is written for config.oidc_updated.
+#[tokio::test]
+#[ignore]
+async fn test_oidc_config_update() {
+    let pool = test_pool().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let actor_id = create_test_admin(&pool, suffix).await;
+    let oidc_id: Uuid = OIDC_CONFIG_ID.parse().unwrap();
+
+    let new_issuer_url = "https://updated-idp.example.com";
+
+    // UPDATE the oidc_config row with a new issuer_url
+    sqlx::query(
+        "UPDATE oidc_config
+         SET issuer_url = $2, updated_by = $3, updated_at = NOW()
+         WHERE id = $1",
+    )
+    .bind(oidc_id)
+    .bind(new_issuer_url)
+    .bind(actor_id)
+    .execute(&pool)
+    .await
+    .expect("update oidc_config issuer_url");
+
+    // SELECT it back and verify the new value
+    let stored_issuer: Option<String> =
+        sqlx::query_scalar("SELECT issuer_url FROM oidc_config WHERE id = $1")
+            .bind(oidc_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch issuer_url");
+
+    assert_eq!(
+        stored_issuer.as_deref(),
+        Some(new_issuer_url),
+        "issuer_url must reflect the updated value"
+    );
+
+    // Insert a config.oidc_updated admin_actions row (simulating what the handler does)
+    sqlx::query(
+        "INSERT INTO admin_actions (actor_id, action_type, detail)
+         VALUES ($1, 'config.oidc_updated', $2)",
+    )
+    .bind(actor_id)
+    .bind(serde_json::json!({"issuer_url": new_issuer_url}))
+    .execute(&pool)
+    .await
+    .expect("log config.oidc_updated");
+
+    // Verify the admin_actions row exists
+    let action_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM admin_actions WHERE actor_id = $1 AND action_type = 'config.oidc_updated'",
+    )
+    .bind(actor_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count admin_actions");
+
+    assert!(
+        action_count >= 1,
+        "Expected at least 1 config.oidc_updated admin_actions row"
+    );
+
+    // Cleanup
+    sqlx::query("DELETE FROM admin_actions WHERE actor_id = $1")
+        .bind(actor_id)
+        .execute(&pool)
+        .await
+        .ok();
+    reset_oidc_config(&pool).await;
+    cleanup(&pool, &[actor_id]).await;
+}

@@ -483,5 +483,33 @@ async fn test_audit_pagination() {
         );
     }
 
+    // Verify ordering: fetch all results and assert occurred_at is descending
+    let all_sql = format!(
+        "{cte}
+         SELECT id, occurred_at, event_type, actor_label, action_type, target_label, detail, actor_id
+         FROM all_events
+         WHERE actor_id = $1
+         ORDER BY occurred_at DESC
+         LIMIT 100 OFFSET 0"
+    );
+    let entries = sqlx::query(&all_sql)
+        .bind(actor_id)
+        .fetch_all(&pool)
+        .await
+        .expect("fetch all entries for ordering check");
+
+    let timestamps: Vec<chrono::DateTime<chrono::Utc>> = entries
+        .iter()
+        .map(|r| r.try_get("occurred_at").unwrap())
+        .collect();
+
+    // Verify ordering: each entry should have occurred_at <= previous
+    for window in timestamps.windows(2) {
+        assert!(
+            window[0] >= window[1],
+            "Results should be ordered by occurred_at DESC"
+        );
+    }
+
     cleanup(&pool, &[actor_id]).await;
 }
