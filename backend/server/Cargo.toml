@@ -23,7 +23,7 @@ tower-http = { workspace = true, features = ["fs"] }
 sqlx.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["macro-diagnostics"] }
 chrono.workspace = true
 anyhow.workspace = true
 tracing.workspace = true

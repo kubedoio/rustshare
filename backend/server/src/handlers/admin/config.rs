@@ -4,7 +4,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use rustshare_crypto::encrypt_secret;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use uuid::Uuid;
+use uuid::{uuid, Uuid};
 
 use crate::{handlers::AdminUser, AppState};
 use super::log_admin_action;
@@ -13,8 +13,8 @@ use super::log_admin_action;
 // Fixed singleton row IDs (pre-seeded by migrations)
 // ---------------------------------------------------------------------------
 
-const OIDC_CONFIG_ID: &str = "00000000-0000-0000-0000-000000000001";
-const SMTP_CONFIG_ID: &str = "00000000-0000-0000-0000-000000000002";
+const OIDC_CONFIG_ID: uuid::Uuid = uuid!("00000000-0000-0000-0000-000000000001");
+const SMTP_CONFIG_ID: uuid::Uuid = uuid!("00000000-0000-0000-0000-000000000002");
 
 // ---------------------------------------------------------------------------
 // OIDC — row type
@@ -169,7 +169,7 @@ pub async fn get_oidc_config(
          FROM oidc_config
          WHERE id = $1",
     )
-    .bind(OIDC_CONFIG_ID.parse::<Uuid>().unwrap())
+    .bind(OIDC_CONFIG_ID)
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
@@ -191,7 +191,7 @@ pub async fn update_oidc_config(
          FROM oidc_config
          WHERE id = $1",
     )
-    .bind(OIDC_CONFIG_ID.parse::<Uuid>().unwrap())
+    .bind(OIDC_CONFIG_ID)
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
@@ -233,7 +233,7 @@ pub async fn update_oidc_config(
          RETURNING id, enabled, provider_name, client_id, client_secret_enc,
                    issuer_url, scopes, auto_provision_users, updated_by, updated_at",
     )
-    .bind(OIDC_CONFIG_ID.parse::<Uuid>().unwrap())
+    .bind(OIDC_CONFIG_ID)
     .bind(new_enabled)
     .bind(new_provider_name)
     .bind(new_client_id)
@@ -272,7 +272,7 @@ pub async fn test_oidc_config(
          FROM oidc_config
          WHERE id = $1",
     )
-    .bind(OIDC_CONFIG_ID.parse::<Uuid>().unwrap())
+    .bind(OIDC_CONFIG_ID)
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
@@ -340,7 +340,7 @@ pub async fn get_smtp_config(
          FROM smtp_config
          WHERE id = $1",
     )
-    .bind(SMTP_CONFIG_ID.parse::<Uuid>().unwrap())
+    .bind(SMTP_CONFIG_ID)
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
@@ -362,7 +362,7 @@ pub async fn update_smtp_config(
          FROM smtp_config
          WHERE id = $1",
     )
-    .bind(SMTP_CONFIG_ID.parse::<Uuid>().unwrap())
+    .bind(SMTP_CONFIG_ID)
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
@@ -406,7 +406,7 @@ pub async fn update_smtp_config(
          RETURNING id, enabled, host, port, username, password_enc,
                    from_address, from_name, tls_mode, updated_by, updated_at",
     )
-    .bind(SMTP_CONFIG_ID.parse::<Uuid>().unwrap())
+    .bind(SMTP_CONFIG_ID)
     .bind(new_enabled)
     .bind(new_host)
     .bind(new_port)
@@ -439,11 +439,14 @@ pub async fn update_smtp_config(
 /// No SMTP library is available; always returns a "not_implemented" stub.
 pub async fn test_smtp_config(
     AdminUser { .. }: AdminUser,
-) -> Json<serde_json::Value> {
-    Json(json!({
-        "status": "not_implemented",
-        "message": "SMTP test not yet available"
-    }))
+) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({
+            "status": "not_implemented",
+            "message": "SMTP test not yet available"
+        })),
+    )
 }
 
 // ---------------------------------------------------------------------------
