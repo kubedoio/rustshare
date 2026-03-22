@@ -724,6 +724,9 @@ async fn find_or_create_oidc_user(
             )
         })?
     {
+        if user.disabled_at.is_some() {
+            return Err((StatusCode::FORBIDDEN, "account_disabled".to_string()));
+        }
         return Ok(user);
     }
 

@@ -58,6 +58,7 @@ pub struct User {
     pub theme: Theme,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub disabled_at: Option<DateTime<Utc>>,
 }
 
 impl User {
@@ -82,6 +83,7 @@ impl User {
             theme: Theme::default(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            disabled_at: None,
         }
     }
 

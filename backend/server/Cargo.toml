@@ -13,6 +13,7 @@ rustshare-core = { path = "../crates/core" }
 rustshare-storage = { path = "../crates/storage" }
 rustshare-auth = { path = "../crates/auth" }
 rustshare-infrastructure = { path = "../crates/infrastructure" }
+rustshare-crypto = { path = "../crates/crypto" }
 
 tokio.workspace = true
 axum = { workspace = true, features = ["multipart", "ws"] }
@@ -22,7 +23,7 @@ tower-http = { workspace = true, features = ["fs"] }
 sqlx.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["macro-diagnostics"] }
 chrono.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
@@ -32,11 +33,47 @@ aws-config.workspace = true
 aws-sdk-s3.workspace = true
 futures-util = "0.3"
 dotenv = "0.15"
+hmac = { workspace = true }
+hex = { workspace = true }
+sha2.workspace = true
+reqwest = { workspace = true }
 governor = "0.6"
 nonzero_ext = "0.3"
 openidconnect = "4.0.1"
 url = "2.5"
 
+[[test]]
+name = "admin_require_admin_test"
+path = "../tests/admin_require_admin_test.rs"
+
+[[test]]
+name = "admin_users_test"
+path = "../tests/admin_users_test.rs"
+
+[[test]]
+name = "admin_groups_test"
+path = "../tests/admin_groups_test.rs"
+
+[[test]]
+name = "admin_config_oidc_test"
+path = "../tests/admin_config_oidc_test.rs"
+
+[[test]]
+name = "admin_config_smtp_test"
+path = "../tests/admin_config_smtp_test.rs"
+
+[[test]]
+name = "admin_webhooks_test"
+path = "../tests/admin_webhooks_test.rs"
+
+[[test]]
+name = "admin_audit_test"
+path = "../tests/admin_audit_test.rs"
+
 [dev-dependencies]
 tokio-tungstenite = "0.24"
-reqwest = { version = "0.11", features = ["multipart"] }
+rustshare-crypto = { path = "../crates/crypto" }
+hmac = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }

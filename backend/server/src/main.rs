@@ -57,6 +57,7 @@ use axum::{
     Json, Router,
 };
 use rustshare_auth::{JwtManager, PasswordHasher};
+use rustshare_crypto::SecretEncryptionKey;
 use rustshare_core::{
     domain::{SharePermissions, User},
     events::EventBroadcaster,
@@ -105,6 +106,7 @@ pub struct AppState {
     pub notification_service: Arc<NotificationService<NotificationRepository>>,
     pub user_share_service: Arc<AppUserShareService>,
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
+    pub secret_key: SecretEncryptionKey,
 }
 
 #[tokio::main]
@@ -253,6 +255,10 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    // Load secret encryption key
+    let secret_key = SecretEncryptionKey::from_env()
+        .map_err(|e| anyhow::anyhow!("Secret encryption key error: {}", e))?;
+
     // Build application state
     let state = AppState {
         db_pool,
@@ -268,6 +274,7 @@ async fn main() -> Result<()> {
         notification_service,
         user_share_service,
         rate_limit_config,
+        secret_key,
     };
 
     // Build router.
@@ -341,6 +348,115 @@ async fn main() -> Result<()> {
         .route(
             "/api/v1/admin/replication/targets",
             get(replication_handlers::list_replication_targets),
+        )
+        // Admin user management (Task 4)
+        .route(
+            "/api/v1/admin/users",
+            get(handlers::admin::users::list_admin_users),
+        )
+        .route(
+            "/api/v1/admin/users",
+            post(handlers::admin::users::create_admin_user),
+        )
+        .route(
+            "/api/v1/admin/users/:id",
+            get(handlers::admin::users::get_admin_user),
+        )
+        .route(
+            "/api/v1/admin/users/:id",
+            patch(handlers::admin::users::update_admin_user),
+        )
+        .route(
+            "/api/v1/admin/users/:id/disable",
+            post(handlers::admin::users::disable_admin_user),
+        )
+        .route(
+            "/api/v1/admin/users/:id/enable",
+            post(handlers::admin::users::enable_admin_user),
+        )
+        .route(
+            "/api/v1/admin/users/:id",
+            delete(handlers::admin::users::delete_admin_user),
+        )
+        // Admin audit log (Task 4)
+        .route(
+            "/api/v1/admin/audit",
+            get(handlers::admin::audit::list_audit_log),
+        )
+        // Admin group management (Task 1)
+        .route(
+            "/api/v1/admin/groups",
+            get(handlers::admin::groups::list_groups),
+        )
+        .route(
+            "/api/v1/admin/groups",
+            post(handlers::admin::groups::create_group),
+        )
+        .route(
+            "/api/v1/admin/groups/:id",
+            get(handlers::admin::groups::get_group),
+        )
+        .route(
+            "/api/v1/admin/groups/:id",
+            patch(handlers::admin::groups::update_group),
+        )
+        .route(
+            "/api/v1/admin/groups/:id",
+            delete(handlers::admin::groups::delete_group),
+        )
+        .route(
+            "/api/v1/admin/groups/:id/members",
+            post(handlers::admin::groups::add_member),
+        )
+        .route(
+            "/api/v1/admin/groups/:id/members/:user_id",
+            delete(handlers::admin::groups::remove_member),
+        )
+        // Admin OIDC/SMTP config
+        .route(
+            "/api/v1/admin/config/oidc",
+            get(handlers::admin::config::get_oidc_config),
+        )
+        .route(
+            "/api/v1/admin/config/oidc",
+            put(handlers::admin::config::update_oidc_config),
+        )
+        .route(
+            "/api/v1/admin/config/oidc/test",
+            post(handlers::admin::config::test_oidc_config),
+        )
+        .route(
+            "/api/v1/admin/config/smtp",
+            get(handlers::admin::config::get_smtp_config),
+        )
+        .route(
+            "/api/v1/admin/config/smtp",
+            put(handlers::admin::config::update_smtp_config),
+        )
+        .route(
+            "/api/v1/admin/config/smtp/test",
+            post(handlers::admin::config::test_smtp_config),
+        )
+        // Admin webhooks
+        .route(
+            "/api/v1/admin/integrations/webhooks",
+            get(handlers::admin::webhooks::list_webhooks),
+        )
+        .route(
+            "/api/v1/admin/integrations/webhooks",
+            post(handlers::admin::webhooks::create_webhook),
+        )
+        .route(
+            "/api/v1/admin/integrations/webhooks/:id",
+            patch(handlers::admin::webhooks::update_webhook),
+        )
+        .route(
+            "/api/v1/admin/integrations/webhooks/:id",
+            delete(handlers::admin::webhooks::delete_webhook),
+        )
+        .route(
+            "/api/v1/admin/integrations/webhooks/:id/test",
+            post(handlers::admin::webhooks::test_webhook),
         )
         // Folder routes (Task 20-22)
         // NOTE: More specific routes (with literal path segments) must come BEFORE parameterized routes
@@ -820,6 +936,15 @@ async fn login(
 
     if !is_valid {
         return Err((StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()));
+    }
+
+    // Reject disabled accounts
+    if user.disabled_at.is_some() {
+        return Ok((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "account_disabled" })),
+        )
+            .into_response());
     }
 
     // Keep JWT generation temporarily for compatibility while the web app migrates to cookies.

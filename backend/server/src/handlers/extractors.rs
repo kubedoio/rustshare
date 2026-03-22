@@ -12,6 +12,7 @@ use axum_extra::{
     TypedHeader,
 };
 use rustshare_auth::ShareSessionClaims;
+use sqlx::Row;
 use uuid::Uuid;
 
 use crate::web_session::{extract_cookie_value, resolve_user_session};
@@ -163,6 +164,72 @@ impl FromRequestParts<AppState> for ShareSessionAuth {
 
         Ok(ShareSessionAuth(claims))
     }
+}
+
+/// Admin-only extractor. Validates the session/JWT (like AuthenticatedUser),
+/// then asserts the user has is_admin = true and is not disabled.
+/// Returns 403 Forbidden if not admin or account is disabled.
+#[derive(Debug, Clone)]
+pub struct AdminUser {
+    pub user_id: Uuid,
+}
+
+#[async_trait]
+impl FromRequestParts<AppState> for AdminUser {
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let auth = AuthenticatedUser::from_request_parts(parts, state).await?;
+
+        let row = sqlx::query(
+            "SELECT is_admin, disabled_at FROM users WHERE id = $1",
+        )
+        .bind(auth.user_id)
+        .fetch_optional(&state.db_pool)
+        .await
+        .map_err(|_| admin_internal_error("Failed to verify admin status"))?
+        .ok_or_else(|| admin_unauthorized_error("User not found"))?;
+
+        let is_admin: bool = row.try_get("is_admin")
+            .map_err(|_| admin_internal_error("Failed to read admin status"))?;
+        let disabled_at: Option<chrono::DateTime<chrono::Utc>> = row.try_get("disabled_at")
+            .map_err(|_| admin_internal_error("Failed to read disabled status"))?;
+
+        if !is_admin {
+            return Err(admin_forbidden_error("Admin access required"));
+        }
+        if disabled_at.is_some() {
+            return Err(admin_forbidden_error("Account is disabled"));
+        }
+        Ok(AdminUser { user_id: auth.user_id })
+    }
+}
+
+fn admin_forbidden_error(msg: &str) -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({ "error": msg })),
+    )
+        .into_response()
+}
+
+fn admin_internal_error(msg: &str) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({ "error": msg })),
+    )
+        .into_response()
+}
+
+fn admin_unauthorized_error(msg: &str) -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({ "error": msg })),
+    )
+        .into_response()
 }
 
 pub(crate) fn bearer_token_from_headers(headers: &HeaderMap) -> Option<String> {

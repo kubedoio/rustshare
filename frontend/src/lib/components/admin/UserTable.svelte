@@ -1,0 +1,196 @@
+<script lang="ts">
+	import { createMutation } from '@tanstack/svelte-query';
+	import type { AdminUser } from '$lib/api/admin';
+	import { disableAdminUser, enableAdminUser, deleteAdminUser } from '$lib/api/admin';
+
+	export let users: AdminUser[] = [];
+	export let total: number = 0;
+	export let page: number = 1;
+	export let perPage: number = 20;
+	export let onPageChange: (page: number) => void = () => {};
+	export let onSearch: (query: string) => void = () => {};
+	export let onStatusFilter: (status: string) => void = () => {};
+	export let onRefresh: () => void = () => {};
+
+	let searchValue = '';
+	let statusFilter = '';
+	let searchTimeout: ReturnType<typeof setTimeout>;
+	let confirmDelete: string | null = null;
+
+	const totalPages = Math.ceil(total / perPage);
+
+	function handleSearchInput(e: Event) {
+		const val = (e.target as HTMLInputElement).value;
+		searchValue = val;
+		clearTimeout(searchTimeout);
+		searchTimeout = setTimeout(() => onSearch(val), 300);
+	}
+
+	function handleStatusChange(e: Event) {
+		statusFilter = (e.target as HTMLSelectElement).value;
+		onStatusFilter(statusFilter);
+	}
+
+	const disableMutation = createMutation({
+		mutationFn: (id: string) => disableAdminUser(id),
+		onSuccess: () => onRefresh()
+	});
+
+	const enableMutation = createMutation({
+		mutationFn: (id: string) => enableAdminUser(id),
+		onSuccess: () => onRefresh()
+	});
+
+	const deleteMutation = createMutation({
+		mutationFn: (id: string) => deleteAdminUser(id),
+		onSuccess: () => {
+			confirmDelete = null;
+			onRefresh();
+		}
+	});
+
+	function formatDate(dateStr: string) {
+		return new Date(dateStr).toLocaleDateString();
+	}
+
+	function formatBytes(bytes: number) {
+		if (bytes === 0) return 'Unlimited';
+		const gb = bytes / (1024 * 1024 * 1024);
+		return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+	}
+</script>
+
+<div class="space-y-4">
+	<!-- Filters -->
+	<div class="flex flex-wrap gap-3 items-center">
+		<input
+			type="text"
+			placeholder="Search users..."
+			class="input input-bordered input-sm w-64"
+			value={searchValue}
+			on:input={handleSearchInput}
+		/>
+		<select class="select select-bordered select-sm" on:change={handleStatusChange}>
+			<option value="">All statuses</option>
+			<option value="active">Active</option>
+			<option value="disabled">Disabled</option>
+		</select>
+		<span class="text-sm text-base-content/60 ml-auto">{total} user{total !== 1 ? 's' : ''}</span>
+	</div>
+
+	<!-- Table -->
+	<div class="overflow-x-auto rounded-lg border border-base-300">
+		<table class="table table-zebra w-full">
+			<thead>
+				<tr>
+					<th>Username</th>
+					<th>Email</th>
+					<th>Status</th>
+					<th>Role</th>
+					<th>Quota</th>
+					<th>Created</th>
+					<th>Actions</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each users as user (user.id)}
+					<tr>
+						<td class="font-medium">{user.username}</td>
+						<td class="text-sm text-base-content/70">{user.email}</td>
+						<td>
+							{#if user.disabled_at}
+								<span class="badge badge-error badge-sm">Disabled</span>
+							{:else}
+								<span class="badge badge-success badge-sm">Active</span>
+							{/if}
+						</td>
+						<td>
+							{#if user.is_admin}
+								<span class="badge badge-warning badge-sm">Admin</span>
+							{:else}
+								<span class="badge badge-ghost badge-sm">User</span>
+							{/if}
+						</td>
+						<td class="text-sm">{formatBytes(user.storage_quota_bytes)}</td>
+						<td class="text-sm text-base-content/60">{formatDate(user.created_at)}</td>
+						<td>
+							<div class="flex gap-1">
+								<a href="/admin/users/{user.id}" class="btn btn-ghost btn-xs">Edit</a>
+								{#if user.disabled_at}
+									<button
+										class="btn btn-ghost btn-xs text-success"
+										on:click={() => $enableMutation.mutate(user.id)}
+										disabled={$enableMutation.isPending}
+									>
+										Enable
+									</button>
+								{:else}
+									<button
+										class="btn btn-ghost btn-xs text-warning"
+										on:click={() => $disableMutation.mutate(user.id)}
+										disabled={$disableMutation.isPending}
+									>
+										Disable
+									</button>
+								{/if}
+								<button
+									class="btn btn-ghost btn-xs text-error"
+									on:click={() => (confirmDelete = user.id)}
+								>
+									Delete
+								</button>
+							</div>
+						</td>
+					</tr>
+				{/each}
+				{#if users.length === 0}
+					<tr>
+						<td colspan="7" class="text-center text-base-content/50 py-8">No users found</td>
+					</tr>
+				{/if}
+			</tbody>
+		</table>
+	</div>
+
+	<!-- Pagination -->
+	{#if totalPages > 1}
+		<div class="flex justify-center gap-2">
+			<button
+				class="btn btn-sm btn-ghost"
+				disabled={page <= 1}
+				on:click={() => onPageChange(page - 1)}
+			>
+				Previous
+			</button>
+			<span class="flex items-center px-2 text-sm">Page {page} of {totalPages}</span>
+			<button
+				class="btn btn-sm btn-ghost"
+				disabled={page >= totalPages}
+				on:click={() => onPageChange(page + 1)}
+			>
+				Next
+			</button>
+		</div>
+	{/if}
+</div>
+
+<!-- Delete confirmation modal -->
+{#if confirmDelete}
+	<div class="modal modal-open">
+		<div class="modal-box">
+			<h3 class="font-bold text-lg">Delete User</h3>
+			<p class="py-4">Are you sure you want to delete this user? This action cannot be undone.</p>
+			<div class="modal-action">
+				<button class="btn btn-ghost" on:click={() => (confirmDelete = null)}>Cancel</button>
+				<button
+					class="btn btn-error"
+					on:click={() => confirmDelete && $deleteMutation.mutate(confirmDelete)}
+					disabled={$deleteMutation.isPending}
+				>
+					{$deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+				</button>
+			</div>
+		</div>
+		<div class="modal-backdrop" on:click={() => (confirmDelete = null)} role="presentation"></div>
+	</div>
+{/if}
