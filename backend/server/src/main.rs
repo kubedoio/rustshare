@@ -378,6 +378,11 @@ async fn main() -> Result<()> {
             "/api/v1/admin/users/:id",
             delete(handlers::admin::users::delete_admin_user),
         )
+        // Admin audit log (Task 4)
+        .route(
+            "/api/v1/admin/audit",
+            get(handlers::admin::audit::list_audit_log),
+        )
         // Admin group management (Task 1)
         .route(
             "/api/v1/admin/groups",
