@@ -83,6 +83,23 @@ pub async fn list_audit_log(
 
     let event_type_filter = query.event_type.as_deref().unwrap_or("all");
 
+    // Fix 1: Validate the type parameter — reject unknown values immediately.
+    if !matches!(event_type_filter, "all" | "share_access" | "security_event" | "admin_action") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Invalid type filter. Must be one of: share_access, security_event, admin_action, all"})),
+        ));
+    }
+
+    // Fix 2: Reject the combination of type=share_access with user_id filter,
+    // since share_access_log has no user UUID column.
+    if event_type_filter == "share_access" && query.user_id.is_some() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "user_id filter cannot be combined with type=share_access"})),
+        ));
+    }
+
     // Determine which branches to include based on the type filter.
     let include_share_access = matches!(event_type_filter, "all" | "share_access");
     let include_security_event = matches!(event_type_filter, "all" | "security_event");
@@ -210,6 +227,7 @@ pub async fn list_audit_log(
     let limit_pos = bind_index;
     bind_index += 1;
     let offset_pos = bind_index;
+    // bind_index ends here; LIMIT and OFFSET are appended after bind_params! macro in select query only
 
     // Build final queries -----------------------------------------------------
     let count_sql = format!(
