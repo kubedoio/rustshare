@@ -68,6 +68,17 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         let user_id =
             Uuid::parse_str(&claims.sub).map_err(|_| auth_error("Invalid user ID in token"))?;
 
+        let disabled: bool = sqlx::query_scalar("SELECT disabled_at IS NOT NULL FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(|_| auth_error("Authentication failed"))?
+            .ok_or_else(|| auth_error("User not found"))?;
+
+        if disabled {
+            return Err(auth_error("Account is disabled"));
+        }
+
         Ok(AuthenticatedUser { user_id })
     }
 }
@@ -106,6 +117,17 @@ impl FromRequestParts<AppState> for AuthenticatedSession {
 
         let user_id =
             Uuid::parse_str(&claims.sub).map_err(|_| auth_error("Invalid user ID in token"))?;
+
+        let disabled: bool = sqlx::query_scalar("SELECT disabled_at IS NOT NULL FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(|_| auth_error("Authentication failed"))?
+            .ok_or_else(|| auth_error("User not found"))?;
+
+        if disabled {
+            return Err(auth_error("Account is disabled"));
+        }
 
         Ok(AuthenticatedSession {
             user_id,
