@@ -378,6 +378,35 @@ async fn main() -> Result<()> {
             "/api/v1/admin/users/:id",
             delete(handlers::admin::users::delete_admin_user),
         )
+        // Admin group management (Task 1)
+        .route(
+            "/api/v1/admin/groups",
+            get(handlers::admin::groups::list_groups),
+        )
+        .route(
+            "/api/v1/admin/groups",
+            post(handlers::admin::groups::create_group),
+        )
+        .route(
+            "/api/v1/admin/groups/:id",
+            get(handlers::admin::groups::get_group),
+        )
+        .route(
+            "/api/v1/admin/groups/:id",
+            patch(handlers::admin::groups::update_group),
+        )
+        .route(
+            "/api/v1/admin/groups/:id",
+            delete(handlers::admin::groups::delete_group),
+        )
+        .route(
+            "/api/v1/admin/groups/:id/members",
+            post(handlers::admin::groups::add_member),
+        )
+        .route(
+            "/api/v1/admin/groups/:id/members/:user_id",
+            delete(handlers::admin::groups::remove_member),
+        )
         // Folder routes (Task 20-22)
         // NOTE: More specific routes (with literal path segments) must come BEFORE parameterized routes
         .route("/api/v1/folders", post(handlers::create_folder))
