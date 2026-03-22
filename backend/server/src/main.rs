@@ -349,6 +349,35 @@ async fn main() -> Result<()> {
             "/api/v1/admin/replication/targets",
             get(replication_handlers::list_replication_targets),
         )
+        // Admin user management (Task 4)
+        .route(
+            "/api/v1/admin/users",
+            get(handlers::admin::users::list_admin_users),
+        )
+        .route(
+            "/api/v1/admin/users",
+            post(handlers::admin::users::create_admin_user),
+        )
+        .route(
+            "/api/v1/admin/users/:id",
+            get(handlers::admin::users::get_admin_user),
+        )
+        .route(
+            "/api/v1/admin/users/:id",
+            patch(handlers::admin::users::update_admin_user),
+        )
+        .route(
+            "/api/v1/admin/users/:id/disable",
+            post(handlers::admin::users::disable_admin_user),
+        )
+        .route(
+            "/api/v1/admin/users/:id/enable",
+            post(handlers::admin::users::enable_admin_user),
+        )
+        .route(
+            "/api/v1/admin/users/:id",
+            delete(handlers::admin::users::delete_admin_user),
+        )
         // Folder routes (Task 20-22)
         // NOTE: More specific routes (with literal path segments) must come BEFORE parameterized routes
         .route("/api/v1/folders", post(handlers::create_folder))
