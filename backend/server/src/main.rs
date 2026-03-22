@@ -831,7 +831,11 @@ async fn login(
 
     // Reject disabled accounts
     if user.disabled_at.is_some() {
-        return Err((StatusCode::FORBIDDEN, "account_disabled".to_string()));
+        return Ok((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "account_disabled" })),
+        )
+            .into_response());
     }
 
     // Keep JWT generation temporarily for compatibility while the web app migrates to cookies.
