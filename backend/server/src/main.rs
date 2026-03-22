@@ -829,6 +829,11 @@ async fn login(
         return Err((StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()));
     }
 
+    // Reject disabled accounts
+    if user.disabled_at.is_some() {
+        return Err((StatusCode::FORBIDDEN, "account_disabled".to_string()));
+    }
+
     // Keep JWT generation temporarily for compatibility while the web app migrates to cookies.
     let token = state
         .jwt_manager

@@ -436,7 +436,7 @@ impl MetadataStore {
     pub async fn find_user_by_email(&self, email: &str) -> Result<Option<User>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at FROM users WHERE email = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at FROM users WHERE email = $1"#,
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -457,6 +457,7 @@ impl MetadataStore {
                     .unwrap_or_default(),
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                disabled_at: row.try_get("disabled_at")?,
             };
             Ok(Some(user))
         } else {
@@ -467,7 +468,7 @@ impl MetadataStore {
     /// Find user by username.
     pub async fn find_user_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at FROM users WHERE username = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at FROM users WHERE username = $1"#,
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -485,6 +486,7 @@ impl MetadataStore {
                 theme: row.try_get("theme")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                disabled_at: row.try_get("disabled_at")?,
             }))
         } else {
             Ok(None)
@@ -495,7 +497,7 @@ impl MetadataStore {
     pub async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at FROM users WHERE id = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at FROM users WHERE id = $1"#,
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -516,6 +518,7 @@ impl MetadataStore {
                     .unwrap_or_default(),
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                disabled_at: row.try_get("disabled_at")?,
             };
             Ok(Some(user))
         } else {

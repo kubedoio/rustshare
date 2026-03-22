@@ -22,6 +22,7 @@ impl UserRepository {
                 .unwrap_or_default(),
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
+            disabled_at: row.try_get("disabled_at")?,
         })
     }
 
@@ -37,7 +38,7 @@ impl UserRepository {
         let row = sqlx::query(
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
-                   storage_quota, theme, created_at, updated_at
+                   storage_quota, theme, created_at, updated_at, disabled_at
             FROM users
             WHERE LOWER(email) = $1
             "#,
@@ -54,7 +55,7 @@ impl UserRepository {
         let row = sqlx::query(
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
-                   storage_quota, theme, created_at, updated_at
+                   storage_quota, theme, created_at, updated_at, disabled_at
             FROM users
             WHERE id = $1
             "#,

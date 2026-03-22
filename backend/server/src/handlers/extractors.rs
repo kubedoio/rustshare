@@ -190,13 +190,13 @@ impl FromRequestParts<AppState> for AdminUser {
         .bind(auth.user_id)
         .fetch_optional(&state.db_pool)
         .await
-        .map_err(|_| admin_forbidden_error("Failed to verify admin status"))?
-        .ok_or_else(|| admin_forbidden_error("User not found"))?;
+        .map_err(|_| admin_internal_error("Failed to verify admin status"))?
+        .ok_or_else(|| admin_unauthorized_error("User not found"))?;
 
         let is_admin: bool = row.try_get("is_admin")
-            .map_err(|_| admin_forbidden_error("Failed to read admin status"))?;
+            .map_err(|_| admin_internal_error("Failed to read admin status"))?;
         let disabled_at: Option<chrono::DateTime<chrono::Utc>> = row.try_get("disabled_at")
-            .map_err(|_| admin_forbidden_error("Failed to read disabled status"))?;
+            .map_err(|_| admin_internal_error("Failed to read disabled status"))?;
 
         if !is_admin {
             return Err(admin_forbidden_error("Admin access required"));
@@ -211,6 +211,22 @@ impl FromRequestParts<AppState> for AdminUser {
 fn admin_forbidden_error(msg: &str) -> Response {
     (
         StatusCode::FORBIDDEN,
+        Json(serde_json::json!({ "error": msg })),
+    )
+        .into_response()
+}
+
+fn admin_internal_error(msg: &str) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({ "error": msg })),
+    )
+        .into_response()
+}
+
+fn admin_unauthorized_error(msg: &str) -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
         Json(serde_json::json!({ "error": msg })),
     )
         .into_response()

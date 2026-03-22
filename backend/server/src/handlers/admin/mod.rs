@@ -34,6 +34,11 @@ pub async fn log_admin_action(
     .await;
 
     if let Err(e) = result {
-        tracing::warn!("Failed to log admin action '{}': {:?}", action_type, e);
+        tracing::warn!(
+            actor_id = %actor_id,
+            action_type = action_type,
+            target_id = ?target_id,
+            "Failed to log admin action: {:?}", e
+        );
     }
 }
