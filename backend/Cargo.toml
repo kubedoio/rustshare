@@ -52,6 +52,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 bytes = "1.5"
 sha2 = "0.10"
+aes-gcm = "0.10"
+base64 = { version = "0.22", features = ["alloc"] }
 
 # Testing
 mockall = "0.12"
