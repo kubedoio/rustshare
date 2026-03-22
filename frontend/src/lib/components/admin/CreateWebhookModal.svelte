@@ -7,11 +7,16 @@
 	export let onCreated: (webhook: Webhook) => void = () => {};
 
 	const ALL_EVENTS = [
-		{ value: 'file_uploaded', label: 'File Uploaded' },
-		{ value: 'file_deleted', label: 'File Deleted' },
-		{ value: 'file_shared', label: 'File Shared' },
-		{ value: 'user_created', label: 'User Created' },
-		{ value: 'user_deleted', label: 'User Deleted' }
+		{ value: 'file.uploaded', label: 'File Uploaded' },
+		{ value: 'file.deleted', label: 'File Deleted' },
+		{ value: 'file.restored', label: 'File Restored' },
+		{ value: 'folder.created', label: 'Folder Created' },
+		{ value: 'folder.deleted', label: 'Folder Deleted' },
+		{ value: 'share.created', label: 'Share Created' },
+		{ value: 'share.revoked', label: 'Share Revoked' },
+		{ value: 'user.created', label: 'User Created' },
+		{ value: 'user.disabled', label: 'User Disabled' },
+		{ value: 'user.deleted', label: 'User Deleted' }
 	];
 
 	let name = '';

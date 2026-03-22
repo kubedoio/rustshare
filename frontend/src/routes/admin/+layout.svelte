@@ -17,6 +17,11 @@
 	}
 </script>
 
+{#if $authStore.isLoading}
+  <div class="flex items-center justify-center h-screen">
+    <span class="loading loading-spinner loading-lg"></span>
+  </div>
+{:else if $authStore.user?.is_admin}
 <div class="flex h-screen overflow-hidden">
 	<!-- Admin Sidebar -->
 	<aside class="w-64 bg-neutral text-neutral-content flex h-screen flex-col flex-shrink-0">
@@ -92,3 +97,4 @@
 		</main>
 	</div>
 </div>
+{/if}

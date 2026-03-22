@@ -17,8 +17,17 @@
 	let is_admin = user.is_admin;
 	let quota_gb =
 		user.storage_quota_bytes > 0
-			? String(user.storage_quota_bytes / (1024 * 1024 * 1024))
+			? String(Math.round(user.storage_quota_bytes / (1024 * 1024 * 1024)))
 			: '';
+
+	$: {
+		email = user.email;
+		display_name = user.display_name;
+		is_admin = user.is_admin;
+		quota_gb = user.storage_quota_bytes > 0
+			? String(Math.round(user.storage_quota_bytes / (1024 * 1024 * 1024)))
+			: '';
+	}
 	let errors: Record<string, string> = {};
 
 	let confirmDisable = false;

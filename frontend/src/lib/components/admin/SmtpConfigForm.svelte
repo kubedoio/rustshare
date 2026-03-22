@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { createQuery, createMutation } from '@tanstack/svelte-query';
+	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
 	import { getSmtpConfig, updateSmtpConfig, testSmtpConfig, type SmtpConfigRequest } from '$lib/api/admin';
+
+	const queryClient = useQueryClient();
 
 	const query = createQuery({
 		queryKey: ['admin', 'smtp-config'],
@@ -43,6 +45,9 @@
 			};
 			if (password.trim()) data.password = password.trim();
 			return updateSmtpConfig(data);
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['admin', 'smtp-config'] });
 		}
 	});
 

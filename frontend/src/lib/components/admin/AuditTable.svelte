@@ -66,12 +66,10 @@
 						bind:value={typeFilter}
 						on:change={applyFilters}
 					>
-						<option value="">All types</option>
-						<option value="user">User</option>
-						<option value="file">File</option>
-						<option value="group">Group</option>
-						<option value="config">Config</option>
-						<option value="auth">Auth</option>
+						<option value="">All</option>
+						<option value="share_access">Share Access</option>
+						<option value="security_event">Security Events</option>
+						<option value="admin_action">Admin Actions</option>
 					</select>
 				</div>
 

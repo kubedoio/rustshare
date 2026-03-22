@@ -37,11 +37,16 @@
 	});
 
 	const EVENT_LABELS: Record<string, string> = {
-		file_uploaded: 'File Uploaded',
-		file_deleted: 'File Deleted',
-		file_shared: 'File Shared',
-		user_created: 'User Created',
-		user_deleted: 'User Deleted'
+		'file.uploaded': 'File Uploaded',
+		'file.deleted': 'File Deleted',
+		'file.restored': 'File Restored',
+		'folder.created': 'Folder Created',
+		'folder.deleted': 'Folder Deleted',
+		'share.created': 'Share Created',
+		'share.revoked': 'Share Revoked',
+		'user.created': 'User Created',
+		'user.disabled': 'User Disabled',
+		'user.deleted': 'User Deleted'
 	};
 </script>
 

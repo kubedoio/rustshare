@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { createQuery, createMutation } from '@tanstack/svelte-query';
+	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
 	import { getOidcConfig, updateOidcConfig, testOidcConfig, type OidcConfigRequest } from '$lib/api/admin';
+
+	const queryClient = useQueryClient();
 
 	const query = createQuery({
 		queryKey: ['admin', 'oidc-config'],
@@ -40,6 +42,9 @@
 			};
 			if (client_secret.trim()) data.client_secret = client_secret.trim();
 			return updateOidcConfig(data);
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['admin', 'oidc-config'] });
 		}
 	});
 
