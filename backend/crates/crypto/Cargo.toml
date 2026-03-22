@@ -10,3 +10,5 @@ license.workspace = true
 argon2.workspace = true
 rand.workspace = true
 thiserror.workspace = true
+aes-gcm = "0.10"
+base64 = { version = "0.22", features = ["alloc"] }
