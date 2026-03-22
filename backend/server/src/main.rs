@@ -412,6 +412,52 @@ async fn main() -> Result<()> {
             "/api/v1/admin/groups/:id/members/:user_id",
             delete(handlers::admin::groups::remove_member),
         )
+        // Admin OIDC/SMTP config
+        .route(
+            "/api/v1/admin/config/oidc",
+            get(handlers::admin::config::get_oidc_config),
+        )
+        .route(
+            "/api/v1/admin/config/oidc",
+            put(handlers::admin::config::update_oidc_config),
+        )
+        .route(
+            "/api/v1/admin/config/oidc/test",
+            post(handlers::admin::config::test_oidc_config),
+        )
+        .route(
+            "/api/v1/admin/config/smtp",
+            get(handlers::admin::config::get_smtp_config),
+        )
+        .route(
+            "/api/v1/admin/config/smtp",
+            put(handlers::admin::config::update_smtp_config),
+        )
+        .route(
+            "/api/v1/admin/config/smtp/test",
+            post(handlers::admin::config::test_smtp_config),
+        )
+        // Admin webhooks
+        .route(
+            "/api/v1/admin/integrations/webhooks",
+            get(handlers::admin::webhooks::list_webhooks),
+        )
+        .route(
+            "/api/v1/admin/integrations/webhooks",
+            post(handlers::admin::webhooks::create_webhook),
+        )
+        .route(
+            "/api/v1/admin/integrations/webhooks/:id",
+            patch(handlers::admin::webhooks::update_webhook),
+        )
+        .route(
+            "/api/v1/admin/integrations/webhooks/:id",
+            delete(handlers::admin::webhooks::delete_webhook),
+        )
+        .route(
+            "/api/v1/admin/integrations/webhooks/:id/test",
+            post(handlers::admin::webhooks::test_webhook),
+        )
         // Folder routes (Task 20-22)
         // NOTE: More specific routes (with literal path segments) must come BEFORE parameterized routes
         .route("/api/v1/folders", post(handlers::create_folder))
