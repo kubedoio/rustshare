@@ -64,7 +64,7 @@ id                    UUID PRIMARY KEY,
 enabled               BOOL NOT NULL DEFAULT false,
 provider_name         TEXT,
 client_id             TEXT,
-client_secret_enc     TEXT,   -- encrypted with server-side key via crypto crate
+client_secret_enc     TEXT,   -- AES-256-GCM encrypted (see Encryption note below)
 issuer_url            TEXT,
 scopes                TEXT[],
 auto_provision_users  BOOL NOT NULL DEFAULT false,
@@ -80,7 +80,7 @@ enabled          BOOL NOT NULL DEFAULT false,
 host             TEXT,
 port             INT,
 username         TEXT,
-password_enc     TEXT,   -- encrypted
+password_enc     TEXT,   -- AES-256-GCM encrypted
 from_address     TEXT,
 from_name        TEXT,
 tls_mode         TEXT CHECK (tls_mode IN ('starttls', 'tls', 'none')),
@@ -93,15 +93,18 @@ updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 name         TEXT NOT NULL,
 url          TEXT NOT NULL,
-secret_enc   TEXT,   -- HMAC signing secret, encrypted
+secret_enc   TEXT,   -- HMAC signing secret, AES-256-GCM encrypted
 enabled      BOOL NOT NULL DEFAULT true,
-events       TEXT[] NOT NULL,  -- e.g. ['file.uploaded', 'user.created']
+events       TEXT[] NOT NULL,  -- values from the Supported webhook event types list below
 created_by   UUID REFERENCES users(id) ON DELETE SET NULL,
 created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
 updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
 
-Supported event types:
+### Encryption note
+The `crypto` crate currently only has password hashing (`argon2`). A new `secret_encryption` module must be added to `backend/crates/crypto/src/` exposing `encrypt_secret(plaintext: &str, key: &[u8; 32]) -> String` and `decrypt_secret(ciphertext: &str, key: &[u8; 32]) -> Result<String>` using **AES-256-GCM** (`aes-gcm` crate). The 32-byte key is derived from the `RUSTSHARE_SECRET_ENCRYPTION_KEY` environment variable (base64-encoded, required at startup). The ciphertext is stored as `base64(nonce || ciphertext)` — a 12-byte random nonce prepended per encryption call.
+
+**Supported webhook event types** (authoritative list — used for schema validation and frontend checkboxes):
 `file.uploaded`, `file.deleted`, `file.restored`, `folder.created`, `folder.deleted`,
 `share.created`, `share.revoked`, `user.created`, `user.disabled`, `user.deleted`
 
@@ -144,7 +147,7 @@ All routes require `require_admin` extractor (403 if not admin, 401 if unauthent
 | PATCH | `/api/v1/admin/users/:id` | Update `display_name`, `email`, `storage_quota_bytes`, `is_admin` |
 | POST | `/api/v1/admin/users/:id/disable` | Set `disabled_at = now()`. Logs `user.disabled` to `admin_actions`. Invalidates all active sessions. |
 | POST | `/api/v1/admin/users/:id/enable` | Set `disabled_at = NULL`. Logs `user.enabled`. |
-| DELETE | `/api/v1/admin/users/:id` | Hard delete: purge files from object storage (async background job), delete DB rows. Logs `user.deleted`. |
+| DELETE | `/api/v1/admin/users/:id` | Hard delete: returns 202 Accepted immediately. Deletes the user row and all DB rows (CASCADE handles related tables). Spawns an in-process `tokio::spawn` task to delete the user's blobs from object storage (keyed from `file_versions.storage_key`). If blob deletion fails the task logs an error but does not block the response — no orphan-tracking table needed for MVP. Logs `user.deleted`. |
 
 ### Groups
 
@@ -190,7 +193,7 @@ All routes require `require_admin` extractor (403 if not admin, 401 if unauthent
 |--------|------|-------------|
 | GET | `/api/v1/admin/audit` | Unified log. Query: `type` (share_access\|security_event\|admin_action\|all), `user_id`, `from`, `to`, `page`, `per_page` |
 
-The handler unions `share_access_log`, `user_security_events`, and `admin_actions`, normalises them into a common shape `{ id, occurred_at, actor_label, action_type, target_label, detail }`, and returns paginated results ordered by `occurred_at DESC`.
+The handler unions `share_access_log`, `user_security_events`, and `admin_actions`, normalises them into a common shape `{ id, occurred_at, actor_label, action_type, target_label, detail }`, and returns paginated results ordered by `occurred_at DESC`. Note: `share_access_log` and `user_security_events` are **pre-existing tables** from prior migrations (not defined in this spec).
 
 ---
 
@@ -236,8 +239,8 @@ The handler unions `share_access_log`, `user_security_events`, and `admin_action
 **Audit**
 - `AuditTable.svelte` — columns: timestamp, actor, action type, target, detail (expandable row); filter bar: type select, user search, date-range picker
 
-**Shared**
-- `UserSearchInput.svelte` — debounced typeahead hitting `GET /api/v1/admin/users?search=...`. Reused in GroupMemberList and later in the share dialog (Sub-project 2).
+**Shared** (`frontend/src/lib/components/common/`)
+- `UserSearchInput.svelte` — debounced typeahead hitting `GET /api/v1/admin/users?search=...`. Placed in `common/` (not `admin/`) so Sub-project 2's share dialog — accessible to non-admin users — can reuse it without moving files. Used in `GroupMemberList` in this spec.
 
 ---
 
@@ -279,3 +282,4 @@ The handler unions `share_access_log`, `user_security_events`, and `admin_action
 - Mobile admin access
 - Role-based access control beyond the binary `is_admin` flag
 - Webhook retry logic and delivery log (can be added later)
+- Blob orphan tracking on user hard-delete failure (MVP: errors are logged, no recovery table)
