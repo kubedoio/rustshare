@@ -18,10 +18,13 @@ use rustshare_core::{
     domain::SharePermissions,
     services::{FileError, FileUploadActor},
 };
+use rustshare_storage::ShareAccessLogEntry;
 
 use crate::{handlers::ShareSessionAuth, AppState};
 
 use super::files::FileUploadResponse;
+
+type HandlerResponseError = Box<Response>;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
@@ -139,13 +142,15 @@ pub async fn get_share_info(
 fn ensure_share_session_matches(
     share: &rustshare_core::domain::Share,
     claims: &rustshare_auth::ShareSessionClaims,
-) -> Result<(), Response> {
+) -> Result<(), HandlerResponseError> {
     if share.id != claims.share_id {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error": "Token is not valid for this share"})),
-        )
-            .into_response());
+        return Err(Box::new(
+            (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error": "Token is not valid for this share"})),
+            )
+                .into_response(),
+        ));
     }
 
     Ok(())
@@ -272,7 +277,7 @@ pub async fn download_shared_file(
         })?;
 
     // Verify JWT share_id matches the share we're accessing
-    ensure_share_session_matches(&share, &claims)?;
+    ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
 
     // Get file metadata
     let file_id = share.file_id.ok_or_else(|| {
@@ -326,17 +331,17 @@ pub async fn download_shared_file(
     // Log access with request metadata
     if let Err(e) = state
         .metadata_store
-        .log_share_access(
-            share.id,
+        .log_share_access(ShareAccessLogEntry {
+            share_id: share.id,
             ip_address,
             user_agent,
-            "download".to_string(),
-            true,
-            Some("public_share_session".to_string()),
-            None,
-            Some(claims.session_id),
-            Some(claims.sub.clone()),
-        )
+            action: "download".to_string(),
+            success: true,
+            actor_type: Some("public_share_session".to_string()),
+            actor_label: None,
+            share_session_id: Some(claims.session_id),
+            share_session_subject: Some(claims.sub.clone()),
+        })
         .await
     {
         tracing::warn!("Failed to log share access: {}", e);
@@ -380,7 +385,7 @@ pub async fn get_shared_folder_contents(
             super::share_error_response(rustshare_core::services::ShareError::NotFound)
         })?;
 
-    ensure_share_session_matches(&share, &claims)?;
+    ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
 
     if share.folder_id.is_none() {
         return Err((
@@ -438,7 +443,7 @@ pub async fn download_shared_folder_file(
             super::share_error_response(rustshare_core::services::ShareError::NotFound)
         })?;
 
-    ensure_share_session_matches(&share, &claims)?;
+    ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
 
     let root_folder_id = share.folder_id.ok_or_else(|| {
         (
@@ -516,17 +521,17 @@ pub async fn download_shared_folder_file(
 
     if let Err(e) = state
         .metadata_store
-        .log_share_access(
-            share.id,
+        .log_share_access(ShareAccessLogEntry {
+            share_id: share.id,
             ip_address,
             user_agent,
-            "download".to_string(),
-            true,
-            Some("public_share_session".to_string()),
-            None,
-            Some(claims.session_id),
-            Some(claims.sub.clone()),
-        )
+            action: "download".to_string(),
+            success: true,
+            actor_type: Some("public_share_session".to_string()),
+            actor_label: None,
+            share_session_id: Some(claims.session_id),
+            share_session_subject: Some(claims.sub.clone()),
+        })
         .await
     {
         tracing::warn!("Failed to log share access: {}", e);
@@ -571,7 +576,7 @@ pub async fn upload_shared_folder_file(
             super::share_error_response(rustshare_core::services::ShareError::NotFound)
         })?;
 
-    ensure_share_session_matches(&share, &claims)?;
+    ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
 
     let root_folder_id = share.folder_id.ok_or_else(|| {
         (
@@ -677,17 +682,17 @@ pub async fn upload_shared_folder_file(
 
     if let Err(e) = state
         .metadata_store
-        .log_share_access(
-            share.id,
+        .log_share_access(ShareAccessLogEntry {
+            share_id: share.id,
             ip_address,
             user_agent,
-            "upload".to_string(),
-            true,
-            Some("public_share_session".to_string()),
-            uploader_name,
-            Some(claims.session_id),
-            Some(claims.sub.clone()),
-        )
+            action: "upload".to_string(),
+            success: true,
+            actor_type: Some("public_share_session".to_string()),
+            actor_label: uploader_name,
+            share_session_id: Some(claims.session_id),
+            share_session_subject: Some(claims.sub.clone()),
+        })
         .await
     {
         tracing::warn!("Failed to log share upload: {}", e);

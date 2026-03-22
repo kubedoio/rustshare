@@ -127,6 +127,7 @@ It does not yet provide:
 
 Run a periodic restore drill using:
 - [2026-03-20-restore-drill-checklist.md](/Users/scolak/Projects/x/rustshare/docs/2026-03-20-restore-drill-checklist.md)
+- [2026-03-21-post-restore-expected-outcomes.md](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-post-restore-expected-outcomes.md)
 
 Recommended default:
 - use `scripts/run-restore-drill.sh` first

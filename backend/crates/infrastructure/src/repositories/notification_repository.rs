@@ -1,7 +1,6 @@
 use chrono::Utc;
-use rustshare_core::domain::{
-    Notification, NotificationId, NotificationType, ResourceType, UserId,
-};
+use rustshare_core::domain::{Notification, NotificationId, UserId};
+use rustshare_core::services::CreateNotification;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -41,16 +40,7 @@ impl NotificationRepository {
     }
 
     /// Insert a new notification.
-    pub async fn create(
-        &self,
-        user_id: UserId,
-        notification_type: NotificationType,
-        title: String,
-        message: String,
-        resource_id: Uuid,
-        resource_type: ResourceType,
-        action_url: Option<String>,
-    ) -> Result<Notification, sqlx::Error> {
+    pub async fn create(&self, request: CreateNotification) -> Result<Notification, sqlx::Error> {
         let id = Uuid::new_v4();
         let created_at = Utc::now();
 
@@ -66,13 +56,13 @@ impl NotificationRepository {
             "#,
         )
         .bind(id)
-        .bind(user_id)
-        .bind(notification_type.to_string())
-        .bind(title)
-        .bind(message)
-        .bind(resource_id)
-        .bind(resource_type.to_string())
-        .bind(action_url)
+        .bind(request.user_id)
+        .bind(request.notification_type.to_string())
+        .bind(request.title)
+        .bind(request.message)
+        .bind(request.resource_id)
+        .bind(request.resource_type.to_string())
+        .bind(request.action_url)
         .bind(created_at)
         .fetch_one(&self.pool)
         .await?;

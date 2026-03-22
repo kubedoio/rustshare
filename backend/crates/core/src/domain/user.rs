@@ -4,19 +4,14 @@ use serde::{Deserialize, Serialize};
 use super::UserId;
 
 /// User theme preference
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, Default)]
 #[sqlx(type_name = "text")]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
     Light,
     Dark,
+    #[default]
     System,
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        Theme::System
-    }
 }
 
 impl std::fmt::Display for Theme {
@@ -67,7 +62,14 @@ pub struct User {
 
 impl User {
     /// Creates a new user account with the given credentials and settings.
-    pub fn new(username: String, display_name: String, password_hash: String, email: String, is_admin: bool, storage_quota: i64) -> Self {
+    pub fn new(
+        username: String,
+        display_name: String,
+        password_hash: String,
+        email: String,
+        is_admin: bool,
+        storage_quota: i64,
+    ) -> Self {
         use uuid::Uuid;
         Self {
             id: Uuid::new_v4(),

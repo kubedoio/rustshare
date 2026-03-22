@@ -1,19 +1,25 @@
 use axum::http::StatusCode;
+use futures_util::{SinkExt, StreamExt};
 use rustshare_server::AppState;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-use futures_util::{SinkExt, StreamExt};
 
 mod common;
 
 /// Helper to create authenticated WebSocket connection
-async fn connect_websocket(token: &str, base_url: &str) -> Result<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, String> {
-    let url = format!("{}/api/sync", base_url.replace("http://", "ws://"));
+async fn connect_websocket(
+    token: &str,
+    base_url: &str,
+) -> Result<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    String,
+> {
+    let url = format!("{}/api/ws", base_url.replace("http://", "ws://"));
     let (ws_stream, _) = connect_async(
         tokio_tungstenite::tungstenite::http::Request::builder()
             .uri(&url)
             .header("Authorization", format!("Bearer {}", token))
             .body(())
-            .unwrap()
+            .unwrap(),
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -36,7 +42,7 @@ async fn test_connect_with_valid_jwt() {
 async fn test_connect_without_jwt() {
     let (_state, base_url) = common::setup_test_server().await;
 
-    let url = format!("{}/api/sync", base_url.replace("http://", "ws://"));
+    let url = format!("{}/api/ws", base_url.replace("http://", "ws://"));
     let result = connect_async(url).await;
 
     assert!(result.is_err(), "Should fail without JWT");
@@ -55,7 +61,7 @@ async fn test_receive_notification_on_upload() {
     // Upload a file via HTTP
     let client = reqwest::Client::new();
     let response = client
-        .post(format!("{}/api/files/upload", base_url))
+        .post(format!("{}/api/v1/files/upload", base_url))
         .header("Authorization", format!("Bearer {}", token))
         .multipart(common::create_test_file_upload("test.txt", b"test content"))
         .send()
@@ -99,7 +105,7 @@ async fn test_multiple_devices_receive_notification() {
     // Upload a file
     let client = reqwest::Client::new();
     let response = client
-        .post(format!("{}/api/files/upload", base_url))
+        .post(format!("{}/api/v1/files/upload", base_url))
         .header("Authorization", format!("Bearer {}", token))
         .multipart(common::create_test_file_upload("test.txt", b"test content"))
         .send()
@@ -111,9 +117,21 @@ async fn test_multiple_devices_receive_notification() {
     // All 3 clients should receive notification
     let timeout = tokio::time::Duration::from_secs(2);
 
-    let msg1 = tokio::time::timeout(timeout, ws1.next()).await.unwrap().unwrap().unwrap();
-    let msg2 = tokio::time::timeout(timeout, ws2.next()).await.unwrap().unwrap().unwrap();
-    let msg3 = tokio::time::timeout(timeout, ws3.next()).await.unwrap().unwrap().unwrap();
+    let msg1 = tokio::time::timeout(timeout, ws1.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let msg2 = tokio::time::timeout(timeout, ws2.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let msg3 = tokio::time::timeout(timeout, ws3.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 
     assert!(matches!(msg1, Message::Text(_)));
     assert!(matches!(msg2, Message::Text(_)));

@@ -3,14 +3,14 @@
 Rustshare now applies per-IP rate limiting to the highest-risk public and authentication routes.
 
 Covered routes:
-- `POST /api/auth/login` and `/api/v1/auth/login`
-- `GET /api/auth/oidc/login` and `/api/v1/auth/oidc/login`
-- `POST /api/public/share/:token/session` and `/api/v1/public/share/:token/session`
-- `GET /api/public/share/:token/info` and `/api/v1/public/share/:token/info`
-- `GET /api/public/share/:token/folder/contents` and `/api/v1/public/share/:token/folder/contents`
-- `GET /api/public/share/:token/file` and `/api/v1/public/share/:token/file`
-- `GET /api/public/share/:token/folder/files/:file_id` and `/api/v1/public/share/:token/folder/files/:file_id`
-- `POST /api/public/share/:token/folder/upload` and `/api/v1/public/share/:token/folder/upload`
+- `POST /api/v1/auth/login`
+- `GET /api/v1/auth/oidc/login`
+- `POST /api/v1/public/share/:token/session`
+- `GET /api/v1/public/share/:token/info`
+- `GET /api/v1/public/share/:token/folder/contents`
+- `GET /api/v1/public/share/:token/file`
+- `GET /api/v1/public/share/:token/folder/files/:file_id`
+- `POST /api/v1/public/share/:token/folder/upload`
 - authenticated share-management routes such as creating, updating, and revoking shares
 
 Default quotas:
@@ -25,6 +25,7 @@ Default quotas:
 Operational notes:
 - Limits are enforced per client IP using the existing proxy-aware IP extraction middleware.
 - Rejections return `429 Too Many Requests` with `Retry-After: 60`.
+- Legacy `/api/auth/...` aliases were removed in Phase 7 wave 2, so auth rate limiting now applies only to canonical versioned auth routes.
 - Public share password prompts are intentionally the strictest limit because they are the easiest brute-force target.
 - Upload-only public folder links are protected by the upload limiter, not the download limiter.
 

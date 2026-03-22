@@ -10,7 +10,7 @@ This module implements WebSocket real-time synchronization for multi-device file
    - Low-level WebSocket connection management
    - Handles connection, disconnection, reconnection with exponential backoff
    - Event registration and dispatching
-   - Uses token as query parameter for browser compatibility
+   - Uses browser session cookie or token query parameter for browser compatibility
 
 2. **Event Definitions** (`events.ts`)
    - TypeScript types for all WebSocket event types
@@ -35,7 +35,7 @@ This module implements WebSocket real-time synchronization for multi-device file
 ## Features
 
 ### Connection Management
-- **Automatic connection** on login with JWT token
+- **Automatic connection** on login with browser session or token auth
 - **Automatic reconnection** with exponential backoff (1s, 2s, 4s, 8s, 16s, max 30s)
 - **Manual disconnection** on logout
 - **Connection state tracking** with visual feedback
@@ -90,8 +90,8 @@ All file and folder events trigger appropriate cache invalidations and notificat
 
 Environment variables in `.env`:
 ```bash
-VITE_API_URL=http://localhost/api
-VITE_WS_URL=ws://localhost/api
+VITE_API_URL=http://localhost/api/v1
+VITE_WS_URL=ws://localhost/api/ws
 ```
 
 The WebSocket URL can be:
@@ -102,10 +102,10 @@ The WebSocket URL can be:
 
 The backend WebSocket endpoint expects:
 ```
-ws://localhost/api/sync?token=<JWT_TOKEN>
+ws://localhost/api/ws
 ```
 
-Token is passed as a query parameter for browser WebSocket API compatibility.
+Token clients may pass `?token=<JWT_TOKEN>` for browser WebSocket API compatibility.
 
 ## Connection States
 

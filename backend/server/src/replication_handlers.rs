@@ -134,7 +134,7 @@ pub async fn get_file_replication_status(
     .bind(file.current_version)
     .fetch_optional(&state.db_pool)
     .await
-    .map_err(internal_error)?;
+    .map_err(|error| *internal_error(error))?;
 
     let (
         replication_state,
@@ -145,12 +145,18 @@ pub async fn get_file_replication_status(
         last_error,
     ) = if let Some(row) = row {
         (
-            row.try_get("replication_state").map_err(internal_error)?,
-            row.try_get("job_status").map_err(internal_error)?,
-            row.try_get("attempt_count").map_err(internal_error)?,
-            row.try_get("next_attempt_at").map_err(internal_error)?,
-            row.try_get("last_attempt_at").map_err(internal_error)?,
-            row.try_get("last_error").map_err(internal_error)?,
+            row.try_get("replication_state")
+                .map_err(|error| *internal_error(error))?,
+            row.try_get("job_status")
+                .map_err(|error| *internal_error(error))?,
+            row.try_get("attempt_count")
+                .map_err(|error| *internal_error(error))?,
+            row.try_get("next_attempt_at")
+                .map_err(|error| *internal_error(error))?,
+            row.try_get("last_attempt_at")
+                .map_err(|error| *internal_error(error))?,
+            row.try_get("last_error")
+                .map_err(|error| *internal_error(error))?,
         )
     } else {
         ("primary_written".to_string(), None, None, None, None, None)
@@ -189,7 +195,7 @@ pub async fn get_replication_summary(
     )
     .fetch_one(&state.db_pool)
     .await
-    .map_err(internal_error)?;
+    .map_err(|error| *internal_error(error))?;
 
     let job_counts_row = sqlx::query(
         r#"
@@ -206,7 +212,7 @@ pub async fn get_replication_summary(
     )
     .fetch_one(&state.db_pool)
     .await
-    .map_err(internal_error)?;
+    .map_err(|error| *internal_error(error))?;
 
     let target_counts_row = sqlx::query(
         r#"
@@ -221,40 +227,44 @@ pub async fn get_replication_summary(
     )
     .fetch_one(&state.db_pool)
     .await
-    .map_err(internal_error)?;
+    .map_err(|error| *internal_error(error))?;
 
     Ok(Json(ReplicationSummaryResponse {
         generated_at: to_rfc3339(Utc::now()),
         version_states: ReplicationVersionStateCounts {
-            primary_written: row_i64(&version_counts_row, "primary_written")?,
-            queued: row_i64(&version_counts_row, "queued")?,
-            syncing: row_i64(&version_counts_row, "syncing")?,
-            fully_replicated: row_i64(&version_counts_row, "fully_replicated")?,
-            degraded: row_i64(&version_counts_row, "degraded")?,
-            failed: row_i64(&version_counts_row, "failed")?,
+            primary_written: row_i64(&version_counts_row, "primary_written")
+                .map_err(|error| *error)?,
+            queued: row_i64(&version_counts_row, "queued").map_err(|error| *error)?,
+            syncing: row_i64(&version_counts_row, "syncing").map_err(|error| *error)?,
+            fully_replicated: row_i64(&version_counts_row, "fully_replicated")
+                .map_err(|error| *error)?,
+            degraded: row_i64(&version_counts_row, "degraded").map_err(|error| *error)?,
+            failed: row_i64(&version_counts_row, "failed").map_err(|error| *error)?,
         },
         job_states: ReplicationJobStateCounts {
-            queued: row_i64(&job_counts_row, "queued")?,
-            syncing: row_i64(&job_counts_row, "syncing")?,
-            retrying: row_i64(&job_counts_row, "retrying")?,
-            completed: row_i64(&job_counts_row, "completed")?,
-            failed: row_i64(&job_counts_row, "failed")?,
+            queued: row_i64(&job_counts_row, "queued").map_err(|error| *error)?,
+            syncing: row_i64(&job_counts_row, "syncing").map_err(|error| *error)?,
+            retrying: row_i64(&job_counts_row, "retrying").map_err(|error| *error)?,
+            completed: row_i64(&job_counts_row, "completed").map_err(|error| *error)?,
+            failed: row_i64(&job_counts_row, "failed").map_err(|error| *error)?,
         },
         target_states: ReplicationTargetStateCounts {
-            enabled: row_i64(&target_counts_row, "enabled")?,
-            required: row_i64(&target_counts_row, "required")?,
-            healthy: row_i64(&target_counts_row, "healthy")?,
-            degraded: row_i64(&target_counts_row, "degraded")?,
-            failed: row_i64(&target_counts_row, "failed")?,
+            enabled: row_i64(&target_counts_row, "enabled").map_err(|error| *error)?,
+            required: row_i64(&target_counts_row, "required").map_err(|error| *error)?,
+            healthy: row_i64(&target_counts_row, "healthy").map_err(|error| *error)?,
+            degraded: row_i64(&target_counts_row, "degraded").map_err(|error| *error)?,
+            failed: row_i64(&target_counts_row, "failed").map_err(|error| *error)?,
         },
         oldest_pending_job_age_seconds: row_optional_i64(
             &job_counts_row,
             "oldest_pending_job_age_seconds",
-        )?,
+        )
+        .map_err(|error| *error)?,
         oldest_failed_job_age_seconds: row_optional_i64(
             &job_counts_row,
             "oldest_failed_job_age_seconds",
-        )?,
+        )
+        .map_err(|error| *error)?,
     }))
 }
 
@@ -288,7 +298,7 @@ pub async fn list_replication_jobs(
     .bind(limit)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(internal_error)?;
+    .map_err(|error| *internal_error(error))?;
 
     let jobs = rows
         .into_iter()
@@ -310,7 +320,7 @@ pub async fn list_replication_jobs(
             })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()
-        .map_err(internal_error)?;
+        .map_err(|error| *internal_error(error))?;
 
     Ok(Json(jobs))
 }
@@ -343,7 +353,7 @@ pub async fn list_replication_targets(
     )
     .fetch_all(&state.db_pool)
     .await
-    .map_err(internal_error)?;
+    .map_err(|error| *internal_error(error))?;
 
     let targets = rows
         .into_iter()
@@ -367,7 +377,7 @@ pub async fn list_replication_targets(
             })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()
-        .map_err(internal_error)?;
+        .map_err(|error| *internal_error(error))?;
 
     Ok(Json(targets))
 }
@@ -381,8 +391,8 @@ async fn require_admin(state: &AppState, user_id: Uuid) -> Result<(), Response> 
         .metadata_store
         .find_user_by_id(user_id)
         .await
-        .map_err(internal_error)?
-        .ok_or_else(|| internal_error(anyhow::anyhow!("authenticated user not found")))?;
+        .map_err(|error| *internal_error(error))?
+        .ok_or_else(|| *internal_error(anyhow::anyhow!("authenticated user not found")))?;
 
     if !user.is_admin {
         return Err(forbidden_error("Admin access required"));
@@ -391,23 +401,28 @@ async fn require_admin(state: &AppState, user_id: Uuid) -> Result<(), Response> 
     Ok(())
 }
 
-fn row_i64(row: &sqlx::postgres::PgRow, column: &str) -> Result<i64, Response> {
+fn row_i64(row: &sqlx::postgres::PgRow, column: &str) -> Result<i64, Box<Response>> {
     row.try_get::<i64, _>(column).map_err(internal_error)
 }
 
-fn row_optional_i64(row: &sqlx::postgres::PgRow, column: &str) -> Result<Option<i64>, Response> {
+fn row_optional_i64(
+    row: &sqlx::postgres::PgRow,
+    column: &str,
+) -> Result<Option<i64>, Box<Response>> {
     row.try_get::<Option<i64>, _>(column)
         .map_err(internal_error)
 }
 
-fn internal_error(error: impl std::fmt::Display) -> Response {
-    (
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse::new(format!(
-            "Internal server error: {error}"
-        ))),
+fn internal_error(error: impl std::fmt::Display) -> Box<Response> {
+    Box::new(
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(format!(
+                "Internal server error: {error}"
+            ))),
+        )
+            .into_response(),
     )
-        .into_response()
 }
 
 fn forbidden_error(message: &str) -> Response {

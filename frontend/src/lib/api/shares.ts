@@ -1,5 +1,11 @@
 import { apiClient } from './client';
-import type { ReceivedShare, Share, SharedFolderContents, ShareRecipient } from './types';
+import type {
+	ReceivedShare,
+	Share,
+	ShareAccessLogEntry,
+	SharedFolderContents,
+	ShareRecipient
+} from './types';
 
 // Request/Response Types
 
@@ -112,8 +118,6 @@ export async function listFolderShares(folderId: string): Promise<Share[]> {
 
 /**
  * List all shares owned by the current user
- * This is a workaround since the backend doesn't have a dedicated endpoint
- * We'll need to aggregate file shares from all files
  */
 export async function listAllUserShares(): Promise<Share[]> {
 	return apiClient.get<Share[]>('/shares');
@@ -191,6 +195,17 @@ export async function removeShareRecipient(shareId: string): Promise<void> {
  */
 export async function revokeShare(shareId: string): Promise<void> {
 	return apiClient.delete<void>(`/shares/${shareId}`);
+}
+
+/**
+ * Get public-share access-log entries for an owned share.
+ * GET /api/shares/{id}/access-log?limit=50
+ */
+export async function getShareAccessLog(
+	shareId: string,
+	limit = 50
+): Promise<ShareAccessLogEntry[]> {
+	return apiClient.get<ShareAccessLogEntry[]>(`/shares/${shareId}/access-log?limit=${limit}`);
 }
 
 // Public Share Access (No Authentication)

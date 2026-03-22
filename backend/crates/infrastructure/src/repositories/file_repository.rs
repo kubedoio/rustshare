@@ -33,7 +33,10 @@ impl FileRepository {
 
 // Implement FileOps trait for FileRepository
 impl rustshare_core::services::FileOps for FileRepository {
-    async fn get_by_id(&self, file_id: rustshare_core::domain::FileId) -> Result<Option<rustshare_core::domain::File>, sqlx::Error> {
+    async fn get_by_id(
+        &self,
+        file_id: rustshare_core::domain::FileId,
+    ) -> Result<Option<rustshare_core::domain::File>, sqlx::Error> {
         self.get_by_id(file_id).await
     }
 }

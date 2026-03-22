@@ -375,7 +375,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         let token = self
             .jwt_manager
             .encode_custom_claims(&claims)
-            .map_err(|e| ShareError::Jwt(e))?;
+            .map_err(ShareError::Jwt)?;
 
         // Calculate expiration time
         let expires_at = Utc::now() + chrono::Duration::hours(1);

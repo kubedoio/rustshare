@@ -32,7 +32,10 @@ impl FolderRepository {
 
 // Implement FolderOps trait for FolderRepository
 impl rustshare_core::services::FolderOps for FolderRepository {
-    async fn get_by_id(&self, folder_id: rustshare_core::domain::FolderId) -> Result<Option<rustshare_core::domain::Folder>, sqlx::Error> {
+    async fn get_by_id(
+        &self,
+        folder_id: rustshare_core::domain::FolderId,
+    ) -> Result<Option<rustshare_core::domain::Folder>, sqlx::Error> {
         self.get_by_id(folder_id).await
     }
 }

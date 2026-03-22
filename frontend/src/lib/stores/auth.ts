@@ -12,6 +12,28 @@ interface AuthState {
   isLoading: boolean;
 }
 
+const WEBSOCKET_TOKEN_KEY = "rustshare.websocket_token";
+
+function saveWebSocketToken(token: string | null | undefined): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (token && token.trim()) {
+    window.sessionStorage.setItem(WEBSOCKET_TOKEN_KEY, token.trim());
+  } else {
+    window.sessionStorage.removeItem(WEBSOCKET_TOKEN_KEY);
+  }
+}
+
+function loadWebSocketToken(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window.sessionStorage.getItem(WEBSOCKET_TOKEN_KEY);
+}
+
 function toAuthUser(profile: Awaited<ReturnType<typeof getUserProfile>>): User {
   return {
     id: profile.id,
@@ -41,7 +63,7 @@ function createAuthStore() {
 
       themeStore.loadFromBackend(profile.theme);
       try {
-        await initializeWebSocket(null, profile.id);
+        await initializeWebSocket(loadWebSocketToken(), profile.id);
       } catch (error) {
         console.error(
           "Failed to initialize WebSocket during bootstrap:",
@@ -55,6 +77,7 @@ function createAuthStore() {
 
       cleanupWebSocket();
       replicationStore.reset();
+      saveWebSocketToken(null);
       set({
         user: null,
         isAuthenticated: false,
@@ -75,6 +98,7 @@ function createAuthStore() {
       try {
         const response = await loginRequest(email, password);
         const user = response.user;
+        saveWebSocketToken(response.token);
 
         set({
           user,
@@ -83,7 +107,7 @@ function createAuthStore() {
         });
 
         try {
-          await initializeWebSocket(null, user.id);
+          await initializeWebSocket(response.token ?? null, user.id);
         } catch (error) {
           console.error("Failed to initialize WebSocket after login:", error);
         }
@@ -106,6 +130,7 @@ function createAuthStore() {
     logout: async () => {
       cleanupWebSocket();
       replicationStore.reset();
+      saveWebSocketToken(null);
       await logoutRequest();
       set({
         user: null,

@@ -14,7 +14,7 @@ Implemented comprehensive WebSocket real-time synchronization for multi-device f
 2. **`frontend/src/lib/websocket/client.ts`** (Updated)
    - WebSocket client with connection management
    - Exponential backoff reconnection (1s → 30s max)
-   - Token authentication via query parameter
+   - Token authentication via query parameter or browser session cookie
    - Connection state tracking
    - Event registration and dispatching
 
@@ -70,8 +70,8 @@ Implemented comprehensive WebSocket real-time synchronization for multi-device f
 ## Features Implemented
 
 ### ✅ Connection Management
-- Automatic connection on login with JWT token
-- Token passed as query parameter (`?token=<jwt>`) for browser compatibility
+- Automatic connection on login with browser session or token client auth
+- Token clients may pass `?token=<jwt>` for browser compatibility
 - Automatic reconnection with exponential backoff
 - Maximum 10 retry attempts
 - Backoff delays: 1s, 2s, 4s, 8s, 16s, 30s (max)
@@ -134,11 +134,11 @@ Each event type invalidates appropriate TanStack Query caches:
 
 ### Environment Variables (.env)
 ```bash
-VITE_API_URL=http://localhost/api
-VITE_WS_URL=ws://localhost/api
+VITE_API_URL=http://localhost/api/v1
+VITE_WS_URL=ws://localhost/api/ws
 ```
 
-WebSocket connects to: `ws://localhost/api/sync?token=<JWT>`
+WebSocket connects to: `ws://localhost/api/ws` or `ws://localhost/api/ws?token=<JWT>`
 
 ## Architecture
 
@@ -152,7 +152,7 @@ WebSocket connects to: `ws://localhost/api/sync?token=<JWT>`
 ┌─────────────────────────────────────────────────────────────┐
 │                     Auth Store                              │
 │  • Initialize WebSocket on login                            │
-│  • Pass JWT token to WebSocket manager                      │
+│  • Pass session or token auth to WebSocket manager          │
 │  • Cleanup on logout                                        │
 └────────────────────────┬────────────────────────────────────┘
                          │
@@ -186,7 +186,7 @@ WebSocket connects to: `ws://localhost/api/sync?token=<JWT>`
 
 The backend expects token in query parameter:
 ```
-ws://localhost/api/sync?token=<JWT_TOKEN>
+ws://localhost/api/ws?token=<JWT_TOKEN>
 ```
 
 This approach works with browser WebSocket API, which doesn't support custom headers.
@@ -207,7 +207,7 @@ This approach works with browser WebSocket API, which doesn't support custom hea
 ## Backend Requirements
 
 The backend WebSocket endpoint must:
-1. Accept JWT token as query parameter: `/api/sync?token=<JWT>`
+1. Accept bearer token as query parameter when needed: `/api/ws?token=<JWT>`
 2. Send events in the format defined in `events.ts`
 3. Include `user_id` in all events for filtering
 4. Send close code 1008 for authentication failures

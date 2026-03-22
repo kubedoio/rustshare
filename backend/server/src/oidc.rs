@@ -88,11 +88,11 @@ struct OidcConfig {
 
 impl OidcConfig {
     fn from_env() -> Option<Self> {
-        let issuer_url = std::env::var("OIDC_ISSUER_URL").ok()?;
-        let client_id = std::env::var("OIDC_CLIENT_ID").ok()?;
-        let client_secret = std::env::var("OIDC_CLIENT_SECRET").ok()?;
-        let redirect_url = std::env::var("OIDC_REDIRECT_URL").ok()?;
-        let login_label = std::env::var("OIDC_LOGIN_LABEL").ok();
+        let issuer_url = non_empty_env("OIDC_ISSUER_URL")?;
+        let client_id = non_empty_env("OIDC_CLIENT_ID")?;
+        let client_secret = non_empty_env("OIDC_CLIENT_SECRET")?;
+        let redirect_url = non_empty_env("OIDC_REDIRECT_URL")?;
+        let login_label = non_empty_env("OIDC_LOGIN_LABEL");
 
         Some(Self {
             issuer_url,
@@ -139,9 +139,9 @@ struct MobileOidcConfig {
 
 impl MobileOidcConfig {
     fn from_env() -> Option<Self> {
-        let issuer_url = std::env::var("OIDC_ISSUER_URL").ok()?;
-        let client_id = std::env::var("OIDC_MOBILE_CLIENT_ID").ok()?;
-        let client_secret = std::env::var("OIDC_MOBILE_CLIENT_SECRET").ok();
+        let issuer_url = non_empty_env("OIDC_ISSUER_URL")?;
+        let client_id = non_empty_env("OIDC_MOBILE_CLIENT_ID")?;
+        let client_secret = non_empty_env("OIDC_MOBILE_CLIENT_SECRET");
         let allowed_redirect_uris = mobile_redirect_uris_from_env();
 
         if allowed_redirect_uris.is_empty() {
@@ -192,6 +192,13 @@ pub async fn auth_config() -> impl IntoResponse {
         oidc_login_label: oidc.map(|config| config.label()),
         oidc_mobile_enabled: mobile_oidc.is_some(),
     })
+}
+
+fn non_empty_env(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 pub async fn oidc_login(
@@ -516,9 +523,25 @@ pub async fn oidc_callback(
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_string());
     let ip_address = middleware::extract_client_ip(&headers, None).map(|value| value.to_string());
-    let session_token = create_user_session(&state, user.id, user_agent, ip_address)
+    let session_token =
+        create_user_session(&state, user.id, user_agent.clone(), ip_address.clone())
+            .await
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+
+    if let Err(error) = state
+        .metadata_store
+        .create_user_security_event(rustshare_storage::UserSecurityEventRecord {
+            user_id: user.id,
+            event_type: "browser_oidc_login",
+            description: "Signed in with single sign-on",
+            ip_address: ip_address.as_deref(),
+            user_agent: user_agent.as_deref(),
+            session_id: None,
+        })
         .await
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    {
+        tracing::warn!("Failed to record OIDC login security event: {:?}", error);
+    }
 
     let mut response_headers = HeaderMap::new();
     response_headers.insert(

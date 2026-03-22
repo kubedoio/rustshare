@@ -1,5 +1,14 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
+  import { onDestroy } from 'svelte';
+  import { currentUser } from '$lib/stores/auth';
   import { websocketStore } from '$lib/stores/websocket';
+  import { initializeWebSocket } from '$lib/websocket/manager';
+
+  const WEBSOCKET_TOKEN_KEY = 'rustshare.websocket_token';
+
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectInFlight = false;
 
   $: state = $websocketStore.state;
   $: error = $websocketStore.error;
@@ -23,6 +32,54 @@
 
   // Always show indicator so users know the connection status
   $: showIndicator = true;
+
+  function loadWebSocketToken(): string | null {
+    if (!browser) {
+      return null;
+    }
+
+    return window.sessionStorage.getItem(WEBSOCKET_TOKEN_KEY);
+  }
+
+  async function ensureWebSocketConnection(): Promise<void> {
+    if (!browser || !$currentUser || reconnectInFlight) {
+      return;
+    }
+
+    if (state === 'connected' || state === 'connecting' || state === 'reconnecting') {
+      return;
+    }
+
+    reconnectInFlight = true;
+
+    try {
+      await initializeWebSocket(loadWebSocketToken(), $currentUser.id);
+    } catch (connectionError) {
+      console.error('WebSocketStatus reconnect attempt failed:', connectionError);
+    } finally {
+      reconnectInFlight = false;
+    }
+  }
+
+  $: {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+
+    if (browser && $currentUser && (state === 'disconnected' || state === 'error')) {
+      const delay = state === 'error' ? 1000 : 200;
+      reconnectTimer = setTimeout(() => {
+        void ensureWebSocketConnection();
+      }, delay);
+    }
+  }
+
+  onDestroy(() => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+    }
+  });
 </script>
 
 {#if showIndicator}

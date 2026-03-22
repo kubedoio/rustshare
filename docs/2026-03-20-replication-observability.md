@@ -41,3 +41,11 @@ scripts/replication-health-check.sh
 ```
 
 It logs in as an admin user, fetches the summary and targets endpoints, and prints a concise status view.
+
+## Alerting Guidance
+
+Use [2026-03-21-alerting-and-incident-thresholds.md](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-alerting-and-incident-thresholds.md) as the source of truth for:
+
+- replication backlog thresholds
+- failed-job escalation expectations
+- degraded required-target handling

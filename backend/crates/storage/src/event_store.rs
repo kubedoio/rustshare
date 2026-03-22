@@ -5,8 +5,8 @@
 //! This will be migrated to compile-time queries after Docker Compose is set up in Task 11.
 
 use anyhow::Result;
-use rustshare_core::events::*;
 use rustshare_core::events::EventBroadcaster;
+use rustshare_core::events::*;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -74,7 +74,9 @@ impl EventStore {
                     id: row.try_get("event_id")?,
                     event_type: serde_json::from_str(&row.try_get::<String, _>("event_type")?)?,
                     aggregate_id: row.try_get("aggregate_id")?,
-                    aggregate_type: serde_json::from_str(&row.try_get::<String, _>("aggregate_type")?)?,
+                    aggregate_type: serde_json::from_str(
+                        &row.try_get::<String, _>("aggregate_type")?,
+                    )?,
                     payload: row.try_get("payload")?,
                     user_id: row.try_get("user_id")?,
                     timestamp: row.try_get("timestamp")?,
@@ -128,7 +130,9 @@ impl EventStore {
                     id: row.try_get("event_id")?,
                     event_type: serde_json::from_str(&row.try_get::<String, _>("event_type")?)?,
                     aggregate_id: row.try_get("aggregate_id")?,
-                    aggregate_type: serde_json::from_str(&row.try_get::<String, _>("aggregate_type")?)?,
+                    aggregate_type: serde_json::from_str(
+                        &row.try_get::<String, _>("aggregate_type")?,
+                    )?,
                     payload: row.try_get("payload")?,
                     user_id: row.try_get("user_id")?,
                     timestamp: row.try_get("timestamp")?,
@@ -144,12 +148,13 @@ impl EventStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustshare_core::events::{Event, EventType, AggregateType};
+    use rustshare_core::events::{AggregateType, Event, EventType};
     use serde_json::json;
 
     async fn setup_test_db() -> PgPool {
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:changeme@localhost:5432/rustshare".to_string()
+        });
 
         PgPool::connect(&database_url).await.unwrap()
     }
@@ -181,7 +186,10 @@ mod tests {
         store.append(&event, &broadcaster).await.unwrap();
 
         // Retrieve events
-        let events = store.get_events(file_id, AggregateType::File).await.unwrap();
+        let events = store
+            .get_events(file_id, AggregateType::File)
+            .await
+            .unwrap();
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, EventType::FileUploaded);
@@ -222,7 +230,10 @@ mod tests {
         }
 
         // Fetch events after the 2nd event (index 1)
-        let events = store.get_events_since(user_id, Some(event_ids[1]), 100).await.unwrap();
+        let events = store
+            .get_events_since(user_id, Some(event_ids[1]), 100)
+            .await
+            .unwrap();
 
         // Should get 3 events (indices 2, 3, 4)
         assert_eq!(events.len(), 3);

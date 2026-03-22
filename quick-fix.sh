@@ -29,7 +29,7 @@ echo -n "  - Backend health: "
 curl -s http://localhost:8080/health | jq -r '.status' 2>/dev/null || echo "FAILED"
 
 echo -n "  - Login API: "
-LOGIN=$(curl -s -X POST http://localhost/api/auth/login \
+LOGIN=$(curl -s -X POST http://localhost/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email": "admin@localhost", "password": "admin123"}' 2>/dev/null)
 if echo "$LOGIN" | jq -e '.token' > /dev/null 2>&1; then

@@ -8,7 +8,7 @@ use rustshare_core::{
     domain::{ReplicationJob, ReplicationState, ReplicationTarget},
     events::{AggregateType, Event, EventBroadcaster, EventType, ReplicationStateChangedPayload},
 };
-use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
+use rustshare_storage::{EventStore, MetadataStore, ObjectStore, ReplicationAttemptRecord};
 use serde::Deserialize;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -20,6 +20,16 @@ pub struct ReplicationWorkerConfig {
     pub batch_size: i64,
     pub lease_timeout_secs: i64,
     pub max_attempts: i32,
+}
+
+#[derive(Debug, Clone)]
+struct ReplicationEventContext<'a> {
+    job: &'a ReplicationJob,
+    replication_state: ReplicationState,
+    job_status: Option<String>,
+    attempt_count: i32,
+    next_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
+    last_error: Option<String>,
 }
 
 impl ReplicationWorkerConfig {
@@ -141,12 +151,14 @@ async fn tick_replication_worker(
                 metadata_store,
                 event_store,
                 broadcaster,
-                &job,
-                ReplicationState::FullyReplicated,
-                Some("completed".to_string()),
-                job.attempt_count,
-                None,
-                None,
+                ReplicationEventContext {
+                    job: &job,
+                    replication_state: ReplicationState::FullyReplicated,
+                    job_status: Some("completed".to_string()),
+                    attempt_count: job.attempt_count,
+                    next_attempt_at: None,
+                    last_error: None,
+                },
             )
             .await?;
             continue;
@@ -184,12 +196,14 @@ async fn process_replication_job(
         metadata_store,
         event_store,
         broadcaster,
-        job,
-        ReplicationState::Syncing,
-        Some("syncing".to_string()),
-        job.attempt_count,
-        None,
-        None,
+        ReplicationEventContext {
+            job,
+            replication_state: ReplicationState::Syncing,
+            job_status: Some("syncing".to_string()),
+            attempt_count: job.attempt_count,
+            next_attempt_at: None,
+            last_error: None,
+        },
     )
     .await?;
 
@@ -208,15 +222,15 @@ async fn process_replication_job(
         match attempt_result {
             Ok(()) => {
                 metadata_store
-                    .create_replication_attempt(
-                        job.id,
-                        target.id,
-                        job.attempt_count,
-                        "completed",
-                        None,
+                    .create_replication_attempt(ReplicationAttemptRecord {
+                        job_id: job.id,
+                        target_id: target.id,
+                        attempt_number: job.attempt_count,
+                        status: "completed",
+                        error_message: None,
                         started_at,
                         completed_at,
-                    )
+                    })
                     .await
                     .with_context(|| {
                         format!(
@@ -239,15 +253,15 @@ async fn process_replication_job(
             Err(error) => {
                 let error_text = error.to_string();
                 metadata_store
-                    .create_replication_attempt(
-                        job.id,
-                        target.id,
-                        job.attempt_count,
-                        "failed",
-                        Some(&error_text),
+                    .create_replication_attempt(ReplicationAttemptRecord {
+                        job_id: job.id,
+                        target_id: target.id,
+                        attempt_number: job.attempt_count,
+                        status: "failed",
+                        error_message: Some(&error_text),
                         started_at,
                         completed_at,
-                    )
+                    })
                     .await
                     .with_context(|| {
                         format!(
@@ -301,12 +315,14 @@ async fn process_replication_job(
             metadata_store,
             event_store,
             broadcaster,
-            job,
-            ReplicationState::FullyReplicated,
-            Some("completed".to_string()),
-            job.attempt_count,
-            None,
-            None,
+            ReplicationEventContext {
+                job,
+                replication_state: ReplicationState::FullyReplicated,
+                job_status: Some("completed".to_string()),
+                attempt_count: job.attempt_count,
+                next_attempt_at: None,
+                last_error: None,
+            },
         )
         .await?;
 
@@ -336,12 +352,14 @@ async fn process_replication_job(
             metadata_store,
             event_store,
             broadcaster,
-            job,
-            ReplicationState::Degraded,
-            Some("retrying".to_string()),
-            job.attempt_count,
-            Some(next_attempt_at),
-            Some(error_text.clone()),
+            ReplicationEventContext {
+                job,
+                replication_state: ReplicationState::Degraded,
+                job_status: Some("retrying".to_string()),
+                attempt_count: job.attempt_count,
+                next_attempt_at: Some(next_attempt_at),
+                last_error: Some(error_text.clone()),
+            },
         )
         .await?;
 
@@ -366,12 +384,14 @@ async fn process_replication_job(
         metadata_store,
         event_store,
         broadcaster,
-        job,
-        ReplicationState::Failed,
-        Some("failed".to_string()),
-        job.attempt_count,
-        None,
-        Some(error_text),
+        ReplicationEventContext {
+            job,
+            replication_state: ReplicationState::Failed,
+            job_status: Some("failed".to_string()),
+            attempt_count: job.attempt_count,
+            next_attempt_at: None,
+            last_error: Some(error_text),
+        },
     )
     .await?;
 
@@ -383,33 +403,33 @@ async fn publish_replication_event(
     metadata_store: &MetadataStore,
     event_store: &EventStore,
     broadcaster: &EventBroadcaster,
-    job: &ReplicationJob,
-    replication_state: ReplicationState,
-    job_status: Option<String>,
-    attempt_count: i32,
-    next_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
-    last_error: Option<String>,
+    context: ReplicationEventContext<'_>,
 ) -> Result<()> {
     let file = metadata_store
-        .find_file_by_id(job.file_id)
+        .find_file_by_id(context.job.file_id)
         .await
-        .with_context(|| format!("failed to load file {} for replication event", job.file_id))?
+        .with_context(|| {
+            format!(
+                "failed to load file {} for replication event",
+                context.job.file_id
+            )
+        })?
         .context("replication job references missing file")?;
 
     let payload = ReplicationStateChangedPayload {
-        file_id: job.file_id,
-        file_version_id: job.file_version_id,
-        replication_state,
-        job_status,
-        attempt_count,
-        next_attempt_at,
-        last_error,
+        file_id: context.job.file_id,
+        file_version_id: context.job.file_version_id,
+        replication_state: context.replication_state,
+        job_status: context.job_status,
+        attempt_count: context.attempt_count,
+        next_attempt_at: context.next_attempt_at,
+        last_error: context.last_error,
         updated_at: chrono::Utc::now(),
     };
 
     let event = Event::new(
         EventType::ReplicationStateChanged,
-        job.file_id,
+        context.job.file_id,
         AggregateType::File,
         serde_json::to_value(payload).context("failed to serialize replication payload")?,
         file.owner_id,

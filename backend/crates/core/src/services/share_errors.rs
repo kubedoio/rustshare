@@ -1,6 +1,6 @@
+use crate::domain::{SharePermissions, UserId};
 use thiserror::Error;
 use uuid::Uuid;
-use crate::domain::{SharePermissions, UserId};
 
 /// Errors that can occur during share operations.
 #[derive(Debug, Error)]
@@ -55,7 +55,10 @@ pub enum ShareError {
 
     /// User lacks required permission for this operation.
     #[error("Insufficient permission: required {required:?}, but have {actual:?}")]
-    InsufficientPermission { required: SharePermissions, actual: SharePermissions },
+    InsufficientPermission {
+        required: SharePermissions,
+        actual: SharePermissions,
+    },
 
     /// Cannot share a file with oneself.
     #[error("Cannot share a file with yourself")]

@@ -44,16 +44,16 @@ Expected: Server starts on port 8080, logs show "EventBroadcaster initialized".
 
 **Steps:**
 
-1. Get a JWT token:
+1. Get an auth token from the canonical login route:
 ```bash
-curl -X POST http://localhost:8080/api/auth/login \
+curl -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@example.com","password":"admin_password"}'
 ```
 
 2. Save the token from the response, then connect via WebSocket:
 ```bash
-wscat -c ws://localhost:8080/api/sync \
+wscat -c ws://localhost:8080/api/ws \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -69,7 +69,7 @@ wscat -c ws://localhost:8080/api/sync \
 
 2. In another terminal, upload a file:
 ```bash
-curl -X POST http://localhost:8080/api/files/upload \
+curl -X POST http://localhost:8080/api/v1/files/upload \
   -H "Authorization: Bearer <token>" \
   -F "file=@test.txt" \
   -F "name=test.txt"
@@ -97,7 +97,7 @@ curl -X POST http://localhost:8080/api/files/upload \
 
 2. Create a folder:
 ```bash
-curl -X POST http://localhost:8080/api/folders \
+curl -X POST http://localhost:8080/api/v1/folders \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"name":"Test Folder","parent_id":null}'
@@ -129,22 +129,22 @@ curl -X POST http://localhost:8080/api/folders \
 
 3. Upload 3 files via HTTP:
 ```bash
-curl -X POST http://localhost:8080/api/files/upload \
+curl -X POST http://localhost:8080/api/v1/files/upload \
   -H "Authorization: Bearer <token>" \
   -F "file=@test1.txt" -F "name=test1.txt"
 
-curl -X POST http://localhost:8080/api/files/upload \
+curl -X POST http://localhost:8080/api/v1/files/upload \
   -H "Authorization: Bearer <token>" \
   -F "file=@test2.txt" -F "name=test2.txt"
 
-curl -X POST http://localhost:8080/api/files/upload \
+curl -X POST http://localhost:8080/api/v1/files/upload \
   -H "Authorization: Bearer <token>" \
   -F "file=@test3.txt" -F "name=test3.txt"
 ```
 
 4. Reconnect via WebSocket and immediately send a sync message:
 ```bash
-wscat -c ws://localhost:8080/api/sync \
+wscat -c ws://localhost:8080/api/ws \
   -H "Authorization: Bearer <token>"
 
 # After connection, send:
@@ -161,7 +161,7 @@ wscat -c ws://localhost:8080/api/sync \
 
 1. Try to connect with an invalid token:
 ```bash
-wscat -c ws://localhost:8080/api/sync \
+wscat -c ws://localhost:8080/api/ws \
   -H "Authorization: Bearer invalid_token"
 ```
 

@@ -3,7 +3,7 @@ FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
 
 ARG VITE_API_URL=/api/v1
-ARG VITE_WS_URL=/api/v1
+ARG VITE_WS_URL=/api/ws
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_WS_URL=$VITE_WS_URL
 

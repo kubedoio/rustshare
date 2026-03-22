@@ -62,7 +62,7 @@ use rustshare_core::{
     events::EventBroadcaster,
     services::{
         FileService, FolderService, NotificationService, PermissionResolver, ShareService,
-        UserShareService,
+        UserShareService, UserShareServiceDeps,
     },
 };
 use rustshare_infrastructure::repositories::{
@@ -75,6 +75,18 @@ use std::{path::PathBuf, sync::Arc};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::info;
+
+type AppUserShareService = UserShareService<
+    ShareRepository,
+    UserRepository,
+    FileRepository,
+    FolderRepository,
+    ShareRepository,
+    FileRepository,
+    FolderRepository,
+    NotificationRepository,
+    EventStore,
+>;
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -91,19 +103,7 @@ pub struct AppState {
     pub permission_resolver:
         Arc<PermissionResolver<ShareRepository, FileRepository, FolderRepository>>,
     pub notification_service: Arc<NotificationService<NotificationRepository>>,
-    pub user_share_service: Arc<
-        UserShareService<
-            ShareRepository,
-            UserRepository,
-            FileRepository,
-            FolderRepository,
-            ShareRepository,
-            FileRepository,
-            FolderRepository,
-            NotificationRepository,
-            EventStore,
-        >,
-    >,
+    pub user_share_service: Arc<AppUserShareService>,
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
 }
 
@@ -196,16 +196,16 @@ async fn main() -> Result<()> {
     let notification_service = Arc::new(NotificationService::new(notification_repository));
 
     // Initialize user share service
-    let user_share_service = Arc::new(UserShareService::new(
-        Arc::clone(&share_repository),
-        Arc::clone(&user_repository),
-        Arc::clone(&file_repository),
-        Arc::clone(&folder_repository),
-        Arc::clone(&permission_resolver),
-        Arc::clone(&notification_service),
-        Arc::clone(&event_store),
-        Arc::clone(&broadcaster),
-    ));
+    let user_share_service = Arc::new(UserShareService::new(UserShareServiceDeps {
+        share_repo: Arc::clone(&share_repository),
+        user_repo: Arc::clone(&user_repository),
+        file_repo: Arc::clone(&file_repository),
+        folder_repo: Arc::clone(&folder_repository),
+        permission_resolver: Arc::clone(&permission_resolver),
+        notification_service: Arc::clone(&notification_service),
+        event_store: Arc::clone(&event_store),
+        broadcaster: Arc::clone(&broadcaster),
+    }));
 
     // Initialize rate limiting configuration
     let rate_limit_config = Arc::new(middleware::RateLimitConfig::new());
@@ -270,24 +270,19 @@ async fn main() -> Result<()> {
         rate_limit_config,
     };
 
-    // Build router
+    // Build router.
+    //
+    // Contract freeze note:
+    // - `/api/v1/...` is the stable client surface
+    // - `/api/ws` is the stable realtime endpoint
+    // - realtime compatibility aliases were removed in Phase 7 wave 1
+    // - legacy `/api/auth/...` aliases were removed in Phase 7 wave 2
+    // - unversioned resource aliases were removed in Phase 7 wave 3
+    // - remaining unversioned `/api/...` routes are limited to narrower compatibility or internal/operator surfaces
     let app = Router::new()
         // Health check
         .route("/health", get(health_check))
-        // Auth
-        .route("/api/auth/config", get(oidc::auth_config))
-        .route("/api/auth/login", post(login))
-        .route("/api/auth/logout", post(logout))
-        .route("/api/auth/oidc/login", get(oidc::oidc_login))
-        .route("/api/auth/oidc/callback", get(oidc::oidc_callback))
-        .route(
-            "/api/auth/oidc/mobile/authorize",
-            post(oidc::mobile_oidc_authorize),
-        )
-        .route(
-            "/api/auth/oidc/mobile/exchange",
-            post(oidc::mobile_oidc_exchange),
-        )
+        // Canonical versioned auth routes
         .route("/api/v1/auth/config", get(oidc::auth_config))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/logout", post(logout))
@@ -302,38 +297,21 @@ async fn main() -> Result<()> {
             post(oidc::mobile_oidc_exchange),
         )
         // File routes (Task 15-19)
-        .route("/api/files", get(handlers::list_files))
         .route("/api/v1/files", get(handlers::list_files))
-        .route("/api/files/upload", post(handlers::upload_file))
         .route("/api/v1/files/upload", post(handlers::upload_file))
-        .route("/api/files/:id", get(handlers::get_file))
         .route("/api/v1/files/:id", get(handlers::get_file))
-        .route("/api/files/:id", put(handlers::update_file))
         .route("/api/v1/files/:id", put(handlers::update_file))
-        .route("/api/files/:id", delete(handlers::delete_file))
         .route("/api/v1/files/:id", delete(handlers::delete_file))
-        .route("/api/files/:id/download", get(handlers::download_file))
         .route("/api/v1/files/:id/download", get(handlers::download_file))
-        .route(
-            "/api/files/:id/replication",
-            get(replication_handlers::get_file_replication_status),
-        )
-        .route("/api/files/:id/versions", get(handlers::get_file_versions))
         .route(
             "/api/v1/files/:id/versions",
             get(handlers::get_file_versions),
         )
         .route(
-            "/api/files/:id/restore",
-            post(handlers::restore_file_version),
-        )
-        .route(
             "/api/v1/files/:id/restore",
             post(handlers::restore_file_version),
         )
-        .route("/api/files/:id/move", post(handlers::move_file))
         .route("/api/v1/files/:id/move", post(handlers::move_file))
-        .route("/api/files/:id/rename", post(handlers::rename_file))
         .route("/api/v1/files/:id/rename", post(handlers::rename_file))
         .route(
             "/api/admin/replication/jobs",
@@ -366,70 +344,39 @@ async fn main() -> Result<()> {
         )
         // Folder routes (Task 20-22)
         // NOTE: More specific routes (with literal path segments) must come BEFORE parameterized routes
-        .route("/api/folders", post(handlers::create_folder))
         .route("/api/v1/folders", post(handlers::create_folder))
-        .route(
-            "/api/folders/root/contents",
-            get(handlers::get_root_contents),
-        )
         .route(
             "/api/v1/folders/root/contents",
             get(handlers::get_root_contents),
         )
-        .route("/api/folders/tree", get(handlers::get_folder_tree))
         .route("/api/v1/folders/tree", get(handlers::get_folder_tree))
-        .route(
-            "/api/folders/:id/contents",
-            get(handlers::get_folder_contents),
-        )
         .route(
             "/api/v1/folders/:id/contents",
             get(handlers::get_folder_contents),
         )
-        .route("/api/folders/:id/move", post(handlers::move_folder))
         .route("/api/v1/folders/:id/move", post(handlers::move_folder))
-        .route("/api/folders/:id/rename", post(handlers::rename_folder))
         .route("/api/v1/folders/:id/rename", post(handlers::rename_folder))
-        .route("/api/folders/:id", get(handlers::get_folder))
         .route("/api/v1/folders/:id", get(handlers::get_folder))
-        .route("/api/folders/:id", delete(handlers::delete_folder))
         .route("/api/v1/folders/:id", delete(handlers::delete_folder))
         // Share routes (Task 9)
         .route(
-            "/api/files/:file_id/shares",
-            post(handlers::create_public_file_share),
-        )
-        .route(
             "/api/v1/files/:file_id/shares",
             post(handlers::create_public_file_share),
-        )
-        .route(
-            "/api/folders/:folder_id/shares",
-            post(handlers::create_public_folder_share),
         )
         .route(
             "/api/v1/folders/:folder_id/shares",
             post(handlers::create_public_folder_share),
         )
         .route(
-            "/api/files/:file_id/shares",
-            get(handlers::list_public_file_shares),
-        )
-        .route(
             "/api/v1/files/:file_id/shares",
             get(handlers::list_public_file_shares),
-        )
-        .route(
-            "/api/folders/:folder_id/shares",
-            get(handlers::list_public_folder_shares),
         )
         .route(
             "/api/v1/folders/:folder_id/shares",
             get(handlers::list_public_folder_shares),
         )
-        .route("/api/shares", get(list_user_shares))
         .route("/api/v1/shares", get(list_user_shares))
-        .route("/api/shares/:id", delete(revoke_share))
+        .route("/api/v1/shares/:id/access-log", get(get_share_access_log))
         .route("/api/v1/shares/:id", delete(revoke_share))
         // User routes
         .route("/api/users/me", get(handlers::get_user_profile))
@@ -438,75 +385,79 @@ async fn main() -> Result<()> {
         .route("/api/users/me/theme", patch(handlers::update_user_theme))
         .route("/api/v1/users/me/theme", patch(handlers::update_user_theme))
         .route("/api/v1/me/theme", patch(handlers::update_user_theme))
-        // Internal user share routes
-        .route("/api/files/:id/share", post(handlers::create_file_share))
-        .route("/api/v1/files/:id/share", post(handlers::create_file_share))
+        .route("/api/users/me/sessions", get(handlers::list_user_sessions))
         .route(
-            "/api/folders/:id/share",
-            post(handlers::create_folder_share),
+            "/api/v1/users/me/sessions",
+            get(handlers::list_user_sessions),
         )
+        .route("/api/v1/me/sessions", get(handlers::list_user_sessions))
+        .route(
+            "/api/users/me/security-events",
+            get(handlers::list_user_security_events),
+        )
+        .route(
+            "/api/v1/users/me/security-events",
+            get(handlers::list_user_security_events),
+        )
+        .route(
+            "/api/v1/me/security-events",
+            get(handlers::list_user_security_events),
+        )
+        .route(
+            "/api/users/me/sessions/:id",
+            delete(handlers::delete_user_session),
+        )
+        .route(
+            "/api/v1/users/me/sessions/:id",
+            delete(handlers::delete_user_session),
+        )
+        .route(
+            "/api/v1/me/sessions/:id",
+            delete(handlers::delete_user_session),
+        )
+        .route(
+            "/api/users/me/password",
+            patch(handlers::update_user_password),
+        )
+        .route(
+            "/api/v1/users/me/password",
+            patch(handlers::update_user_password),
+        )
+        .route("/api/v1/me/password", patch(handlers::update_user_password))
+        // Internal user share routes
+        .route("/api/v1/files/:id/share", post(handlers::create_file_share))
         .route(
             "/api/v1/folders/:id/share",
             post(handlers::create_folder_share),
         )
-        .route("/api/shares/received", get(handlers::list_received_shares))
         .route(
             "/api/v1/shares/received",
             get(handlers::list_received_shares),
-        )
-        .route(
-            "/api/files/:id/recipients",
-            get(handlers::list_file_recipients),
         )
         .route(
             "/api/v1/files/:id/recipients",
             get(handlers::list_file_recipients),
         )
         .route(
-            "/api/folders/:id/recipients",
-            get(handlers::list_folder_recipients),
-        )
-        .route(
             "/api/v1/folders/:id/recipients",
             get(handlers::list_folder_recipients),
-        )
-        .route(
-            "/api/shares/:id/permission",
-            put(handlers::update_recipient_permission),
         )
         .route(
             "/api/v1/shares/:id/permission",
             put(handlers::update_recipient_permission),
         )
         .route(
-            "/api/shares/:id/recipient",
-            delete(handlers::remove_recipient),
-        )
-        .route(
             "/api/v1/shares/:id/recipient",
             delete(handlers::remove_recipient),
         )
-        .route("/api/notifications", get(handlers::list_notifications))
         .route("/api/v1/notifications", get(handlers::list_notifications))
-        .route(
-            "/api/notifications/unread-count",
-            get(handlers::count_unread_notifications),
-        )
         .route(
             "/api/v1/notifications/unread-count",
             get(handlers::count_unread_notifications),
         )
         .route(
-            "/api/notifications/:id/read",
-            put(handlers::mark_notification_read),
-        )
-        .route(
             "/api/v1/notifications/:id/read",
             put(handlers::mark_notification_read),
-        )
-        .route(
-            "/api/notifications/:id",
-            delete(handlers::delete_notification),
         )
         .route(
             "/api/v1/notifications/:id",
@@ -514,48 +465,24 @@ async fn main() -> Result<()> {
         )
         // Public share routes (Task 10 - no authentication required for session creation and info)
         .route(
-            "/api/public/share/:token/session",
-            post(handlers::create_session),
-        )
-        .route(
             "/api/v1/public/share/:token/session",
             post(handlers::create_session),
-        )
-        .route(
-            "/api/public/share/:token/info",
-            get(handlers::get_share_info),
         )
         .route(
             "/api/v1/public/share/:token/info",
             get(handlers::get_share_info),
         )
         .route(
-            "/api/public/share/:token/file",
-            get(handlers::download_shared_file),
-        )
-        .route(
             "/api/v1/public/share/:token/file",
             get(handlers::download_shared_file),
-        )
-        .route(
-            "/api/public/share/:token/folder/contents",
-            get(handlers::get_shared_folder_contents),
         )
         .route(
             "/api/v1/public/share/:token/folder/contents",
             get(handlers::get_shared_folder_contents),
         )
         .route(
-            "/api/public/share/:token/folder/files/:file_id",
-            get(handlers::download_shared_folder_file),
-        )
-        .route(
             "/api/v1/public/share/:token/folder/files/:file_id",
             get(handlers::download_shared_folder_file),
-        )
-        .route(
-            "/api/public/share/:token/folder/upload",
-            post(handlers::upload_shared_folder_file),
         )
         .route(
             "/api/v1/public/share/:token/folder/upload",
@@ -563,8 +490,6 @@ async fn main() -> Result<()> {
         )
         // WebSocket sync endpoint (Task Phase 3A)
         .route("/api/ws", get(handlers::sync_handler))
-        .route("/api/v1/ws", get(handlers::sync_handler))
-        .route("/api/sync", get(handlers::sync_handler))
         .route("/api", any(api_not_found))
         .route("/api/*path", any(api_not_found))
         .with_state(state.clone())
@@ -712,8 +637,27 @@ struct OwnedShareResponse {
     share_token: String,
     permissions: SharePermissions,
     password_protected: bool,
+    access_count: i32,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
     created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Deserialize)]
+struct ShareAccessLogQuery {
+    limit: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct ShareAccessLogResponse {
+    accessed_at: chrono::DateTime<chrono::Utc>,
+    action: String,
+    success: bool,
+    actor_type: Option<String>,
+    actor_label: Option<String>,
+    ip_address: Option<String>,
+    user_agent: Option<String>,
+    share_session_id: Option<uuid::Uuid>,
+    share_session_subject: Option<String>,
 }
 
 async fn list_user_shares(
@@ -735,9 +679,7 @@ async fn list_user_shares(
         .into_iter()
         .filter_map(|entry| {
             let share = entry.share;
-            let Some(share_token) = share.share_token else {
-                return None;
-            };
+            let share_token = share.share_token?;
 
             Some(OwnedShareResponse {
                 id: share.id,
@@ -747,6 +689,7 @@ async fn list_user_shares(
                 share_token,
                 permissions: share.permissions,
                 password_protected: share.password_hash.is_some(),
+                access_count: share.access_count,
                 expires_at: share.expires_at,
                 created_at: share.created_at,
             })
@@ -812,6 +755,44 @@ async fn revoke_share(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn get_share_access_log(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    axum::extract::Path(share_id): axum::extract::Path<uuid::Uuid>,
+    axum::extract::Query(query): axum::extract::Query<ShareAccessLogQuery>,
+    handlers::AuthenticatedUser { user_id }: handlers::AuthenticatedUser,
+) -> Result<Json<Vec<ShareAccessLogResponse>>, (StatusCode, String)> {
+    let requested_limit = query.limit.unwrap_or(50);
+    let limit = requested_limit.clamp(1, 200);
+
+    let entries = state
+        .metadata_store
+        .get_public_share_access_log(share_id, user_id, limit)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to fetch share access log: {error}"),
+            )
+        })?;
+
+    let response = entries
+        .into_iter()
+        .map(|entry| ShareAccessLogResponse {
+            accessed_at: entry.accessed_at,
+            action: entry.action,
+            success: entry.success,
+            actor_type: entry.actor_type,
+            actor_label: entry.actor_label,
+            ip_address: entry.ip_address,
+            user_agent: entry.user_agent,
+            share_session_id: entry.share_session_id,
+            share_session_subject: entry.share_session_subject,
+        })
+        .collect();
+
+    Ok(Json(response))
+}
+
 /// Login handler
 async fn login(
     axum::extract::State(state): axum::extract::State<AppState>,
@@ -852,9 +833,29 @@ async fn login(
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_string());
     let ip_address = middleware::extract_client_ip(&headers, None).map(|value| value.to_string());
-    let session_token = create_user_session(&state, user.id, user_agent, ip_address)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let session_token =
+        create_user_session(&state, user.id, user_agent.clone(), ip_address.clone())
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    if let Err(error) = log_user_security_event(
+        &state,
+        rustshare_storage::UserSecurityEventRecord {
+            user_id: user.id,
+            event_type: "password_login",
+            description: "Signed in with email and password",
+            ip_address: ip_address.as_deref(),
+            user_agent: user_agent.as_deref(),
+            session_id: None,
+        },
+    )
+    .await
+    {
+        tracing::warn!(
+            "Failed to record password login security event: {:?}",
+            error
+        );
+    }
 
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
@@ -886,11 +887,41 @@ async fn logout(
         extract_cookie_value(&headers, rustshare_auth::WEB_SESSION_COOKIE_NAME)
     {
         let token_hash = rustshare_auth::hash_web_session_token(&session_token);
+        let session = state
+            .metadata_store
+            .find_user_session_by_token_hash(&token_hash)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        let user_agent = headers
+            .get(header::USER_AGENT)
+            .and_then(|value| value.to_str().ok());
+        let ip_address =
+            middleware::extract_client_ip(&headers, None).map(|value| value.to_string());
+
         state
             .metadata_store
             .delete_user_session_by_token_hash(&token_hash)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        if let Some(session) = session {
+            if let Err(error) = log_user_security_event(
+                &state,
+                rustshare_storage::UserSecurityEventRecord {
+                    user_id: session.user_id,
+                    event_type: "logout",
+                    description: "Signed out of browser session",
+                    ip_address: ip_address.as_deref(),
+                    user_agent,
+                    session_id: Some(session.id),
+                },
+            )
+            .await
+            {
+                tracing::warn!("Failed to record logout security event: {:?}", error);
+            }
+        }
     }
 
     let mut response_headers = HeaderMap::new();
@@ -901,4 +932,11 @@ async fn logout(
     );
 
     Ok((response_headers, StatusCode::NO_CONTENT).into_response())
+}
+
+async fn log_user_security_event(
+    state: &AppState,
+    event: rustshare_storage::UserSecurityEventRecord<'_>,
+) -> anyhow::Result<()> {
+    state.metadata_store.create_user_security_event(event).await
 }

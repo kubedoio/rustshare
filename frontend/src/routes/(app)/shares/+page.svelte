@@ -1,13 +1,17 @@
 <script lang="ts">
 	import { createQuery, createMutation } from '@tanstack/svelte-query';
-	import { listAllUserShares, revokeShare } from '$lib/api/shares';
+	import { getShareAccessLog, listAllUserShares, revokeShare } from '$lib/api/shares';
 	import { queryClient } from '$lib/query-client';
-	import type { Share } from '$lib/api/types';
+	import type { Share, ShareAccessLogEntry } from '$lib/api/types';
 	import Toast from '$lib/components/common/Toast.svelte';
 
 	let showToast = false;
 	let toastMessage = '';
 	let toastType: 'success' | 'error' | 'info' = 'info';
+	let activeShareActivityId: string | null = null;
+	let shareActivity: ShareAccessLogEntry[] = [];
+	let shareActivityLoading = false;
+	let shareActivityError = '';
 
 	// Query for all shares
 	const sharesQuery = createQuery({
@@ -45,6 +49,33 @@
 		const url = getShareUrl(token);
 		navigator.clipboard.writeText(url);
 		displayToast('Share link copied to clipboard', 'success');
+	}
+
+	async function toggleShareActivity(share: Share) {
+		if (activeShareActivityId === share.id) {
+			closeShareActivity();
+			return;
+		}
+
+		activeShareActivityId = share.id;
+		shareActivity = [];
+		shareActivityError = '';
+		shareActivityLoading = true;
+
+		try {
+			shareActivity = await getShareAccessLog(share.id, 50);
+		} catch (error) {
+			shareActivityError = error instanceof Error ? error.message : 'Failed to load activity';
+		} finally {
+			shareActivityLoading = false;
+		}
+	}
+
+	function closeShareActivity() {
+		activeShareActivityId = null;
+		shareActivity = [];
+		shareActivityError = '';
+		shareActivityLoading = false;
 	}
 
 	function handleRevokeShare(share: Share) {
@@ -87,6 +118,16 @@
 		const daysUntilExpiry = Math.round(hoursUntilExpiry / 24);
 		return { text: `${daysUntilExpiry}d left`, class: 'badge-info' };
 	}
+
+	function formatAccessTime(dateString: string): string {
+		return new Date(dateString).toLocaleString('en-US', {
+			year: 'numeric',
+			month: 'short',
+			day: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit'
+		});
+	}
 </script>
 
 <div class="p-4 lg:p-6 max-w-7xl container mx-auto">
@@ -99,7 +140,7 @@
 			</div>
 		</div>
 
-		<div class="alert alert-warning">
+		<div class="alert alert-info">
 			<svg
 				xmlns="http://www.w3.org/2000/svg"
 				fill="none"
@@ -110,12 +151,12 @@
 					stroke-linecap="round"
 					stroke-linejoin="round"
 					stroke-width="2"
-					d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z"
+					d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"
 				></path>
 			</svg>
 			<span>
-				Global shared-link management is still being finished. For now, the reliable way to create
-				and manage links is from the Share action on individual files and folders.
+				Public links can now be audited here. Create and edit links from the Share action in My
+				Files, then use this page for revocation and access-log review.
 			</span>
 		</div>
 
@@ -197,6 +238,9 @@
 													<span class="badge badge-xs badge-ghost">🔒 Password</span>
 												{/if}
 												<span class="badge badge-xs badge-ghost">{share.permissions}</span>
+												<span class="badge badge-xs badge-ghost">
+													{share.access_count} access{share.access_count === 1 ? '' : 'es'}
+												</span>
 											</div>
 										</div>
 									</div>
@@ -216,7 +260,11 @@
 								</td>
 								<td class="text-right">
 									<div class="dropdown dropdown-end">
-										<button type="button" class="btn btn-ghost btn-xs">
+										<button
+											type="button"
+											class="btn btn-ghost btn-xs"
+											aria-label="Open share actions"
+										>
 											<svg
 												xmlns="http://www.w3.org/2000/svg"
 												fill="none"
@@ -253,6 +301,25 @@
 												</button>
 											</li>
 											<li>
+												<button type="button" on:click={() => toggleShareActivity(share)}>
+													<svg
+														xmlns="http://www.w3.org/2000/svg"
+														fill="none"
+														viewBox="0 0 24 24"
+														stroke-width="1.5"
+														stroke="currentColor"
+														class="w-4 h-4"
+													>
+														<path
+															stroke-linecap="round"
+															stroke-linejoin="round"
+															d="M3 3v18h18M7.5 15l3-3 2.25 2.25L16.5 9"
+														/>
+													</svg>
+													{activeShareActivityId === share.id ? 'Hide Activity' : 'View Activity'}
+												</button>
+											</li>
+											<li>
 												<button
 													type="button"
 													on:click={() => handleRevokeShare(share)}
@@ -283,6 +350,65 @@
 					</tbody>
 				</table>
 			</div>
+
+			{#if activeShareActivityId}
+				<div class="bg-base-100 rounded-lg shadow p-4">
+					<div class="mb-3 flex items-center justify-between">
+						<div>
+							<h2 class="text-lg font-semibold">Share Activity</h2>
+							<p class="text-sm text-base-content/70">
+								Recent access attempts for the selected public link
+							</p>
+						</div>
+						<button type="button" class="btn btn-ghost btn-sm" on:click={closeShareActivity}>
+							Close
+						</button>
+					</div>
+
+					{#if shareActivityLoading}
+						<div class="py-8 flex justify-center">
+							<span class="loading loading-spinner loading-md"></span>
+						</div>
+					{:else if shareActivityError}
+						<div class="alert alert-error">
+							<span>{shareActivityError}</span>
+						</div>
+					{:else if shareActivity.length === 0}
+						<div class="text-sm text-base-content/70 py-4">
+							No recorded access yet for this share.
+						</div>
+					{:else}
+						<div class="overflow-x-auto">
+							<table class="table-sm table">
+								<thead>
+									<tr>
+										<th>Time</th>
+										<th>Action</th>
+										<th>Actor</th>
+										<th>IP</th>
+										<th>Status</th>
+									</tr>
+								</thead>
+								<tbody>
+									{#each shareActivity as entry}
+										<tr>
+											<td>{formatAccessTime(entry.accessed_at)}</td>
+											<td class="text-xs uppercase">{entry.action}</td>
+											<td>{entry.actor_label || entry.actor_type || 'Anonymous'}</td>
+											<td class="font-mono text-xs">{entry.ip_address || 'Unknown'}</td>
+											<td>
+												<span class="badge {entry.success ? 'badge-success' : 'badge-error'}">
+													{entry.success ? 'Success' : 'Failed'}
+												</span>
+											</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+					{/if}
+				</div>
+			{/if}
 		{/if}
 	</div>
 </div>

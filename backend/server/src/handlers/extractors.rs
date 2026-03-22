@@ -27,6 +27,12 @@ pub struct AuthenticatedUser {
     pub user_id: Uuid,
 }
 
+#[derive(Debug, Clone)]
+pub struct AuthenticatedSession {
+    pub user_id: Uuid,
+    pub session_id: Option<Uuid>,
+}
+
 #[async_trait]
 impl FromRequestParts<AppState> for AuthenticatedUser {
     type Rejection = Response;
@@ -62,6 +68,48 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             Uuid::parse_str(&claims.sub).map_err(|_| auth_error("Invalid user ID in token"))?;
 
         Ok(AuthenticatedUser { user_id })
+    }
+}
+
+#[async_trait]
+impl FromRequestParts<AppState> for AuthenticatedSession {
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        if let Some(session_token) =
+            extract_cookie_value(&parts.headers, rustshare_auth::WEB_SESSION_COOKIE_NAME)
+        {
+            if let Some(session) = resolve_user_session(state, &session_token)
+                .await
+                .map_err(session_auth_error)?
+            {
+                return Ok(AuthenticatedSession {
+                    user_id: session.user_id,
+                    session_id: Some(session.id),
+                });
+            }
+        }
+
+        let TypedHeader(Authorization(bearer)) = parts
+            .extract::<TypedHeader<Authorization<Bearer>>>()
+            .await
+            .map_err(|_| auth_error("Missing or invalid authentication"))?;
+
+        let claims = state
+            .jwt_manager
+            .validate(bearer.token())
+            .map_err(|e| auth_error(&format!("Invalid token: {}", e)))?;
+
+        let user_id =
+            Uuid::parse_str(&claims.sub).map_err(|_| auth_error("Invalid user ID in token"))?;
+
+        Ok(AuthenticatedSession {
+            user_id,
+            session_id: None,
+        })
     }
 }
 

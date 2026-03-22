@@ -4,8 +4,8 @@ Get WebSocket real-time sync up and running in 5 minutes.
 
 ## Prerequisites
 
-- Backend WebSocket server running at `/api/sync`
-- Backend accepts JWT token as query parameter
+- Backend WebSocket server running at `/api/ws`
+- Backend accepts browser session cookies, bearer tokens, or `?token=` query auth
 - Frontend development environment set up
 
 ## Step 1: Environment Configuration
@@ -14,14 +14,14 @@ Ensure your `.env` file has the WebSocket URL configured:
 
 ```bash
 # frontend/.env
-VITE_API_URL=http://localhost/api
-VITE_WS_URL=ws://localhost/api
+VITE_API_URL=http://localhost/api/v1
+VITE_WS_URL=ws://localhost/api/ws
 ```
 
 For production with SSL:
 ```bash
-VITE_API_URL=https://yourapp.com/api
-VITE_WS_URL=wss://yourapp.com/api
+VITE_API_URL=https://yourapp.com/api/v1
+VITE_WS_URL=wss://yourapp.com/api/ws
 ```
 
 ## Step 2: Verify Installation
@@ -47,7 +47,7 @@ frontend/src/lib/components/common/WebSocketStatus.svelte
 
 The WebSocket connection is automatic:
 
-1. **Login**: WebSocket connects automatically with your JWT token
+1. **Login**: WebSocket connects automatically with your browser session
 2. **Session Restore**: WebSocket reconnects on page refresh
 3. **Logout**: WebSocket disconnects cleanly
 
@@ -64,7 +64,7 @@ npm run dev
 1. **Login** to the application
 2. **Check Header**: Look for connection status indicator (hidden when connected)
 3. **Open Browser DevTools** → Network tab → WS filter
-4. **Verify Connection**: Should see `ws://localhost/api/sync?token=...` with status 101
+4. **Verify Connection**: Should see `ws://localhost/api/ws` or `ws://localhost/api/ws?token=...` with status 101
 
 ### Console Verification
 
@@ -137,7 +137,7 @@ curl -I http://localhost/api/health
 ```javascript
 // In browser console
 [WebSocket] Authentication failed
-→ Solution: Check JWT token validity
+→ Solution: Check session validity or token validity
 
 [WebSocket] Failed to create connection
 → Solution: Check WebSocket URL in .env
@@ -200,7 +200,7 @@ Your backend WebSocket endpoint must:
 
 1. **Accept token in query parameter**
    ```
-   ws://localhost/api/sync?token=<JWT>
+   ws://localhost/api/ws?token=<JWT>
    ```
 
 2. **Send events in correct format**
@@ -288,7 +288,7 @@ toastStore.show('Processing...', 'info', 5000);
 
 ## Security Notes
 
-- ✅ JWT token is sent securely in WebSocket handshake
+- ✅ Browser session cookie or token auth is sent during the WebSocket handshake
 - ✅ Token is URL-encoded to prevent injection
 - ✅ Authentication failures don't retry infinitely
 - ✅ Expired tokens are handled gracefully

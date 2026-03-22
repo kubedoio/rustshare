@@ -108,7 +108,7 @@ pub async fn upload_file(
             mime_type,
         )
         .await
-        .map_err(|e| file_error_response(e))?;
+        .map_err(file_error_response)?;
 
     Ok((
         StatusCode::OK,

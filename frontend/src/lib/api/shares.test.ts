@@ -3,6 +3,7 @@ import {
 	createFileUserShare,
 	createFolderUserShare,
 	createShare,
+	getShareAccessLog,
 	listAllUserShares,
 	listFolderShares,
 	listFolderRecipients,
@@ -144,6 +145,7 @@ describe('shares API', () => {
 					permissions: 'View' as const,
 					upload_only: false,
 					password_protected: true,
+					access_count: 0,
 					expires_at: '2024-12-31T23:59:59Z',
 					created_at: '2024-01-01T00:00:00Z',
 					created_by: 'user-1'
@@ -156,6 +158,7 @@ describe('shares API', () => {
 					permissions: 'Edit' as const,
 					upload_only: false,
 					password_protected: false,
+					access_count: 0,
 					expires_at: null,
 					created_at: '2024-01-02T00:00:00Z',
 					created_by: 'user-1'
@@ -192,6 +195,7 @@ describe('shares API', () => {
 					permissions: 'View' as const,
 					upload_only: true,
 					password_protected: false,
+					access_count: 0,
 					expires_at: null,
 					created_at: '2024-01-02T00:00:00Z'
 				}
@@ -234,6 +238,7 @@ describe('shares API', () => {
 					permissions: 'View' as const,
 					upload_only: false,
 					password_protected: false,
+					access_count: 3,
 					expires_at: null,
 					created_at: '2024-01-01T00:00:00Z',
 					created_by: 'user-1'
@@ -354,6 +359,31 @@ describe('shares API', () => {
 			await removeShareRecipient('share-1');
 
 			expect(apiClient.delete).toHaveBeenCalledWith('/shares/share-1/recipient');
+		});
+	});
+
+	describe('share activity', () => {
+		it('should fetch the access log for a share', async () => {
+			const mockEntries = [
+				{
+					accessed_at: '2026-03-21T10:00:00Z',
+					action: 'download',
+					success: true,
+					actor_type: 'public_share_session',
+					actor_label: 'Uploader',
+					ip_address: '127.0.0.1',
+					user_agent: 'Mozilla/5.0',
+					share_session_id: 'session-1',
+					share_session_subject: 'share:session-1'
+				}
+			];
+
+			vi.mocked(apiClient.get).mockResolvedValue(mockEntries);
+
+			const result = await getShareAccessLog('share-1', 25);
+
+			expect(apiClient.get).toHaveBeenCalledWith('/shares/share-1/access-log?limit=25');
+			expect(result).toEqual(mockEntries);
 		});
 	});
 

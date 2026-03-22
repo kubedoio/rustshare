@@ -1,220 +1,139 @@
 # RustShare Backend
 
-Rust-based file sharing backend with event sourcing, WebSocket real-time sync, and object storage.
+RustShare backend built with Axum, PostgreSQL, RustFS-compatible object storage, and WebSocket realtime updates.
 
-## Architecture
+## Current Role
 
-The backend is organized as a Cargo workspace with the following crates:
+The backend is the only production runtime server. It is responsible for:
 
-- **rustshare-core**: Domain models, business logic, and services
-- **rustshare-storage**: Database operations (PostgreSQL via SQLx)
-- **rustshare-auth**: Authentication (Argon2id password hashing, JWT tokens)
-- **rustshare-server**: HTTP/WebSocket server (Axum)
+- serving all `/api/...` routes
+- serving the compiled SvelteKit SPA for non-API routes
+- browser session management with secure HTTP-only cookies
+- mobile and desktop token-oriented auth flows
+- file, folder, sharing, notification, and replication APIs
+- realtime updates on `/api/ws`
 
-## Prerequisites
+## Workspace Crates
 
-- Rust 1.70+
-- PostgreSQL 15+
-- S3-compatible object storage (AWS S3, MinIO, or local filesystem)
-- Docker and Docker Compose (for development)
+- `rustshare-core`: domain models and business logic
+- `rustshare-storage`: PostgreSQL and object-storage integration
+- `rustshare-auth`: password hashing, JWTs, cookie-session helpers
+- `rustshare-server`: Axum HTTP and WebSocket server
 
-## Getting Started
+## Contract Rules
 
-### Development Setup
+- Stable client routes live under `/api/v1/...`
+- Stable realtime endpoint is `GET /api/ws`
+- Unversioned `/api/...` aliases and legacy auth aliases are compatibility-only
+- New backend/client work must follow [API Contract Freeze](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-api-contract-freeze.md)
+- Client implementations should also follow [Client Integration Checklist](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-client-integration-checklist.md)
 
-1. Start services:
-```bash
-docker-compose up -d
-```
+## Stable Client Entry Points
 
-2. Run migrations:
-```bash
-cd backend
-sqlx migrate run
-```
+### Auth and Account
 
-3. Start server:
-```bash
-cd backend/server
-cargo run
-```
+- `GET /api/v1/auth/config`
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/logout`
+- `GET /api/v1/auth/oidc/login`
+- `GET /api/v1/auth/oidc/callback`
+- `POST /api/v1/auth/oidc/mobile/authorize`
+- `POST /api/v1/auth/oidc/mobile/exchange`
+- `GET /api/v1/me`
+- `PATCH /api/v1/me/theme`
+- `PATCH /api/v1/me/password`
+- `GET /api/v1/me/sessions`
+- `DELETE /api/v1/me/sessions/:id`
+- `GET /api/v1/me/security-events`
 
-The server will start on `http://localhost:8080`.
+### Files and Folders
 
-### Environment Variables
+- `GET /api/v1/files`
+- `POST /api/v1/files/upload`
+- `GET /api/v1/files/:id`
+- `PUT /api/v1/files/:id`
+- `DELETE /api/v1/files/:id`
+- `GET /api/v1/files/:id/download`
+- `GET /api/v1/files/:id/versions`
+- `POST /api/v1/files/:id/restore`
+- `POST /api/v1/files/:id/move`
+- `POST /api/v1/files/:id/rename`
+- `GET /api/v1/files/:id/replication`
+- `POST /api/v1/folders`
+- `GET /api/v1/folders/root/contents`
+- `GET /api/v1/folders/tree`
+- `GET /api/v1/folders/:id`
+- `GET /api/v1/folders/:id/contents`
+- `POST /api/v1/folders/:id/move`
+- `POST /api/v1/folders/:id/rename`
+- `DELETE /api/v1/folders/:id`
 
-Copy `.env.example` to `.env` and configure:
+### Shares and Notifications
 
-```bash
-DATABASE_URL=postgres://rustshare:rustshare@localhost:5432/rustshare
-JWT_SECRET=your-secret-key
-OBJECT_STORAGE_ENDPOINT=http://localhost:9000
-OBJECT_STORAGE_REGION=us-east-1
-OBJECT_STORAGE_BUCKET=rustshare
-OBJECT_STORAGE_ACCESS_KEY=minioadmin
-OBJECT_STORAGE_SECRET_KEY=minioadmin
-BROADCAST_CAPACITY=1000
-```
+- `GET /api/v1/shares`
+- `GET /api/v1/shares/:id/access-log`
+- `DELETE /api/v1/shares/:id`
+- `POST /api/v1/files/:id/share`
+- `POST /api/v1/folders/:id/share`
+- `GET /api/v1/shares/received`
+- `GET /api/v1/files/:id/recipients`
+- `GET /api/v1/folders/:id/recipients`
+- `PUT /api/v1/shares/:id/permission`
+- `DELETE /api/v1/shares/:id/recipient`
+- `GET /api/v1/notifications`
+- `GET /api/v1/notifications/unread-count`
+- `POST /api/v1/notifications/:id/read`
+- `DELETE /api/v1/notifications/:id`
 
-## API Endpoints
+### Public Share Access
 
-### Authentication
+- `POST /api/v1/public/share/:token/session`
+- `GET /api/v1/public/share/:token/info`
+- `GET /api/v1/public/share/:token/file`
+- `GET /api/v1/public/share/:token/folder/contents`
+- `GET /api/v1/public/share/:token/folder/files/:file_id`
+- `POST /api/v1/public/share/:token/folder/upload`
 
-- `POST /api/auth/login` - Login with email/password, returns JWT token
-- `POST /api/auth/register` - Register new user (if enabled)
+### Realtime
 
-### Files
+- `GET /api/ws`
 
-- `POST /api/files/upload` - Upload a new file
-- `GET /api/files/:id` - Get file metadata
-- `GET /api/files/:id/download` - Download file content
-- `PUT /api/files/:id` - Update file content
-- `GET /api/files/:id/versions` - List file versions
-- `POST /api/files/:id/restore/:version_id` - Restore a previous version
+WebSocket auth may use:
 
-### Folders
+- browser session cookie
+- `Authorization: Bearer <token>`
+- `?token=<token>` query parameter for browser-compatible token clients
 
-- `POST /api/folders` - Create folder
-- `GET /api/folders/:id` - Get folder metadata
-- `GET /api/folders/:id/contents` - List folder contents
-- `GET /api/folders/:id/tree` - Get folder tree
-- `PUT /api/folders/:id/rename` - Rename folder
-- `PUT /api/folders/:id/move` - Move folder
-- `DELETE /api/folders/:id` - Delete folder
+Stable event families are documented in [API Contract Freeze](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-api-contract-freeze.md).
 
-### Health
+## Internal / Operator Routes
 
-- `GET /health` - Health check endpoint
+These routes are intentionally outside the general client contract:
 
-## Phase 3A: Real-time Sync
-
-WebSocket endpoint for real-time file/folder notifications.
-
-**Endpoint:** `GET /api/sync`
-**Auth:** JWT Bearer token in `Authorization` header during upgrade
-
-**Client Protocol:**
-- Connect with JWT token
-- Optionally send `{"type":"sync","last_seen_event_id":"<uuid>"}` for catch-up
-- Receive notifications: `{"event_id":"...","event_type":"FileUploaded",...}`
-
-**Configuration:**
-- `BROADCAST_CAPACITY`: Event buffer size per subscriber (default: 1000)
-
-### Event Types
-
-The WebSocket server broadcasts the following event types:
-
-- `FileUploaded` - New file uploaded
-- `FileModified` - File content updated
-- `FileRestored` - File version restored
-- `FolderCreated` - New folder created
-- `FolderRenamed` - Folder name changed
-- `FolderMoved` - Folder moved to new parent
-- `FolderDeleted` - Folder deleted
-
-### Testing
-
-See `TESTING.md` for manual testing procedures.
+- `GET /api/v1/admin/replication/jobs`
+- `GET /api/v1/admin/replication/summary`
+- `GET /api/v1/admin/replication/targets`
 
 ## Development
 
-### Running Tests
+### Local setup
 
 ```bash
-# Unit tests only (no database required)
-cargo test --lib
-
-# All tests (requires database)
-cargo test
-
-# Specific crate
-cargo test -p rustshare-core
-
-# With output
-cargo test -- --nocapture
+docker compose up -d
 ```
 
-### Database Migrations
-
 ```bash
-# Create new migration
-sqlx migrate add migration_name
-
-# Run migrations
+cd backend
 sqlx migrate run
-
-# Revert last migration
-sqlx migrate revert
+cargo run --bin rustshare-server
 ```
 
-### Code Quality
+### Quality checks
 
 ```bash
-# Format code
 cargo fmt
-
-# Lint
 cargo clippy
-
-# Check without building
 cargo check
 ```
 
-## Architecture Details
-
-### Event Sourcing
-
-All file and folder operations are recorded as immutable events in the `events` table. This provides:
-- Complete audit trail
-- Point-in-time recovery
-- Real-time sync via event replay
-
-### Real-time Sync
-
-The WebSocket sync system uses:
-- `tokio::sync::broadcast` for in-memory pub/sub
-- Event replay from database for catch-up
-- JWT authentication for secure connections
-- Best-effort delivery with lag detection
-
-### Object Storage
-
-Files are stored in S3-compatible object storage:
-- Content-addressable (SHA256 hashing)
-- Automatic deduplication
-- Version history support
-
-## Deployment
-
-### Docker Production Build
-
-```bash
-docker build -t rustshare-backend .
-docker run -p 8080:8080 --env-file .env rustshare-backend
-```
-
-### Systemd Service
-
-Example systemd unit file:
-
-```ini
-[Unit]
-Description=RustShare Backend
-After=network.target postgresql.service
-
-[Service]
-Type=simple
-User=rustshare
-WorkingDirectory=/opt/rustshare
-EnvironmentFile=/opt/rustshare/.env
-ExecStart=/opt/rustshare/rustshare-server
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## License
-
-See LICENSE file in repository root.
+See [TESTING.md](/Users/scolak/Projects/x/rustshare/backend/TESTING.md) for broader validation guidance.

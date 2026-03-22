@@ -37,7 +37,7 @@ impl SharePermissions {
 
 impl PartialOrd for SharePermissions {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.level().partial_cmp(&other.level())
+        Some(self.cmp(other))
     }
 }
 

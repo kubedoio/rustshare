@@ -53,13 +53,13 @@ As of 2026-03-21, the implemented platform includes:
 
 ### Product scope
 
-- the light mobile client with photo backup and offline flows is still outstanding
+- the light mobile client now exists as an aligned standalone foundation, but active mobile product work is postponed for now
 - the Apple-first desktop app is only an early separate prototype, not a production client
 - deeper admin dashboards and alerting remain partial
 
 ### Technical debt
 
-- the frontend currently builds successfully, but still emits SvelteKit/Svelte runtime mismatch warnings during production build
+- the frontend toolchain is now aligned on Svelte 5 without the previous runtime mismatch warning
 - some legacy or compatibility endpoints and historical notes still exist and need cleanup
 - OIDC still needs end-to-end validation against the intended production identity provider
 
@@ -88,10 +88,90 @@ These are directional engineering estimates, not a guarantee of launch readiness
 
 ## Immediate Priorities
 
-1. Stabilize the frontend dependency mismatch so Docker/frontend builds stop emitting runtime compatibility warnings.
-2. Validate OIDC end to end against the actual identity provider intended for launch.
-3. Continue observability and alerting work around replication health.
-4. Continue the light mobile client as the next major product phase.
+1. Decide whether the current conditional web-first pilot result is sufficient for rollout scope.
+2. Re-run Phase 6 in the real launch environment if OIDC, alerting, or replication targets are added there.
+3. Begin Phase 7 only within the limits described by the current gate decision.
+
+## Contract Freeze
+
+As of 2026-03-21:
+
+- `/api/v1/...` is the frozen client-facing API surface
+- `/api/ws` is the frozen realtime endpoint
+- `/api/v1/ws` and `/api/sync` have been removed
+- legacy `/api/auth/...` aliases have been removed
+- unversioned file, folder, share, notification, and public-share aliases have been removed
+- remaining unversioned `/api/...` routes are limited to narrower compatibility or internal/operator surfaces
+
+Use [API Contract Freeze](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-api-contract-freeze.md) as the source of truth for new client work.
+Use [Compatibility Surface Inventory](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-compatibility-surface.md) to track what remains transitional and what should be removed later.
+
+## Phase Status
+
+- Phase 1: complete
+- Phase 2: complete
+- Phase 3: complete
+- Phase 4: complete at the aligned mobile-foundation level
+- Phase 5: complete at the repo hardening level
+- Phase 6: executed for the current Docker-based pilot profile
+- Launch Gate: conditionally passed for the current password-login web-first pilot profile
+- Phase 7: active within the limits of the current gate decision
+
+Current Phase 7 progress:
+
+- Wave 1 complete: realtime compatibility aliases removed
+- Wave 2 complete: legacy auth aliases removed
+- Wave 3 complete: unversioned resource aliases removed
+
+Phase 3 completion means:
+
+- stable `/api/v1` contract documented
+- stable `/api/ws` realtime endpoint documented
+- client integration rules documented
+- compatibility-only surface inventoried
+- current web client and active websocket references aligned to canonical paths
+
+Phase 4 completion means:
+
+- standalone Android and iOS client trees aligned to the frozen `/api/v1` and `/api/ws` contract
+- native mobile OIDC callback handling in place
+- secure mobile token storage in place
+- explicit offline downloads tracked locally
+- queued photo/video backup implemented in the active mobile client path
+
+Phase 5 completion means:
+
+- OIDC production validation checklist is written
+- alerting and incident threshold guidance is written
+- post-restore expected outcomes are written
+- compatibility removal planning is written
+- frontend runtime dependency drift is reduced materially and the Svelte runtime mismatch warning is removed
+
+Environment-specific launch sign-off is still required after this repo work:
+
+- real IdP validation
+- target-environment restore drill evidence
+- operator alerting implementation in the chosen monitoring stack
+
+## Roadmap Decision
+
+Mobile is postponed as the next active delivery phase.
+
+Use these docs as the source of truth:
+
+- [Mobile Postponement Decision](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-mobile-postponement-decision.md)
+- [Phase 5 Launch Hardening Spec](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-5-launch-hardening-spec.md)
+- [Phase 6 Environment Sign-Off Spec](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-6-environment-signoff-spec.md)
+- [Launch Gate: Web-First Pilot](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-launch-gate-web-first-pilot.md)
+- [Phase 7 Post-Launch And Client Roadmap](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-7-post-launch-and-client-roadmap.md)
+- [Phase 6 Execution Report](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-6-execution-report.md)
+- [Web-First Pilot Gate Decision](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-web-first-pilot-gate-decision.md)
+
+## Phase 7 Progress
+
+- compatibility cleanup wave 1 is complete
+- realtime alias routes `/api/v1/ws` and `/api/sync` are removed
+- the next cleanup target is legacy auth aliases
 
 ## Validation Snapshot
 

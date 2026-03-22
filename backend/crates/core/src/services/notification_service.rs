@@ -15,25 +15,30 @@ use crate::domain::{Notification, NotificationId, NotificationType, ResourceType
 use crate::services::NotificationError;
 use uuid::Uuid;
 
+#[derive(Debug, Clone)]
+pub struct CreateNotification {
+    pub user_id: UserId,
+    pub notification_type: NotificationType,
+    pub title: String,
+    pub message: String,
+    pub resource_id: Uuid,
+    pub resource_type: ResourceType,
+    pub action_url: Option<String>,
+}
+
 /// Trait for notification repository operations needed by NotificationService.
 ///
 /// This trait abstracts the repository to allow for testing without database dependencies.
 #[allow(async_fn_in_trait)]
 pub trait NotificationRepositoryOps: Send + Sync {
     /// Create a new notification.
-    async fn create(
-        &self,
-        user_id: UserId,
-        notification_type: NotificationType,
-        title: String,
-        message: String,
-        resource_id: Uuid,
-        resource_type: ResourceType,
-        action_url: Option<String>,
-    ) -> Result<Notification, sqlx::Error>;
+    async fn create(&self, request: CreateNotification) -> Result<Notification, sqlx::Error>;
 
     /// Find a notification by ID.
-    async fn find_by_id(&self, notification_id: NotificationId) -> Result<Option<Notification>, sqlx::Error>;
+    async fn find_by_id(
+        &self,
+        notification_id: NotificationId,
+    ) -> Result<Option<Notification>, sqlx::Error>;
 
     /// List notifications for a user (paginated, optional unread filter).
     async fn list_for_user(
@@ -45,14 +50,16 @@ pub trait NotificationRepositoryOps: Send + Sync {
     ) -> Result<Vec<Notification>, sqlx::Error>;
 
     /// Count notifications for a user with optional unread filtering.
-    async fn count_for_user(&self, user_id: UserId, unread_only: bool)
-        -> Result<i64, sqlx::Error>;
+    async fn count_for_user(&self, user_id: UserId, unread_only: bool) -> Result<i64, sqlx::Error>;
 
     /// Count unread notifications for a user.
     async fn count_unread(&self, user_id: UserId) -> Result<i64, sqlx::Error>;
 
     /// Mark a notification as read.
-    async fn mark_as_read(&self, notification_id: NotificationId) -> Result<Notification, sqlx::Error>;
+    async fn mark_as_read(
+        &self,
+        notification_id: NotificationId,
+    ) -> Result<Notification, sqlx::Error>;
 
     /// Delete a notification.
     async fn delete(&self, notification_id: NotificationId) -> Result<(), sqlx::Error>;
@@ -77,24 +84,10 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
     /// Returns the created Notification or a NotificationError.
     pub async fn create_notification(
         &self,
-        user_id: UserId,
-        notification_type: NotificationType,
-        title: String,
-        message: String,
-        resource_id: Uuid,
-        resource_type: ResourceType,
-        action_url: Option<String>,
+        request: CreateNotification,
     ) -> Result<Notification, NotificationError> {
         self.repository
-            .create(
-                user_id,
-                notification_type,
-                title,
-                message,
-                resource_id,
-                resource_type,
-                action_url,
-            )
+            .create(request)
             .await
             .map_err(NotificationError::Database)
     }
@@ -252,33 +245,30 @@ mod tests {
     }
 
     impl NotificationRepositoryOps for MockNotificationRepository {
-        async fn create(
-            &self,
-            user_id: UserId,
-            notification_type: NotificationType,
-            title: String,
-            message: String,
-            resource_id: Uuid,
-            resource_type: ResourceType,
-            action_url: Option<String>,
-        ) -> Result<Notification, sqlx::Error> {
+        async fn create(&self, request: CreateNotification) -> Result<Notification, sqlx::Error> {
             let notification = Notification {
                 id: Uuid::new_v4(),
-                user_id,
-                notification_type,
-                title,
-                message,
-                resource_id,
-                resource_type,
-                action_url,
+                user_id: request.user_id,
+                notification_type: request.notification_type,
+                title: request.title,
+                message: request.message,
+                resource_id: request.resource_id,
+                resource_type: request.resource_type,
+                action_url: request.action_url,
                 read: false,
                 created_at: Utc::now(),
             };
-            self.notifications.lock().unwrap().push(notification.clone());
+            self.notifications
+                .lock()
+                .unwrap()
+                .push(notification.clone());
             Ok(notification)
         }
 
-        async fn find_by_id(&self, notification_id: NotificationId) -> Result<Option<Notification>, sqlx::Error> {
+        async fn find_by_id(
+            &self,
+            notification_id: NotificationId,
+        ) -> Result<Option<Notification>, sqlx::Error> {
             Ok(self
                 .notifications
                 .lock()
@@ -298,9 +288,7 @@ mod tests {
             let notifications = self.notifications.lock().unwrap();
             let mut filtered: Vec<_> = notifications
                 .iter()
-                .filter(|n| {
-                    n.user_id == user_id && (!unread_only || !n.read)
-                })
+                .filter(|n| n.user_id == user_id && (!unread_only || !n.read))
                 .cloned()
                 .collect();
 
@@ -309,7 +297,11 @@ mod tests {
 
             // Apply pagination
             let start = offset as usize;
-            let result = filtered.into_iter().skip(start).take(limit as usize).collect();
+            let result = filtered
+                .into_iter()
+                .skip(start)
+                .take(limit as usize)
+                .collect();
 
             Ok(result)
         }
@@ -341,7 +333,10 @@ mod tests {
             Ok(count as i64)
         }
 
-        async fn mark_as_read(&self, notification_id: NotificationId) -> Result<Notification, sqlx::Error> {
+        async fn mark_as_read(
+            &self,
+            notification_id: NotificationId,
+        ) -> Result<Notification, sqlx::Error> {
             let mut notifications = self.notifications.lock().unwrap();
             if let Some(notification) = notifications.iter_mut().find(|n| n.id == notification_id) {
                 notification.read = true;
@@ -367,6 +362,26 @@ mod tests {
         NotificationService::new(repository)
     }
 
+    fn notification_request(
+        user_id: UserId,
+        notification_type: NotificationType,
+        title: &str,
+        message: &str,
+        resource_id: Uuid,
+        resource_type: ResourceType,
+        action_url: Option<&str>,
+    ) -> CreateNotification {
+        CreateNotification {
+            user_id,
+            notification_type,
+            title: title.to_string(),
+            message: message.to_string(),
+            resource_id,
+            resource_type,
+            action_url: action_url.map(str::to_string),
+        }
+    }
+
     #[tokio::test]
     async fn test_create_notification() {
         let service = setup_service();
@@ -374,20 +389,23 @@ mod tests {
         let resource_id = Uuid::new_v4();
 
         let notification = service
-            .create_notification(
+            .create_notification(notification_request(
                 user_id,
                 NotificationType::ShareReceived,
-                "File shared".to_string(),
-                "Alice shared file.pdf with you".to_string(),
+                "File shared",
+                "Alice shared file.pdf with you",
                 resource_id,
                 ResourceType::File,
-                Some("/files/123".to_string()),
-            )
+                Some("/files/123"),
+            ))
             .await
             .unwrap();
 
         assert_eq!(notification.user_id, user_id);
-        assert_eq!(notification.notification_type, NotificationType::ShareReceived);
+        assert_eq!(
+            notification.notification_type,
+            NotificationType::ShareReceived
+        );
         assert_eq!(notification.title, "File shared");
         assert!(!notification.read);
     }
@@ -399,15 +417,15 @@ mod tests {
         let resource_id = Uuid::new_v4();
 
         let created = service
-            .create_notification(
+            .create_notification(notification_request(
                 user_id,
                 NotificationType::ShareReceived,
-                "Test".to_string(),
-                "Message".to_string(),
+                "Test",
+                "Message",
                 resource_id,
                 ResourceType::File,
                 None,
-            )
+            ))
             .await
             .unwrap();
 
@@ -425,19 +443,21 @@ mod tests {
         let resource_id = Uuid::new_v4();
 
         let notification = service
-            .create_notification(
+            .create_notification(notification_request(
                 owner_id,
                 NotificationType::ShareReceived,
-                "Test".to_string(),
-                "Message".to_string(),
+                "Test",
+                "Message",
                 resource_id,
                 ResourceType::File,
                 None,
-            )
+            ))
             .await
             .unwrap();
 
-        let result = service.get_notification(notification.id, other_user_id).await;
+        let result = service
+            .get_notification(notification.id, other_user_id)
+            .await;
 
         assert!(matches!(result, Err(NotificationError::NotOwned { .. })));
     }
@@ -462,42 +482,42 @@ mod tests {
 
         // Create notifications for user
         service
-            .create_notification(
+            .create_notification(notification_request(
                 user_id,
                 NotificationType::ShareReceived,
-                "First".to_string(),
-                "Message 1".to_string(),
+                "First",
+                "Message 1",
                 resource_id,
                 ResourceType::File,
                 None,
-            )
+            ))
             .await
             .unwrap();
 
         service
-            .create_notification(
+            .create_notification(notification_request(
                 user_id,
                 NotificationType::PermissionChanged,
-                "Second".to_string(),
-                "Message 2".to_string(),
+                "Second",
+                "Message 2",
                 resource_id,
                 ResourceType::Folder,
                 None,
-            )
+            ))
             .await
             .unwrap();
 
         // Create notification for different user
         service
-            .create_notification(
+            .create_notification(notification_request(
                 other_user_id,
                 NotificationType::ShareReceived,
-                "Other".to_string(),
-                "Message 3".to_string(),
+                "Other",
+                "Message 3",
                 resource_id,
                 ResourceType::File,
                 None,
-            )
+            ))
             .await
             .unwrap();
 
@@ -519,28 +539,28 @@ mod tests {
 
         // Create notifications
         let n1 = service
-            .create_notification(
+            .create_notification(notification_request(
                 user_id,
                 NotificationType::ShareReceived,
-                "First".to_string(),
-                "Message 1".to_string(),
+                "First",
+                "Message 1",
                 resource_id,
                 ResourceType::File,
                 None,
-            )
+            ))
             .await
             .unwrap();
 
         service
-            .create_notification(
+            .create_notification(notification_request(
                 user_id,
                 NotificationType::PermissionChanged,
-                "Second".to_string(),
-                "Message 2".to_string(),
+                "Second",
+                "Message 2",
                 resource_id,
                 ResourceType::Folder,
                 None,
-            )
+            ))
             .await
             .unwrap();
 
@@ -566,15 +586,15 @@ mod tests {
         // Create 5 notifications
         for i in 0..5 {
             service
-                .create_notification(
+                .create_notification(CreateNotification {
                     user_id,
-                    NotificationType::ShareReceived,
-                    format!("Notification {}", i),
-                    format!("Message {}", i),
+                    notification_type: NotificationType::ShareReceived,
+                    title: format!("Notification {}", i),
+                    message: format!("Message {}", i),
                     resource_id,
-                    ResourceType::File,
-                    None,
-                )
+                    resource_type: ResourceType::File,
+                    action_url: None,
+                })
                 .await
                 .unwrap();
         }
@@ -613,28 +633,28 @@ mod tests {
 
         // Create notifications
         let n1 = service
-            .create_notification(
+            .create_notification(notification_request(
                 user_id,
                 NotificationType::ShareReceived,
-                "First".to_string(),
-                "Message 1".to_string(),
+                "First",
+                "Message 1",
                 resource_id,
                 ResourceType::File,
                 None,
-            )
+            ))
             .await
             .unwrap();
 
         service
-            .create_notification(
+            .create_notification(notification_request(
                 user_id,
                 NotificationType::PermissionChanged,
-                "Second".to_string(),
-                "Message 2".to_string(),
+                "Second",
+                "Message 2",
                 resource_id,
                 ResourceType::Folder,
                 None,
-            )
+            ))
             .await
             .unwrap();
 
@@ -657,28 +677,28 @@ mod tests {
         let resource_id = Uuid::new_v4();
 
         let first = service
-            .create_notification(
+            .create_notification(notification_request(
                 user_id,
                 NotificationType::ShareReceived,
-                "First".to_string(),
-                "Message 1".to_string(),
+                "First",
+                "Message 1",
                 resource_id,
                 ResourceType::File,
                 None,
-            )
+            ))
             .await
             .unwrap();
 
         service
-            .create_notification(
+            .create_notification(notification_request(
                 user_id,
                 NotificationType::PermissionChanged,
-                "Second".to_string(),
-                "Message 2".to_string(),
+                "Second",
+                "Message 2",
                 resource_id,
                 ResourceType::Folder,
                 None,
-            )
+            ))
             .await
             .unwrap();
 
@@ -698,21 +718,24 @@ mod tests {
         let resource_id = Uuid::new_v4();
 
         let notification = service
-            .create_notification(
+            .create_notification(notification_request(
                 user_id,
                 NotificationType::ShareReceived,
-                "Test".to_string(),
-                "Message".to_string(),
+                "Test",
+                "Message",
                 resource_id,
                 ResourceType::File,
                 None,
-            )
+            ))
             .await
             .unwrap();
 
         assert!(!notification.read);
 
-        let updated = service.mark_as_read(notification.id, user_id).await.unwrap();
+        let updated = service
+            .mark_as_read(notification.id, user_id)
+            .await
+            .unwrap();
 
         assert!(updated.read);
     }
@@ -725,15 +748,15 @@ mod tests {
         let resource_id = Uuid::new_v4();
 
         let notification = service
-            .create_notification(
+            .create_notification(notification_request(
                 owner_id,
                 NotificationType::ShareReceived,
-                "Test".to_string(),
-                "Message".to_string(),
+                "Test",
+                "Message",
                 resource_id,
                 ResourceType::File,
                 None,
-            )
+            ))
             .await
             .unwrap();
 
@@ -749,15 +772,15 @@ mod tests {
         let resource_id = Uuid::new_v4();
 
         let notification = service
-            .create_notification(
+            .create_notification(notification_request(
                 user_id,
                 NotificationType::ShareReceived,
-                "Test".to_string(),
-                "Message".to_string(),
+                "Test",
+                "Message",
                 resource_id,
                 ResourceType::File,
                 None,
-            )
+            ))
             .await
             .unwrap();
 
@@ -780,15 +803,15 @@ mod tests {
         let resource_id = Uuid::new_v4();
 
         let notification = service
-            .create_notification(
+            .create_notification(notification_request(
                 owner_id,
                 NotificationType::ShareReceived,
-                "Test".to_string(),
-                "Message".to_string(),
+                "Test",
+                "Message",
                 resource_id,
                 ResourceType::File,
                 None,
-            )
+            ))
             .await
             .unwrap();
 

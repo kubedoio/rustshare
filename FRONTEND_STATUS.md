@@ -15,6 +15,7 @@ The current frontend should be described as:
 - primary browser auth flow based on server-managed HTTP-only session cookies
 - websocket updates over `/api/ws`
 - no production Node.js frontend server requirement
+- new frontend work targets the frozen `/api/v1` contract
 
 ## Implemented
 
@@ -72,8 +73,8 @@ The current frontend should be described as:
 
 ## Current Technical Debt
 
-- Docker and local production builds still emit SvelteKit/Svelte runtime mismatch warnings
-- the app builds and runs, but the dependency alignment should be cleaned up before calling the frontend fully production-ready
+- the previous SvelteKit/Svelte runtime mismatch has been cleaned up
+- the main remaining frontend warning debt is accessibility and markup hygiene, not framework-version drift
 - some older UI surfaces still feel functional rather than polished, especially compared to dedicated desktop file manager UX
 
 ## Not In Scope Yet
@@ -86,3 +87,6 @@ The current frontend should be described as:
 ## Documentation Note
 
 Older notes that mention token-based browser auth, placeholder notifications, or a missing shared-with-me flow are outdated. Use [STATUS.md](/Users/scolak/Projects/x/rustshare/STATUS.md) for overall project state and this document only for frontend-specific maturity.
+
+For stable route and websocket expectations, use [API Contract Freeze](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-api-contract-freeze.md).
+For client implementation rules, use [Client Integration Checklist](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-client-integration-checklist.md).

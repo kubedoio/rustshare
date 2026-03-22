@@ -43,9 +43,22 @@ export interface Share {
 	permissions: 'View' | 'Edit' | 'Admin';
 	upload_only: boolean;
 	password_protected: boolean;
+	access_count: number;
 	expires_at: string | null;
 	created_at: string;
 	created_by?: string;
+}
+
+export interface ShareAccessLogEntry {
+	accessed_at: string;
+	action: string;
+	success: boolean;
+	actor_type: string | null;
+	actor_label: string | null;
+	ip_address: string | null;
+	user_agent: string | null;
+	share_session_id: string | null;
+	share_session_subject: string | null;
 }
 
 export interface ReceivedShare {

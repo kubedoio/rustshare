@@ -305,7 +305,7 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
                     warn!("Client lagged by {} events", n);
                     let lagged = LaggedMessage {
                         msg_type: "lagged".to_string(),
-                        message: format!("Too many events, please sync"),
+                        message: "Too many events, please sync".to_string(),
                     };
                     if let Ok(json) = serde_json::to_string(&lagged) {
                         if sender.send(Message::Text(json)).await.is_err() {
@@ -417,7 +417,7 @@ async fn should_send_event_to_user(
 
             // Get file to check owner
             let file = metadata_store
-                .find_file_by_id(file_id.into())
+                .find_file_by_id(file_id)
                 .await
                 .map_err(|e| format!("Failed to get file: {}", e))?;
 
@@ -444,8 +444,8 @@ async fn event_to_sync_message(
                 .map_err(|e| format!("Failed to deserialize ShareCreatedPayload: {}", e))?;
 
             Ok(SyncMessage::ShareCreated {
-                share_id: payload.share_id.into(),
-                file_id: payload.file_id.into(),
+                share_id: payload.share_id,
+                file_id: payload.file_id,
                 share_token: payload.share_token,
                 permissions: payload.permissions,
                 password_protected: payload.password_protected,
@@ -457,8 +457,8 @@ async fn event_to_sync_message(
                 .map_err(|e| format!("Failed to deserialize ShareRevokedPayload: {}", e))?;
 
             Ok(SyncMessage::ShareRevoked {
-                share_id: payload.share_id.into(),
-                file_id: payload.file_id.into(),
+                share_id: payload.share_id,
+                file_id: payload.file_id,
             })
         }
         EventType::ShareUpdated => {
@@ -466,8 +466,8 @@ async fn event_to_sync_message(
                 .map_err(|e| format!("Failed to deserialize ShareUpdatedPayload: {}", e))?;
 
             Ok(SyncMessage::ShareUpdated {
-                share_id: payload.share_id.into(),
-                file_id: payload.file_id.into(),
+                share_id: payload.share_id,
+                file_id: payload.file_id,
                 password_changed: payload.password_changed,
                 expires_at_changed: payload.expires_at_changed,
                 new_expires_at: payload.new_expires_at,
@@ -483,8 +483,8 @@ async fn event_to_sync_message(
                 })?;
 
             Ok(SyncMessage::ReplicationStateChanged {
-                file_id: payload.file_id.into(),
-                file_version_id: payload.file_version_id.into(),
+                file_id: payload.file_id,
+                file_version_id: payload.file_version_id,
                 replication_state: payload.replication_state.as_str().to_string(),
                 job_status: payload.job_status,
                 attempt_count: payload.attempt_count,

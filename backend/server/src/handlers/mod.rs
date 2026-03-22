@@ -10,7 +10,7 @@ mod sync;
 mod user_shares;
 mod users;
 
-pub use extractors::{AuthenticatedUser, ShareSessionAuth};
+pub use extractors::{AuthenticatedSession, AuthenticatedUser, ShareSessionAuth};
 pub use files::{
     delete_file, download_file, get_file, get_file_versions, list_files, move_file, rename_file,
     restore_file_version, update_file, upload_file,
@@ -35,7 +35,10 @@ pub use user_shares::{
     create_file_share, create_folder_share, list_file_recipients, list_folder_recipients,
     list_received_shares, remove_recipient, update_recipient_permission,
 };
-pub use users::{get_user_profile, update_user_theme};
+pub use users::{
+    delete_user_session, get_user_profile, list_user_security_events, list_user_sessions,
+    update_user_password, update_user_theme,
+};
 
 use axum::{
     http::StatusCode,

@@ -26,6 +26,64 @@ pub struct OwnedPublicShare {
     pub resource_name: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct PublicShareAccessLogEntry {
+    pub accessed_at: DateTime<Utc>,
+    pub action: String,
+    pub success: bool,
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+    pub actor_type: Option<String>,
+    pub actor_label: Option<String>,
+    pub share_session_id: Option<Uuid>,
+    pub share_session_subject: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReplicationAttemptRecord<'a> {
+    pub job_id: Uuid,
+    pub target_id: Uuid,
+    pub attempt_number: i32,
+    pub status: &'a str,
+    pub error_message: Option<&'a str>,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShareAccessLogEntry {
+    pub share_id: Uuid,
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+    pub action: String,
+    pub success: bool,
+    pub actor_type: Option<String>,
+    pub actor_label: Option<String>,
+    pub share_session_id: Option<Uuid>,
+    pub share_session_subject: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserSecurityEventRecord<'a> {
+    pub user_id: Uuid,
+    pub event_type: &'a str,
+    pub description: &'a str,
+    pub ip_address: Option<&'a str>,
+    pub user_agent: Option<&'a str>,
+    pub session_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserSecurityEvent {
+    pub id: Uuid,
+    pub event_type: String,
+    pub description: String,
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+    pub session_id: Option<Uuid>,
+    pub occurred_at: DateTime<Utc>,
+}
+
 impl MetadataStore {
     fn permission_to_db_value(permission: SharePermissions) -> &'static str {
         match permission {
@@ -178,6 +236,130 @@ impl MetadataStore {
             .await?;
 
         Ok(())
+    }
+
+    /// List active browser sessions for a user.
+    pub async fn list_user_sessions(&self, user_id: Uuid) -> Result<Vec<UserSession>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                id,
+                user_id,
+                session_token_hash,
+                expires_at,
+                created_at,
+                last_seen_at,
+                user_agent,
+                ip_address
+            FROM user_sessions
+            WHERE user_id = $1
+            ORDER BY last_seen_at DESC
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(UserSession {
+                    id: row.try_get("id")?,
+                    user_id: row.try_get("user_id")?,
+                    session_token_hash: row.try_get("session_token_hash")?,
+                    expires_at: row.try_get("expires_at")?,
+                    created_at: row.try_get("created_at")?,
+                    last_seen_at: row.try_get("last_seen_at")?,
+                    user_agent: row.try_get("user_agent")?,
+                    ip_address: row.try_get("ip_address")?,
+                })
+            })
+            .collect()
+    }
+
+    /// Delete a browser session by session id, scoped to the owning user.
+    pub async fn delete_user_session_by_id(&self, user_id: Uuid, session_id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM user_sessions WHERE user_id = $1 AND id = $2")
+            .bind(user_id)
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Create a security event entry for a user account.
+    pub async fn create_user_security_event(
+        &self,
+        event: UserSecurityEventRecord<'_>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO user_security_events (
+                id,
+                user_id,
+                event_type,
+                description,
+                ip_address,
+                user_agent,
+                session_id,
+                occurred_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(event.user_id)
+        .bind(event.event_type)
+        .bind(event.description)
+        .bind(event.ip_address)
+        .bind(event.user_agent)
+        .bind(event.session_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// List recent security events for a user account.
+    pub async fn list_user_security_events(
+        &self,
+        user_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<UserSecurityEvent>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                id,
+                event_type,
+                description,
+                ip_address,
+                user_agent,
+                session_id,
+                occurred_at
+            FROM user_security_events
+            WHERE user_id = $1
+            ORDER BY occurred_at DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(user_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(UserSecurityEvent {
+                    id: row.try_get("id")?,
+                    event_type: row.try_get("event_type")?,
+                    description: row.try_get("description")?,
+                    ip_address: row.try_get("ip_address")?,
+                    user_agent: row.try_get("user_agent")?,
+                    session_id: row.try_get("session_id")?,
+                    occurred_at: row.try_get("occurred_at")?,
+                })
+            })
+            .collect()
     }
 
     /// Persist a short-lived OIDC login state.
@@ -339,6 +521,23 @@ impl MetadataStore {
         } else {
             Ok(None)
         }
+    }
+
+    /// Update a user's password hash and bump the updated timestamp.
+    pub async fn update_user_password_hash(&self, id: Uuid, password_hash: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE users
+            SET password_hash = $2, updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .bind(password_hash)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 
     /// Check if any users exist (for admin bootstrapping)
@@ -916,13 +1115,7 @@ impl MetadataStore {
     /// Record the result of a single target replication attempt.
     pub async fn create_replication_attempt(
         &self,
-        job_id: Uuid,
-        target_id: Uuid,
-        attempt_number: i32,
-        status: &str,
-        error_message: Option<&str>,
-        started_at: DateTime<Utc>,
-        completed_at: DateTime<Utc>,
+        attempt: ReplicationAttemptRecord<'_>,
     ) -> Result<()> {
         sqlx::query(
             r#"
@@ -940,13 +1133,13 @@ impl MetadataStore {
             "#,
         )
         .bind(Uuid::new_v4())
-        .bind(job_id)
-        .bind(target_id)
-        .bind(attempt_number)
-        .bind(status)
-        .bind(error_message)
-        .bind(started_at)
-        .bind(completed_at)
+        .bind(attempt.job_id)
+        .bind(attempt.target_id)
+        .bind(attempt.attempt_number)
+        .bind(attempt.status)
+        .bind(attempt.error_message)
+        .bind(attempt.started_at)
+        .bind(attempt.completed_at)
         .execute(&self.pool)
         .await?;
 
@@ -1434,6 +1627,57 @@ impl MetadataStore {
         Ok(shares)
     }
 
+    /// Get access-log entries for a public share owned by a specific user.
+    pub async fn get_public_share_access_log(
+        &self,
+        share_id: Uuid,
+        owner_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<PublicShareAccessLogEntry>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                sal.accessed_at,
+                sal.action,
+                sal.success,
+                sal.ip_address,
+                sal.user_agent,
+                sal.actor_type,
+                sal.actor_label,
+                sal.share_session_id,
+                sal.share_session_subject
+            FROM share_access_log sal
+            INNER JOIN shares s ON s.id = sal.share_id
+            WHERE sal.share_id = $1
+              AND s.created_by = $2
+              AND s.recipient_user_id IS NULL
+            ORDER BY sal.accessed_at DESC
+            LIMIT $3
+            "#,
+        )
+        .bind(share_id)
+        .bind(owner_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(PublicShareAccessLogEntry {
+                    accessed_at: row.try_get("accessed_at")?,
+                    action: row.try_get("action")?,
+                    success: row.try_get("success")?,
+                    ip_address: row.try_get("ip_address")?,
+                    user_agent: row.try_get("user_agent")?,
+                    actor_type: row.try_get("actor_type")?,
+                    actor_label: row.try_get("actor_label")?,
+                    share_session_id: row.try_get("share_session_id")?,
+                    share_session_subject: row.try_get("share_session_subject")?,
+                })
+            })
+            .collect()
+    }
+
     /// Update a share's password and expiration
     pub async fn update_share(&self, share: &Share) -> Result<()> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
@@ -1488,22 +1732,12 @@ impl MetadataStore {
     }
 
     /// Log a share access attempt
-    pub async fn log_share_access(
-        &self,
-        share_id: Uuid,
-        ip_address: Option<String>,
-        user_agent: Option<String>,
-        action: String,
-        success: bool,
-        actor_type: Option<String>,
-        actor_label: Option<String>,
-        share_session_id: Option<Uuid>,
-        share_session_subject: Option<String>,
-    ) -> Result<()> {
+    pub async fn log_share_access(&self, entry: ShareAccessLogEntry) -> Result<()> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         // Validate IP address format before storage
-        let validated_ip =
-            ip_address.and_then(|ip| ip.parse::<std::net::IpAddr>().ok().map(|_| ip));
+        let validated_ip = entry
+            .ip_address
+            .and_then(|ip| ip.parse::<std::net::IpAddr>().ok().map(|_| ip));
 
         sqlx::query(
             r#"
@@ -1514,15 +1748,15 @@ impl MetadataStore {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             "#,
         )
-        .bind(share_id)
+        .bind(entry.share_id)
         .bind(validated_ip)
-        .bind(user_agent)
-        .bind(action)
-        .bind(success)
-        .bind(actor_type)
-        .bind(actor_label)
-        .bind(share_session_id)
-        .bind(share_session_subject)
+        .bind(entry.user_agent)
+        .bind(entry.action)
+        .bind(entry.success)
+        .bind(entry.actor_type)
+        .bind(entry.actor_label)
+        .bind(entry.share_session_id)
+        .bind(entry.share_session_subject)
         .execute(&self.pool)
         .await?;
 
@@ -1997,17 +2231,17 @@ mod tests {
 
         // Test: log_share_access
         store
-            .log_share_access(
-                share.id,
-                Some("192.168.1.1".to_string()),
-                Some("Mozilla/5.0".to_string()),
-                "access".to_string(),
-                true,
-                Some("public_share_session".to_string()),
-                Some("Uploader".to_string()),
-                Some(Uuid::new_v4()),
-                Some("share:test".to_string()),
-            )
+            .log_share_access(ShareAccessLogEntry {
+                share_id: share.id,
+                ip_address: Some("192.168.1.1".to_string()),
+                user_agent: Some("Mozilla/5.0".to_string()),
+                action: "access".to_string(),
+                success: true,
+                actor_type: Some("public_share_session".to_string()),
+                actor_label: Some("Uploader".to_string()),
+                share_session_id: Some(Uuid::new_v4()),
+                share_session_subject: Some("share:test".to_string()),
+            })
             .await
             .unwrap();
 

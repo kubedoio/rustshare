@@ -1,5 +1,5 @@
-use thiserror::Error;
 use crate::domain::{NotificationId, UserId};
+use thiserror::Error;
 
 /// Errors that can occur during notification operations.
 #[derive(Debug, Error)]
@@ -14,7 +14,10 @@ pub enum NotificationError {
 
     /// User does not own the notification.
     #[error("User {user_id} does not own notification {notification_id}")]
-    NotOwned { notification_id: NotificationId, user_id: UserId },
+    NotOwned {
+        notification_id: NotificationId,
+        user_id: UserId,
+    },
 
     /// Database operation failed.
     #[error("Database error: {0}")]
@@ -43,7 +46,10 @@ mod tests {
     fn test_notification_error_not_owned() {
         let notification_id = Uuid::new_v4();
         let user_id = Uuid::new_v4();
-        let err = NotificationError::NotOwned { notification_id, user_id };
+        let err = NotificationError::NotOwned {
+            notification_id,
+            user_id,
+        };
         let msg = err.to_string();
         assert!(msg.contains("does not own notification"));
         assert!(msg.contains(&user_id.to_string()));

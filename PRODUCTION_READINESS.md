@@ -13,7 +13,7 @@ Current confidence by area:
 - Async replication foundation: medium-high
 - Operator recovery/runbooks: medium-high
 - Mobile sync/photos product: not ready
-- Deep alerting / long-term observability: partial
+- Deep alerting / long-term observability: partial but specified
 
 ## Runtime Checklist
 
@@ -90,6 +90,17 @@ Current confidence by area:
 - [ ] Centralized metrics and dashboards are still partial
 - [ ] Centralized alerting is still partial
 - [ ] Error tracking / incident paging is not yet documented as complete
+
+Reference planning docs:
+
+- [OIDC Production Validation Checklist](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-oidc-production-validation-checklist.md)
+- [Alerting And Incident Thresholds](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-alerting-and-incident-thresholds.md)
+- [Post-Restore Expected Outcomes](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-post-restore-expected-outcomes.md)
+- [Compatibility Removal Plan](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-compatibility-removal-plan.md)
+- [Phase 6 Environment Sign-Off Spec](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-6-environment-signoff-spec.md)
+- [Launch Gate: Web-First Pilot](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-launch-gate-web-first-pilot.md)
+- [Phase 6 Execution Report](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-6-execution-report.md)
+- [Web-First Pilot Gate Decision](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-web-first-pilot-gate-decision.md)
 
 ## Deployment Checklist
 

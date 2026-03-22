@@ -17,7 +17,9 @@ pub use folder_service::{
     EventStoreOps as FolderEventStoreOps, FolderService, MetadataStoreOps as FolderMetadataStoreOps,
 };
 pub use notification_errors::NotificationError;
-pub use notification_service::{NotificationRepositoryOps, NotificationService};
+pub use notification_service::{
+    CreateNotification, NotificationRepositoryOps, NotificationService,
+};
 pub use permission_resolver::{
     FileResolverOps, FolderResolverOps, PermissionResolver, Resource, ShareResolverOps,
 };
@@ -26,4 +28,6 @@ pub use share_service::{
     EventStoreOps as ShareEventStoreOps, JwtOps, MetadataStoreOps as ShareMetadataStoreOps,
     ShareService,
 };
-pub use user_share_service::{FileOps, FolderOps, ShareOps, UserOps, UserShareService};
+pub use user_share_service::{
+    FileOps, FolderOps, ShareOps, UserOps, UserShareService, UserShareServiceDeps,
+};

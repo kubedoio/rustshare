@@ -37,6 +37,7 @@ temp/
 # Local backup artifacts
 backups/
 restore-drill-reports/
+launch-smoke-reports/
 
 # Workspace helpers
 .worktrees/

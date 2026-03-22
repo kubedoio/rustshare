@@ -7,7 +7,10 @@ pub mod metadata;
 pub mod object_store;
 
 pub use event_store::EventStore;
-pub use metadata::MetadataStore;
+pub use metadata::{
+    MetadataStore, PublicShareAccessLogEntry, ReplicationAttemptRecord, ShareAccessLogEntry,
+    UserSecurityEvent, UserSecurityEventRecord,
+};
 pub use object_store::ObjectStore;
 
 // Implement service layer traits for storage types

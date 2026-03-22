@@ -92,7 +92,7 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
         let cache_key = CacheKey::File(user_id, file_id);
         let cached = { self.cache.lock().unwrap().get(&cache_key).copied() };
         if let Some(cached) = cached {
-            return Ok(cached.map_or(false, |perm| perm >= required));
+            return Ok(cached.is_some_and(|perm| perm >= required));
         }
 
         // Get file metadata
@@ -161,7 +161,7 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
         let cache_key = CacheKey::Folder(user_id, folder_id);
         let cached = { self.cache.lock().unwrap().get(&cache_key).copied() };
         if let Some(cached) = cached {
-            return Ok(cached.map_or(false, |perm| perm >= required));
+            return Ok(cached.is_some_and(|perm| perm >= required));
         }
 
         // Get folder metadata

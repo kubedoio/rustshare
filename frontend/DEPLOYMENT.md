@@ -48,7 +48,7 @@ The `frontend/Dockerfile` uses a multi-stage build to optimize the production im
 
 **Build-time (ARG):**
 - `VITE_API_URL`: API endpoint (default: `/api`)
-- `VITE_WS_URL`: WebSocket endpoint (default: `/api`)
+- `VITE_WS_URL`: WebSocket endpoint (default canonical path: `/api/ws`)
 
 **Runtime (ENV):**
 - `NODE_ENV`: Set to `production`
@@ -76,7 +76,7 @@ The `.dockerignore` file excludes:
 
 2. **WebSocket Support**
    - Enabled for HMR (Hot Module Replacement) on frontend
-   - Enabled for real-time sync on `/api/sync` endpoint
+   - Enabled for real-time sync on `/api/ws` endpoint
    - Proper headers: `Upgrade`, `Connection: upgrade`
 
 3. **Security Headers**
@@ -111,7 +111,7 @@ frontend:
     dockerfile: Dockerfile
     args:
       VITE_API_URL: /api
-      VITE_WS_URL: /api
+      VITE_WS_URL: /api/ws
   ports:
     - "3000:3000"
   environment:
@@ -259,7 +259,7 @@ docker compose build --no-cache frontend
 
 - Verify nginx WebSocket configuration (headers: `Upgrade`, `Connection`)
 - Check browser console for WebSocket errors
-- Verify backend WebSocket endpoint is working: `wscat -c ws://localhost/api/sync`
+- Verify backend WebSocket endpoint is working: `wscat -c ws://localhost/api/ws`
 
 ### File upload fails
 

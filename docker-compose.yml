@@ -40,7 +40,7 @@ services:
       dockerfile: docker/backend.Dockerfile
       args:
         VITE_API_URL: /api/v1
-        VITE_WS_URL: /api/v1
+        VITE_WS_URL: /api/ws
     ports:
       - "8080:8080"
     environment:

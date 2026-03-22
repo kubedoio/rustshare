@@ -119,8 +119,8 @@ docker-compose up -d --force-recreate frontend
 **Cause:** Nginx not routing to backend
 **Check:**
 ```bash
-# Should return 200 or 400 (not 404)
-curl -I http://localhost/api/auth/login
+# Should return 405 or 415 (not 404)
+curl -I http://localhost/api/v1/auth/login
 ```
 
 **Fix:**
@@ -216,7 +216,7 @@ Current test coverage:
 The test script may be too strict. Check:
 1. Are containers actually unhealthy?
 2. Is the test URL correct?
-3. Run tests manually: `curl http://localhost/api/auth/login`
+3. Run tests manually: `curl http://localhost/api/v1/auth/login`
 
 ### Tests pass but browser fails
 Browser-specific issues:

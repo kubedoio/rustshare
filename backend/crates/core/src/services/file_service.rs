@@ -31,6 +31,18 @@ pub struct FileUploadActor {
     pub actor_display_name: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct ReplicationEventContext {
+    file_id: uuid::Uuid,
+    owner_id: UserId,
+    file_version_id: uuid::Uuid,
+    replication_state: ReplicationState,
+    job_status: Option<String>,
+    attempt_count: i32,
+    next_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
+    last_error: Option<String>,
+}
+
 /// Trait for event store operations needed by FileService.
 ///
 /// This trait abstracts the event store to allow for testing without database dependencies.
@@ -917,16 +929,16 @@ where
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
-        self.publish_replication_state_event(
+        self.publish_replication_state_event(ReplicationEventContext {
             file_id,
             owner_id,
-            version.id,
-            ReplicationState::Queued,
-            Some(job.status.as_str().to_string()),
-            job.attempt_count,
-            Some(job.next_attempt_at),
-            None,
-        )
+            file_version_id: version.id,
+            replication_state: ReplicationState::Queued,
+            job_status: Some(job.status.as_str().to_string()),
+            attempt_count: job.attempt_count,
+            next_attempt_at: Some(job.next_attempt_at),
+            last_error: None,
+        })
         .await?;
 
         Ok(())
@@ -934,33 +946,26 @@ where
 
     async fn publish_replication_state_event(
         &self,
-        file_id: uuid::Uuid,
-        owner_id: UserId,
-        file_version_id: uuid::Uuid,
-        replication_state: ReplicationState,
-        job_status: Option<String>,
-        attempt_count: i32,
-        next_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
-        last_error: Option<String>,
+        context: ReplicationEventContext,
     ) -> Result<(), FileError> {
         let payload = ReplicationStateChangedPayload {
-            file_id,
-            file_version_id,
-            replication_state,
-            job_status,
-            attempt_count,
-            next_attempt_at,
-            last_error,
+            file_id: context.file_id,
+            file_version_id: context.file_version_id,
+            replication_state: context.replication_state,
+            job_status: context.job_status,
+            attempt_count: context.attempt_count,
+            next_attempt_at: context.next_attempt_at,
+            last_error: context.last_error,
             updated_at: chrono::Utc::now(),
         };
 
         let event = Event::new(
             EventType::ReplicationStateChanged,
-            file_id,
+            context.file_id,
             AggregateType::File,
             serde_json::to_value(payload)
                 .map_err(|e| FileError::Storage(format!("Failed to serialize payload: {}", e)))?,
-            owner_id,
+            context.owner_id,
         );
 
         self.event_store

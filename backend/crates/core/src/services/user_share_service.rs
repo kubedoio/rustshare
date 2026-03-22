@@ -8,7 +8,9 @@ use crate::domain::{
 use crate::events::{
     AggregateType, Event, EventBroadcaster, EventType, NotificationCreatedPayload,
 };
-use crate::services::{NotificationService, PermissionResolver, Resource, ShareError};
+use crate::services::{
+    CreateNotification, NotificationService, PermissionResolver, Resource, ShareError,
+};
 
 /// Trait for share repository operations needed by UserShareService.
 #[allow(async_fn_in_trait)]
@@ -94,6 +96,28 @@ where
     broadcaster: Arc<EventBroadcaster>,
 }
 
+pub struct UserShareServiceDeps<SR, UR, FR, DR, S, F, D, N, E>
+where
+    SR: ShareOps,
+    UR: UserOps,
+    FR: FileOps,
+    DR: FolderOps,
+    S: crate::services::ShareResolverOps,
+    F: crate::services::FileResolverOps,
+    D: crate::services::FolderResolverOps,
+    N: crate::services::NotificationRepositoryOps,
+    E: crate::services::ShareEventStoreOps,
+{
+    pub share_repo: Arc<SR>,
+    pub user_repo: Arc<UR>,
+    pub file_repo: Arc<FR>,
+    pub folder_repo: Arc<DR>,
+    pub permission_resolver: Arc<PermissionResolver<S, F, D>>,
+    pub notification_service: Arc<NotificationService<N>>,
+    pub event_store: Arc<E>,
+    pub broadcaster: Arc<EventBroadcaster>,
+}
+
 impl<SR, UR, FR, DR, S, F, D, N, E> UserShareService<SR, UR, FR, DR, S, F, D, N, E>
 where
     SR: ShareOps,
@@ -119,25 +143,16 @@ where
         format!("/shared-with-me/{resource_path}/{resource_id}")
     }
 
-    pub fn new(
-        share_repo: Arc<SR>,
-        user_repo: Arc<UR>,
-        file_repo: Arc<FR>,
-        folder_repo: Arc<DR>,
-        permission_resolver: Arc<PermissionResolver<S, F, D>>,
-        notification_service: Arc<NotificationService<N>>,
-        event_store: Arc<E>,
-        broadcaster: Arc<EventBroadcaster>,
-    ) -> Self {
+    pub fn new(deps: UserShareServiceDeps<SR, UR, FR, DR, S, F, D, N, E>) -> Self {
         Self {
-            share_repo,
-            user_repo,
-            file_repo,
-            folder_repo,
-            permission_resolver,
-            notification_service,
-            event_store,
-            broadcaster,
+            share_repo: deps.share_repo,
+            user_repo: deps.user_repo,
+            file_repo: deps.file_repo,
+            folder_repo: deps.folder_repo,
+            permission_resolver: deps.permission_resolver,
+            notification_service: deps.notification_service,
+            event_store: deps.event_store,
+            broadcaster: deps.broadcaster,
         }
     }
 
@@ -279,18 +294,18 @@ where
 
         if let Ok(notification) = self
             .notification_service
-            .create_notification(
-                recipient.id,
-                crate::domain::NotificationType::ShareReceived,
-                "New file shared with you".to_string(),
-                format!("{} shared '{}' with you", creator_email, file.name),
-                file_id.into(),
-                crate::domain::ResourceType::File,
-                Some(Self::shared_resource_action_url(
+            .create_notification(CreateNotification {
+                user_id: recipient.id,
+                notification_type: crate::domain::NotificationType::ShareReceived,
+                title: "New file shared with you".to_string(),
+                message: format!("{} shared '{}' with you", creator_email, file.name),
+                resource_id: file_id,
+                resource_type: crate::domain::ResourceType::File,
+                action_url: Some(Self::shared_resource_action_url(
                     crate::domain::ResourceType::File,
-                    file_id.into(),
+                    file_id,
                 )),
-            )
+            })
             .await
         {
             self.emit_notification_created_event(&notification).await;
@@ -386,18 +401,18 @@ where
 
         if let Ok(notification) = self
             .notification_service
-            .create_notification(
-                recipient.id,
-                crate::domain::NotificationType::ShareReceived,
-                "New folder shared with you".to_string(),
-                format!("{} shared folder '{}' with you", creator_email, folder.name),
-                folder_id.into(),
-                crate::domain::ResourceType::Folder,
-                Some(Self::shared_resource_action_url(
+            .create_notification(CreateNotification {
+                user_id: recipient.id,
+                notification_type: crate::domain::NotificationType::ShareReceived,
+                title: "New folder shared with you".to_string(),
+                message: format!("{} shared folder '{}' with you", creator_email, folder.name),
+                resource_id: folder_id,
+                resource_type: crate::domain::ResourceType::Folder,
+                action_url: Some(Self::shared_resource_action_url(
                     crate::domain::ResourceType::Folder,
-                    folder_id.into(),
+                    folder_id,
                 )),
-            )
+            })
             .await
         {
             self.emit_notification_created_event(&notification).await;
@@ -553,21 +568,21 @@ where
 
             if let Ok(notification) = self
                 .notification_service
-                .create_notification(
-                    recipient_id,
-                    crate::domain::NotificationType::PermissionChanged,
-                    "Share permission updated".to_string(),
-                    format!(
+                .create_notification(CreateNotification {
+                    user_id: recipient_id,
+                    notification_type: crate::domain::NotificationType::PermissionChanged,
+                    title: "Share permission updated".to_string(),
+                    message: format!(
                         "Your permission on '{}' changed from {:?} to {:?}",
                         resource_name, old_permission, new_permission
                     ),
-                    share.resource_id(),
-                    if share.is_file_share() {
+                    resource_id: share.resource_id(),
+                    resource_type: if share.is_file_share() {
                         crate::domain::ResourceType::File
                     } else {
                         crate::domain::ResourceType::Folder
                     },
-                    Some(Self::shared_resource_action_url(
+                    action_url: Some(Self::shared_resource_action_url(
                         if share.is_file_share() {
                             crate::domain::ResourceType::File
                         } else {
@@ -575,7 +590,7 @@ where
                         },
                         share.resource_id(),
                     )),
-                )
+                })
                 .await
             {
                 self.emit_notification_created_event(&notification).await;
@@ -675,19 +690,19 @@ where
 
             if let Ok(notification) = self
                 .notification_service
-                .create_notification(
-                    recipient_id,
-                    crate::domain::NotificationType::ShareRevoked,
-                    "Share access revoked".to_string(),
-                    format!("Your access to '{}' was revoked", resource_name),
-                    share.resource_id(),
-                    if share.is_file_share() {
+                .create_notification(CreateNotification {
+                    user_id: recipient_id,
+                    notification_type: crate::domain::NotificationType::ShareRevoked,
+                    title: "Share access revoked".to_string(),
+                    message: format!("Your access to '{}' was revoked", resource_name),
+                    resource_id: share.resource_id(),
+                    resource_type: if share.is_file_share() {
                         crate::domain::ResourceType::File
                     } else {
                         crate::domain::ResourceType::Folder
                     },
-                    Some("/shared-with-me".to_string()),
-                )
+                    action_url: Some("/shared-with-me".to_string()),
+                })
                 .await
             {
                 self.emit_notification_created_event(&notification).await;

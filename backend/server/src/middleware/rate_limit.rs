@@ -97,11 +97,10 @@ impl Default for RateLimitConfig {
 /// Rate limiting middleware (per-IP)
 ///
 /// Applies different rate limits based on endpoint path, with each IP address
-/// getting its own independent quota:
-/// - POST /api/public/share/:token/session: 5 req/min per IP (prevent brute-force)
-/// - GET /api/public/share/:token/info: 20 req/min per IP
-/// - GET /api/public/share/:token/file: 10 req/min per IP
-/// - Authenticated share endpoints: 100 req/min per IP
+/// getting its own independent quota.
+///
+/// Canonical routes live under `/api/v1/...`; legacy unversioned auth aliases are
+/// still classified here so older clients do not silently bypass protections.
 ///
 /// Supports reverse proxy deployments:
 /// - Checks X-Forwarded-For, X-Real-IP, and Forwarded headers
@@ -214,29 +213,27 @@ fn classify_request(method: &Method, path: &str) -> Option<RateLimitScope> {
 }
 
 fn matches_auth_login(method: &Method, path: &str) -> bool {
-    method == Method::POST && matches!(path, "/api/auth/login" | "/api/v1/auth/login")
+    method == Method::POST && path == "/api/v1/auth/login"
 }
 
 fn matches_oidc_login(method: &Method, path: &str) -> bool {
-    method == Method::GET && matches!(path, "/api/auth/oidc/login" | "/api/v1/auth/oidc/login")
+    method == Method::GET && path == "/api/v1/auth/oidc/login"
 }
 
 fn matches_authenticated_share_admin(method: &Method, path: &str) -> bool {
-    if !path.starts_with("/api/") {
+    if !path.starts_with("/api/v1/") {
         return false;
     }
 
     match *method {
         Method::POST => path.ends_with("/shares") || path.ends_with("/share"),
-        Method::PUT | Method::DELETE => {
-            path.contains("/api/shares/") || path.contains("/api/v1/shares/")
-        }
+        Method::PUT | Method::DELETE => path.contains("/api/v1/shares/"),
         _ => false,
     }
 }
 
 fn is_public_share_path(path: &str) -> bool {
-    path.starts_with("/api/public/share/") || path.starts_with("/api/v1/public/share/")
+    path.starts_with("/api/v1/public/share/")
 }
 
 fn limiter_for_scope(
@@ -331,7 +328,7 @@ mod tests {
     #[test]
     fn test_classify_request_matches_hardened_routes() {
         assert_eq!(
-            classify_request(&Method::POST, "/api/auth/login"),
+            classify_request(&Method::POST, "/api/v1/auth/login"),
             Some(RateLimitScope::AuthLogin)
         );
         assert_eq!(
@@ -339,7 +336,7 @@ mod tests {
             Some(RateLimitScope::OidcLogin)
         );
         assert_eq!(
-            classify_request(&Method::POST, "/api/public/share/token/session"),
+            classify_request(&Method::POST, "/api/v1/public/share/token/session"),
             Some(RateLimitScope::ShareSession)
         );
         assert_eq!(
@@ -347,11 +344,14 @@ mod tests {
             Some(RateLimitScope::ShareInfo)
         );
         assert_eq!(
-            classify_request(&Method::GET, "/api/public/share/token/folder/contents"),
+            classify_request(&Method::GET, "/api/v1/public/share/token/folder/contents"),
             Some(RateLimitScope::ShareInfo)
         );
         assert_eq!(
-            classify_request(&Method::GET, "/api/public/share/token/folder/files/file-id"),
+            classify_request(
+                &Method::GET,
+                "/api/v1/public/share/token/folder/files/file-id"
+            ),
             Some(RateLimitScope::ShareDownload)
         );
         assert_eq!(

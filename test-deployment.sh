@@ -150,7 +150,7 @@ fi
 # Test 8: Login API functionality
 echo ""
 echo "Test 8: Testing login API..."
-LOGIN_RESPONSE=$(curl -s -X POST http://localhost/api/auth/login \
+LOGIN_RESPONSE=$(curl -s -X POST http://localhost/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email": "admin@localhost", "password": "admin123"}')
 
@@ -179,7 +179,7 @@ echo ""
 echo "Test 10: Testing authenticated API request..."
 if [ -n "$TOKEN" ]; then
     # Try to create a test folder
-    FOLDER_RESPONSE=$(curl -s -X POST http://localhost/api/folders \
+    FOLDER_RESPONSE=$(curl -s -X POST http://localhost/api/v1/folders \
       -H "Authorization: Bearer $TOKEN" \
       -H "Content-Type: application/json" \
       -d '{"name": "Test Deployment Folder", "parent_folder_id": null}')
@@ -189,7 +189,7 @@ if [ -n "$TOKEN" ]; then
         FOLDER_ID=$(echo "$FOLDER_RESPONSE" | jq -r '.id')
 
         # Clean up test folder
-        curl -s -X DELETE "http://localhost/api/folders/$FOLDER_ID" \
+        curl -s -X DELETE "http://localhost/api/v1/folders/$FOLDER_ID" \
           -H "Authorization: Bearer $TOKEN" > /dev/null 2>&1
     else
         test_failed "Authenticated API request failed" "Response: $FOLDER_RESPONSE"
@@ -248,7 +248,7 @@ echo ""
 
 # Test 15: Nginx routing
 echo "Test 15: Checking nginx API routing..."
-NGINX_API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/api/auth/login)
+NGINX_API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/api/v1/auth/login)
 if [ "$NGINX_API_STATUS" = "400" ] || [ "$NGINX_API_STATUS" = "401" ] || [ "$NGINX_API_STATUS" = "405" ]; then
     # These status codes indicate the API is reachable (we didn't send proper request)
     test_passed "Nginx correctly routes /api requests to backend"

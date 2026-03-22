@@ -36,6 +36,11 @@ RustShare should currently be described as:
 
 The web file-sharing product is close to launchable with careful operational discipline. The broader product vision is not complete yet, especially around mobile sync/photos, desktop client maturity, and deeper production observability.
 
+Current roadmap note:
+
+- the aligned standalone mobile foundation exists, but active mobile product work is postponed while launch hardening remains the top priority
+- the current Docker-based web pilot profile has now completed environment sign-off with a conditional Web-First Pilot Gate result
+
 ## Quick Start
 
 ### Prerequisites
@@ -92,7 +97,7 @@ In production-style Docker builds, the frontend is compiled into static assets a
 
 Current note:
 
-- production frontend builds still emit SvelteKit/Svelte compatibility warnings that should be resolved as part of launch hardening
+- the frontend dependency contract is now aligned on SvelteKit 2 + Svelte 5; refresh `frontend/node_modules` before the next frontend install/build cycle if you were working from an older checkout
 
 ## Validation
 
@@ -163,16 +168,26 @@ Current route conventions:
 - API routes: `/api/...`
 - Primary versioned routes: `/api/v1/...`
 - WebSocket: `/api/ws`
+- Legacy unversioned aliases still exist for compatibility, but new integrations should use `/api/v1/...`
 
 Examples:
 
 - `GET /api/v1/me`
-- `POST /api/auth/login`
+- `POST /api/v1/auth/login`
 - `POST /api/v1/auth/oidc/mobile/authorize`
 - `POST /api/v1/auth/oidc/mobile/exchange`
 - `GET /api/v1/shares`
 - `GET /api/v1/admin/replication/summary`
 - `GET /api/ws`
+
+Contract freeze:
+
+- New client work should follow [API Contract Freeze](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-api-contract-freeze.md)
+- `/api/v1/...` is the stable client surface
+- `/api/ws` is the stable realtime endpoint
+- `/api/v1/ws` and `/api/sync` have been removed
+- legacy `/api/auth/...` aliases have been removed
+- unversioned file, folder, share, notification, and public-share aliases have been removed
 
 Mobile OIDC notes:
 
@@ -195,6 +210,16 @@ Current operator docs live here:
 - [Restore Drill Checklist](/Users/scolak/Projects/x/rustshare/docs/2026-03-20-restore-drill-checklist.md)
 - [Replication Observability](/Users/scolak/Projects/x/rustshare/docs/2026-03-20-replication-observability.md)
 - [Rate Limit Hardening](/Users/scolak/Projects/x/rustshare/docs/2026-03-20-rate-limit-hardening.md)
+- [API Contract Freeze](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-api-contract-freeze.md)
+- [Client Integration Checklist](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-client-integration-checklist.md)
+- [Compatibility Surface Inventory](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-compatibility-surface.md)
+- [Mobile Postponement Decision](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-mobile-postponement-decision.md)
+- [Phase 5 Launch Hardening Spec](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-5-launch-hardening-spec.md)
+- [Phase 6 Environment Sign-Off Spec](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-6-environment-signoff-spec.md)
+- [Launch Gate: Web-First Pilot](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-launch-gate-web-first-pilot.md)
+- [Phase 7 Post-Launch And Client Roadmap](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-7-post-launch-and-client-roadmap.md)
+- [Phase 6 Execution Report](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-6-execution-report.md)
+- [Web-First Pilot Gate Decision](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-web-first-pilot-gate-decision.md)
 
 Restore-drill helper:
 
@@ -202,12 +227,16 @@ Restore-drill helper:
 scripts/run-restore-drill.sh backups/<timestamp>
 ```
 
-## Known Remaining Gaps
+## Named Remaining Roadmap Steps
 
-- Light mobile client with photo backup and offline flows
-- Stronger anonymous/public upload attribution in audits
-- Real restore-drill execution against a production-like backup set
-- Deeper alerting and metrics beyond current summaries and helper scripts
+- Phase 6: environment sign-off
+- Launch Gate: Web-First Pilot
+- Phase 7: post-launch cleanup and deferred client roadmap
+
+Current gate note:
+
+- the current Docker-based password-login pilot profile has a **Conditional Pass**
+- broader production claims still require real IdP validation and real monitoring/alert wiring
 
 ## Scope Discipline
 
