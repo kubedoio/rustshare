@@ -206,14 +206,10 @@ pub async fn update_webhook(
     };
 
     // Determine new secret
-    let new_secret_enc: Option<String> = match req.secret.as_deref() {
-        Some(s) if !s.is_empty() => {
-            let enc = encrypt_secret(s, &state.secret_key)
-                .map_err(|_| internal_error("Failed to encrypt webhook secret"))?;
-            Some(enc)
-        }
-        Some(_) => None, // empty string → clear
-        None => current.secret_enc,
+    let new_secret_enc = match req.secret.as_deref() {
+        None => current.secret_enc.clone(),          // absent = keep
+        Some("") => None,                             // empty string = clear
+        Some(s) => encrypt_optional_secret(Some(s), &state)?,
     };
 
     let row = sqlx::query_as::<_, WebhookRow>(&format!(

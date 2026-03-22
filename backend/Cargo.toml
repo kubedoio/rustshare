@@ -56,6 +56,7 @@ aes-gcm = "0.10"
 base64 = { version = "0.22", features = ["alloc"] }
 hmac = "0.12"
 hex = "0.4"
+reqwest = { version = "0.11", features = ["json", "multipart"] }
 
 # Testing
 mockall = "0.12"
