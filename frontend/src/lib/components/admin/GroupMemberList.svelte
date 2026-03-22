@@ -24,8 +24,8 @@
 		}
 	});
 
-	function handleSelectUser(e: CustomEvent<AdminUser>) {
-		$addMutation.mutate(e.detail.id);
+	function handleSelectUser(user: AdminUser) {
+		$addMutation.mutate(user.id);
 	}
 </script>
 
@@ -37,7 +37,7 @@
 				<UserSearchInput
 					placeholder="Search users to add..."
 					excludeIds={memberIds}
-					on:select={handleSelectUser}
+					onselect={handleSelectUser}
 				/>
 			</div>
 			{#if $addMutation.isError}

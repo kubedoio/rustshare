@@ -1,11 +1,9 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
 	import { listAdminUsers, type AdminUser } from '$lib/api/admin';
 
 	export let placeholder = 'Search users...';
 	export let excludeIds: string[] = [];
-
-	const dispatch = createEventDispatcher<{ select: AdminUser }>();
+	export let onselect: ((user: AdminUser) => void) | undefined = undefined;
 
 	let query = '';
 	let results: AdminUser[] = [];
@@ -38,7 +36,7 @@
 	}
 
 	function handleSelect(user: AdminUser) {
-		dispatch('select', user);
+		onselect?.(user);
 		query = '';
 		results = [];
 		open = false;
