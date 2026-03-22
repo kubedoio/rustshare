@@ -251,7 +251,7 @@ pub async fn get_group(
 /// PATCH /api/v1/admin/groups/:id
 pub async fn update_group(
     State(state): State<AppState>,
-    AdminUser { .. }: AdminUser,
+    AdminUser { user_id: actor_id }: AdminUser,
     Path(group_id): Path<Uuid>,
     Json(req): Json<UpdateGroupRequest>,
 ) -> Result<Json<GroupResponse>, (StatusCode, Json<serde_json::Value>)> {
@@ -299,6 +299,16 @@ pub async fn update_group(
         db_error(e)
     })?
     .ok_or_else(|| not_found("Group not found"))?;
+
+    log_admin_action(
+        &state.db_pool,
+        actor_id,
+        "group.updated",
+        Some("group"),
+        Some(group_id),
+        json!({"name": updated.name}),
+    )
+    .await;
 
     let member_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM group_members WHERE group_id = $1")
