@@ -1,3 +1,4 @@
+mod device_token;
 mod file;
 mod file_version;
 mod folder;
@@ -8,6 +9,8 @@ mod response_types;
 mod share;
 mod user;
 mod user_session;
+
+pub use device_token::{DevicePairRequest, DeviceToken};
 
 pub use file::File;
 pub use file_version::{FileVersion, ReplicationState};
