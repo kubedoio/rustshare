@@ -315,6 +315,10 @@ async fn main() -> Result<()> {
             "/api/v1/auth/device/poll",
             post(handlers::device_auth::device_poll),
         )
+        .route(
+            "/api/v1/auth/device/approve",
+            post(handlers::device_auth::device_approve),
+        )
         // File routes (Task 15-19)
         .route("/api/v1/files", get(handlers::list_files))
         .route("/api/v1/files/upload", post(handlers::upload_file))

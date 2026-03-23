@@ -13,10 +13,12 @@ use axum::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::{distributions::Uniform, Rng};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::time::{Duration, Instant};
 
+use crate::handlers::AuthenticatedUser;
 use crate::AppState;
 
 /// User code alphabet - excludes ambiguous characters: 0, O, 1, I, L
@@ -48,12 +50,101 @@ pub enum DevicePollResponse {
     Expired,
 }
 
+/// Request body for device approval
+#[derive(Deserialize)]
+pub struct DeviceApproveRequest {
+    pub user_code: String,
+}
+
+/// Response for device approval
+#[derive(Serialize)]
+pub struct DeviceApproveResponse {
+    pub device_name: String,
+}
+
 /// Response for device request
 #[derive(Serialize)]
 pub struct DeviceRequestResponse {
     pub user_code: String,
     pub device_code: String,
     pub expires_in: i64,
+}
+
+/// POST /api/v1/auth/device/approve
+/// Approves a device pair request using the user_code
+pub async fn device_approve(
+    State(state): State<AppState>,
+    AuthenticatedUser { user_id }: AuthenticatedUser,
+    Json(body): Json<DeviceApproveRequest>,
+) -> Result<Json<DeviceApproveResponse>, (StatusCode, Json<serde_json::Value>)> {
+    // Look up pair request by user_code (case-insensitive)
+    let row = sqlx::query(
+        r#"
+        SELECT
+            id,
+            user_id,
+            approved_at IS NOT NULL as is_approved,
+            expires_at < NOW() as is_expired
+        FROM device_pair_requests
+        WHERE UPPER(user_code) = UPPER($1)
+        "#,
+    )
+    .bind(&body.user_code)
+    .fetch_optional(&state.db_pool)
+    .await
+    .map_err(|e| server_error(format!("Database error: {}", e)))?;
+
+    let (id, is_approved, is_expired) = match row {
+        Some(row) => {
+            let id: uuid::Uuid = row.try_get("id")
+                .map_err(|e| server_error(format!("Failed to get id: {}", e)))?;
+            let is_approved: bool = row.try_get("is_approved").unwrap_or(false);
+            let is_expired: bool = row.try_get("is_expired").unwrap_or(true);
+            (id, is_approved, is_expired)
+        }
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "code_not_found"})),
+            ));
+        }
+    };
+
+    // Check if expired
+    if is_expired {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "code_not_found"})),
+        ));
+    }
+
+    // Check if already approved
+    if is_approved {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({"error": "already_approved"})),
+        ));
+    }
+
+    // Update the pair request with user_id and approved_at
+    sqlx::query(
+        r#"
+        UPDATE device_pair_requests
+        SET user_id = $1, approved_at = NOW()
+        WHERE id = $2
+        "#,
+    )
+    .bind(user_id)
+    .bind(id)
+    .execute(&state.db_pool)
+    .await
+    .map_err(|e| server_error(format!("Failed to approve pair request: {}", e)))?;
+
+    // Return device_name - the actual device name is captured at poll time
+    // when the token is created, so we return a placeholder here
+    Ok(Json(DeviceApproveResponse {
+        device_name: "Device".to_string(),
+    }))
 }
 
 /// Generate a random user code (8 chars from safe alphabet)
