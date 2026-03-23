@@ -2,6 +2,7 @@
 
 pub mod admin;
 pub mod device_auth;
+pub mod devices;
 mod extractors;
 mod files;
 mod folders;

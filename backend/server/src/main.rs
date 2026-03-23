@@ -319,6 +319,15 @@ async fn main() -> Result<()> {
             "/api/v1/auth/device/approve",
             post(handlers::device_auth::device_approve),
         )
+        // Device management routes
+        .route(
+            "/api/v1/user/devices",
+            get(handlers::devices::list_devices),
+        )
+        .route(
+            "/api/v1/user/devices/:id",
+            delete(handlers::devices::revoke_device),
+        )
         // File routes (Task 15-19)
         .route("/api/v1/files", get(handlers::list_files))
         .route("/api/v1/files/upload", post(handlers::upload_file))

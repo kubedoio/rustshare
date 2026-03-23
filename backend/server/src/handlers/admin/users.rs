@@ -464,6 +464,13 @@ pub async fn disable_admin_user(
         .await
         .map_err(db_error)?;
 
+    // Revoke all device tokens for the disabled user
+    sqlx::query("UPDATE device_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL")
+        .bind(user_id)
+        .execute(&state.db_pool)
+        .await
+        .map_err(db_error)?;
+
     log_admin_action(
         &state.db_pool,
         actor_id,
