@@ -12,11 +12,113 @@ use axum_extra::{
     TypedHeader,
 };
 use rustshare_auth::ShareSessionClaims;
+use sha2::{Digest, Sha256};
 use sqlx::Row;
 use uuid::Uuid;
 
 use crate::web_session::{extract_cookie_value, resolve_user_session};
 use crate::AppState;
+
+/// Authentication error types for token resolution.
+#[derive(Debug)]
+pub enum AuthError {
+    InvalidToken,
+    UserNotFound,
+    AccountDisabled,
+    DatabaseError,
+}
+
+impl AuthError {
+    /// Convert AuthError to an HTTP response.
+    fn into_response(self) -> Response {
+        let (status, message) = match self {
+            AuthError::InvalidToken => (StatusCode::UNAUTHORIZED, "Invalid token"),
+            AuthError::UserNotFound => (StatusCode::UNAUTHORIZED, "User not found"),
+            AuthError::AccountDisabled => (StatusCode::UNAUTHORIZED, "Account is disabled"),
+            AuthError::DatabaseError => (StatusCode::INTERNAL_SERVER_ERROR, "Authentication failed"),
+        };
+        (status, Json(serde_json::json!({ "error": message }))).into_response()
+    }
+}
+
+/// Hash a token using SHA-256, return hex string.
+fn hash_token(raw: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(raw.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+/// Resolve a bearer token to a user ID.
+///
+/// First tries JWT validation, then falls back to device token lookup.
+/// For device tokens, updates `last_used_at` timestamp on successful lookup.
+pub async fn resolve_bearer_token(token: &str, state: &AppState) -> Result<Uuid, AuthError> {
+    // First, try JWT validation
+    match state.jwt_manager.validate(token) {
+        Ok(claims) => {
+            let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AuthError::InvalidToken)?;
+
+            // Check disabled status
+            let disabled: bool = sqlx::query_scalar(
+                "SELECT disabled_at IS NOT NULL FROM users WHERE id = $1"
+            )
+            .bind(user_id)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(|_| AuthError::DatabaseError)?
+            .ok_or(AuthError::UserNotFound)?;
+
+            if disabled {
+                return Err(AuthError::AccountDisabled);
+            }
+
+            return Ok(user_id);
+        }
+        Err(_) => {
+            // JWT validation failed, try device token lookup
+        }
+    }
+
+    // Device token lookup
+    let token_hash = hash_token(token);
+
+    // Look up device token by hash
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT user_id FROM device_tokens WHERE token_hash = $1 AND revoked_at IS NULL"
+    )
+    .bind(&token_hash)
+    .fetch_optional(&state.db_pool)
+    .await
+    .map_err(|_| AuthError::DatabaseError)?;
+
+    let user_id = match row {
+        Some((uid,)) => uid,
+        None => return Err(AuthError::InvalidToken),
+    };
+
+    // Update last_used_at
+    sqlx::query("UPDATE device_tokens SET last_used_at = NOW() WHERE token_hash = $1")
+        .bind(&token_hash)
+        .execute(&state.db_pool)
+        .await
+        .map_err(|_| AuthError::DatabaseError)?;
+
+    // Check disabled status for device token user
+    let disabled: bool = sqlx::query_scalar(
+        "SELECT disabled_at IS NOT NULL FROM users WHERE id = $1"
+    )
+    .bind(user_id)
+    .fetch_optional(&state.db_pool)
+    .await
+    .map_err(|_| AuthError::DatabaseError)?
+    .ok_or(AuthError::UserNotFound)?;
+
+    if disabled {
+        return Err(AuthError::AccountDisabled);
+    }
+
+    Ok(user_id)
+}
 
 /// Authenticated user extracted from JWT token.
 ///
@@ -60,24 +162,9 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             .await
             .map_err(|_| auth_error("Missing or invalid authentication"))?;
 
-        let claims = state
-            .jwt_manager
-            .validate(bearer.token())
-            .map_err(|e| auth_error(&format!("Invalid token: {}", e)))?;
-
-        let user_id =
-            Uuid::parse_str(&claims.sub).map_err(|_| auth_error("Invalid user ID in token"))?;
-
-        let disabled: bool = sqlx::query_scalar("SELECT disabled_at IS NOT NULL FROM users WHERE id = $1")
-            .bind(user_id)
-            .fetch_optional(&state.db_pool)
+        let user_id = resolve_bearer_token(bearer.token(), state)
             .await
-            .map_err(|_| auth_error("Authentication failed"))?
-            .ok_or_else(|| auth_error("User not found"))?;
-
-        if disabled {
-            return Err(auth_error("Account is disabled"));
-        }
+            .map_err(|e| e.into_response())?;
 
         Ok(AuthenticatedUser { user_id })
     }
@@ -110,24 +197,9 @@ impl FromRequestParts<AppState> for AuthenticatedSession {
             .await
             .map_err(|_| auth_error("Missing or invalid authentication"))?;
 
-        let claims = state
-            .jwt_manager
-            .validate(bearer.token())
-            .map_err(|e| auth_error(&format!("Invalid token: {}", e)))?;
-
-        let user_id =
-            Uuid::parse_str(&claims.sub).map_err(|_| auth_error("Invalid user ID in token"))?;
-
-        let disabled: bool = sqlx::query_scalar("SELECT disabled_at IS NOT NULL FROM users WHERE id = $1")
-            .bind(user_id)
-            .fetch_optional(&state.db_pool)
+        let user_id = resolve_bearer_token(bearer.token(), state)
             .await
-            .map_err(|_| auth_error("Authentication failed"))?
-            .ok_or_else(|| auth_error("User not found"))?;
-
-        if disabled {
-            return Err(auth_error("Account is disabled"));
-        }
+            .map_err(|e| e.into_response())?;
 
         Ok(AuthenticatedSession {
             user_id,
@@ -277,4 +349,53 @@ fn session_auth_error(error: String) -> Response {
         Json(serde_json::json!({ "error": format!("Session validation failed: {}", error) })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hash_token_produces_sha256_hex() {
+        let token = "test_token_123";
+        let hash = hash_token(token);
+
+        // SHA-256 produces 32 bytes = 64 hex chars
+        assert_eq!(hash.len(), 64);
+
+        // Should be valid hex
+        for ch in hash.chars() {
+            assert!(ch.is_ascii_hexdigit(), "Hash contains non-hex character");
+        }
+    }
+
+    #[test]
+    fn hash_token_is_deterministic() {
+        let token = "my_test_token";
+        let hash1 = hash_token(token);
+        let hash2 = hash_token(token);
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn hash_token_differs_for_different_inputs() {
+        let hash1 = hash_token("token_one");
+        let hash2 = hash_token("token_two");
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn auth_error_into_response() {
+        let response = AuthError::InvalidToken.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = AuthError::UserNotFound.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = AuthError::AccountDisabled.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = AuthError::DatabaseError.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
 }
