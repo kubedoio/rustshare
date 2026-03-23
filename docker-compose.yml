@@ -16,20 +16,20 @@ services:
       retries: 5
 
   rustfs:
-    image: minio/minio:latest
+    image: rustfs/rustfs:latest
     environment:
-      MINIO_ROOT_USER: rustfsadmin
-      MINIO_ROOT_PASSWORD: rustfsadmin
-      MINIO_DOMAIN: localhost
-      MINIO_SERVER_URL: http://localhost:9000
+      RUSTFS_ROOT_USER: rustfsadmin
+      RUSTFS_ROOT_PASSWORD: rustfsadmin
+      RUSTFS_DATA_DIR: /data
+      RUSTFS_LOGS_DIR: /logs
     volumes:
       - rustfs_data:/data
+      - rustfs_logs:/logs
     ports:
       - "9000:9000"
       - "9001:9001"
-    command: server /data --console-address ":9001"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "sh", "-c", "nc -z localhost 9000 && nc -z localhost 9001"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -103,3 +103,4 @@ services:
 volumes:
   postgres_data:
   rustfs_data:
+  rustfs_logs:
