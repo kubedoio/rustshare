@@ -30,6 +30,7 @@ struct OidcConfigRow {
     issuer_url: Option<String>,
     scopes: Option<Vec<String>>,
     auto_provision_users: bool,
+    device_pair_code_ttl_seconds: Option<i32>,
     updated_by: Option<Uuid>,
     updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -49,6 +50,7 @@ pub struct OidcConfigResponse {
     pub issuer_url: Option<String>,
     pub scopes: Vec<String>,
     pub auto_provision_users: bool,
+    pub device_pair_code_ttl_seconds: Option<i32>,
     pub updated_by: Option<String>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -64,6 +66,7 @@ impl From<OidcConfigRow> for OidcConfigResponse {
             issuer_url: row.issuer_url,
             scopes: row.scopes.unwrap_or_default(),
             auto_provision_users: row.auto_provision_users,
+            device_pair_code_ttl_seconds: row.device_pair_code_ttl_seconds,
             updated_by: row.updated_by.map(|u| u.to_string()),
             updated_at: row.updated_at,
         }
@@ -81,6 +84,7 @@ pub struct UpdateOidcConfigRequest {
     pub issuer_url: Option<String>,
     pub scopes: Option<Vec<String>>,
     pub auto_provision_users: Option<bool>,
+    pub device_pair_code_ttl_seconds: Option<i32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -165,7 +169,8 @@ pub async fn get_oidc_config(
 ) -> Result<Json<OidcConfigResponse>, (StatusCode, Json<serde_json::Value>)> {
     let row = sqlx::query_as::<_, OidcConfigRow>(
         "SELECT id, enabled, provider_name, client_id, client_secret_enc,
-                issuer_url, scopes, auto_provision_users, updated_by, updated_at
+                issuer_url, scopes, auto_provision_users, device_pair_code_ttl_seconds,
+                updated_by, updated_at
          FROM oidc_config
          WHERE id = $1",
     )
@@ -184,10 +189,18 @@ pub async fn update_oidc_config(
     AdminUser { user_id: actor_id }: AdminUser,
     Json(req): Json<UpdateOidcConfigRequest>,
 ) -> Result<Json<OidcConfigResponse>, (StatusCode, Json<serde_json::Value>)> {
+    // Validate TTL value
+    if let Some(ttl) = req.device_pair_code_ttl_seconds {
+        if ![300, 600, 1800].contains(&ttl) {
+            return Err(bad_request("device_pair_code_ttl_seconds must be 300, 600, or 1800"));
+        }
+    }
+
     // Fetch existing row to use as fallback for fields not provided.
     let current = sqlx::query_as::<_, OidcConfigRow>(
         "SELECT id, enabled, provider_name, client_id, client_secret_enc,
-                issuer_url, scopes, auto_provision_users, updated_by, updated_at
+                issuer_url, scopes, auto_provision_users, device_pair_code_ttl_seconds,
+                updated_by, updated_at
          FROM oidc_config
          WHERE id = $1",
     )
@@ -203,6 +216,7 @@ pub async fn update_oidc_config(
     let new_issuer_url = req.issuer_url.or(current.issuer_url);
     let new_scopes = req.scopes.or(current.scopes);
     let new_auto_provision = req.auto_provision_users.unwrap_or(current.auto_provision_users);
+    let new_device_pair_ttl = req.device_pair_code_ttl_seconds.or(current.device_pair_code_ttl_seconds);
 
     // Determine encrypted secret:
     //   - If req.client_secret is Some(s) and s is non-empty → encrypt it.
@@ -220,18 +234,20 @@ pub async fn update_oidc_config(
 
     let row = sqlx::query_as::<_, OidcConfigRow>(
         "UPDATE oidc_config
-         SET enabled              = $2,
-             provider_name        = $3,
-             client_id            = $4,
-             client_secret_enc    = $5,
-             issuer_url           = $6,
-             scopes               = $7,
-             auto_provision_users = $8,
-             updated_by           = $9,
-             updated_at           = NOW()
+         SET enabled                       = $2,
+             provider_name                 = $3,
+             client_id                     = $4,
+             client_secret_enc             = $5,
+             issuer_url                    = $6,
+             scopes                        = $7,
+             auto_provision_users          = $8,
+             device_pair_code_ttl_seconds  = $9,
+             updated_by                    = $10,
+             updated_at                    = NOW()
          WHERE id = $1
          RETURNING id, enabled, provider_name, client_id, client_secret_enc,
-                   issuer_url, scopes, auto_provision_users, updated_by, updated_at",
+                   issuer_url, scopes, auto_provision_users, device_pair_code_ttl_seconds,
+                   updated_by, updated_at",
     )
     .bind(OIDC_CONFIG_ID)
     .bind(new_enabled)
@@ -241,6 +257,7 @@ pub async fn update_oidc_config(
     .bind(new_issuer_url)
     .bind(new_scopes)
     .bind(new_auto_provision)
+    .bind(new_device_pair_ttl)
     .bind(actor_id)
     .fetch_optional(&state.db_pool)
     .await
@@ -268,7 +285,8 @@ pub async fn test_oidc_config(
     // Read current issuer_url
     let row = sqlx::query_as::<_, OidcConfigRow>(
         "SELECT id, enabled, provider_name, client_id, client_secret_enc,
-                issuer_url, scopes, auto_provision_users, updated_by, updated_at
+                issuer_url, scopes, auto_provision_users, device_pair_code_ttl_seconds,
+                updated_by, updated_at
          FROM oidc_config
          WHERE id = $1",
     )
