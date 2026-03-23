@@ -72,7 +72,8 @@ use rustshare_infrastructure::repositories::{
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
+use tokio::sync::Mutex;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::info;
@@ -107,6 +108,7 @@ pub struct AppState {
     pub user_share_service: Arc<AppUserShareService>,
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
     pub secret_key: SecretEncryptionKey,
+    pub poll_rate_limiter: Arc<Mutex<HashMap<String, Instant>>>,
 }
 
 #[tokio::main]
@@ -275,6 +277,7 @@ async fn main() -> Result<()> {
         user_share_service,
         rate_limit_config,
         secret_key,
+        poll_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
     };
 
     // Build router.
@@ -302,6 +305,15 @@ async fn main() -> Result<()> {
         .route(
             "/api/v1/auth/oidc/mobile/exchange",
             post(oidc::mobile_oidc_exchange),
+        )
+        // Device pairing auth routes
+        .route(
+            "/api/v1/auth/device/request",
+            post(handlers::device_auth::device_request),
+        )
+        .route(
+            "/api/v1/auth/device/poll",
+            post(handlers::device_auth::device_poll),
         )
         // File routes (Task 15-19)
         .route("/api/v1/files", get(handlers::list_files))

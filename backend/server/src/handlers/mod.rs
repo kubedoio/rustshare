@@ -1,6 +1,7 @@
 //! HTTP request handlers for RustShare API endpoints.
 
 pub mod admin;
+pub mod device_auth;
 mod extractors;
 mod files;
 mod folders;

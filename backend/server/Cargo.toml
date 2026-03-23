@@ -41,6 +41,8 @@ governor = "0.6"
 nonzero_ext = "0.3"
 openidconnect = "4.0.1"
 url = "2.5"
+base64 = { workspace = true }
+rand = { workspace = true }
 
 [[test]]
 name = "admin_require_admin_test"
