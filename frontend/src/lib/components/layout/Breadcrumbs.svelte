@@ -2,7 +2,6 @@
   import { createEventDispatcher } from 'svelte';
   import type { Folder } from '$lib/api/types';
 
-  export let currentFolder: Folder | null = null;
   export let folderPath: Folder[] = [];
 
   const dispatch = createEventDispatcher<{
@@ -40,22 +39,23 @@
       </button>
     </li>
 
-    {#each folderPath as folder}
-      <li>
-        <button
-          type="button"
-          class="btn btn-ghost btn-sm"
-          on:click={() => handleNavigate(folder.id)}
-        >
-          {folder.name}
-        </button>
-      </li>
+    {#each folderPath as folder, index}
+      {#if index === folderPath.length - 1}
+        <!-- Last item is current folder - not clickable -->
+        <li>
+          <span class="text-base-content/60">{folder.name}</span>
+        </li>
+      {:else}
+        <li>
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            on:click={() => handleNavigate(folder.id)}
+          >
+            {folder.name}
+          </button>
+        </li>
+      {/if}
     {/each}
-
-    {#if currentFolder}
-      <li>
-        <span class="text-base-content/60">{currentFolder.name}</span>
-      </li>
-    {/if}
   </ul>
 </div>

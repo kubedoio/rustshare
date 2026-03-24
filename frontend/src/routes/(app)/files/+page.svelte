@@ -748,7 +748,6 @@
 	<div class="space-y-4">
 		<!-- Breadcrumb Navigation -->
 		<Breadcrumbs
-			currentFolder={folderPath[folderPath.length - 1] || null}
 			{folderPath}
 			on:navigate={handleBreadcrumbNavigate}
 		/>
