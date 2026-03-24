@@ -1,17 +1,12 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import type { File } from '$lib/api/types';
 
   export let file: File;
   export let size: 'sm' | 'md' | 'lg' = 'md';
 
-  const isImage = (mimeType: string) => {
-    return mimeType.startsWith('image/');
-  };
-
-  // Initialize loading based on whether this is an image
   let thumbnailUrl: string | null = null;
-  let loading = isImage(file.mime_type);
+  let loading = false;
   let error = false;
 
   const sizeClasses = {
@@ -30,97 +25,57 @@
     return mimeType.startsWith('video/');
   };
 
-  async function generateThumbnail() {
-    if (!isImage(file.mime_type)) {
+  const isThumbnailSupported = (mimeType: string) => {
+    const supported = [
+      'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp',
+      'application/pdf',
+      'video/mp4', 'video/quicktime', 'video/webm'
+    ];
+    return supported.includes(mimeType.toLowerCase());
+  };
+
+  async function loadThumbnail() {
+    if (!isThumbnailSupported(file.mime_type)) {
       loading = false;
       return;
     }
 
+    loading = true;
+
     try {
-      // Get download URL from backend
-      const response = await fetch(`/api/v1/files/${file.id}/download`, {
+      const response = await fetch(`/api/v1/files/${file.id}/thumbnail?size=${size}`, {
         credentials: 'include'
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to get download URL');
-      }
-
-      const { url } = await response.json();
-
-      // Convert MinIO URL to nginx proxy path
-      // MinIO returns: http://rustfs:9000/rustshare-files/path/to/file
-      // We want: /storage/path/to/file
-      let imageUrl = url;
-      if (url.includes('/rustshare-files/')) {
-        const path = url.split('/rustshare-files/')[1];
-        imageUrl = `/storage/${path}`;
-      }
-
-      // Load image
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-
-      img.onload = () => {
-        // Create canvas
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          error = true;
-          loading = false;
-          return;
-        }
-
-        // Calculate thumbnail size (maintaining aspect ratio)
-        const maxSize = size === 'lg' ? 96 : size === 'md' ? 64 : 40;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > maxSize) {
-            height = (height * maxSize) / width;
-            width = maxSize;
-          }
-        } else {
-          if (height > maxSize) {
-            width = (width * maxSize) / height;
-            height = maxSize;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-
-        // Draw image
-        ctx.drawImage(img, 0, 0, width, height);
-
-        // Convert to data URL
-        thumbnailUrl = canvas.toDataURL('image/jpeg', 0.8);
-        loading = false;
-      };
-
-      img.onerror = () => {
+      if (response.ok) {
+        const blob = await response.blob();
+        thumbnailUrl = URL.createObjectURL(blob);
+        error = false;
+      } else {
+        // 404, 415, 413 - show fallback icon
         error = true;
-        loading = false;
-      };
-
-      img.src = imageUrl;
+      }
     } catch (err) {
-      console.error('Failed to generate thumbnail:', err);
+      console.error('Failed to load thumbnail:', err);
       error = true;
+    } finally {
       loading = false;
     }
   }
 
   onMount(() => {
-    if (isImage(file.mime_type)) {
-      generateThumbnail();
+    loadThumbnail();
+  });
+
+  onDestroy(() => {
+    if (thumbnailUrl) {
+      URL.revokeObjectURL(thumbnailUrl);
     }
   });
 
   // Get file type icon emoji
   function getFileIcon(mimeType: string): string {
-    if (isImage(mimeType)) return '🖼️';
+    if (mimeType.startsWith('image/')) return '🖼️';
     if (isPDF(mimeType)) return '📄';
     if (isVideo(mimeType)) return '🎬';
     if (mimeType.includes('text')) return '📝';
@@ -136,18 +91,15 @@
 <div class={`${sizeClass} flex items-center justify-center bg-base-200 rounded overflow-hidden`}>
   {#if loading}
     <span class="loading loading-spinner loading-xs"></span>
-  {:else if error || !isImage(file.mime_type)}
+  {:else if error || !thumbnailUrl}
     <!-- Show file type icon -->
     <span class="text-2xl">{getFileIcon(file.mime_type)}</span>
-  {:else if thumbnailUrl}
+  {:else}
     <!-- Show thumbnail image -->
     <img
       src={thumbnailUrl}
       alt={file.name}
       class="w-full h-full object-cover"
     />
-  {:else}
-    <!-- Fallback icon -->
-    <span class="text-2xl">{getFileIcon(file.mime_type)}</span>
   {/if}
 </div>
