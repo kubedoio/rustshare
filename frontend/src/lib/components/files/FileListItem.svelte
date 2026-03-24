@@ -142,7 +142,7 @@
 						</h3>
 					</button>
 				{/if}
-				<div class="text-xs lg:text-sm text-base-content/60 gap-2 lg:gap-4 flex">
+				<div class="text-xs lg:text-sm text-base-content/60 flex items-center justify-between mt-1">
 					<span>{displaySize}</span>
 					<span class="sm:inline hidden">{displayDate}</span>
 				</div>
