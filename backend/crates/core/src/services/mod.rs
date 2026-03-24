@@ -6,6 +6,7 @@ mod notification_service;
 mod permission_resolver;
 mod share_errors;
 mod share_service;
+mod thumbnail_service;
 mod user_share_service;
 
 pub use errors::{FileError, FolderError};

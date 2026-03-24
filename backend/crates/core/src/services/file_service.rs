@@ -128,6 +128,12 @@ pub trait ObjectStoreOps: Send + Sync {
     /// # Returns
     /// The content as Bytes.
     async fn get(&self, key: &str) -> Result<Bytes>;
+
+    /// Delete an object from storage.
+    ///
+    /// # Arguments
+    /// * `key` - The object key
+    async fn delete(&self, key: &str) -> Result<()>;
 }
 
 /// File service for handling file operations.
