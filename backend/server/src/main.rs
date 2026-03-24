@@ -63,7 +63,7 @@ use rustshare_core::{
     events::EventBroadcaster,
     services::{
         FileService, FolderService, NotificationService, PermissionResolver, ShareService,
-        UserShareService, UserShareServiceDeps,
+        ThumbnailService, UserShareService, UserShareServiceDeps,
     },
 };
 use rustshare_infrastructure::repositories::{
@@ -102,6 +102,7 @@ pub struct AppState {
     pub file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore>>,
     pub folder_service: Arc<FolderService<EventStore, MetadataStore>>,
     pub share_service: Arc<ShareService<EventStore, MetadataStore, JwtManager>>,
+    pub thumbnail_service: Arc<ThumbnailService<ObjectStore>>,
     pub permission_resolver:
         Arc<PermissionResolver<ShareRepository, FileRepository, FolderRepository>>,
     pub notification_service: Arc<NotificationService<NotificationRepository>>,
@@ -180,6 +181,10 @@ async fn main() -> Result<()> {
         Arc::clone(&metadata_store),
         Arc::clone(&broadcaster),
         Arc::clone(&jwt_manager),
+    ));
+    let thumbnail_service = Arc::new(ThumbnailService::new(
+        db_pool.clone(),
+        Arc::clone(&object_store),
     ));
 
     // Initialize repositories for new services
@@ -272,6 +277,7 @@ async fn main() -> Result<()> {
         file_service,
         folder_service,
         share_service,
+        thumbnail_service,
         permission_resolver,
         notification_service,
         user_share_service,
@@ -345,6 +351,10 @@ async fn main() -> Result<()> {
         )
         .route("/api/v1/files/:id/move", post(handlers::move_file))
         .route("/api/v1/files/:id/rename", post(handlers::rename_file))
+        .route(
+            "/api/v1/files/:id/thumbnail",
+            get(handlers::get_file_thumbnail),
+        )
         .route(
             "/api/admin/replication/jobs",
             get(replication_handlers::list_replication_jobs),

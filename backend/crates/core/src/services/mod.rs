@@ -29,6 +29,7 @@ pub use share_service::{
     EventStoreOps as ShareEventStoreOps, JwtOps, MetadataStoreOps as ShareMetadataStoreOps,
     ShareService,
 };
+pub use thumbnail_service::{ThumbnailError, ThumbnailService};
 pub use user_share_service::{
     FileOps, FolderOps, ShareOps, UserOps, UserShareService, UserShareServiceDeps,
 };

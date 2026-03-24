@@ -1,9 +1,9 @@
 //! HTTP handlers for file operations.
 
 use axum::{
-    extract::{Multipart, Path, State},
+    extract::{Multipart, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
-    response::Response,
+    response::{IntoResponse, Response},
     Json,
 };
 use bytes::Bytes;
@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use rustshare_core::{
-    domain::{File, FileVersion},
-    services::FileError,
+    domain::{File, FileVersion, ThumbnailSize},
+    services::{FileError, ThumbnailError},
 };
 
 use super::{file_error_response, AuthenticatedUser};
@@ -390,6 +390,127 @@ pub async fn rename_file(
 #[derive(Debug, Deserialize)]
 pub struct RenameFileRequest {
     pub new_name: String,
+}
+
+// ============================================================================
+// Thumbnail Endpoint
+// ============================================================================
+
+/// Query parameters for thumbnail requests.
+#[derive(Debug, Deserialize)]
+pub struct ThumbnailParams {
+    /// Thumbnail size: sm (40x40), md (128x128), lg (256x256)
+    /// Defaults to "md" if not specified
+    pub size: Option<String>,
+}
+
+/// Get file thumbnail.
+///
+/// GET /api/v1/files/:id/thumbnail
+///
+/// Returns the thumbnail image for a file. If the thumbnail doesn't exist,
+/// it will be generated on-demand for supported file types (images, PDFs, videos).
+///
+/// Query parameters:
+/// - size: "sm" | "md" | "lg" (default: "md")
+pub async fn get_file_thumbnail(
+    State(state): State<AppState>,
+    AuthenticatedUser { user_id }: AuthenticatedUser,
+    Path(file_id): Path<Uuid>,
+    Query(params): Query<ThumbnailParams>,
+) -> Result<Response, (StatusCode, String)> {
+    // First, verify the user has access to the file
+    let file = match state.file_service.get_file(file_id, user_id).await {
+        Ok(file) => file,
+        Err(FileError::NotFound(_)) => {
+            return Err((StatusCode::NOT_FOUND, "File not found".to_string()));
+        }
+        Err(FileError::PermissionDenied { .. }) => {
+            return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
+        }
+        Err(_) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to retrieve file".to_string(),
+            ));
+        }
+    };
+
+    // Parse size parameter (default to "md")
+    let size_str = params.size.as_deref().unwrap_or("md");
+    let size = match ThumbnailSize::try_from(size_str) {
+        Ok(size) => size,
+        Err(_) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("Invalid size parameter: {}. Use 'sm', 'md', or 'lg'", size_str),
+            ));
+        }
+    };
+
+    // Check if thumbnail exists
+    let thumbnail = match state.thumbnail_service.get_thumbnail(file_id, size).await {
+        Ok(Some(thumbnail)) => thumbnail,
+        Ok(None) => {
+            // Thumbnail doesn't exist, try to generate it
+            match state
+                .thumbnail_service
+                .generate_thumbnail(file_id, &file.mime_type, size)
+                .await
+            {
+                Ok(thumbnail) => thumbnail,
+                Err(ThumbnailError::NotFound) => {
+                    return Err((StatusCode::NOT_FOUND, "File not found".to_string()));
+                }
+                Err(ThumbnailError::UnsupportedType) => {
+                    return Err((
+                        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                        "Thumbnail generation not supported for this file type".to_string(),
+                    ));
+                }
+                Err(e) => {
+                    tracing::error!("Failed to generate thumbnail: {}", e);
+                    return Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Failed to generate thumbnail".to_string(),
+                    ));
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to get thumbnail: {}", e);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to retrieve thumbnail".to_string(),
+            ));
+        }
+    };
+
+    // Get thumbnail data from storage
+    let thumbnail_data = match state
+        .thumbnail_service
+        .get_thumbnail_data(&thumbnail.storage_path)
+        .await
+    {
+        Ok(data) => data,
+        Err(e) => {
+            tracing::error!("Failed to get thumbnail data: {}", e);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to retrieve thumbnail data".to_string(),
+            ));
+        }
+    };
+
+    // Return the thumbnail with proper content-type
+    let response = (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, thumbnail.content_type.as_str())],
+        thumbnail_data,
+    )
+        .into_response();
+
+    Ok(response)
 }
 
 // ============================================================================
