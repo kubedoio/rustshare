@@ -32,7 +32,39 @@ const DEVICE_CODE_LENGTH: usize = 32;
 const TOKEN_LENGTH: usize = 32;
 const POLL_RATE_LIMIT_SECONDS: u64 = 5;
 
-/// Request body for device poll
+/// Response for QR info endpoint
+#[derive(Serialize)]
+pub struct DeviceQrInfoResponse {
+    pub instance_url: String,
+    pub device_pairing_path: String,
+}
+
+/// GET /api/v1/auth/device/qr-info
+/// Returns information needed for QR code generation on the device pairing page
+pub async fn device_qr_info(
+    headers: HeaderMap,
+) -> Result<Json<DeviceQrInfoResponse>, (StatusCode, Json<serde_json::Value>)> {
+    // Extract Host header from request
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Construct the instance URL
+    let instance_url = match host {
+        Some(host) => format!("https://{}", host),
+        None => {
+            // Fall back to RUSTSHARE_PUBLIC_URL env var or default
+            std::env::var("RUSTSHARE_PUBLIC_URL")
+                .unwrap_or_else(|_| "http://localhost:8080".to_string())
+        }
+    };
+
+    Ok(Json(DeviceQrInfoResponse {
+        instance_url,
+        device_pairing_path: "/device".to_string(),
+    }))
+}
 #[derive(Deserialize)]
 pub struct DevicePollRequest {
     pub device_code: String,

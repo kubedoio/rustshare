@@ -314,6 +314,10 @@ async fn main() -> Result<()> {
         )
         // Device pairing auth routes
         .route(
+            "/api/v1/auth/device/qr-info",
+            get(handlers::device_auth::device_qr_info),
+        )
+        .route(
             "/api/v1/auth/device/request",
             post(handlers::device_auth::device_request),
         )
