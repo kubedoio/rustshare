@@ -15,7 +15,7 @@ use rustshare_core::{
     services::{FileError, ThumbnailError},
 };
 
-use super::{file_error_response, AuthenticatedUser};
+use super::{file_error_response, AuthenticatedUser, ErrorResponse};
 use crate::AppState;
 
 // ============================================================================
@@ -396,6 +396,29 @@ pub struct RenameFileRequest {
 // Thumbnail Endpoint
 // ============================================================================
 
+/// Maximum file size for thumbnail generation (100MB)
+const MAX_THUMBNAIL_FILE_SIZE: i64 = 100 * 1024 * 1024;
+
+/// Map ThumbnailError to HTTP response.
+fn thumbnail_error_response(err: ThumbnailError) -> Response {
+    let (status, message) = match err {
+        ThumbnailError::NotFound => (StatusCode::NOT_FOUND, "File not found".to_string()),
+        ThumbnailError::UnsupportedType => (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Thumbnail generation not supported for this file type".to_string(),
+        ),
+        ThumbnailError::Storage(_) | ThumbnailError::Generation(_) | ThumbnailError::Database(_) => {
+            tracing::error!("Thumbnail service error: {}", err);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to generate thumbnail".to_string(),
+            )
+        }
+    };
+
+    (status, Json(ErrorResponse::new(message))).into_response()
+}
+
 /// Query parameters for thumbnail requests.
 #[derive(Debug, Deserialize)]
 pub struct ThumbnailParams {
@@ -418,97 +441,76 @@ pub async fn get_file_thumbnail(
     AuthenticatedUser { user_id }: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
     Query(params): Query<ThumbnailParams>,
-) -> Result<Response, (StatusCode, String)> {
+) -> Result<Response, Response> {
     // First, verify the user has access to the file
-    let file = match state.file_service.get_file(file_id, user_id).await {
-        Ok(file) => file,
-        Err(FileError::NotFound(_)) => {
-            return Err((StatusCode::NOT_FOUND, "File not found".to_string()));
-        }
-        Err(FileError::PermissionDenied { .. }) => {
-            return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
-        }
-        Err(_) => {
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to retrieve file".to_string(),
-            ));
-        }
-    };
+    let file = state
+        .file_service
+        .get_file(file_id, user_id)
+        .await
+        .map_err(file_error_response)?;
+
+    // Check file size - don't generate thumbnails for files larger than 100MB
+    if file.size > MAX_THUMBNAIL_FILE_SIZE {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ErrorResponse {
+                error: "File too large for thumbnail generation".to_string(),
+                details: Some(format!(
+                    "File size {} exceeds maximum allowed {} bytes",
+                    file.size, MAX_THUMBNAIL_FILE_SIZE
+                )),
+            }),
+        )
+            .into_response());
+    }
 
     // Parse size parameter (default to "md")
     let size_str = params.size.as_deref().unwrap_or("md");
-    let size = match ThumbnailSize::try_from(size_str) {
-        Ok(size) => size,
-        Err(_) => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                format!("Invalid size parameter: {}. Use 'sm', 'md', or 'lg'", size_str),
-            ));
-        }
-    };
+    let size = ThumbnailSize::try_from(size_str).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new(format!(
+                "Invalid size parameter: {}. Use 'sm', 'md', or 'lg'",
+                size_str
+            ))),
+        )
+            .into_response()
+    })?;
 
     // Check if thumbnail exists
     let thumbnail = match state.thumbnail_service.get_thumbnail(file_id, size).await {
         Ok(Some(thumbnail)) => thumbnail,
         Ok(None) => {
             // Thumbnail doesn't exist, try to generate it
-            match state
+            state
                 .thumbnail_service
                 .generate_thumbnail(file_id, &file.mime_type, size)
                 .await
-            {
-                Ok(thumbnail) => thumbnail,
-                Err(ThumbnailError::NotFound) => {
-                    return Err((StatusCode::NOT_FOUND, "File not found".to_string()));
-                }
-                Err(ThumbnailError::UnsupportedType) => {
-                    return Err((
-                        StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                        "Thumbnail generation not supported for this file type".to_string(),
-                    ));
-                }
-                Err(e) => {
-                    tracing::error!("Failed to generate thumbnail: {}", e);
-                    return Err((
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Failed to generate thumbnail".to_string(),
-                    ));
-                }
-            }
+                .map_err(thumbnail_error_response)?
         }
         Err(e) => {
             tracing::error!("Failed to get thumbnail: {}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to retrieve thumbnail".to_string(),
-            ));
+            return Err(thumbnail_error_response(e));
         }
     };
 
     // Get thumbnail data from storage
-    let thumbnail_data = match state
+    let thumbnail_data = state
         .thumbnail_service
         .get_thumbnail_data(&thumbnail.storage_path)
         .await
-    {
-        Ok(data) => data,
-        Err(e) => {
-            tracing::error!("Failed to get thumbnail data: {}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to retrieve thumbnail data".to_string(),
-            ));
-        }
-    };
+        .map_err(thumbnail_error_response)?;
 
-    // Return the thumbnail with proper content-type
-    let response = (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, thumbnail.content_type.as_str())],
-        thumbnail_data,
-    )
-        .into_response();
+    // Build response with cache headers
+    // Thumbnails are immutable once generated
+    let etag = format!("{}-{}", file_id, size_str);
+    let headers = [
+        (header::CONTENT_TYPE, thumbnail.content_type.as_str()),
+        (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        (header::ETAG, etag.as_str()),
+    ];
+
+    let response = (StatusCode::OK, headers, thumbnail_data).into_response();
 
     Ok(response)
 }
