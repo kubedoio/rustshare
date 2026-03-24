@@ -18,6 +18,17 @@ export interface AuthConfig {
 	oidc_mobile_enabled: boolean;
 }
 
+export interface DeviceRequestResponse {
+	user_code: string;
+	device_code: string;
+	expires_in: number;
+}
+
+export type DevicePollResponse =
+	| { status: 'pending' }
+	| { status: 'approved'; token: string }
+	| { status: 'expired' };
+
 export async function login(email: string, password: string): Promise<LoginResponse> {
 	return apiClient.post<LoginResponse>('/auth/login', { email, password });
 }
@@ -46,4 +57,16 @@ export async function logout(): Promise<void> {
 	if (typeof window !== 'undefined') {
 		window.location.href = '/login';
 	}
+}
+
+export async function requestDevicePairing(): Promise<DeviceRequestResponse> {
+	return apiClient.post<DeviceRequestResponse>('/auth/device/request', null);
+}
+
+export async function pollDevicePairing(device_code: string): Promise<DevicePollResponse> {
+	return apiClient.post<DevicePollResponse>('/auth/device/poll', { device_code });
+}
+
+export async function approveDevicePairing(user_code: string): Promise<{ device_name: string }> {
+	return apiClient.post<{ device_name: string }>('/auth/device/approve', { user_code });
 }

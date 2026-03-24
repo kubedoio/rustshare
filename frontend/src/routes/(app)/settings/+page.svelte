@@ -6,9 +6,12 @@
 		listUserSecurityEvents,
 		listUserSessions,
 		revokeUserSession,
-		updateUserPassword
+		updateUserPassword,
+		listUserDevices,
+		revokeUserDevice
 	} from '$lib/api/users';
-	import type { UserSecurityEvent, UserSession } from '$lib/api/users';
+	import type { UserSecurityEvent, UserSession, UserDevice } from '$lib/api/users';
+	import { approveDevicePairing } from '$lib/api/auth';
 	import Toast from '$lib/components/common/Toast.svelte';
 
 	let showToast = false;
@@ -30,6 +33,12 @@
 	let securityEventsLoading = true;
 	let securityEventsError = '';
 	let securityEvents: UserSecurityEvent[] = [];
+	let devices: UserDevice[] = [];
+	let devicesLoading = true;
+	let devicesError = '';
+	let revokingDeviceId: string | null = null;
+	let userCodeInput = '';
+	let approvingDevice = false;
 	let authConfig: AuthConfig = {
 		password_login_enabled: true,
 		oidc_enabled: false,
@@ -78,7 +87,62 @@
 
 		await refreshSessions();
 		await refreshSecurityEvents();
+		await refreshDevices();
 	});
+
+	async function refreshDevices() {
+		devicesLoading = true;
+		devicesError = '';
+		try {
+			devices = await listUserDevices();
+		} catch (error) {
+			devicesError = error instanceof Error ? error.message : 'Failed to load devices';
+		} finally {
+			devicesLoading = false;
+		}
+	}
+
+	async function handleApproveDevice() {
+		if (!userCodeInput || userCodeInput.length < 8) {
+			showNotification('Please enter a valid 8-character pairing code', 'error');
+			return;
+		}
+
+		approvingDevice = true;
+		try {
+			// Clean up input (remove dashes, spaces, make uppercase)
+			const code = userCodeInput.replace(/[-\s]/g, '').toUpperCase();
+			const response = await approveDevicePairing(code);
+			userCodeInput = '';
+			showNotification(`Device "${response.device_name}" approved successfully`, 'success');
+			await refreshDevices();
+			await refreshSecurityEvents();
+		} catch (error) {
+			showNotification(
+				error instanceof Error ? error.message : 'Failed to approve device pairing',
+				'error'
+			);
+		} finally {
+			approvingDevice = false;
+		}
+	}
+
+	async function handleRevokeDevice(deviceId: string) {
+		revokingDeviceId = deviceId;
+		try {
+			await revokeUserDevice(deviceId);
+			await refreshDevices();
+			await refreshSecurityEvents();
+			showNotification('Device revoked successfully', 'success');
+		} catch (error) {
+			showNotification(
+				error instanceof Error ? error.message : 'Failed to revoke device',
+				'error'
+			);
+		} finally {
+			revokingDeviceId = null;
+		}
+	}
 
 	async function refreshSessions() {
 		sessionsLoading = true;
@@ -559,6 +623,106 @@
 							{/each}
 						</div>
 					{/if}
+				</div>
+
+				<div class="bg-base-200 rounded-box p-4">
+					<div class="mb-3 flex items-center justify-between">
+						<div>
+							<h3 class="font-semibold text-lg">Devices</h3>
+							<p class="text-sm text-base-content/70">
+								Manage devices paired with your account.
+							</p>
+						</div>
+					</div>
+
+					<div class="space-y-6">
+						<!-- Pair New Device -->
+						<div class="p-4 bg-base-100 rounded-box border border-base-300">
+							<h4 class="font-medium mb-2">Pair New Device</h4>
+							<p class="text-sm text-base-content/70 mb-4">
+								Enter the 8-character code shown on the device you want to pair.
+							</p>
+							<div class="flex gap-2">
+								<input
+									type="text"
+									placeholder="XXXX-XXXX"
+									class="input input-bordered w-full max-w-xs font-mono"
+									bind:value={userCodeInput}
+									maxlength="11"
+								/>
+								<button
+									class="btn btn-primary"
+									on:click={handleApproveDevice}
+									disabled={approvingDevice || !userCodeInput}
+								>
+									{#if approvingDevice}
+										<span class="loading loading-spinner loading-xs"></span>
+									{/if}
+									Approve
+								</button>
+							</div>
+						</div>
+
+						<!-- Device List -->
+						<div class="space-y-3">
+							<div class="flex items-center justify-between">
+								<h4 class="font-medium">Active Devices</h4>
+								{#if devicesLoading}
+									<span class="loading loading-spinner loading-sm"></span>
+								{:else}
+									<button type="button" class="btn btn-ghost btn-xs" on:click={refreshDevices}>
+										Refresh
+									</button>
+								{/if}
+							</div>
+
+							{#if devicesError}
+								<div class="alert alert-warning py-2">
+									<span>{devicesError}</span>
+								</div>
+							{:else if devices.length === 0 && !devicesLoading}
+								<p class="text-sm text-base-content/70 italic">No other devices paired.</p>
+							{:else}
+								{#each devices as device}
+									<div class="rounded-box border-base-300 p-3 border bg-base-100">
+										<div class="mb-2 gap-4 flex items-start justify-between">
+											<div>
+												<div class="gap-2 flex items-center">
+													<span class="font-medium">{device.device_name}</span>
+												</div>
+												<div class="text-xs text-base-content/70">
+													ID: {device.id}
+												</div>
+											</div>
+
+											<button
+												type="button"
+												class="btn btn-outline btn-error btn-xs"
+												on:click={() => handleRevokeDevice(device.id)}
+												disabled={revokingDeviceId === device.id}
+											>
+												{#if revokingDeviceId === device.id}
+													<span class="loading loading-spinner loading-xs"></span>
+												{/if}
+												Revoke
+											</button>
+										</div>
+
+										<div class="gap-2 text-sm text-base-content/70 md:grid-cols-2 grid grid-cols-1">
+											<div>
+												<span class="font-medium text-base-content">Paired:</span>
+												{formatDateTime(device.created_at)}
+											</div>
+											<div>
+												<span class="font-medium text-base-content">Last active:</span>
+												{device.last_used_at ? formatDateTime(device.last_used_at) : 'Never'}
+											</div>
+										</div>
+									</div>
+								{/each}
+							{/if}
+						</div>
+					</div>
 				</div>
 
 				<div class="bg-base-200 rounded-box p-4">

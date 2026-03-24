@@ -37,6 +37,13 @@ export interface UserSession {
 	is_current: boolean;
 }
 
+export interface UserDevice {
+	id: string;
+	device_name: string;
+	created_at: string;
+	last_used_at: string | null;
+}
+
 export interface UserSecurityEvent {
 	id: string;
 	event_type: string;
@@ -93,4 +100,18 @@ export async function revokeUserSession(sessionId: string): Promise<void> {
  */
 export async function listUserSecurityEvents(): Promise<UserSecurityEvent[]> {
 	return apiClient.get<UserSecurityEvent[]>('/me/security-events');
+}
+
+/**
+ * List active devices for the current user.
+ */
+export async function listUserDevices(): Promise<UserDevice[]> {
+	return apiClient.get<UserDevice[]>('/user/devices');
+}
+
+/**
+ * Revoke a specific device token.
+ */
+export async function revokeUserDevice(deviceId: string): Promise<void> {
+	return apiClient.delete<void>(`/user/devices/${deviceId}`);
 }

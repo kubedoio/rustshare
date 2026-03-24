@@ -16,8 +16,17 @@ export class ApiClient {
 			headers['Content-Type'] = 'application/json';
 		}
 
+		// Add CSRF header if needed
 		if (requiresCsrfHeader(method) && !headers[CSRF_HEADER_NAME]) {
 			headers[CSRF_HEADER_NAME] = '1';
+		}
+
+		// Add Authorization header if token exists in sessionStorage
+		if (typeof window !== 'undefined') {
+			const token = window.sessionStorage.getItem('rustshare.websocket_token');
+			if (token && !headers['Authorization']) {
+				headers['Authorization'] = `Bearer ${token}`;
+			}
 		}
 
 		const response = await fetch(`${this.baseURL}${endpoint}`, {
