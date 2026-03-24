@@ -7,6 +7,7 @@ mod oidc_login_state;
 mod replication;
 mod response_types;
 mod share;
+mod thumbnail;
 mod user;
 mod user_session;
 
@@ -22,6 +23,7 @@ pub use replication::{
 };
 pub use response_types::{FolderContents, FolderTree};
 pub use share::{Share, SharePermissions, ShareRecipient};
+pub use thumbnail::{FileThumbnail, ThumbnailCategory, ThumbnailSize, get_thumbnail_category, is_thumbnail_supported};
 pub use user::{Theme, User};
 pub use user_session::UserSession;
 
