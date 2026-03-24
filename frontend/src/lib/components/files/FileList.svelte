@@ -71,7 +71,7 @@
 	}
 </script>
 
-<div class="bg-base-100 rounded-lg shadow overflow-x-auto">
+<div class="bg-base-100 rounded-lg shadow overflow-x-auto min-h-[200px]">
 	<table class="table-zebra table">
 		<thead>
 			<tr>
@@ -112,7 +112,7 @@
 					<td>—</td>
 					<td>{formatDate(folder.updated_at)}</td>
 					<td class="text-right">
-						<div class="dropdown dropdown-end">
+						<div class="dropdown dropdown-end dropdown-bottom">
 							<button
 								type="button"
 								class="btn btn-ghost btn-xs"
@@ -134,7 +134,7 @@
 									/>
 								</svg>
 							</button>
-							<ul class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-[1]">
+							<ul class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-50">
 								<li>
 									<button type="button" on:click|stopPropagation={() => onRenameFolder(folder)}
 										>Rename</button
@@ -201,7 +201,7 @@
 					<td>{formatBytes(file.size)}</td>
 					<td>{formatDate(file.modified_at)}</td>
 					<td class="text-right">
-						<div class="dropdown dropdown-end">
+						<div class="dropdown dropdown-end dropdown-bottom">
 							<button
 								type="button"
 								class="btn btn-ghost btn-xs"
@@ -223,7 +223,7 @@
 									/>
 								</svg>
 							</button>
-							<ul class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-[1]">
+							<ul class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-50">
 								<li>
 									<button type="button" on:click|stopPropagation={() => onRenameFile(file)}
 										>Rename</button
