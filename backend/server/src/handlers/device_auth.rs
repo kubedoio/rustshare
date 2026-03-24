@@ -192,13 +192,14 @@ pub async fn device_request(
     State(state): State<AppState>,
 ) -> Result<Json<DeviceRequestResponse>, (StatusCode, Json<serde_json::Value>)> {
     // Get TTL from oidc_config table (device_pair_code_ttl_seconds)
-    let ttl_seconds: i64 = sqlx::query_scalar(
+    let ttl_seconds: i32 = sqlx::query_scalar(
         "SELECT COALESCE(device_pair_code_ttl_seconds, 300) FROM oidc_config LIMIT 1",
     )
     .fetch_optional(&state.db_pool)
     .await
     .map_err(|e| server_error(format!("Database error: {}", e)))?
     .unwrap_or(300);
+    let ttl_seconds_i64 = i64::from(ttl_seconds);
 
     let user_code = gen_user_code();
     let device_code = gen_device_code();
@@ -212,7 +213,7 @@ pub async fn device_request(
     )
     .bind(&device_code)
     .bind(&user_code)
-    .bind(ttl_seconds as f64)
+    .bind(f64::from(ttl_seconds))
     .execute(&state.db_pool)
     .await
     .map_err(|e| server_error(format!("Failed to create pair request: {}", e)))?;
@@ -220,7 +221,7 @@ pub async fn device_request(
     Ok(Json(DeviceRequestResponse {
         user_code,
         device_code,
-        expires_in: ttl_seconds,
+        expires_in: ttl_seconds_i64,
     }))
 }
 
