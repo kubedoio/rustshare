@@ -67,7 +67,7 @@ where
     pub async fn generate_thumbnail(
         &self,
         file_id: Uuid,
-        _mime_type: &str,
+        mime_type: &str,
         size: ThumbnailSize,
     ) -> Result<FileThumbnail, ThumbnailError> {
         // Check if file exists
@@ -81,6 +81,10 @@ where
 
         if !file_exists {
             return Err(ThumbnailError::NotFound);
+        }
+
+        if !self.is_supported(mime_type) {
+            return Err(ThumbnailError::UnsupportedType);
         }
 
         // Get the file content from storage
@@ -177,8 +181,8 @@ where
             .map_err(|e| ThumbnailError::Database(e.to_string()))?;
 
         // Delete from storage (best effort - don't fail if storage delete fails)
-        for size in ["sm", "md", "lg"] {
-            let path = format!("thumbnails/{}/{}.webp", file_id, size);
+        for size in [ThumbnailSize::Sm, ThumbnailSize::Md, ThumbnailSize::Lg] {
+            let path = format!("thumbnails/{}/{}.webp", file_id, size.as_str());
             let _ = self.storage.delete(&path).await;
         }
 

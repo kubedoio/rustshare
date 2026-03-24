@@ -1181,6 +1181,11 @@ mod tests {
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("Object not found: {}", key))
         }
+
+        async fn delete(&self, key: &str) -> Result<()> {
+            self.objects.lock().unwrap().remove(key);
+            Ok(())
+        }
     }
 
     fn setup_file_service() -> (
