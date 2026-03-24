@@ -169,6 +169,17 @@
 							Cancel and restart
 						</button>
 					</div>
+
+					<div class="divider text-xs opacity-50">or</div>
+
+					<div class="card-actions justify-center">
+						<a href="/device/qr" class="btn btn-outline btn-sm">
+							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4h2v-4zM6 20h2v-4H6v4zm6-6h2v-4h-2v4zm-6 0h2v-4H6v4zm12-6h2V4h-2v4zM6 10h2V4H6v6zm6-6h2V4h-2v4z" />
+							</svg>
+							Show QR Code for mobile pairing
+						</a>
+					</div>
 				</div>
 			{:else if showError}
 				<div class="alert alert-error mb-6">
