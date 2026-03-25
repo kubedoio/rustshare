@@ -11,7 +11,7 @@
 
 	export let item: File | Folder;
 	export let isFolder: boolean;
-	export let onSelect: () => void;
+	export let onSelect: (event?: MouseEvent) => void;
 	export let selectionMode = false;
 	export let selected = false;
 	export let replicationStatus: ReplicationStatus | null = null;
@@ -79,8 +79,8 @@
 		dispatch('replace', { item: item as File });
 	}
 
-	function handleCardActivate() {
-		onSelect();
+	function handleCardActivate(event: MouseEvent) {
+		onSelect(event);
 	}
 
 	function handleCardKeydown(event: KeyboardEvent) {

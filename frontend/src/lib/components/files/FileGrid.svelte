@@ -22,12 +22,16 @@
 	export let selectionMode = false;
 	export let replicationStatuses: Record<string, ReplicationStatus> = {};
 
-	function handleFileToggle(file: File) {
-		selectionStore.toggleFile(file.id);
+	function handleFileToggle(file: File, event?: MouseEvent) {
+		const isShiftKey = event?.shiftKey ?? false;
+		const allFileIds = files.map(f => f.id);
+		selectionStore.toggleFile(file.id, isShiftKey, allFileIds);
 	}
 
-	function handleFolderToggle(folder: Folder) {
-		selectionStore.toggleFolder(folder.id);
+	function handleFolderToggle(folder: Folder, event?: MouseEvent) {
+		const isShiftKey = event?.shiftKey ?? false;
+		const allFolderIds = folders.map(f => f.id);
+		selectionStore.toggleFolder(folder.id, isShiftKey, allFolderIds);
 	}
 
 	function handleVersionHistoryClick(e: CustomEvent) {
@@ -60,7 +64,7 @@
 			<FileListItem
 				item={folder}
 				isFolder={true}
-				onSelect={() => (selectionMode ? handleFolderToggle(folder) : onFolderClick(folder))}
+				onSelect={(e) => (selectionMode ? handleFolderToggle(folder, e) : onFolderClick(folder))}
 				selected={selectionMode && $selectionStore.selectedFolderIds.has(folder.id)}
 				{selectionMode}
 				on:rename={(e) => e.detail.isFolder && onRenameFolder(folder)}
@@ -75,7 +79,7 @@
 				item={file}
 				isFolder={false}
 				replicationStatus={replicationStatuses[file.id] ?? null}
-				onSelect={() => (selectionMode ? handleFileToggle(file) : onFileClick(file))}
+				onSelect={(e) => (selectionMode ? handleFileToggle(file, e) : onFileClick(file))}
 				selected={selectionMode && $selectionStore.selectedFileIds.has(file.id)}
 				{selectionMode}
 				on:rename={(e) => !e.detail.isFolder && onRenameFile(file)}
