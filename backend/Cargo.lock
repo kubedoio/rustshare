@@ -3351,6 +3351,7 @@ dependencies = [
  "governor",
  "hex",
  "hmac",
+ "image",
  "nonzero_ext",
  "openidconnect",
  "rand 0.8.5",

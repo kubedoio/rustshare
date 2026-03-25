@@ -611,6 +611,28 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Update user's avatar path
+    pub async fn update_user_avatar(
+        &self,
+        user_id: Uuid,
+        avatar_path: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE users
+            SET avatar_path = $1,
+                updated_at = NOW()
+            WHERE id = $2
+            "#,
+        )
+        .bind(avatar_path)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// Create a new file in the projection table
     pub async fn create_file(&self, file: &File) -> Result<()> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)

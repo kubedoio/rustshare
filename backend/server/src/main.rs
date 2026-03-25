@@ -588,6 +588,15 @@ async fn main() -> Result<()> {
             "/api/v1/users/me/profile",
             patch(handlers::update_profile),
         )
+        // Avatar routes (Task 18)
+        .route(
+            "/api/v1/users/me/avatar",
+            post(handlers::upload_avatar).delete(handlers::delete_avatar),
+        )
+        .route(
+            "/api/v1/users/:id/avatar",
+            get(handlers::get_avatar),
+        )
         // Internal user share routes
         .route("/api/v1/files/:id/share", post(handlers::create_file_share))
         .route(
