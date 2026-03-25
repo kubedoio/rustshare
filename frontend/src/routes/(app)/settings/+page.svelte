@@ -102,16 +102,35 @@
 		}
 	}
 
+	function formatPairingCode(input: string): string {
+		// Remove any non-alphanumeric characters
+		const cleaned = input.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+		
+		// Add hyphen after first 4 characters if we have more than 4
+		if (cleaned.length > 4) {
+			return `${cleaned.slice(0, 4)}-${cleaned.slice(4, 8)}`;
+		}
+		
+		return cleaned;
+	}
+
+	function handleCodeInput(event: Event) {
+		const input = event.target as HTMLInputElement;
+		const formatted = formatPairingCode(input.value);
+		userCodeInput = formatted;
+	}
+
 	async function handleApproveDevice() {
-		if (!userCodeInput || userCodeInput.length < 8) {
+		// Clean up input (remove dashes, spaces, make uppercase)
+		const code = userCodeInput.replace(/[-\s]/g, '').toUpperCase();
+		
+		if (!code || code.length < 8) {
 			showNotification('Please enter a valid 8-character pairing code', 'error');
 			return;
 		}
 
 		approvingDevice = true;
 		try {
-			// Clean up input (remove dashes, spaces, make uppercase)
-			const code = userCodeInput.replace(/[-\s]/g, '').toUpperCase();
 			const response = await approveDevicePairing(code);
 			userCodeInput = '';
 			showNotification(`Device "${response.device_name}" approved successfully`, 'success');
@@ -647,8 +666,9 @@
 									type="text"
 									placeholder="XXXX-XXXX"
 									class="input input-bordered w-full max-w-xs font-mono"
-									bind:value={userCodeInput}
-									maxlength="11"
+									value={userCodeInput}
+									on:input={handleCodeInput}
+									maxlength="9"
 								/>
 								<button
 									class="btn btn-primary"

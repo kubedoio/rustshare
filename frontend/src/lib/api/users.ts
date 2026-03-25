@@ -179,11 +179,16 @@ export function getAvatarUrl(userId: string): string {
 	return `/api/v1/users/${userId}/avatar`;
 }
 
+interface ListDevicesResponse {
+	devices: UserDevice[];
+}
+
 /**
  * List active devices for the current user.
  */
 export async function listUserDevices(): Promise<UserDevice[]> {
-	return apiClient.get<UserDevice[]>('/user/devices');
+	const response = await apiClient.get<ListDevicesResponse>('/user/devices');
+	return response.devices;
 }
 
 /**
