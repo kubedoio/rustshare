@@ -1,24 +1,43 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { requestDevicePairing, pollDevicePairing, type DevicePollResponse } from '$lib/api/auth';
+	import { page } from '$app/stores';
+	import { 
+		requestDevicePairing, 
+		pollDevicePairing, 
+		getDeviceQrInfo,
+		type DevicePollResponse,
+		type DeviceQrInfoResponse 
+	} from '$lib/api/auth';
 	import { authStore } from '$lib/stores/auth';
 	import Toast from '$lib/components/common/Toast.svelte';
 	import QrScanner from './QrScanner.svelte';
+	import QRCode from 'qrcode';
 
+	// Pairing state
 	let userCode = '';
 	let deviceCode = '';
 	let expiresIn = 0;
+	let countdown = 0;
 	let isLoading = true;
 	let isPolling = false;
 	let errorMessage = '';
 	let showError = false;
-	let countdown = 0;
+	
+	// UI state
+	let activeTab: 'qr' | 'key' | 'scan' = 'qr';
+	let qrDataUrl = '';
+	let qrInfo: DeviceQrInfoResponse | null = null;
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	let countdownInterval: ReturnType<typeof setInterval> | null = null;
-	let showScanner = false;
 
 	onMount(async () => {
+		// Check if we're in scan mode (from query param)
+		const mode = $page.url.searchParams.get('mode');
+		if (mode === 'scan') {
+			activeTab = 'scan';
+		}
+		
 		await startPairing();
 	});
 
@@ -33,12 +52,17 @@
 		stopPolling();
 
 		try {
+			// Get pairing codes
 			const response = await requestDevicePairing();
 			userCode = response.user_code;
 			deviceCode = response.device_code;
 			expiresIn = response.expires_in;
 			countdown = expiresIn;
 
+			// Generate QR code
+			await generateQrCode();
+
+			// Start polling for approval
 			startPolling();
 			startCountdown();
 		} catch (error: any) {
@@ -49,6 +73,26 @@
 		}
 	}
 
+	async function generateQrCode() {
+		try {
+			qrInfo = await getDeviceQrInfo();
+			// QR payload: server URL + device code for approval
+			const pairingUrl = `${qrInfo.instance_url}/device/approve?device_code=${deviceCode}`;
+			
+			qrDataUrl = await QRCode.toDataURL(pairingUrl, {
+				width: 280,
+				margin: 2,
+				color: {
+					dark: '#000000',
+					light: '#ffffff'
+				},
+				errorCorrectionLevel: 'M'
+			});
+		} catch (error) {
+			console.error('Failed to generate QR code:', error);
+		}
+	}
+
 	function startPolling() {
 		isPolling = true;
 		pollInterval = setInterval(async () => {
@@ -56,11 +100,10 @@
 				const response = await pollDevicePairing(deviceCode);
 				handlePollResponse(response);
 			} catch (error: any) {
-				// Silently ignore poll errors (network issues, rate limits)
-				// Rate limit (429) is handled by the PollRateLimiter on the backend
+				// Silently ignore poll errors
 				console.warn('Pairing poll failed:', error);
 			}
-		}, 5000); // Poll every 5 seconds
+		}, 3000); // Poll every 3 seconds for faster response
 	}
 
 	function stopPolling() {
@@ -79,22 +122,27 @@
 		}, 1000);
 	}
 
+	function formatTime(seconds: number): string {
+		const mins = Math.floor(seconds / 60);
+		const secs = seconds % 60;
+		return `${mins}:${secs.toString().padStart(2, '0')}`;
+	}
+
 	async function handlePollResponse(response: DevicePollResponse) {
 		if (response.status === 'approved') {
 			stopPolling();
 
-			// Store the token in sessionStorage (used by ApiClient and WebSocket)
+			// Store the token
 			if (typeof window !== 'undefined') {
 				window.sessionStorage.setItem('rustshare.websocket_token', response.token);
 			}
 
-			// Refresh auth store profile and redirect
+			// Refresh auth and redirect
 			try {
 				await authStore.refreshSession();
 				goto('/files');
 			} catch (error) {
-				console.error('Failed to load profile after pairing:', error);
-				goto('/files'); // Try to go anyway
+				goto('/files');
 			}
 		} else if (response.status === 'expired') {
 			handleExpired();
@@ -106,14 +154,7 @@
 		errorMessage = 'Pairing code has expired. Please try again.';
 		showError = true;
 		userCode = '';
-	}
-
-	function formatUserCode(code: string) {
-		if (!code) return '';
-		if (code.length === 8) {
-			return `${code.slice(0, 4)}-${code.slice(4)}`;
-		}
-		return code;
+		qrDataUrl = '';
 	}
 
 	function handleRetry() {
@@ -121,22 +162,16 @@
 	}
 
 	function handleScanSuccess(url: string) {
-		showScanner = false;
 		try {
 			const urlObj = new URL(url, window.location.origin);
 			// Only allow same-origin URLs for security
 			if (urlObj.origin === window.location.origin) {
-				if (urlObj.pathname.startsWith('/device')) {
-					goto(urlObj.pathname + urlObj.search);
-				} else {
-					goto(urlObj.pathname + urlObj.search);
-				}
+				goto(urlObj.pathname + urlObj.search);
 			} else {
 				errorMessage = 'Invalid QR code: URL must be from this RustShare instance';
 				showError = true;
 			}
 		} catch {
-			// Handle relative paths
 			if (url.startsWith('/')) {
 				goto(url);
 			} else {
@@ -150,101 +185,263 @@
 		showError = true;
 		errorMessage = error;
 	}
+
+	function copyPairingKey() {
+		navigator.clipboard.writeText(formatUserCode(userCode));
+	}
+
+	function formatUserCode(code: string): string {
+		if (!code) return '';
+		if (code.length === 8) {
+			return `${code.slice(0, 4)}-${code.slice(4)}`;
+		}
+		return code;
+	}
+
+	function getProgressPercent(): number {
+		return (countdown / expiresIn) * 100;
+	}
 </script>
 
 <svelte:head>
 	<title>Pair Device - RustShare</title>
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 </svelte:head>
 
-<div class="bg-base-200 flex min-h-screen items-center justify-center p-4">
-	<div class="card w-full max-w-md bg-base-100 shadow-xl">
-		<div class="card-body items-center text-center">
-			<h2 class="card-title text-2xl mb-2">RustShare</h2>
-			<p class="text-base-content/70 mb-6">Pair your device</p>
-
-			{#if isLoading}
-				<div class="flex flex-col items-center py-8">
-					<span class="loading loading-spinner loading-lg text-primary"></span>
-					<p class="mt-4 text-sm opacity-70">Generating code...</p>
-				</div>
-			{:else if userCode}
-				<div class="w-full space-y-8">
-					<div class="space-y-2">
-						<p class="text-sm font-medium">Enter this code on your other device:</p>
-						<div class="flex justify-center">
-							<div class="bg-base-200 text-primary font-mono text-4xl font-bold tracking-widest py-6 px-8 rounded-lg border-2 border-primary/20 shadow-inner">
-								{formatUserCode(userCode)}
-							</div>
-						</div>
-					</div>
-
-					<div class="flex flex-col items-center gap-4 py-4">
-						<div class="flex items-center gap-3">
-							<span class="loading loading-ring loading-md text-primary"></span>
-							<span class="text-sm font-medium">Waiting for approval...</span>
-						</div>
-
-						<div class="w-full max-w-xs space-y-1">
-							<div class="flex justify-between text-xs opacity-60">
-								<span>Expires in</span>
-								<span>{Math.floor(countdown / 60)}:{(countdown % 60).toString().padStart(2, '0')}</span>
-							</div>
-							<progress
-								class="progress progress-primary w-full"
-								value={countdown}
-								max={expiresIn}
-							></progress>
-						</div>
-					</div>
-
-					<div class="card-actions justify-center">
-						<button class="btn btn-ghost btn-sm" on:click={handleRetry}>
-							Cancel and restart
-						</button>
-					</div>
-
-					<div class="divider text-xs opacity-50">or</div>
-
-					<div class="card-actions justify-center flex-col gap-2">
-						<button class="btn btn-outline btn-sm w-full" on:click={() => showScanner = true}>
-							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-							</svg>
-							Scan QR Code
-						</button>
-						<a href="/device/qr" class="btn btn-outline btn-sm w-full">
-							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4h2v-4zM6 20h2v-4H6v4zm6-6h2v-4h-2v4zm-6 0h2v-4H6v4zm12-6h2V4h-2v4zM6 10h2V4H6v6zm6-6h2V4h-2v4z" />
-							</svg>
-							Show QR Code for mobile pairing
-						</a>
-					</div>
-				</div>
-			{:else if showError}
-				<div class="alert alert-error mb-6">
-					<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-					<span>{errorMessage}</span>
-				</div>
-				<button class="btn btn-primary w-full" on:click={handleRetry}>
-					Try Again
-				</button>
-			{/if}
-
-			<div class="mt-8 text-xs text-base-content/50 max-w-xs mx-auto">
-				<p>To pair, log in to RustShare on another device, go to Settings > Devices, and enter the code shown above.</p>
+<div class="min-h-screen bg-base-200 flex items-center justify-center p-4">
+	<div class="w-full max-w-md">
+		<!-- Header -->
+		<div class="text-center mb-6">
+			<div class="inline-flex items-center justify-center w-16 h-16 bg-primary/10 rounded-2xl mb-4">
+				<svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 18v-5.25m0 0a6.01 6.01 0 001.5-.189m-1.5.189a6.01 6.01 0 01-1.5-.189m3.75 7.478a12.06 12.06 0 01-4.5 0m3.75 2.383a14.406 14.406 0 01-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 10-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" />
+				</svg>
 			</div>
+			<h1 class="text-2xl font-bold mb-1">Pair Your Device</h1>
+			<p class="text-base-content/60 text-sm">Connect this device to your RustShare account</p>
 		</div>
+
+		{#if isLoading}
+			<!-- Loading State -->
+			<div class="card bg-base-100 shadow-xl">
+				<div class="card-body items-center py-12">
+					<span class="loading loading-spinner loading-lg text-primary mb-4"></span>
+					<p class="text-base-content/60">Generating pairing code...</p>
+				</div>
+			</div>
+		{:else if showError}
+			<!-- Error State -->
+			<div class="card bg-base-100 shadow-xl">
+				<div class="card-body items-center text-center py-8">
+					<div class="w-16 h-16 bg-error/10 rounded-full flex items-center justify-center mb-4">
+						<svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 text-error" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+						</svg>
+					</div>
+					<h2 class="text-lg font-semibold mb-2">Pairing Failed</h2>
+					<p class="text-base-content/60 text-sm mb-6">{errorMessage}</p>
+					<button class="btn btn-primary w-full" on:click={handleRetry}>
+						Try Again
+					</button>
+				</div>
+			</div>
+		{:else}
+			<!-- Main Pairing Card -->
+			<div class="card bg-base-100 shadow-xl overflow-hidden">
+				<!-- Tabs -->
+				<div class="tabs tabs-boxed bg-base-200 p-2 rounded-none">
+					<button 
+						class="tab flex-1 {activeTab === 'qr' ? 'tab-active bg-base-100 shadow-sm' : ''}"
+						on:click={() => activeTab = 'qr'}
+					>
+						<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 013.75 9.375v-4.5zM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0113.5 9.375v-4.5z" />
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6.75 6.75h.75v.75h-.75v-.75zM6.75 16.5h.75v.75h-.75v-.75zM16.5 6.75h.75v.75h-.75v-.75zM13.5 13.5h.75v.75h-.75v-.75zM13.5 19.5h.75v.75h-.75v-.75zM19.5 13.5h.75v.75h-.75v-.75zM19.5 19.5h.75v.75h-.75v-.75zM16.5 16.5h.75v.75h-.75v-.75z" />
+						</svg>
+						Scan QR
+					</button>
+					<button 
+						class="tab flex-1 {activeTab === 'key' ? 'tab-active bg-base-100 shadow-sm' : ''}"
+						on:click={() => activeTab = 'key'}
+					>
+						<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
+						</svg>
+						Pairing Key
+					</button>
+					<button 
+						class="tab flex-1 {activeTab === 'scan' ? 'tab-active bg-base-100 shadow-sm' : ''}"
+						on:click={() => activeTab = 'scan'}
+					>
+						<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zM18.75 10.5h.008v.008h-.008V10.5z" />
+						</svg>
+						Scan
+					</button>
+				</div>
+
+				<div class="card-body p-6">
+					{#if activeTab === 'qr'}
+						<!-- QR Code Tab -->
+						<div class="text-center space-y-6">
+							<div class="space-y-2">
+								<h2 class="text-lg font-semibold">Scan with another device</h2>
+								<p class="text-sm text-base-content/60">
+									Open RustShare on an authenticated device and scan this code
+								</p>
+							</div>
+
+							{#if qrDataUrl}
+								<div class="flex justify-center">
+									<div class="bg-white p-4 rounded-2xl shadow-lg">
+										<img src={qrDataUrl} alt="Pairing QR Code" class="w-56 h-56" />
+									</div>
+								</div>
+							{:else}
+								<div class="flex justify-center py-8">
+									<span class="loading loading-spinner loading-lg text-primary"></span>
+								</div>
+							{/if}
+
+							<!-- Status -->
+							<div class="space-y-3">
+								<div class="flex items-center justify-center gap-2 text-sm text-base-content/60">
+									<span class="relative flex h-3 w-3">
+										<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
+										<span class="relative inline-flex rounded-full h-3 w-3 bg-success"></span>
+									</span>
+									<span>Waiting for approval...</span>
+								</div>
+
+								<!-- Progress bar -->
+								<div class="w-full max-w-xs mx-auto space-y-1">
+									<div class="flex justify-between text-xs text-base-content/50">
+										<span>Expires in</span>
+										<span class="font-mono">{formatTime(countdown)}</span>
+									</div>
+									<progress 
+										class="progress progress-success w-full h-2" 
+										value={countdown} 
+										max={expiresIn}
+									></progress>
+								</div>
+							</div>
+
+							<!-- Help text -->
+							<div class="text-xs text-base-content/50 pt-2">
+								<p>Go to <strong>Settings → Devices</strong> on another device<br>and scan this QR code to approve</p>
+							</div>
+						</div>
+
+					{:else if activeTab === 'key'}
+						<!-- Pairing Key Tab -->
+						<div class="text-center space-y-6">
+							<div class="space-y-2">
+								<h2 class="text-lg font-semibold">Enter pairing key</h2>
+								<p class="text-sm text-base-content/60">
+									Enter this 8-character code on an authenticated RustShare session
+								</p>
+							</div>
+
+							<!-- Pairing Key Display -->
+							<div class="relative">
+								<button 
+									class="group w-full bg-base-200 hover:bg-base-300 border-2 border-dashed border-base-300 rounded-2xl p-6 transition-colors"
+									on:click={copyPairingKey}
+									title="Click to copy"
+								>
+									<div class="font-mono text-4xl font-bold tracking-[0.2em] text-primary">
+										{formatUserCode(userCode)}
+									</div>
+									<div class="text-xs text-base-content/50 mt-2 flex items-center justify-center gap-1">
+										<svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
+										</svg>
+										Click to copy
+									</div>
+								</button>
+							</div>
+
+							<!-- Status -->
+							<div class="space-y-3">
+								<div class="flex items-center justify-center gap-2 text-sm text-base-content/60">
+									<span class="relative flex h-3 w-3">
+										<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
+										<span class="relative inline-flex rounded-full h-3 w-3 bg-success"></span>
+									</span>
+									<span>Waiting for approval...</span>
+								</div>
+
+								<!-- Progress bar -->
+								<div class="w-full max-w-xs mx-auto space-y-1">
+									<div class="flex justify-between text-xs text-base-content/50">
+										<span>Expires in</span>
+										<span class="font-mono">{formatTime(countdown)}</span>
+									</div>
+									<progress 
+										class="progress progress-success w-full h-2" 
+										value={countdown} 
+										max={expiresIn}
+									></progress>
+								</div>
+							</div>
+
+							<!-- Help text -->
+							<div class="text-xs text-base-content/50 pt-2">
+								<p>Go to <strong>Settings → Devices</strong> on another device<br>and enter this code to approve pairing</p>
+							</div>
+						</div>
+
+					{:else if activeTab === 'scan'}
+						<!-- Scan Tab -->
+						<div class="text-center space-y-4">
+							<div class="space-y-2">
+								<h2 class="text-lg font-semibold">Scan QR code</h2>
+								<p class="text-sm text-base-content/60">
+									Scan a pairing QR code from another RustShare device
+								</p>
+							</div>
+
+							<QrScanner 
+								onSuccess={handleScanSuccess}
+								onError={handleScanError}
+								onClose={() => activeTab = 'qr'}
+								inline={true}
+							/>
+						</div>
+					{/if}
+				</div>
+
+				<!-- Footer -->
+				<div class="bg-base-200/50 px-6 py-4 border-t border-base-200">
+					<div class="flex items-center justify-between">
+						<span class="text-xs text-base-content/50">
+							Code expires in {formatTime(countdown)}
+						</span>
+						<button 
+							class="btn btn-ghost btn-sm text-xs"
+							on:click={handleRetry}
+							disabled={countdown > 30}
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+							</svg>
+							New Code
+						</button>
+					</div>
+				</div>
+			</div>
+
+			<!-- Server Info -->
+			{#if qrInfo}
+				<div class="text-center mt-4 text-xs text-base-content/40">
+					<p>{qrInfo.instance_url}</p>
+				</div>
+			{/if}
+		{/if}
 	</div>
 </div>
-
-{#if showScanner}
-	<QrScanner
-		onSuccess={handleScanSuccess}
-		onError={handleScanError}
-		onClose={() => showScanner = false}
-	/>
-{/if}
 
 {#if showError}
 	<Toast message={errorMessage} type="error" onClose={() => (showError = false)} />

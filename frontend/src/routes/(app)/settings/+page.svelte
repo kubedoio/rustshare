@@ -652,14 +652,20 @@
 								Manage devices paired with your account.
 							</p>
 						</div>
+						<a href="/device" class="btn btn-primary btn-sm">
+							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4.5v15m7.5-7.5h-15" />
+							</svg>
+							Pair This Device
+						</a>
 					</div>
 
 					<div class="space-y-6">
 						<!-- Pair New Device -->
 						<div class="p-4 bg-base-100 rounded-box border border-base-300">
-							<h4 class="font-medium mb-2">Pair New Device</h4>
+							<h4 class="font-medium mb-2">Approve Pairing</h4>
 							<p class="text-sm text-base-content/70 mb-4">
-								Enter the 8-character code shown on the device you want to pair.
+								Enter the 8-character pairing key from another device to approve it.
 							</p>
 							<div class="flex gap-2">
 								<input
