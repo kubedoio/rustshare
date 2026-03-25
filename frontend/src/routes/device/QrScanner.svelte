@@ -14,6 +14,8 @@
 	let isScanning = $state(false);
 	let scannerError = $state('');
 	let isLoading = $state(true);
+	let lastErrorLogTime = 0;
+	const ERROR_LOG_THROTTLE_MS = 5000;
 
 	onMount(async () => {
 		try {
@@ -75,7 +77,11 @@
 					// Scan error (no QR code in frame) - ignore these, they're expected
 					// Only log actual errors, not "QR code not found"
 					if (!errorMessage?.includes('NotFoundException')) {
-						console.warn('QR scan error:', errorMessage);
+						const now = Date.now();
+						if (now - lastErrorLogTime > ERROR_LOG_THROTTLE_MS) {
+							console.warn('QR scan error:', errorMessage);
+							lastErrorLogTime = now;
+						}
 					}
 				}
 			);

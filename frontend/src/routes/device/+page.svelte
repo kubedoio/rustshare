@@ -14,8 +14,8 @@
 	let errorMessage = '';
 	let showError = false;
 	let countdown = 0;
-	let pollInterval: any;
-	let countdownInterval: any;
+	let pollInterval: ReturnType<typeof setInterval> | null = null;
+	let countdownInterval: ReturnType<typeof setInterval> | null = null;
 	let showScanner = false;
 
 	onMount(async () => {
@@ -122,11 +122,27 @@
 
 	function handleScanSuccess(url: string) {
 		showScanner = false;
-		// Navigate to the scanned URL
-		if (url.startsWith('http')) {
-			window.location.href = url;
-		} else {
-			goto(url);
+		try {
+			const urlObj = new URL(url, window.location.origin);
+			// Only allow same-origin URLs for security
+			if (urlObj.origin === window.location.origin) {
+				if (urlObj.pathname.startsWith('/device')) {
+					goto(urlObj.pathname + urlObj.search);
+				} else {
+					goto(urlObj.pathname + urlObj.search);
+				}
+			} else {
+				errorMessage = 'Invalid QR code: URL must be from this RustShare instance';
+				showError = true;
+			}
+		} catch {
+			// Handle relative paths
+			if (url.startsWith('/')) {
+				goto(url);
+			} else {
+				errorMessage = 'Invalid QR code: not a valid URL';
+				showError = true;
+			}
 		}
 	}
 
