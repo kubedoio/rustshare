@@ -17,11 +17,11 @@ mod users;
 pub use extractors::{AdminUser, AuthenticatedSession, AuthenticatedUser, ShareSessionAuth};
 pub use files::{
     delete_file, download_file, get_file, get_file_thumbnail, get_file_versions, list_files,
-    move_file, rename_file, restore_file_version, update_file, upload_file,
+    move_file, rename_file, restore_file_version, update_file, upload_file, FileWithShares,
 };
 pub use folders::{
     create_folder, delete_folder, get_folder, get_folder_contents, get_folder_tree,
-    get_root_contents, move_folder, rename_folder,
+    get_root_contents, move_folder, rename_folder, FolderContentsWithShares, FolderWithShares,
 };
 pub use notifications::{
     count_unread_notifications, delete_notification, list_notifications, mark_notification_read,

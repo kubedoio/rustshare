@@ -519,25 +519,59 @@ pub async fn get_file_thumbnail(
 // List All User Files (Simple View)
 // ============================================================================
 
+// ============================================================================
+// Share Indicator Types
+// ============================================================================
+
+/// File with share information for list responses
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct FileWithShares {
+    // File fields
+    pub id: Uuid,
+    pub name: String,
+    pub path: String,
+    pub content_hash: String,
+    pub size: i64,
+    pub mime_type: String,
+    pub parent_folder_id: Option<Uuid>,
+    pub owner_id: Uuid,
+    pub current_version: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub modified_at: chrono::DateTime<chrono::Utc>,
+    // Share info
+    pub is_shared: bool,
+    pub share_count: i64,
+}
+
 /// List all files for the current user.
 ///
 /// GET /api/files
 ///
-/// Returns a simple flat list of all files owned by the user.
+/// Returns a simple flat list of all files owned by the user with share indicators.
 pub async fn list_files(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-) -> Result<Json<Vec<File>>, Response> {
-    // Query all files for this user from database
-    let files = sqlx::query_as::<_, File>(
+) -> Result<Json<Vec<FileWithShares>>, Response> {
+    // Query all files with share information
+    let files = sqlx::query_as::<_, FileWithShares>(
         r#"
         SELECT
-            id, name, path, content_hash, size, mime_type,
-            parent_folder_id, owner_id, current_version,
-            created_at, modified_at
-        FROM files
-        WHERE owner_id = $1
-        ORDER BY created_at DESC
+            f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
+            f.parent_folder_id, f.owner_id, f.current_version,
+            f.created_at, f.modified_at,
+            EXISTS(
+                SELECT 1 FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+            ) as is_shared,
+            (
+                SELECT COUNT(*) FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+            ) as share_count
+        FROM files f
+        WHERE f.owner_id = $1
+        ORDER BY f.created_at DESC
         "#,
     )
     .bind(auth.user_id)
