@@ -27,7 +27,8 @@
 	// Avatar
 	let selectedFile: File | null = $state(null);
 	let previewUrl: string | null = $state(null);
-	let avatarUrl = $derived(profile?.avatar_path ? getAvatarUrl(profile.id) : null);
+	let avatarTimestamp = $state(Date.now());
+	let avatarUrl = $derived(profile?.avatar_path ? `${getAvatarUrl(profile.id)}?t=${avatarTimestamp}` : null);
 
 	// Messages
 	let successMessage = $state('');
@@ -125,6 +126,8 @@
 			showSuccessMessage('Avatar uploaded successfully');
 			selectedFile = null;
 			previewUrl = null;
+			// Update timestamp to bust cache
+			avatarTimestamp = Date.now();
 			// Reload profile to get updated avatar_path
 			await loadProfile();
 		} catch (e: any) {
@@ -141,6 +144,8 @@
 		try {
 			await deleteAvatar();
 			showSuccessMessage('Avatar deleted successfully');
+			// Update timestamp to bust cache
+			avatarTimestamp = Date.now();
 			await loadProfile();
 		} catch (e: any) {
 			showErrorMessage(e.message || 'Failed to delete avatar');

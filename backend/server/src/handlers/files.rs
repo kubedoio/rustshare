@@ -232,6 +232,53 @@ pub async fn download_file_content(
     (StatusCode::OK, headers, content).into_response()
 }
 
+/// Preview file content (inline disposition for browser viewing).
+///
+/// GET /api/v1/files/{id}/preview
+///
+/// Returns the file content with Content-Disposition set to inline
+/// for browser preview (images, PDFs, videos, etc).
+pub async fn preview_file(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(file_id): Path<Uuid>,
+) -> Response {
+    // Get file metadata first (this also checks permissions)
+    let file = match state.file_service.get_file(file_id, auth.user_id).await {
+        Ok(file) => file,
+        Err(e) => return file_error_response(e).into_response(),
+    };
+
+    // Get file content from storage
+    let storage_key = file.storage_key();
+    let content = match state.object_store.get(&storage_key).await {
+        Ok(data) => data,
+        Err(e) => {
+            tracing::error!("Failed to get file content from storage: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new("Failed to retrieve file content")),
+            )
+                .into_response();
+        }
+    };
+
+    // Build response with inline disposition for browser preview
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        "inline".parse().unwrap(),
+    );
+    
+    // Set Content-Type based on file's MIME type
+    headers.insert(
+        header::CONTENT_TYPE,
+        file.mime_type.parse().unwrap_or_else(|_| "application/octet-stream".parse().unwrap()),
+    );
+
+    (StatusCode::OK, headers, content).into_response()
+}
+
 /// Delete a file.
 ///
 /// DELETE /api/files/{id}

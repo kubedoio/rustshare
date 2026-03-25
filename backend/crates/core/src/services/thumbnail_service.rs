@@ -71,16 +71,16 @@ where
         file_name: &str,
         size: ThumbnailSize,
     ) -> Result<FileThumbnail, ThumbnailError> {
-        // Check if file exists
-        let file_row = sqlx::query_as::<_, (String, i64)>(
-            "SELECT name, size FROM files WHERE id = $1"
+        // Check if file exists and get content hash for storage lookup
+        let file_row = sqlx::query_as::<_, (String, i64, String)>(
+            "SELECT name, size, content_hash FROM files WHERE id = $1"
         )
         .bind(file_id)
         .fetch_optional(&self.db_pool)
         .await
         .map_err(|e| ThumbnailError::Database(e.to_string()))?;
 
-        let (db_file_name, _file_size) = match file_row {
+        let (db_file_name, _file_size, content_hash) = match file_row {
             Some(row) => row,
             None => return Err(ThumbnailError::NotFound),
         };
@@ -92,8 +92,8 @@ where
             return Err(ThumbnailError::UnsupportedType);
         }
 
-        // Get the file content from storage
-        let file_path = format!("files/{}", file_id);
+        // Get the file content from storage using content hash
+        let file_path = format!("blobs/{}", content_hash);
         let content = self
             .storage
             .get(&file_path)

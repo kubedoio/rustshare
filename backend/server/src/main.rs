@@ -346,6 +346,7 @@ async fn main() -> Result<()> {
         .route("/api/v1/files/:id", delete(handlers::delete_file))
         .route("/api/v1/files/:id/download", get(handlers::download_file))
         .route("/api/v1/files/:id/content", get(handlers::download_file_content))
+        .route("/api/v1/files/:id/preview", get(handlers::preview_file))
         .route(
             "/api/v1/files/:id/versions",
             get(handlers::get_file_versions),

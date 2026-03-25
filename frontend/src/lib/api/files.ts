@@ -31,6 +31,12 @@ export async function downloadFile(fileId: string): Promise<{ url: string }> {
   return { url: `/api/v1/files/${fileId}/content` };
 }
 
+export async function previewFile(fileId: string): Promise<{ url: string }> {
+  // Use the /preview endpoint which returns the file with inline disposition
+  // This allows the browser to display the file (images, PDFs, videos) instead of downloading
+  return { url: `/api/v1/files/${fileId}/preview` };
+}
+
 export async function renameFile(
   fileId: string,
   newName: string,

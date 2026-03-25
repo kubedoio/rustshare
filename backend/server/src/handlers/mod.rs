@@ -17,7 +17,7 @@ mod users;
 pub use extractors::{AdminUser, AuthenticatedSession, AuthenticatedUser, ShareSessionAuth};
 pub use files::{
     delete_file, download_file, download_file_content, get_file, get_file_thumbnail, get_file_versions, list_files,
-    move_file, rename_file, restore_file_version, update_file, upload_file,
+    move_file, preview_file, rename_file, restore_file_version, update_file, upload_file,
 };
 pub use folders::{
     create_folder, delete_folder, get_folder, get_folder_contents, get_folder_tree,

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import { downloadFile } from '$lib/api/files';
+	import { previewFile } from '$lib/api/files';
 	import type { File } from '$lib/api/types';
 	import { formatFileSize } from '$lib/utils/format';
 
@@ -31,7 +31,7 @@
 		previewUrl = null;
 
 		try {
-			const response = await downloadFile(file.id);
+			const response = await previewFile(file.id);
 			previewUrl = response.url;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load preview';
