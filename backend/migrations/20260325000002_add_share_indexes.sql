@@ -13,9 +13,9 @@ CREATE INDEX IF NOT EXISTS idx_shares_folder_id
 
 -- Index for looking up shares by recipient (used in notifications)
 CREATE INDEX IF NOT EXISTS idx_shares_recipient
-    ON shares(recipient_id, created_at DESC);
+    ON shares(recipient_user_id, created_at DESC);
 
--- Index for filtering active/non-revoked shares
-CREATE INDEX IF NOT EXISTS idx_shares_active
+-- Index for filtering active/non-revoked shares by target
+CREATE INDEX IF NOT EXISTS idx_shares_active_target
     ON shares(file_id, folder_id, revoked_at)
     WHERE revoked_at IS NULL;
