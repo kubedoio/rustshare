@@ -70,3 +70,12 @@ export async function pollDevicePairing(device_code: string): Promise<DevicePoll
 export async function approveDevicePairing(user_code: string): Promise<{ device_name: string }> {
 	return apiClient.post<{ device_name: string }>('/auth/device/approve', { user_code });
 }
+
+export interface DeviceQrInfoResponse {
+	instance_url: string;
+	device_pairing_path: string;
+}
+
+export async function getDeviceQrInfo(): Promise<DeviceQrInfoResponse> {
+	return apiClient.get<DeviceQrInfoResponse>('/auth/device/qr-info');
+}

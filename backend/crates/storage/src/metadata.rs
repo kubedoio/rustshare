@@ -436,7 +436,7 @@ impl MetadataStore {
     pub async fn find_user_by_email(&self, email: &str) -> Result<Option<User>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at FROM users WHERE email = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled FROM users WHERE email = $1"#,
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -458,6 +458,10 @@ impl MetadataStore {
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
                 disabled_at: row.try_get("disabled_at")?,
+                name: row.try_get("name")?,
+                surname: row.try_get("surname")?,
+                avatar_path: row.try_get("avatar_path")?,
+                email_sharing_enabled: row.try_get("email_sharing_enabled")?,
             };
             Ok(Some(user))
         } else {
@@ -468,7 +472,7 @@ impl MetadataStore {
     /// Find user by username.
     pub async fn find_user_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at FROM users WHERE username = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled FROM users WHERE username = $1"#,
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -487,6 +491,10 @@ impl MetadataStore {
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
                 disabled_at: row.try_get("disabled_at")?,
+                name: row.try_get("name")?,
+                surname: row.try_get("surname")?,
+                avatar_path: row.try_get("avatar_path")?,
+                email_sharing_enabled: row.try_get("email_sharing_enabled")?,
             }))
         } else {
             Ok(None)
@@ -497,7 +505,7 @@ impl MetadataStore {
     pub async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at FROM users WHERE id = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled FROM users WHERE id = $1"#,
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -519,6 +527,10 @@ impl MetadataStore {
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
                 disabled_at: row.try_get("disabled_at")?,
+                name: row.try_get("name")?,
+                surname: row.try_get("surname")?,
+                avatar_path: row.try_get("avatar_path")?,
+                email_sharing_enabled: row.try_get("email_sharing_enabled")?,
             };
             Ok(Some(user))
         } else {
@@ -561,6 +573,62 @@ impl MetadataStore {
             .bind(user_id)
             .execute(&self.pool)
             .await?;
+
+        Ok(())
+    }
+
+    /// Update user profile fields
+    pub async fn update_user_profile(
+        &self,
+        user_id: Uuid,
+        name: Option<&str>,
+        surname: Option<&str>,
+        display_name: Option<&str>,
+        email_sharing_enabled: Option<bool>,
+        theme: Option<String>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE users SET
+                name = COALESCE($1, name),
+                surname = COALESCE($2, surname),
+                display_name = COALESCE($3, display_name),
+                email_sharing_enabled = COALESCE($4, email_sharing_enabled),
+                theme = COALESCE($5, theme),
+                updated_at = NOW()
+            WHERE id = $6
+            "#,
+        )
+        .bind(name)
+        .bind(surname)
+        .bind(display_name)
+        .bind(email_sharing_enabled)
+        .bind(theme)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update user's avatar path
+    pub async fn update_user_avatar(
+        &self,
+        user_id: Uuid,
+        avatar_path: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE users
+            SET avatar_path = $1,
+                updated_at = NOW()
+            WHERE id = $2
+            "#,
+        )
+        .bind(avatar_path)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }

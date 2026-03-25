@@ -22,6 +22,9 @@ export interface File {
 	current_version: number;
 	created_at: string;
 	modified_at: string;
+	// Share indicators
+	is_shared?: boolean;
+	share_count?: number;
 }
 
 export interface Folder {
@@ -32,6 +35,9 @@ export interface Folder {
 	owner_id: string;
 	created_at: string;
 	updated_at: string;
+	// Share indicators
+	is_shared?: boolean;
+	share_count?: number;
 }
 
 export interface Share {

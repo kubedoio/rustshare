@@ -103,6 +103,83 @@ export async function listUserSecurityEvents(): Promise<UserSecurityEvent[]> {
 }
 
 /**
+ * Full user profile with all fields
+ */
+export interface FullUserProfile {
+	id: string;
+	username: string;
+	email: string;
+	name: string | null;
+	surname: string | null;
+	display_name: string;
+	avatar_path: string | null;
+	email_sharing_enabled: boolean;
+	theme: Theme;
+	storage_quota: number;
+	created_at: string;
+	updated_at: string;
+}
+
+/**
+ * Request to update user profile
+ */
+export interface UpdateProfileRequest {
+	name?: string;
+	surname?: string;
+	display_name?: string;
+	email_sharing_enabled?: boolean;
+}
+
+/**
+ * Get the current user's full profile
+ */
+export async function getProfile(): Promise<FullUserProfile> {
+	return apiClient.get<FullUserProfile>('/users/me/profile');
+}
+
+/**
+ * Update the current user's profile
+ */
+export async function updateProfile(request: UpdateProfileRequest): Promise<FullUserProfile> {
+	return apiClient.patch<FullUserProfile>('/users/me/profile', request);
+}
+
+/**
+ * Upload a new avatar for the current user
+ */
+export async function uploadAvatar(file: File): Promise<{ avatar_path: string }> {
+	const formData = new FormData();
+	formData.append('avatar', file);
+
+	const response = await fetch('/api/v1/users/me/avatar', {
+		method: 'POST',
+		body: formData,
+		credentials: 'include'
+	});
+
+	if (!response.ok) {
+		const error = await response.json();
+		throw new Error(error.error || 'Failed to upload avatar');
+	}
+
+	return response.json();
+}
+
+/**
+ * Delete the current user's avatar
+ */
+export async function deleteAvatar(): Promise<void> {
+	return apiClient.delete<void>('/users/me/avatar');
+}
+
+/**
+ * Get the URL for a user's avatar
+ */
+export function getAvatarUrl(userId: string): string {
+	return `/api/v1/users/${userId}/avatar`;
+}
+
+/**
  * List active devices for the current user.
  */
 export async function listUserDevices(): Promise<UserDevice[]> {

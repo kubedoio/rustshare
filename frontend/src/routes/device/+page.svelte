@@ -4,6 +4,7 @@
 	import { requestDevicePairing, pollDevicePairing, type DevicePollResponse } from '$lib/api/auth';
 	import { authStore } from '$lib/stores/auth';
 	import Toast from '$lib/components/common/Toast.svelte';
+	import QrScanner from './QrScanner.svelte';
 
 	let userCode = '';
 	let deviceCode = '';
@@ -13,8 +14,9 @@
 	let errorMessage = '';
 	let showError = false;
 	let countdown = 0;
-	let pollInterval: any;
-	let countdownInterval: any;
+	let pollInterval: ReturnType<typeof setInterval> | null = null;
+	let countdownInterval: ReturnType<typeof setInterval> | null = null;
+	let showScanner = false;
 
 	onMount(async () => {
 		await startPairing();
@@ -80,12 +82,12 @@
 	async function handlePollResponse(response: DevicePollResponse) {
 		if (response.status === 'approved') {
 			stopPolling();
-			
+
 			// Store the token in sessionStorage (used by ApiClient and WebSocket)
 			if (typeof window !== 'undefined') {
 				window.sessionStorage.setItem('rustshare.websocket_token', response.token);
 			}
-			
+
 			// Refresh auth store profile and redirect
 			try {
 				await authStore.refreshSession();
@@ -116,6 +118,37 @@
 
 	function handleRetry() {
 		startPairing();
+	}
+
+	function handleScanSuccess(url: string) {
+		showScanner = false;
+		try {
+			const urlObj = new URL(url, window.location.origin);
+			// Only allow same-origin URLs for security
+			if (urlObj.origin === window.location.origin) {
+				if (urlObj.pathname.startsWith('/device')) {
+					goto(urlObj.pathname + urlObj.search);
+				} else {
+					goto(urlObj.pathname + urlObj.search);
+				}
+			} else {
+				errorMessage = 'Invalid QR code: URL must be from this RustShare instance';
+				showError = true;
+			}
+		} catch {
+			// Handle relative paths
+			if (url.startsWith('/')) {
+				goto(url);
+			} else {
+				errorMessage = 'Invalid QR code: not a valid URL';
+				showError = true;
+			}
+		}
+	}
+
+	function handleScanError(error: string) {
+		showError = true;
+		errorMessage = error;
 	}
 </script>
 
@@ -150,15 +183,15 @@
 							<span class="loading loading-ring loading-md text-primary"></span>
 							<span class="text-sm font-medium">Waiting for approval...</span>
 						</div>
-						
+
 						<div class="w-full max-w-xs space-y-1">
 							<div class="flex justify-between text-xs opacity-60">
 								<span>Expires in</span>
 								<span>{Math.floor(countdown / 60)}:{(countdown % 60).toString().padStart(2, '0')}</span>
 							</div>
-							<progress 
-								class="progress progress-primary w-full" 
-								value={countdown} 
+							<progress
+								class="progress progress-primary w-full"
+								value={countdown}
 								max={expiresIn}
 							></progress>
 						</div>
@@ -168,6 +201,24 @@
 						<button class="btn btn-ghost btn-sm" on:click={handleRetry}>
 							Cancel and restart
 						</button>
+					</div>
+
+					<div class="divider text-xs opacity-50">or</div>
+
+					<div class="card-actions justify-center flex-col gap-2">
+						<button class="btn btn-outline btn-sm w-full" on:click={() => showScanner = true}>
+							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+							</svg>
+							Scan QR Code
+						</button>
+						<a href="/device/qr" class="btn btn-outline btn-sm w-full">
+							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4h2v-4zM6 20h2v-4H6v4zm6-6h2v-4h-2v4zm-6 0h2v-4H6v4zm12-6h2V4h-2v4zM6 10h2V4H6v6zm6-6h2V4h-2v4z" />
+							</svg>
+							Show QR Code for mobile pairing
+						</a>
 					</div>
 				</div>
 			{:else if showError}
@@ -186,6 +237,14 @@
 		</div>
 	</div>
 </div>
+
+{#if showScanner}
+	<QrScanner
+		onSuccess={handleScanSuccess}
+		onError={handleScanError}
+		onClose={() => showScanner = false}
+	/>
+{/if}
 
 {#if showError}
 	<Toast message={errorMessage} type="error" onClose={() => (showError = false)} />

@@ -63,7 +63,7 @@ use rustshare_core::{
     events::EventBroadcaster,
     services::{
         FileService, FolderService, NotificationService, PermissionResolver, ShareService,
-        UserShareService, UserShareServiceDeps,
+        ThumbnailService, UserShareService, UserShareServiceDeps,
     },
 };
 use rustshare_infrastructure::repositories::{
@@ -102,6 +102,7 @@ pub struct AppState {
     pub file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore>>,
     pub folder_service: Arc<FolderService<EventStore, MetadataStore>>,
     pub share_service: Arc<ShareService<EventStore, MetadataStore, JwtManager>>,
+    pub thumbnail_service: Arc<ThumbnailService<ObjectStore>>,
     pub permission_resolver:
         Arc<PermissionResolver<ShareRepository, FileRepository, FolderRepository>>,
     pub notification_service: Arc<NotificationService<NotificationRepository>>,
@@ -180,6 +181,10 @@ async fn main() -> Result<()> {
         Arc::clone(&metadata_store),
         Arc::clone(&broadcaster),
         Arc::clone(&jwt_manager),
+    ));
+    let thumbnail_service = Arc::new(ThumbnailService::new(
+        db_pool.clone(),
+        Arc::clone(&object_store),
     ));
 
     // Initialize repositories for new services
@@ -272,6 +277,7 @@ async fn main() -> Result<()> {
         file_service,
         folder_service,
         share_service,
+        thumbnail_service,
         permission_resolver,
         notification_service,
         user_share_service,
@@ -307,6 +313,10 @@ async fn main() -> Result<()> {
             post(oidc::mobile_oidc_exchange),
         )
         // Device pairing auth routes
+        .route(
+            "/api/v1/auth/device/qr-info",
+            get(handlers::device_auth::device_qr_info),
+        )
         .route(
             "/api/v1/auth/device/request",
             post(handlers::device_auth::device_request),
@@ -345,6 +355,10 @@ async fn main() -> Result<()> {
         )
         .route("/api/v1/files/:id/move", post(handlers::move_file))
         .route("/api/v1/files/:id/rename", post(handlers::rename_file))
+        .route(
+            "/api/v1/files/:id/thumbnail",
+            get(handlers::get_file_thumbnail),
+        )
         .route(
             "/api/admin/replication/jobs",
             get(replication_handlers::list_replication_jobs),
@@ -565,6 +579,24 @@ async fn main() -> Result<()> {
             patch(handlers::update_user_password),
         )
         .route("/api/v1/me/password", patch(handlers::update_user_password))
+        // Profile routes (Task 17)
+        .route(
+            "/api/v1/users/me/profile",
+            get(handlers::get_profile),
+        )
+        .route(
+            "/api/v1/users/me/profile",
+            patch(handlers::update_profile),
+        )
+        // Avatar routes (Task 18)
+        .route(
+            "/api/v1/users/me/avatar",
+            post(handlers::upload_avatar).delete(handlers::delete_avatar),
+        )
+        .route(
+            "/api/v1/users/:id/avatar",
+            get(handlers::get_avatar),
+        )
         // Internal user share routes
         .route("/api/v1/files/:id/share", post(handlers::create_file_share))
         .route(

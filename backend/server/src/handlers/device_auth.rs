@@ -32,7 +32,46 @@ const DEVICE_CODE_LENGTH: usize = 32;
 const TOKEN_LENGTH: usize = 32;
 const POLL_RATE_LIMIT_SECONDS: u64 = 5;
 
-/// Request body for device poll
+/// Response for QR info endpoint
+#[derive(Serialize)]
+pub struct DeviceQrInfoResponse {
+    pub instance_url: String,
+    pub device_pairing_path: String,
+}
+
+/// GET /api/v1/auth/device/qr-info
+/// Returns information needed for QR code generation on the device pairing page
+pub async fn device_qr_info(
+    headers: HeaderMap,
+) -> Result<Json<DeviceQrInfoResponse>, (StatusCode, Json<serde_json::Value>)> {
+    // Extract Host header from request
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Extract protocol from X-Forwarded-Proto header, fallback to https
+    let protocol = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("https");
+
+    // Construct the instance URL
+    let instance_url = match host {
+        Some(host) => format!("{}://{}", protocol, host),
+        None => {
+            // Fall back to RUSTSHARE_PUBLIC_URL env var or default
+            std::env::var("RUSTSHARE_PUBLIC_URL")
+                .unwrap_or_else(|_| "http://localhost:8080".to_string())
+        }
+    };
+
+    Ok(Json(DeviceQrInfoResponse {
+        instance_url,
+        device_pairing_path: "/device".to_string(),
+    }))
+}
+
 #[derive(Deserialize)]
 pub struct DevicePollRequest {
     pub device_code: String,
@@ -362,6 +401,10 @@ pub async fn device_poll(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Static mutex to ensure env var tests run serially
+    static ENV_VAR_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn generate_user_code_uses_safe_alphabet() {
@@ -433,5 +476,76 @@ mod tests {
         let hash1 = hash_token("token_one");
         let hash2 = hash_token("token_two");
         assert_ne!(hash1, hash2);
+    }
+
+    #[tokio::test]
+    async fn device_qr_info_uses_host_header_when_present() {
+        let mut headers = HeaderMap::new();
+        headers.insert(axum::http::header::HOST, "example.com".parse().unwrap());
+
+        let result = device_qr_info(headers).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.0.instance_url, "https://example.com");
+        assert_eq!(response.0.device_pairing_path, "/device");
+    }
+
+    #[tokio::test]
+    async fn device_qr_info_uses_x_forwarded_proto_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(axum::http::header::HOST, "example.com".parse().unwrap());
+        headers.insert("x-forwarded-proto", "http".parse().unwrap());
+
+        let result = device_qr_info(headers).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.0.instance_url, "http://example.com");
+    }
+
+    #[tokio::test]
+    async fn device_qr_info_defaults_to_https_when_no_x_forwarded_proto() {
+        let mut headers = HeaderMap::new();
+        headers.insert(axum::http::header::HOST, "secure.example.com".parse().unwrap());
+
+        let result = device_qr_info(headers).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.0.instance_url, "https://secure.example.com");
+    }
+
+    #[tokio::test]
+    async fn device_qr_info_uses_env_var_fallback_when_no_host_header() {
+        let _lock = ENV_VAR_MUTEX.lock().unwrap();
+
+        // Set the environment variable
+        std::env::set_var("RUSTSHARE_PUBLIC_URL", "http://env-fallback.example.com:8080");
+
+        let headers = HeaderMap::new();
+        let result = device_qr_info(headers).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.0.instance_url, "http://env-fallback.example.com:8080");
+
+        // Clean up
+        std::env::remove_var("RUSTSHARE_PUBLIC_URL");
+    }
+
+    #[tokio::test]
+    async fn device_qr_info_uses_localhost_fallback_when_no_host_or_env_var() {
+        let _lock = ENV_VAR_MUTEX.lock().unwrap();
+
+        // Ensure env var is not set
+        std::env::remove_var("RUSTSHARE_PUBLIC_URL");
+
+        let headers = HeaderMap::new();
+        let result = device_qr_info(headers).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.0.instance_url, "http://localhost:8080");
     }
 }

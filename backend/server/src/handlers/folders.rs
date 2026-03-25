@@ -6,13 +6,40 @@ use axum::{
     response::Response,
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use rustshare_core::domain::{Folder, FolderContents, FolderTree};
 
 use super::{folder_error_response, AuthenticatedUser};
 use crate::AppState;
+
+// ============================================================================
+// Share Indicator Types
+// ============================================================================
+
+/// Folder with share information for list responses
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct FolderWithShares {
+    // Folder fields
+    pub id: Uuid,
+    pub name: String,
+    pub path: String,
+    pub parent_folder_id: Option<Uuid>,
+    pub owner_id: Uuid,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    // Share info
+    pub is_shared: bool,
+    pub share_count: i64,
+}
+
+/// Folder contents with share indicators
+#[derive(Debug, Serialize)]
+pub struct FolderContentsWithShares {
+    pub folders: Vec<FolderWithShares>,
+    pub files: Vec<crate::handlers::files::FileWithShares>,
+}
 
 // ============================================================================
 // Task 20: Folder CRUD
@@ -79,58 +106,161 @@ pub async fn delete_folder(
 // Task 21: Folder List/Tree
 // ============================================================================
 
-/// List folder contents (immediate children only).
+/// List folder contents (immediate children only) with share indicators.
 ///
 /// GET /api/folders/{id}/contents
 pub async fn get_folder_contents(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
-) -> Result<Json<FolderContents>, Response> {
-    let contents = state
-        .folder_service
-        .list_contents(folder_id, auth.user_id)
-        .await
-        .map_err(folder_error_response)?;
-    Ok(Json(contents))
+) -> Result<Json<FolderContentsWithShares>, Response> {
+    // Get folders in this parent with share info
+    let folders = sqlx::query_as::<_, FolderWithShares>(
+        r#"
+        SELECT
+            f.id, f.name, f.path, f.parent_folder_id, f.owner_id,
+            f.created_at, f.updated_at,
+            EXISTS(
+                SELECT 1 FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+            ) as is_shared,
+            (
+                SELECT COUNT(*) FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+            ) as share_count
+        FROM folders f
+        WHERE f.parent_folder_id = $1 AND f.owner_id = $2
+        ORDER BY f.name
+        "#,
+    )
+    .bind(folder_id)
+    .bind(auth.user_id)
+    .fetch_all(&state.db_pool)
+    .await
+    .map_err(|_| {
+        use axum::{http::StatusCode, response::IntoResponse, Json};
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(super::ErrorResponse::new("Internal server error")),
+        )
+            .into_response()
+    })?;
+
+    // Get files in this parent with share info
+    let files = sqlx::query_as::<_, crate::handlers::files::FileWithShares>(
+        r#"
+        SELECT
+            f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
+            f.parent_folder_id, f.owner_id, f.current_version,
+            f.created_at, f.modified_at,
+            EXISTS(
+                SELECT 1 FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+            ) as is_shared,
+            (
+                SELECT COUNT(*) FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+            ) as share_count
+        FROM files f
+        WHERE f.parent_folder_id = $1 AND f.owner_id = $2
+        ORDER BY f.name
+        "#,
+    )
+    .bind(folder_id)
+    .bind(auth.user_id)
+    .fetch_all(&state.db_pool)
+    .await
+    .map_err(|_| {
+        use axum::{http::StatusCode, response::IntoResponse, Json};
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(super::ErrorResponse::new("Internal server error")),
+        )
+            .into_response()
+    })?;
+
+    Ok(Json(FolderContentsWithShares { folders, files }))
 }
 
-/// List root contents (folders and files with no parent).
+/// List root contents (folders and files with no parent) with share indicators.
 ///
 /// GET /api/folders/root/contents
 pub async fn get_root_contents(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-) -> Result<Json<FolderContents>, Response> {
-    // Get root folders (parent_folder_id = null)
-    let folders = state
-        .metadata_store
-        .list_folders(None, auth.user_id)
-        .await
-        .map_err(|_| {
-            use axum::{http::StatusCode, response::IntoResponse, Json};
+) -> Result<Json<FolderContentsWithShares>, Response> {
+    // Get root folders with share info
+    let folders = sqlx::query_as::<_, FolderWithShares>(
+        r#"
+        SELECT
+            f.id, f.name, f.path, f.parent_folder_id, f.owner_id,
+            f.created_at, f.updated_at,
+            EXISTS(
+                SELECT 1 FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+            ) as is_shared,
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new("Internal server error")),
-            )
-                .into_response()
-        })?;
+                SELECT COUNT(*) FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+            ) as share_count
+        FROM folders f
+        WHERE f.parent_folder_id IS NULL AND f.owner_id = $1
+        ORDER BY f.name
+        "#,
+    )
+    .bind(auth.user_id)
+    .fetch_all(&state.db_pool)
+    .await
+    .map_err(|_| {
+        use axum::{http::StatusCode, response::IntoResponse, Json};
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(super::ErrorResponse::new("Internal server error")),
+        )
+            .into_response()
+    })?;
 
-    // Get root files (parent_folder_id = null)
-    let files = state
-        .metadata_store
-        .list_files(None, auth.user_id)
-        .await
-        .map_err(|_| {
-            use axum::{http::StatusCode, response::IntoResponse, Json};
+    // Get root files with share info
+    let files = sqlx::query_as::<_, crate::handlers::files::FileWithShares>(
+        r#"
+        SELECT
+            f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
+            f.parent_folder_id, f.owner_id, f.current_version,
+            f.created_at, f.modified_at,
+            EXISTS(
+                SELECT 1 FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+            ) as is_shared,
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new("Internal server error")),
-            )
-                .into_response()
-        })?;
+                SELECT COUNT(*) FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+            ) as share_count
+        FROM files f
+        WHERE f.parent_folder_id IS NULL AND f.owner_id = $1
+        ORDER BY f.name
+        "#,
+    )
+    .bind(auth.user_id)
+    .fetch_all(&state.db_pool)
+    .await
+    .map_err(|_| {
+        use axum::{http::StatusCode, response::IntoResponse, Json};
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(super::ErrorResponse::new("Internal server error")),
+        )
+            .into_response()
+    })?;
 
-    Ok(Json(FolderContents { folders, files }))
+    Ok(Json(FolderContentsWithShares { folders, files }))
 }
 
 /// Get full folder tree (recursive).

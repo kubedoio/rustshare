@@ -59,6 +59,14 @@ pub struct User {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub disabled_at: Option<DateTime<Utc>>,
+    /// User's first name
+    pub name: Option<String>,
+    /// User's last name
+    pub surname: Option<String>,
+    /// Path to avatar image
+    pub avatar_path: Option<String>,
+    /// Whether email can be shared with other users
+    pub email_sharing_enabled: bool,
 }
 
 impl User {
@@ -84,6 +92,10 @@ impl User {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             disabled_at: None,
+            name: None,
+            surname: None,
+            avatar_path: None,
+            email_sharing_enabled: true,
         }
     }
 

@@ -43,6 +43,7 @@ openidconnect = "4.0.1"
 url = "2.5"
 base64 = { workspace = true }
 rand = { workspace = true }
+image = { version = "0.24", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
 
 [[test]]
 name = "admin_require_admin_test"

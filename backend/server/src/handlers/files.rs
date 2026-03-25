@@ -1,9 +1,9 @@
 //! HTTP handlers for file operations.
 
 use axum::{
-    extract::{Multipart, Path, State},
+    extract::{Multipart, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
-    response::Response,
+    response::{IntoResponse, Response},
     Json,
 };
 use bytes::Bytes;
@@ -11,11 +11,11 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use rustshare_core::{
-    domain::{File, FileVersion},
-    services::FileError,
+    domain::{File, FileVersion, ThumbnailSize},
+    services::{FileError, ThumbnailError},
 };
 
-use super::{file_error_response, AuthenticatedUser};
+use super::{file_error_response, AuthenticatedUser, ErrorResponse};
 use crate::AppState;
 
 // ============================================================================
@@ -393,28 +393,185 @@ pub struct RenameFileRequest {
 }
 
 // ============================================================================
+// Thumbnail Endpoint
+// ============================================================================
+
+/// Maximum file size for thumbnail generation (100MB)
+const MAX_THUMBNAIL_FILE_SIZE: i64 = 100 * 1024 * 1024;
+
+/// Map ThumbnailError to HTTP response.
+fn thumbnail_error_response(err: ThumbnailError) -> Response {
+    let (status, message) = match err {
+        ThumbnailError::NotFound => (StatusCode::NOT_FOUND, "File not found".to_string()),
+        ThumbnailError::UnsupportedType => (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Thumbnail generation not supported for this file type".to_string(),
+        ),
+        ThumbnailError::Storage(_) | ThumbnailError::Generation(_) | ThumbnailError::Database(_) => {
+            tracing::error!("Thumbnail service error: {}", err);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to generate thumbnail".to_string(),
+            )
+        }
+    };
+
+    (status, Json(ErrorResponse::new(message))).into_response()
+}
+
+/// Query parameters for thumbnail requests.
+#[derive(Debug, Deserialize)]
+pub struct ThumbnailParams {
+    /// Thumbnail size: sm (40x40), md (128x128), lg (256x256)
+    /// Defaults to "md" if not specified
+    pub size: Option<String>,
+}
+
+/// Get file thumbnail.
+///
+/// GET /api/v1/files/:id/thumbnail
+///
+/// Returns the thumbnail image for a file. If the thumbnail doesn't exist,
+/// it will be generated on-demand for supported file types (images, PDFs, videos).
+///
+/// Query parameters:
+/// - size: "sm" | "md" | "lg" (default: "md")
+pub async fn get_file_thumbnail(
+    State(state): State<AppState>,
+    AuthenticatedUser { user_id }: AuthenticatedUser,
+    Path(file_id): Path<Uuid>,
+    Query(params): Query<ThumbnailParams>,
+) -> Result<Response, Response> {
+    // First, verify the user has access to the file
+    let file = state
+        .file_service
+        .get_file(file_id, user_id)
+        .await
+        .map_err(file_error_response)?;
+
+    // Check file size - don't generate thumbnails for files larger than 100MB
+    if file.size > MAX_THUMBNAIL_FILE_SIZE {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ErrorResponse {
+                error: "File too large for thumbnail generation".to_string(),
+                details: Some(format!(
+                    "File size {} exceeds maximum allowed {} bytes",
+                    file.size, MAX_THUMBNAIL_FILE_SIZE
+                )),
+            }),
+        )
+            .into_response());
+    }
+
+    // Parse size parameter (default to "md")
+    let size_str = params.size.as_deref().unwrap_or("md");
+    let size = ThumbnailSize::try_from(size_str).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new(format!(
+                "Invalid size parameter: {}. Use 'sm', 'md', or 'lg'",
+                size_str
+            ))),
+        )
+            .into_response()
+    })?;
+
+    // Check if thumbnail exists
+    let thumbnail = match state.thumbnail_service.get_thumbnail(file_id, size).await {
+        Ok(Some(thumbnail)) => thumbnail,
+        Ok(None) => {
+            // Thumbnail doesn't exist, try to generate it
+            state
+                .thumbnail_service
+                .generate_thumbnail(file_id, &file.mime_type, size)
+                .await
+                .map_err(thumbnail_error_response)?
+        }
+        Err(e) => {
+            tracing::error!("Failed to get thumbnail: {}", e);
+            return Err(thumbnail_error_response(e));
+        }
+    };
+
+    // Get thumbnail data from storage
+    let thumbnail_data = state
+        .thumbnail_service
+        .get_thumbnail_data(&thumbnail.storage_path)
+        .await
+        .map_err(thumbnail_error_response)?;
+
+    // Build response with cache headers
+    // Thumbnails are immutable once generated
+    let etag = format!("{}-{}", file_id, size_str);
+    let headers = [
+        (header::CONTENT_TYPE, thumbnail.content_type.as_str()),
+        (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        (header::ETAG, etag.as_str()),
+    ];
+
+    let response = (StatusCode::OK, headers, thumbnail_data).into_response();
+
+    Ok(response)
+}
+
+// ============================================================================
 // List All User Files (Simple View)
 // ============================================================================
+
+// ============================================================================
+// Share Indicator Types
+// ============================================================================
+
+/// File with share information for list responses
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct FileWithShares {
+    // File fields
+    pub id: Uuid,
+    pub name: String,
+    pub path: String,
+    pub content_hash: String,
+    pub size: i64,
+    pub mime_type: String,
+    pub parent_folder_id: Option<Uuid>,
+    pub owner_id: Uuid,
+    pub current_version: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub modified_at: chrono::DateTime<chrono::Utc>,
+    // Share info
+    pub is_shared: bool,
+    pub share_count: i64,
+}
 
 /// List all files for the current user.
 ///
 /// GET /api/files
 ///
-/// Returns a simple flat list of all files owned by the user.
+/// Returns a simple flat list of all files owned by the user with share indicators.
 pub async fn list_files(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-) -> Result<Json<Vec<File>>, Response> {
-    // Query all files for this user from database
-    let files = sqlx::query_as::<_, File>(
+) -> Result<Json<Vec<FileWithShares>>, Response> {
+    // Query all files with share information
+    let files = sqlx::query_as::<_, FileWithShares>(
         r#"
         SELECT
-            id, name, path, content_hash, size, mime_type,
-            parent_folder_id, owner_id, current_version,
-            created_at, modified_at
-        FROM files
-        WHERE owner_id = $1
-        ORDER BY created_at DESC
+            f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
+            f.parent_folder_id, f.owner_id, f.current_version,
+            f.created_at, f.modified_at,
+            EXISTS(
+                SELECT 1 FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+            ) as is_shared,
+            (
+                SELECT COUNT(*) FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+            ) as share_count
+        FROM files f
+        WHERE f.owner_id = $1
+        ORDER BY f.created_at DESC
         "#,
     )
     .bind(auth.user_id)

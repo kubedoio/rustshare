@@ -7,6 +7,7 @@ mod extractors;
 mod files;
 mod folders;
 mod notifications;
+mod profile;
 mod public_shares;
 mod shares;
 mod sync;
@@ -15,16 +16,17 @@ mod users;
 
 pub use extractors::{AdminUser, AuthenticatedSession, AuthenticatedUser, ShareSessionAuth};
 pub use files::{
-    delete_file, download_file, get_file, get_file_versions, list_files, move_file, rename_file,
-    restore_file_version, update_file, upload_file,
+    delete_file, download_file, get_file, get_file_thumbnail, get_file_versions, list_files,
+    move_file, rename_file, restore_file_version, update_file, upload_file, FileWithShares,
 };
 pub use folders::{
     create_folder, delete_folder, get_folder, get_folder_contents, get_folder_tree,
-    get_root_contents, move_folder, rename_folder,
+    get_root_contents, move_folder, rename_folder, FolderContentsWithShares, FolderWithShares,
 };
 pub use notifications::{
     count_unread_notifications, delete_notification, list_notifications, mark_notification_read,
 };
+pub use profile::{get_profile, update_profile};
 pub use public_shares::{
     create_session, download_shared_file, download_shared_folder_file, get_share_info,
     get_shared_folder_contents, upload_shared_folder_file,
@@ -39,8 +41,9 @@ pub use user_shares::{
     list_received_shares, remove_recipient, update_recipient_permission,
 };
 pub use users::{
-    delete_user_session, get_user_profile, list_user_security_events, list_user_sessions,
-    update_user_password, update_user_theme,
+    delete_avatar, delete_user_session, get_avatar, get_user_profile,
+    list_user_security_events, list_user_sessions, update_user_password, update_user_theme,
+    upload_avatar,
 };
 
 use axum::{

@@ -1,5 +1,7 @@
+//! User management handlers for the RustShare API.
+
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -473,4 +475,263 @@ pub async fn get_user_profile(
                 .into_response()
         }
     }
+}
+
+/// Response for successful avatar upload.
+#[derive(Debug, Serialize)]
+pub struct UploadAvatarResponse {
+    pub avatar_path: String,
+}
+
+/// Maximum avatar file size (5MB).
+const MAX_AVATAR_SIZE: usize = 5 * 1024 * 1024;
+
+/// Target avatar size (256x256).
+const AVATAR_SIZE: u32 = 256;
+
+/// Upload avatar for the authenticated user.
+///
+/// # Endpoint
+/// `POST /api/v1/users/me/avatar`
+///
+/// # Authentication
+/// Requires valid JWT token.
+///
+/// # Request Body
+/// Raw image data (image/* content types accepted)
+///
+/// # Response
+/// - 200 OK: Avatar uploaded successfully
+/// - 400 Bad Request: Invalid image or too large
+/// - 401 Unauthorized: Missing or invalid token
+/// - 500 Internal Server Error: Processing or storage error
+pub async fn upload_avatar(
+    State(state): State<AppState>,
+    AuthenticatedUser { user_id }: AuthenticatedUser,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    // Check content type
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if !content_type.starts_with("image/") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new("Content-Type must be image/*")),
+        )
+            .into_response();
+    }
+
+    // Check file size
+    if body.len() > MAX_AVATAR_SIZE {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new("Avatar must be less than 5MB")),
+        )
+            .into_response();
+    }
+
+    // Process image: resize to 256x256 and convert to WebP
+    let processed = tokio::task::spawn_blocking(move || {
+        use image::imageops::FilterType;
+
+        let img = image::load_from_memory(&body)
+            .map_err(|e| format!("Failed to load image: {}", e))?;
+
+        let resized = img.resize(AVATAR_SIZE, AVATAR_SIZE, FilterType::Lanczos3);
+
+        let mut output = Vec::new();
+        let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut output);
+        let rgba = resized.to_rgba8();
+        encoder
+            .encode(&rgba, resized.width(), resized.height(), image::ColorType::Rgba8)
+            .map_err(|e| format!("WebP encode failed: {}", e))?;
+
+        Ok::<Vec<u8>, String>(output)
+    })
+    .await;
+
+    let processed = match processed {
+        Ok(Ok(data)) => data,
+        Ok(Err(e)) => {
+            tracing::error!("Image processing failed: {}", e);
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse::new(format!("Image processing failed: {}", e))),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("Image processing task failed: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new("Failed to process image")),
+            )
+                .into_response();
+        }
+    };
+
+    // Store in object storage
+    let avatar_path = format!("avatars/{}.webp", user_id);
+    if let Err(e) = state
+        .object_store
+        .put(&avatar_path, processed.into())
+        .await
+    {
+        tracing::error!("Failed to store avatar: {:?}", e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new("Failed to store avatar")),
+        )
+            .into_response();
+    }
+
+    // Update database
+    if let Err(e) = state
+        .metadata_store
+        .update_user_avatar(user_id, Some(&avatar_path))
+        .await
+    {
+        tracing::error!("Failed to update user avatar_path: {:?}", e);
+        // Try to clean up stored avatar
+        let _ = state.object_store.delete(&avatar_path).await;
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new("Failed to update avatar")),
+        )
+            .into_response();
+    }
+
+    (
+        StatusCode::OK,
+        Json(UploadAvatarResponse { avatar_path }),
+    )
+        .into_response()
+}
+
+/// Delete avatar for the authenticated user.
+///
+/// # Endpoint
+/// `DELETE /api/v1/users/me/avatar`
+///
+/// # Authentication
+/// Requires valid JWT token.
+///
+/// # Response
+/// - 204 No Content: Avatar deleted successfully
+/// - 401 Unauthorized: Missing or invalid token
+/// - 500 Internal Server Error: Database error
+pub async fn delete_avatar(
+    State(state): State<AppState>,
+    AuthenticatedUser { user_id }: AuthenticatedUser,
+) -> Response {
+    // Get current avatar_path
+    let user = match state.metadata_store.find_user_by_id(user_id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse::new("User not found")),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("Failed to find user for avatar deletion: {:?}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new("Failed to delete avatar")),
+            )
+                .into_response();
+        }
+    };
+
+    // Delete from object storage if exists
+    if let Some(avatar_path) = &user.avatar_path {
+        let _ = state.object_store.delete(avatar_path).await;
+    }
+
+    // Update database to clear avatar_path
+    if let Err(e) = state.metadata_store.update_user_avatar(user_id, None).await {
+        tracing::error!("Failed to clear user avatar_path: {:?}", e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new("Failed to delete avatar")),
+        )
+            .into_response();
+    }
+
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// Get avatar image for a user.
+///
+/// # Endpoint
+/// `GET /api/v1/users/:id/avatar`
+///
+/// # Authentication
+/// None required - public endpoint.
+///
+/// # Response
+/// - 200 OK: Returns avatar image (image/webp)
+/// - 404 Not Found: User has no avatar
+/// - 500 Internal Server Error: Storage error
+pub async fn get_avatar(
+    State(state): State<AppState>,
+    Path(user_id): Path<uuid::Uuid>,
+) -> Response {
+    // Get user to find avatar_path
+    let user = match state.metadata_store.find_user_by_id(user_id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse::new("User not found")),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("Failed to find user for avatar: {:?}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new("Failed to get avatar")),
+            )
+                .into_response();
+        }
+    };
+
+    // Check if user has an avatar
+    let avatar_path = match user.avatar_path {
+        Some(path) => path,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse::new("Avatar not found")),
+            )
+                .into_response();
+        }
+    };
+
+    // Fetch image data from storage
+    let data = match state.object_store.get(&avatar_path).await {
+        Ok(data) => data,
+        Err(e) => {
+            tracing::error!("Failed to fetch avatar from storage: {:?}", e);
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse::new("Avatar not found")),
+            )
+                .into_response();
+        }
+    };
+
+    // Return image with proper content type
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "image/webp")],
+        data,
+    )
+        .into_response()
 }

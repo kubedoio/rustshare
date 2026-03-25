@@ -262,4 +262,8 @@ impl CoreObjectStoreOps for ObjectStore {
     async fn get(&self, key: &str) -> Result<bytes::Bytes> {
         self.get(key).await
     }
+
+    async fn delete(&self, key: &str) -> Result<()> {
+        self.delete(key).await
+    }
 }

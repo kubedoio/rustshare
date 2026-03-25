@@ -11,7 +11,7 @@
 
 	export let item: File | Folder;
 	export let isFolder: boolean;
-	export let onSelect: () => void;
+	export let onSelect: (event?: MouseEvent) => void;
 	export let selectionMode = false;
 	export let selected = false;
 	export let replicationStatus: ReplicationStatus | null = null;
@@ -79,8 +79,8 @@
 		dispatch('replace', { item: item as File });
 	}
 
-	function handleCardActivate() {
-		onSelect();
+	function handleCardActivate(event: MouseEvent) {
+		onSelect(event);
 	}
 
 	function handleCardKeydown(event: KeyboardEvent) {
@@ -131,6 +131,14 @@
 							class="font-semibold text-sm lg:text-base hover:text-primary cursor-pointer truncate"
 						>
 							{item.name}
+							{#if item.is_shared}
+								<span class="badge badge-primary badge-xs ml-2" title="Shared">
+									<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
+									</svg>
+									{#if item.share_count && item.share_count > 1}{item.share_count}{/if}
+								</span>
+							{/if}
 						</h3>
 					</button>
 				{:else}
@@ -139,10 +147,18 @@
 							class="font-semibold text-sm lg:text-base hover:text-primary cursor-pointer truncate"
 						>
 							{item.name}
+							{#if item.is_shared}
+								<span class="badge badge-primary badge-xs ml-2" title="Shared">
+									<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
+									</svg>
+									{#if item.share_count && item.share_count > 1}{item.share_count}{/if}
+								</span>
+							{/if}
 						</h3>
 					</button>
 				{/if}
-				<div class="text-xs lg:text-sm text-base-content/60 gap-2 lg:gap-4 flex">
+				<div class="text-xs lg:text-sm text-base-content/60 flex items-center justify-between mt-1">
 					<span>{displaySize}</span>
 					<span class="sm:inline hidden">{displayDate}</span>
 				</div>

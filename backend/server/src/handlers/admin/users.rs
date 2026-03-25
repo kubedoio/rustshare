@@ -115,7 +115,7 @@ pub async fn list_admin_users(
     Query(query): Query<ListUsersQuery>,
 ) -> Result<Json<PaginatedUsers>, (StatusCode, Json<serde_json::Value>)> {
     let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(20).min(100).max(1);
+    let per_page = query.per_page.unwrap_or(20).clamp(1, 100);
     let offset = (page - 1) * per_page;
 
     let cols = "id, username, email, display_name, is_admin, storage_quota, disabled_at, created_at, updated_at";
