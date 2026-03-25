@@ -26,7 +26,9 @@ export async function getFile(fileId: string): Promise<File> {
 }
 
 export async function downloadFile(fileId: string): Promise<{ url: string }> {
-  return apiClient.get<{ url: string }>(`/files/${fileId}/download`);
+  // Use the new /content endpoint which returns the file with proper Content-Disposition header
+  // This ensures downloaded files have their original filename instead of the storage ID
+  return { url: `/api/v1/files/${fileId}/content` };
 }
 
 export async function renameFile(

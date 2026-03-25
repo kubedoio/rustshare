@@ -112,7 +112,7 @@
 					<td>—</td>
 					<td>{formatDate(folder.updated_at)}</td>
 					<td class="text-right">
-						<div class="dropdown dropdown-end dropdown-bottom">
+						<div class="dropdown dropdown-end dropdown-top">
 							<button
 								type="button"
 								class="btn btn-ghost btn-xs"

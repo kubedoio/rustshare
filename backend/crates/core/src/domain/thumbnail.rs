@@ -89,6 +89,14 @@ pub const SUPPORTED_VIDEO_TYPES: &[&str] = &[
     "video/webm",
 ];
 
+/// Special diagram file types (identified by extension)
+pub const SUPPORTED_DIAGRAM_EXTENSIONS: &[&str] = &[
+    ".excalidraw",
+    ".excalidraw.json",
+    ".drawio",
+    ".dio",
+];
+
 /// Check if a MIME type is supported for thumbnail generation
 pub fn is_thumbnail_supported(mime_type: &str) -> bool {
     let mime_lower = mime_type.to_lowercase();
@@ -97,12 +105,31 @@ pub fn is_thumbnail_supported(mime_type: &str) -> bool {
         || SUPPORTED_VIDEO_TYPES.contains(&mime_lower.as_str())
 }
 
+/// Check if a file supports thumbnail generation (by MIME type and filename)
+pub fn is_file_thumbnail_supported(mime_type: &str, file_name: &str) -> bool {
+    // First check MIME type
+    if is_thumbnail_supported(mime_type) {
+        return true;
+    }
+    
+    // Check special diagram file extensions
+    let name_lower = file_name.to_lowercase();
+    for ext in SUPPORTED_DIAGRAM_EXTENSIONS {
+        if name_lower.ends_with(ext) {
+            return true;
+        }
+    }
+    
+    false
+}
+
 /// Get the category of thumbnail generation for a MIME type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThumbnailCategory {
     Image,
     Pdf,
     Video,
+    Diagram, // Excalidraw, Draw.io, etc.
     Unsupported,
 }
 
@@ -117,6 +144,25 @@ pub fn get_thumbnail_category(mime_type: &str) -> ThumbnailCategory {
     } else {
         ThumbnailCategory::Unsupported
     }
+}
+
+/// Get thumbnail category considering both MIME type and filename
+pub fn get_file_thumbnail_category(mime_type: &str, file_name: &str) -> ThumbnailCategory {
+    // First try MIME type based detection
+    let category = get_thumbnail_category(mime_type);
+    if category != ThumbnailCategory::Unsupported {
+        return category;
+    }
+    
+    // Check for diagram files by extension
+    let name_lower = file_name.to_lowercase();
+    for ext in SUPPORTED_DIAGRAM_EXTENSIONS {
+        if name_lower.ends_with(ext) {
+            return ThumbnailCategory::Diagram;
+        }
+    }
+    
+    ThumbnailCategory::Unsupported
 }
 
 #[cfg(test)]

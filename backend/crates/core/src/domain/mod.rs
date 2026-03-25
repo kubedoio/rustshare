@@ -23,7 +23,11 @@ pub use replication::{
 };
 pub use response_types::{FolderContents, FolderTree};
 pub use share::{Share, SharePermissions, ShareRecipient};
-pub use thumbnail::{FileThumbnail, ThumbnailCategory, ThumbnailSize, get_thumbnail_category, is_thumbnail_supported};
+pub use thumbnail::{
+    FileThumbnail, ThumbnailCategory, ThumbnailSize, 
+    SUPPORTED_DIAGRAM_EXTENSIONS, SUPPORTED_IMAGE_TYPES, SUPPORTED_PDF_TYPES, SUPPORTED_VIDEO_TYPES,
+    get_file_thumbnail_category, get_thumbnail_category, is_file_thumbnail_supported, is_thumbnail_supported
+};
 pub use user::{Theme, User};
 pub use user_session::UserSession;
 

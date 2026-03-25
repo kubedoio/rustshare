@@ -25,17 +25,30 @@
     return mimeType.startsWith('video/');
   };
 
-  const isThumbnailSupported = (mimeType: string) => {
-    const supported = [
-      'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp',
-      'application/pdf',
-      'video/mp4', 'video/quicktime', 'video/webm'
-    ];
-    return supported.includes(mimeType.toLowerCase());
+  const isThumbnailSupported = (mimeType: string, fileName: string) => {
+    // Images - always supported
+    if (mimeType.startsWith('image/')) {
+      return ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp', 'image/svg+xml'].includes(mimeType.toLowerCase()) ||
+             mimeType.startsWith('image/'); // Support all images
+    }
+    
+    // PDF
+    if (mimeType === 'application/pdf') return true;
+    
+    // Videos
+    const videoTypes = ['video/mp4', 'video/quicktime', 'video/webm', 'video/avi', 'video/mpeg'];
+    if (videoTypes.includes(mimeType.toLowerCase())) return true;
+    
+    // Special file types based on extension
+    const lowerName = fileName.toLowerCase();
+    if (lowerName.endsWith('.excalidraw') || lowerName.endsWith('.excalidraw.json')) return true;
+    if (lowerName.endsWith('.drawio') || lowerName.endsWith('.dio')) return true;
+    
+    return false;
   };
 
   async function loadThumbnail() {
-    if (!file?.id || !isThumbnailSupported(file.mime_type)) {
+    if (!file?.id || !isThumbnailSupported(file.mime_type, file.name)) {
       loading = false;
       return;
     }
@@ -81,16 +94,25 @@
   });
 
   // Get file type icon emoji
-  function getFileIcon(mimeType: string): string {
+  function getFileIcon(mimeType: string, fileName: string): string {
+    const lowerName = fileName.toLowerCase();
+    
+    // Special file types
+    if (lowerName.endsWith('.excalidraw') || lowerName.endsWith('.excalidraw.json')) return '✏️';
+    if (lowerName.endsWith('.drawio') || lowerName.endsWith('.dio')) return '📐';
+    
+    // Standard MIME types
     if (mimeType.startsWith('image/')) return '🖼️';
     if (isPDF(mimeType)) return '📄';
     if (isVideo(mimeType)) return '🎬';
+    if (mimeType.startsWith('audio/')) return '🎵';
     if (mimeType.includes('text')) return '📝';
-    if (mimeType.includes('audio')) return '🎵';
-    if (mimeType.includes('zip') || mimeType.includes('archive')) return '📦';
-    if (mimeType.includes('word')) return '📘';
-    if (mimeType.includes('excel') || mimeType.includes('spreadsheet')) return '📊';
+    if (mimeType.includes('zip') || mimeType.includes('archive') || mimeType.includes('compressed')) return '📦';
+    if (mimeType.includes('word') || mimeType.includes('document')) return '📘';
+    if (mimeType.includes('excel') || mimeType.includes('spreadsheet') || mimeType.includes('sheet')) return '📊';
     if (mimeType.includes('powerpoint') || mimeType.includes('presentation')) return '📽️';
+    if (mimeType.includes('json') || mimeType.includes('xml') || mimeType.includes('yaml')) return '📋';
+    if (mimeType.includes('javascript') || mimeType.includes('typescript') || mimeType.includes('python')) return '💻';
     return '📄';
   }
 </script>
@@ -100,7 +122,7 @@
     <span class="loading loading-spinner loading-xs"></span>
   {:else if error || !thumbnailUrl}
     <!-- Show file type icon -->
-    <span class="text-2xl">{getFileIcon(file.mime_type)}</span>
+    <span class="text-2xl">{getFileIcon(file.mime_type, file.name)}</span>
   {:else}
     <!-- Show thumbnail image -->
     <img

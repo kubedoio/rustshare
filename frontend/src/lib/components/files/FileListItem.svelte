@@ -174,7 +174,7 @@
 			</div>
 
 			<!-- Actions Menu -->
-			<div class="dropdown dropdown-end">
+			<div class="dropdown dropdown-end dropdown-top">
 				<button
 					type="button"
 					class="btn btn-ghost btn-sm btn-circle lg:opacity-0 lg:group-hover:opacity-100 lg:min-h-0 lg:min-w-0 min-h-[44px] min-w-[44px] opacity-100 transition-opacity"
