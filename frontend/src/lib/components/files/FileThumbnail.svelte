@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onDestroy } from 'svelte';
   import type { File } from '$lib/api/types';
 
   export let file: File;
@@ -35,9 +35,15 @@
   };
 
   async function loadThumbnail() {
-    if (!isThumbnailSupported(file.mime_type)) {
+    if (!file?.id || !isThumbnailSupported(file.mime_type)) {
       loading = false;
       return;
+    }
+
+    // Clean up old thumbnail URL before loading new one
+    if (thumbnailUrl) {
+      URL.revokeObjectURL(thumbnailUrl);
+      thumbnailUrl = null;
     }
 
     loading = true;
@@ -63,9 +69,10 @@
     }
   }
 
-  onMount(() => {
+  // Reactive: reload thumbnail when file changes
+  $: if (file?.id) {
     loadThumbnail();
-  });
+  }
 
   onDestroy(() => {
     if (thumbnailUrl) {

@@ -148,12 +148,12 @@ export async function updateProfile(request: UpdateProfileRequest): Promise<Full
  * Upload a new avatar for the current user
  */
 export async function uploadAvatar(file: File): Promise<{ avatar_path: string }> {
-	const formData = new FormData();
-	formData.append('avatar', file);
-
 	const response = await fetch('/api/v1/users/me/avatar', {
 		method: 'POST',
-		body: formData,
+		body: file,
+		headers: {
+			'Content-Type': file.type
+		},
 		credentials: 'include'
 	});
 

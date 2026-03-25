@@ -27,9 +27,9 @@
 	}>();
 
 	$: fileItem = isFolder ? undefined : (item as File);
-	const icon = isFolder ? '📁' : getMimeTypeIcon(fileItem?.mime_type || '');
-	const displaySize = isFolder ? '-' : formatFileSize(fileItem?.size || 0);
-	const displayDate = formatDate(
+	$: icon = isFolder ? '📁' : getMimeTypeIcon(fileItem?.mime_type || '');
+	$: displaySize = isFolder ? '-' : formatFileSize(fileItem?.size || 0);
+	$: displayDate = formatDate(
 		isFolder ? (item as Folder).updated_at : (item as File).modified_at
 	);
 
