@@ -709,6 +709,36 @@
 			return;
 		}
 
+		// Ctrl+A: Select all
+		if (event.key === 'a' && (event.ctrlKey || event.metaKey)) {
+			event.preventDefault();
+			if (!selectionMode) {
+				selectionMode = true;
+			}
+			handleSelectAll();
+			return;
+		}
+
+		// Escape: Clear selection or close modals
+		if (event.key === 'Escape') {
+			if (selectionMode) {
+				event.preventDefault();
+				selectionStore.clear();
+				selectionMode = false;
+				return;
+			}
+			// Close any open modal
+			showRenameModal = false;
+			showDeleteModal = false;
+			showMoveModal = false;
+			showShareModal = false;
+			showCreateFolderModal = false;
+			showVersionHistoryModal = false;
+			showFilePreviewModal = false;
+			showKeyboardShortcuts.set(false);
+			return;
+		}
+
 		switch (event.key.toLowerCase()) {
 			case '?':
 				event.preventDefault();
@@ -721,18 +751,6 @@
 			case 'n':
 				event.preventDefault();
 				showCreateFolderModal = true;
-				break;
-			case 'escape':
-				event.preventDefault();
-				// Close any open modal
-				showRenameModal = false;
-				showDeleteModal = false;
-				showMoveModal = false;
-				showShareModal = false;
-				showCreateFolderModal = false;
-				showVersionHistoryModal = false;
-				showFilePreviewModal = false;
-				showKeyboardShortcuts.set(false);
 				break;
 		}
 	}
