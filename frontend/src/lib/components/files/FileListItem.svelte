@@ -8,6 +8,7 @@
 	import { formatFileSize, formatDate, getMimeTypeIcon } from '$lib/utils/format';
 	import { createEventDispatcher } from 'svelte';
 	import FileThumbnail from './FileThumbnail.svelte';
+import ShareIndicator from './ShareIndicator.svelte';
 
 	export let item: File | Folder;
 	export let isFolder: boolean;
@@ -125,39 +126,21 @@
 			{/if}
 
 			<div class="min-w-0 flex-1">
-				{#if isFolder}
-					<button type="button" class="w-full text-left" on:click|stopPropagation={onSelect}>
-						<h3
-							class="font-semibold text-sm lg:text-base hover:text-primary cursor-pointer truncate"
-						>
-							{item.name}
-							{#if item.is_shared}
-								<span class="badge badge-primary badge-xs ml-2" title="Shared">
-									<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
-									</svg>
-									{#if item.share_count && item.share_count > 1}{item.share_count}{/if}
-								</span>
-							{/if}
-						</h3>
-					</button>
-				{:else}
-					<button type="button" class="w-full text-left" on:click|stopPropagation={onSelect}>
-						<h3
-							class="font-semibold text-sm lg:text-base hover:text-primary cursor-pointer truncate"
-						>
-							{item.name}
-							{#if item.is_shared}
-								<span class="badge badge-primary badge-xs ml-2" title="Shared">
-									<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
-									</svg>
-									{#if item.share_count && item.share_count > 1}{item.share_count}{/if}
-								</span>
-							{/if}
-						</h3>
-					</button>
-				{/if}
+				<button type="button" class="w-full text-left" on:click|stopPropagation={onSelect}>
+					<h3
+						class="font-semibold text-sm lg:text-base hover:text-primary cursor-pointer truncate flex items-center gap-2"
+					>
+						{item.name}
+						{#if item.is_shared}
+							<ShareIndicator
+								isShared={item.is_shared}
+								shareCount={item.share_count || 0}
+								shareExpiresAt={item.share_expires_at || null}
+								size="sm"
+							/>
+						{/if}
+					</h3>
+				</button>
 				<div class="text-xs lg:text-sm text-base-content/60 flex items-center justify-between mt-1">
 					<span>{displaySize}</span>
 					<span class="sm:inline hidden">{displayDate}</span>

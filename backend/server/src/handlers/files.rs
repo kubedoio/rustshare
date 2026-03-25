@@ -540,7 +540,7 @@ pub async fn get_file_thumbnail(
             // Thumbnail doesn't exist, try to generate it
             state
                 .thumbnail_service
-                .generate_thumbnail(file_id, &file.mime_type, size)
+                .generate_thumbnail(file_id, &file.mime_type, &file.name, size)
                 .await
                 .map_err(thumbnail_error_response)?
         }
@@ -597,6 +597,8 @@ pub struct FileWithShares {
     // Share info
     pub is_shared: bool,
     pub share_count: i64,
+    /// Earliest share expiration date (None if no shares have expiration)
+    pub share_expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// List all files for the current user.
@@ -624,7 +626,13 @@ pub async fn list_files(
                 SELECT COUNT(*) FROM shares
                 WHERE file_id = f.id
                 AND revoked_at IS NULL
-            ) as share_count
+            ) as share_count,
+            (
+                SELECT MIN(expires_at) FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+                AND expires_at IS NOT NULL
+            ) as share_expires_at
         FROM files f
         WHERE f.owner_id = $1
         ORDER BY f.created_at DESC

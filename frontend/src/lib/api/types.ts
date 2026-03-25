@@ -25,6 +25,8 @@ export interface File {
 	// Share indicators
 	is_shared?: boolean;
 	share_count?: number;
+	/// Earliest share expiration date (ISO 8601 format), null if shares don't expire
+	share_expires_at?: string | null;
 }
 
 export interface Folder {
@@ -38,6 +40,8 @@ export interface Folder {
 	// Share indicators
 	is_shared?: boolean;
 	share_count?: number;
+	/// Earliest share expiration date (ISO 8601 format), null if shares don't expire
+	share_expires_at?: string | null;
 }
 
 export interface Share {

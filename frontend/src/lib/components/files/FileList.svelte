@@ -6,6 +6,7 @@
 		type ReplicationStatus
 	} from '$lib/stores/replication';
 	import { selectionStore } from '$lib/stores/selection';
+import ShareIndicator from './ShareIndicator.svelte';
 
 	export let folders: Folder[] = [];
 	export let files: File[] = [];
@@ -104,6 +105,14 @@
 								<span class="text-2xl">📁</span>
 								<span class="font-medium">{folder.name}</span>
 							</button>
+							{#if folder.is_shared}
+								<ShareIndicator
+									isShared={folder.is_shared}
+									shareCount={folder.share_count || 0}
+									shareExpiresAt={folder.share_expires_at || null}
+									size="sm"
+								/>
+							{/if}
 						</div>
 					</td>
 					<td>
@@ -184,6 +193,14 @@
 							>
 								{file.name}
 							</button>
+							{#if file.is_shared}
+								<ShareIndicator
+									isShared={file.is_shared}
+									shareCount={file.share_count || 0}
+									shareExpiresAt={file.share_expires_at || null}
+									size="sm"
+								/>
+							{/if}
 							{#if replicationStatuses[file.id]}
 								<div class="mt-1">
 									<span

@@ -9,7 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use rustshare_core::domain::{Folder, FolderContents, FolderTree};
+use rustshare_core::domain::{Folder, FolderTree};
 
 use super::{folder_error_response, AuthenticatedUser};
 use crate::AppState;
@@ -32,6 +32,8 @@ pub struct FolderWithShares {
     // Share info
     pub is_shared: bool,
     pub share_count: i64,
+    /// Earliest share expiration date (None if no shares have expiration)
+    pub share_expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Folder contents with share indicators
@@ -129,7 +131,13 @@ pub async fn get_folder_contents(
                 SELECT COUNT(*) FROM shares
                 WHERE folder_id = f.id
                 AND revoked_at IS NULL
-            ) as share_count
+            ) as share_count,
+            (
+                SELECT MIN(expires_at) FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+                AND expires_at IS NOT NULL
+            ) as share_expires_at
         FROM folders f
         WHERE f.parent_folder_id = $1 AND f.owner_id = $2
         ORDER BY f.name
@@ -164,7 +172,13 @@ pub async fn get_folder_contents(
                 SELECT COUNT(*) FROM shares
                 WHERE file_id = f.id
                 AND revoked_at IS NULL
-            ) as share_count
+            ) as share_count,
+            (
+                SELECT MIN(expires_at) FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+                AND expires_at IS NOT NULL
+            ) as share_expires_at
         FROM files f
         WHERE f.parent_folder_id = $1 AND f.owner_id = $2
         ORDER BY f.name
@@ -208,7 +222,13 @@ pub async fn get_root_contents(
                 SELECT COUNT(*) FROM shares
                 WHERE folder_id = f.id
                 AND revoked_at IS NULL
-            ) as share_count
+            ) as share_count,
+            (
+                SELECT MIN(expires_at) FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+                AND expires_at IS NOT NULL
+            ) as share_expires_at
         FROM folders f
         WHERE f.parent_folder_id IS NULL AND f.owner_id = $1
         ORDER BY f.name
@@ -242,7 +262,13 @@ pub async fn get_root_contents(
                 SELECT COUNT(*) FROM shares
                 WHERE file_id = f.id
                 AND revoked_at IS NULL
-            ) as share_count
+            ) as share_count,
+            (
+                SELECT MIN(expires_at) FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+                AND expires_at IS NOT NULL
+            ) as share_expires_at
         FROM files f
         WHERE f.parent_folder_id IS NULL AND f.owner_id = $1
         ORDER BY f.name
