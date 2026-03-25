@@ -1,92 +1,41 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
-  import { authStore } from '$lib/stores/auth';
-  import { showKeyboardShortcuts } from '$lib/stores/ui';
-  import { searchQuery } from '$lib/stores/search';
-  import Sidebar from '$lib/components/layout/Sidebar.svelte';
-  import Header from '$lib/components/layout/Header.svelte';
-  import KeyboardShortcuts from '$lib/components/common/KeyboardShortcuts.svelte';
-  import ToastContainer from '$lib/components/common/ToastContainer.svelte';
+	import { onMount } from 'svelte';
+	import { browser } from '$app/environment';
+	import { page } from '$app/stores';
+	import { authStore } from '$lib/stores/auth';
+	import { showKeyboardShortcuts } from '$lib/stores/ui';
+	import { searchQuery } from '$lib/stores/search';
+	import AppShell from '$lib/layout/AppShell.svelte';
 
-  import { browser } from '$app/environment';
+	// Check auth on mount
+	onMount(() => {
+		if (browser) {
+			console.log('[Layout] Checking auth state:', $authStore.isAuthenticated);
+		}
+	});
 
-  let mobileMenuOpen = false;
-  let checkComplete = false;
+	// Show search only on files page
+	$: showSearch = $page.url.pathname === '/files';
 
-  // Check authentication on mount
-  onMount(() => {
-    console.log('[Layout] onMount - authStore:', $authStore);
-  });
+	// Determine sidebar variant based on route
+	$: sidebarVariant = $page.url.pathname.startsWith('/files') ? 'files' : 'default';
 
-  $: if (!$authStore.isLoading) {
-    checkComplete = true;
-  }
+	// Clear search when navigating away from files page
+	$: if (!showSearch) {
+		searchQuery.set('');
+	}
 
-  // Redirect if auth state changes (only after initial check)
-  $: if (browser && checkComplete && !$authStore.isLoading && !$authStore.isAuthenticated) {
-    console.log('[Layout] Reactive redirect - auth state changed to unauthenticated');
-    goto('/login');
-  }
-
-  // Show search only on files page
-  $: showSearch = $page.url.pathname === '/files';
-
-  // Clear search when navigating away from files page
-  $: if (!showSearch) {
-    searchQuery.set('');
-  }
-
-  function toggleMobileMenu() {
-    mobileMenuOpen = !mobileMenuOpen;
-  }
-
-  function closeMobileMenu() {
-    mobileMenuOpen = false;
-  }
-
-  function showHelp() {
-    showKeyboardShortcuts.set(true);
-  }
-
-  function handleSearchChange(query: string) {
-    searchQuery.set(query);
-  }
+	function handleSearchChange(query: string) {
+		searchQuery.set(query);
+	}
 </script>
 
-{#if checkComplete}
-  {#if $authStore.isAuthenticated}
-    <div class="flex h-screen overflow-hidden">
-      <Sidebar mobileOpen={mobileMenuOpen} onClose={closeMobileMenu} />
-
-      <div class="flex-1 flex flex-col overflow-hidden">
-        <Header
-          onMenuClick={toggleMobileMenu}
-          onHelpClick={showHelp}
-          onSearchChange={showSearch ? handleSearchChange : null}
-        >
-          <slot slot="breadcrumbs" name="breadcrumbs" />
-        </Header>
-
-        <main class="flex-1 overflow-auto bg-base-200 p-4 lg:p-6">
-          <slot />
-        </main>
-      </div>
-    </div>
-
-    <KeyboardShortcuts
-      open={$showKeyboardShortcuts}
-      on:close={() => showKeyboardShortcuts.set(false)}
-    />
-
-    <!-- Global Toast Notifications -->
-    <ToastContainer />
-  {:else}
-    <!-- Will redirect to login in onMount -->
-  {/if}
-{:else}
-  <div class="flex items-center justify-center h-screen">
-    <span class="loading loading-spinner loading-lg"></span>
-  </div>
-{/if}
+<AppShell 
+	{showSearch} 
+	onSearchChange={showSearch ? handleSearchChange : null}
+	sidebarVariant={sidebarVariant}
+>
+	<div class="p-4 lg:p-6 max-w-7xl mx-auto">
+		<slot />
+	</div>
+</AppShell>

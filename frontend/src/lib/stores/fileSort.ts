@@ -59,3 +59,7 @@ export function setSortField(field: SortField) {
 export function setViewMode(mode: ViewMode) {
   fileSortState.update((state) => ({ ...state, viewMode: mode }));
 }
+
+export function setSortOrder(order: SortOrder) {
+  fileSortState.update((state) => ({ ...state, order }));
+}
