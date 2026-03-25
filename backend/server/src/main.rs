@@ -579,6 +579,15 @@ async fn main() -> Result<()> {
             patch(handlers::update_user_password),
         )
         .route("/api/v1/me/password", patch(handlers::update_user_password))
+        // Profile routes (Task 17)
+        .route(
+            "/api/v1/users/me/profile",
+            get(handlers::get_profile),
+        )
+        .route(
+            "/api/v1/users/me/profile",
+            patch(handlers::update_profile),
+        )
         // Internal user share routes
         .route("/api/v1/files/:id/share", post(handlers::create_file_share))
         .route(

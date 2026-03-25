@@ -7,6 +7,7 @@ mod extractors;
 mod files;
 mod folders;
 mod notifications;
+mod profile;
 mod public_shares;
 mod shares;
 mod sync;
@@ -25,6 +26,7 @@ pub use folders::{
 pub use notifications::{
     count_unread_notifications, delete_notification, list_notifications, mark_notification_read,
 };
+pub use profile::{get_profile, update_profile};
 pub use public_shares::{
     create_session, download_shared_file, download_shared_folder_file, get_share_info,
     get_shared_folder_contents, upload_shared_folder_file,

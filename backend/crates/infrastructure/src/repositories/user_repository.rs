@@ -23,6 +23,10 @@ impl UserRepository {
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
             disabled_at: row.try_get("disabled_at")?,
+            name: row.try_get("name")?,
+            surname: row.try_get("surname")?,
+            avatar_path: row.try_get("avatar_path")?,
+            email_sharing_enabled: row.try_get("email_sharing_enabled")?,
         })
     }
 
