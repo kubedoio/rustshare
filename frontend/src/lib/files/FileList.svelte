@@ -38,7 +38,7 @@
 		selectionStore.selectAll(files, folders);
 	}
 
-	$: allSelected = folders.length + files.length > 0 && 
+	$: allSelected = folders.length + files.length > 0 &&
 		$selectionStore.selectedFolderIds.size + $selectionStore.selectedFileIds.size === folders.length + files.length;
 </script>
 
@@ -72,13 +72,13 @@
 					isFolder={true}
 					{selectionMode}
 					selected={$selectionStore.selectedFolderIds.has(folder.id)}
-					onSelect={(e) => selectionMode ? handleFolderToggle(folder, e) : onFolderClick(folder)}
+					onSelect={(e) => handleFolderToggle(folder, e)}
 					onToggleSelect={() => handleFolderToggle(folder)}
+					onNavigate={() => onFolderClick(folder)}
 					onRename={() => onRenameFolder(folder)}
 					onDelete={() => onDeleteFolder(folder)}
 					onShare={() => onShareFolder(folder)}
 					onMove={() => onMoveFolder(folder)}
-					onNavigate={() => onFolderClick(folder)}
 				/>
 			{/each}
 
@@ -90,8 +90,9 @@
 					{selectionMode}
 					selected={$selectionStore.selectedFileIds.has(file.id)}
 					replicationStatus={replicationStatuses[file.id]}
-					onSelect={(e) => selectionMode ? handleFileToggle(file, e) : onFileClick(file)}
+					onSelect={() => onFileClick(file)}
 					onToggleSelect={() => handleFileToggle(file)}
+					onNavigate={() => {}}
 					onRename={() => onRenameFile(file)}
 					onDelete={() => onDeleteFile(file)}
 					onShare={() => onShareFile(file)}

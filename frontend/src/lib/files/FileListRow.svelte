@@ -1,12 +1,11 @@
 <script lang="ts">
 	import type { File as FileType, Folder } from '$lib/api/types';
 	import type { ReplicationStatus } from '$lib/stores/replication';
-	import { formatFileSize, formatDate } from '$lib/utils/format';
+	import { formatFileSize, formatDate, getFileTypeLabel } from '$lib/utils/format';
 	import FilePreview from './FilePreview.svelte';
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
 	import { replicationStateBadgeClass, formatReplicationStateLabel } from '$lib/stores/replication';
 	import { MoreVertical, Edit, Trash2, Share2, Move, Download, History, RefreshCw } from 'lucide-svelte';
-	import { createEventDispatcher } from 'svelte';
 
 	export let item: FileType | Folder;
 	export let isFolder: boolean;
@@ -14,7 +13,17 @@
 	export let selected: boolean = false;
 	export let replicationStatus: ReplicationStatus | null = null;
 
-	const dispatch = createEventDispatcher();
+	// Event handlers (callback props)
+	export let onSelect: (e?: MouseEvent) => void = () => {};
+	export let onToggleSelect: () => void = () => {};
+	export let onNavigate: () => void = () => {};
+	export let onRename: () => void = () => {};
+	export let onDelete: () => void = () => {};
+	export let onShare: () => void = () => {};
+	export let onMove: () => void = () => {};
+	export let onDownload: () => void = () => {};
+	export let onVersionHistory: () => void = () => {};
+	export let onReplace: () => void = () => {};
 
 	$: fileItem = isFolder ? null : (item as FileType);
 	$: folderItem = isFolder ? (item as Folder) : null;
@@ -24,27 +33,36 @@
 	);
 	$: mimeType = fileItem?.mime_type || '';
 	$: fileName = item?.name || '';
+	$: fileTypeLabel = isFolder ? 'Folder' : getFileTypeLabel(mimeType, fileName);
 
 	let showActions = false;
 	let actionMenuRef: HTMLDivElement;
 
 	function handleClick(e: MouseEvent) {
-		dispatch('select', e);
+		if (!selectionMode) {
+			if (isFolder) {
+				onNavigate();
+			} else {
+				onSelect(e);
+			}
+		} else {
+			onSelect(e);
+		}
 	}
 
 	function handleToggle(e: Event) {
 		e.stopPropagation();
-		dispatch('toggleSelect');
+		onToggleSelect();
 	}
 
 	function handleNavigate(e: MouseEvent) {
 		e.stopPropagation();
-		dispatch('navigate');
+		onNavigate();
 	}
 
-	function handleAction(e: Event, action: string) {
+	function handleAction(e: Event, action: () => void) {
 		e.stopPropagation();
-		dispatch(action);
+		action();
 		showActions = false;
 	}
 
@@ -108,11 +126,7 @@
 	</td>
 	<td class="px-4 py-3 hidden md:table-cell">
 		<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-base-200 text-base-content/70">
-			{#if isFolder}
-				Folder
-			{:else}
-				{mimeType.split('/')[1]?.toUpperCase() || mimeType.split('/')[0]}
-			{/if}
+			{fileTypeLabel}
 		</span>
 	</td>
 	<td class="px-4 py-3 text-sm text-base-content/60 hidden sm:table-cell">{displaySize}</td>
@@ -135,7 +149,7 @@
 					<button
 						type="button"
 						class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-						on:click={(e) => handleAction(e, 'rename')}
+						on:click={(e) => handleAction(e, onRename)}
 					>
 						<Edit size={14} />
 						Rename
@@ -143,7 +157,7 @@
 					<button
 						type="button"
 						class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-						on:click={(e) => handleAction(e, 'share')}
+						on:click={(e) => handleAction(e, onShare)}
 					>
 						<Share2 size={14} />
 						Share
@@ -152,7 +166,7 @@
 						<button
 							type="button"
 							class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-							on:click={(e) => handleAction(e, 'download')}
+							on:click={(e) => handleAction(e, onDownload)}
 						>
 							<Download size={14} />
 							Download
@@ -160,7 +174,7 @@
 						<button
 							type="button"
 							class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-							on:click={(e) => handleAction(e, 'versionHistory')}
+							on:click={(e) => handleAction(e, onVersionHistory)}
 						>
 							<History size={14} />
 							Version history
@@ -169,7 +183,7 @@
 					<button
 						type="button"
 						class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-						on:click={(e) => handleAction(e, 'move')}
+						on:click={(e) => handleAction(e, onMove)}
 					>
 						<Move size={14} />
 						Move
@@ -178,7 +192,7 @@
 					<button
 						type="button"
 						class="w-full flex items-center gap-2 px-4 py-2 text-sm text-error hover:bg-error/10 transition-colors text-left"
-						on:click={(e) => handleAction(e, 'delete')}
+						on:click={(e) => handleAction(e, onDelete)}
 					>
 						<Trash2 size={14} />
 						Delete

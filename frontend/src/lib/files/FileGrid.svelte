@@ -61,7 +61,8 @@
 				isFolder={true}
 				selected={selectionMode && $selectionStore.selectedFolderIds.has(folder.id)}
 				{selectionMode}
-				onSelect={(e) => selectionMode ? handleFolderToggle(folder, e) : onFolderClick(folder)}
+				onSelect={() => onFolderClick(folder)}
+				onToggle={() => handleFolderToggle(folder)}
 				onRename={() => onRenameFolder(folder)}
 				onDelete={() => onDeleteFolder(folder)}
 				onShare={() => onShareFolder(folder)}
@@ -77,7 +78,8 @@
 				selected={selectionMode && $selectionStore.selectedFileIds.has(file.id)}
 				{selectionMode}
 				replicationStatus={replicationStatuses[file.id]}
-				onSelect={(e) => selectionMode ? handleFileToggle(file, e) : onFileClick(file)}
+				onSelect={() => onFileClick(file)}
+				onToggle={() => handleFileToggle(file)}
 				onRename={() => onRenameFile(file)}
 				onDelete={() => onDeleteFile(file)}
 				onShare={() => onShareFile(file)}

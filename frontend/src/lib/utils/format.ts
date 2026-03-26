@@ -57,3 +57,107 @@ export function getMimeTypeIcon(mimeType: string): string {
 	if (normalized.startsWith('text/')) return '📃';
 	return '📄';
 }
+
+/**
+ * Get a user-friendly file type label from MIME type and filename
+ * Falls back to file extension for unknown/binary types
+ */
+export function getFileTypeLabel(mimeType: string, fileName: string): string {
+	const normalized = mimeType.toLowerCase();
+	const extension = fileName.split('.').pop()?.toLowerCase() || '';
+
+	// Image types
+	if (normalized.startsWith('image/')) {
+		if (normalized.includes('png')) return 'PNG';
+		if (normalized.includes('jpeg') || normalized.includes('jpg')) return 'JPEG';
+		if (normalized.includes('gif')) return 'GIF';
+		if (normalized.includes('svg')) return 'SVG';
+		if (normalized.includes('webp')) return 'WebP';
+		if (normalized.includes('bmp')) return 'BMP';
+		if (normalized.includes('tiff')) return 'TIFF';
+		return 'Image';
+	}
+
+	// Video types
+	if (normalized.startsWith('video/')) {
+		if (normalized.includes('mp4')) return 'MP4';
+		if (normalized.includes('webm')) return 'WebM';
+		if (normalized.includes('avi')) return 'AVI';
+		if (normalized.includes('mov') || normalized.includes('quicktime')) return 'QuickTime';
+		if (normalized.includes('mkv')) return 'MKV';
+		return 'Video';
+	}
+
+	// Audio types
+	if (normalized.startsWith('audio/')) {
+		if (normalized.includes('mpeg') || normalized.includes('mp3')) return 'MP3';
+		if (normalized.includes('wav')) return 'WAV';
+		if (normalized.includes('ogg')) return 'OGG';
+		if (normalized.includes('flac')) return 'FLAC';
+		if (normalized.includes('aac')) return 'AAC';
+		if (normalized.includes('m4a')) return 'M4A';
+		return 'Audio';
+	}
+
+	// Document types
+	if (normalized.includes('pdf')) return 'PDF';
+	if (normalized.includes('msword') || normalized.includes('wordprocessingml') || extension === 'doc' || extension === 'docx') {
+		return 'Word';
+	}
+	if (normalized.includes('ms-excel') || normalized.includes('spreadsheetml') || extension === 'xls' || extension === 'xlsx') {
+		return 'Excel';
+	}
+	if (normalized.includes('ms-powerpoint') || normalized.includes('presentationml') || extension === 'ppt' || extension === 'pptx') {
+		return 'PowerPoint';
+	}
+	if (normalized.includes('openxmlformats-officedocument')) {
+		if (extension === 'docx') return 'Word';
+		if (extension === 'xlsx') return 'Excel';
+		if (extension === 'pptx') return 'PowerPoint';
+	}
+
+	// Text types
+	if (normalized.startsWith('text/')) {
+		if (normalized.includes('html')) return 'HTML';
+		if (normalized.includes('css')) return 'CSS';
+		if (normalized.includes('javascript')) return 'JavaScript';
+		if (normalized.includes('json')) return 'JSON';
+		if (normalized.includes('xml')) return 'XML';
+		if (normalized.includes('markdown') || extension === 'md') return 'Markdown';
+		if (normalized.includes('plain')) return 'Text';
+		return 'Text';
+	}
+
+	// Archive types
+	if (normalized.includes('zip') || normalized.includes('tar') || normalized.includes('gzip') || normalized.includes('archive') || normalized.includes('compressed')) {
+		if (extension === 'zip') return 'ZIP';
+		if (extension === 'tar') return 'TAR';
+		if (extension === 'gz' || extension === 'tgz') return 'GZIP';
+		if (extension === 'rar') return 'RAR';
+		if (extension === '7z') return '7Z';
+		return 'Archive';
+	}
+
+	// Code types
+	if (normalized.includes('javascript') || extension === 'js' || extension === 'jsx') return 'JavaScript';
+	if (normalized.includes('typescript') || extension === 'ts' || extension === 'tsx') return 'TypeScript';
+	if (normalized.includes('json')) return 'JSON';
+	if (normalized.includes('xml')) return 'XML';
+	if (normalized.includes('sql')) return 'SQL';
+
+	// Fallback to extension for binary/unknown types
+	if (normalized.includes('octet-stream') || normalized.includes('binary')) {
+		if (extension) return extension.toUpperCase();
+	}
+
+	// Try to get subtype as last resort
+	const subtype = mimeType.split('/')[1];
+	if (subtype && subtype !== 'octet-stream') {
+		return subtype.toUpperCase();
+	}
+
+	// Final fallback to extension
+	if (extension) return extension.toUpperCase();
+
+	return 'File';
+}
