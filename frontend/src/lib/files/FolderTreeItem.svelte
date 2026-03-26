@@ -13,7 +13,9 @@
 	$: isSelected = $folderTreeStore.selectedId === folder.id;
 	$: isLoading = $folderTreeStore.loadingIds.has(folder.id);
 	$: hasChildren = folder.children && folder.children.length > 0;
-	$: canExpand = folder.has_children || hasChildren;
+	$: hasNoChildren = folder.children !== undefined && (!folder.children || folder.children.length === 0);
+	// Show expand button if: we have children, or we haven't checked yet (children undefined)
+	$: canExpand = hasChildren || !hasNoChildren;
 
 	const paddingLeft = level * 12 + 8;
 
@@ -22,6 +24,7 @@
 	}
 
 	function handleToggle(e: MouseEvent) {
+		e.preventDefault();
 		e.stopPropagation();
 		onToggleExpand(folder);
 	}
@@ -49,10 +52,11 @@
 		<!-- Expand/Collapse Button -->
 		<button
 			type="button"
-			class="w-5 h-5 flex items-center justify-center rounded hover:bg-base-300/50 transition-colors
+			class="w-6 h-6 flex items-center justify-center rounded hover:bg-base-300/50 transition-colors flex-shrink-0
 				{canExpand ? 'opacity-100' : 'opacity-0 pointer-events-none'}"
-			on:click={handleToggle}
+			on:click|preventDefault|stopPropagation={handleToggle}
 			aria-label={isExpanded ? 'Collapse folder' : 'Expand folder'}
+			disabled={!canExpand}
 		>
 			{#if isLoading}
 				<div class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
