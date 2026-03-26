@@ -20,6 +20,9 @@
 	// Determine sidebar variant based on route
 	$: sidebarVariant = $page.url.pathname.startsWith('/files') ? 'files' : 'default';
 
+	// Check if this is the files page (needs full-height layout)
+	$: isFilesPage = $page.url.pathname === '/files';
+
 	// Clear search when navigating away from files page
 	$: if (!showSearch) {
 		searchQuery.set('');
@@ -35,7 +38,15 @@
 	onSearchChange={showSearch ? handleSearchChange : null}
 	sidebarVariant={sidebarVariant}
 >
-	<div class="p-4 lg:p-6 max-w-7xl mx-auto">
-		<slot />
-	</div>
+	{#if isFilesPage}
+		<!-- Files page needs full-height layout -->
+		<div class="h-[calc(100vh-3.5rem)]">
+			<slot />
+		</div>
+	{:else}
+		<!-- Other pages use standard padding -->
+		<div class="p-4 lg:p-6 max-w-7xl mx-auto">
+			<slot />
+		</div>
+	{/if}
 </AppShell>

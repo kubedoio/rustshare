@@ -10,6 +10,7 @@
 	export let showSearch = false;
 	export let onSearchChange: ((query: string) => void) | null = null;
 	export let sidebarCollapsed = false;
+	export let hideSidebarToggle = false;
 
 	let searchQuery = '';
 	let userMenuOpen = false;
@@ -63,20 +64,22 @@
 		</button>
 
 		<!-- Sidebar toggle (desktop) -->
-		<button
-			type="button"
-			class="hidden lg:flex p-2 -ml-2 text-base-content/60 hover:text-base-content hover:bg-base-200 rounded-lg transition-colors"
-			on:click={onSidebarToggle}
-			aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-		>
-			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
-				{#if sidebarCollapsed}
-					<path d="m9 18 6-6-6-6"/>
-				{:else}
-					<path d="m15 18-6-6 6-6"/>
-				{/if}
-			</svg>
-		</button>
+		{#if !hideSidebarToggle}
+			<button
+				type="button"
+				class="hidden lg:flex p-2 -ml-2 text-base-content/60 hover:text-base-content hover:bg-base-200 rounded-lg transition-colors"
+				on:click={onSidebarToggle}
+				aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+			>
+				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
+					{#if sidebarCollapsed}
+						<path d="m9 18 6-6-6-6"/>
+					{:else}
+						<path d="m15 18-6-6 6-6"/>
+					{/if}
+				</svg>
+			</button>
+		{/if}
 
 		<!-- Page title / breadcrumbs -->
 		<div class="hidden sm:flex items-center text-sm">

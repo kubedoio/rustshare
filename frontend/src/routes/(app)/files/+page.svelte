@@ -5,19 +5,16 @@
 	import { getFolderContents, createFolder, renameFolder, deleteFolder, moveFolder } from '$lib/api/folders';
 	import { queryClient } from '$lib/query-client';
 	import { searchQuery } from '$lib/stores/search';
-	import { fileSortState, setSortField, setSortOrder } from '$lib/stores/fileSort';
+	import { fileSortState } from '$lib/stores/fileSort';
 	import { selectionStore, selectionCount, hasSelection } from '$lib/stores/selection';
 	import { activityStore } from '$lib/stores/activity';
 	import { replicationStore, type ReplicationStatus } from '$lib/stores/replication';
 	import type { File, Folder } from '$lib/api/types';
 	import type { WebSocketEvent } from '$lib/websocket/events';
+	import type { FolderNode } from '$lib/stores/folderTree';
 
 	// Components
-	import FileToolbar from '$lib/files/FileToolbar.svelte';
-	import FileTable from '$lib/files/FileTable.svelte';
-	import FileGrid from '$lib/components/files/FileGrid.svelte';
-	import FileGridSkeleton from '$lib/components/files/FileGridSkeleton.svelte';
-	import Breadcrumbs from '$lib/components/layout/Breadcrumbs.svelte';
+	import FileExplorer from '$lib/files/FileExplorer.svelte';
 	import DropZone from '$lib/components/files/DropZone.svelte';
 	import UploadProgress from '$lib/components/files/UploadProgress.svelte';
 	import Toast from '$lib/components/common/Toast.svelte';
@@ -86,6 +83,7 @@
 		mutationFn: (file: globalThis.File) => uploadFile(currentFolderId, file),
 		onSuccess: (_, file) => {
 			queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
 			activityStore.addActivity('file_uploaded', file.name);
 		}
 	});
@@ -94,6 +92,7 @@
 		mutationFn: (name: string) => createFolder(name, currentFolderId),
 		onSuccess: (folder) => {
 			queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
 			showCreateFolderModal = false;
 			showNotification('Folder created', 'success');
 			activityStore.addActivity('folder_created', folder.name);
@@ -119,7 +118,8 @@
 		mutationFn: ({ folderId, newName }: { folderId: string; newName: string }) => renameFolder(folderId, newName),
 		onSuccess: (_, { newName }) => {
 			const oldName = renameTarget?.name || 'Folder';
-			queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+			queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
 			showRenameModal = false;
 			renameTarget = null;
 			showNotification('Folder renamed', 'success');
@@ -143,7 +143,8 @@
 		mutationFn: (folderId: string) => deleteFolder(folderId),
 		onSuccess: () => {
 			const folderName = deleteTarget?.name || 'Folder';
-			queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+			queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
 			showDeleteModal = false;
 			deleteTarget = null;
 			showNotification('Folder deleted', 'success');
@@ -156,6 +157,7 @@
 		onSuccess: () => {
 			const fileName = moveTarget?.name || 'File';
 			queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
 			showMoveModal = false;
 			moveTarget = null;
 			showNotification('File moved', 'success');
@@ -168,6 +170,7 @@
 		onSuccess: () => {
 			const folderName = moveTarget?.name || 'Folder';
 			queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
 			showMoveModal = false;
 			moveTarget = null;
 			showNotification('Folder moved', 'success');
@@ -215,6 +218,11 @@
 	});
 
 	// Handlers
+	function handleFolderSelect(folderId: string | null, path: Folder[]) {
+		currentFolderId = folderId;
+		folderPath = path;
+	}
+
 	function handleFolderClick(folder: Folder) {
 		currentFolderId = folder.id;
 		folderPath = [...folderPath, folder];
@@ -320,6 +328,7 @@
 			selectionStore.clear();
 			selectionMode = false;
 			queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
 			showNotification(`Deleted ${fileIds.length + folderIds.length} item(s)`, 'success');
 		} catch (error) {
 			showNotification('Failed to delete some items', 'error');
@@ -511,106 +520,39 @@
 <svelte:window on:keydown={handleKeyDown} />
 
 <DropZone on:filesDropped={(e) => handleFilesSelected(e.detail)} disabled={isUploading}>
-	<div class="space-y-6">
-		<!-- Breadcrumbs -->
-		<Breadcrumbs {folderPath} on:navigate={handleBreadcrumbNavigate} />
-
-		<!-- Toolbar -->
-		<FileToolbar
-			{selectionMode}
-			{isUploading}
-			onToggleSelection={toggleSelectionMode}
-			onSelectAll={handleSelectAll}
-			onDeselectAll={handleDeselectAll}
-			onBulkDelete={handleBulkDelete}
-			onNewFolder={() => showCreateFolderModal = true}
-			onUpload={() => document.getElementById('upload-file-input')?.click()}
-		/>
-
-		<!-- File List -->
-		{#if $filesQuery.isLoading}
-			<FileGridSkeleton count={8} />
-		{:else if $filesQuery.isError}
-			<div class="flex flex-col items-center justify-center py-16 text-center">
-				<div class="w-16 h-16 rounded-2xl bg-error/10 flex items-center justify-center mb-4">
-					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-8 h-8 text-error">
-						<circle cx="12" cy="12" r="10"/>
-						<line x1="12" x2="12" y1="8" y2="12"/>
-						<line x1="12" x2="12.01" y1="16" y2="16"/>
-					</svg>
-				</div>
-				<h3 class="text-lg font-semibold text-base-content mb-1">Failed to load files</h3>
-				<p class="text-sm text-base-content/60 mb-4">{$filesQuery.error?.message || 'Unknown error'}</p>
-				<button
-					type="button"
-					class="px-4 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors"
-					on:click={() => $filesQuery.refetch()}
-				>
-					Try again
-				</button>
-			</div>
-		{:else if $searchQuery && sortedFiles.length === 0 && sortedFolders.length === 0}
-			<div class="flex flex-col items-center justify-center py-16 text-center">
-				<div class="w-16 h-16 rounded-2xl bg-base-200 flex items-center justify-center mb-4">
-					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-8 h-8 text-base-content/30">
-						<circle cx="11" cy="11" r="8"/>
-						<path d="m21 21-4.3-4.3"/>
-					</svg>
-				</div>
-				<h3 class="text-lg font-semibold text-base-content mb-1">No results found</h3>
-				<p class="text-sm text-base-content/60 mb-4">No files or folders match "{$searchQuery}"</p>
-				<button
-					type="button"
-					class="px-4 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors"
-					on:click={() => searchQuery.set('')}
-				>
-					Clear search
-				</button>
-			</div>
-		{:else}
-			{#if $fileSortState.viewMode === 'grid'}
-				<FileGrid
-					folders={sortedFolders}
-					files={sortedFiles}
-					{replicationStatuses}
-					{selectionMode}
-					onFolderClick={handleFolderClick}
-					onFileClick={handleFileClick}
-					onRenameFolder={handleRenameFolder}
-					onDeleteFolder={handleDeleteFolder}
-					onShareFolder={handleShareFolder}
-					onMoveFolder={handleMoveFolder}
-					onRenameFile={handleRenameFile}
-					onDeleteFile={handleDeleteFile}
-					onMoveFile={handleMoveFile}
-					onDownloadFile={handleDownloadFile}
-					onReplaceFile={handleReplaceFile}
-					onShareFile={handleShareFile}
-					onVersionHistory={handleVersionHistory}
-				/>
-			{:else}
-				<FileTable
-					folders={sortedFolders}
-					files={sortedFiles}
-					{replicationStatuses}
-					{selectionMode}
-					onFolderClick={handleFolderClick}
-					onFileClick={handleFileClick}
-					onRenameFolder={handleRenameFolder}
-					onDeleteFolder={handleDeleteFolder}
-					onShareFolder={handleShareFolder}
-					onMoveFolder={handleMoveFolder}
-					onRenameFile={handleRenameFile}
-					onDeleteFile={handleDeleteFile}
-					onMoveFile={handleMoveFile}
-					onDownloadFile={handleDownloadFile}
-					onReplaceFile={handleReplaceFile}
-					onShareFile={handleShareFile}
-					onVersionHistory={handleVersionHistory}
-				/>
-			{/if}
-		{/if}
-	</div>
+	<FileExplorer
+		folders={sortedFolders}
+		files={sortedFiles}
+		{currentFolderId}
+		{folderPath}
+		isLoading={$filesQuery.isLoading}
+		error={$filesQuery.error}
+		{replicationStatuses}
+		{selectionMode}
+		{isUploading}
+		onFolderSelect={handleFolderSelect}
+		onFolderClick={handleFolderClick}
+		onFileClick={handleFileClick}
+		onRefresh={() => $filesQuery.refetch()}
+		onNewFolder={() => showCreateFolderModal = true}
+		onUpload={() => document.getElementById('upload-file-input')?.click()}
+		onToggleSelection={toggleSelectionMode}
+		onSelectAll={handleSelectAll}
+		onDeselectAll={handleDeselectAll}
+		onBulkDelete={handleBulkDelete}
+		onRenameFile={handleRenameFile}
+		onDeleteFile={handleDeleteFile}
+		onShareFile={handleShareFile}
+		onVersionHistory={handleVersionHistory}
+		onMoveFile={handleMoveFile}
+		onDownloadFile={handleDownloadFile}
+		onReplaceFile={handleReplaceFile}
+		onRenameFolder={handleRenameFolder}
+		onDeleteFolder={handleDeleteFolder}
+		onShareFolder={handleShareFolder}
+		onMoveFolder={handleMoveFolder}
+		on:breadcrumbNavigate={handleBreadcrumbNavigate}
+	/>
 </DropZone>
 
 <!-- Upload Progress -->

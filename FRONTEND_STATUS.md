@@ -65,9 +65,23 @@ The current frontend should be described as:
 - websocket-driven invalidation and toasts
 - clickable realtime toasts that open the correct shared resource
 
+## Implemented (continued)
+
+### Settings
+
+- tabbed settings interface (General, Security, Notifications, Devices, Appearance, Sharing)
+- profile editing within settings
+- password change with validation
+- active sessions management (view and revoke)
+- device pairing (approve via pairing code)
+- connected devices management
+- theme selection (Light, Dark, System)
+- notification preferences UI (email and in-app)
+- sharing defaults configuration
+- responsive layout for mobile/desktop
+
 ## Still Partial
 
-- some account-management surfaces in settings remain lighter than a full production account console
 - deeper admin/operator dashboards are not a frontend focus yet
 - the mobile client does not exist yet, so responsive web support is not the same as a native mobile product
 

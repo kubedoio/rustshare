@@ -1,0 +1,125 @@
+<script lang="ts">
+	import type { File as FileType, Folder } from '$lib/api/types';
+	import type { ReplicationStatus } from '$lib/stores/replication';
+	import { selectionStore } from '$lib/stores/selection';
+	import FileListRow from './FileListRow.svelte';
+
+	export let folders: Folder[] = [];
+	export let files: FileType[] = [];
+	export let onFolderClick: (folder: Folder) => void;
+	export let onFileClick: (file: FileType) => void;
+	export let onRenameFolder: (folder: Folder) => void = () => {};
+	export let onDeleteFolder: (folder: Folder) => void = () => {};
+	export let onShareFolder: (folder: Folder) => void = () => {};
+	export let onMoveFolder: (folder: Folder) => void = () => {};
+	export let onRenameFile: (file: FileType) => void = () => {};
+	export let onDeleteFile: (file: FileType) => void = () => {};
+	export let onShareFile: (file: FileType) => void = () => {};
+	export let onVersionHistory: (file: FileType) => void = () => {};
+	export let onMoveFile: (file: FileType) => void = () => {};
+	export let onDownloadFile: (file: FileType) => void = () => {};
+	export let onReplaceFile: (file: FileType) => void = () => {};
+	export let selectionMode = false;
+	export let replicationStatuses: Record<string, ReplicationStatus> = {};
+
+	function handleFileToggle(file: FileType, event?: MouseEvent) {
+		const isShiftKey = event?.shiftKey ?? false;
+		const allFileIds = files.map(f => f.id);
+		selectionStore.toggleFile(file.id, isShiftKey, allFileIds);
+	}
+
+	function handleFolderToggle(folder: Folder, event?: MouseEvent) {
+		const isShiftKey = event?.shiftKey ?? false;
+		const allFolderIds = folders.map(f => f.id);
+		selectionStore.toggleFolder(folder.id, isShiftKey, allFolderIds);
+	}
+
+	function handleSelectAll() {
+		selectionStore.selectAll(files, folders);
+	}
+
+	$: allSelected = folders.length + files.length > 0 && 
+		$selectionStore.selectedFolderIds.size + $selectionStore.selectedFileIds.size === folders.length + files.length;
+</script>
+
+<div class="bg-base-100 rounded-xl border border-base-300 overflow-hidden">
+	<table class="w-full">
+		<thead>
+			<tr class="border-b border-base-300 bg-base-200/50">
+				<th class="w-10 px-4 py-3 text-left">
+					{#if selectionMode}
+						<input
+							type="checkbox"
+							class="w-4 h-4 rounded border-base-300 text-brand-500 focus:ring-brand-500 bg-base-100"
+							checked={allSelected}
+							on:change={handleSelectAll}
+						/>
+					{/if}
+				</th>
+				<th class="w-12 px-2 py-3 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider">Preview</th>
+				<th class="px-4 py-3 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider">Name</th>
+				<th class="px-4 py-3 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider hidden md:table-cell">Type</th>
+				<th class="px-4 py-3 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider hidden sm:table-cell">Size</th>
+				<th class="px-4 py-3 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider hidden lg:table-cell">Modified</th>
+				<th class="w-10 px-4 py-3"></th>
+			</tr>
+		</thead>
+		<tbody class="divide-y divide-base-300">
+			<!-- Folders -->
+			{#each folders as folder (folder.id)}
+				<FileListRow
+					item={folder}
+					isFolder={true}
+					{selectionMode}
+					selected={$selectionStore.selectedFolderIds.has(folder.id)}
+					onSelect={(e) => selectionMode ? handleFolderToggle(folder, e) : onFolderClick(folder)}
+					onToggleSelect={() => handleFolderToggle(folder)}
+					onRename={() => onRenameFolder(folder)}
+					onDelete={() => onDeleteFolder(folder)}
+					onShare={() => onShareFolder(folder)}
+					onMove={() => onMoveFolder(folder)}
+					onNavigate={() => onFolderClick(folder)}
+				/>
+			{/each}
+
+			<!-- Files -->
+			{#each files as file (file.id)}
+				<FileListRow
+					item={file}
+					isFolder={false}
+					{selectionMode}
+					selected={$selectionStore.selectedFileIds.has(file.id)}
+					replicationStatus={replicationStatuses[file.id]}
+					onSelect={(e) => selectionMode ? handleFileToggle(file, e) : onFileClick(file)}
+					onToggleSelect={() => handleFileToggle(file)}
+					onRename={() => onRenameFile(file)}
+					onDelete={() => onDeleteFile(file)}
+					onShare={() => onShareFile(file)}
+					onMove={() => onMoveFile(file)}
+					onDownload={() => onDownloadFile(file)}
+					onVersionHistory={() => onVersionHistory(file)}
+					onReplace={() => onReplaceFile(file)}
+				/>
+			{/each}
+		</tbody>
+	</table>
+
+	{#if folders.length === 0 && files.length === 0}
+		<div class="flex flex-col items-center justify-center py-16 text-center">
+			<div class="w-16 h-16 rounded-2xl bg-base-200 flex items-center justify-center mb-4">
+				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-8 h-8 text-base-content/30">
+					<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+				</svg>
+			</div>
+			<h3 class="text-lg font-semibold text-base-content mb-1">No files yet</h3>
+			<p class="text-sm text-base-content/60 mb-4">Upload your first file to get started</p>
+			<button
+				type="button"
+				class="px-4 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors"
+				on:click={() => document.getElementById('upload-file-input')?.click()}
+			>
+				Upload files
+			</button>
+		</div>
+	{/if}
+</div>

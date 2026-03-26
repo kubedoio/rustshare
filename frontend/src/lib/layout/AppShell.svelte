@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
 	import { authStore } from '$lib/stores/auth';
 	import { showKeyboardShortcuts } from '$lib/stores/ui';
 	import LeftRail from './LeftRail.svelte';
@@ -16,6 +17,9 @@
 	let checkComplete = false;
 	let mobileMenuOpen = false;
 	let sidebarCollapsed = false;
+
+	// Check if we're on the files page - hide secondary sidebar there
+	$: isFilesPage = $page.url.pathname === '/files';
 
 	onMount(() => {
 		// Check if sidebar should be collapsed (saved preference)
@@ -55,13 +59,15 @@
 			<!-- Far Left Icon Rail -->
 			<LeftRail />
 
-			<!-- Secondary Sidebar -->
-			<SidebarNav 
-				variant={sidebarVariant}
-				collapsed={sidebarCollapsed}
-				mobileOpen={mobileMenuOpen}
-				onClose={closeMobileMenu}
-			/>
+			<!-- Secondary Sidebar - Hidden on files page -->
+			{#if !isFilesPage}
+				<SidebarNav 
+					variant={sidebarVariant}
+					collapsed={sidebarCollapsed}
+					mobileOpen={mobileMenuOpen}
+					onClose={closeMobileMenu}
+				/>
+			{/if}
 
 			<!-- Main Content Area -->
 			<div class="flex-1 flex flex-col min-w-0">
@@ -71,6 +77,7 @@
 					{showSearch}
 					{onSearchChange}
 					sidebarCollapsed={sidebarCollapsed}
+					hideSidebarToggle={isFilesPage}
 				/>
 
 				<main class="flex-1 overflow-auto bg-base-100">

@@ -262,8 +262,8 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
                 }
             }
         } else {
-            // Share viewers don't support catch-up, skip the wait
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            // Share viewers don't support catch-up, abort the recv_task and continue
+            recv_task.abort();
         }
 
         // Stream live events
