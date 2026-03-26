@@ -243,7 +243,7 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
                                     for event in events {
                                         if let Ok(message) = event_to_sync_message(&event, &metadata_store).await {
                                             if let Ok(json) = serde_json::to_string(&message) {
-                                                if sender.send(Message::Text(json)).await.is_err() {
+                                                if sender.send(Message::Text(json.into())).await.is_err() {
                                                     return;
                                                 }
                                             }
@@ -283,7 +283,7 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
                             match event_to_sync_message(&event, &metadata_store).await {
                                 Ok(message) => {
                                     if let Ok(json) = serde_json::to_string(&message) {
-                                        if sender.send(Message::Text(json)).await.is_err() {
+                                        if sender.send(Message::Text(json.into())).await.is_err() {
                                             break;
                                         }
                                     }
@@ -308,7 +308,7 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
                         message: "Too many events, please sync".to_string(),
                     };
                     if let Ok(json) = serde_json::to_string(&lagged) {
-                        if sender.send(Message::Text(json)).await.is_err() {
+                        if sender.send(Message::Text(json.into())).await.is_err() {
                             break;
                         }
                     }

@@ -1,7 +1,6 @@
 //! Authentication extractors for JWT token validation.
 
 use axum::{
-    async_trait,
     extract::FromRequestParts,
     http::{request::Parts, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -136,7 +135,6 @@ pub struct AuthenticatedSession {
     pub session_id: Option<Uuid>,
 }
 
-#[async_trait]
 impl FromRequestParts<AppState> for AuthenticatedUser {
     type Rejection = Response;
 
@@ -170,7 +168,6 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
     }
 }
 
-#[async_trait]
 impl FromRequestParts<AppState> for AuthenticatedSession {
     type Rejection = Response;
 
@@ -215,7 +212,6 @@ impl FromRequestParts<AppState> for AuthenticatedSession {
 #[derive(Debug, Clone)]
 pub struct ShareSessionAuth(pub ShareSessionClaims);
 
-#[async_trait]
 impl FromRequestParts<AppState> for ShareSessionAuth {
     type Rejection = Response;
 
@@ -268,7 +264,6 @@ pub struct AdminUser {
     pub user_id: Uuid,
 }
 
-#[async_trait]
 impl FromRequestParts<AppState> for AdminUser {
     type Rejection = Response;
 
