@@ -3352,6 +3352,7 @@ dependencies = [
  "hex",
  "hmac",
  "image",
+ "mime_guess",
  "nonzero_ext",
  "openidconnect",
  "rand 0.8.5",

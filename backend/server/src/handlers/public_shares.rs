@@ -243,6 +243,13 @@ async fn parse_upload_multipart(
         super::file_error_response(FileError::InvalidName("Missing file name".to_string()))
     })?;
 
+    // If mime_type is generic or not provided, guess from file extension
+    if mime_type == "application/octet-stream" {
+        mime_type = mime_guess::from_path(&file_name)
+            .first_or_octet_stream()
+            .to_string();
+    }
+
     Ok((
         file_data,
         file_name,

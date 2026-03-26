@@ -129,7 +129,9 @@
 			</button>
 			
 			{#if showActions}
-				<div class="absolute right-0 top-full mt-1 w-44 bg-base-100 rounded-xl shadow-lg shadow-black/20 border border-base-300 py-1 z-50">
+				<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+				<div class="absolute right-0 top-full mt-1 w-44 bg-base-100 rounded-xl shadow-lg shadow-black/20 border border-base-300 py-1 z-50"
+					on:click|stopPropagation>
 					<button
 						type="button"
 						class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"

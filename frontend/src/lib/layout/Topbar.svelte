@@ -125,7 +125,7 @@
 	{/if}
 
 	<!-- Right section -->
-	<div class="flex items-center gap-1">
+	<div class="flex items-center gap-2 ml-auto">
 		<!-- WebSocket Status -->
 		<div class="hidden sm:block">
 			<WebSocketStatus />

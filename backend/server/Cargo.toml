@@ -45,6 +45,7 @@ urlencoding = "2.1"
 base64 = { workspace = true }
 rand = { workspace = true }
 image = { version = "0.24", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
+mime_guess = "2.0"
 
 [[test]]
 name = "admin_require_admin_test"

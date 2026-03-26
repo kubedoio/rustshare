@@ -94,8 +94,10 @@ pub async fn upload_file(
         file_error_response(FileError::InvalidName("Missing file name".to_string()))
     })?;
 
-    // Detect MIME type (simple version - can be enhanced)
-    let mime_type = "application/octet-stream".to_string(); // TODO: Implement proper MIME detection
+    // Detect MIME type from file extension
+    let mime_type = mime_guess::from_path(&file_name)
+        .first_or_octet_stream()
+        .to_string();
 
     // Upload file
     let file = state
