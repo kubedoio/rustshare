@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import { previewFile } from '$lib/api/files';
+	import { previewFile, downloadFile } from '$lib/api/files';
 	import type { File } from '$lib/api/types';
 	import { formatFileSize } from '$lib/utils/format';
 
@@ -79,8 +79,15 @@
 	}
 
 	async function handleDownload() {
-		if (!file || !previewUrl) return;
-		window.open(previewUrl, '_blank');
+		if (!file) return;
+		const response = await downloadFile(file.id);
+		let downloadUrl = response.url;
+		// Handle storage URL rewrite if needed
+		if (downloadUrl.includes('/rustshare-files/')) {
+			const path = downloadUrl.split('/rustshare-files/')[1];
+			downloadUrl = `/storage/${path}`;
+		}
+		window.open(downloadUrl, '_blank');
 	}
 </script>
 

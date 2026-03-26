@@ -39,8 +39,8 @@
 	sidebarVariant={sidebarVariant}
 >
 	{#if isFilesPage}
-		<!-- Files page needs full-height layout -->
-		<div class="h-[calc(100vh-3.5rem)]">
+		<!-- Files page uses full-height layout without padding -->
+		<div class="h-full">
 			<slot />
 		</div>
 	{:else}

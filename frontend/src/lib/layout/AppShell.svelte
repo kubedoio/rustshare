@@ -18,9 +18,6 @@
 	let mobileMenuOpen = false;
 	let sidebarCollapsed = false;
 
-	// Check if we're on the files page - hide secondary sidebar there
-	$: isFilesPage = $page.url.pathname === '/files';
-
 	onMount(() => {
 		// Check if sidebar should be collapsed (saved preference)
 		if (browser) {
@@ -59,15 +56,13 @@
 			<!-- Far Left Icon Rail -->
 			<LeftRail />
 
-			<!-- Secondary Sidebar - Hidden on files page -->
-			{#if !isFilesPage}
-				<SidebarNav 
-					variant={sidebarVariant}
-					collapsed={sidebarCollapsed}
-					mobileOpen={mobileMenuOpen}
-					onClose={closeMobileMenu}
-				/>
-			{/if}
+			<!-- Secondary Sidebar -->
+			<SidebarNav 
+				variant={sidebarVariant}
+				collapsed={sidebarCollapsed}
+				mobileOpen={mobileMenuOpen}
+				onClose={closeMobileMenu}
+			/>
 
 			<!-- Main Content Area -->
 			<div class="flex-1 flex flex-col min-w-0">
@@ -77,7 +72,6 @@
 					{showSearch}
 					{onSearchChange}
 					sidebarCollapsed={sidebarCollapsed}
-					hideSidebarToggle={isFilesPage}
 				/>
 
 				<main class="flex-1 overflow-auto bg-base-100">
