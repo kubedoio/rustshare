@@ -335,30 +335,30 @@ async fn main() -> Result<()> {
             get(handlers::devices::list_devices),
         )
         .route(
-            "/api/v1/user/devices/:id",
+            "/api/v1/user/devices/{id}",
             delete(handlers::devices::revoke_device),
         )
         // File routes (Task 15-19)
         .route("/api/v1/files", get(handlers::list_files))
         .route("/api/v1/files/upload", post(handlers::upload_file))
-        .route("/api/v1/files/:id", get(handlers::get_file))
-        .route("/api/v1/files/:id", put(handlers::update_file))
-        .route("/api/v1/files/:id", delete(handlers::delete_file))
-        .route("/api/v1/files/:id/download", get(handlers::download_file))
-        .route("/api/v1/files/:id/content", get(handlers::download_file_content))
-        .route("/api/v1/files/:id/preview", get(handlers::preview_file))
+        .route("/api/v1/files/{id}", get(handlers::get_file))
+        .route("/api/v1/files/{id}", put(handlers::update_file))
+        .route("/api/v1/files/{id}", delete(handlers::delete_file))
+        .route("/api/v1/files/{id}/download", get(handlers::download_file))
+        .route("/api/v1/files/{id}/content", get(handlers::download_file_content))
+        .route("/api/v1/files/{id}/preview", get(handlers::preview_file))
         .route(
-            "/api/v1/files/:id/versions",
+            "/api/v1/files/{id}/versions",
             get(handlers::get_file_versions),
         )
         .route(
-            "/api/v1/files/:id/restore",
+            "/api/v1/files/{id}/restore",
             post(handlers::restore_file_version),
         )
-        .route("/api/v1/files/:id/move", post(handlers::move_file))
-        .route("/api/v1/files/:id/rename", post(handlers::rename_file))
+        .route("/api/v1/files/{id}/move", post(handlers::move_file))
+        .route("/api/v1/files/{id}/rename", post(handlers::rename_file))
         .route(
-            "/api/v1/files/:id/thumbnail",
+            "/api/v1/files/{id}/thumbnail",
             get(handlers::get_file_thumbnail),
         )
         .route(
@@ -375,7 +375,7 @@ async fn main() -> Result<()> {
         )
         // Forward-compatible v1 aliases for new replication visibility endpoints
         .route(
-            "/api/v1/files/:id/replication",
+            "/api/v1/files/{id}/replication",
             get(replication_handlers::get_file_replication_status),
         )
         .route(
@@ -400,23 +400,23 @@ async fn main() -> Result<()> {
             post(handlers::admin::users::create_admin_user),
         )
         .route(
-            "/api/v1/admin/users/:id",
+            "/api/v1/admin/users/{id}",
             get(handlers::admin::users::get_admin_user),
         )
         .route(
-            "/api/v1/admin/users/:id",
+            "/api/v1/admin/users/{id}",
             patch(handlers::admin::users::update_admin_user),
         )
         .route(
-            "/api/v1/admin/users/:id/disable",
+            "/api/v1/admin/users/{id}/disable",
             post(handlers::admin::users::disable_admin_user),
         )
         .route(
-            "/api/v1/admin/users/:id/enable",
+            "/api/v1/admin/users/{id}/enable",
             post(handlers::admin::users::enable_admin_user),
         )
         .route(
-            "/api/v1/admin/users/:id",
+            "/api/v1/admin/users/{id}",
             delete(handlers::admin::users::delete_admin_user),
         )
         // Admin audit log (Task 4)
@@ -434,23 +434,23 @@ async fn main() -> Result<()> {
             post(handlers::admin::groups::create_group),
         )
         .route(
-            "/api/v1/admin/groups/:id",
+            "/api/v1/admin/groups/{id}",
             get(handlers::admin::groups::get_group),
         )
         .route(
-            "/api/v1/admin/groups/:id",
+            "/api/v1/admin/groups/{id}",
             patch(handlers::admin::groups::update_group),
         )
         .route(
-            "/api/v1/admin/groups/:id",
+            "/api/v1/admin/groups/{id}",
             delete(handlers::admin::groups::delete_group),
         )
         .route(
-            "/api/v1/admin/groups/:id/members",
+            "/api/v1/admin/groups/{id}/members",
             post(handlers::admin::groups::add_member),
         )
         .route(
-            "/api/v1/admin/groups/:id/members/:user_id",
+            "/api/v1/admin/groups/{id}/members/{user_id}",
             delete(handlers::admin::groups::remove_member),
         )
         // Admin OIDC/SMTP config
@@ -488,15 +488,15 @@ async fn main() -> Result<()> {
             post(handlers::admin::webhooks::create_webhook),
         )
         .route(
-            "/api/v1/admin/integrations/webhooks/:id",
+            "/api/v1/admin/integrations/webhooks/{id}",
             patch(handlers::admin::webhooks::update_webhook),
         )
         .route(
-            "/api/v1/admin/integrations/webhooks/:id",
+            "/api/v1/admin/integrations/webhooks/{id}",
             delete(handlers::admin::webhooks::delete_webhook),
         )
         .route(
-            "/api/v1/admin/integrations/webhooks/:id/test",
+            "/api/v1/admin/integrations/webhooks/{id}/test",
             post(handlers::admin::webhooks::test_webhook),
         )
         // Folder routes (Task 20-22)
@@ -508,33 +508,33 @@ async fn main() -> Result<()> {
         )
         .route("/api/v1/folders/tree", get(handlers::get_folder_tree))
         .route(
-            "/api/v1/folders/:id/contents",
+            "/api/v1/folders/{id}/contents",
             get(handlers::get_folder_contents),
         )
-        .route("/api/v1/folders/:id/move", post(handlers::move_folder))
-        .route("/api/v1/folders/:id/rename", post(handlers::rename_folder))
-        .route("/api/v1/folders/:id", get(handlers::get_folder))
-        .route("/api/v1/folders/:id", delete(handlers::delete_folder))
+        .route("/api/v1/folders/{id}/move", post(handlers::move_folder))
+        .route("/api/v1/folders/{id}/rename", post(handlers::rename_folder))
+        .route("/api/v1/folders/{id}", get(handlers::get_folder))
+        .route("/api/v1/folders/{id}", delete(handlers::delete_folder))
         // Share routes (Task 9)
         .route(
-            "/api/v1/files/:file_id/shares",
+            "/api/v1/files/{file_id}/shares",
             post(handlers::create_public_file_share),
         )
         .route(
-            "/api/v1/folders/:folder_id/shares",
+            "/api/v1/folders/{folder_id}/shares",
             post(handlers::create_public_folder_share),
         )
         .route(
-            "/api/v1/files/:file_id/shares",
+            "/api/v1/files/{file_id}/shares",
             get(handlers::list_public_file_shares),
         )
         .route(
-            "/api/v1/folders/:folder_id/shares",
+            "/api/v1/folders/{folder_id}/shares",
             get(handlers::list_public_folder_shares),
         )
         .route("/api/v1/shares", get(list_user_shares))
-        .route("/api/v1/shares/:id/access-log", get(get_share_access_log))
-        .route("/api/v1/shares/:id", delete(revoke_share))
+        .route("/api/v1/shares/{id}/access-log", get(get_share_access_log))
+        .route("/api/v1/shares/{id}", delete(revoke_share))
         // User routes
         .route("/api/users/me", get(handlers::get_user_profile))
         .route("/api/v1/users/me", get(handlers::get_user_profile))
@@ -561,15 +561,15 @@ async fn main() -> Result<()> {
             get(handlers::list_user_security_events),
         )
         .route(
-            "/api/users/me/sessions/:id",
+            "/api/users/me/sessions/{id}",
             delete(handlers::delete_user_session),
         )
         .route(
-            "/api/v1/users/me/sessions/:id",
+            "/api/v1/users/me/sessions/{id}",
             delete(handlers::delete_user_session),
         )
         .route(
-            "/api/v1/me/sessions/:id",
+            "/api/v1/me/sessions/{id}",
             delete(handlers::delete_user_session),
         )
         .route(
@@ -596,13 +596,13 @@ async fn main() -> Result<()> {
             post(handlers::upload_avatar).delete(handlers::delete_avatar),
         )
         .route(
-            "/api/v1/users/:id/avatar",
+            "/api/v1/users/{id}/avatar",
             get(handlers::get_avatar),
         )
         // Internal user share routes
-        .route("/api/v1/files/:id/share", post(handlers::create_file_share))
+        .route("/api/v1/files/{id}/share", post(handlers::create_file_share))
         .route(
-            "/api/v1/folders/:id/share",
+            "/api/v1/folders/{id}/share",
             post(handlers::create_folder_share),
         )
         .route(
@@ -610,19 +610,19 @@ async fn main() -> Result<()> {
             get(handlers::list_received_shares),
         )
         .route(
-            "/api/v1/files/:id/recipients",
+            "/api/v1/files/{id}/recipients",
             get(handlers::list_file_recipients),
         )
         .route(
-            "/api/v1/folders/:id/recipients",
+            "/api/v1/folders/{id}/recipients",
             get(handlers::list_folder_recipients),
         )
         .route(
-            "/api/v1/shares/:id/permission",
+            "/api/v1/shares/{id}/permission",
             put(handlers::update_recipient_permission),
         )
         .route(
-            "/api/v1/shares/:id/recipient",
+            "/api/v1/shares/{id}/recipient",
             delete(handlers::remove_recipient),
         )
         .route("/api/v1/notifications", get(handlers::list_notifications))
@@ -631,36 +631,36 @@ async fn main() -> Result<()> {
             get(handlers::count_unread_notifications),
         )
         .route(
-            "/api/v1/notifications/:id/read",
+            "/api/v1/notifications/{id}/read",
             put(handlers::mark_notification_read),
         )
         .route(
-            "/api/v1/notifications/:id",
+            "/api/v1/notifications/{id}",
             delete(handlers::delete_notification),
         )
         // Public share routes (Task 10 - no authentication required for session creation and info)
         .route(
-            "/api/v1/public/share/:token/session",
+            "/api/v1/public/share/{token}/session",
             post(handlers::create_session),
         )
         .route(
-            "/api/v1/public/share/:token/info",
+            "/api/v1/public/share/{token}/info",
             get(handlers::get_share_info),
         )
         .route(
-            "/api/v1/public/share/:token/file",
+            "/api/v1/public/share/{token}/file",
             get(handlers::download_shared_file),
         )
         .route(
-            "/api/v1/public/share/:token/folder/contents",
+            "/api/v1/public/share/{token}/folder/contents",
             get(handlers::get_shared_folder_contents),
         )
         .route(
-            "/api/v1/public/share/:token/folder/files/:file_id",
+            "/api/v1/public/share/{token}/folder/files/{file_id}",
             get(handlers::download_shared_folder_file),
         )
         .route(
-            "/api/v1/public/share/:token/folder/upload",
+            "/api/v1/public/share/{token}/folder/upload",
             post(handlers::upload_shared_folder_file),
         )
         // WebSocket sync endpoint (Task Phase 3A)

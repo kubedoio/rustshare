@@ -40,6 +40,7 @@ function toAuthUser(profile: Awaited<ReturnType<typeof getUserProfile>>): User {
     email: profile.email,
     display_name: profile.display_name,
     is_admin: profile.is_admin,
+    avatar_path: profile.avatar_path,
   };
 }
 

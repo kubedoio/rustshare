@@ -519,6 +519,21 @@
 
 <svelte:window on:keydown={handleKeyDown} />
 
+<!-- Hidden file input for upload button -->
+<input
+	id="upload-file-input"
+	type="file"
+	class="hidden"
+	multiple
+	on:change={(e) => {
+		const target = e.target as HTMLInputElement;
+		if (target.files && target.files.length > 0) {
+			handleFilesSelected(Array.from(target.files));
+			target.value = '';
+		}
+	}}
+/>
+
 <DropZone on:filesDropped={(e) => handleFilesSelected(e.detail)} disabled={isUploading}>
 	<FileExplorer
 		folders={sortedFolders}

@@ -9,6 +9,7 @@ export interface UserProfile {
 	is_admin: boolean;
 	storage_quota: number;
 	theme: Theme;
+	avatar_path?: string | null;
 	created_at: string;
 	updated_at: string;
 }

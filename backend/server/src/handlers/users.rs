@@ -436,6 +436,7 @@ pub struct UserProfile {
     pub is_admin: bool,
     pub storage_quota: i64,
     pub theme: Theme,
+    pub avatar_path: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -455,6 +456,7 @@ pub async fn get_user_profile(
                 is_admin: user.is_admin,
                 storage_quota: user.storage_quota,
                 theme: user.theme,
+                avatar_path: user.avatar_path,
                 created_at: user.created_at.to_rfc3339(),
                 updated_at: user.updated_at.to_rfc3339(),
             };

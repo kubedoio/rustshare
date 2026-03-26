@@ -3,6 +3,7 @@ export interface User {
 	email: string;
 	display_name: string;
 	is_admin: boolean;
+	avatar_path?: string | null;
 	storage_quota?: number;
 	storage_used?: number;
 	created_at?: string;
