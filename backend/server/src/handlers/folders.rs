@@ -17,6 +17,73 @@ use rustshare_storage::MetadataDocumentStoreExt;
 use super::{folder_error_response, AuthenticatedUser};
 use crate::AppState;
 
+/// Recursively update paths for all descendants of a folder.
+/// This is called after a folder is moved or renamed to ensure
+/// all child folders and files have correct paths.
+async fn update_descendant_paths(
+    state: &AppState,
+    user_id: Uuid,
+    folder_id: Uuid,
+    new_parent_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use chrono::Utc;
+
+    // Update direct child folders
+    let folder_prefix = format!("{}/{}/meta/folders/",
+        state.metadata_prefix, state.metadata_namespace);
+    let folder_keys = state.doc_store
+        .list_prefix(&folder_prefix)
+        .await?;
+
+    for key in folder_keys {
+        if let Ok(Some((mut doc, _))) = state.doc_store.get::<FolderDocument>(&key).await {
+            if doc.owner_id == user_id && !doc.deleted && doc.parent_id == Some(folder_id) {
+                // Recompute child's path
+                let new_path = if new_parent_path == "/" {
+                    format!("/{}", doc.name)
+                } else {
+                    format!("{}/{}", new_parent_path, doc.name)
+                };
+                doc.path = new_path.clone();
+                doc.updated_at = Utc::now();
+
+                // Store updated document
+                state.doc_store.put(&key, &doc, PutOptions::default()).await?;
+
+                // Recursively update this folder's descendants
+                Box::pin(update_descendant_paths(state, user_id, doc.id, &new_path)).await?;
+            }
+        }
+    }
+
+    // Update direct child files
+    let file_prefix = format!("{}/{}/meta/files/",
+        state.metadata_prefix, state.metadata_namespace);
+    let file_keys = state.doc_store
+        .list_prefix(&file_prefix)
+        .await?;
+
+    for key in file_keys {
+        if let Ok(Some((mut doc, _))) = state.doc_store.get::<FileDocument>(&key).await {
+            if doc.owner_id == user_id && !doc.deleted && doc.parent_id == Some(folder_id) {
+                // Recompute file's path
+                let new_path = if new_parent_path == "/" {
+                    format!("/{}", doc.name)
+                } else {
+                    format!("{}/{}", new_parent_path, doc.name)
+                };
+                doc.path = new_path;
+                doc.updated_at = Utc::now();
+
+                // Store updated document
+                state.doc_store.put(&key, &doc, PutOptions::default()).await?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // ============================================================================
 // Share Indicator Types
 // ============================================================================
