@@ -876,6 +876,12 @@ impl ShareRepository for RustFsShareRepository {
         
         Ok(shares)
     }
+    
+    async fn increment_access_count(&self, id: ShareId) -> Result<(), RepositoryError> {
+        let mut share = self.get_required(id).await?;
+        share.access_count += 1;
+        self.update(&share).await
+    }
 }
 
 /// RustFS-backed event repository
@@ -1889,6 +1895,47 @@ impl RustFsNotificationRepository {
 
 #[async_trait]
 impl NotificationRepository for RustFsNotificationRepository {
+    async fn create(&self, notification: &NotificationDocument) -> Result<(), RepositoryError> {
+        // Store the notification document
+        let key = format!("{}/{}/meta/notifications/{}/{}.json",
+            self.path_builder.base_prefix,
+            self.path_builder.namespace,
+            notification.user_id,
+            notification.id
+        );
+        
+        self.doc_store.put(&key, notification, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        // Update the user's notification index
+        let mut index = self.get_index(notification.user_id).await?;
+        
+        let notif_ref = NotificationRef {
+            notification_id: notification.id,
+            notification_type: notification.notification_type,
+            resource_type: notification.resource_type.clone(),
+            resource_id: notification.resource_id,
+            read: notification.read,
+            created_at: notification.created_at,
+        };
+        
+        index.add_notification(&notif_ref);
+        self.save_index(&index).await
+    }
+    
+    async fn get(&self, user_id: UserId, notification_id: Uuid) -> Result<Option<NotificationDocument>, RepositoryError> {
+        let key = format!("{}/{}/meta/notifications/{}/{}.json",
+            self.path_builder.base_prefix,
+            self.path_builder.namespace,
+            user_id,
+            notification_id
+        );
+        
+        self.doc_store.get::<NotificationDocument>(&key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))
+            .map(|opt| opt.map(|(doc, _)| doc))
+    }
+    
     async fn get_index(&self, user_id: UserId) -> Result<UserNotificationIndex, RepositoryError> {
         let key = self.path_builder.user_notifications_index(user_id);
         

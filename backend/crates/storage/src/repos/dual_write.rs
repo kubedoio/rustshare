@@ -393,6 +393,20 @@ impl ShareRepository for DualWriteShareRepository {
     async fn list_by_recipient(&self, user_id: UserId) -> Result<Vec<ShareDocument>, RepositoryError> {
         self.primary.list_by_recipient(user_id).await
     }
+    
+    async fn increment_access_count(&self, id: ShareId) -> Result<(), RepositoryError> {
+        self.primary.increment_access_count(id).await?;
+        
+        if let Err(e) = self.secondary.increment_access_count(id).await {
+            error!(error = %e, share_id = %id, "Failed to increment access count in secondary backend");
+            
+            if !self.config.continue_on_secondary_error {
+                return Err(e);
+            }
+        }
+        
+        Ok(())
+    }
 }
 
 /// Dual-write file version repository

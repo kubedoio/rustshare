@@ -88,20 +88,37 @@ pub async fn list_notifications(
                 .into_response()
         })?;
 
-    let notification_responses: Vec<NotificationResponse> = notifications
-        .into_iter()
-        .map(|n| NotificationResponse {
+    // Fetch full notification documents to get title, message, etc.
+    let mut notification_responses = Vec::new();
+    for n in notifications {
+        // Try to fetch the full notification document
+        let (title, message, action_url) = match state.notification_repo
+            .get(auth.user_id.into(), n.notification_id)
+            .await 
+        {
+            Ok(Some(doc)) => (doc.title, doc.message, None), // action_url not stored in NotificationDocument
+            Ok(None) => {
+                tracing::warn!("Notification {} not found in document store", n.notification_id);
+                ("Notification".to_string(), "You have a new notification".to_string(), None)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to fetch notification {}: {}", n.notification_id, e);
+                ("Notification".to_string(), "You have a new notification".to_string(), None)
+            }
+        };
+        
+        notification_responses.push(NotificationResponse {
             id: n.notification_id.to_string(),
             notification_type: format!("{:?}", n.notification_type).to_lowercase(),
-            title: String::new(), // TODO: Get from NotificationDocument
-            message: String::new(), // TODO: Get from NotificationDocument
+            title,
+            message,
             resource_id: n.resource_id.to_string(),
             resource_type: n.resource_type.clone(),
-            action_url: None, // TODO: Get from NotificationDocument
+            action_url,
             read: n.read,
             created_at: n.created_at.to_rfc3339(),
-        })
-        .collect();
+        });
+    }
 
     let response = ListNotificationsResponse {
         total: notification_responses.len(),

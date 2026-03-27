@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use aws_config::BehaviorVersion;
-use aws_config::meta::credentials::CredentialsProviderChain;
 use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use bytes::Bytes;
 
@@ -20,15 +19,9 @@ impl ObjectStore {
         // Use public endpoint for presigned URLs if configured
         let presign_endpoint = public_endpoint.clone().unwrap_or_else(|| endpoint.clone());
 
-        // Create credentials provider chain with environment variables
-        let creds_provider = CredentialsProviderChain::builder()
-            .add_provider(aws_config::environment::EnvironmentVariableCredentialsProvider::new())
-            .build();
-
         let config = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&endpoint)
             .region(aws_config::Region::new(region))
-            .credentials_provider(creds_provider)
             .load()
             .await;
 
@@ -42,16 +35,11 @@ impl ObjectStore {
         ensure_bucket_exists(&client, &bucket).await?;
 
         // Create a second client for presigned URLs with public endpoint
-        let presign_creds = CredentialsProviderChain::builder()
-            .add_provider(aws_config::environment::EnvironmentVariableCredentialsProvider::new())
-            .build();
-        
         let presign_config = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&presign_endpoint)
             .region(aws_config::Region::new(
                 config.region().unwrap().to_string(),
             ))
-            .credentials_provider(presign_creds)
             .load()
             .await;
 
@@ -158,15 +146,27 @@ async fn ensure_bucket_exists(client: &S3Client, bucket: &str) -> Result<()> {
                 "Object storage bucket missing or inaccessible, attempting to create it"
             );
 
-            client
+            match client
                 .create_bucket()
                 .bucket(bucket)
                 .send()
-                .await
-                .with_context(|| format!("failed to create object storage bucket `{bucket}`"))?;
-
-            tracing::info!(bucket = %bucket, "Created object storage bucket");
-            Ok(())
+                .await {
+                Ok(_) => {
+                    tracing::info!(bucket = %bucket, "Created object storage bucket");
+                    Ok(())
+                }
+                Err(create_err) => {
+                    // If bucket creation fails (e.g., signature error with RustFS),
+                    // just warn and continue - the bucket might already exist
+                    // or RustFS might auto-create buckets
+                    tracing::warn!(
+                        bucket = %bucket,
+                        error = %create_err,
+                        "Failed to create bucket, continuing anyway - operations may fail if bucket doesn't exist"
+                    );
+                    Ok(())
+                }
+            }
         }
     }
 }

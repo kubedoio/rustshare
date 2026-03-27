@@ -319,6 +319,14 @@ async fn main() -> Result<()> {
 
     info!("Rate limiting initialized");
 
+    // Initialize new repository layer (needed for bootstrap)
+    let path_builder = PathBuilder::new(metadata_prefix.clone(), metadata_namespace.clone());
+    
+    // Initialize repositories using the document store
+    let user_repo: Arc<dyn UserRepository> = Arc::new(
+        DomainUserRepository::new(Arc::clone(&doc_store), metadata_prefix.clone(), metadata_namespace.clone())
+    );
+
     let replication_worker_config = ReplicationWorkerConfig::from_env();
     spawn_replication_worker(
         Arc::clone(&metadata_store),
@@ -329,7 +337,7 @@ async fn main() -> Result<()> {
     );
 
     // Bootstrap admin user if no users exist
-    if !metadata_store.has_users().await? {
+    if !user_repo.has_users().await? {
         let admin_username = std::env::var("RUSTSHARE_ADMIN_USERNAME")?;
         let admin_email = std::env::var("RUSTSHARE_ADMIN_EMAIL")?;
         let admin_password = std::env::var("RUSTSHARE_ADMIN_PASSWORD")?;
@@ -344,13 +352,13 @@ async fn main() -> Result<()> {
             default_storage_quota_bytes(),
         );
 
-        metadata_store.create_user(&admin_user).await?;
+        user_repo.create_user(&admin_user).await?;
 
         info!("Admin user created: {} ({})", admin_username, admin_email);
     }
 
     ensure_optional_seed_user(
-        &metadata_store,
+        Arc::clone(&user_repo),
         "RUSTSHARE_DEMO_VIEWER_USERNAME",
         "RUSTSHARE_DEMO_VIEWER_EMAIL",
         "RUSTSHARE_DEMO_VIEWER_PASSWORD",
@@ -364,14 +372,7 @@ async fn main() -> Result<()> {
     let secret_key = SecretEncryptionKey::from_env()
         .map_err(|e| anyhow::anyhow!("Secret encryption key error: {}", e))?;
     
-    // Initialize new repository layer
-    let path_builder = PathBuilder::new(metadata_prefix.clone(), metadata_namespace.clone());
-    
-    // Initialize repositories using the document store
-    let user_repo: Arc<dyn UserRepository> = Arc::new(
-        DomainUserRepository::new(Arc::clone(&doc_store), metadata_prefix, metadata_namespace)
-    );
-    
+    // Initialize remaining repositories (user_repo already initialized earlier for bootstrap)
     let user_metadata_repo: Arc<dyn UserMetadataRepository> = Arc::new(
         MetadataUserRepository::new(Arc::clone(&doc_store), path_builder.clone())
     );
@@ -853,7 +854,7 @@ async fn main() -> Result<()> {
 }
 
 async fn ensure_optional_seed_user(
-    metadata_store: &Arc<MetadataStore>,
+    user_repo: Arc<dyn UserRepository>,
     username_env: &str,
     email_env: &str,
     password_env: &str,
@@ -874,7 +875,7 @@ async fn ensure_optional_seed_user(
     let password =
         password.ok_or_else(|| anyhow::anyhow!("Missing required env {}", password_env))?;
 
-    if metadata_store.find_user_by_email(&email).await?.is_some() {
+    if user_repo.get_user_by_email(&email).await?.is_some() {
         return Ok(());
     }
 
@@ -888,7 +889,7 @@ async fn ensure_optional_seed_user(
         default_storage_quota_bytes(),
     );
 
-    metadata_store.create_user(&user).await?;
+    user_repo.create_user(&user).await?;
 
     info!("Seed user created: {} ({})", username, email);
 
@@ -1093,10 +1094,10 @@ async fn login(
         ));
     }
 
-    // Find user
+    // Find user using the new user_repo
     let user = state
-        .metadata_store
-        .find_user_by_email(&req.email)
+        .user_repo
+        .get_user_by_email(&req.email)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| (StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()))?;

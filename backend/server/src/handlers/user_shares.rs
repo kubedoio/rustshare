@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use rustshare_core::domain::SharePermissions;
-use rustshare_storage::metadata_v2::schemas::{ShareDocument, SharePermission};
+use rustshare_storage::metadata_v2::schemas::{ShareDocument, SharePermission, NotificationDocument, NotificationType};
 
 use crate::{handlers::AuthenticatedUser, AppState};
 
@@ -157,7 +157,22 @@ pub async fn create_file_share(
                 .into_response()
         })?;
     
-    // TODO: Create notification for recipient using the correct Notification domain type
+    // Create notification for recipient
+    let notification = NotificationDocument::new(
+        Uuid::new_v4(),
+        recipient.id,
+        share_id, // Use share_id as event_id
+        "file".to_string(),
+        file_id,
+        NotificationType::FileShared,
+        "File shared with you".to_string(),
+        format!("A file has been shared with you by user {}", auth.user_id),
+    );
+    
+    if let Err(e) = state.notification_repo.create(&notification).await {
+        tracing::warn!("Failed to create notification for share: {}", e);
+        // Don't fail the share creation if notification fails
+    }
     
     Ok((
         StatusCode::CREATED,
@@ -232,7 +247,22 @@ pub async fn create_folder_share(
                 .into_response()
         })?;
     
-    // TODO: Create notification for recipient using the correct Notification domain type
+    // Create notification for recipient
+    let notification = NotificationDocument::new(
+        Uuid::new_v4(),
+        recipient.id,
+        share_id, // Use share_id as event_id
+        "folder".to_string(),
+        folder_id,
+        NotificationType::FolderShared,
+        "Folder shared with you".to_string(),
+        format!("A folder has been shared with you by user {}", auth.user_id),
+    );
+    
+    if let Err(e) = state.notification_repo.create(&notification).await {
+        tracing::warn!("Failed to create notification for share: {}", e);
+        // Don't fail the share creation if notification fails
+    }
     
     Ok((
         StatusCode::CREATED,

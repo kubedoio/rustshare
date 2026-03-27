@@ -14,7 +14,6 @@ use rustshare_auth::ShareSessionClaims;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::web_session::{extract_cookie_value, resolve_user_session};
 use crate::AppState;
 
 /// Authentication error types for token resolution.
@@ -129,19 +128,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        if let Some(session_token) =
-            extract_cookie_value(&parts.headers, rustshare_auth::WEB_SESSION_COOKIE_NAME)
-        {
-            if let Some(session) = resolve_user_session(state, &session_token)
-                .await
-                .map_err(session_auth_error)?
-            {
-                return Ok(AuthenticatedUser {
-                    user_id: session.user_id,
-                });
-            }
-        }
-
+        // JWT-based authentication - validate Authorization header
         let TypedHeader(Authorization(bearer)) = parts
             .extract::<TypedHeader<Authorization<Bearer>>>()
             .await
@@ -162,20 +149,7 @@ impl FromRequestParts<AppState> for AuthenticatedSession {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        if let Some(session_token) =
-            extract_cookie_value(&parts.headers, rustshare_auth::WEB_SESSION_COOKIE_NAME)
-        {
-            if let Some(session) = resolve_user_session(state, &session_token)
-                .await
-                .map_err(session_auth_error)?
-            {
-                return Ok(AuthenticatedSession {
-                    user_id: session.user_id,
-                    session_id: Some(session.id),
-                });
-            }
-        }
-
+        // JWT-based authentication - validate Authorization header
         let TypedHeader(Authorization(bearer)) = parts
             .extract::<TypedHeader<Authorization<Bearer>>>()
             .await

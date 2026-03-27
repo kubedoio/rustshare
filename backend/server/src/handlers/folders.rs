@@ -111,14 +111,12 @@ pub async fn delete_folder(
 /// List folder contents (immediate children only) with share indicators.
 ///
 /// GET /api/folders/{id}/contents
-///
-/// TODO: Implement share indicators using new ShareRepository
 pub async fn get_folder_contents(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
 ) -> Result<Json<FolderContentsWithShares>, Response> {
-    // Get folders in this parent (without share info for now)
+    // Get folders in this parent
     let folders = state
         .metadata_store
         .list_folders(Some(folder_id), auth.user_id)
@@ -132,10 +130,28 @@ pub async fn get_folder_contents(
                 .into_response()
         })?;
 
-    // Convert to FolderWithShares (without share info for now)
-    let folders_with_shares: Vec<FolderWithShares> = folders
-        .into_iter()
-        .map(|f| FolderWithShares {
+    // Convert to FolderWithShares with share info
+    let mut folders_with_shares: Vec<FolderWithShares> = Vec::new();
+    for f in folders {
+        let shares = state.share_repo
+            .list_by_resource("folder", f.id)
+            .await
+            .map_err(|_| {
+                use axum::{http::StatusCode, response::IntoResponse, Json};
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(super::ErrorResponse::new("Internal server error")),
+                )
+                    .into_response()
+            })?;
+        
+        let is_shared = !shares.is_empty();
+        let share_count = shares.len() as i64;
+        let share_expires_at = shares.iter()
+            .filter_map(|s| s.expires_at)
+            .min();
+        
+        folders_with_shares.push(FolderWithShares {
             id: f.id,
             name: f.name,
             path: f.path,
@@ -143,13 +159,13 @@ pub async fn get_folder_contents(
             owner_id: f.owner_id,
             created_at: f.created_at,
             updated_at: f.updated_at,
-            is_shared: false, // TODO: Get from share repository
-            share_count: 0,
-            share_expires_at: None,
-        })
-        .collect();
+            is_shared,
+            share_count,
+            share_expires_at,
+        });
+    }
 
-    // Get files in this parent (without share info for now)
+    // Get files in this parent
     let files = state
         .metadata_store
         .list_files(Some(folder_id), auth.user_id)
@@ -163,10 +179,28 @@ pub async fn get_folder_contents(
                 .into_response()
         })?;
 
-    // Convert to FileWithShares (without share info for now)
-    let files_with_shares: Vec<crate::handlers::files::FileWithShares> = files
-        .into_iter()
-        .map(|f| crate::handlers::files::FileWithShares {
+    // Convert to FileWithShares with share info
+    let mut files_with_shares: Vec<crate::handlers::files::FileWithShares> = Vec::new();
+    for f in files {
+        let shares = state.share_repo
+            .list_by_resource("file", f.id)
+            .await
+            .map_err(|_| {
+                use axum::{http::StatusCode, response::IntoResponse, Json};
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(super::ErrorResponse::new("Internal server error")),
+                )
+                    .into_response()
+            })?;
+        
+        let is_shared = !shares.is_empty();
+        let share_count = shares.len() as i64;
+        let share_expires_at = shares.iter()
+            .filter_map(|s| s.expires_at)
+            .min();
+        
+        files_with_shares.push(crate::handlers::files::FileWithShares {
             id: f.id,
             name: f.name,
             path: f.path,
@@ -178,11 +212,11 @@ pub async fn get_folder_contents(
             current_version: f.current_version,
             created_at: f.created_at,
             modified_at: f.modified_at,
-            is_shared: false, // TODO: Get from share repository
-            share_count: 0,
-            share_expires_at: None,
-        })
-        .collect();
+            is_shared,
+            share_count,
+            share_expires_at,
+        });
+    }
 
     Ok(Json(FolderContentsWithShares { 
         folders: folders_with_shares, 
@@ -193,13 +227,11 @@ pub async fn get_folder_contents(
 /// List root contents (folders and files with no parent) with share indicators.
 ///
 /// GET /api/folders/root/contents
-///
-/// TODO: Implement share indicators using new ShareRepository
 pub async fn get_root_contents(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
 ) -> Result<Json<FolderContentsWithShares>, Response> {
-    // Get root folders (without share info for now)
+    // Get root folders
     let folders = state
         .metadata_store
         .list_folders(None, auth.user_id)
@@ -213,10 +245,28 @@ pub async fn get_root_contents(
                 .into_response()
         })?;
 
-    // Convert to FolderWithShares (without share info for now)
-    let folders_with_shares: Vec<FolderWithShares> = folders
-        .into_iter()
-        .map(|f| FolderWithShares {
+    // Convert to FolderWithShares with share info
+    let mut folders_with_shares: Vec<FolderWithShares> = Vec::new();
+    for f in folders {
+        let shares = state.share_repo
+            .list_by_resource("folder", f.id)
+            .await
+            .map_err(|_| {
+                use axum::{http::StatusCode, response::IntoResponse, Json};
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(super::ErrorResponse::new("Internal server error")),
+                )
+                    .into_response()
+            })?;
+        
+        let is_shared = !shares.is_empty();
+        let share_count = shares.len() as i64;
+        let share_expires_at = shares.iter()
+            .filter_map(|s| s.expires_at)
+            .min();
+        
+        folders_with_shares.push(FolderWithShares {
             id: f.id,
             name: f.name,
             path: f.path,
@@ -224,13 +274,13 @@ pub async fn get_root_contents(
             owner_id: f.owner_id,
             created_at: f.created_at,
             updated_at: f.updated_at,
-            is_shared: false, // TODO: Get from share repository
-            share_count: 0,
-            share_expires_at: None,
-        })
-        .collect();
+            is_shared,
+            share_count,
+            share_expires_at,
+        });
+    }
 
-    // Get root files (without share info for now)
+    // Get root files
     let files = state
         .metadata_store
         .list_files(None, auth.user_id)
@@ -244,10 +294,28 @@ pub async fn get_root_contents(
                 .into_response()
         })?;
 
-    // Convert to FileWithShares (without share info for now)
-    let files_with_shares: Vec<crate::handlers::files::FileWithShares> = files
-        .into_iter()
-        .map(|f| crate::handlers::files::FileWithShares {
+    // Convert to FileWithShares with share info
+    let mut files_with_shares: Vec<crate::handlers::files::FileWithShares> = Vec::new();
+    for f in files {
+        let shares = state.share_repo
+            .list_by_resource("file", f.id)
+            .await
+            .map_err(|_| {
+                use axum::{http::StatusCode, response::IntoResponse, Json};
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(super::ErrorResponse::new("Internal server error")),
+                )
+                    .into_response()
+            })?;
+        
+        let is_shared = !shares.is_empty();
+        let share_count = shares.len() as i64;
+        let share_expires_at = shares.iter()
+            .filter_map(|s| s.expires_at)
+            .min();
+        
+        files_with_shares.push(crate::handlers::files::FileWithShares {
             id: f.id,
             name: f.name,
             path: f.path,
@@ -259,11 +327,11 @@ pub async fn get_root_contents(
             current_version: f.current_version,
             created_at: f.created_at,
             modified_at: f.modified_at,
-            is_shared: false, // TODO: Get from share repository
-            share_count: 0,
-            share_expires_at: None,
-        })
-        .collect();
+            is_shared,
+            share_count,
+            share_expires_at,
+        });
+    }
 
     Ok(Json(FolderContentsWithShares { 
         folders: folders_with_shares, 

@@ -144,6 +144,9 @@ pub trait ShareRepository: Send + Sync {
     
     /// List shares received by a user
     async fn list_by_recipient(&self, user_id: UserId) -> Result<Vec<ShareDocument>, RepositoryError>;
+    
+    /// Increment access count for a share
+    async fn increment_access_count(&self, id: ShareId) -> Result<(), RepositoryError>;
 }
 
 /// Repository for event operations
@@ -432,6 +435,12 @@ pub trait WebhookRepository: Send + Sync {
 /// Repository for notification operations
 #[async_trait]
 pub trait NotificationRepository: Send + Sync {
+    /// Create a new notification
+    async fn create(&self, notification: &NotificationDocument) -> Result<(), RepositoryError>;
+    
+    /// Get a notification by ID
+    async fn get(&self, user_id: UserId, notification_id: Uuid) -> Result<Option<NotificationDocument>, RepositoryError>;
+    
     /// Get notification index for a user
     async fn get_index(&self, user_id: UserId) -> Result<UserNotificationIndex, RepositoryError>;
     

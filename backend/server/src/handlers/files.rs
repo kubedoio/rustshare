@@ -663,10 +663,6 @@ pub async fn list_files(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
 ) -> Result<Json<Vec<FileWithShares>>, Response> {
-    // TODO: Use metadata_store instead of SQLx query
-    // For now, return empty list as placeholder
-    tracing::warn!("list_files not yet fully implemented in zero-PostgreSQL mode");
-    
     // Get all user files (passing None for parent_folder_id gets all files)
     let files = state
         .metadata_store
@@ -674,10 +670,21 @@ pub async fn list_files(
         .await
         .map_err(|e| file_error_response(FileError::Storage(format!("Failed to list files: {}", e))))?;
     
-    // Convert File objects to FileWithShares (without share info for now)
-    let files_with_shares: Vec<FileWithShares> = files
-        .into_iter()
-        .map(|f| FileWithShares {
+    // Convert File objects to FileWithShares with share info
+    let mut files_with_shares: Vec<FileWithShares> = Vec::new();
+    for f in files {
+        let shares = state.share_repo
+            .list_by_resource("file", f.id)
+            .await
+            .map_err(|e| file_error_response(FileError::Storage(format!("Failed to get shares: {}", e))))?;
+        
+        let is_shared = !shares.is_empty();
+        let share_count = shares.len() as i64;
+        let share_expires_at = shares.iter()
+            .filter_map(|s| s.expires_at)
+            .min();
+        
+        files_with_shares.push(FileWithShares {
             id: f.id,
             name: f.name,
             path: f.path,
@@ -689,11 +696,11 @@ pub async fn list_files(
             current_version: f.current_version,
             created_at: f.created_at,
             modified_at: f.modified_at,
-            is_shared: false, // TODO: Get from share repository
-            share_count: 0,
-            share_expires_at: None,
-        })
-        .collect();
+            is_shared,
+            share_count,
+            share_expires_at,
+        });
+    }
 
     Ok(Json(files_with_shares))
 }

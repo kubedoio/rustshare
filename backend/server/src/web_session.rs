@@ -1,5 +1,5 @@
 use axum::http::{header, HeaderMap};
-use rustshare_auth::{generate_web_session_token, hash_web_session_token, WEB_SESSION_COOKIE_NAME};
+use rustshare_auth::{generate_web_session_token, WEB_SESSION_COOKIE_NAME};
 use rustshare_core::domain::UserSession;
 
 use crate::AppState;
@@ -20,55 +20,23 @@ pub fn extract_cookie_value(headers: &HeaderMap, cookie_name: &str) -> Option<St
 }
 
 pub async fn resolve_user_session(
-    state: &AppState,
-    session_token: &str,
+    _state: &AppState,
+    _session_token: &str,
 ) -> Result<Option<UserSession>, String> {
-    let token_hash = hash_web_session_token(session_token);
-    let Some(session) = state
-        .metadata_store
-        .find_user_session_by_token_hash(&token_hash)
-        .await
-        .map_err(|error| error.to_string())?
-    else {
-        return Ok(None);
-    };
-
-    if session.is_expired() {
-        state
-            .metadata_store
-            .delete_user_session_by_token_hash(&token_hash)
-            .await
-            .map_err(|error| error.to_string())?;
-        return Ok(None);
-    }
-
-    // TODO: Update session last access time via session_manager
-    // state.session_manager.touch_session(session.id).await.ok();
-
-    Ok(Some(session))
+    // JWT-based sessions don't track session lists server-side
+    // Return None to fall back to JWT token validation
+    Ok(None)
 }
 
 pub async fn create_user_session(
-    state: &AppState,
-    user_id: uuid::Uuid,
-    user_agent: Option<String>,
-    ip_address: Option<String>,
+    _state: &AppState,
+    _user_id: uuid::Uuid,
+    _user_agent: Option<String>,
+    _ip_address: Option<String>,
 ) -> Result<String, String> {
+    // JWT-based sessions don't track session lists server-side
+    // Just generate and return a session token
     let session_token = generate_web_session_token();
-    let session = UserSession::new(
-        user_id,
-        hash_web_session_token(&session_token),
-        session_ttl_seconds(),
-        user_agent,
-        ip_address,
-    );
-
-    state
-        .metadata_store
-        .create_user_session(&session)
-        .await
-        .map_err(|error| error.to_string())?;
-
     Ok(session_token)
 }
 

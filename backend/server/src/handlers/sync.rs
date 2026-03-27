@@ -20,7 +20,6 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::extractors::bearer_token_from_headers;
-use crate::web_session::{extract_cookie_value, resolve_user_session};
 use crate::AppState;
 
 /// Identifies the client connected to WebSocket
@@ -160,21 +159,10 @@ pub async fn sync_handler(
         validate_client_token(&token, &state.jwt_manager).await?
     } else if let Some(token) = query.token {
         validate_client_token(&token, &state.jwt_manager).await?
-    } else if let Some(session_token) =
-        extract_cookie_value(&headers, rustshare_auth::WEB_SESSION_COOKIE_NAME)
-    {
-        let Some(session) = resolve_user_session(&state, &session_token)
-            .await
-            .map_err(|error| (StatusCode::UNAUTHORIZED, error))?
-        else {
-            return Err((StatusCode::UNAUTHORIZED, "Invalid session".to_string()));
-        };
-
-        ClientIdentity::User(session.user_id)
     } else {
         return Err((
             StatusCode::UNAUTHORIZED,
-            "Missing authentication (cookie, Authorization header, or ?token= query parameter)"
+            "Missing authentication (Authorization header or ?token= query parameter)"
                 .to_string(),
         ));
     };

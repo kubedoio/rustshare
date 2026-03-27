@@ -330,10 +330,10 @@ pub async fn download_shared_file(
         .and_then(|v| v.to_str().ok())
         .map(String::from);
 
-    // TODO: Increment access count using new repository
-    // if let Err(e) = state.metadata_store.increment_share_access(share.id).await {
-    //     tracing::warn!("Failed to increment share access count: {}", e);
-    // }
+    // Increment access count
+    if let Err(e) = state.share_repo.increment_access_count(share.id).await {
+        tracing::warn!("Failed to increment share access count: {}", e);
+    }
 
     // Log access with request metadata
     if let Err(e) = state
@@ -522,10 +522,10 @@ pub async fn download_shared_folder_file(
         .and_then(|v| v.to_str().ok())
         .map(String::from);
 
-    // TODO: Increment access count using new repository
-    // if let Err(e) = state.metadata_store.increment_share_access(share.id).await {
-    //     tracing::warn!("Failed to increment share access count: {}", e);
-    // }
+    // Increment access count
+    if let Err(e) = state.share_repo.increment_access_count(share.id).await {
+        tracing::warn!("Failed to increment share access count: {}", e);
+    }
 
     if let Err(e) = state
         .metadata_store
@@ -684,10 +684,10 @@ pub async fn upload_shared_folder_file(
         .and_then(|v| v.to_str().ok())
         .map(String::from);
 
-    // TODO: Increment access count using new repository
-    // if let Err(e) = state.metadata_store.increment_share_access(share.id).await {
-    //     tracing::warn!("Failed to increment share access count: {}", e);
-    // }
+    // Increment access count
+    if let Err(e) = state.share_repo.increment_access_count(share.id).await {
+        tracing::warn!("Failed to increment share access count: {}", e);
+    }
 
     if let Err(e) = state
         .metadata_store
