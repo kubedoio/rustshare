@@ -119,8 +119,8 @@ async fn test_fv_02_star_shared_updates_recipient_only() {
         .await
         .unwrap();
 
-    // Recipient has favourites index
-    let recipient_index_key = "indexes/received/favourites.json";
+    // Recipient has favourites index (service uses indexes/owned/ for all favourites)
+    let recipient_index_key = "indexes/owned/favourites.json";
     let recipient_index = ctx
         .user_buckets
         .get_object(recipient_id, recipient_index_key)

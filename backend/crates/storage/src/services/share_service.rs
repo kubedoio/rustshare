@@ -111,11 +111,13 @@ impl ShareServiceV2 {
         // Create received share (recipient's perspective)
         let received_share = ReceivedShareDocV2 {
             schema_version: SCHEMA_VERSION,
+            id: share_id,  // Same as share_id for compatibility
             share_id,
             resource_type,
             resource_locator,
             permissions,
             shared_by: owner_id,
+            owner_user_id: owner_id,  // Same as shared_by for compatibility
             created_at,
             expires_at,
         };

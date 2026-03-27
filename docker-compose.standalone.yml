@@ -12,18 +12,19 @@
 
 services:
   rustfs:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
+    image: rustfs/rustfs:latest
     environment:
-      MINIO_ROOT_USER: rustfsadmin
-      MINIO_ROOT_PASSWORD: changeme
+      RUSTFS_ROOT_USER: rustfsadmin
+      RUSTFS_ROOT_PASSWORD: changeme
+      RUSTFS_DATA_DIR: /data
+      RUSTFS_LOGS_DIR: /logs
     volumes:
       - rustfs_data:/data
     ports:
       - "9000:9000"
       - "9001:9001"
     healthcheck:
-      test: ["CMD", "sh", "-c", "nc -z localhost 9000 && nc -z localhost 9001"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9000/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -51,7 +52,7 @@ services:
       RUSTFS_REGION: us-east-1
       RUSTFS_BUCKET: rustshare-files
       AWS_ACCESS_KEY_ID: rustfsadmin
-      AWS_SECRET_ACCESS_KEY: changeme
+      AWS_SECRET_ACCESS_KEY: rustfsadmin
       
       # Local Storage for Metadata (standalone mode)
       RUSTSHARE_LOCAL_STORAGE_PATH: /data/metadata

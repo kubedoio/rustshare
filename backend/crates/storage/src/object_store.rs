@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use aws_config::BehaviorVersion;
+use aws_config::meta::credentials::CredentialsProviderChain;
 use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use bytes::Bytes;
 
@@ -19,9 +20,15 @@ impl ObjectStore {
         // Use public endpoint for presigned URLs if configured
         let presign_endpoint = public_endpoint.clone().unwrap_or_else(|| endpoint.clone());
 
+        // Create credentials provider chain with environment variables
+        let creds_provider = CredentialsProviderChain::builder()
+            .add_provider(aws_config::environment::EnvironmentVariableCredentialsProvider::new())
+            .build();
+
         let config = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&endpoint)
             .region(aws_config::Region::new(region))
+            .credentials_provider(creds_provider)
             .load()
             .await;
 
@@ -35,11 +42,16 @@ impl ObjectStore {
         ensure_bucket_exists(&client, &bucket).await?;
 
         // Create a second client for presigned URLs with public endpoint
+        let presign_creds = CredentialsProviderChain::builder()
+            .add_provider(aws_config::environment::EnvironmentVariableCredentialsProvider::new())
+            .build();
+        
         let presign_config = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&presign_endpoint)
             .region(aws_config::Region::new(
                 config.region().unwrap().to_string(),
             ))
+            .credentials_provider(presign_creds)
             .load()
             .await;
 

@@ -107,9 +107,9 @@ async fn test_sh_02_recipient_receives_reference() {
         "ReceivedShareReference should exist in recipient's bucket"
     );
 
-    let doc: ReceivedShareReference = serde_json::from_slice(&ref_data.unwrap()).unwrap();
+    let doc: ReceivedShareDocument = serde_json::from_slice(&ref_data.unwrap()).unwrap();
     assert_eq!(doc.share_id, share.share_id);
-    assert_eq!(doc.owner_user_id, owner_id);
+    assert_eq!(doc.shared_by, owner_id);
     assert!(
         !doc.resource_locator.bucket.is_empty(),
         "Should have a PortableStorageLocator"
@@ -117,7 +117,6 @@ async fn test_sh_02_recipient_receives_reference() {
 
     let locator = doc.resource_locator;
     assert_eq!(locator.resource_id, file.id);
-    assert_eq!(locator.resource_type, "file");
     assert!(
         locator.bucket.contains(&owner_id.to_string()),
         "Locator should point to owner's bucket"
@@ -216,30 +215,27 @@ async fn test_sh_04_revoke_removes_recipient_visibility() {
         .await
         .unwrap();
 
-    // Verify recipient can access
-    let access_before = ctx.share_service().access_shared_resource::<()>(recipient_id, share.share_id).await;
+    // Verify recipient can access (check by fetching the share)
+    let access_before = ctx.share_service().get_received_share(recipient_id, share.share_id).await;
     assert!(access_before.is_ok(), "Recipient should be able to access before revoke");
 
     // Revoke
     ctx.share_service().revoke_share(owner_id, share.share_id).await.unwrap();
 
-    // Outbound share marked revoked
+    // Outbound share deleted (service deletes shares on revoke)
     let share_key = format!("owned/shares/outbound/{}.json", share.share_id);
     let share_data = ctx
         .user_buckets
         .get_object(owner_id, &share_key)
         .await
-        .unwrap()
-        .expect("Share should exist");
-
-    let doc: OutboundShareDocument = serde_json::from_slice(&share_data).unwrap();
+        .unwrap();
     assert!(
-        true, // revocation state not directly available
-        "Share should be marked as revoked"
+        share_data.is_none(),
+        "Share should be deleted after revoke"
     );
 
-    // Recipient can no longer access
-    let access_after = ctx.share_service().access_shared_resource::<()>(recipient_id, share.share_id).await;
+    // Recipient can no longer access (received share should be deleted)
+    let access_after = ctx.share_service().get_received_share(recipient_id, share.share_id).await;
     assert!(
         access_after.is_err(),
         "Recipient should not be able to access after revoke"

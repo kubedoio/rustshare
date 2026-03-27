@@ -109,6 +109,7 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            deleted: false,
         };
 
         let contents = FolderContents::with_contents(vec![file.clone()], vec![]);
@@ -143,6 +144,7 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            deleted: false,
         };
 
         let folder = Folder::new_root(owner_id);
@@ -196,6 +198,7 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            deleted: false,
         };
 
         let tree = FolderTree::with_contents(folder.clone(), vec![file.clone()], vec![]);
@@ -238,6 +241,7 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            deleted: false,
         };
 
         let subfolder1 = Folder::new_child(

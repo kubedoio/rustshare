@@ -245,11 +245,13 @@ pub struct OutboundShareDocV2 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReceivedShareDocV2 {
     pub schema_version: u32,
+    pub id: Uuid,  // Same as share_id for compatibility
     pub share_id: Uuid,
     pub resource_type: ShareResourceTypeV2,
     pub resource_locator: PortableStorageLocator,
     pub permissions: SharePermissionV2,
     pub shared_by: Uuid,
+    pub owner_user_id: Uuid,  // Same as shared_by for compatibility
     pub created_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
 }

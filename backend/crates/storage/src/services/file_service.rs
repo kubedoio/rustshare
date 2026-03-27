@@ -58,11 +58,7 @@ impl FileServiceV2 {
         // Compute path
         let path = if let Some(folder_id) = parent_id {
             let folder_doc = self.get_folder_doc(owner_id, folder_id).await?;
-            if folder_doc.parent_id.is_none() {
-                format!("/{}", name)
-            } else {
-                format!("{}/{}", folder_doc.path, name)
-            }
+            format!("{}/{}", folder_doc.path, name)
         } else {
             format!("/{}", name)
         };
@@ -84,7 +80,7 @@ impl FileServiceV2 {
             schema_version: 2,
             id: file_id,
             owner_id,
-            parent_folder_id,
+            parent_folder_id: parent_id,
             name: name.clone(),
             path: path.clone(),
             current_version_id: version_id,
@@ -105,10 +101,9 @@ impl FileServiceV2 {
             version_number: 1,
             size,
             content_hash: content_hash.clone(),
+            storage_key: format!("blobs/{}", content_hash),
             created_by: owner_id,
             created_at: Utc::now(),
-            change_description: Some("Initial upload".to_string()),
-            storage_key: format!("blobs/{}", content_hash),
         };
 
         // Store documents
@@ -259,19 +254,14 @@ impl FileServiceV2 {
         doc.name = new_name.clone();
 
         // Compute new path
-        doc.path = if let Some(parent_id) = doc.parent_id {
+        doc.path = if let Some(parent_id) = doc.parent_folder_id {
             let folder_doc = self.get_folder_doc(user_id, parent_id).await?;
-            if folder_doc.path == "/" {
-                format!("/{}", new_name)
-            } else {
-                format!("{}/{}", folder_doc.path, new_name)
-            }
+            format!("{}/{}", folder_doc.path, new_name)
         } else {
             format!("/{}", new_name)
         };
 
         doc.updated_at = Utc::now();
-        doc.version += 1;
 
         // Save updated document
         self.user_buckets
@@ -284,10 +274,10 @@ impl FileServiceV2 {
             .map_err(|e| FileError::Storage(e.to_string()))?;
 
         // Update folder children index
-        if let Some(parent_id) = doc.parent_id {
+        if let Some(parent_id) = doc.parent_folder_id {
             self.indexes
                 .folder_children
-                .update_file(user_id, parent_folder_id, &doc)
+                .update_file(user_id, parent_id, &doc)
                 .await
                 .map_err(|e| FileError::Storage(e.to_string()))?;
         }
@@ -323,7 +313,7 @@ impl FileServiceV2 {
             return Err(FileError::PermissionDenied { file_id, user_id });
         }
 
-        let old_parent_id = doc.parent_id;
+        let old_parent_id = doc.parent_folder_id;
 
         // Verify target folder exists if specified
         if let Some(target_id) = target_folder_id {
@@ -331,20 +321,15 @@ impl FileServiceV2 {
         }
 
         // Update parent and path
-        doc.parent_id = target_folder_id;
+        doc.parent_folder_id = target_folder_id;
         doc.path = if let Some(folder_id) = target_folder_id {
             let folder_doc = self.get_folder_doc(user_id, folder_id).await?;
-            if folder_doc.path == "/" {
-                format!("/{}", doc.name)
-            } else {
-                format!("{}/{}", folder_doc.path, doc.name)
-            }
+            format!("{}/{}", folder_doc.path, doc.name)
         } else {
             format!("/{}", doc.name)
         };
 
         doc.updated_at = Utc::now();
-        doc.version += 1;
 
         // Save updated document
         self.user_buckets
@@ -400,22 +385,11 @@ impl FileServiceV2 {
         }
 
         // Create tombstone
-        let tombstone = TombstoneDocumentV2 {
-            schema_version: 1,
-            id: file_id,
-            resource_type: "file".to_string(),
-            resource_id: file_id,
-            deleted_at: Utc::now(),
-            deleted_by: user_id,
-            previous_parent_id: doc.parent_folder_id,
-            original_path: Some(doc.path.clone()),
-            restore_data: serde_json::to_value(&doc).unwrap_or_default(),
-        };
+        let tombstone = TombstoneDocV2::from_file(&doc, user_id);
 
         // Mark file as deleted
         doc.deleted = true;
         doc.updated_at = Utc::now();
-        doc.version += 1;
 
         // Save tombstone and updated file
         self.user_buckets
@@ -437,10 +411,10 @@ impl FileServiceV2 {
             .map_err(|e| FileError::Storage(e.to_string()))?;
 
         // Update folder children index
-        if let Some(parent_id) = doc.parent_id {
+        if let Some(parent_id) = doc.parent_folder_id {
             self.indexes
                 .folder_children
-                .mark_deleted(user_id, parent_folder_id, file_id)
+                .mark_deleted(user_id, parent_id, file_id)
                 .await
                 .map_err(|e| FileError::Storage(e.to_string()))?;
         }
@@ -460,16 +434,15 @@ impl FileServiceV2 {
             .map_err(|e| FileError::Storage(e.to_string()))?
             .ok_or(FileError::NotFound(file_id))?;
 
-        let tombstone: TombstoneDocumentV2 = serde_json::from_slice(&tombstone_data)
+        let tombstone: TombstoneDocV2 = serde_json::from_slice(&tombstone_data)
             .map_err(|e| FileError::Storage(format!("Invalid tombstone: {}", e)))?;
 
         // Restore original document
-        let mut doc: FileDocV2 = serde_json::from_value(tombstone.restore_data.clone())
+        let mut doc: FileDocV2 = serde_json::from_value(tombstone.original_doc.clone())
             .map_err(|e| FileError::Storage(format!("Invalid restore data: {}", e)))?;
 
         doc.deleted = false;
         doc.updated_at = Utc::now();
-        doc.version += 1;
 
         // Save restored file
         self.user_buckets
@@ -488,10 +461,10 @@ impl FileServiceV2 {
             .map_err(|e| FileError::Storage(e.to_string()))?;
 
         // Update folder children index
-        if let Some(parent_id) = doc.parent_id {
+        if let Some(parent_id) = doc.parent_folder_id {
             self.indexes
                 .folder_children
-                .unmark_deleted(user_id, parent_folder_id, file_id)
+                .unmark_deleted(user_id, parent_id, file_id)
                 .await
                 .map_err(|e| FileError::Storage(e.to_string()))?;
         }
@@ -554,26 +527,23 @@ impl FileServiceV2 {
         // Create new version
         let version_id = Uuid::new_v4();
         let version_doc = FileVersionDocV2 {
-            schema_version: 1,
+            schema_version: 2,
             id: version_id,
             file_id,
             version_number: doc.version_number + 1,
-            content_ref: format!("sha256:{}", content_hash.clone()),
             size,
-            checksum: content_hash.clone(),
+            content_hash: content_hash.clone(),
+            storage_key: format!("blobs/{}", content_hash),
             created_by: user_id,
             created_at: Utc::now(),
-            change_description: Some(format!("Updated from version {}", doc.version_number)),
         };
 
         // Update file document
         doc.current_version_id = version_id;
         doc.version_number += 1;
         doc.size = size;
-        doc.content_ref = format!("sha256:{}", content_hash);
-        doc.checksum = content_hash;
+        doc.content_hash = content_hash;
         doc.updated_at = Utc::now();
-        doc.version += 1;
 
         // Save documents
         self.user_buckets
@@ -595,10 +565,10 @@ impl FileServiceV2 {
             .map_err(|e| FileError::Storage(e.to_string()))?;
 
         // Update folder children index
-        if let Some(parent_id) = doc.parent_id {
+        if let Some(parent_id) = doc.parent_folder_id {
             self.indexes
                 .folder_children
-                .update_file(user_id, parent_folder_id, &doc)
+                .update_file(user_id, parent_id, &doc)
                 .await
                 .map_err(|e| FileError::Storage(e.to_string()))?;
         }
@@ -676,7 +646,7 @@ impl FileServiceV2 {
         &self,
         user_id: UserId,
         folder_id: Uuid,
-    ) -> Result<FolderDocumentV2, FileError> {
+    ) -> Result<FolderDocV2, FileError> {
         let paths = UserBucketPaths::new(user_id);
 
         let data = self
@@ -686,7 +656,7 @@ impl FileServiceV2 {
             .map_err(|e| FileError::Storage(e.to_string()))?
             .ok_or(FileError::FolderNotFound(folder_id))?;
 
-        let doc: FolderDocumentV2 = serde_json::from_slice(&data)
+        let doc: FolderDocV2 = serde_json::from_slice(&data)
             .map_err(|e| FileError::Storage(format!("Invalid folder document: {}", e)))?;
 
         Ok(doc)

@@ -155,10 +155,10 @@ async fn test_ub_02_recipient_share_reference_in_recipient_bucket() {
     );
 
     // Verify the received share has a valid locator
-    let received_doc: ReceivedShareReference =
+    let received_doc: ReceivedShareDocument =
         serde_json::from_slice(&received_data.unwrap()).unwrap();
     assert_eq!(received_doc.share_id, share.share_id);
-    assert_eq!(received_doc.owner_user_id, owner_id);
+    assert_eq!(received_doc.shared_by, owner_id);
     assert!(
         received_doc.resource_locator.bucket.contains(&owner_id.to_string()),
         "Locator should point to owner's bucket"

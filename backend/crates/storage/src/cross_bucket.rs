@@ -199,15 +199,29 @@ impl CrossBucketReaderFactory {
 }
 
 /// In-memory cross-bucket reader for testing
+/// 
+/// This implementation delegates to a UserBucketStore to actually read data,
+/// making it work correctly with the rest of the test infrastructure.
 pub struct MemoryCrossBucketReader {
+    user_buckets: Option<Arc<dyn UserBucketStore>>,
     storage: std::sync::Mutex<std::collections::HashMap<String, Bytes>>,
     bucket_prefix: String,
 }
 
 impl MemoryCrossBucketReader {
-    /// Create a new memory cross-bucket reader
+    /// Create a new memory cross-bucket reader (legacy mode - uses internal storage)
     pub fn new() -> Self {
         Self {
+            user_buckets: None,
+            storage: std::sync::Mutex::new(std::collections::HashMap::new()),
+            bucket_prefix: "rustshare-user-".to_string(),
+        }
+    }
+
+    /// Create with a UserBucketStore delegate
+    pub fn with_user_buckets(user_buckets: Arc<dyn UserBucketStore>) -> Self {
+        Self {
+            user_buckets: Some(user_buckets),
             storage: std::sync::Mutex::new(std::collections::HashMap::new()),
             bucket_prefix: "rustshare-user-".to_string(),
         }
@@ -216,12 +230,13 @@ impl MemoryCrossBucketReader {
     /// Create with custom bucket prefix
     pub fn with_prefix(bucket_prefix: String) -> Self {
         Self {
+            user_buckets: None,
             storage: std::sync::Mutex::new(std::collections::HashMap::new()),
             bucket_prefix,
         }
     }
 
-    /// Store a value for testing
+    /// Store a value for testing (only used in legacy mode)
     pub fn store(&self, bucket: &str, key: &str, data: Bytes) {
         let full_key = format!("{}/{}", bucket, key);
         let mut storage = self.storage.lock().unwrap();
@@ -230,6 +245,18 @@ impl MemoryCrossBucketReader {
 
     fn build_key(&self, bucket: &str, key: &str) -> String {
         format!("{}/{}", bucket, key)
+    }
+
+    /// Extract user ID from bucket name
+    fn extract_user_id(&self, bucket: &str) -> Option<Uuid> {
+        let prefix = &self.bucket_prefix;
+        if let Some(suffix) = bucket.strip_prefix(prefix) {
+            // Handle "rustshare-user-{uuid}" format
+            if let Ok(user_id) = Uuid::parse_str(suffix) {
+                return Some(user_id);
+            }
+        }
+        None
     }
 }
 
@@ -242,12 +269,26 @@ impl Default for MemoryCrossBucketReader {
 #[async_trait]
 impl CrossBucketReader for MemoryCrossBucketReader {
     async fn read_with_locator(&self, locator: &PortableStorageLocator) -> Result<Option<Bytes>> {
+        // If we have a user_buckets delegate, use it
+        if let Some(ref user_buckets) = self.user_buckets {
+            if let Some(user_id) = self.extract_user_id(&locator.bucket) {
+                return user_buckets.get_object(user_id, &locator.key).await;
+            }
+        }
+        // Fall back to internal storage
         let key = self.build_key(&locator.bucket, &locator.key);
         let storage = self.storage.lock().unwrap();
         Ok(storage.get(&key).cloned())
     }
 
     async fn check_locator(&self, locator: &PortableStorageLocator) -> Result<bool> {
+        // If we have a user_buckets delegate, use it
+        if let Some(ref user_buckets) = self.user_buckets {
+            if let Some(user_id) = self.extract_user_id(&locator.bucket) {
+                return user_buckets.object_exists(user_id, &locator.key).await;
+            }
+        }
+        // Fall back to internal storage
         let key = self.build_key(&locator.bucket, &locator.key);
         let storage = self.storage.lock().unwrap();
         Ok(storage.contains_key(&key))

@@ -68,7 +68,7 @@ impl FolderChildrenIndexManager {
     }
 
     /// Add a file to the folder's children index
-    pub async fn add_file(&self, user_id: UserId, folder_id: Uuid, file: &FileDocumentV2) -> Result<()> {
+    pub async fn add_file(&self, user_id: UserId, folder_id: Uuid, file: &FileDocV2) -> Result<()> {
         let mut index = self.load(user_id, folder_id).await?;
         index.add_file(file.id, file.name.clone());
         self.save(user_id, &index).await?;
@@ -84,7 +84,7 @@ impl FolderChildrenIndexManager {
     }
 
     /// Update a file in the index
-    pub async fn update_file(&self, user_id: UserId, folder_id: Uuid, file: &FileDocumentV2) -> Result<()> {
+    pub async fn update_file(&self, user_id: UserId, folder_id: Uuid, file: &FileDocV2) -> Result<()> {
         let mut index = self.load(user_id, folder_id).await?;
         // Remove old entry if exists
         index.files.retain(|f| f.id != file.id);

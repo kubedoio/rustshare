@@ -3,7 +3,7 @@
 //! Generates S3 keys for all document types in the V2 User Storage Domain.
 //! 
 //! Bucket Layout:
-//! ```
+//! ```text
 //! owned/
 //!   files/{file_id}.json
 //!   folders/{folder_id}.json
@@ -113,19 +113,19 @@ impl UserBucketPaths {
     // INDEXES (Derived State - Rebuildable)
     // =========================================================================
 
-    /// Path to favourites index: indexes/favourites.json
+    /// Path to favourites index: indexes/owned/favourites.json
     pub fn favourites_index(&self) -> String {
-        "indexes/favourites.json".to_string()
+        "indexes/owned/favourites.json".to_string()
     }
 
-    /// Path to shared with me index: indexes/shared_with_me.json
+    /// Path to shared with me index: indexes/received/shared_with_me.json
     pub fn shared_with_me_index(&self) -> String {
-        "indexes/shared_with_me.json".to_string()
+        "indexes/received/shared_with_me.json".to_string()
     }
 
-    /// Path to folder children index: indexes/folder_children/{folder_id}.json
+    /// Path to folder children index: indexes/folders/{folder_id}/children.json
     pub fn folder_children_index(&self, folder_id: Uuid) -> String {
-        format!("indexes/folder_children/{}.json", folder_id)
+        format!("indexes/folders/{}/children.json", folder_id)
     }
 
     /// Prefix for all folder children indexes: indexes/folder_children/
@@ -133,9 +133,9 @@ impl UserBucketPaths {
         "indexes/folder_children/".to_string()
     }
 
-    /// Path to user roots index: indexes/roots.json
+    /// Path to user roots index: indexes/owned/roots.json
     pub fn roots_index(&self) -> String {
-        "indexes/roots.json".to_string()
+        "indexes/owned/roots.json".to_string()
     }
 }
 

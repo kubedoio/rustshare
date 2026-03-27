@@ -314,7 +314,7 @@ impl TestContext {
     pub async fn new() -> Self {
         let user_buckets: Arc<dyn UserBucketStore> = Arc::new(MemoryUserBucketStore::new());
         let blob_store: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
-        let cross_bucket: Arc<dyn CrossBucketReader> = Arc::new(MemoryCrossBucketReader::new());
+        let cross_bucket: Arc<dyn CrossBucketReader> = Arc::new(MemoryCrossBucketReader::with_user_buckets(user_buckets.clone()));
         let coordination: Arc<dyn CoordinationStore> = Arc::new(MemoryCoordinationStore::new());
 
         let service_factory = V2ServiceFactory::new(

@@ -94,7 +94,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_service_factory_creation() {
-        let user_buckets = Arc::new(MemoryUserBucketStore::new("rustshare-user-{}".to_string()));
+        let user_buckets = Arc::new(MemoryUserBucketStore::new());
         let cross_bucket_reader = Arc::new(MemoryCrossBucketReader::new());
         let blob_store = Arc::new(MemoryBlobStore::new());
 
