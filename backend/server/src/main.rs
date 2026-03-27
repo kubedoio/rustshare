@@ -37,7 +37,9 @@
 //! - Ensure target group health checks are configured
 //!
 
+mod admin;
 mod handlers;
+mod metadata_integration;
 mod middleware;
 mod oidc;
 mod replication;

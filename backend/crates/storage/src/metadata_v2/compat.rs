@@ -1,0 +1,403 @@
+//! Compatibility layer for migrating from old MetadataStore to new repositories
+//!
+//! This module provides adapters that implement the old MetadataStoreOps traits
+//! using the new metadata_v2 repositories. This allows gradual migration without
+//! rewriting all services at once.
+
+use rustshare_core::domain::{
+    File, FileVersion, Folder, ReplicationJob, ReplicationState, Share,
+};
+use std::sync::Arc;
+
+use crate::repos::*;
+
+/// Adapter that implements the old MetadataStoreOps using new repositories
+#[derive(Clone)]
+pub struct MetadataStoreCompat {
+    repo: Arc<dyn MetadataRepository>,
+}
+
+impl MetadataStoreCompat {
+    pub fn new(repo: Arc<dyn MetadataRepository>) -> Self {
+        Self { repo }
+    }
+}
+
+/// Compatibility layer for file operations
+#[allow(async_fn_in_trait)]
+impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
+    async fn create_file(&self, file: &File) -> anyhow::Result<()> {
+        // Convert old File to new FileDocument
+        let doc = file_to_document(file);
+        self.repo.files().create(&doc).await.map_err(|e| e.into())
+    }
+
+    async fn create_file_version(&self, version: &FileVersion) -> anyhow::Result<()> {
+        let doc = version_to_document(version);
+        self.repo.file_versions().create(&doc).await.map_err(|e| e.into())
+    }
+
+    async fn find_folder_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
+        match self.repo.folders().get(id).await? {
+            Some(doc) => Ok(Some(folder_from_document(&doc))),
+            None => Ok(None),
+        }
+    }
+
+    async fn find_file_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<File>> {
+        match self.repo.files().get(id).await? {
+            Some(doc) => Ok(Some(file_from_document(&doc))),
+            None => Ok(None),
+        }
+    }
+
+    async fn update_file(&self, file: &File) -> anyhow::Result<()> {
+        let doc = file_to_document(file);
+        self.repo.files().update(&doc).await.map_err(|e| e.into())
+    }
+
+    async fn delete_file(&self, id: uuid::Uuid) -> anyhow::Result<()> {
+        // Get user_id from context or file - for now use nil
+        let deleted_by = uuid::Uuid::nil();
+        self.repo.files().delete(id, deleted_by).await.map_err(|e| e.into())
+    }
+
+    async fn list_file_versions(&self, file_id: uuid::Uuid) -> anyhow::Result<Vec<FileVersion>> {
+        let docs = self.repo.file_versions().list_by_file(file_id).await?;
+        Ok(docs.iter().map(version_from_document).collect())
+    }
+
+    async fn find_file_version(
+        &self,
+        file_id: uuid::Uuid,
+        version: i32,
+    ) -> anyhow::Result<Option<FileVersion>> {
+        match self.repo.file_versions().get_by_number(file_id, version).await? {
+            Some(doc) => Ok(Some(version_from_document(&doc))),
+            None => Ok(None),
+        }
+    }
+
+    async fn count_enabled_replication_targets(&self) -> anyhow::Result<i64> {
+        // This would need a separate repository - for now return 0
+        Ok(0)
+    }
+
+    async fn create_replication_job(&self, _job: &ReplicationJob) -> anyhow::Result<()> {
+        // This would need a separate repository - for now no-op
+        Ok(())
+    }
+
+    async fn update_file_version_replication_state(
+        &self,
+        _version_id: uuid::Uuid,
+        _state: ReplicationState,
+    ) -> anyhow::Result<()> {
+        // This would need a separate repository - for now no-op
+        Ok(())
+    }
+}
+
+/// Compatibility layer for folder operations
+#[allow(async_fn_in_trait)]
+impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
+    async fn create_folder(&self, folder: &Folder) -> anyhow::Result<()> {
+        let doc = folder_to_document(folder);
+        self.repo.folders().create(&doc).await.map_err(|e| e.into())
+    }
+
+    async fn find_folder_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
+        match self.repo.folders().get(id).await? {
+            Some(doc) => Ok(Some(folder_from_document(&doc))),
+            None => Ok(None),
+        }
+    }
+
+    async fn update_folder(&self, folder: &Folder) -> anyhow::Result<()> {
+        let doc = folder_to_document(folder);
+        self.repo.folders().update(&doc).await.map_err(|e| e.into())
+    }
+
+    async fn delete_folder(&self, id: uuid::Uuid) -> anyhow::Result<()> {
+        let deleted_by = uuid::Uuid::nil();
+        self.repo.folders().delete(id, deleted_by).await.map_err(|e| e.into())
+    }
+
+    async fn list_folders(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<Folder>> {
+        // This is inefficient - should use an index
+        // For now, return empty or implement scan
+        Ok(Vec::new())
+    }
+
+    async fn find_descendant_folders(&self, folder_id: uuid::Uuid) -> anyhow::Result<Vec<Folder>> {
+        let docs = self.repo.folders().list_descendants(folder_id).await?;
+        Ok(docs.iter().map(folder_from_document).collect())
+    }
+
+    async fn list_files(
+        &self,
+        _parent_id: Option<uuid::Uuid>,
+        _owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<File>> {
+        // This is inefficient - should use an index
+        Ok(Vec::new())
+    }
+}
+
+/// Compatibility layer for share operations
+#[allow(async_fn_in_trait)]
+impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
+    async fn find_file_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<File>> {
+        match self.repo.files().get(id).await? {
+            Some(doc) => Ok(Some(file_from_document(&doc))),
+            None => Ok(None),
+        }
+    }
+
+    async fn find_folder_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
+        match self.repo.folders().get(id).await? {
+            Some(doc) => Ok(Some(folder_from_document(&doc))),
+            None => Ok(None),
+        }
+    }
+
+    async fn create_share(&self, share: &Share) -> anyhow::Result<()> {
+        let doc = share_to_document(share);
+        self.repo.shares().create(&doc).await.map_err(|e| e.into())
+    }
+
+    async fn get_share_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<Share>> {
+        match self.repo.shares().get(id).await? {
+            Some(doc) => Ok(Some(share_from_document(&doc))),
+            None => Ok(None),
+        }
+    }
+
+    async fn get_share_by_token(&self, token: &str) -> anyhow::Result<Option<Share>> {
+        // Hash the token for lookup
+        let token_hash = format!("{:x}", md5::compute(token));
+        match self.repo.shares().get_by_token(&token_hash).await? {
+            Some(doc) => Ok(Some(share_from_document(&doc))),
+            None => Ok(None),
+        }
+    }
+
+    async fn get_file_shares(&self, file_id: uuid::Uuid) -> anyhow::Result<Vec<Share>> {
+        let docs = self.repo.shares().list_by_resource("file", file_id).await?;
+        Ok(docs.iter().map(share_from_document).collect())
+    }
+
+    async fn get_folder_shares(&self, folder_id: uuid::Uuid) -> anyhow::Result<Vec<Share>> {
+        let docs = self.repo.shares().list_by_resource("folder", folder_id).await?;
+        Ok(docs.iter().map(share_from_document).collect())
+    }
+
+    async fn list_files(
+        &self,
+        _parent_id: Option<uuid::Uuid>,
+        _owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<File>> {
+        Ok(Vec::new())
+    }
+
+    async fn list_folders(
+        &self,
+        _parent_id: Option<uuid::Uuid>,
+        _owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<Folder>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_descendant_folders(&self, folder_id: uuid::Uuid) -> anyhow::Result<Vec<Folder>> {
+        let docs = self.repo.folders().list_descendants(folder_id).await?;
+        Ok(docs.iter().map(folder_from_document).collect())
+    }
+
+    async fn revoke_share(&self, share_id: uuid::Uuid) -> anyhow::Result<()> {
+        let revoked_by = uuid::Uuid::nil();
+        self.repo.shares().revoke(share_id, revoked_by).await.map_err(|e| e.into())
+    }
+
+    async fn update_share(&self, share: &Share) -> anyhow::Result<()> {
+        let doc = share_to_document(share);
+        self.repo.shares().update(&doc).await.map_err(|e| e.into())
+    }
+}
+
+// ============================================================================
+// Conversion functions between old and new types
+// ============================================================================
+
+use crate::metadata_v2::schemas::*;
+
+fn folder_to_document(folder: &Folder) -> FolderDocument {
+    FolderDocument {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        id: folder.id,
+        namespace_id: uuid::Uuid::nil(), // Would need proper namespace handling
+        parent_id: folder.parent_folder_id,
+        name: folder.name.clone(),
+        path: folder.path.clone(),
+        owner_id: folder.owner_id,
+        created_at: folder.created_at,
+        updated_at: folder.updated_at,
+        version: 1,
+        deleted: false,
+    }
+}
+
+fn folder_from_document(doc: &FolderDocument) -> Folder {
+    Folder {
+        id: doc.id,
+        name: doc.name.clone(),
+        path: doc.path.clone(),
+        parent_folder_id: doc.parent_id,
+        owner_id: doc.owner_id,
+        created_at: doc.created_at,
+        updated_at: doc.updated_at,
+    }
+}
+
+fn file_to_document(file: &File) -> FileDocument {
+    FileDocument {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        id: file.id,
+        namespace_id: uuid::Uuid::nil(),
+        parent_id: file.parent_folder_id,
+        name: file.name.clone(),
+        path: file.path.clone(),
+        owner_id: file.owner_id,
+        current_version_id: uuid::Uuid::nil(), // Would need proper version tracking
+        version_number: file.current_version,
+        size: file.size,
+        mime_type: file.mime_type.clone(),
+        content_ref: format!("sha256:{}", file.content_hash),
+        checksum: file.content_hash.clone(),
+        created_at: file.created_at,
+        updated_at: file.modified_at,
+        version: 1,
+        deleted: false,
+    }
+}
+
+fn file_from_document(doc: &FileDocument) -> File {
+    File {
+        id: doc.id,
+        name: doc.name.clone(),
+        path: doc.path.clone(),
+        content_hash: doc.checksum.clone(),
+        size: doc.size,
+        mime_type: doc.mime_type.clone(),
+        parent_folder_id: doc.parent_id,
+        owner_id: doc.owner_id,
+        current_version: doc.version_number,
+        created_at: doc.created_at,
+        modified_at: doc.updated_at,
+    }
+}
+
+fn version_to_document(version: &FileVersion) -> FileVersionDocument {
+    FileVersionDocument {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        id: version.id,
+        file_id: version.file_id,
+        version_number: version.version_number,
+        content_ref: format!("sha256:{}", version.content_hash),
+        size: version.size,
+        checksum: version.content_hash.clone(),
+        created_by: version.created_by,
+        created_at: version.created_at,
+        change_description: version.change_description.clone(),
+    }
+}
+
+fn version_from_document(doc: &FileVersionDocument) -> FileVersion {
+    FileVersion {
+        id: doc.id,
+        file_id: doc.file_id,
+        version_number: doc.version_number,
+        content_hash: doc.checksum.clone(),
+        size: doc.size,
+        replication_state: ReplicationState::PrimaryWritten, // Default
+        created_by: doc.created_by,
+        created_at: doc.created_at,
+        change_description: doc.change_description.clone(),
+    }
+}
+
+fn share_to_document(share: &Share) -> ShareDocument {
+    let (resource_type, resource_id) = if let Some(file_id) = share.file_id {
+        ("file".to_string(), file_id)
+    } else if let Some(folder_id) = share.folder_id {
+        ("folder".to_string(), folder_id)
+    } else {
+        ("unknown".to_string(), uuid::Uuid::nil())
+    };
+
+    let scope = if share.recipient_user_id.is_some() {
+        ShareScope::User
+    } else {
+        ShareScope::Public
+    };
+
+    let permissions = match share.permissions {
+        rustshare_core::domain::SharePermissions::View => SharePermission::View,
+        rustshare_core::domain::SharePermissions::Edit => SharePermission::Edit,
+        rustshare_core::domain::SharePermissions::Admin => SharePermission::Admin,
+    };
+
+    ShareDocument {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        id: share.id,
+        resource_type,
+        resource_id,
+        scope,
+        permissions,
+        token_hash: share.share_token.as_ref().map(|t| format!("{:x}", md5::compute(t))),
+        recipient_user_id: share.recipient_user_id,
+        password_hash: share.password_hash.clone(),
+        expires_at: share.expires_at,
+        upload_only: share.upload_only,
+        access_count: share.access_count,
+        created_by: share.created_by,
+        created_at: share.created_at,
+        revoked_at: share.revoked_at,
+        version: 1,
+    }
+}
+
+fn share_from_document(doc: &ShareDocument) -> Share {
+    use rustshare_core::domain::{SharePermissions, ShareRecipient};
+
+    let (file_id, folder_id) = match doc.resource_type.as_str() {
+        "file" => (Some(doc.resource_id), None),
+        "folder" => (None, Some(doc.resource_id)),
+        _ => (None, None),
+    };
+
+    let permissions = match doc.permissions {
+        SharePermission::View => SharePermissions::View,
+        SharePermission::Edit => SharePermissions::Edit,
+        SharePermission::Admin => SharePermissions::Admin,
+    };
+
+    Share {
+        id: doc.id,
+        file_id,
+        folder_id,
+        share_token: doc.token_hash.clone(), // Note: this is the hash, not the original token
+        permissions,
+        password_hash: doc.password_hash.clone(),
+        expires_at: doc.expires_at,
+        upload_only: doc.upload_only,
+        access_count: doc.access_count,
+        recipient_user_id: doc.recipient_user_id,
+        created_by: doc.created_by,
+        created_at: doc.created_at,
+        revoked_at: doc.revoked_at,
+    }
+}

@@ -1,0 +1,130 @@
+name: Dependencies Check
+
+on:
+  # Run weekly
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday at 9 AM
+  # Run on PRs that modify Cargo files
+  pull_request:
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+  # Allow manual trigger
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-backend-dependencies:
+    name: Check Backend Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+      
+      - name: Cache cargo-outdated
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-outdated
+          key: ${{ runner.os }}-cargo-outdated
+      
+      - name: Install cargo-outdated
+        run: |
+          if ! command -v cargo-outdated &> /dev/null; then
+            cargo install cargo-outdated
+          fi
+      
+      - name: Check for outdated dependencies
+        working-directory: ./backend
+        run: |
+          echo "## Outdated Dependencies" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Check for outdated dependencies
+          OUTPUT=$(cargo outdated -R --format compact 2>&1 || true)
+          
+          if echo "$OUTPUT" | grep -q "All dependencies are up to date"; then
+            echo "✅ All dependencies are up to date!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Outdated dependencies found:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "$OUTPUT" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            
+            # Show detailed view
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Detailed Report" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cargo outdated -R 2>&1 || true
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+        continue-on-error: true
+      
+      - name: Verify build with latest dependencies
+        working-directory: ./backend
+        run: |
+          cargo update
+          cargo check --all-features
+          cargo test --all-features
+
+  check-frontend-dependencies:
+    name: Check Frontend Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: './frontend/package-lock.json'
+      
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm ci
+      
+      - name: Check for outdated dependencies
+        working-directory: ./frontend
+        run: |
+          echo "## Outdated NPM Dependencies" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          npm outdated || true
+          
+          # Also check with npm audit
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Security Audit" >> $GITHUB_STEP_SUMMARY
+          npm audit --audit-level=high || true
+        continue-on-error: true
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+      
+      - name: Cache cargo-audit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: ${{ runner.os }}-cargo-audit
+      
+      - name: Install cargo-audit
+        run: |
+          if ! command -v cargo-audit &> /dev/null; then
+            cargo install cargo-audit
+          fi
+      
+      - name: Run security audit
+        working-directory: ./backend
+        run: cargo audit
+        continue-on-error: true

@@ -2,9 +2,13 @@
 //!
 //! Handles persistence to PostgreSQL and RustFS.
 
+pub mod admin;
 pub mod event_store;
 pub mod metadata;
+pub mod metadata_v2;
 pub mod object_store;
+pub mod repos;
+pub mod service_integration;
 
 pub use event_store::EventStore;
 pub use metadata::{

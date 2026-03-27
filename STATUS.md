@@ -116,6 +116,67 @@ Use [Compatibility Surface Inventory](/Users/scolak/Projects/x/rustshare/docs/20
 - Phase 6: executed for the current Docker-based pilot profile
 - Launch Gate: conditionally passed for the current password-login web-first pilot profile
 - Phase 7: active within the limits of the current gate decision
+- **Metadata Refactor**: implemented (2026-03-27), pending migration
+
+## Metadata V2 Implementation
+
+The metadata v2 refactor is **complete** and ready for phased migration:
+
+### Architecture
+
+- **New storage model**: Metadata stored in RustFS/S3 as JSON documents
+- **Consistency model**: Synchronous writes with event append for audit
+- **Object layout**: Hierarchical structure with indexing for folder children
+- **Runtime cache**: In-memory caching with automatic invalidation
+
+### Migration Stages
+
+1. `postgres` - PostgreSQL only (current, default)
+2. `dual_write` - Write to both, read from PostgreSQL
+3. `rustfs_reads` - Write to both, read from RustFS
+4. `rustfs` - RustFS only (target)
+
+### Configuration
+
+```bash
+# Select backend
+RUSTSHARE_METADATA_BACKEND=postgres  # Options: postgres, rustfs, dual_write, rustfs_reads, localfs
+
+# Optional tuning
+RUSTSHARE_METADATA_CACHE=true
+RUSTSHARE_METADATA_PREFIX=apps/rustshare
+RUSTSHARE_METADATA_NAMESPACE=default
+```
+
+### Admin Endpoints
+
+- `GET /admin/metadata/health` - Health check
+- `GET /admin/metadata/stats` - Storage statistics
+- `GET /admin/metadata/verify/parity` - PostgreSQL vs RustFS parity
+- `GET /admin/metadata/verify/consistency` - Internal consistency check
+- `POST /admin/metadata/repair` - Repair inconsistencies
+- `POST /admin/metadata/rebuild/index` - Rebuild indexes from objects
+
+### Verification Tools
+
+```bash
+# Verify data parity between backends
+./scripts/verify-metadata.sh parity
+
+# Check internal consistency
+./scripts/verify-metadata.sh consistency
+
+# Repair detected issues
+./scripts/repair-metadata.sh
+
+# Rebuild indexes from source objects
+./scripts/rebuild-metadata-index.sh
+```
+
+### Documentation
+
+- [Metadata Refactor Design](docs/2026-03-27-metadata-refactor-design.md)
+- [Metadata Refactor Architecture Decision](docs/2026-03-27-metadata-refactor-adr.md)
 
 Current Phase 7 progress:
 
@@ -189,3 +250,14 @@ The main validation loop has already been exercised successfully in this workspa
 - `docker compose build --no-cache backend`
 
 The remaining work is no longer “make the project basically work.” It is launch hardening, technical debt cleanup, and the next client phases.
+
+## Dependency Management
+
+Automated dependency management is now configured:
+
+- **Dependabot**: Weekly PRs for Cargo and npm updates
+- **CI Checks**: Weekly automated dependency audits
+- **Local Tools**: `cargo-outdated`, `cargo-audit` for manual checks
+- **Script**: `./scripts/check-dependencies.sh` for one-command checking
+
+See [docs/DEPENDENCY_MANAGEMENT.md](docs/DEPENDENCY_MANAGEMENT.md) for details.

@@ -1,0 +1,48 @@
+version: 2
+updates:
+  # Enable version updates for Cargo (Rust)
+  - package-ecosystem: "cargo"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    # Group all updates together in a single PR
+    groups:
+      cargo-dependencies:
+        patterns:
+          - "*"
+    # Limit open PRs to avoid noise
+    open-pull-requests-limit: 5
+    # Labels for PRs
+    labels:
+      - "dependencies"
+      - "rust"
+    # Reviewers
+    # reviewers:
+    #   - "your-github-username"
+    
+  # Enable version updates for npm (frontend)
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "javascript"
+
+  # Enable version updates for GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"
+      - "ci"
