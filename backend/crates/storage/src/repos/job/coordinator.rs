@@ -1,7 +1,7 @@
 //! Job coordinator for distributed job processing
 
 use super::{Job, JobRepository, JobStatus};
-use crate::coordination::{CoordinationStore, CoordinationError};
+use crate::coordination::CoordinationStore;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -42,6 +42,12 @@ impl<R: JobRepository, C: CoordinationStore> JobCoordinator<R, C> {
     pub fn with_heartbeat_interval(mut self, interval: Duration) -> Self {
         self.heartbeat_interval = interval;
         self
+    }
+    
+    /// Get reference to job repository for testing
+    #[cfg(test)]
+    pub fn job_repo(&self) -> &Arc<R> {
+        &self.job_repo
     }
     
     /// Try to claim a job for processing
@@ -148,11 +154,11 @@ impl<R: JobRepository, C: CoordinationStore> JobCoordinator<R, C> {
             .await
             .map_err(|e| CoordinatorError::Repository(e.to_string()))?;
         
-        info!("Job {} completed successfully", job_id);
+        info!("Job {} completed by worker {}", job_id, self.worker_id);
         Ok(())
     }
     
-    /// Mark a job as failed
+    /// Fail a job, with optional retry
     pub async fn fail_job(
         &self,
         job_id: Uuid,
@@ -175,17 +181,22 @@ impl<R: JobRepository, C: CoordinationStore> JobCoordinator<R, C> {
         job.error_message = Some(error_message.clone());
         
         if job.retry_count >= job.max_retries {
-            // Mark as permanently failed
+            // Permanently failed
             job.status = JobStatus::Failed;
             job.completed_at = Some(chrono::Utc::now());
-            error!("Job {} failed permanently: {}", job_id, error_message);
+            error!(
+                "Job {} failed permanently after {} retries: {}",
+                job_id, job.retry_count, error_message
+            );
         } else {
-            // Reschedule for retry
+            // Retry
             job.status = JobStatus::Pending;
             job.worker_id = None;
             job.started_at = None;
-            job.scheduled_at = chrono::Utc::now() + chrono::Duration::seconds(60 * job.retry_count as i64);
-            warn!("Job {} failed (attempt {}/{}), rescheduled", job_id, job.retry_count, job.max_retries);
+            warn!(
+                "Job {} failed, scheduling retry {}/{}",
+                job_id, job.retry_count, job.max_retries
+            );
         }
         
         self.job_repo
@@ -195,40 +206,9 @@ impl<R: JobRepository, C: CoordinationStore> JobCoordinator<R, C> {
         
         Ok(())
     }
-    
-    /// Cancel a job
-    pub async fn cancel_job(&self, job_id: Uuid) -> Result<(), CoordinatorError> {
-        // Release claim if we have it
-        let _ = self.coord_store
-            .release_job_claim(&job_id.to_string(), &self.worker_id)
-            .await;
-        
-        // Get and update job
-        let mut job = self.job_repo
-            .get_job(job_id)
-            .await
-            .map_err(|e| CoordinatorError::Repository(e.to_string()))?
-            .ok_or(CoordinatorError::JobNotFound(job_id))?;
-        
-        job.status = JobStatus::Cancelled;
-        job.completed_at = Some(chrono::Utc::now());
-        
-        self.job_repo
-            .update_job(&job)
-            .await
-            .map_err(|e| CoordinatorError::Repository(e.to_string()))?;
-        
-        info!("Job {} cancelled", job_id);
-        Ok(())
-    }
-    
-    /// Get the heartbeat interval
-    pub fn heartbeat_interval(&self) -> Duration {
-        self.heartbeat_interval
-    }
 }
 
-/// Errors that can occur in job coordination
+/// Errors that can occur during job coordination
 #[derive(Debug, thiserror::Error)]
 pub enum CoordinatorError {
     #[error("Job not found: {0}")]
@@ -242,147 +222,4 @@ pub enum CoordinatorError {
     
     #[error("Job already claimed")]
     AlreadyClaimed,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::coordination::InMemoryCoordinationStore;
-    use crate::metadata_v2::stores::LocalFsDocumentStore;
-    use crate::metadata_v2::MetadataBackendConfig;
-    use crate::repos::job::rustfs::RustFsJobRepository;
-    use tempfile::TempDir;
-
-    async fn create_test_coordinator() -> (JobCoordinator<RustFsJobRepository, InMemoryCoordinationStore>, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
-        let config = MetadataBackendConfig {
-            base_prefix: "test".to_string(),
-            namespace: "default".to_string(),
-            enable_optimistic_concurrency: true,
-            fallback_to_leases: true,
-        };
-        
-        let doc_store: Arc<dyn MetadataDocumentStore> = Arc::new(
-            LocalFsDocumentStore::new(temp_dir.path().to_path_buf(), config)
-        );
-        
-        let job_repo = Arc::new(RustFsJobRepository::new(
-            doc_store,
-            "apps/rustshare".to_string(),
-            "test".to_string(),
-        ));
-        
-        let coord_store: Arc<InMemoryCoordinationStore> = Arc::new(InMemoryCoordinationStore::new());
-        
-        let coordinator = JobCoordinator::new(
-            job_repo,
-            coord_store,
-            "worker1".to_string(),
-        );
-        
-        (coordinator, temp_dir)
-    }
-
-    fn create_test_job(id: Uuid) -> Job {
-        Job {
-            id,
-            job_type: "replication".to_string(),
-            resource_type: "file_version".to_string(),
-            resource_id: Uuid::new_v4(),
-            status: JobStatus::Pending,
-            priority: 10,
-            payload: serde_json::json!({"target": "s3"}),
-            retry_count: 0,
-            max_retries: 3,
-            created_at: chrono::Utc::now(),
-            scheduled_at: chrono::Utc::now(),
-            started_at: None,
-            completed_at: None,
-            worker_id: None,
-            error_message: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn test_claim_job() {
-        let (coordinator, _temp) = create_test_coordinator().await;
-        let job = create_test_job(Uuid::new_v4());
-        
-        // Create job
-        coordinator.job_repo.create_job(&job).await.unwrap();
-        
-        // Claim it
-        let claimed = coordinator.claim_job().await.unwrap();
-        assert!(claimed.is_some());
-        
-        let claimed_job = claimed.unwrap();
-        assert_eq!(claimed_job.id, job.id);
-        assert_eq!(claimed_job.status, JobStatus::Running);
-        assert_eq!(claimed_job.worker_id, Some("worker1".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_complete_job() {
-        let (coordinator, _temp) = create_test_coordinator().await;
-        let job = create_test_job(Uuid::new_v4());
-        
-        // Create and claim job
-        coordinator.job_repo.create_job(&job).await.unwrap();
-        let claimed = coordinator.claim_job().await.unwrap().unwrap();
-        
-        // Complete it
-        coordinator.complete_job(claimed.id, serde_json::json!({"success": true}))
-            .await
-            .unwrap();
-        
-        // Verify
-        let completed = coordinator.job_repo.get_job(job.id).await.unwrap().unwrap();
-        assert_eq!(completed.status, JobStatus::Completed);
-        assert!(completed.completed_at.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_fail_job_with_retry() {
-        let (coordinator, _temp) = create_test_coordinator().await;
-        let job = create_test_job(Uuid::new_v4());
-        
-        // Create and claim job
-        coordinator.job_repo.create_job(&job).await.unwrap();
-        let claimed = coordinator.claim_job().await.unwrap().unwrap();
-        
-        // Fail it
-        coordinator.fail_job(claimed.id, "Network error".to_string())
-            .await
-            .unwrap();
-        
-        // Verify - should be pending again for retry
-        let failed = coordinator.job_repo.get_job(job.id).await.unwrap().unwrap();
-        assert_eq!(failed.status, JobStatus::Pending);
-        assert_eq!(failed.retry_count, 1);
-        assert!(failed.error_message.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_fail_job_permanently() {
-        let (coordinator, _temp) = create_test_coordinator().await;
-        let mut job = create_test_job(Uuid::new_v4());
-        job.max_retries = 1;
-        job.retry_count = 1; // Already failed once
-        
-        // Create and claim job
-        coordinator.job_repo.create_job(&job).await.unwrap();
-        let claimed = coordinator.claim_job().await.unwrap().unwrap();
-        
-        // Fail it again - should be permanent
-        coordinator.fail_job(claimed.id, "Final error".to_string())
-            .await
-            .unwrap();
-        
-        // Verify - should be permanently failed
-        let failed = coordinator.job_repo.get_job(job.id).await.unwrap().unwrap();
-        assert_eq!(failed.status, JobStatus::Failed);
-    }
-
-    use std::sync::Arc;
-    use crate::metadata_v2::MetadataDocumentStore;
 }

@@ -5,15 +5,12 @@
 
 use async_trait::async_trait;
 use std::sync::Arc;
-use rustshare_core::domain::{FileId, FolderId, ShareId, UserId};
-use uuid::Uuid;
 
 use super::{
     FileRepository, FileVersionRepository, FolderChildrenIndexRepository,
-    FolderRepository, MetadataRepository, RepositoryError, ShareRepository,
+    FolderRepository, MetadataRepository, ShareRepository,
     EventRepository, TombstoneRepository,
 };
-use crate::metadata_v2::schemas::*;
 
 /// Stub metadata repository that returns empty results
 pub struct StubMetadataRepository;

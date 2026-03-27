@@ -164,7 +164,7 @@ impl<R: NotificationRepository> NotificationProjector<R> {
 mod tests {
     use super::*;
     use crate::metadata_v2::stores::LocalFsDocumentStore;
-    use crate::metadata_v2::MetadataBackendConfig;
+    use crate::metadata_v2::{MetadataBackendConfig, MetadataDocumentStore};
     use crate::repos::notification::rustfs::RustFsNotificationRepository;
     use crate::repos::notification::NotificationQuery;
     use serde_json::json;

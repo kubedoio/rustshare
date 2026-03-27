@@ -262,7 +262,7 @@ use crate::metadata_v2::schemas::{
 
 /// Repository for user operations
 #[async_trait]
-pub trait UserRepository: Send + Sync {
+pub trait UserMetadataRepository: Send + Sync {
     /// Get a user by ID
     async fn get(&self, id: UserId) -> Result<Option<UserDocument>, RepositoryError>;
     
@@ -453,7 +453,7 @@ pub trait NotificationRepository: Send + Sync {
 
 /// Extended combined repository with new operations
 pub trait ExtendedMetadataRepository: MetadataRepository {
-    fn users(&self) -> &dyn UserRepository;
+    fn users(&self) -> &dyn UserMetadataRepository;
     fn devices(&self) -> &dyn DeviceRepository;
     fn groups(&self) -> &dyn GroupRepository;
     fn audit(&self) -> &dyn AuditRepository;

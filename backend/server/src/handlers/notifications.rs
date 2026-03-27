@@ -1,7 +1,4 @@
 //! HTTP handlers for notification operations.
-//!
-//! TODO: This module needs to be rewritten to use the new NotificationRepository
-//! for notification storage instead of PostgreSQL.
 
 use axum::{
     extract::{Path, Query, State},
@@ -12,8 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{AuthenticatedUser, ErrorResponse};
-use crate::AppState;
+use crate::{handlers::AuthenticatedUser, AppState};
 
 // ============================================================================
 // Request/Response DTOs
@@ -40,11 +36,11 @@ fn default_limit() -> i64 {
 /// Response for a notification.
 #[derive(Debug, Serialize)]
 pub struct NotificationResponse {
-    pub id: Uuid,
+    pub id: String,
     pub notification_type: String,
     pub title: String,
     pub message: String,
-    pub resource_id: Uuid,
+    pub resource_id: String,
     pub resource_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action_url: Option<String>,
@@ -62,7 +58,7 @@ pub struct ListNotificationsResponse {
 /// Response for unread notification count.
 #[derive(Debug, Serialize)]
 pub struct UnreadNotificationCountResponse {
-    pub count: i64,
+    pub count: u32,
 }
 
 // ============================================================================
@@ -72,19 +68,44 @@ pub struct UnreadNotificationCountResponse {
 /// List notifications for the authenticated user.
 ///
 /// GET /api/notifications?limit=50&offset=0&unread_only=false
-///
-/// TODO: Implement using new NotificationRepository
 pub async fn list_notifications(
-    State(_state): State<AppState>,
-    _auth: AuthenticatedUser,
-    Query(_query): Query<ListNotificationsQuery>,
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Query(query): Query<ListNotificationsQuery>,
 ) -> Result<Response, Response> {
-    tracing::warn!("Notification list not yet implemented in zero-PostgreSQL mode");
+    let offset = query.offset.max(0) as usize;
+    let limit = query.limit.clamp(1, 100) as usize;
     
-    // Return empty list for now
+    let notifications = state.notification_repo
+        .list(auth.user_id.into(), query.unread_only, offset, limit)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to list notifications: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to list notifications" })),
+            )
+                .into_response()
+        })?;
+
+    let notification_responses: Vec<NotificationResponse> = notifications
+        .into_iter()
+        .map(|n| NotificationResponse {
+            id: n.notification_id.to_string(),
+            notification_type: format!("{:?}", n.notification_type).to_lowercase(),
+            title: String::new(), // TODO: Get from NotificationDocument
+            message: String::new(), // TODO: Get from NotificationDocument
+            resource_id: n.resource_id.to_string(),
+            resource_type: n.resource_type.clone(),
+            action_url: None, // TODO: Get from NotificationDocument
+            read: n.read,
+            created_at: n.created_at.to_rfc3339(),
+        })
+        .collect();
+
     let response = ListNotificationsResponse {
-        notifications: vec![],
-        total: 0,
+        total: notification_responses.len(),
+        notifications: notification_responses,
     };
     
     Ok(Json(response).into_response())
@@ -93,48 +114,68 @@ pub async fn list_notifications(
 /// Count unread notifications for the authenticated user.
 ///
 /// GET /api/notifications/unread-count
-///
-/// TODO: Implement using new NotificationRepository
 pub async fn count_unread_notifications(
-    State(_state): State<AppState>,
-    _auth: AuthenticatedUser,
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
 ) -> Result<Response, Response> {
-    tracing::warn!("Unread notification count not yet implemented in zero-PostgreSQL mode");
-    
-    Ok(Json(UnreadNotificationCountResponse { count: 0 }).into_response())
+    let count = state.notification_repo
+        .count_unread(auth.user_id.into())
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to count unread notifications: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to count notifications" })),
+            )
+                .into_response()
+        })?;
+
+    Ok(Json(UnreadNotificationCountResponse { count }).into_response())
 }
 
 /// Mark a notification as read.
 ///
 /// PUT /api/notifications/{id}/read
-///
-/// TODO: Implement using new NotificationRepository
 pub async fn mark_notification_read(
-    State(_state): State<AppState>,
-    Path(_notification_id): Path<Uuid>,
-    _auth: AuthenticatedUser,
+    State(state): State<AppState>,
+    Path(notification_id): Path<Uuid>,
+    auth: AuthenticatedUser,
 ) -> Result<Response, Response> {
-    tracing::warn!("Mark notification read not yet implemented in zero-PostgreSQL mode");
-    
-    Err((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(ErrorResponse::new("Not implemented")),
-    )
-        .into_response())
+    state.notification_repo
+        .mark_read(auth.user_id.into(), notification_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to mark notification as read: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to mark notification as read" })),
+            )
+                .into_response()
+        })?;
+
+    Ok((StatusCode::OK, Json(serde_json::json!({ "success": true }))).into_response())
 }
 
 /// Delete a notification.
 ///
 /// DELETE /api/notifications/{id}
-///
-/// TODO: Implement using new NotificationRepository
 pub async fn delete_notification(
-    State(_state): State<AppState>,
-    Path(_notification_id): Path<Uuid>,
-    _auth: AuthenticatedUser,
+    State(state): State<AppState>,
+    Path(notification_id): Path<Uuid>,
+    auth: AuthenticatedUser,
 ) -> Result<Response, Response> {
-    tracing::warn!("Delete notification not yet implemented in zero-PostgreSQL mode");
-    
+    state.notification_repo
+        .delete(auth.user_id.into(), notification_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to delete notification: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to delete notification" })),
+            )
+                .into_response()
+        })?;
+
     Ok((StatusCode::NO_CONTENT, ()).into_response())
 }
 

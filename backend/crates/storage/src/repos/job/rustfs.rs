@@ -3,8 +3,7 @@
 use super::*;
 use crate::metadata_v2::{
     schemas::{
-        JobDocument, JobQueueIndex, JobRef, JobStatus as DocJobStatus,
-        CURRENT_SCHEMA_VERSION,
+        JobDocument, JobQueueIndex, JobRef,
     },
     MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions,
 };
@@ -187,7 +186,7 @@ impl JobRepository for RustFsJobRepository {
             .map_err(|e| JobRepositoryError::Storage(e.to_string()))?;
         
         // Update index
-        if let Some(job) = job {
+        if let Some(_job) = job {
             let mut index = self.get_or_create_index().await?;
             index.remove_job(id);
             self.save_index(&index).await?;

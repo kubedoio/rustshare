@@ -18,6 +18,22 @@ pub struct RepositoryFactoryConfig {
     pub dual_write_config: Option<DualWriteConfig>,
 }
 
+impl Default for RepositoryFactoryConfig {
+    fn default() -> Self {
+        Self {
+            backend_type: MetadataBackendType::RustFs,
+            backend_config: MetadataBackendConfig {
+                base_prefix: "apps/rustshare".to_string(),
+                namespace: "default".to_string(),
+                enable_optimistic_concurrency: true,
+                fallback_to_leases: true,
+            },
+            enable_cache: true,
+            dual_write_config: None,
+        }
+    }
+}
+
 impl RepositoryFactoryConfig {
     /// Create from environment variables
     pub fn from_env() -> anyhow::Result<Self> {
@@ -56,6 +72,11 @@ impl RepositoryFactoryConfig {
 pub struct RepositoryFactory;
 
 impl RepositoryFactory {
+    /// Create a new repository factory
+    pub fn new(_config: RepositoryFactoryConfig) -> Self {
+        Self
+    }
+    
     /// Create folder repository
     pub fn create_folder_repo(
         doc_store: Arc<dyn MetadataDocumentStore>,
@@ -239,17 +260,15 @@ pub struct RepositoryBuilder {
     event_store: Option<Arc<dyn EventLogStore>>,
     path_builder: Option<PathBuilder>,
     cache: Option<Arc<RuntimeMetadataCache>>,
-    backend_type: MetadataBackendType,
 }
 
 impl RepositoryBuilder {
-    pub fn new(backend_type: MetadataBackendType) -> Self {
+    pub fn new(_backend_type: MetadataBackendType) -> Self {
         Self {
             doc_store: None,
             event_store: None,
             path_builder: None,
             cache: None,
-            backend_type,
         }
     }
     

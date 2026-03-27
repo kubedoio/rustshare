@@ -38,7 +38,8 @@ pub use shares::{
 pub use sync::sync_handler;
 pub use user_shares::{
     create_file_share, create_folder_share, list_file_recipients, list_folder_recipients,
-    list_received_shares, remove_recipient, update_recipient_permission,
+    list_received_shares, remove_file_recipient, remove_folder_recipient, 
+    update_file_recipient_permission, update_folder_recipient_permission,
 };
 pub use users::{
     delete_avatar, delete_user_session, get_avatar, get_user_profile,
@@ -98,10 +99,12 @@ pub fn folder_error_response(err: FolderError) -> Response {
         FolderError::PermissionDenied { .. } => (StatusCode::FORBIDDEN, err.to_string()),
         FolderError::ParentFolderNotFound(_) => (StatusCode::BAD_REQUEST, err.to_string()),
         FolderError::CircularReference { .. } => (StatusCode::BAD_REQUEST, err.to_string()),
-        FolderError::DuplicateName { .. } => (StatusCode::CONFLICT, err.to_string()),
+        FolderError::DuplicateName(_) => (StatusCode::CONFLICT, err.to_string()),
         FolderError::InvalidName(_) => (StatusCode::BAD_REQUEST, err.to_string()),
         FolderError::CannotDeleteRoot(_) => (StatusCode::BAD_REQUEST, err.to_string()),
-        FolderError::Database(_) => (
+        FolderError::NotEmpty(_) => (StatusCode::CONFLICT, err.to_string()),
+        FolderError::InvalidMove { .. } => (StatusCode::BAD_REQUEST, err.to_string()),
+        FolderError::Storage(_) | FolderError::Database(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Internal server error".to_string(),
         ),
@@ -115,18 +118,22 @@ pub fn share_error_response(err: ShareError) -> Response {
     let (status, message) = match err {
         ShareError::NotFound => (StatusCode::NOT_FOUND, err.to_string()),
         ShareError::NotFoundById(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        ShareError::PermissionDenied { .. } => (StatusCode::FORBIDDEN, err.to_string()),
+        ShareError::ShareNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
         ShareError::FileNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
+        ShareError::ResourceNotFound { .. } => (StatusCode::NOT_FOUND, err.to_string()),
+        ShareError::PermissionDenied { .. } => (StatusCode::FORBIDDEN, err.to_string()),
         ShareError::Revoked => (StatusCode::GONE, err.to_string()),
         ShareError::Expired => (StatusCode::GONE, err.to_string()),
+        ShareError::ShareExpired(_) => (StatusCode::GONE, err.to_string()),
         ShareError::PasswordRequired => (StatusCode::UNAUTHORIZED, err.to_string()),
         ShareError::InvalidPassword => (StatusCode::UNAUTHORIZED, err.to_string()),
+        ShareError::InvalidShare { .. } => (StatusCode::BAD_REQUEST, err.to_string()),
         ShareError::RecipientNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
         ShareError::InsufficientPermission { .. } => (StatusCode::FORBIDDEN, err.to_string()),
         ShareError::CannotShareWithSelf => (StatusCode::BAD_REQUEST, err.to_string()),
         ShareError::ShareAlreadyExists(_) => (StatusCode::CONFLICT, err.to_string()),
         ShareError::CannotRemoveOwner => (StatusCode::FORBIDDEN, err.to_string()),
-        ShareError::Database(_) | ShareError::PasswordHash(_) | ShareError::Jwt(_) => (
+        ShareError::Storage(_) | ShareError::Database(_) | ShareError::PasswordHash(_) | ShareError::Jwt(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Internal server error".to_string(),
         ),

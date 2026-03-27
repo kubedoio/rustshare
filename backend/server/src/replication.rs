@@ -5,7 +5,6 @@
 
 use std::{sync::Arc, time::Duration};
 
-use anyhow::Result;
 use rustshare_core::events::EventBroadcaster;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use tracing::info;
@@ -13,9 +12,13 @@ use tracing::info;
 #[derive(Debug, Clone)]
 pub struct ReplicationWorkerConfig {
     pub enabled: bool,
+    #[allow(dead_code)]
     pub poll_interval: Duration,
+    #[allow(dead_code)]
     pub batch_size: i64,
+    #[allow(dead_code)]
     pub lease_timeout_secs: i64,
+    #[allow(dead_code)]
     pub max_attempts: i32,
 }
 

@@ -4,6 +4,8 @@
 //! PostgreSQL to RustFS. It should be removed or rewritten for the new
 //! zero-PostgreSQL architecture.
 
+#![allow(dead_code, private_interfaces)]
+
 use std::sync::Arc;
 
 use rustshare_storage::{
@@ -33,7 +35,7 @@ impl MetadataState {
     /// TODO: Remove db_pool parameter - this is a temporary measure
     pub async fn from_env(
         _db_pool_placeholder: Option<()>,
-        object_store: Arc<ObjectStore>,
+        _object_store: Arc<ObjectStore>,
     ) -> anyhow::Result<Self> {
         // Initialize legacy stores
         let metadata_store = Arc::new(MetadataStore::new(()));
@@ -125,6 +127,7 @@ impl MetadataState {
 
 /// Configuration for metadata backend selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum MetadataBackendMode {
     /// Use PostgreSQL only (legacy - DEPRECATED)
     PostgresOnly,

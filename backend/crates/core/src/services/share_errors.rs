@@ -13,9 +13,17 @@ pub enum ShareError {
     #[error("Share {0} not found")]
     NotFoundById(Uuid),
 
+    /// Share with the given ID was not found (V2).
+    #[error("Share not found: {0}")]
+    ShareNotFound(Uuid),
+
     /// File with the given ID was not found.
     #[error("File {0} not found")]
     FileNotFound(Uuid),
+
+    /// Resource being shared was not found.
+    #[error("Resource not found: {resource_id} (type: {resource_type})")]
+    ResourceNotFound { resource_id: Uuid, resource_type: String },
 
     /// User lacks permission to manage shares for this file.
     #[error("User {user_id} does not have permission to manage shares for file {file_id}")]
@@ -29,6 +37,10 @@ pub enum ShareError {
     #[error("Share has expired")]
     Expired,
 
+    /// Share has expired (V2 variant with ID).
+    #[error("Share expired: {0}")]
+    ShareExpired(Uuid),
+
     /// Password is required for this share.
     #[error("Password required for this share")]
     PasswordRequired,
@@ -37,9 +49,17 @@ pub enum ShareError {
     #[error("Invalid password")]
     InvalidPassword,
 
+    /// Invalid share operation.
+    #[error("Invalid share: {reason}")]
+    InvalidShare { reason: String },
+
     /// Database operation failed.
     #[error("Database error: {0}")]
     Database(String),
+
+    /// Storage operation failed.
+    #[error("Storage error: {0}")]
+    Storage(String),
 
     /// Password hashing operation failed.
     #[error("Password hashing error: {0}")]

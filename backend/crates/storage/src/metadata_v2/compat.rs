@@ -10,17 +10,64 @@ use rustshare_core::domain::{
 use std::sync::Arc;
 
 use crate::repos::*;
-use crate::EventStore;
+use crate::metadata_v2::EventLogStore;
 
-/// Adapter that implements EventStoreOps using the legacy EventStore
+/// Adapter that implements EventStoreOps using the new EventLogStore
 #[derive(Clone)]
 pub struct EventStoreCompat {
-    store: Arc<EventStore>,
+    store: Arc<dyn EventLogStore>,
 }
 
 impl EventStoreCompat {
-    pub fn new(store: Arc<EventStore>) -> Self {
+    pub fn new(store: Arc<dyn EventLogStore>) -> Self {
         Self { store }
+    }
+    
+    /// Append an event to the log
+    async fn append_event(
+        &self,
+        event: &rustshare_core::events::Event,
+        _broadcaster: &rustshare_core::events::EventBroadcaster,
+    ) -> anyhow::Result<()> {
+        use crate::metadata_v2::schemas::{EventDocument, EventType};
+        
+        // Map core EventType to storage EventType
+        let event_type = match event.event_type {
+            rustshare_core::events::EventType::FileUploaded => EventType::FileUploaded,
+            rustshare_core::events::EventType::FileModified => EventType::FileModified,
+            rustshare_core::events::EventType::FileMoved => EventType::FileMoved,
+            rustshare_core::events::EventType::FileRenamed => EventType::FileRenamed,
+            rustshare_core::events::EventType::FileDeleted => EventType::FileDeleted,
+            rustshare_core::events::EventType::FileRestored => EventType::FileRestored,
+            rustshare_core::events::EventType::FolderCreated => EventType::FolderCreated,
+            rustshare_core::events::EventType::FolderMoved => EventType::FolderMoved,
+            rustshare_core::events::EventType::FolderRenamed => EventType::FolderRenamed,
+            rustshare_core::events::EventType::FolderDeleted => EventType::FolderDeleted,
+            rustshare_core::events::EventType::ShareCreated => EventType::ShareCreated,
+            rustshare_core::events::EventType::ShareRevoked => EventType::ShareRevoked,
+            rustshare_core::events::EventType::ShareUpdated => EventType::ShareUpdated,
+            _ => EventType::FileModified, // Default fallback for unmapped types
+        };
+        
+        // Convert aggregate type to resource type string
+        let resource_type = match event.aggregate_type {
+            rustshare_core::events::AggregateType::File => "file",
+            rustshare_core::events::AggregateType::Folder => "folder",
+            rustshare_core::events::AggregateType::Share => "share",
+            rustshare_core::events::AggregateType::User => "user",
+            _ => "unknown",
+        }.to_string();
+        
+        let doc = EventDocument::new(
+            event_type,
+            event.user_id,
+            resource_type,
+            event.aggregate_id,
+            event.payload.clone(),
+        );
+        
+        self.store.append(&doc).await
+            .map_err(|e| anyhow::anyhow!("Failed to append event: {}", e))
     }
 }
 
@@ -31,7 +78,7 @@ impl rustshare_core::services::FileEventStoreOps for EventStoreCompat {
         event: &rustshare_core::events::Event,
         broadcaster: &rustshare_core::events::EventBroadcaster,
     ) -> anyhow::Result<()> {
-        self.store.append(event, broadcaster).await
+        self.append_event(event, broadcaster).await
     }
 }
 
@@ -42,7 +89,7 @@ impl rustshare_core::services::FolderEventStoreOps for EventStoreCompat {
         event: &rustshare_core::events::Event,
         broadcaster: &rustshare_core::events::EventBroadcaster,
     ) -> anyhow::Result<()> {
-        self.store.append(event, broadcaster).await
+        self.append_event(event, broadcaster).await
     }
 }
 
@@ -53,7 +100,7 @@ impl rustshare_core::services::ShareEventStoreOps for EventStoreCompat {
         event: &rustshare_core::events::Event,
         broadcaster: &rustshare_core::events::EventBroadcaster,
     ) -> anyhow::Result<()> {
-        self.store.append(event, broadcaster).await
+        self.append_event(event, broadcaster).await
     }
 }
 
@@ -171,8 +218,8 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
 
     async fn list_folders(
         &self,
-        parent_id: Option<uuid::Uuid>,
-        owner_id: uuid::Uuid,
+        _parent_id: Option<uuid::Uuid>,
+        _owner_id: uuid::Uuid,
     ) -> anyhow::Result<Vec<Folder>> {
         // This is inefficient - should use an index
         // For now, return empty or implement scan
@@ -305,6 +352,7 @@ fn folder_from_document(doc: &FolderDocument) -> Folder {
         owner_id: doc.owner_id,
         created_at: doc.created_at,
         updated_at: doc.updated_at,
+        deleted: doc.deleted,
     }
 }
 
@@ -343,6 +391,7 @@ fn file_from_document(doc: &FileDocument) -> File {
         current_version: doc.version_number,
         created_at: doc.created_at,
         modified_at: doc.updated_at,
+        deleted: doc.deleted,
     }
 }
 
@@ -417,7 +466,7 @@ fn share_to_document(share: &Share) -> ShareDocument {
 }
 
 fn share_from_document(doc: &ShareDocument) -> Share {
-    use rustshare_core::domain::{SharePermissions, ShareRecipient};
+    use rustshare_core::domain::SharePermissions;
 
     let (file_id, folder_id) = match doc.resource_type.as_str() {
         "file" => (Some(doc.resource_id), None),

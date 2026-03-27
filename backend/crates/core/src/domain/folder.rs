@@ -16,6 +16,7 @@ pub struct Folder {
     pub owner_id: UserId,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub deleted: bool,
 }
 
 impl Folder {
@@ -30,6 +31,7 @@ impl Folder {
             owner_id,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            deleted: false,
         }
     }
 
@@ -44,6 +46,7 @@ impl Folder {
             owner_id,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            deleted: false,
         }
     }
 }

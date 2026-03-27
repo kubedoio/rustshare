@@ -1,18 +1,20 @@
 //! Admin endpoints for metadata management
 
+#![allow(dead_code)]
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     routing::{get, post},
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::AppState;
 
 /// Admin router for metadata operations
+#[allow(dead_code)]
 pub fn metadata_admin_routes() -> Router<AppState> {
     Router::new()
         .route("/api/admin/metadata/verify/folder/{id}", get(verify_folder))

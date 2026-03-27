@@ -1,18 +1,18 @@
 //! Storage layer for RustShare.
 //!
 //! Handles persistence to RustFS with optional Redis coordination.
-//!
-//! # Migration Notice
-//!
-//! The PostgreSQL-based storage has been deprecated. Use `metadata_v2` module instead.
 
 pub mod admin;
+pub mod blob;
 pub mod coordination;
+pub mod services;
 
-// Legacy modules - deprecated, will be removed in a future release
-#[deprecated(since = "0.2.0", note = "Use metadata_v2 instead")]
+// RustShare V2 - User bucket isolation
+pub mod cross_bucket;
+pub mod user_bucket;
+
+// Compatibility modules (minimal stubs)
 pub mod event_store;
-#[deprecated(since = "0.2.0", note = "Use metadata_v2 instead")]
 pub mod metadata;
 
 // New metadata system
@@ -24,7 +24,7 @@ pub mod session;
 
 // Re-export metadata_v2 types
 pub use metadata_v2::{
-    BlobStore, EventLogStore, IndexStore, MetadataBackendConfig, MetadataBackendType,
+    EventLogStore, IndexStore, MetadataBackendConfig, MetadataBackendType,
     MetadataDocumentStore, MetadataDocumentStoreExt, ObjectMetadata, PutOptions, PutResult,
     RuntimeMetadataCache,
 };
@@ -46,21 +46,33 @@ pub use service_integration::{
 // Re-export object store
 pub use object_store::ObjectStore;
 
-// Re-export legacy types with deprecation warnings
-#[allow(deprecated)]
-#[deprecated(since = "0.2.0", note = "Use metadata_v2::MetadataRepository instead")]
-pub use metadata::MetadataStore;
+// Re-export blob store
+pub use blob::{BlobStore, MemoryBlobStore};
 
-#[allow(deprecated)]
-#[deprecated(since = "0.2.0", note = "Use metadata_v2::EventLogStore instead")]
-pub use event_store::EventStore;
-
-#[allow(deprecated)]
-#[deprecated(since = "0.2.0", note = "Use metadata_v2 types instead")]
-pub use metadata::{
-    OwnedPublicShare, PublicShareAccessLogEntry, ReplicationAttemptRecord, ShareAccessLogEntry,
-    UserSecurityEvent, UserSecurityEventRecord,
+// Re-export V2 services
+pub use services::{
+    FileServiceV2, FolderServiceV2, ShareServiceV2, FavouriteServiceV2,
+    V2ServiceFactory, ShareInfo, FavouriteDetail, FavouriteError,
 };
+pub use services::models::{
+    SharePermissionV2, ShareResourceTypeV2, FavouriteResourceType,
+    FavouritesIndex, FileDocV2, FolderDocV2, FileVersionDocV2,
+    OutboundShareDocV2, ReceivedShareDocV2, TombstoneDocV2,
+};
+
+// Re-export user bucket types
+pub use user_bucket::{
+    MemoryUserBucketStore, S3UserBucketStore, UserBucketConfig, UserBucketStore, UserId,
+    UserBucketStoreFactory,
+};
+
+// Re-export cross-bucket types
+pub use cross_bucket::{
+    CrossBucketReader, CrossBucketReaderExt, CrossBucketReaderFactory, MemoryCrossBucketReader, PortableStorageLocator,
+};
+
+// Re-export compatibility types
+pub use metadata::{EventStore, MetadataStore, ShareAccessLogEntry, UserSecurityEvent, UserSecurityEventRecord};
 
 // ObjectStore implements ObjectStoreOps trait
 use anyhow::Result;
@@ -79,11 +91,30 @@ impl CoreObjectStoreOps for ObjectStore {
         self.get_presigned_url(key, expires_in_secs).await
     }
 
-    async fn get(&self, key: &str) -> Result<bytes::Bytes> {
-        self.get(key).await
-    }
-
     async fn delete(&self, key: &str) -> Result<()> {
         self.delete(key).await
     }
+
+    async fn get(&self, key: &str) -> Result<bytes::Bytes> {
+        self.get(key).await
+    }
+}
+
+/// Initialize storage layer with default configuration
+pub async fn init_storage(
+    endpoint: &str,
+    region: &str,
+    bucket: &str,
+) -> Result<(ObjectStore, repos::RepositoryFactory)> {
+    let object_store = ObjectStore::new(endpoint.to_string(), region.to_string(), bucket.to_string()).await?;
+    let repo_factory = repos::RepositoryFactory::new(repos::RepositoryFactoryConfig::default());
+
+    Ok((object_store, repo_factory))
+}
+
+/// Testing utilities
+pub mod testing {
+    pub use super::blob::{BlobStore, MemoryBlobStore};
+    pub use super::cross_bucket::{CrossBucketReader, MemoryCrossBucketReader};
+    pub use super::user_bucket::{MemoryUserBucketStore, UserBucketStore};
 }

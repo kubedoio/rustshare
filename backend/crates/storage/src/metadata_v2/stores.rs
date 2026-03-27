@@ -246,6 +246,7 @@ impl LocalFsDocumentStore {
             .join(key)
     }
     
+    #[allow(dead_code)]
     fn build_lock_path(&self, key: &str) -> std::path::PathBuf {
         self.base_path
             .join(&self.config.base_prefix)

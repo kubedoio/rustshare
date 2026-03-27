@@ -772,8 +772,8 @@ async fn allocate_username(state: &AppState, email: &str) -> Result<String, (Sta
         };
 
         let existing = state
-            .metadata_store
-            .find_user_by_username(&candidate)
+            .user_repo
+            .get_user_by_username(&candidate)
             .await
             .map_err(|error| {
                 (

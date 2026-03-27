@@ -133,9 +133,9 @@ async fn test_version_restore_flow() {
         .expect("Failed to list versions");
 
     assert_eq!(versions_before_restore.len(), 3);
-    assert_eq!(versions_before_restore[0].version_number, 3); // Newest first
-    assert_eq!(versions_before_restore[1].version_number, 2);
-    assert_eq!(versions_before_restore[2].version_number, 1);
+    assert_eq!(versions_before_restore[0].current_version_number, 3); // Newest first
+    assert_eq!(versions_before_restore[1].current_version_number, 2);
+    assert_eq!(versions_before_restore[2].current_version_number, 1);
 
     // Step 4: Restore v1 → creates v4 with v1 content
     let file_v4 = file_service
@@ -156,10 +156,10 @@ async fn test_version_restore_flow() {
         .expect("Failed to list versions after restore");
 
     assert_eq!(versions_after_restore.len(), 4);
-    assert_eq!(versions_after_restore[0].version_number, 4); // Newest
-    assert_eq!(versions_after_restore[1].version_number, 3);
-    assert_eq!(versions_after_restore[2].version_number, 2);
-    assert_eq!(versions_after_restore[3].version_number, 1); // Oldest
+    assert_eq!(versions_after_restore[0].current_version_number, 4); // Newest
+    assert_eq!(versions_after_restore[1].current_version_number, 3);
+    assert_eq!(versions_after_restore[2].current_version_number, 2);
+    assert_eq!(versions_after_restore[3].current_version_number, 1); // Oldest
 
     // Verify content hashes
     assert_eq!(versions_after_restore[0].content_hash, v1_hash); // v4 = v1 content
@@ -264,22 +264,22 @@ async fn test_restore_multiple_versions() {
     assert_eq!(versions.len(), 6);
 
     // Verify version sequence
-    assert_eq!(versions[0].version_number, 6);
+    assert_eq!(versions[0].current_version_number, 6);
     assert_eq!(versions[0].content_hash, v3_hash);
 
-    assert_eq!(versions[1].version_number, 5);
+    assert_eq!(versions[1].current_version_number, 5);
     assert_eq!(versions[1].content_hash, v1_hash);
 
-    assert_eq!(versions[2].version_number, 4);
+    assert_eq!(versions[2].current_version_number, 4);
     assert_eq!(versions[2].content_hash, v2_hash);
 
-    assert_eq!(versions[3].version_number, 3);
+    assert_eq!(versions[3].current_version_number, 3);
     assert_eq!(versions[3].content_hash, v3_hash);
 
-    assert_eq!(versions[4].version_number, 2);
+    assert_eq!(versions[4].current_version_number, 2);
     assert_eq!(versions[4].content_hash, v2_hash);
 
-    assert_eq!(versions[5].version_number, 1);
+    assert_eq!(versions[5].current_version_number, 1);
     assert_eq!(versions[5].content_hash, v1_hash);
 
     // Cleanup
@@ -432,9 +432,9 @@ async fn test_get_specific_version() {
         .expect("Failed to get version 3");
 
     // Verify version numbers
-    assert_eq!(version1.version_number, 1);
-    assert_eq!(version2.version_number, 2);
-    assert_eq!(version3.version_number, 3);
+    assert_eq!(version1.current_version_number, 1);
+    assert_eq!(version2.current_version_number, 2);
+    assert_eq!(version3.current_version_number, 3);
 
     // Verify they have different content hashes
     assert_ne!(version1.content_hash, version2.content_hash);

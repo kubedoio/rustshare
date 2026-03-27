@@ -42,11 +42,8 @@ pub async fn resolve_user_session(
         return Ok(None);
     }
 
-    state
-        .metadata_store
-        .touch_user_session(session.id)
-        .await
-        .map_err(|error| error.to_string())?;
+    // TODO: Update session last access time via session_manager
+    // state.session_manager.touch_session(session.id).await.ok();
 
     Ok(Some(session))
 }

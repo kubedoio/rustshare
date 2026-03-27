@@ -18,10 +18,10 @@ use rustshare_storage::{
     repos::{
         PathBuilder, UserRepository, DeviceRepository, GroupRepository, 
         AuditRepository, ConfigRepository, PairingRepository, WebhookRepository,
-        NotificationRepository,
+        NotificationRepository, ShareRepository,
         RustFsUserRepository, RustFsDeviceRepository, RustFsGroupRepository,
         RustFsAuditRepository, RustFsConfigRepository, RustFsPairingRepository,
-        RustFsWebhookRepository, RustFsNotificationRepository,
+        RustFsWebhookRepository, RustFsNotificationRepository, RustFsShareRepository,
     },
     session::SessionManager,
 };
@@ -82,6 +82,8 @@ pub struct AppState {
     pub webhook_repo: Arc<dyn WebhookRepository>,
     /// Notification repository
     pub notification_repo: Arc<dyn NotificationRepository>,
+    /// Share repository
+    pub share_repo: Arc<dyn ShareRepository>,
     /// Path builder for key generation
     pub path_builder: PathBuilder,
 }
@@ -164,6 +166,10 @@ impl AppState {
             RustFsNotificationRepository::new(Arc::clone(&metadata_store), path_builder.clone())
         );
         
+        let share_repo: Arc<dyn ShareRepository> = Arc::new(
+            RustFsShareRepository::new(Arc::clone(&metadata_store), path_builder.clone())
+        );
+        
         Ok(Self {
             runtime_profile: profile,
             metadata_store,
@@ -183,6 +189,7 @@ impl AppState {
             pairing_repo,
             webhook_repo,
             notification_repo,
+            share_repo,
             path_builder,
         })
     }

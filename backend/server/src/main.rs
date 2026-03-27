@@ -1,5 +1,8 @@
 //! RustShare Server
 //!
+//! Note: Many deprecated items are used during the PostgreSQL-to-RustFS migration.
+#![allow(deprecated)]
+//!
 //! # Reverse Proxy Support
 //!
 //! The server supports deployment behind reverse proxies (nginx, Cloudflare, AWS ALB, etc.).
@@ -64,8 +67,8 @@ use rustshare_core::{
     domain::{SharePermissions, User},
     events::EventBroadcaster,
     services::{
-        FileService, FolderService, NotificationService, PermissionResolver, ShareService,
-        ThumbnailService, UserShareService, UserShareServiceDeps,
+        FileService, FolderService, ShareService,
+        ThumbnailService,
     },
 };
 // TODO: PostgreSQL removed - rustshare_infrastructure repositories depend on PostgreSQL
@@ -73,16 +76,18 @@ use rustshare_core::{
 //     FileRepository, FolderRepository, NotificationRepository, ShareRepository, UserRepository,
 // };
 use rustshare_storage::{
-    coordination::{CoordinationStore, InMemoryCoordinationStore},
     metadata_v2::{EventLogStore, MetadataDocumentStore, MetadataBackendConfig, stores::{LocalFsDocumentStore, RustFsEventStore}},
     repos::{
-        PathBuilder, UserRepository, DeviceRepository, GroupRepository, 
+        PathBuilder, UserRepository, UserMetadataRepository, DeviceRepository, GroupRepository, 
         AuditRepository, ConfigRepository, PairingRepository, WebhookRepository,
-        NotificationRepository,
-        RustFsUserRepository, RustFsDeviceRepository, RustFsGroupRepository,
+        NotificationRepository, ShareRepository,
+        RustFsDeviceRepository, RustFsGroupRepository,
         RustFsAuditRepository, RustFsConfigRepository, RustFsPairingRepository,
-        RustFsWebhookRepository, RustFsNotificationRepository,
+        RustFsWebhookRepository, RustFsNotificationRepository, RustFsShareRepository,
     },
+    repos::user::RustFsUserRepository as DomainUserRepository,
+    repos::rustfs_repos::RustFsUserMetadataRepository as MetadataUserRepository,
+    session::{SessionManager, SessionConfig},
     EventStore, MetadataStore, ObjectStore,
 };
 use serde::{Deserialize, Serialize};
@@ -136,6 +141,7 @@ pub struct AppState {
     
     // New repository layer
     pub user_repo: Arc<dyn UserRepository>,
+    pub user_metadata_repo: Arc<dyn UserMetadataRepository>,
     pub device_repo: Arc<dyn DeviceRepository>,
     pub group_repo: Arc<dyn GroupRepository>,
     pub audit_repo: Arc<dyn AuditRepository>,
@@ -143,6 +149,10 @@ pub struct AppState {
     pub pairing_repo: Arc<dyn PairingRepository>,
     pub webhook_repo: Arc<dyn WebhookRepository>,
     pub notification_repo: Arc<dyn NotificationRepository>,
+    pub share_repo: Arc<dyn ShareRepository>,
+    
+    // Session management
+    pub session_manager: Arc<SessionManager>,
     
     // Core services
     pub jwt_manager: Arc<JwtManager>,
@@ -224,7 +234,11 @@ async fn main() -> Result<()> {
 
     // Initialize JWT manager
     let jwt_secret = std::env::var("JWT_SECRET")?;
-    let jwt_manager = Arc::new(JwtManager::new(jwt_secret));
+    let jwt_manager = Arc::new(JwtManager::new(jwt_secret.clone()));
+
+    // Initialize session manager
+    let session_config = SessionConfig::new(jwt_secret);
+    let session_manager = Arc::new(SessionManager::new(session_config));
 
     // Initialize EventBroadcaster
     let capacity = std::env::var("BROADCAST_CAPACITY")
@@ -242,7 +256,7 @@ async fn main() -> Result<()> {
         rustshare_storage::repos::StubMetadataRepository::new()
     ));
     let event_compat = Arc::new(rustshare_storage::metadata_v2::EventStoreCompat::new(
-        Arc::clone(&event_store)
+        Arc::clone(&event_log_store)
     ));
 
     // Initialize services with compatibility layer
@@ -351,11 +365,15 @@ async fn main() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Secret encryption key error: {}", e))?;
     
     // Initialize new repository layer
-    let path_builder = PathBuilder::new(metadata_prefix, metadata_namespace);
+    let path_builder = PathBuilder::new(metadata_prefix.clone(), metadata_namespace.clone());
     
     // Initialize repositories using the document store
     let user_repo: Arc<dyn UserRepository> = Arc::new(
-        RustFsUserRepository::new(Arc::clone(&doc_store), path_builder.clone())
+        DomainUserRepository::new(Arc::clone(&doc_store), metadata_prefix, metadata_namespace)
+    );
+    
+    let user_metadata_repo: Arc<dyn UserMetadataRepository> = Arc::new(
+        MetadataUserRepository::new(Arc::clone(&doc_store), path_builder.clone())
     );
     
     let device_repo: Arc<dyn DeviceRepository> = Arc::new(
@@ -385,6 +403,10 @@ async fn main() -> Result<()> {
     let notification_repo: Arc<dyn NotificationRepository> = Arc::new(
         RustFsNotificationRepository::new(Arc::clone(&doc_store), path_builder.clone())
     );
+    
+    let share_repo: Arc<dyn ShareRepository> = Arc::new(
+        RustFsShareRepository::new(Arc::clone(&doc_store), path_builder.clone(), None)
+    );
 
     // Build application state
     let state = AppState {
@@ -392,6 +414,7 @@ async fn main() -> Result<()> {
         event_store,
         object_store,
         user_repo,
+        user_metadata_repo,
         device_repo,
         group_repo,
         audit_repo,
@@ -399,6 +422,8 @@ async fn main() -> Result<()> {
         pairing_repo,
         webhook_repo,
         notification_repo,
+        share_repo,
+        session_manager,
         jwt_manager,
         broadcaster,
         file_service,
@@ -744,12 +769,14 @@ async fn main() -> Result<()> {
             get(handlers::list_folder_recipients),
         )
         .route(
-            "/api/v1/shares/{id}/permission",
-            put(handlers::update_recipient_permission),
+            "/api/v1/files/{id}/recipients/{recipient_id}",
+            put(handlers::update_file_recipient_permission)
+            .delete(handlers::remove_file_recipient),
         )
         .route(
-            "/api/v1/shares/{id}/recipient",
-            delete(handlers::remove_recipient),
+            "/api/v1/folders/{id}/recipients/{recipient_id}",
+            put(handlers::update_folder_recipient_permission)
+            .delete(handlers::remove_folder_recipient),
         )
         .route("/api/v1/notifications", get(handlers::list_notifications))
         .route(
@@ -944,6 +971,7 @@ struct OwnedShareResponse {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct ShareAccessLogQuery {
     limit: Option<i64>,
 }
@@ -988,19 +1016,29 @@ async fn revoke_share(
             rustshare_core::services::ShareError::NotFoundById(_) => {
                 (StatusCode::NOT_FOUND, error.to_string())
             }
-            rustshare_core::services::ShareError::PermissionDenied { .. } => {
-                (StatusCode::FORBIDDEN, error.to_string())
+            rustshare_core::services::ShareError::ShareNotFound(_) => {
+                (StatusCode::NOT_FOUND, error.to_string())
             }
             rustshare_core::services::ShareError::FileNotFound(_) => {
                 (StatusCode::NOT_FOUND, error.to_string())
             }
+            rustshare_core::services::ShareError::ResourceNotFound { .. } => {
+                (StatusCode::NOT_FOUND, error.to_string())
+            }
+            rustshare_core::services::ShareError::PermissionDenied { .. } => {
+                (StatusCode::FORBIDDEN, error.to_string())
+            }
             rustshare_core::services::ShareError::Revoked => (StatusCode::GONE, error.to_string()),
             rustshare_core::services::ShareError::Expired => (StatusCode::GONE, error.to_string()),
+            rustshare_core::services::ShareError::ShareExpired(_) => (StatusCode::GONE, error.to_string()),
             rustshare_core::services::ShareError::PasswordRequired => {
                 (StatusCode::UNAUTHORIZED, error.to_string())
             }
             rustshare_core::services::ShareError::InvalidPassword => {
                 (StatusCode::UNAUTHORIZED, error.to_string())
+            }
+            rustshare_core::services::ShareError::InvalidShare { .. } => {
+                (StatusCode::BAD_REQUEST, error.to_string())
             }
             rustshare_core::services::ShareError::RecipientNotFound(_) => {
                 (StatusCode::NOT_FOUND, error.to_string())
@@ -1017,7 +1055,8 @@ async fn revoke_share(
             rustshare_core::services::ShareError::CannotRemoveOwner => {
                 (StatusCode::FORBIDDEN, error.to_string())
             }
-            rustshare_core::services::ShareError::Database(_)
+            rustshare_core::services::ShareError::Storage(_)
+            | rustshare_core::services::ShareError::Database(_)
             | rustshare_core::services::ShareError::PasswordHash(_)
             | rustshare_core::services::ShareError::Jwt(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,

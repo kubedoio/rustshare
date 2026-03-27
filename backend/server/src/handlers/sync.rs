@@ -651,7 +651,7 @@ mod tests {
         );
 
         // Create a mock metadata store - in production this would be a real store
-        let metadata_store = rustshare_storage::MetadataStore::new();
+        let metadata_store = rustshare_storage::MetadataStore::new(());
 
         let message = event_to_sync_message(&event, &metadata_store)
             .await
@@ -697,7 +697,7 @@ mod tests {
             owner_id,
         );
 
-        let metadata_store = rustshare_storage::MetadataStore::new();
+        let metadata_store = rustshare_storage::MetadataStore::new(());
 
         let message = event_to_sync_message(&event, &metadata_store)
             .await
@@ -739,7 +739,7 @@ mod tests {
             owner_id,
         );
 
-        let metadata_store = rustshare_storage::MetadataStore::new();
+        let metadata_store = rustshare_storage::MetadataStore::new(());
 
         let message = event_to_sync_message(&event, &metadata_store)
             .await
@@ -781,7 +781,7 @@ mod tests {
             owner_id,
         );
 
-        let metadata_store = rustshare_storage::MetadataStore::new();
+        let metadata_store = rustshare_storage::MetadataStore::new(());
 
         let message = event_to_sync_message(&event, &metadata_store)
             .await
@@ -866,7 +866,7 @@ mod tests {
             owner_id,
         );
 
-        let metadata_store = rustshare_storage::MetadataStore::new();
+        let metadata_store = rustshare_storage::MetadataStore::new(());
 
         // Share viewer should receive the event
         let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
@@ -908,7 +908,7 @@ mod tests {
             owner_id,
         );
 
-        let metadata_store = rustshare_storage::MetadataStore::new();
+        let metadata_store = rustshare_storage::MetadataStore::new(());
 
         // Share viewer should receive the event
         let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
@@ -953,7 +953,7 @@ mod tests {
             owner_id,
         );
 
-        let metadata_store = rustshare_storage::MetadataStore::new();
+        let metadata_store = rustshare_storage::MetadataStore::new(());
 
         // Share viewer should receive the event
         let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
@@ -999,7 +999,7 @@ mod tests {
             owner_id,
         );
 
-        let metadata_store = rustshare_storage::MetadataStore::new();
+        let metadata_store = rustshare_storage::MetadataStore::new(());
 
         // Share viewer should NOT receive the event
         let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
@@ -1039,7 +1039,7 @@ mod tests {
             owner_id,
         );
 
-        let metadata_store = rustshare_storage::MetadataStore::new();
+        let metadata_store = rustshare_storage::MetadataStore::new(());
 
         // Share viewer should NOT receive the event
         let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)
@@ -1077,7 +1077,7 @@ mod tests {
             user_id,
         );
 
-        let metadata_store = rustshare_storage::MetadataStore::new();
+        let metadata_store = rustshare_storage::MetadataStore::new(());
 
         // Share viewer should NOT receive the event
         let should_send = should_send_event_to_client(&event, &client_identity, &metadata_store)

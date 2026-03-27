@@ -10,6 +10,9 @@ use std::sync::{Arc, Mutex};
 use tokio::time::{Duration, Instant};
 use uuid::Uuid;
 
+#[cfg(test)]
+use futures::future::FutureExt;
+
 /// Lease token for coordination
 #[derive(Debug, Clone)]
 pub struct Lease {
@@ -256,6 +259,7 @@ impl MetadataCoordination for InMemoryCoordination {
 /// Object-store backed coordination using lease documents
 pub struct ObjectStoreCoordination {
     doc_store: Arc<dyn MetadataDocumentStore>,
+    #[allow(dead_code)]
     owner_id: String,
 }
 
@@ -354,7 +358,7 @@ impl MetadataCoordination for ObjectStoreCoordination {
             }
             
             // Delete with ETag check
-            let opts = PutOptions {
+            let _opts = PutOptions {
                 if_match: Some(metadata.etag),
                 ..Default::default()
             };

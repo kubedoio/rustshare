@@ -217,9 +217,9 @@ async fn test_successful_sequential_updates() {
         .expect("Failed to list versions");
 
     assert_eq!(versions.len(), 3);
-    assert_eq!(versions[0].version_number, 3); // Newest first
-    assert_eq!(versions[1].version_number, 2);
-    assert_eq!(versions[2].version_number, 1);
+    assert_eq!(versions[0].current_version_number, 3); // Newest first
+    assert_eq!(versions[1].current_version_number, 2);
+    assert_eq!(versions[2].current_version_number, 1);
 
     // Cleanup
     file_service

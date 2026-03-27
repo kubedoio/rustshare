@@ -1,7 +1,7 @@
 //! Rebuild tools for recreating indexes from canonical metadata
 
 use std::sync::Arc;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::OperationSummary;
@@ -25,7 +25,7 @@ impl RebuildTool {
         info!(folder_id = %folder_id, "Rebuilding folder children index");
         
         // Verify the folder exists
-        let folder = match self.repo.folders().get(folder_id).await? {
+        let _folder = match self.repo.folders().get(folder_id).await? {
             Some(f) => f,
             None => {
                 summary.add_error(format!("Folder {} not found", folder_id));
@@ -33,7 +33,7 @@ impl RebuildTool {
             }
         };
         
-        let mut index = FolderChildrenIndex::new(folder_id);
+        let index = FolderChildrenIndex::new(folder_id);
         
         // Find all child folders
         // Note: In production, this would use an efficient query
@@ -218,7 +218,7 @@ impl RebuildTool {
     
     /// Rebuild all indexes (full rebuild)
     pub async fn rebuild_all_indexes(&self) -> Result<OperationSummary, RepositoryError> {
-        let mut summary = OperationSummary::new("rebuild_all_indexes");
+        let summary = OperationSummary::new("rebuild_all_indexes");
         
         info!("Starting full index rebuild");
         
@@ -294,13 +294,11 @@ impl RebuildTool {
 }
 
 /// Scan tool for full namespace scanning
-pub struct ScanTool {
-    repo: Arc<dyn MetadataRepository>,
-}
+pub struct ScanTool;
 
 impl ScanTool {
-    pub fn new(repo: Arc<dyn MetadataRepository>) -> Self {
-        Self { repo }
+    pub fn new(_repo: Arc<dyn MetadataRepository>) -> Self {
+        Self
     }
     
     /// Full scan of all folders

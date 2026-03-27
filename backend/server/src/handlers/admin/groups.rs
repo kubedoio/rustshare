@@ -1,7 +1,4 @@
 //! Admin group management handlers.
-//!
-//! TODO: This module needs to be rewritten to use the new RustFS-based
-//! repositories for group management instead of PostgreSQL.
 
 use axum::{
     extract::{Path, State},
@@ -11,6 +8,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
+
+use rustshare_storage::metadata_v2::schemas::UserGroupDocument;
 
 use crate::{handlers::AdminUser, AppState};
 use super::log_admin_action;
@@ -71,71 +70,158 @@ pub struct GroupMemberResponse {
 // ---------------------------------------------------------------------------
 
 /// GET /api/v1/admin/groups
-/// 
-/// TODO: Implement using new GroupRepository
 pub async fn list_groups(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
 ) -> Result<Json<Vec<GroupResponse>>, (StatusCode, Json<serde_json::Value>)> {
-    // TODO: Implement using new GroupRepository
-    tracing::warn!("Group list not yet implemented in zero-PostgreSQL mode");
-    
-    // Return empty list for now
-    Ok(Json(vec![]))
+    let groups = state.group_repo
+        .list()
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to list groups: {}", e);
+            internal_error("Failed to list groups")
+        })?;
+
+    let group_responses: Vec<GroupResponse> = groups
+        .into_iter()
+        .map(|g| GroupResponse {
+            id: g.id.to_string(),
+            name: g.name,
+            description: if g.description.is_empty() { None } else { Some(g.description) },
+            created_by: Some(g.created_by.to_string()),
+            created_at: g.created_at,
+            updated_at: g.updated_at,
+            member_count: g.member_ids.len() as i64,
+        })
+        .collect();
+
+    Ok(Json(group_responses))
 }
 
 /// POST /api/v1/admin/groups
-/// 
-/// TODO: Implement using new GroupRepository
 pub async fn create_group(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
-    Json(_req): Json<CreateGroupRequest>,
+    Json(req): Json<CreateGroupRequest>,
 ) -> Result<(StatusCode, Json<GroupResponse>), (StatusCode, Json<serde_json::Value>)> {
-    // TODO: Implement using new GroupRepository
-    tracing::warn!("Group creation not yet implemented in zero-PostgreSQL mode");
-    
-    // Log admin action (noop for now)
+    if req.name.trim().is_empty() {
+        return Err(bad_request("Group name must not be empty"));
+    }
+
+    let group_id = Uuid::new_v4();
+    let group = UserGroupDocument::new(
+        group_id,
+        req.name.trim().to_string(),
+        req.description.unwrap_or_default(),
+        actor_id,
+    );
+
+    state.group_repo
+        .create(&group)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to create group: {}", e);
+            internal_error("Failed to create group")
+        })?;
+
     log_admin_action(
+        &State(state),
         actor_id,
         "group.created",
         Some("group"),
-        Some(Uuid::new_v4()),
-        json!({"name": "placeholder"}),
+        Some(group_id),
+        json!({"name": group.name}),
     )
     .await;
 
-    Err(not_implemented("Group management not yet implemented"))
+    Ok((StatusCode::CREATED, Json(GroupResponse {
+        id: group.id.to_string(),
+        name: group.name,
+        description: if group.description.is_empty() { None } else { Some(group.description) },
+        created_by: Some(group.created_by.to_string()),
+        created_at: group.created_at,
+        updated_at: group.updated_at,
+        member_count: 0,
+    })))
 }
 
 /// GET /api/v1/admin/groups/:id
-/// 
-/// TODO: Implement using new GroupRepository
 pub async fn get_group(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
-    Path(_group_id): Path<Uuid>,
+    Path(group_id): Path<Uuid>,
 ) -> Result<Json<GroupDetailResponse>, (StatusCode, Json<serde_json::Value>)> {
-    // TODO: Implement using new GroupRepository
-    tracing::warn!("Group get not yet implemented in zero-PostgreSQL mode");
-    
-    Err(not_found("Group not found"))
+    let group = state.group_repo
+        .get(group_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get group: {}", e);
+            internal_error("Failed to get group")
+        })?
+        .ok_or_else(|| not_found("Group not found"))?;
+
+    // Get member details
+    let mut members = Vec::new();
+    for member_id in &group.member_ids {
+        if let Ok(Some(user)) = state.user_metadata_repo.get((*member_id).into()).await {
+            members.push(GroupMemberResponse {
+                user_id: user.id.to_string(),
+                username: user.username,
+                email: user.email,
+                added_at: chrono::Utc::now(), // TODO: Track when user was added to group
+            });
+        }
+    }
+
+    Ok(Json(GroupDetailResponse {
+        id: group.id.to_string(),
+        name: group.name,
+        description: if group.description.is_empty() { None } else { Some(group.description) },
+        created_by: Some(group.created_by.to_string()),
+        created_at: group.created_at,
+        updated_at: group.updated_at,
+        members,
+    }))
 }
 
 /// PATCH /api/v1/admin/groups/:id
-/// 
-/// TODO: Implement using new GroupRepository
 pub async fn update_group(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(group_id): Path<Uuid>,
-    Json(_req): Json<UpdateGroupRequest>,
+    Json(req): Json<UpdateGroupRequest>,
 ) -> Result<Json<GroupResponse>, (StatusCode, Json<serde_json::Value>)> {
-    // TODO: Implement using new GroupRepository
-    tracing::warn!("Group update not yet implemented in zero-PostgreSQL mode");
+    let mut group = state.group_repo
+        .get(group_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get group: {}", e);
+            internal_error("Failed to update group")
+        })?
+        .ok_or_else(|| not_found("Group not found"))?;
+
+    // Apply updates
+    if let Some(name) = req.name {
+        if name.trim().is_empty() {
+            return Err(bad_request("Group name must not be empty"));
+        }
+        group.name = name.trim().to_string();
+    }
     
-    // Log admin action (noop for now)
+    if let Some(description) = req.description {
+        group.description = description;
+    }
+
+    state.group_repo
+        .update(&group)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to update group: {}", e);
+            internal_error("Failed to update group")
+        })?;
+
     log_admin_action(
+        &State(state),
         actor_id,
         "group.updated",
         Some("group"),
@@ -144,22 +230,43 @@ pub async fn update_group(
     )
     .await;
 
-    Err(not_found("Group not found"))
+    Ok(Json(GroupResponse {
+        id: group.id.to_string(),
+        name: group.name,
+        description: if group.description.is_empty() { None } else { Some(group.description) },
+        created_by: Some(group.created_by.to_string()),
+        created_at: group.created_at,
+        updated_at: group.updated_at,
+        member_count: group.member_ids.len() as i64,
+    }))
 }
 
 /// DELETE /api/v1/admin/groups/:id
-/// 
-/// TODO: Implement using new GroupRepository
 pub async fn delete_group(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(group_id): Path<Uuid>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    // TODO: Implement using new GroupRepository
-    tracing::warn!("Group deletion not yet implemented in zero-PostgreSQL mode");
-    
-    // Log admin action (noop for now)
+    // Check group exists
+    let _group = state.group_repo
+        .get(group_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get group: {}", e);
+            internal_error("Failed to delete group")
+        })?
+        .ok_or_else(|| not_found("Group not found"))?;
+
+    state.group_repo
+        .delete(group_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to delete group: {}", e);
+            internal_error("Failed to delete group")
+        })?;
+
     log_admin_action(
+        &State(state),
         actor_id,
         "group.deleted",
         Some("group"),
@@ -168,23 +275,46 @@ pub async fn delete_group(
     )
     .await;
 
-    Err(not_found("Group not found"))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// POST /api/v1/admin/groups/:id/members
-/// 
-/// TODO: Implement using new GroupRepository
 pub async fn add_member(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(group_id): Path<Uuid>,
     Json(req): Json<AddMemberRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    // TODO: Implement using new GroupRepository
-    tracing::warn!("Group member add not yet implemented in zero-PostgreSQL mode");
-    
-    // Log admin action (noop for now)
+    // Verify group exists
+    let _group = state.group_repo
+        .get(group_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get group: {}", e);
+            internal_error("Failed to add member")
+        })?
+        .ok_or_else(|| not_found("Group not found"))?;
+
+    // Verify user exists
+    let _user = state.user_metadata_repo
+        .get(req.user_id.into())
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get user: {}", e);
+            internal_error("Failed to add member")
+        })?
+        .ok_or_else(|| not_found("User not found"))?;
+
+    state.group_repo
+        .add_member(group_id, req.user_id.into(), actor_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to add member: {}", e);
+            internal_error("Failed to add member")
+        })?;
+
     log_admin_action(
+        &State(state),
         actor_id,
         "group.member_added",
         Some("group"),
@@ -193,22 +323,35 @@ pub async fn add_member(
     )
     .await;
 
-    Err(not_found("Group not found"))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// DELETE /api/v1/admin/groups/:id/members/:user_id
-/// 
-/// TODO: Implement using new GroupRepository
 pub async fn remove_member(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path((group_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    // TODO: Implement using new GroupRepository
-    tracing::warn!("Group member remove not yet implemented in zero-PostgreSQL mode");
-    
-    // Log admin action (noop for now)
+    // Verify group exists
+    let _group = state.group_repo
+        .get(group_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get group: {}", e);
+            internal_error("Failed to remove member")
+        })?
+        .ok_or_else(|| not_found("Group not found"))?;
+
+    state.group_repo
+        .remove_member(group_id, user_id.into())
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to remove member: {}", e);
+            internal_error("Failed to remove member")
+        })?;
+
     log_admin_action(
+        &State(state),
         actor_id,
         "group.member_removed",
         Some("group"),
@@ -217,7 +360,7 @@ pub async fn remove_member(
     )
     .await;
 
-    Err(not_found("Membership not found"))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---------------------------------------------------------------------------
@@ -228,9 +371,13 @@ fn not_found(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
     (StatusCode::NOT_FOUND, Json(json!({ "error": msg })))
 }
 
-fn not_implemented(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+fn bad_request(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::BAD_REQUEST, Json(json!({ "error": msg })))
+}
+
+fn internal_error(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
     (
-        StatusCode::NOT_IMPLEMENTED,
+        StatusCode::INTERNAL_SERVER_ERROR,
         Json(json!({ "error": msg })),
     )
 }

@@ -314,6 +314,7 @@ pub async fn get_folder_tree(
         owner_id: auth.user_id,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
+        deleted: false,
     };
 
     // Get files at root level (files with no parent folder)

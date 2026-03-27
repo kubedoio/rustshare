@@ -20,6 +20,7 @@ pub struct File {
     pub current_version: i32,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
+    pub deleted: bool,
 }
 
 impl File {
@@ -46,6 +47,7 @@ impl File {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            deleted: false,
         }
     }
 
@@ -74,6 +76,7 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            deleted: false,
         };
 
         assert_eq!(file.storage_key(), "blobs/abc123def456");
@@ -94,6 +97,7 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            deleted: false,
         };
 
         assert_eq!(file.storage_key(), format!("blobs/{}", hash));

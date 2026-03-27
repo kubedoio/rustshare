@@ -1,7 +1,4 @@
 //! Admin unified audit log handler.
-//!
-//! TODO: This module needs to be rewritten to use the new AuditStore
-//! for audit logging instead of PostgreSQL.
 
 use axum::{
     extract::{Query, State},
@@ -11,6 +8,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
+
+use rustshare_storage::metadata_v2::schemas::AuditFilter;
 
 use crate::{handlers::AdminUser, AppState};
 
@@ -54,28 +53,76 @@ pub struct PaginatedAuditLog {
 }
 
 // ---------------------------------------------------------------------------
-// Handler
+// Handlers
 // ---------------------------------------------------------------------------
 
 /// GET /api/v1/admin/audit
-/// 
-/// TODO: Implement using new AuditStore
 pub async fn list_audit_log(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
     Query(query): Query<AuditLogQuery>,
 ) -> Result<Json<PaginatedAuditLog>, (StatusCode, Json<serde_json::Value>)> {
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.per_page.unwrap_or(20).clamp(1, 100);
 
-    // TODO: Implement using new AuditStore
-    tracing::warn!("Audit log not yet implemented in zero-PostgreSQL mode");
+    // Build filter
+    let mut filter = AuditFilter::new()
+        .with_pagination((page - 1) * per_page, per_page);
+    
+    if let Some(actor_id) = query.user_id {
+        filter.actor_id = Some(actor_id);
+    }
+    
+    if let Some(action_type) = query.event_type {
+        filter.action_type = Some(action_type);
+    }
+    
+    if let Some(from) = query.from {
+        filter.from = Some(from);
+    }
+    
+    if let Some(to) = query.to {
+        filter.to = Some(to);
+    }
 
-    // Return empty result for now
+    let entries = state.audit_repo
+        .list(filter)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to list audit log: {}", e);
+            internal_error("Failed to list audit log")
+        })?;
+
+    let total = entries.len() as i64; // Note: In production, use count query
+
+    let audit_entries: Vec<AuditEntry> = entries
+        .into_iter()
+        .map(|e| AuditEntry {
+            id: e.id.to_string(),
+            occurred_at: e.occurred_at,
+            event_type: e.action_type.clone(),
+            actor_label: e.actor_label,
+            action_type: e.action_type,
+            target_label: e.target_label,
+            detail: e.detail,
+        })
+        .collect();
+
     Ok(Json(PaginatedAuditLog {
-        entries: vec![],
-        total: 0,
+        entries: audit_entries,
+        total,
         page,
         per_page,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn internal_error(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": msg })),
+    )
 }

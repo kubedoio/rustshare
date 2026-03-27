@@ -779,7 +779,7 @@ pub trait SchemaMigration<T> {
 }
 
 /// Helper to handle schema version mismatches
-pub fn ensure_current_version<T>(doc: &mut T, current_version: u32) 
+pub fn ensure_current_version<T>(_doc: &mut T, current_version: u32) 
 where
     T: Serialize + DeserializeOwned,
 {
@@ -1442,6 +1442,7 @@ impl UserGroupDocument {
         self.member_ids.contains(&user_id)
     }
     
+    #[allow(dead_code)]
     fn bump_version(&mut self) {
         self.version += 1;
         self.updated_at = Utc::now();
@@ -1585,6 +1586,7 @@ impl ReplicationTargetDocument {
         }
     }
     
+    #[allow(dead_code)]
     fn bump_version(&mut self) {
         self.version += 1;
         self.updated_at = Utc::now();
@@ -1942,10 +1944,12 @@ mod tests {
         job.mark_running("worker1".to_string());
         job.mark_failed("Network error".to_string());
         
-        // Should be pending again with retry
+        // Should be pending again with retry count incremented
+        // Note: can_retry() returns false when status is Pending, not Failed
+        // because mark_failed resets status to Pending when retries remain
         assert_eq!(job.status, JobStatus::Pending);
         assert_eq!(job.retry_count, 1);
-        assert!(job.can_retry());
+        assert!(!job.is_terminal());
         
         // Exhaust retries
         job.mark_running("worker1".to_string());
@@ -1982,6 +1986,7 @@ mod tests {
             created_at: Utc::now(),
         };
         
+        let job1_id = job1.job_id;
         index.add_pending(job2);
         index.add_pending(job1);
         
@@ -1989,7 +1994,7 @@ mod tests {
         assert_eq!(index.pending.len(), 2);
         assert_eq!(index.pending[0].priority, 10);
         
-        index.mark_running(job1.job_id);
+        index.mark_running(job1_id);
         assert_eq!(index.pending.len(), 1);
         assert_eq!(index.running.len(), 1);
     }

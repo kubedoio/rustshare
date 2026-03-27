@@ -12,12 +12,16 @@ pub mod rustfs_repos;
 pub mod dual_write;
 pub mod factory;
 pub mod stub;
+pub mod user;
+pub mod notification;
+pub mod job;
 
 pub use traits::*;
 pub use rustfs_repos::*;
 pub use dual_write::*;
 pub use factory::*;
 pub use stub::*;
+pub use user::*;
 
 use thiserror::Error;
 

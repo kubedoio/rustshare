@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use super::{RepositoryError, *};
 use crate::metadata_v2::{
-    BlobStore, EventLogStore, FolderChildrenIndex, IndexStore,
+    EventLogStore, FolderChildrenIndex,
     MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions, RuntimeMetadataCache,
 };
 use crate::metadata_v2::schemas::*;
@@ -1058,13 +1058,13 @@ use crate::metadata_v2::schemas::{
     UserDocument, UserGroupDocument, UserGroupsIndex, WebhookDocument, ConfigType,
 };
 
-/// RustFS-backed user repository
-pub struct RustFsUserRepository {
+/// RustFS-backed user metadata repository (document-based)
+pub struct RustFsUserMetadataRepository {
     doc_store: Arc<dyn MetadataDocumentStore>,
     path_builder: PathBuilder,
 }
 
-impl RustFsUserRepository {
+impl RustFsUserMetadataRepository {
     pub fn new(doc_store: Arc<dyn MetadataDocumentStore>, path_builder: PathBuilder) -> Self {
         Self {
             doc_store,
@@ -1074,7 +1074,7 @@ impl RustFsUserRepository {
 }
 
 #[async_trait]
-impl UserRepository for RustFsUserRepository {
+impl UserMetadataRepository for RustFsUserMetadataRepository {
     async fn get(&self, id: UserId) -> Result<Option<UserDocument>, RepositoryError> {
         let key = self.path_builder.user(id);
         self.doc_store.get::<UserDocument>(&key).await
@@ -1409,7 +1409,7 @@ impl GroupRepository for RustFsGroupRepository {
         Ok(groups)
     }
     
-    async fn add_member(&self, group_id: Uuid, user_id: UserId, added_by: UserId) -> Result<(), RepositoryError> {
+    async fn add_member(&self, group_id: Uuid, user_id: UserId, _added_by: UserId) -> Result<(), RepositoryError> {
         // Update group document
         let mut group = self.get(group_id).await?
             .ok_or_else(|| RepositoryError::NotFound(format!("Group {} not found", group_id)))?;

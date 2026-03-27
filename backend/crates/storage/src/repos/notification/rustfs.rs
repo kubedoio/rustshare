@@ -4,7 +4,6 @@ use super::*;
 use crate::metadata_v2::{
     schemas::{
         NotificationDocument, NotificationRef, UserNotificationIndex,
-        CURRENT_SCHEMA_VERSION,
     },
     MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions,
 };
@@ -99,6 +98,7 @@ impl RustFsNotificationRepository {
     }
     
     /// Update index when notification is marked read
+    #[allow(dead_code)]
     async fn mark_read_in_index(&self, user_id: Uuid, notification_id: Uuid) -> Result<(), NotificationRepositoryError> {
         let mut index = self.get_or_create_index(user_id).await?;
         index.mark_read(notification_id);
@@ -106,6 +106,7 @@ impl RustFsNotificationRepository {
     }
     
     /// Update index when notification is deleted
+    #[allow(dead_code)]
     async fn remove_from_index(&self, user_id: Uuid, notification_id: Uuid) -> Result<(), NotificationRepositoryError> {
         let mut index = self.get_or_create_index(user_id).await?;
         index.remove_notification(notification_id);
@@ -131,7 +132,7 @@ impl NotificationRepository for RustFsNotificationRepository {
         Ok(())
     }
     
-    async fn get_notification(&self, id: Uuid) -> Result<Option<Notification>, NotificationRepositoryError> {
+    async fn get_notification(&self, _id: Uuid) -> Result<Option<Notification>, NotificationRepositoryError> {
         // We need to know the user_id to find the notification
         // This is inefficient - we'd need to scan or maintain a separate index
         // For now, return None (notifications are typically accessed via user query)
@@ -173,7 +174,7 @@ impl NotificationRepository for RustFsNotificationRepository {
         Ok(index.unread_count)
     }
     
-    async fn mark_read(&self, id: Uuid) -> Result<(), NotificationRepositoryError> {
+    async fn mark_read(&self, _id: Uuid) -> Result<(), NotificationRepositoryError> {
         // We need to find the notification first
         // For efficiency, we should scan user indexes or maintain a reverse index
         // For now, this is a no-op that would need the user_id
@@ -213,7 +214,7 @@ impl NotificationRepository for RustFsNotificationRepository {
         Ok(count)
     }
     
-    async fn delete_notification(&self, id: Uuid) -> Result<(), NotificationRepositoryError> {
+    async fn delete_notification(&self, _id: Uuid) -> Result<(), NotificationRepositoryError> {
         // Similar to mark_read, we need user_id
         // TODO: Implement with global index or require user_id parameter
         Ok(())

@@ -92,11 +92,6 @@ pub mod conversions {
         }
     }
     
-    /// Convert ResourceType from core domain
-    fn from_core_resource_type(ty: CoreResourceType) -> String {
-        ty.to_string()
-    }
-    
     /// Convert ResourceType to core domain
     fn to_core_resource_type(ty: &str) -> CoreResourceType {
         ty.parse().unwrap_or(CoreResourceType::File)

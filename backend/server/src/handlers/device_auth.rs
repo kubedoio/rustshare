@@ -228,14 +228,6 @@ fn hash_token(raw: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
-/// Standard server error response
-fn server_error(msg: impl Into<String>) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({ "error": msg.into() })),
-    )
-}
-
 fn not_found(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
     (StatusCode::NOT_FOUND, Json(json!({ "error": msg })))
 }

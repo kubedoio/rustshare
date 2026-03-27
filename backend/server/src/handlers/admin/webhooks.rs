@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
+use rustshare_storage::metadata_v2::schemas::{WebhookDocument, WebhookFilter};
+
 use crate::{handlers::AdminUser, AppState};
 use super::log_admin_action;
 
@@ -57,6 +59,7 @@ pub struct CreateWebhookRequest {
     pub url: String,
     /// Optional HMAC signing secret (plain text; will be encrypted before storage).
     pub secret: Option<String>,
+    #[allow(dead_code)]
     pub enabled: Option<bool>,
     pub events: Vec<String>,
 }
@@ -77,16 +80,40 @@ pub struct UpdateWebhookRequest {
 
 /// GET /api/v1/admin/integrations/webhooks
 pub async fn list_webhooks(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
 ) -> Result<Json<Vec<WebhookResponse>>, (StatusCode, Json<serde_json::Value>)> {
-    tracing::warn!("Feature not yet implemented in zero-PostgreSQL mode");
-    Ok(Json(vec![]))
+    let filter = WebhookFilter::new();
+    
+    let webhooks = state.webhook_repo
+        .list(filter)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to list webhooks: {}", e);
+            internal_error("Failed to list webhooks")
+        })?;
+
+    let responses: Vec<WebhookResponse> = webhooks
+        .into_iter()
+        .map(|w| WebhookResponse {
+            id: w.id.to_string(),
+            name: w.name,
+            url: w.url,
+            secret: w.secret_hash.map(|_| "***".to_string()),
+            enabled: w.enabled,
+            events: w.events,
+            created_by: Some(w.created_by.to_string()),
+            created_at: w.created_at,
+            updated_at: w.updated_at,
+        })
+        .collect();
+
+    Ok(Json(responses))
 }
 
 /// POST /api/v1/admin/integrations/webhooks
 pub async fn create_webhook(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Json(req): Json<CreateWebhookRequest>,
 ) -> Result<(StatusCode, Json<WebhookResponse>), (StatusCode, Json<serde_json::Value>)> {
@@ -99,25 +126,57 @@ pub async fn create_webhook(
     }
     validate_events(&req.events)?;
 
-    tracing::warn!("Feature not yet implemented in zero-PostgreSQL mode");
-
     let webhook_id = Uuid::new_v4();
+    
+    // Hash the secret if provided
+    let secret_hash = req.secret.filter(|s| !s.is_empty()).map(|s| {
+        // TODO: Use proper hashing
+        format!("hash:{}", s)
+    });
+
+    let webhook = WebhookDocument::new(
+        webhook_id,
+        req.name.trim().to_string(),
+        req.url.trim().to_string(),
+        secret_hash,
+        req.events,
+        actor_id,
+    );
+
+    state.webhook_repo
+        .create(&webhook)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to create webhook: {}", e);
+            internal_error("Failed to create webhook")
+        })?;
 
     log_admin_action(
+        &State(state),
         actor_id,
         "webhook.created",
         Some("webhook"),
         Some(webhook_id),
-        json!({"name": req.name, "url": req.url}),
+        json!({"name": webhook.name, "url": webhook.url}),
     )
     .await;
 
-    Err(internal_error("Webhook creation not yet implemented in zero-PostgreSQL mode"))
+    Ok((StatusCode::CREATED, Json(WebhookResponse {
+        id: webhook.id.to_string(),
+        name: webhook.name,
+        url: webhook.url,
+        secret: webhook.secret_hash.map(|_| "***".to_string()),
+        enabled: webhook.enabled,
+        events: webhook.events,
+        created_by: Some(webhook.created_by.to_string()),
+        created_at: webhook.created_at,
+        updated_at: webhook.updated_at,
+    })))
 }
 
 /// PATCH /api/v1/admin/integrations/webhooks/:id
 pub async fn update_webhook(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(webhook_id): Path<Uuid>,
     Json(req): Json<UpdateWebhookRequest>,
@@ -126,32 +185,93 @@ pub async fn update_webhook(
         validate_events(events)?;
     }
 
-    tracing::warn!("Feature not yet implemented in zero-PostgreSQL mode");
+    let mut webhook = state.webhook_repo
+        .get(webhook_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get webhook: {}", e);
+            internal_error("Failed to update webhook")
+        })?
+        .ok_or_else(|| not_found("Webhook not found"))?;
 
-    let new_name = req.name.unwrap_or_else(|| "unknown".to_string());
-    let new_url = req.url.unwrap_or_else(|| "unknown".to_string());
+    // Apply updates
+    let new_name = req.name.unwrap_or_else(|| webhook.name.clone());
+    let new_url = req.url.unwrap_or_else(|| webhook.url.clone());
+    let new_events = req.events.unwrap_or_else(|| webhook.events.clone());
+    let new_enabled = req.enabled.unwrap_or(webhook.enabled);
+
+    // Handle secret update
+    let new_secret = match req.secret {
+        Some(ref s) if s.is_empty() => None, // Clear secret
+        Some(s) => Some(format!("hash:{}", s)), // New secret
+        None => webhook.secret_hash.clone(), // Keep existing
+    };
+
+    webhook.update(
+        Some(new_name),
+        Some(new_url),
+        Some(new_events),
+        Some(new_enabled),
+    );
+    webhook.secret_hash = new_secret;
+
+    state.webhook_repo
+        .update(&webhook)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to update webhook: {}", e);
+            internal_error("Failed to update webhook")
+        })?;
 
     log_admin_action(
+        &State(state),
         actor_id,
         "webhook.updated",
         Some("webhook"),
         Some(webhook_id),
-        json!({"name": new_name, "url": new_url}),
+        json!({"name": webhook.name, "url": webhook.url}),
     )
     .await;
 
-    Err(not_found("Webhook not found"))
+    Ok(Json(WebhookResponse {
+        id: webhook.id.to_string(),
+        name: webhook.name,
+        url: webhook.url,
+        secret: webhook.secret_hash.map(|_| "***".to_string()),
+        enabled: webhook.enabled,
+        events: webhook.events,
+        created_by: Some(webhook.created_by.to_string()),
+        created_at: webhook.created_at,
+        updated_at: webhook.updated_at,
+    }))
 }
 
 /// DELETE /api/v1/admin/integrations/webhooks/:id
 pub async fn delete_webhook(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(webhook_id): Path<Uuid>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    tracing::warn!("Feature not yet implemented in zero-PostgreSQL mode");
+    // Verify webhook exists
+    let _webhook = state.webhook_repo
+        .get(webhook_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get webhook: {}", e);
+            internal_error("Failed to delete webhook")
+        })?
+        .ok_or_else(|| not_found("Webhook not found"))?;
+
+    state.webhook_repo
+        .delete(webhook_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to delete webhook: {}", e);
+            internal_error("Failed to delete webhook")
+        })?;
 
     log_admin_action(
+        &State(state),
         actor_id,
         "webhook.deleted",
         Some("webhook"),
@@ -164,15 +284,31 @@ pub async fn delete_webhook(
 }
 
 /// POST /api/v1/admin/integrations/webhooks/:id/test
-///
-/// Fires a `ping` event to the webhook URL and returns the result.
 pub async fn test_webhook(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
-    Path(_webhook_id): Path<Uuid>,
+    Path(webhook_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    tracing::warn!("Feature not yet implemented in zero-PostgreSQL mode");
-    Err(not_found("Webhook not found"))
+    // Verify webhook exists
+    let _webhook = state.webhook_repo
+        .get(webhook_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get webhook: {}", e);
+            internal_error("Failed to test webhook")
+        })?
+        .ok_or_else(|| not_found("Webhook not found"))?;
+
+    // TODO: Implement webhook test (send ping event)
+    tracing::warn!("Webhook test not yet implemented");
+    
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({
+            "status": "not_implemented",
+            "message": "Webhook test not yet available"
+        })),
+    ))
 }
 
 // ---------------------------------------------------------------------------

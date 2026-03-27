@@ -81,8 +81,8 @@ pub enum FolderError {
     },
 
     /// A folder with the same name already exists in the parent folder.
-    #[error("Duplicate folder name: {name} in folder {parent_id}")]
-    DuplicateName { name: String, parent_id: FolderId },
+    #[error("Duplicate folder name: {0}")]
+    DuplicateName(String),
 
     /// Folder name is invalid (e.g., empty, contains illegal characters).
     #[error("Invalid folder name: {0}")]
@@ -92,10 +92,24 @@ pub enum FolderError {
     #[error("Cannot delete root folder: {0}")]
     CannotDeleteRoot(FolderId),
 
+    /// Folder is not empty and cannot be deleted.
+    #[error("Folder is not empty: {0}")]
+    NotEmpty(FolderId),
+
+    /// Invalid move operation.
+    #[error("Invalid move for folder {folder_id}: {reason}")]
+    InvalidMove { folder_id: FolderId, reason: String },
+
+    /// Storage operation failed.
+    #[error("Storage error: {0}")]
+    Storage(String),
+
     /// Database operation failed.
     #[error("Database error: {0}")]
     Database(String),
 }
+
+
 
 #[cfg(test)]
 mod tests {
@@ -223,10 +237,9 @@ mod tests {
     #[test]
     fn test_folder_error_duplicate_name() {
         let name = "Documents".to_string();
-        let parent_id = Uuid::new_v4();
-        let err = FolderError::DuplicateName { name, parent_id };
+        let err = FolderError::DuplicateName(name.clone());
         assert!(err.to_string().contains("Duplicate folder name"));
-        assert!(err.to_string().contains("Documents"));
+        assert!(err.to_string().contains(&name));
     }
 
     #[test]

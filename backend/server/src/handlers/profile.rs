@@ -102,7 +102,7 @@ pub async fn get_profile(
     State(state): State<AppState>,
     AuthenticatedUser { user_id }: AuthenticatedUser,
 ) -> Response {
-    match state.metadata_store.find_user_by_id(user_id).await {
+    match state.user_repo.get_user_by_id(user_id).await {
         Ok(Some(user)) => {
             let profile = ProfileResponse {
                 id: user.id.to_string(),
@@ -180,7 +180,7 @@ pub async fn update_profile(
     }
 
     // Get current user
-    let user = match state.metadata_store.find_user_by_id(user_id).await {
+    let mut user = match state.user_repo.get_user_by_id(user_id).await {
         Ok(Some(user)) => user,
         Ok(None) => {
             return (
@@ -199,26 +199,25 @@ pub async fn update_profile(
         }
     };
 
-    // Build update parameters
-    let name = req.name;
-    let surname = req.surname;
-    let display_name = req.display_name;
-    let email_sharing_enabled = req.email_sharing_enabled;
-    let theme = req.theme;
+    // Apply updates
+    if let Some(name) = req.name {
+        user.name = Some(name);
+    }
+    if let Some(surname) = req.surname {
+        user.surname = Some(surname);
+    }
+    if let Some(display_name) = req.display_name {
+        user.display_name = display_name;
+    }
+    if let Some(email_sharing_enabled) = req.email_sharing_enabled {
+        user.email_sharing_enabled = email_sharing_enabled;
+    }
+    if let Some(theme) = req.theme {
+        user.theme = theme;
+    }
 
-    // Update user in database
-    if let Err(e) = state
-        .metadata_store
-        .update_user_profile(
-            user_id,
-            name.as_deref(),
-            surname.as_deref(),
-            display_name.as_deref(),
-            email_sharing_enabled,
-            theme.as_ref().map(|t| t.to_string()),
-        )
-        .await
-    {
+    // Update user in repository
+    if let Err(e) = state.user_repo.update_user(&user).await {
         tracing::error!("Failed to update user profile: {:?}", e);
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -228,7 +227,7 @@ pub async fn update_profile(
     }
 
     // Fetch updated user to return complete profile
-    match state.metadata_store.find_user_by_id(user_id).await {
+    match state.user_repo.get_user_by_id(user_id).await {
         Ok(Some(updated_user)) => {
             let response = UpdateProfileResponse {
                 id: updated_user.id.to_string(),
@@ -247,17 +246,17 @@ pub async fn update_profile(
             (StatusCode::OK, Json(response)).into_response()
         }
         _ => {
-            // If we can't fetch the updated user, return the original with updates applied
+            // If we can't fetch the updated user, return with updates applied
             let response = UpdateProfileResponse {
                 id: user.id.to_string(),
                 username: user.username,
                 email: user.email,
-                name: name.or(user.name),
-                surname: surname.or(user.surname),
-                display_name: display_name.unwrap_or(user.display_name),
+                name: user.name,
+                surname: user.surname,
+                display_name: user.display_name,
                 avatar_path: user.avatar_path,
-                email_sharing_enabled: email_sharing_enabled.unwrap_or(user.email_sharing_enabled),
-                theme: theme.unwrap_or(user.theme),
+                email_sharing_enabled: user.email_sharing_enabled,
+                theme: user.theme,
                 storage_quota: user.storage_quota,
                 created_at: user.created_at.to_rfc3339(),
             };

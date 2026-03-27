@@ -57,9 +57,9 @@ pub async fn resolve_bearer_token(token: &str, state: &AppState) -> Result<Uuid,
             let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AuthError::InvalidToken)?;
 
             // Verify user exists and is not disabled
-            match state.user_repo.get(user_id).await {
+            match state.user_repo.get_user_by_id(user_id).await {
                 Ok(Some(user)) => {
-                    if user.disabled {
+                    if user.disabled_at.is_some() {
                         return Err(AuthError::AccountDisabled);
                     }
                     return Ok(user_id);
@@ -261,9 +261,9 @@ impl FromRequestParts<AppState> for AdminUser {
         let auth = AuthenticatedUser::from_request_parts(parts, state).await?;
 
         // Verify admin status using UserRepository
-        match state.user_repo.get(auth.user_id).await {
+        match state.user_repo.get_user_by_id(auth.user_id).await {
             Ok(Some(user)) => {
-                if user.disabled {
+                if user.disabled_at.is_some() {
                     return Err(admin_unauthorized_error("Account is disabled"));
                 }
                 if !user.is_admin {

@@ -6,11 +6,10 @@
 //! - Index consistency with canonical documents
 
 use std::sync::Arc;
-use tracing::{debug, info, warn, error};
+use tracing::info;
 use uuid::Uuid;
 
 use super::OperationSummary;
-use crate::metadata_v2::schemas::*;
 use crate::repos::*;
 
 /// Result of verifying a single entity
@@ -245,7 +244,7 @@ impl ParityVerifier {
         file_limit: usize,
         share_limit: usize,
     ) -> Result<VerificationReport, RepositoryError> {
-        let mut report = VerificationReport::new();
+        let report = VerificationReport::new();
         
         // Note: In a real implementation, we would scan from PostgreSQL
         // and verify each entity in RustFS. For now, this is a placeholder
@@ -307,18 +306,16 @@ impl ParityVerifier {
 }
 
 /// Verifies internal consistency of metadata documents
-pub struct ConsistencyVerifier {
-    repo: Arc<dyn MetadataRepository>,
-}
+pub struct ConsistencyVerifier;
 
 impl ConsistencyVerifier {
-    pub fn new(repo: Arc<dyn MetadataRepository>) -> Self {
-        Self { repo }
+    pub fn new(_repo: Arc<dyn MetadataRepository>) -> Self {
+        Self
     }
     
     /// Verify folder hierarchy consistency
     pub async fn verify_folder_hierarchy(&self) -> Result<OperationSummary, RepositoryError> {
-        let mut summary = OperationSummary::new("folder_hierarchy_verification");
+        let summary = OperationSummary::new("folder_hierarchy_verification");
         
         // This would:
         // 1. Scan all folders
@@ -333,7 +330,7 @@ impl ConsistencyVerifier {
     
     /// Verify file version consistency
     pub async fn verify_file_versions(&self) -> Result<OperationSummary, RepositoryError> {
-        let mut summary = OperationSummary::new("file_version_verification");
+        let summary = OperationSummary::new("file_version_verification");
         
         // This would:
         // 1. Scan all files
@@ -348,7 +345,7 @@ impl ConsistencyVerifier {
     
     /// Verify share consistency
     pub async fn verify_shares(&self) -> Result<OperationSummary, RepositoryError> {
-        let mut summary = OperationSummary::new("share_verification");
+        let summary = OperationSummary::new("share_verification");
         
         // This would:
         // 1. Verify all shares point to valid resources
@@ -362,7 +359,7 @@ impl ConsistencyVerifier {
     
     /// Verify index consistency with canonical documents
     pub async fn verify_indexes(&self) -> Result<OperationSummary, RepositoryError> {
-        let mut summary = OperationSummary::new("index_verification");
+        let summary = OperationSummary::new("index_verification");
         
         // This would:
         // 1. Scan all folder children indexes
