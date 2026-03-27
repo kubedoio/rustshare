@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use rustshare_core::domain::{Folder, FolderTree};
-use rustshare_storage::metadata_v2::schemas::{FolderDocument, FileDocument};
+use rustshare_storage::metadata_v2::schemas::{FolderDocument, FileDocument, TombstoneDocument, TombstoneResourceType};
 use rustshare_storage::metadata_v2::PutOptions;
 use rustshare_storage::MetadataDocumentStoreExt;
 
@@ -194,11 +194,97 @@ pub async fn delete_folder(
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
 ) -> Result<StatusCode, Response> {
-    state
-        .folder_service
-        .delete_folder(folder_id, auth.user_id)
+    use rustshare_storage::metadata_v2::schemas::{FolderDocument, FileDocument, TombstoneDocument, TombstoneResourceType};
+    use chrono::Utc;
+
+    // Load folder document
+    let folder_key = format!("{}/{}/meta/folders/{}.json",
+        state.metadata_prefix, state.metadata_namespace, folder_id);
+    let folder_doc = state.doc_store
+        .get::<FolderDocument>(&folder_key).await
+        .map_err(|e| {
+            tracing::error!("Failed to load folder: {}", e);
+            folder_error_response(rustshare_core::services::FolderError::Storage(e.to_string()))
+        })?
+        .ok_or_else(|| {
+            folder_error_response(rustshare_core::services::FolderError::NotFound(folder_id))
+        })?;
+
+    // Verify ownership
+    if folder_doc.owner_id != auth.user_id {
+        return Err(folder_error_response(
+            rustshare_core::services::FolderError::PermissionDenied { folder_id, user_id: auth.user_id }
+        ));
+    }
+
+    // Check if folder is empty (no subfolders and no files)
+    let folder_prefix = format!("{}/{}/meta/folders/",
+        state.metadata_prefix, state.metadata_namespace);
+    let folder_keys = state.doc_store
+        .list_prefix(&folder_prefix)
         .await
-        .map_err(folder_error_response)?;
+        .map_err(|e| folder_error_response(
+            rustshare_core::services::FolderError::Storage(e.to_string())
+        ))?;
+
+    for key in folder_keys {
+        if let Ok(Some((doc, _))) = state.doc_store.get::<FolderDocument>(&key).await {
+            if doc.owner_id == auth.user_id
+                && !doc.deleted
+                && doc.parent_id == Some(folder_id) {
+                return Err(folder_error_response(
+                    rustshare_core::services::FolderError::NotEmpty(folder_id)
+                ));
+            }
+        }
+    }
+
+    // Check for files in the folder
+    let file_prefix = format!("{}/{}/meta/files/",
+        state.metadata_prefix, state.metadata_namespace);
+    let file_keys = state.doc_store
+        .list_prefix(&file_prefix)
+        .await
+        .map_err(|e| folder_error_response(
+            rustshare_core::services::FolderError::Storage(e.to_string())
+        ))?;
+
+    for key in file_keys {
+        if let Ok(Some((doc, _))) = state.doc_store.get::<FileDocument>(&key).await {
+            if doc.owner_id == auth.user_id
+                && !doc.deleted
+                && doc.parent_id == Some(folder_id) {
+                return Err(folder_error_response(
+                    rustshare_core::services::FolderError::NotEmpty(folder_id)
+                ));
+            }
+        }
+    }
+
+    // Soft delete: mark as deleted and update
+    let mut updated_doc = folder_doc;
+    updated_doc.deleted = true;
+    updated_doc.updated_at = Utc::now();
+
+    state.doc_store.put(&folder_key, &updated_doc, PutOptions::default()).await
+        .map_err(|e| folder_error_response(
+            rustshare_core::services::FolderError::Storage(e.to_string())
+        ))?;
+
+    // Create tombstone for potential recovery
+    let tombstone = TombstoneDocument {
+        schema_version: 2,
+        resource_type: TombstoneResourceType::Folder,
+        resource_id: folder_id,
+        deleted_at: Utc::now(),
+        deleted_by: auth.user_id,
+        original_doc: serde_json::to_value(&updated_doc).unwrap(),
+    };
+
+    let tombstone_key = format!("{}/{}/meta/tombstones/folders/{}.json",
+        state.metadata_prefix, state.metadata_namespace, folder_id);
+    let _ = state.doc_store.put(&tombstone_key, &tombstone, PutOptions::default()).await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 
