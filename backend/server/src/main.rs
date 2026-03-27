@@ -84,6 +84,7 @@ use rustshare_storage::{
         RustFsDeviceRepository, RustFsGroupRepository,
         RustFsAuditRepository, RustFsConfigRepository, RustFsPairingRepository,
         RustFsWebhookRepository, RustFsNotificationRepository, RustFsShareRepository,
+        CombinedMetadataRepository,
     },
     repos::user::RustFsUserRepository as DomainUserRepository,
     repos::rustfs_repos::RustFsUserMetadataRepository as MetadataUserRepository,
@@ -253,11 +254,16 @@ async fn main() -> Result<()> {
 
     info!("EventBroadcaster initialized with capacity {}", capacity);
 
-    // Create compatibility layer for trait implementations
-    // For now, use stub repositories that return empty results
-    // TODO: Replace with actual RustFS repositories once fully implemented
+    // Create compatibility layer using real RustFS-backed repositories
+    let path_builder = PathBuilder::new(metadata_prefix.clone(), metadata_namespace.clone());
+    let metadata_repo = Arc::new(CombinedMetadataRepository::from_components(
+        Arc::clone(&doc_store),
+        Arc::clone(&event_log_store),
+        path_builder.clone(),
+        None, // No cache for now
+    ));
     let metadata_compat = Arc::new(rustshare_storage::metadata_v2::MetadataStoreCompat::new(
-        rustshare_storage::repos::StubMetadataRepository::new()
+        metadata_repo
     ));
     let event_compat = Arc::new(rustshare_storage::metadata_v2::EventStoreCompat::new(
         Arc::clone(&event_log_store)
@@ -322,9 +328,6 @@ async fn main() -> Result<()> {
     let rate_limit_config = Arc::new(middleware::RateLimitConfig::new());
 
     info!("Rate limiting initialized");
-
-    // Initialize new repository layer (needed for bootstrap)
-    let path_builder = PathBuilder::new(metadata_prefix.clone(), metadata_namespace.clone());
     
     // Initialize repositories using the document store
     let user_repo: Arc<dyn UserRepository> = Arc::new(

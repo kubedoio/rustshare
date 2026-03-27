@@ -3,8 +3,8 @@
 	import type { ReplicationStatus } from '$lib/stores/replication';
 	import { fileSortState } from '$lib/stores/fileSort';
 	import FileToolbar from './FileToolbar.svelte';
-	import FileList from './FileList.svelte';
-	import FileGrid from './FileGrid.svelte';
+	import FileList from '../components/files/FileList.svelte';
+	import FileGrid from '../components/files/FileGrid.svelte';
 	import Breadcrumbs from '$lib/components/layout/Breadcrumbs.svelte';
 	import { createEventDispatcher } from 'svelte';
 
@@ -48,9 +48,9 @@
 	}
 </script>
 
-<div class="flex flex-col h-full bg-base-100">
+<div class="flex flex-col h-full bg-[#0f1115]">
 	<!-- Toolbar -->
-	<div class="px-4 py-3 border-b border-base-300">
+	<div class="px-4 py-3 border-b border-[#2a2f35] bg-[#0f1115]">
 		<FileToolbar
 			{selectionMode}
 			{isUploading}
@@ -64,15 +64,15 @@
 	</div>
 
 	<!-- Breadcrumbs -->
-	<div class="px-4 py-2 border-b border-base-300 bg-base-200/30">
+	<div class="px-4 py-2 border-b border-[#2a2f35] bg-[#0f1115]">
 		<Breadcrumbs {folderPath} on:navigate={handleBreadcrumbNavigate} />
 	</div>
 
 	<!-- Content -->
-	<div class="flex-1 overflow-auto p-4">
+	<div class="flex-1 overflow-auto">
 		{#if isLoading}
 			<div class="flex items-center justify-center h-64">
-				<div class="animate-spin w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full"></div>
+				<div class="animate-spin w-8 h-8 border-2 border-[#2563eb] border-t-transparent rounded-full"></div>
 			</div>
 		{:else if error}
 			<div class="flex flex-col items-center justify-center h-64 text-center">
@@ -83,11 +83,11 @@
 						<line x1="12" x2="12.01" y1="16" y2="16"/>
 					</svg>
 				</div>
-				<h3 class="text-lg font-semibold text-base-content mb-1">Failed to load files</h3>
-				<p class="text-sm text-base-content/60 mb-4">{error.message || 'Unknown error'}</p>
+				<h3 class="text-lg font-semibold text-[#e5e7eb] mb-1">Failed to load files</h3>
+				<p class="text-sm text-[#9ca3af] mb-4">{error.message || 'Unknown error'}</p>
 				<button
 					type="button"
-					class="px-4 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors"
+					class="px-4 py-2 text-sm font-medium bg-[#2563eb] hover:bg-[#1d4ed8] text-white rounded-lg transition-colors"
 					on:click={onRefresh}
 				>
 					Try again
@@ -95,25 +95,27 @@
 			</div>
 		{:else}
 			{#if $fileSortState.viewMode === 'grid'}
-				<FileGrid
-					{folders}
-					{files}
-					{replicationStatuses}
-					{selectionMode}
-					onFolderClick={onFolderClick}
-					onFileClick={onFileClick}
-					onRenameFolder={onRenameFolder}
-					onDeleteFolder={onDeleteFolder}
-					onShareFolder={onShareFolder}
-					onMoveFolder={onMoveFolder}
-					onRenameFile={onRenameFile}
-					onDeleteFile={onDeleteFile}
-					onMoveFile={onMoveFile}
-					onDownloadFile={onDownloadFile}
-					onReplaceFile={onReplaceFile}
-					onShareFile={onShareFile}
-					onVersionHistory={onVersionHistory}
-				/>
+				<div class="p-4">
+					<FileGrid
+						{folders}
+						{files}
+						{replicationStatuses}
+						{selectionMode}
+						onFolderClick={onFolderClick}
+						onFileClick={onFileClick}
+						onRenameFolder={onRenameFolder}
+						onDeleteFolder={onDeleteFolder}
+						onShareFolder={onShareFolder}
+						onMoveFolder={onMoveFolder}
+						onRenameFile={onRenameFile}
+						onDeleteFile={onDeleteFile}
+						onMoveFile={onMoveFile}
+						onDownloadFile={onDownloadFile}
+						onReplaceFile={onReplaceFile}
+						onShareFile={onShareFile}
+						onVersionHistory={onVersionHistory}
+					/>
+				</div>
 			{:else}
 				<FileList
 					{folders}

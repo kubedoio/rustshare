@@ -80,10 +80,10 @@
 	});
 </script>
 
-<div class="h-full flex flex-col bg-base-100">
+<div class="h-full flex flex-col bg-[#181b21]">
 	<!-- Header -->
-	<div class="px-3 py-3 border-b border-base-300">
-		<h2 class="text-xs font-semibold text-base-content/50 uppercase tracking-wider px-2">Folders</h2>
+	<div class="px-3 py-3 border-b border-[#2a2f35]">
+		<h2 class="text-xs font-semibold text-[#6b7280] uppercase tracking-wider px-2">Folders</h2>
 	</div>
 
 	<!-- Root Item -->
@@ -91,11 +91,11 @@
 		type="button"
 		class="flex items-center gap-2 px-3 py-2 mx-2 mt-2 rounded-md text-sm transition-colors
 			{$folderTreeStore.selectedId === null 
-				? 'bg-brand-500/15 text-brand-300 font-medium' 
-				: 'text-base-content/70 hover:bg-base-200/50 hover:text-base-content'}"
+				? 'bg-[#1e3a5f]/60 text-[#e5e7eb] font-medium' 
+				: 'text-[#9ca3af] hover:bg-[#1a1d24] hover:text-[#e5e7eb]'}"
 		on:click={handleSelectRoot}
 	>
-		<Home size={18} class={$folderTreeStore.selectedId === null ? 'text-brand-400' : 'text-base-content/50'} />
+		<Home size={18} class={$folderTreeStore.selectedId === null ? 'text-[#2563eb]' : 'text-[#6b7280]'} />
 		<span>Home</span>
 	</button>
 
@@ -103,19 +103,19 @@
 	<div class="flex-1 overflow-y-auto py-2" role="tree" aria-label="Folder tree">
 		{#if $rootFoldersQuery.isLoading}
 			<div class="px-4 py-4 flex items-center justify-center">
-				<Loader2 size={20} class="animate-spin text-base-content/30" />
+				<Loader2 size={20} class="animate-spin text-[#6b7280]" />
 			</div>
 		{:else if $rootFoldersQuery.isError}
-			<div class="px-4 py-4 text-sm text-error">
+			<div class="px-4 py-4 text-sm text-[#ef4444]">
 				Failed to load folders
 			</div>
 		{:else if $folderTreeStore.rootFolders.length === 0}
 			<div class="px-4 py-8 text-center">
-				<div class="w-12 h-12 rounded-xl bg-base-200 flex items-center justify-center mx-auto mb-3">
-					<Folder size={24} class="text-base-content/30" />
+				<div class="w-12 h-12 rounded-xl bg-[#1a1d24] flex items-center justify-center mx-auto mb-3">
+					<Folder size={24} class="text-[#6b7280]" />
 				</div>
-				<p class="text-sm text-base-content/50">No folders yet</p>
-				<p class="text-xs text-base-content/40 mt-1">Create folders to organize your files</p>
+				<p class="text-sm text-[#9ca3af]">No folders yet</p>
+				<p class="text-xs text-[#6b7280] mt-1">Create folders to organize your files</p>
 			</div>
 		{:else}
 			{#each $folderTreeStore.rootFolders as folder (folder.id)}

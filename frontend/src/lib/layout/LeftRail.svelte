@@ -28,16 +28,16 @@
 </script>
 
 <!-- Far-left Icon Rail -->
-<aside class="w-16 bg-base-200 border-r border-base-300 flex flex-col flex-shrink-0 z-30">
+<aside class="w-16 bg-[#0f1115] border-r border-[#2a2f35] flex flex-col flex-shrink-0 z-30">
 	<!-- Logo -->
-	<div class="h-14 flex items-center justify-center border-b border-base-300">
+	<div class="h-14 flex items-center justify-center border-b border-[#2a2f35]">
 		<a href="/dashboard" class="flex items-center justify-center" aria-label="RustShare">
 			<svg class="h-8 w-8" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-				<rect x="2" y="6" width="28" height="20" rx="3" fill="currentColor" class="text-brand-500"/>
-				<rect x="2" y="9" width="28" height="4" fill="currentColor" class="text-brand-400"/>
-				<circle cx="24" cy="21" r="5" fill="currentColor" class="text-base-200"/>
-				<circle cx="24" cy="21" r="3" fill="currentColor" class="text-brand-500"/>
-				<rect x="22.5" y="19.5" width="3" height="3" fill="currentColor" class="text-base-200"/>
+				<rect x="2" y="6" width="28" height="20" rx="3" fill="currentColor" class="text-[#2563eb]"/>
+				<rect x="2" y="9" width="28" height="4" fill="currentColor" class="text-[#3b82f6]"/>
+				<circle cx="24" cy="21" r="5" fill="currentColor" class="text-[#0f1115]"/>
+				<circle cx="24" cy="21" r="3" fill="currentColor" class="text-[#2563eb]"/>
+				<rect x="22.5" y="19.5" width="3" height="3" fill="currentColor" class="text-[#0f1115]"/>
 			</svg>
 		</a>
 	</div>
@@ -49,8 +49,8 @@
 				href={item.href}
 				class="group relative flex items-center justify-center w-12 h-12 rounded-xl transition-all duration-200
 					{isActive(item.href) 
-						? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25' 
-						: 'text-base-content/60 hover:text-base-content hover:bg-base-300'}"
+						? 'bg-[#1e3a5f]/60 text-[#2563eb]' 
+						: 'text-[#6b7280] hover:text-[#e5e7eb] hover:bg-[#1a1d24]'}"
 				aria-current={isActive(item.href) ? 'page' : undefined}
 				aria-label={item.label}
 			>
@@ -73,7 +73,7 @@
 				</span>
 
 				<!-- Tooltip -->
-				<span class="absolute left-full ml-3 px-2 py-1 bg-base-300 text-xs font-medium text-base-content rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 whitespace-nowrap z-50">
+				<span class="absolute left-full ml-3 px-2 py-1 bg-[#1a1d24] text-xs font-medium text-[#e5e7eb] rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 whitespace-nowrap z-50 border border-[#2a2f35]">
 					{item.label}
 				</span>
 			</a>
@@ -81,14 +81,14 @@
 	</nav>
 
 	<!-- Secondary Navigation -->
-	<nav class="py-4 px-2 space-y-1 border-t border-base-300">
+	<nav class="py-4 px-2 space-y-1 border-t border-[#2a2f35]">
 		{#each secondaryItems as item}
 			<a
 				href={item.href}
 				class="group relative flex items-center justify-center w-12 h-12 rounded-xl transition-all duration-200
 					{isActive(item.href) 
-						? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25' 
-						: 'text-base-content/60 hover:text-base-content hover:bg-base-300'}"
+						? 'bg-[#1e3a5f]/60 text-[#2563eb]' 
+						: 'text-[#6b7280] hover:text-[#e5e7eb] hover:bg-[#1a1d24]'}"
 				aria-current={isActive(item.href) ? 'page' : undefined}
 				aria-label={item.label}
 			>
@@ -101,7 +101,7 @@
 					{/if}
 				</span>
 
-				<span class="absolute left-full ml-3 px-2 py-1 bg-base-300 text-xs font-medium text-base-content rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 whitespace-nowrap z-50">
+				<span class="absolute left-full ml-3 px-2 py-1 bg-[#1a1d24] text-xs font-medium text-[#e5e7eb] rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 whitespace-nowrap z-50 border border-[#2a2f35]">
 					{item.label}
 				</span>
 			</a>

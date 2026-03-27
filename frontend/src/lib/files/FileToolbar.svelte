@@ -27,62 +27,46 @@
 </script>
 
 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-	<!-- Left: Title and filter chips -->
+	<!-- Left: Title -->
 	<div class="flex items-center gap-4">
-		<h1 class="text-xl font-semibold text-base-content">All files</h1>
-		
-		<!-- Filter chips -->
-		<div class="hidden sm:flex items-center gap-2">
-			<button
-				type="button"
-				class="px-3 py-1.5 text-sm font-medium rounded-full transition-colors bg-brand-500/10 text-brand-400 border border-brand-500/20"
-			>
-				Recents
-			</button>
-			<button
-				type="button"
-				class="px-3 py-1.5 text-sm font-medium rounded-full transition-colors text-base-content/60 hover:text-base-content hover:bg-base-200"
-			>
-				Starred
-			</button>
-		</div>
+		<h1 class="text-xl font-semibold text-[#e5e7eb]">All files</h1>
 	</div>
 
 	<!-- Right: Actions -->
 	<div class="flex items-center gap-2">
 		{#if selectionMode}
 			<!-- Selection mode toolbar -->
-			<div class="flex items-center gap-2 bg-base-200 rounded-lg px-3 py-1.5">
-				<span class="text-sm font-medium text-base-content">
+			<div class="flex items-center gap-2 bg-[#1a1d24] rounded-lg px-3 py-1.5">
+				<span class="text-sm font-medium text-[#e5e7eb]">
 					{$selectionCount} selected
 				</span>
-				<div class="w-px h-4 bg-base-300 mx-1"></div>
+				<div class="w-px h-4 bg-[#2a2f35] mx-1"></div>
 				<button
 					type="button"
-					class="text-sm text-base-content/70 hover:text-base-content transition-colors"
+					class="text-sm text-[#9ca3af] hover:text-[#e5e7eb] transition-colors"
 					on:click={onSelectAll}
 				>
 					All
 				</button>
 				<button
 					type="button"
-					class="text-sm text-base-content/70 hover:text-base-content transition-colors"
+					class="text-sm text-[#9ca3af] hover:text-[#e5e7eb] transition-colors"
 					on:click={onDeselectAll}
 				>
 					None
 				</button>
 				<button
 					type="button"
-					class="text-sm text-error hover:text-error/80 transition-colors"
+					class="text-sm text-[#ef4444] hover:text-[#f87171] transition-colors"
 					on:click={onBulkDelete}
 					disabled={!$hasSelection}
 				>
 					Delete
 				</button>
-				<div class="w-px h-4 bg-base-300 mx-1"></div>
+				<div class="w-px h-4 bg-[#2a2f35] mx-1"></div>
 				<button
 					type="button"
-					class="text-sm text-base-content/70 hover:text-base-content transition-colors"
+					class="text-sm text-[#9ca3af] hover:text-[#e5e7eb] transition-colors"
 					on:click={onToggleSelection}
 				>
 					Done
@@ -93,7 +77,7 @@
 			<div class="relative">
 				<button
 					type="button"
-					class="flex items-center gap-2 px-3 py-2 text-sm font-medium text-base-content/70 hover:text-base-content hover:bg-base-200 rounded-lg transition-colors"
+					class="flex items-center gap-2 px-3 py-2 text-sm font-medium text-[#9ca3af] hover:text-[#e5e7eb] hover:bg-[#1a1d24] rounded-lg transition-colors"
 					on:click={() => sortMenuOpen = !sortMenuOpen}
 					aria-expanded={sortMenuOpen}
 				>
@@ -107,12 +91,12 @@
 				</button>
 
 				{#if sortMenuOpen}
-					<div class="absolute right-0 top-full mt-2 w-48 bg-base-100 rounded-xl shadow-lg shadow-black/20 border border-base-300 py-1 z-50">
+					<div class="absolute right-0 top-full mt-2 w-48 bg-[#181b21] rounded-xl shadow-lg shadow-black/20 border border-[#2a2f35] py-1 z-50">
 						{#each sortOptions as option}
 							<button
 								type="button"
 								class="w-full flex items-center justify-between px-4 py-2 text-sm text-left transition-colors
-									{$fileSortState.field === option.value ? 'text-brand-400 bg-brand-500/10' : 'text-base-content/80 hover:bg-base-200'}"
+									{$fileSortState.field === option.value ? 'text-[#2563eb] bg-[#2563eb]/10' : 'text-[#9ca3af] hover:bg-[#1a1d24]'}"
 								on:click={() => { setSortField(option.value); sortMenuOpen = false; }}
 							>
 								{option.label}
@@ -127,10 +111,10 @@
 								{/if}
 							</button>
 						{/each}
-						<div class="border-t border-base-200 my-1"></div>
+						<div class="border-t border-[#2a2f35] my-1"></div>
 						<button
 							type="button"
-							class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors"
+							class="w-full flex items-center gap-2 px-4 py-2 text-sm text-[#9ca3af] hover:bg-[#1a1d24] transition-colors"
 							on:click={() => { toggleSortOrder(); sortMenuOpen = false; }}
 						>
 							{#if $fileSortState.order === 'asc'}
@@ -156,11 +140,11 @@
 			</div>
 
 			<!-- View mode toggle -->
-			<div class="flex items-center bg-base-200 rounded-lg p-1">
+			<div class="flex items-center bg-[#1a1d24] rounded-lg p-1">
 				<button
 					type="button"
 					class="p-1.5 rounded-md transition-all
-						{$fileSortState.viewMode === 'grid' ? 'bg-base-100 text-base-content shadow-sm' : 'text-base-content/50 hover:text-base-content'}"
+						{$fileSortState.viewMode === 'grid' ? 'bg-[#0f1115] text-[#e5e7eb] shadow-sm' : 'text-[#6b7280] hover:text-[#e5e7eb]'}"
 					on:click={() => setViewMode('grid')}
 					aria-label="Grid view"
 				>
@@ -174,7 +158,7 @@
 				<button
 					type="button"
 					class="p-1.5 rounded-md transition-all
-						{$fileSortState.viewMode === 'list' ? 'bg-base-100 text-base-content shadow-sm' : 'text-base-content/50 hover:text-base-content'}"
+						{$fileSortState.viewMode === 'list' ? 'bg-[#0f1115] text-[#e5e7eb] shadow-sm' : 'text-[#6b7280] hover:text-[#e5e7eb]'}"
 					on:click={() => setViewMode('list')}
 					aria-label="List view"
 				>
@@ -186,12 +170,12 @@
 				</button>
 			</div>
 
-			<div class="w-px h-6 bg-base-300 mx-1"></div>
+			<div class="w-px h-6 bg-[#2a2f35] mx-1"></div>
 
 			<!-- New Folder button -->
 			<button
 				type="button"
-				class="hidden sm:flex items-center gap-2 px-3 py-2 text-sm font-medium text-base-content/80 hover:text-base-content hover:bg-base-200 rounded-lg transition-colors"
+				class="hidden sm:flex items-center gap-2 px-3 py-2 text-sm font-medium text-[#e5e7eb] hover:bg-[#1a1d24] rounded-lg transition-colors"
 				on:click={onNewFolder}
 				disabled={isUploading}
 			>
@@ -206,7 +190,7 @@
 			<!-- Upload button -->
 			<button
 				type="button"
-				class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors shadow-sm shadow-brand-500/20"
+				class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#2563eb] hover:bg-[#1d4ed8] text-white rounded-lg transition-colors shadow-sm shadow-[#2563eb]/20"
 				on:click={onUpload}
 				disabled={isUploading}
 			>
@@ -221,7 +205,7 @@
 			<!-- Selection mode button -->
 			<button
 				type="button"
-				class="p-2 text-base-content/60 hover:text-base-content hover:bg-base-200 rounded-lg transition-colors"
+				class="p-2 text-[#6b7280] hover:text-[#e5e7eb] hover:bg-[#1a1d24] rounded-lg transition-colors"
 				on:click={onToggleSelection}
 				aria-label="Select multiple"
 			>

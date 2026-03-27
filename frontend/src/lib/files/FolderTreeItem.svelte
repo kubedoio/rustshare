@@ -45,14 +45,14 @@
 		aria-expanded={canExpand ? isExpanded : undefined}
 		style="padding-left: {paddingLeft}px"
 		class="group flex items-center gap-1.5 py-1.5 pr-3 cursor-pointer transition-colors rounded-md mx-1
-			{isSelected ? 'bg-brand-500/15 text-brand-300' : 'text-base-content/70 hover:bg-base-200/50 hover:text-base-content'}"
+			{isSelected ? 'bg-[#1e3a5f]/60 text-[#e5e7eb]' : 'text-[#9ca3af] hover:bg-[#1a1d24] hover:text-[#e5e7eb]'}"
 		on:click={handleClick}
 		on:keydown={handleKeyDown}
 	>
 		<!-- Expand/Collapse Button -->
 		<button
 			type="button"
-			class="w-6 h-6 flex items-center justify-center rounded hover:bg-base-300/50 transition-colors flex-shrink-0
+			class="w-6 h-6 flex items-center justify-center rounded hover:bg-[#2a2f35] transition-colors flex-shrink-0
 				{canExpand ? 'opacity-100' : 'opacity-0 pointer-events-none'}"
 			on:click|preventDefault|stopPropagation={handleToggle}
 			aria-label={isExpanded ? 'Collapse folder' : 'Expand folder'}
@@ -68,7 +68,7 @@
 		</button>
 
 		<!-- Folder Icon -->
-		<div class="flex-shrink-0 {isSelected ? 'text-brand-400' : 'text-brand-500/70 group-hover:text-brand-400'}">
+		<div class="flex-shrink-0 {isSelected ? 'text-[#2563eb]' : 'text-[#4b5563] group-hover:text-[#6b7280]'}">
 			{#if isExpanded}
 				<FolderOpen size={18} />
 			{:else}
@@ -77,7 +77,7 @@
 		</div>
 
 		<!-- Folder Name -->
-		<span class="text-sm truncate flex-1 font-medium">
+		<span class="text-sm truncate flex-1 font-normal">
 			{folder.name}
 		</span>
 	</div>
