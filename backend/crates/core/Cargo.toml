@@ -20,7 +20,7 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 rand = { workspace = true }
 rustshare-crypto = { path = "../crypto" }
-image = { version = "0.24", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
+image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
 
 [dev-dependencies]
 tokio = { workspace = true }
