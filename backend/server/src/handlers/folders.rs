@@ -674,11 +674,111 @@ pub async fn rename_folder(
     Path(folder_id): Path<Uuid>,
     Json(req): Json<RenameFolderRequest>,
 ) -> Result<Json<Folder>, Response> {
-    let folder = state
-        .folder_service
-        .rename_folder(folder_id, req.new_name, auth.user_id)
-        .await
-        .map_err(folder_error_response)?;
+    use rustshare_storage::metadata_v2::schemas::FolderDocument;
+    use chrono::Utc;
+
+    // Validate name
+    if req.new_name.is_empty() {
+        return Err(folder_error_response(
+            rustshare_core::services::FolderError::InvalidName("Folder name cannot be empty".to_string())
+        ));
+    }
+    if req.new_name.contains('/') {
+        return Err(folder_error_response(
+            rustshare_core::services::FolderError::InvalidName("Folder name cannot contain forward slash".to_string())
+        ));
+    }
+
+    // Load folder document
+    let folder_key = format!("{}/{}/meta/folders/{}.json",
+        state.metadata_prefix, state.metadata_namespace, folder_id);
+    let (mut folder_doc, _) = state.doc_store
+        .get::<FolderDocument>(&folder_key).await
+        .map_err(|e| folder_error_response(
+            rustshare_core::services::FolderError::Storage(e.to_string())
+        ))?
+        .ok_or_else(|| folder_error_response(
+            rustshare_core::services::FolderError::NotFound(folder_id)
+        ))?;
+
+    // Verify ownership
+    if folder_doc.owner_id != auth.user_id {
+        return Err(folder_error_response(
+            rustshare_core::services::FolderError::PermissionDenied { folder_id, user_id: auth.user_id }
+        ));
+    }
+
+    // Check for duplicate name in parent
+    if folder_doc.name != req.new_name {
+        let folder_prefix = format!("{}/{}/meta/folders/",
+            state.metadata_prefix, state.metadata_namespace);
+        let folder_keys = state.doc_store
+            .list_prefix(&folder_prefix)
+            .await
+            .map_err(|e| folder_error_response(
+                rustshare_core::services::FolderError::Storage(e.to_string())
+            ))?;
+
+        for key in folder_keys {
+            if let Ok(Some((doc, _))) = state.doc_store.get::<FolderDocument>(&key).await {
+                if doc.owner_id == auth.user_id
+                    && !doc.deleted
+                    && doc.parent_id == folder_doc.parent_id
+                    && doc.name == req.new_name {
+                    return Err(folder_error_response(
+                        rustshare_core::services::FolderError::DuplicateName(req.new_name.clone())
+                    ));
+                }
+            }
+        }
+    }
+
+    // Update name and recompute path
+    folder_doc.name = req.new_name.clone();
+    folder_doc.path = if let Some(parent_id) = folder_doc.parent_id {
+        let parent_key = format!("{}/{}/meta/folders/{}.json",
+            state.metadata_prefix, state.metadata_namespace, parent_id);
+        if let Ok(Some((parent_doc, _))) = state.doc_store.get::<FolderDocument>(&parent_key).await {
+            if parent_doc.path == "/" {
+                format!("/{}", req.new_name)
+            } else {
+                format!("{}/{}", parent_doc.path, req.new_name)
+            }
+        } else {
+            format!("/{}", req.new_name)
+        }
+    } else {
+        format!("/{}", req.new_name)
+    };
+    folder_doc.updated_at = Utc::now();
+
+    // Store updated folder
+    state.doc_store.put(&folder_key, &folder_doc, PutOptions::default()).await
+        .map_err(|e| folder_error_response(
+            rustshare_core::services::FolderError::Storage(e.to_string())
+        ))?;
+
+    // Recursively update descendant paths
+    update_descendant_paths(
+        &state,
+        auth.user_id,
+        folder_id,
+        &folder_doc.path,
+    ).await.map_err(|e| folder_error_response(
+        rustshare_core::services::FolderError::Storage(e.to_string())
+    ))?;
+
+    // Convert to domain Folder for response
+    let folder = Folder {
+        id: folder_id,
+        name: folder_doc.name,
+        path: folder_doc.path.clone(),
+        parent_folder_id: folder_doc.parent_id,
+        owner_id: folder_doc.owner_id,
+        created_at: folder_doc.created_at,
+        updated_at: folder_doc.updated_at,
+        deleted: folder_doc.deleted,
+    };
 
     Ok(Json(folder))
 }
