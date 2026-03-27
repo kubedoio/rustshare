@@ -1,14 +1,16 @@
 //! Storage layer for RustShare.
 //!
-//! Handles persistence to PostgreSQL and RustFS.
+//! Handles persistence to RustFS with optional Redis coordination.
 
 pub mod admin;
+pub mod coordination;
 pub mod event_store;
 pub mod metadata;
 pub mod metadata_v2;
 pub mod object_store;
 pub mod repos;
 pub mod service_integration;
+pub mod session;
 
 pub use event_store::EventStore;
 pub use metadata::{

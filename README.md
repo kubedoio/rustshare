@@ -44,26 +44,37 @@ RustShare is a lightweight file-sharing and sync platform built with Rust and Sv
                    │
     ┌──────────────┼──────────────┐
     │              │              │
-┌───▼───┐    ┌────▼────┐   ┌────▼─────┐
-│PostgreSQL│   │  RustFS  │   │  WebSocket │
-│(Metadata)│   │ (S3 API) │   │  (/api/ws) │
-│ Legacy   │   │ Files +  │   │            │
-│          │   │ Metadata │   │            │
-└─────────┘    │ (Target) │   └──────────┘
-               └─────────┘
+    │         ┌────▼────┐   ┌────▼─────┐
+    │         │  RustFS  │   │  WebSocket │
+    │         │ (S3 API) │   │  (/api/ws) │
+    │         │ Files +  │   │            │
+    │         │ Metadata │   │            │
+    │         │(Canonical│   └──────────┘
+    │         │  Store)  │
+    │         └─────────┘
+    │              ▲
+    │              │ (Optional)
+┌───▼───┐     ┌────┴────┐
+│ Redis │     │  Local  │
+│(Coord)│     │   FS    │
+│       │     │(Stand-  │
+│       │     │ alone)  │
+└───────┘     └─────────┘
+(Distributed) (Standalone)
 ```
 
 ### Technology Stack
 
-| Layer | Technology | Version |
-|-------|------------|---------|
-| **Backend** | Rust + Axum | 0.8.8 |
-| **Frontend** | SvelteKit 2 + Svelte 5 | Latest |
-| **Database** | PostgreSQL | 15+ |
-| **Object Storage** | RustFS (S3-compatible) | Latest |
-| **Metadata** | PostgreSQL or RustFS/S3 | Both supported |
-| **Real-time** | WebSocket | Native |
-| **Runtime** | Docker + Docker Compose | 24+ |
+| Layer | Technology | Version | Notes |
+|-------|------------|---------|-------|
+| **Backend** | Rust + Axum | 0.8.8 | Zero-PostgreSQL architecture |
+| **Frontend** | SvelteKit 2 + Svelte 5 | Latest | SPA with Svelte 5 runes |
+| **Metadata Store** | RustFS (S3-compatible) | Latest | **Canonical store** |
+| **Coordination** | Redis (optional) | 7+ | Required for distributed mode |
+| **Object Storage** | RustFS (S3-compatible) | Latest | File content storage |
+| **Session Cache** | Memory or Redis | - | Ephemeral, reconstructible |
+| **Real-time** | WebSocket | Native | Event-driven updates |
+| **Runtime** | Docker + Docker Compose | 24+ | Standalone or distributed |
 
 ### Backend Architecture
 

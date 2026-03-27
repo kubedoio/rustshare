@@ -4,9 +4,23 @@
 
 RustShare is a late-MVP / pre-release file-sharing platform with a strong web product core and a deliberately narrower scope than Nextcloud. The project is no longer a prototype shell: the main web app, sharing flows, realtime updates, async replication, and operator recovery tooling are all implemented and working.
 
-As of 2026-03-21, the implemented platform includes:
+### Major Architecture Update: Zero-PostgreSQL (2026-03-27)
 
-- secure web sessions with HTTP-only cookies
+RustShare now supports a **zero-PostgreSQL architecture**. The system can run entirely without PostgreSQL, using RustFS as the durable system of record for all metadata. This enables:
+
+- **Simpler deployments**: Just rustshare + rustfs (optionally + redis)
+- **Two runtime profiles**: Standalone (single-node) and Distributed (multi-node with Redis)
+- **Flexible scaling**: Start with standalone, migrate to distributed as needed
+
+See [Zero-PostgreSQL Architecture](docs/ZERO_POSTGRES_ARCHITECTURE.md) for details.
+
+### Implemented Features
+
+As of 2026-03-27, the implemented platform includes:
+
+- **Zero-PostgreSQL architecture** with RustFS as canonical store
+- **Dual runtime profiles**: Standalone and Distributed with Redis coordination
+- secure web sessions with HTTP-only cookies (JWT-based, stateless)
 - OIDC groundwork for SSO, including mobile-oriented PKCE endpoints
 - Axum-served SvelteKit SPA runtime
 - file and folder CRUD with version history and trash
@@ -14,12 +28,13 @@ As of 2026-03-21, the implemented platform includes:
 - public file links
 - public folder links
 - upload-only public folder links
-- persistent notifications and unread counts
+- persistent notifications and unread counts (RustFS-backed)
 - websocket-driven realtime updates
-- RustFS-compatible primary storage
-- asynchronous replication worker with database-tracked replication states
-- rate limiting for auth and public-share hot paths
+- RustFS-compatible primary storage (metadata + content)
+- asynchronous replication worker with RustFS-tracked job states
+- rate limiting for auth and public-share hot paths (Redis or memory)
 - backup, restore, verification, and post-restore smoke tooling
+- CoordinationStore abstraction for distributed locks and job claims
 
 ## What Is Solid
 
