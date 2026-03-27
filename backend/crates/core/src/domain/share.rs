@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::{FileId, FolderId, ShareId, UserId};
 
 /// Permission level for a share link.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "TEXT")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SharePermissions {
     /// Read-only access (download files, view folder contents)
     View,
@@ -51,7 +50,7 @@ impl Ord for SharePermissions {
 ///
 /// Supports both public shares (anonymous access via token) and user shares
 /// (authenticated user-to-user sharing).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Share {
     pub id: ShareId,
     /// File being shared (None for folder shares)

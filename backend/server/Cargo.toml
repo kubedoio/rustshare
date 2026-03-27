@@ -20,7 +20,6 @@ axum = { workspace = true, features = ["multipart", "ws"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
 tower.workspace = true
 tower-http = { workspace = true, features = ["fs"] }
-sqlx.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid = { workspace = true, features = ["macro-diagnostics"] }

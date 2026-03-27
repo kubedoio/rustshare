@@ -5,7 +5,6 @@ edition.workspace = true
 
 [dependencies]
 rustshare-core = { path = "../core" }
-sqlx.workspace = true
 tokio.workspace = true
 uuid.workspace = true
 chrono.workspace = true

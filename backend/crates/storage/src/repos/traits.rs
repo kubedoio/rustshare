@@ -249,3 +249,216 @@ pub trait MetadataRepository: Send + Sync {
     fn folder_children_index(&self) -> &dyn FolderChildrenIndexRepository;
     fn tombstones(&self) -> &dyn TombstoneRepository;
 }
+
+// ============================================================================
+// Additional Repository Traits
+// ============================================================================
+
+use crate::metadata_v2::schemas::{
+    AuditFilter, AuditLogEntryDocument, ConfigType, DeviceTokenDocument, PairingRequestDocument,
+    SystemConfigDocument, UserDocument, UserFilter, UserGroupDocument, WebhookDocument,
+    WebhookFilter, UserNotificationIndex, NotificationRef,
+};
+
+/// Repository for user operations
+#[async_trait]
+pub trait UserRepository: Send + Sync {
+    /// Get a user by ID
+    async fn get(&self, id: UserId) -> Result<Option<UserDocument>, RepositoryError>;
+    
+    /// Get a user by ID, error if not found
+    async fn get_required(&self, id: UserId) -> Result<UserDocument, RepositoryError> {
+        self.get(id).await?.ok_or_else(|| {
+            RepositoryError::NotFound(format!("User not found: {}", id))
+        })
+    }
+    
+    /// Get a user by email
+    async fn get_by_email(&self, email: &str) -> Result<Option<UserDocument>, RepositoryError>;
+    
+    /// Create a new user
+    async fn create(&self, user: &UserDocument) -> Result<(), RepositoryError>;
+    
+    /// Update an existing user
+    async fn update(&self, user: &UserDocument) -> Result<(), RepositoryError>;
+    
+    /// Delete a user
+    async fn delete(&self, id: UserId) -> Result<(), RepositoryError>;
+    
+    /// List users with filter
+    async fn list(&self, filter: UserFilter) -> Result<Vec<UserDocument>, RepositoryError>;
+}
+
+/// Repository for device token operations
+#[async_trait]
+pub trait DeviceRepository: Send + Sync {
+    /// Get a device by ID
+    async fn get(&self, id: Uuid) -> Result<Option<DeviceTokenDocument>, RepositoryError>;
+    
+    /// Get a device by token hash
+    async fn get_by_token_hash(&self, token_hash: &str) -> Result<Option<DeviceTokenDocument>, RepositoryError>;
+    
+    /// Create a new device
+    async fn create(&self, device: &DeviceTokenDocument) -> Result<(), RepositoryError>;
+    
+    /// Update an existing device
+    async fn update(&self, device: &DeviceTokenDocument) -> Result<(), RepositoryError>;
+    
+    /// Delete a device
+    async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
+    
+    /// List devices for a user
+    async fn list_by_user(&self, user_id: UserId) -> Result<Vec<DeviceTokenDocument>, RepositoryError>;
+}
+
+/// Repository for group operations
+#[async_trait]
+pub trait GroupRepository: Send + Sync {
+    /// Get a group by ID
+    async fn get(&self, id: Uuid) -> Result<Option<UserGroupDocument>, RepositoryError>;
+    
+    /// Get a group by ID, error if not found
+    async fn get_required(&self, id: Uuid) -> Result<UserGroupDocument, RepositoryError> {
+        self.get(id).await?.ok_or_else(|| {
+            RepositoryError::NotFound(format!("Group not found: {}", id))
+        })
+    }
+    
+    /// Create a new group
+    async fn create(&self, group: &UserGroupDocument) -> Result<(), RepositoryError>;
+    
+    /// Update an existing group
+    async fn update(&self, group: &UserGroupDocument) -> Result<(), RepositoryError>;
+    
+    /// Delete a group
+    async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
+    
+    /// List all groups
+    async fn list(&self) -> Result<Vec<UserGroupDocument>, RepositoryError>;
+    
+    /// Add a member to a group
+    async fn add_member(&self, group_id: Uuid, user_id: UserId, added_by: UserId) -> Result<(), RepositoryError>;
+    
+    /// Remove a member from a group
+    async fn remove_member(&self, group_id: Uuid, user_id: UserId) -> Result<(), RepositoryError>;
+    
+    /// List members of a group
+    async fn list_members(&self, group_id: Uuid) -> Result<Vec<Uuid>, RepositoryError>;
+    
+    /// List groups a user is a member of
+    async fn list_by_user(&self, user_id: UserId) -> Result<Vec<UserGroupDocument>, RepositoryError>;
+}
+
+/// Repository for audit log operations
+#[async_trait]
+pub trait AuditRepository: Send + Sync {
+    /// Append an audit log entry
+    async fn append(&self, entry: &AuditLogEntryDocument) -> Result<(), RepositoryError>;
+    
+    /// List audit log entries with filter
+    async fn list(&self, filter: AuditFilter) -> Result<Vec<AuditLogEntryDocument>, RepositoryError>;
+    
+    /// Count audit log entries with filter
+    async fn count(&self, filter: AuditFilter) -> Result<i64, RepositoryError>;
+}
+
+/// Repository for system configuration operations
+#[async_trait]
+pub trait ConfigRepository: Send + Sync {
+    /// Get configuration by type
+    async fn get(&self, config_type: ConfigType) -> Result<Option<SystemConfigDocument>, RepositoryError>;
+    
+    /// Get OIDC configuration
+    async fn get_oidc(&self) -> Result<Option<SystemConfigDocument>, RepositoryError>;
+    
+    /// Get SMTP configuration
+    async fn get_smtp(&self) -> Result<Option<SystemConfigDocument>, RepositoryError>;
+    
+    /// Set configuration
+    async fn set(&self, config: &SystemConfigDocument) -> Result<(), RepositoryError>;
+}
+
+/// Repository for device pairing operations
+#[async_trait]
+pub trait PairingRepository: Send + Sync {
+    /// Get a pairing request by ID
+    async fn get(&self, id: Uuid) -> Result<Option<PairingRequestDocument>, RepositoryError>;
+    
+    /// Get a pairing request by user code
+    async fn get_by_user_code(&self, user_code: &str) -> Result<Option<PairingRequestDocument>, RepositoryError>;
+    
+    /// Get a pairing request by device code
+    async fn get_by_device_code(&self, device_code: &str) -> Result<Option<PairingRequestDocument>, RepositoryError>;
+    
+    /// Create a new pairing request
+    async fn create(&self, pairing: &PairingRequestDocument) -> Result<(), RepositoryError>;
+    
+    /// Update a pairing request
+    async fn update(&self, pairing: &PairingRequestDocument) -> Result<(), RepositoryError>;
+    
+    /// Delete a pairing request
+    async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
+    
+    /// Clean up expired pairing requests
+    async fn cleanup_expired(&self) -> Result<u64, RepositoryError>;
+}
+
+/// Repository for webhook operations
+#[async_trait]
+pub trait WebhookRepository: Send + Sync {
+    /// Get a webhook by ID
+    async fn get(&self, id: Uuid) -> Result<Option<WebhookDocument>, RepositoryError>;
+    
+    /// Get a webhook by ID, error if not found
+    async fn get_required(&self, id: Uuid) -> Result<WebhookDocument, RepositoryError> {
+        self.get(id).await?.ok_or_else(|| {
+            RepositoryError::NotFound(format!("Webhook not found: {}", id))
+        })
+    }
+    
+    /// Create a new webhook
+    async fn create(&self, webhook: &WebhookDocument) -> Result<(), RepositoryError>;
+    
+    /// Update an existing webhook
+    async fn update(&self, webhook: &WebhookDocument) -> Result<(), RepositoryError>;
+    
+    /// Delete a webhook
+    async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
+    
+    /// List webhooks with filter
+    async fn list(&self, filter: WebhookFilter) -> Result<Vec<WebhookDocument>, RepositoryError>;
+}
+
+/// Repository for notification operations
+#[async_trait]
+pub trait NotificationRepository: Send + Sync {
+    /// Get notification index for a user
+    async fn get_index(&self, user_id: UserId) -> Result<UserNotificationIndex, RepositoryError>;
+    
+    /// Save notification index
+    async fn save_index(&self, index: &UserNotificationIndex) -> Result<(), RepositoryError>;
+    
+    /// List notifications for a user
+    async fn list(&self, user_id: UserId, unread_only: bool, offset: usize, limit: usize) -> Result<Vec<NotificationRef>, RepositoryError>;
+    
+    /// Count unread notifications for a user
+    async fn count_unread(&self, user_id: UserId) -> Result<u32, RepositoryError>;
+    
+    /// Mark a notification as read
+    async fn mark_read(&self, user_id: UserId, notification_id: Uuid) -> Result<(), RepositoryError>;
+    
+    /// Delete a notification
+    async fn delete(&self, user_id: UserId, notification_id: Uuid) -> Result<(), RepositoryError>;
+}
+
+/// Extended combined repository with new operations
+pub trait ExtendedMetadataRepository: MetadataRepository {
+    fn users(&self) -> &dyn UserRepository;
+    fn devices(&self) -> &dyn DeviceRepository;
+    fn groups(&self) -> &dyn GroupRepository;
+    fn audit(&self) -> &dyn AuditRepository;
+    fn config(&self) -> &dyn ConfigRepository;
+    fn pairing(&self) -> &dyn PairingRepository;
+    fn webhooks(&self) -> &dyn WebhookRepository;
+    fn notifications(&self) -> &dyn NotificationRepository;
+}

@@ -10,6 +10,52 @@ use rustshare_core::domain::{
 use std::sync::Arc;
 
 use crate::repos::*;
+use crate::EventStore;
+
+/// Adapter that implements EventStoreOps using the legacy EventStore
+#[derive(Clone)]
+pub struct EventStoreCompat {
+    store: Arc<EventStore>,
+}
+
+impl EventStoreCompat {
+    pub fn new(store: Arc<EventStore>) -> Self {
+        Self { store }
+    }
+}
+
+#[allow(async_fn_in_trait)]
+impl rustshare_core::services::FileEventStoreOps for EventStoreCompat {
+    async fn append(
+        &self,
+        event: &rustshare_core::events::Event,
+        broadcaster: &rustshare_core::events::EventBroadcaster,
+    ) -> anyhow::Result<()> {
+        self.store.append(event, broadcaster).await
+    }
+}
+
+#[allow(async_fn_in_trait)]
+impl rustshare_core::services::FolderEventStoreOps for EventStoreCompat {
+    async fn append(
+        &self,
+        event: &rustshare_core::events::Event,
+        broadcaster: &rustshare_core::events::EventBroadcaster,
+    ) -> anyhow::Result<()> {
+        self.store.append(event, broadcaster).await
+    }
+}
+
+#[allow(async_fn_in_trait)]
+impl rustshare_core::services::ShareEventStoreOps for EventStoreCompat {
+    async fn append(
+        &self,
+        event: &rustshare_core::events::Event,
+        broadcaster: &rustshare_core::events::EventBroadcaster,
+    ) -> anyhow::Result<()> {
+        self.store.append(event, broadcaster).await
+    }
+}
 
 /// Adapter that implements the old MetadataStoreOps using new repositories
 #[derive(Clone)]

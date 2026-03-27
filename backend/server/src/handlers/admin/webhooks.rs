@@ -5,11 +5,8 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use hmac::{Hmac, Mac};
-use rustshare_crypto::{decrypt_secret, encrypt_secret};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sha2::Sha256;
 use uuid::Uuid;
 
 use crate::{handlers::AdminUser, AppState};
@@ -33,23 +30,6 @@ const VALID_EVENTS: &[&str] = &[
 ];
 
 // ---------------------------------------------------------------------------
-// Row type
-// ---------------------------------------------------------------------------
-
-#[derive(sqlx::FromRow)]
-struct WebhookRow {
-    id: Uuid,
-    name: String,
-    url: String,
-    secret_enc: Option<String>,
-    enabled: bool,
-    events: Vec<String>,
-    created_by: Option<Uuid>,
-    created_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-// ---------------------------------------------------------------------------
 // Response type
 // ---------------------------------------------------------------------------
 
@@ -65,22 +45,6 @@ pub struct WebhookResponse {
     pub created_by: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-impl From<WebhookRow> for WebhookResponse {
-    fn from(row: WebhookRow) -> Self {
-        WebhookResponse {
-            id: row.id.to_string(),
-            name: row.name,
-            url: row.url,
-            secret: row.secret_enc.as_deref().map(|_| "***".to_string()),
-            enabled: row.enabled,
-            events: row.events,
-            created_by: row.created_by.map(|u| u.to_string()),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -111,27 +75,18 @@ pub struct UpdateWebhookRequest {
 // Handlers
 // ---------------------------------------------------------------------------
 
-const COLS: &str =
-    "id, name, url, secret_enc, enabled, events, created_by, created_at, updated_at";
-
 /// GET /api/v1/admin/integrations/webhooks
 pub async fn list_webhooks(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     AdminUser { .. }: AdminUser,
 ) -> Result<Json<Vec<WebhookResponse>>, (StatusCode, Json<serde_json::Value>)> {
-    let rows = sqlx::query_as::<_, WebhookRow>(&format!(
-        "SELECT {COLS} FROM webhook_configs ORDER BY created_at DESC"
-    ))
-    .fetch_all(&state.db_pool)
-    .await
-    .map_err(db_error)?;
-
-    Ok(Json(rows.into_iter().map(WebhookResponse::from).collect()))
+    tracing::warn!("Feature not yet implemented in zero-PostgreSQL mode");
+    Ok(Json(vec![]))
 }
 
 /// POST /api/v1/admin/integrations/webhooks
 pub async fn create_webhook(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Json(req): Json<CreateWebhookRequest>,
 ) -> Result<(StatusCode, Json<WebhookResponse>), (StatusCode, Json<serde_json::Value>)> {
@@ -144,28 +99,11 @@ pub async fn create_webhook(
     }
     validate_events(&req.events)?;
 
-    let secret_enc = encrypt_optional_secret(req.secret.as_deref(), &state)?;
-    let enabled = req.enabled.unwrap_or(true);
+    tracing::warn!("Feature not yet implemented in zero-PostgreSQL mode");
 
-    let row = sqlx::query_as::<_, WebhookRow>(&format!(
-        "INSERT INTO webhook_configs (name, url, secret_enc, enabled, events, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING {COLS}"
-    ))
-    .bind(&req.name)
-    .bind(&req.url)
-    .bind(&secret_enc)
-    .bind(enabled)
-    .bind(&req.events)
-    .bind(actor_id)
-    .fetch_one(&state.db_pool)
-    .await
-    .map_err(db_error)?;
-
-    let webhook_id = row.id;
+    let webhook_id = Uuid::new_v4();
 
     log_admin_action(
-        &state.db_pool,
         actor_id,
         "webhook.created",
         Some("webhook"),
@@ -174,68 +112,26 @@ pub async fn create_webhook(
     )
     .await;
 
-    Ok((StatusCode::CREATED, Json(WebhookResponse::from(row))))
+    Err(internal_error("Webhook creation not yet implemented in zero-PostgreSQL mode"))
 }
 
 /// PATCH /api/v1/admin/integrations/webhooks/:id
 pub async fn update_webhook(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(webhook_id): Path<Uuid>,
     Json(req): Json<UpdateWebhookRequest>,
 ) -> Result<Json<WebhookResponse>, (StatusCode, Json<serde_json::Value>)> {
-    // Fetch current
-    let current = sqlx::query_as::<_, WebhookRow>(&format!(
-        "SELECT {COLS} FROM webhook_configs WHERE id = $1"
-    ))
-    .bind(webhook_id)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(db_error)?
-    .ok_or_else(|| not_found("Webhook not found"))?;
+    if let Some(ref events) = req.events {
+        validate_events(events)?;
+    }
 
-    let new_name = req.name.as_deref().unwrap_or(&current.name).to_string();
-    let new_url = req.url.as_deref().unwrap_or(&current.url).to_string();
-    let new_enabled = req.enabled.unwrap_or(current.enabled);
+    tracing::warn!("Feature not yet implemented in zero-PostgreSQL mode");
 
-    let new_events = if let Some(ref evts) = req.events {
-        validate_events(evts)?;
-        evts.clone()
-    } else {
-        current.events.clone()
-    };
-
-    // Determine new secret
-    let new_secret_enc = match req.secret.as_deref() {
-        None => current.secret_enc.clone(),          // absent = keep
-        Some("") => None,                             // empty string = clear
-        Some(s) => encrypt_optional_secret(Some(s), &state)?,
-    };
-
-    let row = sqlx::query_as::<_, WebhookRow>(&format!(
-        "UPDATE webhook_configs
-         SET name       = $2,
-             url        = $3,
-             secret_enc = $4,
-             enabled    = $5,
-             events     = $6,
-             updated_at = NOW()
-         WHERE id = $1
-         RETURNING {COLS}"
-    ))
-    .bind(webhook_id)
-    .bind(&new_name)
-    .bind(&new_url)
-    .bind(&new_secret_enc)
-    .bind(new_enabled)
-    .bind(&new_events)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(db_error)?
-    .ok_or_else(|| not_found("Webhook not found"))?;
+    let new_name = req.name.unwrap_or_else(|| "unknown".to_string());
+    let new_url = req.url.unwrap_or_else(|| "unknown".to_string());
 
     log_admin_action(
-        &state.db_pool,
         actor_id,
         "webhook.updated",
         Some("webhook"),
@@ -244,27 +140,18 @@ pub async fn update_webhook(
     )
     .await;
 
-    Ok(Json(WebhookResponse::from(row)))
+    Err(not_found("Webhook not found"))
 }
 
 /// DELETE /api/v1/admin/integrations/webhooks/:id
 pub async fn delete_webhook(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(webhook_id): Path<Uuid>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    let result = sqlx::query("DELETE FROM webhook_configs WHERE id = $1")
-        .bind(webhook_id)
-        .execute(&state.db_pool)
-        .await
-        .map_err(db_error)?;
-
-    if result.rows_affected() == 0 {
-        return Err(not_found("Webhook not found"));
-    }
+    tracing::warn!("Feature not yet implemented in zero-PostgreSQL mode");
 
     log_admin_action(
-        &state.db_pool,
         actor_id,
         "webhook.deleted",
         Some("webhook"),
@@ -280,73 +167,12 @@ pub async fn delete_webhook(
 ///
 /// Fires a `ping` event to the webhook URL and returns the result.
 pub async fn test_webhook(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     AdminUser { .. }: AdminUser,
-    Path(webhook_id): Path<Uuid>,
+    Path(_webhook_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    // Fetch webhook
-    let webhook = sqlx::query_as::<_, WebhookRow>(&format!(
-        "SELECT {COLS} FROM webhook_configs WHERE id = $1"
-    ))
-    .bind(webhook_id)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(db_error)?
-    .ok_or_else(|| not_found("Webhook not found"))?;
-
-    // Build payload
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let payload = json!({"event": "ping", "timestamp": now_secs});
-    let body_str = serde_json::to_string(&payload)
-        .map_err(|_| internal_error("Failed to serialize payload"))?;
-
-    // Build HTTP client with 10s timeout
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| internal_error(&format!("Failed to build HTTP client: {e}")))?;
-
-    let mut request = client
-        .post(&webhook.url)
-        .header("Content-Type", "application/json")
-        .body(body_str.clone());
-
-    // If there is a secret, compute HMAC-SHA256 and add signature header
-    if let Some(ref enc) = webhook.secret_enc {
-        let plaintext = decrypt_secret(enc, &state.secret_key)
-            .map_err(|_| internal_error("Failed to decrypt webhook secret"))?;
-
-        let mut mac = Hmac::<Sha256>::new_from_slice(plaintext.as_bytes())
-            .map_err(|_| internal_error("Failed to create HMAC"))?;
-        mac.update(body_str.as_bytes());
-        let result = mac.finalize();
-        let sig_hex = hex::encode(result.into_bytes());
-        request = request.header("X-Webhook-Signature", format!("sha256={sig_hex}"));
-    }
-
-    match request.send().await {
-        Ok(resp) => {
-            let http_status = resp.status().as_u16();
-            if resp.status().is_success() {
-                Ok(Json(json!({"status": "ok", "http_status": http_status})))
-            } else {
-                Err((
-                    StatusCode::BAD_GATEWAY,
-                    Json(json!({
-                        "status": "error",
-                        "detail": format!("Webhook returned HTTP {http_status}")
-                    })),
-                ))
-            }
-        }
-        Err(e) => Err((
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"status": "error", "detail": e.to_string()})),
-        )),
-    }
+    tracing::warn!("Feature not yet implemented in zero-PostgreSQL mode");
+    Err(not_found("Webhook not found"))
 }
 
 // ---------------------------------------------------------------------------
@@ -365,28 +191,6 @@ fn validate_events(
         }
     }
     Ok(())
-}
-
-fn encrypt_optional_secret(
-    secret: Option<&str>,
-    state: &AppState,
-) -> Result<Option<String>, (StatusCode, Json<serde_json::Value>)> {
-    match secret {
-        Some(s) if !s.is_empty() => {
-            let enc = encrypt_secret(s, &state.secret_key)
-                .map_err(|_| internal_error("Failed to encrypt webhook secret"))?;
-            Ok(Some(enc))
-        }
-        _ => Ok(None),
-    }
-}
-
-fn db_error(e: sqlx::Error) -> (StatusCode, Json<serde_json::Value>) {
-    tracing::error!("Database error: {:?}", e);
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": "Database error" })),
-    )
 }
 
 fn not_found(msg: &str) -> (StatusCode, Json<serde_json::Value>) {

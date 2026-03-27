@@ -1,14 +1,14 @@
 //! RustFS-backed repository implementations
 
 use async_trait::async_trait;
-use chrono::Datelike;
+use chrono::{DateTime, Datelike, Utc};
 use rustshare_core::domain::{FileId, FolderId, ShareId, UserId};
 use std::sync::Arc;
 use uuid::Uuid;
 
 use super::{RepositoryError, *};
 use crate::metadata_v2::{
-    BlobStore, EventLogStore, FolderChildrenIndex, IndexStore, MetadataCoordination,
+    BlobStore, EventLogStore, FolderChildrenIndex, IndexStore,
     MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions, RuntimeMetadataCache,
 };
 use crate::metadata_v2::schemas::*;
@@ -84,6 +84,119 @@ impl PathBuilder {
         format!(
             "{}/{}/indexes/users/{}/shared_with_me.json",
             self.base_prefix, self.namespace, user_id
+        )
+    }
+    
+    // User paths
+    pub fn user(&self, id: UserId) -> String {
+        format!("{}/{}/meta/users/{}.json", self.base_prefix, self.namespace, id)
+    }
+    
+    // Device token paths
+    pub fn device(&self, id: Uuid) -> String {
+        format!("{}/{}/meta/devices/{}.json", self.base_prefix, self.namespace, id)
+    }
+    
+    // Group paths
+    pub fn group(&self, id: Uuid) -> String {
+        format!("{}/{}/meta/groups/{}.json", self.base_prefix, self.namespace, id)
+    }
+    
+    // Pairing paths
+    pub fn pairing(&self, id: Uuid) -> String {
+        format!("{}/{}/meta/pairings/{}.json", self.base_prefix, self.namespace, id)
+    }
+    
+    // Webhook paths
+    pub fn webhook(&self, id: Uuid) -> String {
+        format!("{}/{}/meta/webhooks/{}.json", self.base_prefix, self.namespace, id)
+    }
+    
+    // Job paths
+    pub fn job(&self, id: Uuid) -> String {
+        format!("{}/{}/meta/jobs/{}.json", self.base_prefix, self.namespace, id)
+    }
+    
+    // Config paths
+    pub fn config(&self, config_type: &str) -> String {
+        format!("{}/{}/meta/config/{}.json", self.base_prefix, self.namespace, config_type)
+    }
+    
+    // Audit log path
+    pub fn audit_entry(&self, occurred_at: DateTime<Utc>, id: Uuid) -> String {
+        format!(
+            "{}/{}/audit/{:04}/{:02}/{:02}/{}.json",
+            self.base_prefix,
+            self.namespace,
+            occurred_at.year(),
+            occurred_at.month(),
+            occurred_at.day(),
+            id
+        )
+    }
+    
+    // Lookup paths
+    pub fn email_lookup(&self, email_hash: &str) -> String {
+        format!(
+            "{}/{}/lookups/user_by_email/{}.json",
+            self.base_prefix, self.namespace, email_hash
+        )
+    }
+    
+    pub fn token_lookup(&self, token_hash: &str) -> String {
+        format!(
+            "{}/{}/lookups/public_share_tokens/{}.json",
+            self.base_prefix, self.namespace, token_hash
+        )
+    }
+    
+    pub fn pairing_code_lookup(&self, code: &str) -> String {
+        format!(
+            "{}/{}/lookups/pairing_codes/{}.json",
+            self.base_prefix, self.namespace, code
+        )
+    }
+    
+    // Index paths
+    pub fn user_devices_index(&self, user_id: UserId) -> String {
+        format!(
+            "{}/{}/indexes/users/{}/devices.json",
+            self.base_prefix, self.namespace, user_id
+        )
+    }
+    
+    pub fn user_notifications_index(&self, user_id: UserId) -> String {
+        format!(
+            "{}/{}/indexes/users/{}/notifications.json",
+            self.base_prefix, self.namespace, user_id
+        )
+    }
+    
+    pub fn user_groups_index(&self, user_id: UserId) -> String {
+        format!(
+            "{}/{}/indexes/users/{}/groups.json",
+            self.base_prefix, self.namespace, user_id
+        )
+    }
+    
+    pub fn group_members_index(&self, group_id: Uuid) -> String {
+        format!(
+            "{}/{}/indexes/groups/{}/members.json",
+            self.base_prefix, self.namespace, group_id
+        )
+    }
+    
+    pub fn job_queue_index(&self) -> String {
+        format!(
+            "{}/{}/indexes/jobs/queue.json",
+            self.base_prefix, self.namespace
+        )
+    }
+    
+    pub fn resource_shares_index(&self, resource_id: Uuid) -> String {
+        format!(
+            "{}/{}/indexes/shares/by_resource/{}.json",
+            self.base_prefix, self.namespace, resource_id
         )
     }
 }
@@ -931,5 +1044,903 @@ impl TombstoneRepository for RustFsTombstoneRepository {
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
         Ok(())
+    }
+}
+
+
+// ============================================================================
+// Additional Repository Implementations
+// ============================================================================
+
+use crate::metadata_v2::schemas::{
+    AuditLogEntryDocument, EmailLookupDocument, GroupMembersIndex, PairingRequestDocument,
+    PairingStatus, SystemConfigDocument, TokenLookupDocument, UserDevicesIndex,
+    UserDocument, UserGroupDocument, UserGroupsIndex, WebhookDocument, ConfigType,
+};
+
+/// RustFS-backed user repository
+pub struct RustFsUserRepository {
+    doc_store: Arc<dyn MetadataDocumentStore>,
+    path_builder: PathBuilder,
+}
+
+impl RustFsUserRepository {
+    pub fn new(doc_store: Arc<dyn MetadataDocumentStore>, path_builder: PathBuilder) -> Self {
+        Self {
+            doc_store,
+            path_builder,
+        }
+    }
+}
+
+#[async_trait]
+impl UserRepository for RustFsUserRepository {
+    async fn get(&self, id: UserId) -> Result<Option<UserDocument>, RepositoryError> {
+        let key = self.path_builder.user(id);
+        self.doc_store.get::<UserDocument>(&key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))
+            .map(|opt| opt.map(|(doc, _)| doc))
+    }
+    
+    async fn get_by_email(&self, email: &str) -> Result<Option<UserDocument>, RepositoryError> {
+        // First lookup the email
+        let email_hash = EmailLookupDocument::hash_email(email);
+        let lookup_key = self.path_builder.email_lookup(&email_hash);
+        
+        let lookup = self.doc_store.get::<EmailLookupDocument>(&lookup_key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?
+            .map(|(doc, _)| doc);
+        
+        if let Some(lookup) = lookup {
+            self.get(lookup.user_id).await
+        } else {
+            Ok(None)
+        }
+    }
+    
+    async fn create(&self, user: &UserDocument) -> Result<(), RepositoryError> {
+        // Create user document
+        let key = self.path_builder.user(user.id);
+        let opts = PutOptions {
+            if_none_match: Some("*".to_string()),
+            ..Default::default()
+        };
+        
+        self.doc_store.put(&key, user, opts).await
+            .map_err(|e| {
+                if e.to_string().contains("Precondition") {
+                    RepositoryError::AlreadyExists(format!("User {} already exists", user.id))
+                } else {
+                    RepositoryError::StorageError(e.to_string())
+                }
+            })?;
+        
+        // Create email lookup
+        let email_hash = EmailLookupDocument::hash_email(&user.email);
+        let lookup = EmailLookupDocument::new(user.email.clone(), user.id);
+        let lookup_key = self.path_builder.email_lookup(&email_hash);
+        
+        self.doc_store.put(&lookup_key, &lookup, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn update(&self, user: &UserDocument) -> Result<(), RepositoryError> {
+        let key = self.path_builder.user(user.id);
+        
+        self.doc_store.put(&key, user, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn delete(&self, id: UserId) -> Result<(), RepositoryError> {
+        // Get user first to clean up lookup
+        if let Some(user) = self.get(id).await? {
+            let email_hash = EmailLookupDocument::hash_email(&user.email);
+            let lookup_key = self.path_builder.email_lookup(&email_hash);
+            
+            // Delete email lookup
+            let _ = self.doc_store.delete(&lookup_key).await;
+        }
+        
+        // Delete user document
+        let key = self.path_builder.user(id);
+        self.doc_store.delete(&key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn list(&self, _filter: UserFilter) -> Result<Vec<UserDocument>, RepositoryError> {
+        // Scan all users - in production, use an index
+        let prefix = format!("{}/{}/meta/users/", self.path_builder.base_prefix, self.path_builder.namespace);
+        
+        let keys = self.doc_store.list_prefix(&prefix).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        let mut users = Vec::new();
+        
+        for key in keys {
+            if let Some((user, _)) = self.doc_store.get::<UserDocument>(&key).await
+                .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+                users.push(user);
+            }
+        }
+        
+        Ok(users)
+    }
+}
+
+/// RustFS-backed device repository
+pub struct RustFsDeviceRepository {
+    doc_store: Arc<dyn MetadataDocumentStore>,
+    path_builder: PathBuilder,
+}
+
+impl RustFsDeviceRepository {
+    pub fn new(doc_store: Arc<dyn MetadataDocumentStore>, path_builder: PathBuilder) -> Self {
+        Self {
+            doc_store,
+            path_builder,
+        }
+    }
+}
+
+#[async_trait]
+impl DeviceRepository for RustFsDeviceRepository {
+    async fn get(&self, id: Uuid) -> Result<Option<DeviceTokenDocument>, RepositoryError> {
+        let key = self.path_builder.device(id);
+        self.doc_store.get::<DeviceTokenDocument>(&key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))
+            .map(|opt| opt.map(|(doc, _)| doc))
+    }
+    
+    async fn get_by_token_hash(&self, token_hash: &str) -> Result<Option<DeviceTokenDocument>, RepositoryError> {
+        // Scan for matching token hash - use index in production
+        let prefix = format!("{}/{}/meta/devices/", self.path_builder.base_prefix, self.path_builder.namespace);
+        
+        let keys = self.doc_store.list_prefix(&prefix).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        for key in keys {
+            if let Some((device, _)) = self.doc_store.get::<DeviceTokenDocument>(&key).await
+                .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+                if device.token_hash == token_hash {
+                    return Ok(Some(device));
+                }
+            }
+        }
+        
+        Ok(None)
+    }
+    
+    async fn create(&self, device: &DeviceTokenDocument) -> Result<(), RepositoryError> {
+        let key = self.path_builder.device(device.id);
+        
+        self.doc_store.put(&key, device, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        // Update user devices index
+        let index_key = self.path_builder.user_devices_index(device.user_id);
+        let mut index = self.doc_store.get::<UserDevicesIndex>(&index_key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?
+            .map(|(doc, _)| doc)
+            .unwrap_or_else(|| UserDevicesIndex::new(device.user_id));
+        
+        index.add_device(device.id);
+        
+        self.doc_store.put(&index_key, &index, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn update(&self, device: &DeviceTokenDocument) -> Result<(), RepositoryError> {
+        let key = self.path_builder.device(device.id);
+        
+        self.doc_store.put(&key, device, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn delete(&self, id: Uuid) -> Result<(), RepositoryError> {
+        // Get device first to update index
+        if let Some(device) = self.get(id).await? {
+            let index_key = self.path_builder.user_devices_index(device.user_id);
+            
+            if let Some((mut index, _)) = self.doc_store.get::<UserDevicesIndex>(&index_key).await
+                .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+                index.remove_device(id);
+                
+                self.doc_store.put(&index_key, &index, PutOptions::default()).await
+                    .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+            }
+        }
+        
+        let key = self.path_builder.device(id);
+        self.doc_store.delete(&key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn list_by_user(&self, user_id: UserId) -> Result<Vec<DeviceTokenDocument>, RepositoryError> {
+        // Use index if available
+        let index_key = self.path_builder.user_devices_index(user_id);
+        
+        if let Some((index, _)) = self.doc_store.get::<UserDevicesIndex>(&index_key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+            
+            let mut devices = Vec::new();
+            for device_id in index.device_ids {
+                if let Some(device) = self.get(device_id).await? {
+                    devices.push(device);
+                }
+            }
+            return Ok(devices);
+        }
+        
+        // Fall back to scanning
+        let prefix = format!("{}/{}/meta/devices/", self.path_builder.base_prefix, self.path_builder.namespace);
+        
+        let keys = self.doc_store.list_prefix(&prefix).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        let mut devices = Vec::new();
+        
+        for key in keys {
+            if let Some((device, _)) = self.doc_store.get::<DeviceTokenDocument>(&key).await
+                .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+                if device.user_id == user_id {
+                    devices.push(device);
+                }
+            }
+        }
+        
+        Ok(devices)
+    }
+}
+
+/// RustFS-backed group repository
+pub struct RustFsGroupRepository {
+    doc_store: Arc<dyn MetadataDocumentStore>,
+    path_builder: PathBuilder,
+}
+
+impl RustFsGroupRepository {
+    pub fn new(doc_store: Arc<dyn MetadataDocumentStore>, path_builder: PathBuilder) -> Self {
+        Self {
+            doc_store,
+            path_builder,
+        }
+    }
+}
+
+#[async_trait]
+impl GroupRepository for RustFsGroupRepository {
+    async fn get(&self, id: Uuid) -> Result<Option<UserGroupDocument>, RepositoryError> {
+        let key = self.path_builder.group(id);
+        self.doc_store.get::<UserGroupDocument>(&key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))
+            .map(|opt| opt.map(|(doc, _)| doc))
+    }
+    
+    async fn create(&self, group: &UserGroupDocument) -> Result<(), RepositoryError> {
+        let key = self.path_builder.group(group.id);
+        let opts = PutOptions {
+            if_none_match: Some("*".to_string()),
+            ..Default::default()
+        };
+        
+        self.doc_store.put(&key, group, opts).await
+            .map_err(|e| {
+                if e.to_string().contains("Precondition") {
+                    RepositoryError::AlreadyExists(format!("Group {} already exists", group.id))
+                } else {
+                    RepositoryError::StorageError(e.to_string())
+                }
+            })?;
+        
+        // Create empty members index
+        let index = GroupMembersIndex::new(group.id);
+        let index_key = self.path_builder.group_members_index(group.id);
+        
+        self.doc_store.put(&index_key, &index, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn update(&self, group: &UserGroupDocument) -> Result<(), RepositoryError> {
+        let key = self.path_builder.group(group.id);
+        
+        self.doc_store.put(&key, group, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn delete(&self, id: Uuid) -> Result<(), RepositoryError> {
+        // Clean up memberships
+        if let Some(group) = self.get(id).await? {
+            for member_id in &group.member_ids {
+                let user_index_key = self.path_builder.user_groups_index(*member_id);
+                
+                if let Some((mut user_index, _)) = self.doc_store.get::<UserGroupsIndex>(&user_index_key).await
+                    .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+                    user_index.remove_group(id);
+                    
+                    self.doc_store.put(&user_index_key, &user_index, PutOptions::default()).await
+                        .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+                }
+            }
+        }
+        
+        // Delete members index
+        let index_key = self.path_builder.group_members_index(id);
+        let _ = self.doc_store.delete(&index_key).await;
+        
+        // Delete group
+        let key = self.path_builder.group(id);
+        self.doc_store.delete(&key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn list(&self) -> Result<Vec<UserGroupDocument>, RepositoryError> {
+        let prefix = format!("{}/{}/meta/groups/", self.path_builder.base_prefix, self.path_builder.namespace);
+        
+        let keys = self.doc_store.list_prefix(&prefix).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        let mut groups = Vec::new();
+        
+        for key in keys {
+            if let Some((group, _)) = self.doc_store.get::<UserGroupDocument>(&key).await
+                .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+                groups.push(group);
+            }
+        }
+        
+        Ok(groups)
+    }
+    
+    async fn add_member(&self, group_id: Uuid, user_id: UserId, added_by: UserId) -> Result<(), RepositoryError> {
+        // Update group document
+        let mut group = self.get(group_id).await?
+            .ok_or_else(|| RepositoryError::NotFound(format!("Group {} not found", group_id)))?;
+        
+        group.add_member(user_id);
+        self.update(&group).await?;
+        
+        // Update group members index
+        let index_key = self.path_builder.group_members_index(group_id);
+        let mut index = self.doc_store.get::<GroupMembersIndex>(&index_key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?
+            .map(|(doc, _)| doc)
+            .unwrap_or_else(|| GroupMembersIndex::new(group_id));
+        
+        index.add_member(user_id);
+        
+        self.doc_store.put(&index_key, &index, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        // Update user groups index
+        let user_index_key = self.path_builder.user_groups_index(user_id);
+        let mut user_index = self.doc_store.get::<UserGroupsIndex>(&user_index_key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?
+            .map(|(doc, _)| doc)
+            .unwrap_or_else(|| UserGroupsIndex::new(user_id));
+        
+        user_index.add_group(group_id);
+        
+        self.doc_store.put(&user_index_key, &user_index, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn remove_member(&self, group_id: Uuid, user_id: UserId) -> Result<(), RepositoryError> {
+        // Update group document
+        let mut group = self.get(group_id).await?
+            .ok_or_else(|| RepositoryError::NotFound(format!("Group {} not found", group_id)))?;
+        
+        group.remove_member(user_id);
+        self.update(&group).await?;
+        
+        // Update group members index
+        let index_key = self.path_builder.group_members_index(group_id);
+        
+        if let Some((mut index, _)) = self.doc_store.get::<GroupMembersIndex>(&index_key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+            index.remove_member(user_id);
+            
+            self.doc_store.put(&index_key, &index, PutOptions::default()).await
+                .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        }
+        
+        // Update user groups index
+        let user_index_key = self.path_builder.user_groups_index(user_id);
+        
+        if let Some((mut user_index, _)) = self.doc_store.get::<UserGroupsIndex>(&user_index_key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+            user_index.remove_group(group_id);
+            
+            self.doc_store.put(&user_index_key, &user_index, PutOptions::default()).await
+                .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        }
+        
+        Ok(())
+    }
+    
+    async fn list_members(&self, group_id: Uuid) -> Result<Vec<Uuid>, RepositoryError> {
+        // Use index
+        let index_key = self.path_builder.group_members_index(group_id);
+        
+        if let Some((index, _)) = self.doc_store.get::<GroupMembersIndex>(&index_key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+            return Ok(index.member_ids);
+        }
+        
+        // Fall back to group document
+        if let Some(group) = self.get(group_id).await? {
+            return Ok(group.member_ids);
+        }
+        
+        Ok(Vec::new())
+    }
+    
+    async fn list_by_user(&self, user_id: UserId) -> Result<Vec<UserGroupDocument>, RepositoryError> {
+        // Use index
+        let index_key = self.path_builder.user_groups_index(user_id);
+        
+        if let Some((index, _)) = self.doc_store.get::<UserGroupsIndex>(&index_key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+            
+            let mut groups = Vec::new();
+            for membership in &index.groups {
+                if let Some(group) = self.get(membership.group_id).await? {
+                    groups.push(group);
+                }
+            }
+            return Ok(groups);
+        }
+        
+        // Fall back to scanning
+        let all_groups = self.list().await?;
+        let groups: Vec<_> = all_groups.into_iter()
+            .filter(|g| g.is_member(user_id))
+            .collect();
+        
+        Ok(groups)
+    }
+}
+
+/// RustFS-backed audit repository
+pub struct RustFsAuditRepository {
+    doc_store: Arc<dyn MetadataDocumentStore>,
+    path_builder: PathBuilder,
+}
+
+impl RustFsAuditRepository {
+    pub fn new(doc_store: Arc<dyn MetadataDocumentStore>, path_builder: PathBuilder) -> Self {
+        Self {
+            doc_store,
+            path_builder,
+        }
+    }
+}
+
+#[async_trait]
+impl AuditRepository for RustFsAuditRepository {
+    async fn append(&self, entry: &AuditLogEntryDocument) -> Result<(), RepositoryError> {
+        let key = self.path_builder.audit_entry(entry.occurred_at, entry.id);
+        
+        self.doc_store.put(&key, entry, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn list(&self, filter: AuditFilter) -> Result<Vec<AuditLogEntryDocument>, RepositoryError> {
+        let prefix = format!("{}/{}/audit/", self.path_builder.base_prefix, self.path_builder.namespace);
+        
+        let keys = self.doc_store.list_prefix(&prefix).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        let mut entries = Vec::new();
+        
+        for key in keys {
+            if let Some((entry, _)) = self.doc_store.get::<AuditLogEntryDocument>(&key).await
+                .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+                // Apply filters
+                if let Some(ref actor_id) = filter.actor_id {
+                    if entry.actor_id != *actor_id {
+                        continue;
+                    }
+                }
+                
+                if let Some(ref action_type) = filter.action_type {
+                    if !entry.action_type.contains(action_type) {
+                        continue;
+                    }
+                }
+                
+                if let Some(ref from) = filter.from {
+                    if entry.occurred_at < *from {
+                        continue;
+                    }
+                }
+                
+                if let Some(ref to) = filter.to {
+                    if entry.occurred_at > *to {
+                        continue;
+                    }
+                }
+                
+                entries.push(entry);
+            }
+        }
+        
+        // Sort by occurred_at desc
+        entries.sort_by(|a, b| b.occurred_at.cmp(&a.occurred_at));
+        
+        // Apply pagination
+        let offset = filter.offset as usize;
+        let limit = filter.limit as usize;
+        
+        if offset < entries.len() {
+            entries = entries.into_iter().skip(offset).take(limit).collect();
+        } else {
+            entries.clear();
+        }
+        
+        Ok(entries)
+    }
+    
+    async fn count(&self, filter: AuditFilter) -> Result<i64, RepositoryError> {
+        let entries = self.list(filter).await?;
+        Ok(entries.len() as i64)
+    }
+}
+
+/// RustFS-backed config repository
+pub struct RustFsConfigRepository {
+    doc_store: Arc<dyn MetadataDocumentStore>,
+    path_builder: PathBuilder,
+}
+
+impl RustFsConfigRepository {
+    pub fn new(doc_store: Arc<dyn MetadataDocumentStore>, path_builder: PathBuilder) -> Self {
+        Self {
+            doc_store,
+            path_builder,
+        }
+    }
+}
+
+#[async_trait]
+impl ConfigRepository for RustFsConfigRepository {
+    async fn get(&self, config_type: ConfigType) -> Result<Option<SystemConfigDocument>, RepositoryError> {
+        let key = self.path_builder.config(&format!("{:?}", config_type).to_lowercase());
+        self.doc_store.get::<SystemConfigDocument>(&key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))
+            .map(|opt| opt.map(|(doc, _)| doc))
+    }
+    
+    async fn get_oidc(&self) -> Result<Option<SystemConfigDocument>, RepositoryError> {
+        self.get(ConfigType::Oidc).await
+    }
+    
+    async fn get_smtp(&self) -> Result<Option<SystemConfigDocument>, RepositoryError> {
+        self.get(ConfigType::Smtp).await
+    }
+    
+    async fn set(&self, config: &SystemConfigDocument) -> Result<(), RepositoryError> {
+        let key = self.path_builder.config(&format!("{:?}", config.config_type).to_lowercase());
+        
+        self.doc_store.put(&key, config, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+}
+
+/// RustFS-backed pairing repository
+pub struct RustFsPairingRepository {
+    doc_store: Arc<dyn MetadataDocumentStore>,
+    path_builder: PathBuilder,
+}
+
+impl RustFsPairingRepository {
+    pub fn new(doc_store: Arc<dyn MetadataDocumentStore>, path_builder: PathBuilder) -> Self {
+        Self {
+            doc_store,
+            path_builder,
+        }
+    }
+}
+
+#[async_trait]
+impl PairingRepository for RustFsPairingRepository {
+    async fn get(&self, id: Uuid) -> Result<Option<PairingRequestDocument>, RepositoryError> {
+        let key = self.path_builder.pairing(id);
+        self.doc_store.get::<PairingRequestDocument>(&key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))
+            .map(|opt| opt.map(|(doc, _)| doc))
+    }
+    
+    async fn get_by_user_code(&self, user_code: &str) -> Result<Option<PairingRequestDocument>, RepositoryError> {
+        // Use lookup
+        let lookup_key = self.path_builder.pairing_code_lookup(user_code);
+        
+        if let Some((lookup, _)) = self.doc_store.get::<TokenLookupDocument>(&lookup_key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+            return self.get(lookup.resource_id).await;
+        }
+        
+        // Fall back to scanning
+        let prefix = format!("{}/{}/meta/pairings/", self.path_builder.base_prefix, self.path_builder.namespace);
+        
+        let keys = self.doc_store.list_prefix(&prefix).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        for key in keys {
+            if let Some((pairing, _)) = self.doc_store.get::<PairingRequestDocument>(&key).await
+                .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+                if pairing.user_code == user_code {
+                    return Ok(Some(pairing));
+                }
+            }
+        }
+        
+        Ok(None)
+    }
+    
+    async fn get_by_device_code(&self, device_code: &str) -> Result<Option<PairingRequestDocument>, RepositoryError> {
+        // Scan for matching device code
+        let prefix = format!("{}/{}/meta/pairings/", self.path_builder.base_prefix, self.path_builder.namespace);
+        
+        let keys = self.doc_store.list_prefix(&prefix).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        for key in keys {
+            if let Some((pairing, _)) = self.doc_store.get::<PairingRequestDocument>(&key).await
+                .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+                if pairing.device_code == device_code {
+                    return Ok(Some(pairing));
+                }
+            }
+        }
+        
+        Ok(None)
+    }
+    
+    async fn create(&self, pairing: &PairingRequestDocument) -> Result<(), RepositoryError> {
+        let key = self.path_builder.pairing(pairing.id);
+        let opts = PutOptions {
+            if_none_match: Some("*".to_string()),
+            ..Default::default()
+        };
+        
+        self.doc_store.put(&key, pairing, opts).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        // Create user_code lookup
+        let lookup = TokenLookupDocument::new(
+            pairing.user_code.clone(),
+            "pairing".to_string(),
+            pairing.id,
+            Some(pairing.expires_at),
+        );
+        let lookup_key = self.path_builder.pairing_code_lookup(&pairing.user_code);
+        
+        self.doc_store.put(&lookup_key, &lookup, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn update(&self, pairing: &PairingRequestDocument) -> Result<(), RepositoryError> {
+        let key = self.path_builder.pairing(pairing.id);
+        
+        self.doc_store.put(&key, pairing, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn delete(&self, id: Uuid) -> Result<(), RepositoryError> {
+        // Clean up lookup
+        if let Some(pairing) = self.get(id).await? {
+            let lookup_key = self.path_builder.pairing_code_lookup(&pairing.user_code);
+            let _ = self.doc_store.delete(&lookup_key).await;
+        }
+        
+        let key = self.path_builder.pairing(id);
+        self.doc_store.delete(&key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn cleanup_expired(&self) -> Result<u64, RepositoryError> {
+        let prefix = format!("{}/{}/meta/pairings/", self.path_builder.base_prefix, self.path_builder.namespace);
+        
+        let keys = self.doc_store.list_prefix(&prefix).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        let mut cleaned = 0u64;
+        
+        for key in keys {
+            if let Some((pairing, _)) = self.doc_store.get::<PairingRequestDocument>(&key).await
+                .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+                if pairing.is_expired() && pairing.status != PairingStatus::Expired {
+                    let mut expired = pairing.clone();
+                    expired.expire();
+                    self.update(&expired).await?;
+                    cleaned += 1;
+                }
+            }
+        }
+        
+        Ok(cleaned)
+    }
+}
+
+/// RustFS-backed webhook repository
+pub struct RustFsWebhookRepository {
+    doc_store: Arc<dyn MetadataDocumentStore>,
+    path_builder: PathBuilder,
+}
+
+impl RustFsWebhookRepository {
+    pub fn new(doc_store: Arc<dyn MetadataDocumentStore>, path_builder: PathBuilder) -> Self {
+        Self {
+            doc_store,
+            path_builder,
+        }
+    }
+}
+
+#[async_trait]
+impl WebhookRepository for RustFsWebhookRepository {
+    async fn get(&self, id: Uuid) -> Result<Option<WebhookDocument>, RepositoryError> {
+        let key = self.path_builder.webhook(id);
+        self.doc_store.get::<WebhookDocument>(&key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))
+            .map(|opt| opt.map(|(doc, _)| doc))
+    }
+    
+    async fn create(&self, webhook: &WebhookDocument) -> Result<(), RepositoryError> {
+        let key = self.path_builder.webhook(webhook.id);
+        
+        self.doc_store.put(&key, webhook, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn update(&self, webhook: &WebhookDocument) -> Result<(), RepositoryError> {
+        let key = self.path_builder.webhook(webhook.id);
+        
+        self.doc_store.put(&key, webhook, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn delete(&self, id: Uuid) -> Result<(), RepositoryError> {
+        let key = self.path_builder.webhook(id);
+        self.doc_store.delete(&key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn list(&self, filter: WebhookFilter) -> Result<Vec<WebhookDocument>, RepositoryError> {
+        let prefix = format!("{}/{}/meta/webhooks/", self.path_builder.base_prefix, self.path_builder.namespace);
+        
+        let keys = self.doc_store.list_prefix(&prefix).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        let mut webhooks = Vec::new();
+        
+        for key in keys {
+            if let Some((webhook, _)) = self.doc_store.get::<WebhookDocument>(&key).await
+                .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
+                // Apply filters
+                if filter.enabled_only && !webhook.enabled {
+                    continue;
+                }
+                
+                if let Some(ref event_type) = filter.event_type {
+                    if !webhook.events.contains(event_type) {
+                        continue;
+                    }
+                }
+                
+                webhooks.push(webhook);
+            }
+        }
+        
+        Ok(webhooks)
+    }
+}
+
+/// RustFS-backed notification repository
+pub struct RustFsNotificationRepository {
+    doc_store: Arc<dyn MetadataDocumentStore>,
+    path_builder: PathBuilder,
+}
+
+impl RustFsNotificationRepository {
+    pub fn new(doc_store: Arc<dyn MetadataDocumentStore>, path_builder: PathBuilder) -> Self {
+        Self {
+            doc_store,
+            path_builder,
+        }
+    }
+}
+
+#[async_trait]
+impl NotificationRepository for RustFsNotificationRepository {
+    async fn get_index(&self, user_id: UserId) -> Result<UserNotificationIndex, RepositoryError> {
+        let key = self.path_builder.user_notifications_index(user_id);
+        
+        self.doc_store.get::<UserNotificationIndex>(&key).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))
+            .map(|opt| opt.map(|(doc, _)| doc).unwrap_or_else(|| UserNotificationIndex::new(user_id)))
+    }
+    
+    async fn save_index(&self, index: &UserNotificationIndex) -> Result<(), RepositoryError> {
+        let key = self.path_builder.user_notifications_index(index.user_id);
+        
+        self.doc_store.put(&key, index, PutOptions::default()).await
+            .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    async fn list(&self, user_id: UserId, unread_only: bool, offset: usize, limit: usize) -> Result<Vec<NotificationRef>, RepositoryError> {
+        let index = self.get_index(user_id).await?;
+        
+        let mut notifications: Vec<_> = if unread_only {
+            index.notifications.into_iter().filter(|n| !n.read).collect()
+        } else {
+            index.notifications
+        };
+        
+        // Sort by created_at desc
+        notifications.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        
+        // Apply pagination
+        let paginated: Vec<_> = notifications.into_iter()
+            .skip(offset)
+            .take(limit)
+            .collect();
+        
+        Ok(paginated)
+    }
+    
+    async fn count_unread(&self, user_id: UserId) -> Result<u32, RepositoryError> {
+        let index = self.get_index(user_id).await?;
+        Ok(index.unread_count)
+    }
+    
+    async fn mark_read(&self, user_id: UserId, notification_id: Uuid) -> Result<(), RepositoryError> {
+        let mut index = self.get_index(user_id).await?;
+        index.mark_read(notification_id);
+        self.save_index(&index).await
+    }
+    
+    async fn delete(&self, user_id: UserId, notification_id: Uuid) -> Result<(), RepositoryError> {
+        let mut index = self.get_index(user_id).await?;
+        index.remove_notification(notification_id);
+        self.save_index(&index).await
     }
 }

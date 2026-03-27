@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::UserId;
 
 /// User theme preference
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, Default)]
-#[sqlx(type_name = "text")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
     Light,
@@ -41,7 +40,7 @@ impl std::str::FromStr for Theme {
 ///
 /// Note: The `username` field is used for login and is distinct from `email`.
 /// This allows users to have a stable login identifier separate from their email address.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct User {
     pub id: UserId,
     /// Login identifier (enhancement beyond spec)

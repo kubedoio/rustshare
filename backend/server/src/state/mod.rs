@@ -13,8 +13,16 @@ use rustshare_core::events::EventBroadcaster;
 use rustshare_crypto::SecretEncryptionKey;
 use rustshare_storage::{
     coordination::CoordinationStore,
-    metadata_v2::{MetadataDocumentStore, EventLogStore},
+    metadata_v2::{MetadataDocumentStore, EventLogStore, MetadataBackendConfig},
     object_store::ObjectStore,
+    repos::{
+        PathBuilder, UserRepository, DeviceRepository, GroupRepository, 
+        AuditRepository, ConfigRepository, PairingRepository, WebhookRepository,
+        NotificationRepository,
+        RustFsUserRepository, RustFsDeviceRepository, RustFsGroupRepository,
+        RustFsAuditRepository, RustFsConfigRepository, RustFsPairingRepository,
+        RustFsWebhookRepository, RustFsNotificationRepository,
+    },
     session::SessionManager,
 };
 
@@ -56,6 +64,26 @@ pub struct AppState {
     
     /// Rate limiter state
     pub rate_limit_state: Arc<Mutex<HashMap<String, Instant>>>,
+    
+    // Repository layer
+    /// User repository
+    pub user_repo: Arc<dyn UserRepository>,
+    /// Device repository
+    pub device_repo: Arc<dyn DeviceRepository>,
+    /// Group repository
+    pub group_repo: Arc<dyn GroupRepository>,
+    /// Audit repository
+    pub audit_repo: Arc<dyn AuditRepository>,
+    /// Config repository
+    pub config_repo: Arc<dyn ConfigRepository>,
+    /// Pairing repository
+    pub pairing_repo: Arc<dyn PairingRepository>,
+    /// Webhook repository
+    pub webhook_repo: Arc<dyn WebhookRepository>,
+    /// Notification repository
+    pub notification_repo: Arc<dyn NotificationRepository>,
+    /// Path builder for key generation
+    pub path_builder: PathBuilder,
 }
 
 impl AppState {
@@ -97,6 +125,45 @@ impl AppState {
         // Initialize event broadcaster
         let broadcaster = Arc::new(EventBroadcaster::new(config.broadcast_capacity));
         
+        // Create path builder
+        let path_builder = PathBuilder::new(
+            config.metadata_prefix.clone(),
+            config.metadata_namespace.clone(),
+        );
+        
+        // Initialize repositories
+        let user_repo: Arc<dyn UserRepository> = Arc::new(
+            RustFsUserRepository::new(Arc::clone(&metadata_store), path_builder.clone())
+        );
+        
+        let device_repo: Arc<dyn DeviceRepository> = Arc::new(
+            RustFsDeviceRepository::new(Arc::clone(&metadata_store), path_builder.clone())
+        );
+        
+        let group_repo: Arc<dyn GroupRepository> = Arc::new(
+            RustFsGroupRepository::new(Arc::clone(&metadata_store), path_builder.clone())
+        );
+        
+        let audit_repo: Arc<dyn AuditRepository> = Arc::new(
+            RustFsAuditRepository::new(Arc::clone(&metadata_store), path_builder.clone())
+        );
+        
+        let config_repo: Arc<dyn ConfigRepository> = Arc::new(
+            RustFsConfigRepository::new(Arc::clone(&metadata_store), path_builder.clone())
+        );
+        
+        let pairing_repo: Arc<dyn PairingRepository> = Arc::new(
+            RustFsPairingRepository::new(Arc::clone(&metadata_store), path_builder.clone())
+        );
+        
+        let webhook_repo: Arc<dyn WebhookRepository> = Arc::new(
+            RustFsWebhookRepository::new(Arc::clone(&metadata_store), path_builder.clone())
+        );
+        
+        let notification_repo: Arc<dyn NotificationRepository> = Arc::new(
+            RustFsNotificationRepository::new(Arc::clone(&metadata_store), path_builder.clone())
+        );
+        
         Ok(Self {
             runtime_profile: profile,
             metadata_store,
@@ -108,6 +175,15 @@ impl AppState {
             broadcaster,
             secret_key: config.secret_key,
             rate_limit_state: Arc::new(Mutex::new(HashMap::new())),
+            user_repo,
+            device_repo,
+            group_repo,
+            audit_repo,
+            config_repo,
+            pairing_repo,
+            webhook_repo,
+            notification_repo,
+            path_builder,
         })
     }
     

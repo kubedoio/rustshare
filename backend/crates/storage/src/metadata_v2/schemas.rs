@@ -1639,6 +1639,133 @@ impl ThumbnailDocument {
     }
 }
 
+// ============================================================================
+// Filter Types for Repository Queries
+// ============================================================================
+
+/// Filter for listing users
+#[derive(Debug, Clone, Default)]
+pub struct UserFilter {
+    /// Search term (matches username, email, display_name)
+    pub search: Option<String>,
+    /// Filter by admin status
+    pub is_admin: Option<bool>,
+    /// Filter by disabled status
+    pub disabled: Option<bool>,
+    /// Pagination offset
+    pub offset: i64,
+    /// Pagination limit
+    pub limit: i64,
+}
+
+impl UserFilter {
+    /// Create a new filter with defaults
+    pub fn new() -> Self {
+        Self {
+            search: None,
+            is_admin: None,
+            disabled: None,
+            offset: 0,
+            limit: 100,
+        }
+    }
+    
+    /// Set search term
+    pub fn with_search(mut self, search: String) -> Self {
+        self.search = Some(search);
+        self
+    }
+    
+    /// Set pagination
+    pub fn with_pagination(mut self, offset: i64, limit: i64) -> Self {
+        self.offset = offset;
+        self.limit = limit.max(1).min(1000);
+        self
+    }
+}
+
+/// Filter for audit log queries
+#[derive(Debug, Clone, Default)]
+pub struct AuditFilter {
+    /// Filter by actor user ID
+    pub actor_id: Option<Uuid>,
+    /// Filter by action type (partial match)
+    pub action_type: Option<String>,
+    /// Filter by target type
+    pub target_type: Option<String>,
+    /// Filter by target ID
+    pub target_id: Option<Uuid>,
+    /// Start time (inclusive)
+    pub from: Option<DateTime<Utc>>,
+    /// End time (inclusive)
+    pub to: Option<DateTime<Utc>>,
+    /// Pagination offset
+    pub offset: i64,
+    /// Pagination limit
+    pub limit: i64,
+}
+
+impl AuditFilter {
+    /// Create a new filter with defaults
+    pub fn new() -> Self {
+        Self {
+            actor_id: None,
+            action_type: None,
+            target_type: None,
+            target_id: None,
+            from: None,
+            to: None,
+            offset: 0,
+            limit: 100,
+        }
+    }
+    
+    /// Set time range
+    pub fn with_time_range(mut self, from: DateTime<Utc>, to: DateTime<Utc>) -> Self {
+        self.from = Some(from);
+        self.to = Some(to);
+        self
+    }
+    
+    /// Set pagination
+    pub fn with_pagination(mut self, offset: i64, limit: i64) -> Self {
+        self.offset = offset;
+        self.limit = limit.max(1).min(1000);
+        self
+    }
+}
+
+/// Filter for webhook queries
+#[derive(Debug, Clone, Default)]
+pub struct WebhookFilter {
+    /// Only return enabled webhooks
+    pub enabled_only: bool,
+    /// Filter by event type
+    pub event_type: Option<String>,
+    /// Pagination offset
+    pub offset: usize,
+    /// Pagination limit
+    pub limit: usize,
+}
+
+impl WebhookFilter {
+    /// Create a new filter with defaults
+    pub fn new() -> Self {
+        Self {
+            enabled_only: false,
+            event_type: None,
+            offset: 0,
+            limit: 100,
+        }
+    }
+    
+    /// Only enabled webhooks
+    pub fn enabled_only(mut self) -> Self {
+        self.enabled_only = true;
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1919,5 +2046,543 @@ mod tests {
         config.update(serde_json::json!({"provider": "github"}), None);
         assert_eq!(config.config["provider"], "github");
         assert_eq!(config.version, 2);
+    }
+}
+
+// ============================================================================
+// Additional Schemas - Audit Log, Pairing, Webhooks
+// ============================================================================
+
+/// Audit log entry document (append-only)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuditLogEntryDocument {
+    /// Schema version
+    pub schema_version: u32,
+    /// Unique entry identifier
+    pub id: Uuid,
+    /// Actor user ID (who performed the action)
+    pub actor_id: Uuid,
+    /// Actor label (username or email for display)
+    pub actor_label: String,
+    /// Action type (e.g., "user.created", "file.deleted")
+    pub action_type: String,
+    /// Target resource type (e.g., "user", "file", "group")
+    pub target_type: Option<String>,
+    /// Target resource ID
+    pub target_id: Option<Uuid>,
+    /// Target label (name or identifier for display)
+    pub target_label: Option<String>,
+    /// Additional detail (JSON payload)
+    pub detail: serde_json::Value,
+    /// IP address of actor
+    pub ip_address: Option<String>,
+    /// User agent of actor
+    pub user_agent: Option<String>,
+    /// Timestamp
+    pub occurred_at: DateTime<Utc>,
+}
+
+impl AuditLogEntryDocument {
+    /// Create a new audit log entry
+    pub fn new(
+        actor_id: Uuid,
+        actor_label: String,
+        action_type: String,
+        target_type: Option<String>,
+        target_id: Option<Uuid>,
+        target_label: Option<String>,
+        detail: serde_json::Value,
+    ) -> Self {
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            id: Uuid::new_v4(),
+            actor_id,
+            actor_label,
+            action_type,
+            target_type,
+            target_id,
+            target_label,
+            detail,
+            ip_address: None,
+            user_agent: None,
+            occurred_at: Utc::now(),
+        }
+    }
+    
+    /// Set IP address
+    pub fn with_ip(mut self, ip: String) -> Self {
+        self.ip_address = Some(ip);
+        self
+    }
+    
+    /// Set user agent
+    pub fn with_user_agent(mut self, ua: String) -> Self {
+        self.user_agent = Some(ua);
+        self
+    }
+}
+
+/// Pairing request status
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PairingStatus {
+    Pending,
+    Approved,
+    Expired,
+    Cancelled,
+}
+
+/// Device pairing request document
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PairingRequestDocument {
+    /// Schema version
+    pub schema_version: u32,
+    /// Unique pairing identifier
+    pub id: Uuid,
+    /// User-facing code (8 chars)
+    pub user_code: String,
+    /// Device-facing code (32 bytes base64)
+    pub device_code: String,
+    /// Token hash (for QR code / direct approval)
+    pub token_hash: String,
+    /// Device name (provided by device)
+    pub device_name: Option<String>,
+    /// Device type
+    pub device_type: Option<String>,
+    /// Status
+    pub status: PairingStatus,
+    /// User ID (set when approved)
+    pub user_id: Option<Uuid>,
+    /// Device token ID (set when approved)
+    pub device_token_id: Option<Uuid>,
+    /// Token for device to claim (set when approved)
+    pub access_token: Option<String>,
+    /// Creation timestamp
+    pub created_at: DateTime<Utc>,
+    /// Expiration timestamp
+    pub expires_at: DateTime<Utc>,
+    /// Approval timestamp
+    pub approved_at: Option<DateTime<Utc>>,
+}
+
+impl PairingRequestDocument {
+    /// Create a new pairing request
+    pub fn new(
+        id: Uuid,
+        user_code: String,
+        device_code: String,
+        token_hash: String,
+        ttl_seconds: i64,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            id,
+            user_code,
+            device_code,
+            token_hash,
+            device_name: None,
+            device_type: None,
+            status: PairingStatus::Pending,
+            user_id: None,
+            device_token_id: None,
+            access_token: None,
+            created_at: now,
+            expires_at: now + chrono::Duration::seconds(ttl_seconds),
+            approved_at: None,
+        }
+    }
+    
+    /// Check if expired
+    pub fn is_expired(&self) -> bool {
+        Utc::now() > self.expires_at
+    }
+    
+    /// Mark as approved
+    pub fn approve(&mut self, user_id: Uuid, device_token_id: Uuid, access_token: String) {
+        self.status = PairingStatus::Approved;
+        self.user_id = Some(user_id);
+        self.device_token_id = Some(device_token_id);
+        self.access_token = Some(access_token);
+        self.approved_at = Some(Utc::now());
+    }
+    
+    /// Mark as expired
+    pub fn expire(&mut self) {
+        self.status = PairingStatus::Expired;
+    }
+    
+    /// Check if pending
+    pub fn is_pending(&self) -> bool {
+        self.status == PairingStatus::Pending && !self.is_expired()
+    }
+}
+
+/// Webhook document
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WebhookDocument {
+    /// Schema version
+    pub schema_version: u32,
+    /// Unique webhook identifier
+    pub id: Uuid,
+    /// Webhook name
+    pub name: String,
+    /// Target URL
+    pub url: String,
+    /// Secret for HMAC signature (hashed)
+    pub secret_hash: Option<String>,
+    /// Enabled events
+    pub events: Vec<String>,
+    /// Whether webhook is enabled
+    pub enabled: bool,
+    /// Creator user ID
+    pub created_by: Uuid,
+    /// Creation timestamp
+    pub created_at: DateTime<Utc>,
+    /// Last update timestamp
+    pub updated_at: DateTime<Utc>,
+    /// Document version
+    pub version: u64,
+}
+
+impl WebhookDocument {
+    /// Create a new webhook
+    pub fn new(
+        id: Uuid,
+        name: String,
+        url: String,
+        secret_hash: Option<String>,
+        events: Vec<String>,
+        created_by: Uuid,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            id,
+            name,
+            url,
+            secret_hash,
+            events,
+            enabled: true,
+            created_by,
+            created_at: now,
+            updated_at: now,
+            version: 1,
+        }
+    }
+    
+    /// Update webhook
+    pub fn update(&mut self, name: Option<String>, url: Option<String>, events: Option<Vec<String>>, enabled: Option<bool>) {
+        if let Some(name) = name {
+            self.name = name;
+        }
+        if let Some(url) = url {
+            self.url = url;
+        }
+        if let Some(events) = events {
+            self.events = events;
+        }
+        if let Some(enabled) = enabled {
+            self.enabled = enabled;
+        }
+        self.bump_version();
+    }
+    
+    /// Update secret
+    pub fn update_secret(&mut self, secret_hash: Option<String>) {
+        self.secret_hash = secret_hash;
+        self.bump_version();
+    }
+    
+    fn bump_version(&mut self) {
+        self.version += 1;
+        self.updated_at = Utc::now();
+    }
+}
+
+// ============================================================================
+// Lookup Documents
+// ============================================================================
+
+/// Email to user ID lookup document
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EmailLookupDocument {
+    /// Schema version
+    pub schema_version: u32,
+    /// Normalized email address
+    pub email: String,
+    /// User ID
+    pub user_id: Uuid,
+    /// Creation timestamp
+    pub created_at: DateTime<Utc>,
+}
+
+impl EmailLookupDocument {
+    /// Create a new email lookup
+    pub fn new(email: String, user_id: Uuid) -> Self {
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            email: email.to_lowercase().trim().to_string(),
+            user_id,
+            created_at: Utc::now(),
+        }
+    }
+    
+    /// Hash email for key generation
+    pub fn hash_email(email: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(email.to_lowercase().trim().as_bytes());
+        hex::encode(hasher.finalize())
+    }
+}
+
+/// Token lookup document (for public shares, pairing, device tokens)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TokenLookupDocument {
+    /// Schema version
+    pub schema_version: u32,
+    /// Token hash (lookup key)
+    pub token_hash: String,
+    /// Resource type ("share", "pairing", "device")
+    pub resource_type: String,
+    /// Resource ID
+    pub resource_id: Uuid,
+    /// Expiration timestamp
+    pub expires_at: Option<DateTime<Utc>>,
+    /// Creation timestamp
+    pub created_at: DateTime<Utc>,
+}
+
+impl TokenLookupDocument {
+    /// Create a new token lookup
+    pub fn new(
+        token_hash: String,
+        resource_type: String,
+        resource_id: Uuid,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> Self {
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            token_hash,
+            resource_type,
+            resource_id,
+            expires_at,
+            created_at: Utc::now(),
+        }
+    }
+    
+    /// Check if expired
+    pub fn is_expired(&self) -> bool {
+        self.expires_at.map(|e| Utc::now() > e).unwrap_or(false)
+    }
+}
+
+// ============================================================================
+// Index Documents
+// ============================================================================
+
+/// User devices index
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UserDevicesIndex {
+    /// Schema version
+    pub schema_version: u32,
+    /// User ID
+    pub user_id: Uuid,
+    /// Index version
+    pub version: u64,
+    /// Last updated
+    pub updated_at: DateTime<Utc>,
+    /// Device token IDs
+    pub device_ids: Vec<Uuid>,
+}
+
+impl UserDevicesIndex {
+    /// Create a new empty index
+    pub fn new(user_id: Uuid) -> Self {
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            user_id,
+            version: 1,
+            updated_at: Utc::now(),
+            device_ids: Vec::new(),
+        }
+    }
+    
+    /// Add a device
+    pub fn add_device(&mut self, device_id: Uuid) {
+        if !self.device_ids.contains(&device_id) {
+            self.device_ids.push(device_id);
+            self.version += 1;
+            self.updated_at = Utc::now();
+        }
+    }
+    
+    /// Remove a device
+    pub fn remove_device(&mut self, device_id: Uuid) {
+        if let Some(pos) = self.device_ids.iter().position(|&id| id == device_id) {
+            self.device_ids.remove(pos);
+            self.version += 1;
+            self.updated_at = Utc::now();
+        }
+    }
+}
+
+/// User groups index
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UserGroupsIndex {
+    /// Schema version
+    pub schema_version: u32,
+    /// User ID
+    pub user_id: Uuid,
+    /// Index version
+    pub version: u64,
+    /// Last updated
+    pub updated_at: DateTime<Utc>,
+    /// Group IDs with membership info
+    pub groups: Vec<UserGroupMembership>,
+}
+
+/// User membership in a group
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UserGroupMembership {
+    pub group_id: Uuid,
+    pub joined_at: DateTime<Utc>,
+}
+
+impl UserGroupsIndex {
+    /// Create a new empty index
+    pub fn new(user_id: Uuid) -> Self {
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            user_id,
+            version: 1,
+            updated_at: Utc::now(),
+            groups: Vec::new(),
+        }
+    }
+    
+    /// Add group membership
+    pub fn add_group(&mut self, group_id: Uuid) {
+        if !self.groups.iter().any(|g| g.group_id == group_id) {
+            self.groups.push(UserGroupMembership {
+                group_id,
+                joined_at: Utc::now(),
+            });
+            self.version += 1;
+            self.updated_at = Utc::now();
+        }
+    }
+    
+    /// Remove group membership
+    pub fn remove_group(&mut self, group_id: Uuid) {
+        if let Some(pos) = self.groups.iter().position(|g| g.group_id == group_id) {
+            self.groups.remove(pos);
+            self.version += 1;
+            self.updated_at = Utc::now();
+        }
+    }
+}
+
+/// Group members index
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GroupMembersIndex {
+    /// Schema version
+    pub schema_version: u32,
+    /// Group ID
+    pub group_id: Uuid,
+    /// Index version
+    pub version: u64,
+    /// Last updated
+    pub updated_at: DateTime<Utc>,
+    /// Member user IDs
+    pub member_ids: Vec<Uuid>,
+}
+
+impl GroupMembersIndex {
+    /// Create a new empty index
+    pub fn new(group_id: Uuid) -> Self {
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            group_id,
+            version: 1,
+            updated_at: Utc::now(),
+            member_ids: Vec::new(),
+        }
+    }
+    
+    /// Add member
+    pub fn add_member(&mut self, user_id: Uuid) {
+        if !self.member_ids.contains(&user_id) {
+            self.member_ids.push(user_id);
+            self.version += 1;
+            self.updated_at = Utc::now();
+        }
+    }
+    
+    /// Remove member
+    pub fn remove_member(&mut self, user_id: Uuid) {
+        if let Some(pos) = self.member_ids.iter().position(|&id| id == user_id) {
+            self.member_ids.remove(pos);
+            self.version += 1;
+            self.updated_at = Utc::now();
+        }
+    }
+}
+
+/// Resource shares index (for quick lookup of shares by file/folder)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResourceSharesIndex {
+    /// Schema version
+    pub schema_version: u32,
+    /// Resource ID (file or folder)
+    pub resource_id: Uuid,
+    /// Index version
+    pub version: u64,
+    /// Last updated
+    pub updated_at: DateTime<Utc>,
+    /// Public share IDs
+    pub public_share_ids: Vec<Uuid>,
+    /// User share IDs
+    pub user_share_ids: Vec<Uuid>,
+}
+
+impl ResourceSharesIndex {
+    /// Create a new empty index
+    pub fn new(resource_id: Uuid) -> Self {
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            resource_id,
+            version: 1,
+            updated_at: Utc::now(),
+            public_share_ids: Vec::new(),
+            user_share_ids: Vec::new(),
+        }
+    }
+    
+    /// Add a public share
+    pub fn add_public_share(&mut self, share_id: Uuid) {
+        if !self.public_share_ids.contains(&share_id) {
+            self.public_share_ids.push(share_id);
+            self.version += 1;
+            self.updated_at = Utc::now();
+        }
+    }
+    
+    /// Add a user share
+    pub fn add_user_share(&mut self, share_id: Uuid) {
+        if !self.user_share_ids.contains(&share_id) {
+            self.user_share_ids.push(share_id);
+            self.version += 1;
+            self.updated_at = Utc::now();
+        }
+    }
+    
+    /// Remove a share
+    pub fn remove_share(&mut self, share_id: Uuid) {
+        self.public_share_ids.retain(|&id| id != share_id);
+        self.user_share_ids.retain(|&id| id != share_id);
+        self.version += 1;
+        self.updated_at = Utc::now();
     }
 }

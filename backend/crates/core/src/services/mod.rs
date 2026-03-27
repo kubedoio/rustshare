@@ -27,7 +27,7 @@ pub use permission_resolver::{
 pub use share_errors::ShareError;
 pub use share_service::{
     EventStoreOps as ShareEventStoreOps, JwtOps, MetadataStoreOps as ShareMetadataStoreOps,
-    ShareService,
+    ShareService, ShareSession,
 };
 pub use thumbnail_service::{ThumbnailError, ThumbnailService};
 pub use user_share_service::{

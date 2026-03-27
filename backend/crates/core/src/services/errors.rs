@@ -48,7 +48,7 @@ pub enum FileError {
 
     /// Database operation failed.
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(String),
 
     /// Storage operation failed.
     #[error("Storage error: {0}")]
@@ -94,7 +94,7 @@ pub enum FolderError {
 
     /// Database operation failed.
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(String),
 }
 
 #[cfg(test)]
@@ -177,9 +177,12 @@ mod tests {
         assert_eq!(err.to_string(), format!("Storage error: {}", msg));
     }
 
-    // Note: Database error tests removed as they require sqlx::Error which cannot
-    // be easily constructed in unit tests. The #[from] attribute ensures proper
-    // automatic conversion from sqlx::Error to FileError::Database.
+    #[test]
+    fn test_file_error_database() {
+        let msg = "connection failed";
+        let err = FileError::Database(msg.to_string());
+        assert_eq!(err.to_string(), format!("Database error: {}", msg));
+    }
 
     #[test]
     fn test_folder_error_not_found() {
@@ -243,7 +246,10 @@ mod tests {
         );
     }
 
-    // Note: Database error tests removed as they require sqlx::Error which cannot
-    // be easily constructed in unit tests. The #[from] attribute ensures proper
-    // automatic conversion from sqlx::Error to FolderError::Database.
+    #[test]
+    fn test_folder_error_database() {
+        let msg = "connection failed";
+        let err = FolderError::Database(msg.to_string());
+        assert_eq!(err.to_string(), format!("Database error: {}", msg));
+    }
 }

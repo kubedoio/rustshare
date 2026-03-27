@@ -20,7 +20,7 @@ pub trait ShareOps: Send + Sync {
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
         recipient_user_id: UserId,
-    ) -> Result<Option<Share>, sqlx::Error>;
+    ) -> Result<Option<Share>, String>;
 
     async fn create_user_share(
         &self,
@@ -29,49 +29,49 @@ pub trait ShareOps: Send + Sync {
         recipient_user_id: UserId,
         permissions: SharePermissions,
         created_by: UserId,
-    ) -> Result<Share, sqlx::Error>;
+    ) -> Result<Share, String>;
 
     async fn update_share_permission(
         &self,
         share_id: ShareId,
         new_permission: SharePermissions,
-    ) -> Result<Share, sqlx::Error>;
+    ) -> Result<Share, String>;
 
-    async fn get_by_id(&self, share_id: ShareId) -> Result<Option<Share>, sqlx::Error>;
+    async fn get_by_id(&self, share_id: ShareId) -> Result<Option<Share>, String>;
 
     async fn list_received_shares(
         &self,
         user_id: UserId,
         limit: i64,
         offset: i64,
-    ) -> Result<Vec<Share>, sqlx::Error>;
+    ) -> Result<Vec<Share>, String>;
 
     async fn list_share_recipients(
         &self,
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
-    ) -> Result<Vec<Share>, sqlx::Error>;
+    ) -> Result<Vec<Share>, String>;
 
-    async fn revoke_share(&self, share_id: ShareId) -> Result<(), sqlx::Error>;
+    async fn revoke_share(&self, share_id: ShareId) -> Result<(), String>;
 }
 
 /// Trait for user repository operations needed by UserShareService.
 #[allow(async_fn_in_trait)]
 pub trait UserOps: Send + Sync {
-    async fn find_by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error>;
-    async fn get_by_id(&self, user_id: UserId) -> Result<Option<User>, sqlx::Error>;
+    async fn find_by_email(&self, email: &str) -> Result<Option<User>, String>;
+    async fn get_by_id(&self, user_id: UserId) -> Result<Option<User>, String>;
 }
 
 /// Trait for file repository operations needed by UserShareService.
 #[allow(async_fn_in_trait)]
 pub trait FileOps: Send + Sync {
-    async fn get_by_id(&self, file_id: FileId) -> Result<Option<File>, sqlx::Error>;
+    async fn get_by_id(&self, file_id: FileId) -> Result<Option<File>, String>;
 }
 
 /// Trait for folder repository operations needed by UserShareService.
 #[allow(async_fn_in_trait)]
 pub trait FolderOps: Send + Sync {
-    async fn get_by_id(&self, folder_id: FolderId) -> Result<Option<Folder>, sqlx::Error>;
+    async fn get_by_id(&self, folder_id: FolderId) -> Result<Option<Folder>, String>;
 }
 
 pub struct UserShareService<SR, UR, FR, DR, S, F, D, N, E>
@@ -258,16 +258,15 @@ where
                     .share_repo
                     .update_share_permission(existing_share.id, permission)
                     .await
-                    .map_err(|error| {
+                    .map_err(|error: String| {
                         error!(
                             share_id = %existing_share.id,
                             file_id = %file_id,
                             recipient_user_id = %recipient.id,
                             "failed to update existing file share: {error}"
                         );
-                        error
-                    })
-                    .map_err(ShareError::from);
+                        ShareError::Database(error)
+                    });
             }
         }
 
@@ -276,14 +275,14 @@ where
             .share_repo
             .create_user_share(Some(file_id), None, recipient.id, permission, created_by)
             .await
-            .map_err(|error| {
+            .map_err(|error: String| {
                 error!(
                     file_id = %file_id,
                     recipient_user_id = %recipient.id,
                     created_by = %created_by,
                     "failed to create file share: {error}"
                 );
-                error
+                ShareError::Database(error)
             })?;
 
         // Create notification for recipient (ignore errors - notifications are best-effort)
@@ -365,16 +364,15 @@ where
                     .share_repo
                     .update_share_permission(existing_share.id, permission)
                     .await
-                    .map_err(|error| {
+                    .map_err(|error: String| {
                         error!(
                             share_id = %existing_share.id,
                             folder_id = %folder_id,
                             recipient_user_id = %recipient.id,
                             "failed to update existing folder share: {error}"
                         );
-                        error
-                    })
-                    .map_err(ShareError::from);
+                        ShareError::Database(error)
+                    });
             }
         }
 
@@ -383,14 +381,14 @@ where
             .share_repo
             .create_user_share(None, Some(folder_id), recipient.id, permission, created_by)
             .await
-            .map_err(|error| {
+            .map_err(|error: String| {
                 error!(
                     folder_id = %folder_id,
                     recipient_user_id = %recipient.id,
                     created_by = %created_by,
                     "failed to create folder share: {error}"
                 );
-                error
+                ShareError::Database(error)
             })?;
 
         // Create notification for recipient
@@ -456,7 +454,7 @@ where
             .permission_resolver
             .resolve_permission(requesting_user, resource)
             .await
-            .map_err(|e| ShareError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         if permission != Some(SharePermissions::Admin) {
             return Err(ShareError::InsufficientPermission {
@@ -526,7 +524,7 @@ where
             .permission_resolver
             .resolve_permission(requesting_user, resource)
             .await
-            .map_err(|e| ShareError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         if permission != Some(SharePermissions::Admin) {
             return Err(ShareError::InsufficientPermission {
@@ -628,7 +626,7 @@ where
             .permission_resolver
             .resolve_permission(requesting_user, resource)
             .await
-            .map_err(|e| ShareError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         if permission != Some(SharePermissions::Admin) {
             return Err(ShareError::InsufficientPermission {

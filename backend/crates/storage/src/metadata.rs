@@ -1,2364 +1,481 @@
-//! Metadata store for querying projection tables.
+//! DEPRECATED: PostgreSQL-based MetadataStore
 //!
-//! NOTE: Currently uses runtime queries (`sqlx::query()`) instead of compile-time
-//! queries (`sqlx::query!()`) because offline mode setup requires a running database.
-//! This will be migrated to compile-time queries after Docker Compose is set up in Task 11.
+//! This module is deprecated as part of the PostgreSQL removal migration.
+//! The storage crate no longer supports PostgreSQL as a metadata backend.
+//!
+//! Use `metadata_v2` module instead, which provides:
+//! - `MetadataRepository` trait for metadata operations
+//! - `MetadataDocumentStore` for document storage
+//! - `CombinedMetadataRepository` for the main implementation
+//!
+//! Migration guide:
+//! - Replace `MetadataStore` with `Arc<dyn MetadataRepository>` from `metadata_v2`
+//! - Use `RustFsDocumentStore` or `LocalFsDocumentStore` for storage backends
 
-use anyhow::Result;
-use chrono::{DateTime, Utc};
-use rustshare_core::domain::{
-    File, FileVersion, Folder, OidcLoginState, ReplicationJob, ReplicationJobStatus,
-    ReplicationState, ReplicationTarget, Share, SharePermissions, User, UserSession,
-};
-use sqlx::{PgPool, Row};
-use uuid::Uuid;
-
-/// Metadata store for querying projection tables
+/// DEPRECATED: MetadataStore has been removed.
+///
+/// This struct no longer functions. Use `metadata_v2::CombinedMetadataRepository` instead.
+#[deprecated(
+    since = "0.2.0",
+    note = "PostgreSQL-based MetadataStore has been removed. Use metadata_v2::CombinedMetadataRepository instead."
+)]
 pub struct MetadataStore {
-    pool: PgPool,
+    _private: (),
 }
 
-#[derive(Debug, Clone)]
+#[deprecated(
+    since = "0.2.0",
+    note = "Use metadata_v2 types instead"
+)]
 pub struct OwnedPublicShare {
-    pub share: Share,
-    pub resource_id: Uuid,
+    pub share: rustshare_core::domain::Share,
+    pub resource_id: uuid::Uuid,
     pub resource_type: String,
     pub resource_name: String,
 }
 
-#[derive(Debug, Clone)]
+#[deprecated(
+    since = "0.2.0",
+    note = "Use metadata_v2 types instead"
+)]
 pub struct PublicShareAccessLogEntry {
-    pub accessed_at: DateTime<Utc>,
+    pub accessed_at: chrono::DateTime<chrono::Utc>,
     pub action: String,
     pub success: bool,
     pub ip_address: Option<String>,
     pub user_agent: Option<String>,
     pub actor_type: Option<String>,
     pub actor_label: Option<String>,
-    pub share_session_id: Option<Uuid>,
+    pub share_session_id: Option<uuid::Uuid>,
     pub share_session_subject: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[deprecated(
+    since = "0.2.0",
+    note = "Use metadata_v2 types instead"
+)]
 pub struct ReplicationAttemptRecord<'a> {
-    pub job_id: Uuid,
-    pub target_id: Uuid,
+    pub job_id: uuid::Uuid,
+    pub target_id: uuid::Uuid,
     pub attempt_number: i32,
     pub status: &'a str,
     pub error_message: Option<&'a str>,
-    pub started_at: DateTime<Utc>,
-    pub completed_at: DateTime<Utc>,
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    pub completed_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone)]
+#[deprecated(
+    since = "0.2.0",
+    note = "Use metadata_v2 types instead"
+)]
 pub struct ShareAccessLogEntry {
-    pub share_id: Uuid,
+    pub share_id: uuid::Uuid,
     pub ip_address: Option<String>,
     pub user_agent: Option<String>,
     pub action: String,
     pub success: bool,
     pub actor_type: Option<String>,
     pub actor_label: Option<String>,
-    pub share_session_id: Option<Uuid>,
+    pub share_session_id: Option<uuid::Uuid>,
     pub share_session_subject: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[deprecated(
+    since = "0.2.0",
+    note = "Use metadata_v2 types instead"
+)]
 pub struct UserSecurityEventRecord<'a> {
-    pub user_id: Uuid,
+    pub user_id: uuid::Uuid,
     pub event_type: &'a str,
     pub description: &'a str,
     pub ip_address: Option<&'a str>,
     pub user_agent: Option<&'a str>,
-    pub session_id: Option<Uuid>,
+    pub session_id: Option<uuid::Uuid>,
 }
 
-#[derive(Debug, Clone)]
+#[deprecated(
+    since = "0.2.0",
+    note = "Use metadata_v2 types instead"
+)]
 pub struct UserSecurityEvent {
-    pub id: Uuid,
+    pub id: uuid::Uuid,
     pub event_type: String,
     pub description: String,
     pub ip_address: Option<String>,
     pub user_agent: Option<String>,
-    pub session_id: Option<Uuid>,
-    pub occurred_at: DateTime<Utc>,
+    pub session_id: Option<uuid::Uuid>,
+    pub occurred_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[allow(deprecated)]
 impl MetadataStore {
-    fn permission_to_db_value(permission: SharePermissions) -> &'static str {
-        match permission {
-            SharePermissions::View => "View",
-            SharePermissions::Edit => "Edit",
-            SharePermissions::Admin => "Admin",
-        }
+    /// DEPRECATED: Creates a stub that will panic if used.
+    #[deprecated(
+        since = "0.2.0",
+        note = "MetadataStore::new is no longer available. Use metadata_v2 instead."
+    )]
+    pub fn new(_pool: ()) -> Self {
+        Self { _private: () }
     }
 
-    fn permission_from_db_value(value: &str) -> SharePermissions {
-        match value {
-            "Edit" | "edit" => SharePermissions::Edit,
-            "Admin" | "admin" => SharePermissions::Admin,
-            _ => SharePermissions::View,
-        }
+    fn err<T>() -> anyhow::Result<T> {
+        Err(anyhow::anyhow!(
+            "MetadataStore has been deprecated. Use metadata_v2::CombinedMetadataRepository instead."
+        ))
     }
 
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub async fn create_user(&self, _user: &rustshare_core::domain::User) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    fn parse_replication_state(value: &str) -> Result<ReplicationState> {
-        value.parse().map_err(|error: String| {
-            anyhow::anyhow!("invalid replication state `{value}`: {error}")
-        })
+    pub async fn create_user_session(
+        &self,
+        _session: &rustshare_core::domain::UserSession,
+    ) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    fn parse_replication_job_status(value: &str) -> Result<ReplicationJobStatus> {
-        value.parse().map_err(|error: String| {
-            anyhow::anyhow!("invalid replication job status `{value}`: {error}")
-        })
-    }
-
-    /// Create a new user in the projection table
-    pub async fn create_user(&self, user: &User) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
-            r#"
-            INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            "#,
-        )
-        .bind(user.id)
-        .bind(&user.username)
-        .bind(&user.email)
-        .bind(&user.password_hash)
-        .bind(&user.display_name)
-        .bind(user.is_admin)
-        .bind(user.storage_quota)
-        .bind(user.created_at)
-        .bind(user.updated_at)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Create a new opaque browser session.
-    pub async fn create_user_session(&self, session: &UserSession) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO user_sessions (
-                id,
-                user_id,
-                session_token_hash,
-                expires_at,
-                created_at,
-                last_seen_at,
-                user_agent,
-                ip_address
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            "#,
-        )
-        .bind(session.id)
-        .bind(session.user_id)
-        .bind(&session.session_token_hash)
-        .bind(session.expires_at)
-        .bind(session.created_at)
-        .bind(session.last_seen_at)
-        .bind(&session.user_agent)
-        .bind(&session.ip_address)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Find a browser session by hashed token.
     pub async fn find_user_session_by_token_hash(
         &self,
-        token_hash: &str,
-    ) -> Result<Option<UserSession>> {
-        let row = sqlx::query(
-            r#"
-            SELECT
-                id,
-                user_id,
-                session_token_hash,
-                expires_at,
-                created_at,
-                last_seen_at,
-                user_agent,
-                ip_address
-            FROM user_sessions
-            WHERE session_token_hash = $1
-            "#,
-        )
-        .bind(token_hash)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            Ok(Some(UserSession {
-                id: row.try_get("id")?,
-                user_id: row.try_get("user_id")?,
-                session_token_hash: row.try_get("session_token_hash")?,
-                expires_at: row.try_get("expires_at")?,
-                created_at: row.try_get("created_at")?,
-                last_seen_at: row.try_get("last_seen_at")?,
-                user_agent: row.try_get("user_agent")?,
-                ip_address: row.try_get("ip_address")?,
-            }))
-        } else {
-            Ok(None)
-        }
+        _token_hash: &str,
+    ) -> anyhow::Result<Option<rustshare_core::domain::UserSession>> {
+        Self::err()
     }
 
-    /// Touch session activity for active browser sessions.
-    pub async fn touch_user_session(&self, session_id: Uuid) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE user_sessions
-            SET last_seen_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(session_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+    pub async fn touch_user_session(&self, _session_id: uuid::Uuid) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Delete a browser session by hashed token.
-    pub async fn delete_user_session_by_token_hash(&self, token_hash: &str) -> Result<()> {
-        sqlx::query("DELETE FROM user_sessions WHERE session_token_hash = $1")
-            .bind(token_hash)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
+    pub async fn delete_user_session_by_token_hash(&self, _token_hash: &str) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// List active browser sessions for a user.
-    pub async fn list_user_sessions(&self, user_id: Uuid) -> Result<Vec<UserSession>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT
-                id,
-                user_id,
-                session_token_hash,
-                expires_at,
-                created_at,
-                last_seen_at,
-                user_agent,
-                ip_address
-            FROM user_sessions
-            WHERE user_id = $1
-            ORDER BY last_seen_at DESC
-            "#,
-        )
-        .bind(user_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        rows.into_iter()
-            .map(|row| {
-                Ok(UserSession {
-                    id: row.try_get("id")?,
-                    user_id: row.try_get("user_id")?,
-                    session_token_hash: row.try_get("session_token_hash")?,
-                    expires_at: row.try_get("expires_at")?,
-                    created_at: row.try_get("created_at")?,
-                    last_seen_at: row.try_get("last_seen_at")?,
-                    user_agent: row.try_get("user_agent")?,
-                    ip_address: row.try_get("ip_address")?,
-                })
-            })
-            .collect()
+    pub async fn list_user_sessions(
+        &self,
+        _user_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::UserSession>> {
+        Self::err()
     }
 
-    /// Delete a browser session by session id, scoped to the owning user.
-    pub async fn delete_user_session_by_id(&self, user_id: Uuid, session_id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM user_sessions WHERE user_id = $1 AND id = $2")
-            .bind(user_id)
-            .bind(session_id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
+    pub async fn delete_user_session_by_id(
+        &self,
+        _user_id: uuid::Uuid,
+        _session_id: uuid::Uuid,
+    ) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Create a security event entry for a user account.
     pub async fn create_user_security_event(
         &self,
-        event: UserSecurityEventRecord<'_>,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO user_security_events (
-                id,
-                user_id,
-                event_type,
-                description,
-                ip_address,
-                user_agent,
-                session_id,
-                occurred_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-            "#,
-        )
-        .bind(Uuid::new_v4())
-        .bind(event.user_id)
-        .bind(event.event_type)
-        .bind(event.description)
-        .bind(event.ip_address)
-        .bind(event.user_agent)
-        .bind(event.session_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+        _event: UserSecurityEventRecord<'_>,
+    ) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// List recent security events for a user account.
     pub async fn list_user_security_events(
         &self,
-        user_id: Uuid,
-        limit: i64,
-    ) -> Result<Vec<UserSecurityEvent>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT
-                id,
-                event_type,
-                description,
-                ip_address,
-                user_agent,
-                session_id,
-                occurred_at
-            FROM user_security_events
-            WHERE user_id = $1
-            ORDER BY occurred_at DESC
-            LIMIT $2
-            "#,
-        )
-        .bind(user_id)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
-
-        rows.into_iter()
-            .map(|row| {
-                Ok(UserSecurityEvent {
-                    id: row.try_get("id")?,
-                    event_type: row.try_get("event_type")?,
-                    description: row.try_get("description")?,
-                    ip_address: row.try_get("ip_address")?,
-                    user_agent: row.try_get("user_agent")?,
-                    session_id: row.try_get("session_id")?,
-                    occurred_at: row.try_get("occurred_at")?,
-                })
-            })
-            .collect()
+        _user_id: uuid::Uuid,
+        _limit: i64,
+    ) -> anyhow::Result<Vec<UserSecurityEvent>> {
+        Self::err()
     }
 
-    /// Persist a short-lived OIDC login state.
-    pub async fn create_oidc_login_state(&self, login_state: &OidcLoginState) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO oidc_login_states (
-                state,
-                pkce_verifier,
-                nonce,
-                redirect_to,
-                expires_at,
-                created_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6)
-            "#,
-        )
-        .bind(&login_state.state)
-        .bind(&login_state.pkce_verifier)
-        .bind(&login_state.nonce)
-        .bind(&login_state.redirect_to)
-        .bind(login_state.expires_at)
-        .bind(login_state.created_at)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+    pub async fn create_oidc_login_state(
+        &self,
+        _login_state: &rustshare_core::domain::OidcLoginState,
+    ) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Load an OIDC login state by the opaque state token.
-    pub async fn find_oidc_login_state(&self, state: &str) -> Result<Option<OidcLoginState>> {
-        let row = sqlx::query(
-            r#"
-            SELECT
-                state,
-                pkce_verifier,
-                nonce,
-                redirect_to,
-                expires_at,
-                created_at
-            FROM oidc_login_states
-            WHERE state = $1
-            "#,
-        )
-        .bind(state)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            Ok(Some(OidcLoginState {
-                state: row.try_get("state")?,
-                pkce_verifier: row.try_get("pkce_verifier")?,
-                nonce: row.try_get("nonce")?,
-                redirect_to: row.try_get("redirect_to")?,
-                expires_at: row.try_get("expires_at")?,
-                created_at: row.try_get("created_at")?,
-            }))
-        } else {
-            Ok(None)
-        }
+    pub async fn find_oidc_login_state(
+        &self,
+        _state: &str,
+    ) -> anyhow::Result<Option<rustshare_core::domain::OidcLoginState>> {
+        Self::err()
     }
 
-    /// Delete a consumed or expired OIDC login state.
-    pub async fn delete_oidc_login_state(&self, state: &str) -> Result<()> {
-        sqlx::query("DELETE FROM oidc_login_states WHERE state = $1")
-            .bind(state)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
+    pub async fn delete_oidc_login_state(&self, _state: &str) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Find user by email
-    pub async fn find_user_by_email(&self, email: &str) -> Result<Option<User>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled FROM users WHERE email = $1"#,
-        )
-        .bind(email)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            let user = User {
-                id: row.try_get("id")?,
-                username: row.try_get("username")?,
-                email: row.try_get("email")?,
-                password_hash: row.try_get("password_hash")?,
-                display_name: row.try_get("display_name")?,
-                is_admin: row.try_get("is_admin")?,
-                storage_quota: row.try_get("storage_quota")?,
-                theme: row
-                    .try_get::<String, _>("theme")?
-                    .parse()
-                    .unwrap_or_default(),
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                disabled_at: row.try_get("disabled_at")?,
-                name: row.try_get("name")?,
-                surname: row.try_get("surname")?,
-                avatar_path: row.try_get("avatar_path")?,
-                email_sharing_enabled: row.try_get("email_sharing_enabled")?,
-            };
-            Ok(Some(user))
-        } else {
-            Ok(None)
-        }
+    pub async fn find_user_by_email(
+        &self,
+        _email: &str,
+    ) -> anyhow::Result<Option<rustshare_core::domain::User>> {
+        Self::err()
     }
 
-    /// Find user by username.
-    pub async fn find_user_by_username(&self, username: &str) -> Result<Option<User>> {
-        let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled FROM users WHERE username = $1"#,
-        )
-        .bind(username)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            Ok(Some(User {
-                id: row.try_get("id")?,
-                username: row.try_get("username")?,
-                email: row.try_get("email")?,
-                password_hash: row.try_get("password_hash")?,
-                display_name: row.try_get("display_name")?,
-                is_admin: row.try_get("is_admin")?,
-                storage_quota: row.try_get("storage_quota")?,
-                theme: row.try_get("theme")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                disabled_at: row.try_get("disabled_at")?,
-                name: row.try_get("name")?,
-                surname: row.try_get("surname")?,
-                avatar_path: row.try_get("avatar_path")?,
-                email_sharing_enabled: row.try_get("email_sharing_enabled")?,
-            }))
-        } else {
-            Ok(None)
-        }
+    pub async fn find_user_by_username(
+        &self,
+        _username: &str,
+    ) -> anyhow::Result<Option<rustshare_core::domain::User>> {
+        Self::err()
     }
 
-    /// Find user by ID
-    pub async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled FROM users WHERE id = $1"#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            let user = User {
-                id: row.try_get("id")?,
-                username: row.try_get("username")?,
-                email: row.try_get("email")?,
-                password_hash: row.try_get("password_hash")?,
-                display_name: row.try_get("display_name")?,
-                is_admin: row.try_get("is_admin")?,
-                storage_quota: row.try_get("storage_quota")?,
-                theme: row
-                    .try_get::<String, _>("theme")?
-                    .parse()
-                    .unwrap_or_default(),
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                disabled_at: row.try_get("disabled_at")?,
-                name: row.try_get("name")?,
-                surname: row.try_get("surname")?,
-                avatar_path: row.try_get("avatar_path")?,
-                email_sharing_enabled: row.try_get("email_sharing_enabled")?,
-            };
-            Ok(Some(user))
-        } else {
-            Ok(None)
-        }
+    pub async fn find_user_by_id(
+        &self,
+        _id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::User>> {
+        Self::err()
     }
 
-    /// Update a user's password hash and bump the updated timestamp.
-    pub async fn update_user_password_hash(&self, id: Uuid, password_hash: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE users
-            SET password_hash = $2, updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .bind(password_hash)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+    pub async fn update_user_password_hash(
+        &self,
+        _id: uuid::Uuid,
+        _password_hash: &str,
+    ) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Check if any users exist (for admin bootstrapping)
-    pub async fn has_users(&self) -> Result<bool> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query("SELECT COUNT(*) as count FROM users")
-            .fetch_one(&self.pool)
-            .await?;
-
-        let count: i64 = row.try_get("count")?;
-        Ok(count > 0)
+    pub async fn has_users(&self) -> anyhow::Result<bool> {
+        Self::err()
     }
 
-    /// Update user's theme preference
-    pub async fn update_user_theme(&self, user_id: Uuid, theme: &str) -> Result<()> {
-        sqlx::query(r#"UPDATE users SET theme = $1, updated_at = NOW() WHERE id = $2"#)
-            .bind(theme)
-            .bind(user_id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
+    pub async fn update_user_theme(&self, _user_id: uuid::Uuid, _theme: &str) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Update user profile fields
     pub async fn update_user_profile(
         &self,
-        user_id: Uuid,
-        name: Option<&str>,
-        surname: Option<&str>,
-        display_name: Option<&str>,
-        email_sharing_enabled: Option<bool>,
-        theme: Option<String>,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE users SET
-                name = COALESCE($1, name),
-                surname = COALESCE($2, surname),
-                display_name = COALESCE($3, display_name),
-                email_sharing_enabled = COALESCE($4, email_sharing_enabled),
-                theme = COALESCE($5, theme),
-                updated_at = NOW()
-            WHERE id = $6
-            "#,
-        )
-        .bind(name)
-        .bind(surname)
-        .bind(display_name)
-        .bind(email_sharing_enabled)
-        .bind(theme)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+        _user_id: uuid::Uuid,
+        _name: Option<&str>,
+        _surname: Option<&str>,
+        _display_name: Option<&str>,
+        _email_sharing_enabled: Option<bool>,
+        _theme: Option<String>,
+    ) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Update user's avatar path
     pub async fn update_user_avatar(
         &self,
-        user_id: Uuid,
-        avatar_path: Option<&str>,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE users
-            SET avatar_path = $1,
-                updated_at = NOW()
-            WHERE id = $2
-            "#,
-        )
-        .bind(avatar_path)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+        _user_id: uuid::Uuid,
+        _avatar_path: Option<&str>,
+    ) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Create a new file in the projection table
-    pub async fn create_file(&self, file: &File) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
-            r#"
-            INSERT INTO files (id, name, path, size, mime_type, content_hash, storage_key, owner_id, parent_folder_id, current_version, created_at, modified_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            "#,
-        )
-        .bind(file.id)
-        .bind(&file.name)
-        .bind(&file.path)
-        .bind(file.size)
-        .bind(&file.mime_type)
-        .bind(&file.content_hash)
-        .bind(file.storage_key())
-        .bind(file.owner_id)
-        .bind(file.parent_folder_id)
-        .bind(file.current_version)
-        .bind(file.created_at)
-        .bind(file.modified_at)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+    pub async fn create_file(&self, _file: &rustshare_core::domain::File) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Find file by ID
-    pub async fn find_file_by_id(&self, id: Uuid) -> Result<Option<File>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query(
-            r#"SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at FROM files WHERE id = $1"#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            let file = File {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                size: row.try_get("size")?,
-                mime_type: row.try_get("mime_type")?,
-                content_hash: row.try_get("content_hash")?,
-                owner_id: row.try_get("owner_id")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                current_version: row.try_get("current_version")?,
-                created_at: row.try_get("created_at")?,
-                modified_at: row.try_get("modified_at")?,
-            };
-            Ok(Some(file))
-        } else {
-            Ok(None)
-        }
+    pub async fn find_file_by_id(
+        &self,
+        _id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::File>> {
+        Self::err()
     }
 
-    /// Find a file by its canonical path for a specific owner.
-    pub async fn find_file_by_path(&self, path: &str, owner_id: Uuid) -> Result<Option<File>> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at
-            FROM files
-            WHERE path = $1 AND owner_id = $2
-            "#,
-        )
-        .bind(path)
-        .bind(owner_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            let file = File {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                size: row.try_get("size")?,
-                mime_type: row.try_get("mime_type")?,
-                content_hash: row.try_get("content_hash")?,
-                owner_id: row.try_get("owner_id")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                current_version: row.try_get("current_version")?,
-                created_at: row.try_get("created_at")?,
-                modified_at: row.try_get("modified_at")?,
-            };
-            Ok(Some(file))
-        } else {
-            Ok(None)
-        }
+    pub async fn find_file_by_path(
+        &self,
+        _path: &str,
+        _owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::File>> {
+        Self::err()
     }
 
-    /// Update a file in the projection table
-    pub async fn update_file(&self, file: &File) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
-            r#"
-            UPDATE files
-            SET name = $2, path = $3, size = $4, mime_type = $5, content_hash = $6,
-                storage_key = $7, parent_folder_id = $8, current_version = $9, modified_at = $10
-            WHERE id = $1
-            "#,
-        )
-        .bind(file.id)
-        .bind(&file.name)
-        .bind(&file.path)
-        .bind(file.size)
-        .bind(&file.mime_type)
-        .bind(&file.content_hash)
-        .bind(file.storage_key())
-        .bind(file.parent_folder_id)
-        .bind(file.current_version)
-        .bind(file.modified_at)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+    pub async fn update_file(&self, _file: &rustshare_core::domain::File) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Delete a file from the projection table
-    pub async fn delete_file(&self, id: Uuid) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query("DELETE FROM files WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
+    pub async fn delete_file(&self, _id: uuid::Uuid) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// List files with optional filters
-    ///
-    /// Returns files owned by the specified user, optionally filtered by parent folder.
-    /// Pass `None` for parent_id to get files in the root directory (no parent).
-    pub async fn list_files(&self, parent_id: Option<Uuid>, owner_id: Uuid) -> Result<Vec<File>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let rows = sqlx::query(
-            r#"
-            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at
-            FROM files
-            WHERE owner_id = $1 AND (parent_folder_id = $2 OR ($2 IS NULL AND parent_folder_id IS NULL))
-            ORDER BY name ASC
-            "#,
-        )
-        .bind(owner_id)
-        .bind(parent_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut files = Vec::new();
-        for row in rows {
-            let file = File {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                size: row.try_get("size")?,
-                mime_type: row.try_get("mime_type")?,
-                content_hash: row.try_get("content_hash")?,
-                owner_id: row.try_get("owner_id")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                current_version: row.try_get("current_version")?,
-                created_at: row.try_get("created_at")?,
-                modified_at: row.try_get("modified_at")?,
-            };
-            files.push(file);
-        }
-
-        Ok(files)
+    pub async fn list_files(
+        &self,
+        _parent_id: Option<uuid::Uuid>,
+        _owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::File>> {
+        Self::err()
     }
 
-    /// Create a new file version in the projection table
-    pub async fn create_file_version(&self, version: &FileVersion) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
-            r#"
-            INSERT INTO file_versions (
-                id,
-                file_id,
-                version_number,
-                content_hash,
-                storage_key,
-                size,
-                replication_state,
-                created_by,
-                created_at,
-                change_description
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            "#,
-        )
-        .bind(version.id)
-        .bind(version.file_id)
-        .bind(version.version_number)
-        .bind(&version.content_hash)
-        .bind(version.storage_key())
-        .bind(version.size)
-        .bind(version.replication_state.as_str())
-        .bind(version.created_by)
-        .bind(version.created_at)
-        .bind(&version.change_description)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+    pub async fn create_file_version(
+        &self,
+        _version: &rustshare_core::domain::FileVersion,
+    ) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// List all versions for a file, ordered by version number descending (newest first)
-    pub async fn list_file_versions(&self, file_id: Uuid) -> Result<Vec<FileVersion>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let rows = sqlx::query(
-            r#"
-            SELECT id, file_id, version_number, content_hash, size, replication_state, created_by, created_at, change_description
-            FROM file_versions
-            WHERE file_id = $1
-            ORDER BY version_number DESC
-            "#,
-        )
-        .bind(file_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut versions = Vec::new();
-        for row in rows {
-            let replication_state: String = row.try_get("replication_state")?;
-            let version = FileVersion {
-                id: row.try_get("id")?,
-                file_id: row.try_get("file_id")?,
-                version_number: row.try_get("version_number")?,
-                content_hash: row.try_get("content_hash")?,
-                size: row.try_get("size")?,
-                replication_state: Self::parse_replication_state(&replication_state)?,
-                created_by: row.try_get("created_by")?,
-                created_at: row.try_get("created_at")?,
-                change_description: row.try_get("change_description")?,
-            };
-            versions.push(version);
-        }
-
-        Ok(versions)
+    pub async fn list_file_versions(
+        &self,
+        _file_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::FileVersion>> {
+        Self::err()
     }
 
-    /// Find a specific version of a file
     pub async fn find_file_version(
         &self,
-        file_id: Uuid,
-        version: i32,
-    ) -> Result<Option<FileVersion>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query(
-            r#"
-            SELECT id, file_id, version_number, content_hash, size, replication_state, created_by, created_at, change_description
-            FROM file_versions
-            WHERE file_id = $1 AND version_number = $2
-            "#,
-        )
-        .bind(file_id)
-        .bind(version)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            let replication_state: String = row.try_get("replication_state")?;
-            let version = FileVersion {
-                id: row.try_get("id")?,
-                file_id: row.try_get("file_id")?,
-                version_number: row.try_get("version_number")?,
-                content_hash: row.try_get("content_hash")?,
-                size: row.try_get("size")?,
-                replication_state: Self::parse_replication_state(&replication_state)?,
-                created_by: row.try_get("created_by")?,
-                created_at: row.try_get("created_at")?,
-                change_description: row.try_get("change_description")?,
-            };
-            Ok(Some(version))
-        } else {
-            Ok(None)
-        }
+        _file_id: uuid::Uuid,
+        _version: i32,
+    ) -> anyhow::Result<Option<rustshare_core::domain::FileVersion>> {
+        Self::err()
     }
 
-    /// Count enabled replication targets.
-    pub async fn count_enabled_replication_targets(&self) -> Result<i64> {
-        let row =
-            sqlx::query("SELECT COUNT(*) AS count FROM replication_targets WHERE enabled = TRUE")
-                .fetch_one(&self.pool)
-                .await?;
-
-        row.try_get("count").map_err(Into::into)
+    pub async fn count_enabled_replication_targets(&self) -> anyhow::Result<i64> {
+        Self::err()
     }
 
-    /// Create a durable replication job for asynchronous workers.
-    pub async fn create_replication_job(&self, job: &ReplicationJob) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO replication_jobs (
-                id,
-                file_id,
-                file_version_id,
-                storage_key,
-                status,
-                attempt_count,
-                next_attempt_at,
-                last_attempt_at,
-                leased_at,
-                lease_token,
-                last_error,
-                created_at,
-                updated_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-            "#,
-        )
-        .bind(job.id)
-        .bind(job.file_id)
-        .bind(job.file_version_id)
-        .bind(&job.storage_key)
-        .bind(job.status.as_str())
-        .bind(job.attempt_count)
-        .bind(job.next_attempt_at)
-        .bind(job.last_attempt_at)
-        .bind(job.leased_at)
-        .bind(job.lease_token)
-        .bind(&job.last_error)
-        .bind(job.created_at)
-        .bind(job.updated_at)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+    pub async fn create_replication_job(
+        &self,
+        _job: &rustshare_core::domain::ReplicationJob,
+    ) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Update replication state after queueing or worker progress.
     pub async fn update_file_version_replication_state(
         &self,
-        version_id: Uuid,
-        state: ReplicationState,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE file_versions
-            SET replication_state = $2
-            WHERE id = $1
-            "#,
-        )
-        .bind(version_id)
-        .bind(state.as_str())
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+        _version_id: uuid::Uuid,
+        _state: rustshare_core::domain::ReplicationState,
+    ) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// List enabled replication targets that workers should copy into.
-    pub async fn list_enabled_replication_targets(&self) -> Result<Vec<ReplicationTarget>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT
-                id,
-                name,
-                destination_type,
-                endpoint,
-                bucket,
-                region,
-                base_path,
-                is_required,
-                enabled,
-                auth_config,
-                health_status,
-                last_healthy_at,
-                last_error,
-                created_at,
-                updated_at
-            FROM replication_targets
-            WHERE enabled = TRUE
-            ORDER BY created_at ASC
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut targets = Vec::with_capacity(rows.len());
-        for row in rows {
-            targets.push(ReplicationTarget {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                destination_type: row.try_get("destination_type")?,
-                endpoint: row.try_get("endpoint")?,
-                bucket: row.try_get("bucket")?,
-                region: row.try_get("region")?,
-                base_path: row.try_get("base_path")?,
-                is_required: row.try_get("is_required")?,
-                enabled: row.try_get("enabled")?,
-                auth_config: row.try_get("auth_config")?,
-                health_status: row.try_get("health_status")?,
-                last_healthy_at: row.try_get("last_healthy_at")?,
-                last_error: row.try_get("last_error")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-            });
-        }
-
-        Ok(targets)
-    }
-
-    /// Lease due replication jobs for background processing.
-    pub async fn lease_replication_jobs(
+    pub async fn list_enabled_replication_targets(
         &self,
-        limit: i64,
-        lease_timeout_secs: i64,
-        lease_token: Uuid,
-    ) -> Result<Vec<ReplicationJob>> {
-        let rows = sqlx::query(
-            r#"
-            WITH candidates AS (
-                SELECT id
-                FROM replication_jobs
-                WHERE status IN ('queued', 'retrying')
-                  AND next_attempt_at <= NOW()
-                  AND (
-                    leased_at IS NULL
-                    OR leased_at < NOW() - make_interval(secs => $2)
-                  )
-                ORDER BY next_attempt_at ASC, created_at ASC
-                LIMIT $1
-                FOR UPDATE SKIP LOCKED
-            )
-            UPDATE replication_jobs
-            SET
-                status = 'syncing',
-                leased_at = NOW(),
-                lease_token = $3,
-                last_attempt_at = NOW(),
-                attempt_count = attempt_count + 1,
-                updated_at = NOW()
-            WHERE id IN (SELECT id FROM candidates)
-            RETURNING
-                id,
-                file_id,
-                file_version_id,
-                storage_key,
-                status,
-                attempt_count,
-                next_attempt_at,
-                last_attempt_at,
-                leased_at,
-                lease_token,
-                last_error,
-                created_at,
-                updated_at
-            "#,
-        )
-        .bind(limit)
-        .bind(lease_timeout_secs)
-        .bind(lease_token)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut jobs = Vec::with_capacity(rows.len());
-        for row in rows {
-            let status: String = row.try_get("status")?;
-            jobs.push(ReplicationJob {
-                id: row.try_get("id")?,
-                file_id: row.try_get("file_id")?,
-                file_version_id: row.try_get("file_version_id")?,
-                storage_key: row.try_get("storage_key")?,
-                status: Self::parse_replication_job_status(&status)?,
-                attempt_count: row.try_get("attempt_count")?,
-                next_attempt_at: row.try_get("next_attempt_at")?,
-                last_attempt_at: row.try_get("last_attempt_at")?,
-                leased_at: row.try_get("leased_at")?,
-                lease_token: row.try_get("lease_token")?,
-                last_error: row.try_get("last_error")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-            });
-        }
-
-        Ok(jobs)
+    ) -> anyhow::Result<Vec<rustshare_core::domain::ReplicationTarget>> {
+        Self::err()
     }
 
-    /// Mark a replication job as completed and release its lease.
-    pub async fn mark_replication_job_completed(&self, job_id: Uuid) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE replication_jobs
-            SET
-                status = 'completed',
-                leased_at = NULL,
-                lease_token = NULL,
-                last_error = NULL,
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(job_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Mark a replication job for retry after a transient failure.
-    pub async fn mark_replication_job_retrying(
+    pub async fn create_replication_target(
         &self,
-        job_id: Uuid,
-        last_error: &str,
-        next_attempt_at: DateTime<Utc>,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE replication_jobs
-            SET
-                status = 'retrying',
-                leased_at = NULL,
-                lease_token = NULL,
-                last_error = $2,
-                next_attempt_at = $3,
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(job_id)
-        .bind(last_error)
-        .bind(next_attempt_at)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+        _target: &rustshare_core::domain::ReplicationTarget,
+    ) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Mark a replication job as terminally failed.
-    pub async fn mark_replication_job_failed(&self, job_id: Uuid, last_error: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE replication_jobs
-            SET
-                status = 'failed',
-                leased_at = NULL,
-                lease_token = NULL,
-                last_error = $2,
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(job_id)
-        .bind(last_error)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+    pub async fn list_replication_attempts(
+        &self,
+        _job_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<ReplicationAttemptRecord<'_>>> {
+        Self::err()
     }
 
-    /// Record the result of a single target replication attempt.
     pub async fn create_replication_attempt(
         &self,
-        attempt: ReplicationAttemptRecord<'_>,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO replication_attempts (
-                id,
-                job_id,
-                target_id,
-                attempt_number,
-                status,
-                error_message,
-                started_at,
-                completed_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            "#,
-        )
-        .bind(Uuid::new_v4())
-        .bind(attempt.job_id)
-        .bind(attempt.target_id)
-        .bind(attempt.attempt_number)
-        .bind(attempt.status)
-        .bind(attempt.error_message)
-        .bind(attempt.started_at)
-        .bind(attempt.completed_at)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+        _attempt: ReplicationAttemptRecord<'_>,
+    ) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Update target health after a replication attempt.
-    pub async fn update_replication_target_health(
+    pub async fn acquire_replication_job_lease(
         &self,
-        target_id: Uuid,
-        health_status: &str,
-        last_error: Option<&str>,
-        last_healthy_at: Option<DateTime<Utc>>,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE replication_targets
-            SET
-                health_status = $2,
-                last_error = $3,
-                last_healthy_at = COALESCE($4, last_healthy_at),
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(target_id)
-        .bind(health_status)
-        .bind(last_error)
-        .bind(last_healthy_at)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+        _batch_size: i32,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::ReplicationJob>> {
+        Self::err()
     }
 
-    /// Create a new folder in the projection table
-    pub async fn create_folder(&self, folder: &Folder) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
-            r#"
-            INSERT INTO folders (id, name, path, parent_folder_id, owner_id, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#,
-        )
-        .bind(folder.id)
-        .bind(&folder.name)
-        .bind(&folder.path)
-        .bind(folder.parent_folder_id)
-        .bind(folder.owner_id)
-        .bind(folder.created_at)
-        .bind(folder.updated_at)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+    pub async fn update_replication_job(
+        &self,
+        _job: &rustshare_core::domain::ReplicationJob,
+    ) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Find folder by ID
-    pub async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<Folder>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query(
-            r#"
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
-            FROM folders
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            let folder = Folder {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                owner_id: row.try_get("owner_id")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-            };
-            Ok(Some(folder))
-        } else {
-            Ok(None)
-        }
+    pub async fn create_folder(
+        &self,
+        _folder: &rustshare_core::domain::Folder,
+    ) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Find a folder by its canonical path for a specific owner.
-    pub async fn find_folder_by_path(&self, path: &str, owner_id: Uuid) -> Result<Option<Folder>> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
-            FROM folders
-            WHERE path = $1 AND owner_id = $2
-            "#,
-        )
-        .bind(path)
-        .bind(owner_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            let folder = Folder {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                owner_id: row.try_get("owner_id")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-            };
-            Ok(Some(folder))
-        } else {
-            Ok(None)
-        }
+    pub async fn find_folder_by_id(
+        &self,
+        _id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
+        Self::err()
     }
 
-    /// Update a folder in the projection table
-    pub async fn update_folder(&self, folder: &Folder) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
-            r#"
-            UPDATE folders
-            SET name = $2, path = $3, parent_folder_id = $4, updated_at = $5
-            WHERE id = $1
-            "#,
-        )
-        .bind(folder.id)
-        .bind(&folder.name)
-        .bind(&folder.path)
-        .bind(folder.parent_folder_id)
-        .bind(folder.updated_at)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+    pub async fn find_folder_by_path(
+        &self,
+        _path: &str,
+        _owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
+        Self::err()
     }
 
-    /// Delete a folder from the projection table
-    pub async fn delete_folder(&self, id: Uuid) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query("DELETE FROM folders WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
+    pub async fn update_folder(
+        &self,
+        _folder: &rustshare_core::domain::Folder,
+    ) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// List folders with optional filters
-    ///
-    /// Returns folders owned by the specified user, optionally filtered by parent folder.
-    /// Pass `None` for parent_id to get folders in the root directory (no parent).
+    pub async fn delete_folder(&self, _id: uuid::Uuid) -> anyhow::Result<()> {
+        Self::err()
+    }
+
     pub async fn list_folders(
         &self,
-        parent_id: Option<Uuid>,
-        owner_id: Uuid,
-    ) -> Result<Vec<Folder>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let rows = sqlx::query(
-            r#"
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
-            FROM folders
-            WHERE owner_id = $1 AND (parent_folder_id = $2 OR ($2 IS NULL AND parent_folder_id IS NULL))
-            ORDER BY name ASC
-            "#,
-        )
-        .bind(owner_id)
-        .bind(parent_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut folders = Vec::new();
-        for row in rows {
-            let folder = Folder {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                owner_id: row.try_get("owner_id")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-            };
-            folders.push(folder);
-        }
-
-        Ok(folders)
+        _parent_id: Option<uuid::Uuid>,
+        _owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
+        Self::err()
     }
 
-    /// Find all descendant folders of a given folder using recursive CTE
-    ///
-    /// Returns all folders in the subtree rooted at the specified folder,
-    /// including the folder itself and all its direct and indirect children.
-    pub async fn find_descendant_folders(&self, folder_id: Uuid) -> Result<Vec<Folder>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let rows = sqlx::query(
-            r#"
-            WITH RECURSIVE folder_tree AS (
-                -- Base case: start with the specified folder
-                SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
-                FROM folders
-                WHERE id = $1
-
-                UNION ALL
-
-                -- Recursive case: get all direct children
-                SELECT f.id, f.name, f.path, f.parent_folder_id, f.owner_id, f.created_at, f.updated_at
-                FROM folders f
-                INNER JOIN folder_tree ft ON f.parent_folder_id = ft.id
-            )
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
-            FROM folder_tree
-            ORDER BY path ASC
-            "#,
-        )
-        .bind(folder_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut folders = Vec::new();
-        for row in rows {
-            let folder = Folder {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                owner_id: row.try_get("owner_id")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-            };
-            folders.push(folder);
-        }
-
-        Ok(folders)
-    }
-
-    /// Create a new share link for a file
-    pub async fn create_share(&self, share: &Share) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO shares (id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            "#,
-        )
-        .bind(share.id)
-        .bind(share.file_id)
-        .bind(share.folder_id)
-        .bind(&share.share_token)
-        .bind(share.recipient_user_id)
-        .bind(share.created_by)
-        .bind(Self::permission_to_db_value(share.permissions))
-        .bind(&share.password_hash)
-        .bind(share.expires_at)
-        .bind(share.upload_only)
-        .bind(share.access_count)
-        .bind(share.created_at)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Find a share by its token
-    pub async fn get_share_by_token(&self, token: &str) -> Result<Option<Share>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query(
-            r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at
-            FROM shares
-            WHERE share_token = $1
-            "#,
-        )
-        .bind(token)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            let permissions_str: String = row.try_get("permissions")?;
-            let permissions = Self::permission_from_db_value(&permissions_str);
-
-            let share = Share {
-                id: row.try_get("id")?,
-                file_id: row.try_get("file_id")?,
-                folder_id: row.try_get("folder_id")?,
-                share_token: row.try_get("share_token")?,
-                recipient_user_id: row.try_get("recipient_user_id")?,
-                created_by: row.try_get("created_by")?,
-                permissions,
-                password_hash: row.try_get("password_hash")?,
-                expires_at: row.try_get("expires_at")?,
-                upload_only: row.try_get("upload_only")?,
-                access_count: row.try_get("access_count")?,
-                created_at: row.try_get("created_at")?,
-                revoked_at: row.try_get("revoked_at")?,
-            };
-            Ok(Some(share))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Find a share by ID
-    pub async fn get_share(&self, share_id: Uuid) -> Result<Option<Share>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query(
-            r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at
-            FROM shares
-            WHERE id = $1
-            "#,
-        )
-        .bind(share_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            let permissions_str: String = row.try_get("permissions")?;
-            let permissions = Self::permission_from_db_value(&permissions_str);
-
-            let share = Share {
-                id: row.try_get("id")?,
-                file_id: row.try_get("file_id")?,
-                folder_id: row.try_get("folder_id")?,
-                share_token: row.try_get("share_token")?,
-                recipient_user_id: row.try_get("recipient_user_id")?,
-                created_by: row.try_get("created_by")?,
-                permissions,
-                password_hash: row.try_get("password_hash")?,
-                expires_at: row.try_get("expires_at")?,
-                upload_only: row.try_get("upload_only")?,
-                access_count: row.try_get("access_count")?,
-                created_at: row.try_get("created_at")?,
-                revoked_at: row.try_get("revoked_at")?,
-            };
-            Ok(Some(share))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Get all active (non-revoked) shares for a file
-    pub async fn get_file_shares(&self, file_id: Uuid) -> Result<Vec<Share>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let rows = sqlx::query(
-            r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at
-            FROM shares
-            WHERE file_id = $1 AND revoked_at IS NULL
-            ORDER BY created_at DESC
-            "#,
-        )
-        .bind(file_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut shares = Vec::new();
-        for row in rows {
-            let permissions_str: String = row.try_get("permissions")?;
-            let permissions = Self::permission_from_db_value(&permissions_str);
-
-            let share = Share {
-                id: row.try_get("id")?,
-                file_id: row.try_get("file_id")?,
-                folder_id: row.try_get("folder_id")?,
-                share_token: row.try_get("share_token")?,
-                recipient_user_id: row.try_get("recipient_user_id")?,
-                created_by: row.try_get("created_by")?,
-                permissions,
-                password_hash: row.try_get("password_hash")?,
-                expires_at: row.try_get("expires_at")?,
-                upload_only: row.try_get("upload_only")?,
-                access_count: row.try_get("access_count")?,
-                created_at: row.try_get("created_at")?,
-                revoked_at: row.try_get("revoked_at")?,
-            };
-            shares.push(share);
-        }
-
-        Ok(shares)
-    }
-
-    /// Get all active (non-revoked) shares for a folder.
-    pub async fn get_folder_shares(&self, folder_id: Uuid) -> Result<Vec<Share>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at
-            FROM shares
-            WHERE folder_id = $1 AND revoked_at IS NULL
-            ORDER BY created_at DESC
-            "#,
-        )
-        .bind(folder_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut shares = Vec::new();
-        for row in rows {
-            let permissions_str: String = row.try_get("permissions")?;
-            let permissions = Self::permission_from_db_value(&permissions_str);
-
-            shares.push(Share {
-                id: row.try_get("id")?,
-                file_id: row.try_get("file_id")?,
-                folder_id: row.try_get("folder_id")?,
-                share_token: row.try_get("share_token")?,
-                recipient_user_id: row.try_get("recipient_user_id")?,
-                created_by: row.try_get("created_by")?,
-                permissions,
-                password_hash: row.try_get("password_hash")?,
-                expires_at: row.try_get("expires_at")?,
-                upload_only: row.try_get("upload_only")?,
-                access_count: row.try_get("access_count")?,
-                created_at: row.try_get("created_at")?,
-                revoked_at: row.try_get("revoked_at")?,
-            });
-        }
-
-        Ok(shares)
-    }
-
-    /// Get all active public shares created by a specific user, with file names.
-    pub async fn get_user_public_shares(&self, user_id: Uuid) -> Result<Vec<OwnedPublicShare>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT
-                s.id,
-                s.file_id,
-                s.folder_id,
-                s.share_token,
-                s.recipient_user_id,
-                s.created_by,
-                s.permissions,
-                s.password_hash,
-                s.expires_at,
-                s.upload_only,
-                s.access_count,
-                s.created_at,
-                s.revoked_at,
-                COALESCE(s.file_id, s.folder_id) AS resource_id,
-                CASE
-                    WHEN s.file_id IS NOT NULL THEN 'file'
-                    ELSE 'folder'
-                END AS resource_type,
-                COALESCE(f.name, fo.name) AS resource_name
-            FROM shares s
-            LEFT JOIN files f ON f.id = s.file_id
-            LEFT JOIN folders fo ON fo.id = s.folder_id
-            WHERE s.created_by = $1
-              AND s.recipient_user_id IS NULL
-              AND s.revoked_at IS NULL
-            ORDER BY s.created_at DESC
-            "#,
-        )
-        .bind(user_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut shares = Vec::with_capacity(rows.len());
-        for row in rows {
-            let permissions_str: String = row.try_get("permissions")?;
-            let permissions = Self::permission_from_db_value(&permissions_str);
-
-            shares.push(OwnedPublicShare {
-                share: Share {
-                    id: row.try_get("id")?,
-                    file_id: row.try_get("file_id")?,
-                    folder_id: row.try_get("folder_id")?,
-                    share_token: row.try_get("share_token")?,
-                    recipient_user_id: row.try_get("recipient_user_id")?,
-                    created_by: row.try_get("created_by")?,
-                    permissions,
-                    password_hash: row.try_get("password_hash")?,
-                    expires_at: row.try_get("expires_at")?,
-                    upload_only: row.try_get("upload_only")?,
-                    access_count: row.try_get("access_count")?,
-                    created_at: row.try_get("created_at")?,
-                    revoked_at: row.try_get("revoked_at")?,
-                },
-                resource_id: row.try_get("resource_id")?,
-                resource_type: row.try_get("resource_type")?,
-                resource_name: row.try_get("resource_name")?,
-            });
-        }
-
-        Ok(shares)
-    }
-
-    /// Get access-log entries for a public share owned by a specific user.
-    pub async fn get_public_share_access_log(
+    pub async fn find_descendant_folders(
         &self,
-        share_id: Uuid,
-        owner_id: Uuid,
-        limit: i64,
-    ) -> Result<Vec<PublicShareAccessLogEntry>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT
-                sal.accessed_at,
-                sal.action,
-                sal.success,
-                sal.ip_address,
-                sal.user_agent,
-                sal.actor_type,
-                sal.actor_label,
-                sal.share_session_id,
-                sal.share_session_subject
-            FROM share_access_log sal
-            INNER JOIN shares s ON s.id = sal.share_id
-            WHERE sal.share_id = $1
-              AND s.created_by = $2
-              AND s.recipient_user_id IS NULL
-            ORDER BY sal.accessed_at DESC
-            LIMIT $3
-            "#,
-        )
-        .bind(share_id)
-        .bind(owner_id)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
-
-        rows.into_iter()
-            .map(|row| {
-                Ok(PublicShareAccessLogEntry {
-                    accessed_at: row.try_get("accessed_at")?,
-                    action: row.try_get("action")?,
-                    success: row.try_get("success")?,
-                    ip_address: row.try_get("ip_address")?,
-                    user_agent: row.try_get("user_agent")?,
-                    actor_type: row.try_get("actor_type")?,
-                    actor_label: row.try_get("actor_label")?,
-                    share_session_id: row.try_get("share_session_id")?,
-                    share_session_subject: row.try_get("share_session_subject")?,
-                })
-            })
-            .collect()
+        _folder_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
+        Self::err()
     }
 
-    /// Update a share's password and expiration
-    pub async fn update_share(&self, share: &Share) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
-            r#"
-            UPDATE shares
-            SET password_hash = $2, expires_at = $3
-            WHERE id = $1
-            "#,
-        )
-        .bind(share.id)
-        .bind(&share.password_hash)
-        .bind(share.expires_at)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+    pub async fn create_share(&self, _share: &rustshare_core::domain::Share) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    /// Revoke a share link (soft delete)
-    pub async fn revoke_share(&self, share_id: Uuid) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
-            r#"
-            UPDATE shares
-            SET revoked_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(share_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+    pub async fn get_share(
+        &self,
+        _id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::Share>> {
+        Self::err()
     }
 
-    /// Increment share access count and update last_accessed_at
-    pub async fn increment_share_access(&self, share_id: Uuid) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
-            r#"
-            UPDATE shares
-            SET access_count = access_count + 1, last_accessed_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(share_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+    pub async fn get_share_by_token(
+        &self,
+        _token: &str,
+    ) -> anyhow::Result<Option<rustshare_core::domain::Share>> {
+        Self::err()
     }
 
-    /// Log a share access attempt
-    pub async fn log_share_access(&self, entry: ShareAccessLogEntry) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        // Validate IP address format before storage
-        let validated_ip = entry
-            .ip_address
-            .and_then(|ip| ip.parse::<std::net::IpAddr>().ok().map(|_| ip));
-
-        sqlx::query(
-            r#"
-            INSERT INTO share_access_log (
-                share_id, ip_address, user_agent, action, success,
-                actor_type, actor_label, share_session_id, share_session_subject
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            "#,
-        )
-        .bind(entry.share_id)
-        .bind(validated_ip)
-        .bind(entry.user_agent)
-        .bind(entry.action)
-        .bind(entry.success)
-        .bind(entry.actor_type)
-        .bind(entry.actor_label)
-        .bind(entry.share_session_id)
-        .bind(entry.share_session_subject)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rustshare_core::domain::{File, FileVersion, Folder, Share, SharePermissions, User};
-
-    async fn setup_test_db() -> PgPool {
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:changeme@localhost:5432/rustshare".to_string()
-        });
-        PgPool::connect(&database_url).await.unwrap()
+    pub async fn get_file_shares(
+        &self,
+        _file_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Share>> {
+        Self::err()
     }
 
-    async fn setup_metadata_store() -> (MetadataStore, PgPool) {
-        let pool = setup_test_db().await;
-        let store = MetadataStore::new(pool.clone());
-        (store, pool)
+    pub async fn get_folder_shares(
+        &self,
+        _folder_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Share>> {
+        Self::err()
     }
 
-    #[tokio::test]
-    #[ignore] // Requires database
-    async fn test_create_and_find_user() {
-        let pool = setup_test_db().await;
-        let store = MetadataStore::new(pool.clone());
-
-        let user = User::new(
-            "testuser".to_string(),
-            "Test User".to_string(),
-            "hash123".to_string(),
-            "test@example.com".to_string(),
-            false,
-            10_737_418_240, // 10GB
-        );
-
-        store.create_user(&user).await.unwrap();
-
-        let found = store.find_user_by_email("test@example.com").await.unwrap();
-        assert!(found.is_some());
-        let found_user = found.unwrap();
-        assert_eq!(found_user.email, "test@example.com");
-        assert_eq!(found_user.username, "testuser");
-
-        // Cleanup
-        sqlx::query("DELETE FROM users WHERE email = $1")
-            .bind("test@example.com")
-            .execute(&pool)
-            .await
-            .unwrap();
+    pub async fn revoke_share(&self, _share_id: uuid::Uuid) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    #[tokio::test]
-    #[ignore] // Requires DATABASE_URL
-    async fn test_file_crud() {
-        let (store, pool) = setup_metadata_store().await;
-
-        // First create a user to own the file
-        let owner = User::new(
-            "fileowner".to_string(),
-            "File Owner".to_string(),
-            "hash456".to_string(),
-            "fileowner@example.com".to_string(),
-            false,
-            10_737_418_240,
-        );
-        store.create_user(&owner).await.unwrap();
-
-        // Create a file
-        let file = File::new(
-            "test-document.pdf".to_string(),
-            "/Documents/test-document.pdf".to_string(),
-            "abc123def456hash".to_string(),
-            2048,
-            "application/pdf".to_string(),
-            None, // No parent folder
-            owner.id,
-        );
-
-        // Test: create_file
-        store.create_file(&file).await.unwrap();
-
-        // Test: find_file_by_id
-        let found = store.find_file_by_id(file.id).await.unwrap();
-        assert!(found.is_some());
-        let found_file = found.unwrap();
-        assert_eq!(found_file.id, file.id);
-        assert_eq!(found_file.name, "test-document.pdf");
-        assert_eq!(found_file.path, "/Documents/test-document.pdf");
-        assert_eq!(found_file.content_hash, "abc123def456hash");
-        assert_eq!(found_file.size, 2048);
-        assert_eq!(found_file.mime_type, "application/pdf");
-        assert_eq!(found_file.owner_id, owner.id);
-        assert_eq!(found_file.current_version, 1);
-
-        // Test: update_file (modify name and size)
-        let mut updated_file = found_file.clone();
-        updated_file.name = "renamed-document.pdf".to_string();
-        updated_file.size = 4096;
-        store.update_file(&updated_file).await.unwrap();
-
-        let found_updated = store.find_file_by_id(file.id).await.unwrap().unwrap();
-        assert_eq!(found_updated.name, "renamed-document.pdf");
-        assert_eq!(found_updated.size, 4096);
-
-        // Test: list_files (with no parent_id filter)
-        let files = store.list_files(None, owner.id).await.unwrap();
-        assert!(!files.is_empty());
-        assert!(files.iter().any(|f| f.id == file.id));
-
-        // Test: delete_file
-        store.delete_file(file.id).await.unwrap();
-        let not_found = store.find_file_by_id(file.id).await.unwrap();
-        assert!(not_found.is_none());
-
-        // Cleanup user
-        sqlx::query("DELETE FROM users WHERE id = $1")
-            .bind(owner.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+    pub async fn update_share(&self, _share: &rustshare_core::domain::Share) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    #[tokio::test]
-    #[ignore] // Requires DATABASE_URL
-    async fn test_file_versions() {
-        let (store, pool) = setup_metadata_store().await;
-
-        // First create a user to own the file
-        let user = User::new(
-            "versionuser".to_string(),
-            "Version User".to_string(),
-            "hash789".to_string(),
-            "versionuser@example.com".to_string(),
-            false,
-            10_737_418_240,
-        );
-        store.create_user(&user).await.unwrap();
-
-        // Create a file
-        let file = File::new(
-            "versioned-doc.txt".to_string(),
-            "/Documents/versioned-doc.txt".to_string(),
-            "hash1".to_string(),
-            100,
-            "text/plain".to_string(),
-            None,
-            user.id,
-        );
-        store.create_file(&file).await.unwrap();
-
-        // Create file version 1
-        let version1 = FileVersion::new(
-            file.id,
-            1,
-            "hash1".to_string(),
-            100,
-            user.id,
-            Some("Initial version".to_string()),
-        );
-        store.create_file_version(&version1).await.unwrap();
-
-        // Create file version 2
-        let version2 = FileVersion::new(
-            file.id,
-            2,
-            "hash2".to_string(),
-            200,
-            user.id,
-            Some("Second version".to_string()),
-        );
-        store.create_file_version(&version2).await.unwrap();
-
-        // Create file version 3
-        let version3 = FileVersion::new(file.id, 3, "hash3".to_string(), 300, user.id, None);
-        store.create_file_version(&version3).await.unwrap();
-
-        // Test: list_file_versions (should be in DESC order: 3, 2, 1)
-        let versions = store.list_file_versions(file.id).await.unwrap();
-        assert_eq!(versions.len(), 3);
-        assert_eq!(versions[0].version_number, 3);
-        assert_eq!(versions[1].version_number, 2);
-        assert_eq!(versions[2].version_number, 1);
-        assert_eq!(versions[0].content_hash, "hash3");
-        assert_eq!(versions[1].content_hash, "hash2");
-        assert_eq!(versions[2].content_hash, "hash1");
-
-        // Test: find_file_version (find version 2)
-        let found_version = store.find_file_version(file.id, 2).await.unwrap();
-        assert!(found_version.is_some());
-        let found = found_version.unwrap();
-        assert_eq!(found.version_number, 2);
-        assert_eq!(found.content_hash, "hash2");
-        assert_eq!(found.size, 200);
-        assert_eq!(found.created_by, user.id);
-        assert_eq!(found.change_description, Some("Second version".to_string()));
-
-        // Test: find_file_version (non-existent version)
-        let not_found = store.find_file_version(file.id, 99).await.unwrap();
-        assert!(not_found.is_none());
-
-        // Cleanup (file_versions will cascade delete with file)
-        sqlx::query("DELETE FROM files WHERE id = $1")
-            .bind(file.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        // Cleanup user
-        sqlx::query("DELETE FROM users WHERE id = $1")
-            .bind(user.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+    pub async fn get_public_share_by_token(
+        &self,
+        _token: &str,
+    ) -> anyhow::Result<Option<OwnedPublicShare>> {
+        Self::err()
     }
 
-    #[tokio::test]
-    #[ignore] // Requires DATABASE_URL
-    async fn test_folder_crud() {
-        let (store, pool) = setup_metadata_store().await;
-
-        // First create a user to own the folders
-        let owner = User::new(
-            "folderowner".to_string(),
-            "Folder Owner".to_string(),
-            "hashabc".to_string(),
-            "folderowner@example.com".to_string(),
-            false,
-            10_737_418_240,
-        );
-        store.create_user(&owner).await.unwrap();
-
-        // Test: create_folder (root folder)
-        let root_folder = Folder::new_root(owner.id);
-        store.create_folder(&root_folder).await.unwrap();
-
-        // Test: find_folder_by_id
-        let found = store.find_folder_by_id(root_folder.id).await.unwrap();
-        assert!(found.is_some());
-        let found_folder = found.unwrap();
-        assert_eq!(found_folder.id, root_folder.id);
-        assert_eq!(found_folder.name, "Root");
-        assert_eq!(found_folder.path, "/");
-        assert_eq!(found_folder.parent_folder_id, None);
-        assert_eq!(found_folder.owner_id, owner.id);
-
-        // Test: create_folder (child folder - Documents)
-        let docs_folder = Folder::new_child(
-            "Documents".to_string(),
-            "/Documents".to_string(),
-            root_folder.id,
-            owner.id,
-        );
-        store.create_folder(&docs_folder).await.unwrap();
-
-        // Test: create_folder (child folder - Photos)
-        let photos_folder = Folder::new_child(
-            "Photos".to_string(),
-            "/Photos".to_string(),
-            root_folder.id,
-            owner.id,
-        );
-        store.create_folder(&photos_folder).await.unwrap();
-
-        // Test: create_folder (nested folder - Documents/Work)
-        let work_folder = Folder::new_child(
-            "Work".to_string(),
-            "/Documents/Work".to_string(),
-            docs_folder.id,
-            owner.id,
-        );
-        store.create_folder(&work_folder).await.unwrap();
-
-        // Test: create_folder (deeply nested folder - Documents/Work/Projects)
-        let projects_folder = Folder::new_child(
-            "Projects".to_string(),
-            "/Documents/Work/Projects".to_string(),
-            work_folder.id,
-            owner.id,
-        );
-        store.create_folder(&projects_folder).await.unwrap();
-
-        // Test: list_folders (root level - should return Documents and Photos)
-        let root_children = store
-            .list_folders(Some(root_folder.id), owner.id)
-            .await
-            .unwrap();
-        assert_eq!(root_children.len(), 2);
-        assert!(root_children.iter().any(|f| f.name == "Documents"));
-        assert!(root_children.iter().any(|f| f.name == "Photos"));
-
-        // Test: list_folders (Documents children - should return Work)
-        let docs_children = store
-            .list_folders(Some(docs_folder.id), owner.id)
-            .await
-            .unwrap();
-        assert_eq!(docs_children.len(), 1);
-        assert_eq!(docs_children[0].name, "Work");
-
-        // Test: list_folders (no parent - should return root folder)
-        let root_folders = store.list_folders(None, owner.id).await.unwrap();
-        assert_eq!(root_folders.len(), 1);
-        assert_eq!(root_folders[0].name, "Root");
-
-        // Test: find_descendant_folders (should find all descendants of Documents)
-        let descendants = store.find_descendant_folders(docs_folder.id).await.unwrap();
-        // Should include: Documents, Work, Projects (3 folders)
-        assert_eq!(descendants.len(), 3);
-        assert!(descendants.iter().any(|f| f.name == "Documents"));
-        assert!(descendants.iter().any(|f| f.name == "Work"));
-        assert!(descendants.iter().any(|f| f.name == "Projects"));
-
-        // Test: find_descendant_folders (leaf folder should only return itself)
-        let leaf_descendants = store
-            .find_descendant_folders(projects_folder.id)
-            .await
-            .unwrap();
-        assert_eq!(leaf_descendants.len(), 1);
-        assert_eq!(leaf_descendants[0].name, "Projects");
-
-        // Test: update_folder (rename Photos to Pictures)
-        let mut updated_photos = photos_folder.clone();
-        updated_photos.name = "Pictures".to_string();
-        updated_photos.path = "/Pictures".to_string();
-        updated_photos.updated_at = chrono::Utc::now();
-        store.update_folder(&updated_photos).await.unwrap();
-
-        let found_updated = store
-            .find_folder_by_id(photos_folder.id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(found_updated.name, "Pictures");
-        assert_eq!(found_updated.path, "/Pictures");
-
-        // Test: delete_folder (delete leaf folder first)
-        store.delete_folder(projects_folder.id).await.unwrap();
-        let not_found = store.find_folder_by_id(projects_folder.id).await.unwrap();
-        assert!(not_found.is_none());
-
-        // Verify descendants updated after deletion
-        let updated_descendants = store.find_descendant_folders(docs_folder.id).await.unwrap();
-        assert_eq!(updated_descendants.len(), 2); // Only Documents and Work remain
-        assert!(!updated_descendants.iter().any(|f| f.name == "Projects"));
-
-        // Cleanup: Delete folders (cascade will handle children)
-        // Delete in order: leaf -> parent
-        sqlx::query("DELETE FROM folders WHERE id = $1")
-            .bind(work_folder.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        sqlx::query("DELETE FROM folders WHERE id = $1")
-            .bind(docs_folder.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        sqlx::query("DELETE FROM folders WHERE id = $1")
-            .bind(photos_folder.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        sqlx::query("DELETE FROM folders WHERE id = $1")
-            .bind(root_folder.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        // Cleanup user
-        sqlx::query("DELETE FROM users WHERE id = $1")
-            .bind(owner.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+    pub async fn log_share_access(&self, _entry: ShareAccessLogEntry) -> anyhow::Result<()> {
+        Self::err()
     }
 
-    #[tokio::test]
-    #[ignore] // Requires DATABASE_URL
-    async fn test_share_crud() {
-        let (store, pool) = setup_metadata_store().await;
-
-        // First create a user to own the file
-        let owner = User::new(
-            "shareowner".to_string(),
-            "Share Owner".to_string(),
-            "hashxyz".to_string(),
-            "shareowner@example.com".to_string(),
-            false,
-            10_737_418_240,
-        );
-        store.create_user(&owner).await.unwrap();
-
-        // Create a file to share
-        let file = File::new(
-            "shareable-document.pdf".to_string(),
-            "/Documents/shareable-document.pdf".to_string(),
-            "abcdef123456hash".to_string(),
-            3072,
-            "application/pdf".to_string(),
-            None,
-            owner.id,
-        );
-        store.create_file(&file).await.unwrap();
-
-        // Test: create_share
-        let share = Share::new(
-            file.id,
-            "sharetoken123".to_string(),
-            owner.id,
-            SharePermissions::View,
-            Some("hashed_password".to_string()),
-            None,
-        );
-        store.create_share(&share).await.unwrap();
-
-        // Test: get_share_by_token
-        let found_by_token = store.get_share_by_token("sharetoken123").await.unwrap();
-        assert!(found_by_token.is_some());
-        let found_share = found_by_token.unwrap();
-        assert_eq!(found_share.id, share.id);
-        assert_eq!(found_share.share_token, Some("sharetoken123".to_string()));
-        assert_eq!(found_share.file_id, Some(file.id));
-        assert_eq!(found_share.permissions, SharePermissions::View);
-        assert_eq!(
-            found_share.password_hash,
-            Some("hashed_password".to_string())
-        );
-        assert_eq!(found_share.access_count, 0);
-
-        // Test: get_share
-        let found_by_id = store.get_share(share.id).await.unwrap();
-        assert!(found_by_id.is_some());
-        let found_share_by_id = found_by_id.unwrap();
-        assert_eq!(found_share_by_id.id, share.id);
-        assert_eq!(
-            found_share_by_id.share_token,
-            Some("sharetoken123".to_string())
-        );
-
-        // Create a second share for the same file
-        let share2 = Share::new(
-            file.id,
-            "sharetoken456".to_string(),
-            owner.id,
-            SharePermissions::Edit,
-            None,
-            None,
-        );
-        store.create_share(&share2).await.unwrap();
-
-        // Test: get_file_shares
-        let file_shares = store.get_file_shares(file.id).await.unwrap();
-        assert_eq!(file_shares.len(), 2);
-        assert!(file_shares
-            .iter()
-            .any(|s| s.share_token == Some("sharetoken123".to_string())));
-        assert!(file_shares
-            .iter()
-            .any(|s| s.share_token == Some("sharetoken456".to_string())));
-
-        // Test: increment_share_access
-        store.increment_share_access(share.id).await.unwrap();
-        let updated = store.get_share(share.id).await.unwrap().unwrap();
-        assert_eq!(updated.access_count, 1);
-
-        // Test: log_share_access
-        store
-            .log_share_access(ShareAccessLogEntry {
-                share_id: share.id,
-                ip_address: Some("192.168.1.1".to_string()),
-                user_agent: Some("Mozilla/5.0".to_string()),
-                action: "access".to_string(),
-                success: true,
-                actor_type: Some("public_share_session".to_string()),
-                actor_label: Some("Uploader".to_string()),
-                share_session_id: Some(Uuid::new_v4()),
-                share_session_subject: Some("share:test".to_string()),
-            })
-            .await
-            .unwrap();
-
-        // Test: update_share
-        let mut updated_share = found_share.clone();
-        updated_share.password_hash = Some("new_hashed_password".to_string());
-        store.update_share(&updated_share).await.unwrap();
-
-        let after_update = store.get_share(share.id).await.unwrap().unwrap();
-        assert_eq!(
-            after_update.password_hash,
-            Some("new_hashed_password".to_string())
-        );
-
-        // Test: revoke_share
-        store.revoke_share(share.id).await.unwrap();
-
-        // After revoke, share should not appear in get_file_shares (only active shares)
-        let active_shares = store.get_file_shares(file.id).await.unwrap();
-        assert_eq!(active_shares.len(), 1);
-        assert!(active_shares
-            .iter()
-            .all(|s| s.share_token == Some("sharetoken456".to_string())));
-
-        // But should still be retrievable by ID
-        let revoked_share = store.get_share(share.id).await.unwrap();
-        assert!(revoked_share.is_some());
-
-        // Cleanup
-        sqlx::query("DELETE FROM shares WHERE file_id = $1")
-            .bind(file.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        sqlx::query("DELETE FROM files WHERE id = $1")
-            .bind(file.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        // Cleanup user
-        sqlx::query("DELETE FROM users WHERE id = $1")
-            .bind(owner.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+    pub async fn get_public_share_access_logs(
+        &self,
+        _share_id: uuid::Uuid,
+        _limit: i64,
+    ) -> anyhow::Result<Vec<PublicShareAccessLogEntry>> {
+        Self::err()
     }
 }

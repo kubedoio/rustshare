@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Thumbnail size variants
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "TEXT")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThumbnailSize {
     /// 40x40px
@@ -62,7 +61,7 @@ impl TryFrom<&str> for ThumbnailSize {
 }
 
 /// File thumbnail record
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileThumbnail {
     pub id: Uuid,
     pub file_id: Uuid,

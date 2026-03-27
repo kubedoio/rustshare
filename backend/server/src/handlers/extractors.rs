@@ -12,7 +12,6 @@ use axum_extra::{
 };
 use rustshare_auth::ShareSessionClaims;
 use sha2::{Digest, Sha256};
-use sqlx::Row;
 use uuid::Uuid;
 
 use crate::web_session::{extract_cookie_value, resolve_user_session};
@@ -57,21 +56,22 @@ pub async fn resolve_bearer_token(token: &str, state: &AppState) -> Result<Uuid,
         Ok(claims) => {
             let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AuthError::InvalidToken)?;
 
-            // Check disabled status
-            let disabled: bool = sqlx::query_scalar(
-                "SELECT disabled_at IS NOT NULL FROM users WHERE id = $1"
-            )
-            .bind(user_id)
-            .fetch_optional(&state.db_pool)
-            .await
-            .map_err(|_| AuthError::DatabaseError)?
-            .ok_or(AuthError::UserNotFound)?;
-
-            if disabled {
-                return Err(AuthError::AccountDisabled);
+            // Verify user exists and is not disabled
+            match state.user_repo.get(user_id).await {
+                Ok(Some(user)) => {
+                    if user.disabled {
+                        return Err(AuthError::AccountDisabled);
+                    }
+                    return Ok(user_id);
+                }
+                Ok(None) => {
+                    return Err(AuthError::UserNotFound);
+                }
+                Err(e) => {
+                    tracing::error!("Database error looking up user: {}", e);
+                    return Err(AuthError::DatabaseError);
+                }
             }
-
-            return Ok(user_id);
         }
         Err(_) => {
             // JWT validation failed, try device token lookup
@@ -81,42 +81,29 @@ pub async fn resolve_bearer_token(token: &str, state: &AppState) -> Result<Uuid,
     // Device token lookup
     let token_hash = hash_token(token);
 
-    // Look up device token by hash
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT user_id FROM device_tokens WHERE token_hash = $1 AND revoked_at IS NULL"
-    )
-    .bind(&token_hash)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|_| AuthError::DatabaseError)?;
-
-    let user_id = match row {
-        Some((uid,)) => uid,
-        None => return Err(AuthError::InvalidToken),
-    };
-
-    // Update last_used_at
-    sqlx::query("UPDATE device_tokens SET last_used_at = NOW() WHERE token_hash = $1")
-        .bind(&token_hash)
-        .execute(&state.db_pool)
-        .await
-        .map_err(|_| AuthError::DatabaseError)?;
-
-    // Check disabled status for device token user
-    let disabled: bool = sqlx::query_scalar(
-        "SELECT disabled_at IS NOT NULL FROM users WHERE id = $1"
-    )
-    .bind(user_id)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|_| AuthError::DatabaseError)?
-    .ok_or(AuthError::UserNotFound)?;
-
-    if disabled {
-        return Err(AuthError::AccountDisabled);
+    match state.device_repo.get_by_token_hash(&token_hash).await {
+        Ok(Some(device)) => {
+            if !device.is_valid() {
+                return Err(AuthError::InvalidToken);
+            }
+            
+            // Update last_used_at
+            let mut updated_device = device.clone();
+            updated_device.touch();
+            if let Err(e) = state.device_repo.update(&updated_device).await {
+                tracing::warn!("Failed to update device last_used_at: {}", e);
+            }
+            
+            Ok(device.user_id)
+        }
+        Ok(None) => {
+            Err(AuthError::InvalidToken)
+        }
+        Err(e) => {
+            tracing::error!("Database error looking up device token: {}", e);
+            Err(AuthError::DatabaseError)
+        }
     }
-
-    Ok(user_id)
 }
 
 /// Authenticated user extracted from JWT token.
@@ -273,27 +260,25 @@ impl FromRequestParts<AppState> for AdminUser {
     ) -> Result<Self, Self::Rejection> {
         let auth = AuthenticatedUser::from_request_parts(parts, state).await?;
 
-        let row = sqlx::query(
-            "SELECT is_admin, disabled_at FROM users WHERE id = $1",
-        )
-        .bind(auth.user_id)
-        .fetch_optional(&state.db_pool)
-        .await
-        .map_err(|_| admin_internal_error("Failed to verify admin status"))?
-        .ok_or_else(|| admin_unauthorized_error("User not found"))?;
-
-        let is_admin: bool = row.try_get("is_admin")
-            .map_err(|_| admin_internal_error("Failed to read admin status"))?;
-        let disabled_at: Option<chrono::DateTime<chrono::Utc>> = row.try_get("disabled_at")
-            .map_err(|_| admin_internal_error("Failed to read disabled status"))?;
-
-        if !is_admin {
-            return Err(admin_forbidden_error("Admin access required"));
+        // Verify admin status using UserRepository
+        match state.user_repo.get(auth.user_id).await {
+            Ok(Some(user)) => {
+                if user.disabled {
+                    return Err(admin_unauthorized_error("Account is disabled"));
+                }
+                if !user.is_admin {
+                    return Err(admin_forbidden_error("Admin access required"));
+                }
+                Ok(AdminUser { user_id: auth.user_id })
+            }
+            Ok(None) => {
+                Err(admin_unauthorized_error("User not found"))
+            }
+            Err(e) => {
+                tracing::error!("Database error verifying admin status: {}", e);
+                Err(admin_internal_error("Failed to verify admin status"))
+            }
         }
-        if disabled_at.is_some() {
-            return Err(admin_forbidden_error("Account is disabled"));
-        }
-        Ok(AdminUser { user_id: auth.user_id })
     }
 }
 

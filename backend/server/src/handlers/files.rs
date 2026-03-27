@@ -512,6 +512,10 @@ fn thumbnail_error_response(err: ThumbnailError) -> Response {
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "Thumbnail generation not supported for this file type".to_string(),
         ),
+        ThumbnailError::NotImplemented => (
+            StatusCode::NOT_IMPLEMENTED,
+            "Thumbnail generation not yet implemented".to_string(),
+        ),
         ThumbnailError::Storage(_) | ThumbnailError::Generation(_) | ThumbnailError::Database(_) => {
             tracing::error!("Thumbnail service error: {}", err);
             (
@@ -629,7 +633,7 @@ pub async fn get_file_thumbnail(
 // ============================================================================
 
 /// File with share information for list responses
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize)]
 pub struct FileWithShares {
     // File fields
     pub id: Uuid,
@@ -659,38 +663,37 @@ pub async fn list_files(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
 ) -> Result<Json<Vec<FileWithShares>>, Response> {
-    // Query all files with share information
-    let files = sqlx::query_as::<_, FileWithShares>(
-        r#"
-        SELECT
-            f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
-            f.parent_folder_id, f.owner_id, f.current_version,
-            f.created_at, f.modified_at,
-            EXISTS(
-                SELECT 1 FROM shares
-                WHERE file_id = f.id
-                AND revoked_at IS NULL
-            ) as is_shared,
-            (
-                SELECT COUNT(*) FROM shares
-                WHERE file_id = f.id
-                AND revoked_at IS NULL
-            ) as share_count,
-            (
-                SELECT MIN(expires_at) FROM shares
-                WHERE file_id = f.id
-                AND revoked_at IS NULL
-                AND expires_at IS NOT NULL
-            ) as share_expires_at
-        FROM files f
-        WHERE f.owner_id = $1
-        ORDER BY f.created_at DESC
-        "#,
-    )
-    .bind(auth.user_id)
-    .fetch_all(&state.db_pool)
-    .await
-    .map_err(|e| file_error_response(FileError::Storage(format!("Failed to list files: {}", e))))?;
+    // TODO: Use metadata_store instead of SQLx query
+    // For now, return empty list as placeholder
+    tracing::warn!("list_files not yet fully implemented in zero-PostgreSQL mode");
+    
+    // Get all user files (passing None for parent_folder_id gets all files)
+    let files = state
+        .metadata_store
+        .list_files(None, auth.user_id)
+        .await
+        .map_err(|e| file_error_response(FileError::Storage(format!("Failed to list files: {}", e))))?;
+    
+    // Convert File objects to FileWithShares (without share info for now)
+    let files_with_shares: Vec<FileWithShares> = files
+        .into_iter()
+        .map(|f| FileWithShares {
+            id: f.id,
+            name: f.name,
+            path: f.path,
+            content_hash: f.content_hash,
+            size: f.size,
+            mime_type: f.mime_type,
+            parent_folder_id: f.parent_folder_id,
+            owner_id: f.owner_id,
+            current_version: f.current_version,
+            created_at: f.created_at,
+            modified_at: f.modified_at,
+            is_shared: false, // TODO: Get from share repository
+            share_count: 0,
+            share_expires_at: None,
+        })
+        .collect();
 
-    Ok(Json(files))
+    Ok(Json(files_with_shares))
 }

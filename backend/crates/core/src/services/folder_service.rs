@@ -109,7 +109,7 @@ where
                 .metadata_store
                 .find_folder_by_id(parent_id)
                 .await
-                .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?
+                .map_err(|e| FolderError::Database(e.to_string()))?
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
 
             // Verify ownership
@@ -159,7 +159,7 @@ where
             folder.id,
             AggregateType::Folder,
             serde_json::to_value(payload)
-                .map_err(|e| FolderError::Database(sqlx::Error::Decode(Box::new(e))))?,
+                .map_err(|e| FolderError::Database(e.to_string()))?,
             owner_id,
         );
 
@@ -167,17 +167,14 @@ where
             .append(&event, &self.broadcaster)
             .await
             .map_err(|e| {
-                FolderError::Database(sqlx::Error::Protocol(format!(
-                    "Failed to append event: {}",
-                    e
-                )))
+                FolderError::Database(format!("Failed to append event: {}", e))
             })?;
 
         // Insert into metadata store
         self.metadata_store
             .create_folder(&folder)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         Ok(folder)
     }
@@ -194,7 +191,7 @@ where
             .metadata_store
             .find_folder_by_id(folder_id)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?
+            .map_err(|e| FolderError::Database(e.to_string()))?
             .ok_or(FolderError::NotFound(folder_id))?;
 
         // Verify ownership
@@ -222,14 +219,14 @@ where
             .metadata_store
             .list_files(Some(folder.id), user_id)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         // Get subfolders in this folder
         let folders = self
             .metadata_store
             .list_folders(Some(folder.id), user_id)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         Ok(FolderContents::with_contents(files, folders))
     }
@@ -263,14 +260,14 @@ where
             .metadata_store
             .list_files(Some(folder.id), user_id)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         // Get immediate subfolders
         let subfolders = self
             .metadata_store
             .list_folders(Some(folder.id), user_id)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         // Recursively build trees for each subfolder
         let mut subfolder_trees = Vec::new();
@@ -311,7 +308,7 @@ where
                 .metadata_store
                 .find_folder_by_id(parent_id)
                 .await
-                .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?
+                .map_err(|e| FolderError::Database(e.to_string()))?
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
             format!("{}/{}", parent.path.trim_end_matches('/'), new_name)
         } else {
@@ -342,7 +339,7 @@ where
             folder_id,
             AggregateType::Folder,
             serde_json::to_value(payload)
-                .map_err(|e| FolderError::Database(sqlx::Error::Decode(Box::new(e))))?,
+                .map_err(|e| FolderError::Database(e.to_string()))?,
             user_id,
         );
 
@@ -350,17 +347,14 @@ where
             .append(&event, &self.broadcaster)
             .await
             .map_err(|e| {
-                FolderError::Database(sqlx::Error::Protocol(format!(
-                    "Failed to append event: {}",
-                    e
-                )))
+                FolderError::Database(format!("Failed to append event: {}", e))
             })?;
 
         // Update in metadata store
         self.metadata_store
             .update_folder(&folder)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         Ok(folder)
     }
@@ -395,7 +389,7 @@ where
                 .metadata_store
                 .find_descendant_folders(folder_id)
                 .await
-                .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+                .map_err(|e| FolderError::Database(e.to_string()))?;
 
             if descendants.iter().any(|d| d.id == parent_id) {
                 return Err(FolderError::CircularReference {
@@ -435,7 +429,7 @@ where
             folder_id,
             AggregateType::Folder,
             serde_json::to_value(payload)
-                .map_err(|e| FolderError::Database(sqlx::Error::Decode(Box::new(e))))?,
+                .map_err(|e| FolderError::Database(e.to_string()))?,
             user_id,
         );
 
@@ -443,17 +437,14 @@ where
             .append(&event, &self.broadcaster)
             .await
             .map_err(|e| {
-                FolderError::Database(sqlx::Error::Protocol(format!(
-                    "Failed to append event: {}",
-                    e
-                )))
+                FolderError::Database(format!("Failed to append event: {}", e))
             })?;
 
         // Update in metadata store
         self.metadata_store
             .update_folder(&folder)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         Ok(folder)
     }
@@ -479,7 +470,7 @@ where
             .metadata_store
             .find_descendant_folders(folder_id)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         // Delete in reverse order (children before parents) to maintain referential integrity
         for descendant in descendants.iter().rev() {
@@ -496,25 +487,20 @@ where
                 descendant.id,
                 AggregateType::Folder,
                 serde_json::to_value(payload)
-                    .map_err(|e| FolderError::Database(sqlx::Error::Decode(Box::new(e))))?,
+                    .map_err(|e| FolderError::Database(e.to_string()))?,
                 user_id,
             );
 
             self.event_store
                 .append(&event, &self.broadcaster)
                 .await
-                .map_err(|e| {
-                    FolderError::Database(sqlx::Error::Protocol(format!(
-                        "Failed to append event: {}",
-                        e
-                    )))
-                })?;
+                .map_err(|e| FolderError::Database(format!("Failed to append event: {}", e)))?;
 
             // Delete from metadata store
             self.metadata_store
                 .delete_folder(descendant.id)
                 .await
-                .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+                .map_err(|e| FolderError::Database(e.to_string()))?;
         }
 
         Ok(())
@@ -535,7 +521,7 @@ where
             .metadata_store
             .find_descendant_folders(folder_id)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         // Filter to get only descendants, not the folder itself
         let descendants: Vec<_> = all_descendants
@@ -553,7 +539,7 @@ where
                 self.metadata_store
                     .update_folder(&descendant)
                     .await
-                    .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+                    .map_err(|e| FolderError::Database(e.to_string()))?;
             }
         }
 

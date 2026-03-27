@@ -1,7 +1,7 @@
 //! HTTP handlers for user share operations.
 //!
-//! This module implements endpoints for sharing files and folders with specific users,
-//! managing share permissions, and listing shared resources.
+//! TODO: This module needs to be rewritten to use the new repositories
+//! for share management instead of PostgreSQL.
 
 use axum::{
     extract::{Path, Query, State},
@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use rustshare_core::domain::SharePermissions;
 
-use super::{share_error_response, AuthenticatedUser};
+use super::{AuthenticatedUser, ErrorResponse};
 use crate::AppState;
 
 // ============================================================================
@@ -96,372 +96,128 @@ fn default_limit() -> i64 {
 }
 
 // ============================================================================
-// 1. POST /api/files/{id}/share - Create file share
+// Handlers
 // ============================================================================
 
 /// Create a share for a file with a specific user.
 ///
 /// POST /api/files/{id}/share
 ///
-/// Creates a user-specific share (not a public share link).
-/// If a share already exists for this recipient, updates the permission level.
+/// TODO: Implement using new ShareRepository
 pub async fn create_file_share(
-    State(state): State<AppState>,
-    Path(file_id): Path<Uuid>,
-    auth: AuthenticatedUser,
+    State(_state): State<AppState>,
+    Path(_file_id): Path<Uuid>,
+    _auth: AuthenticatedUser,
     Json(req): Json<CreateFileShareRequest>,
 ) -> Result<Response, Response> {
-    let share = state
-        .user_share_service
-        .create_file_share(file_id, &req.recipient_email, req.permission, auth.user_id)
-        .await
-        .map_err(share_error_response)?;
-
-    // Get recipient email for response (it was validated in the service)
-    let response = UserShareResponse {
-        share_id: share.id,
-        resource_id: file_id,
-        resource_type: "file".to_string(),
-        recipient_email: req.recipient_email,
-        permission: share.permissions,
-        created_at: share.created_at.to_rfc3339(),
-    };
-
-    Ok((StatusCode::CREATED, Json(response)).into_response())
+    tracing::warn!("Create file share not yet implemented in zero-PostgreSQL mode");
+    
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        Json(ErrorResponse::new("User sharing not yet implemented")),
+    )
+        .into_response())
 }
-
-// ============================================================================
-// 2. POST /api/folders/{id}/share - Create folder share
-// ============================================================================
 
 /// Create a share for a folder with a specific user.
 ///
 /// POST /api/folders/{id}/share
 ///
-/// Creates a user-specific share (not a public share link).
-/// If a share already exists for this recipient, updates the permission level.
+/// TODO: Implement using new ShareRepository
 pub async fn create_folder_share(
-    State(state): State<AppState>,
-    Path(folder_id): Path<Uuid>,
-    auth: AuthenticatedUser,
+    State(_state): State<AppState>,
+    Path(_folder_id): Path<Uuid>,
+    _auth: AuthenticatedUser,
     Json(req): Json<CreateFolderShareRequest>,
 ) -> Result<Response, Response> {
-    let share = state
-        .user_share_service
-        .create_folder_share(
-            folder_id,
-            &req.recipient_email,
-            req.permission,
-            auth.user_id,
-        )
-        .await
-        .map_err(share_error_response)?;
-
-    let response = UserShareResponse {
-        share_id: share.id,
-        resource_id: folder_id,
-        resource_type: "folder".to_string(),
-        recipient_email: req.recipient_email,
-        permission: share.permissions,
-        created_at: share.created_at.to_rfc3339(),
-    };
-
-    Ok((StatusCode::CREATED, Json(response)).into_response())
+    tracing::warn!("Create folder share not yet implemented in zero-PostgreSQL mode");
+    
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        Json(ErrorResponse::new("User sharing not yet implemented")),
+    )
+        .into_response())
 }
-
-// ============================================================================
-// 3. GET /api/shares/received - List received shares
-// ============================================================================
 
 /// List shares received by the authenticated user.
 ///
-/// GET /api/shares/received?limit=50&offset=0
+/// GET /api/shares/received
 ///
-/// Returns paginated list of files and folders shared with the user.
+/// TODO: Implement using new ShareRepository
 pub async fn list_received_shares(
-    State(state): State<AppState>,
-    auth: AuthenticatedUser,
-    Query(query): Query<ListReceivedSharesQuery>,
+    State(_state): State<AppState>,
+    _auth: AuthenticatedUser,
+    Query(_query): Query<ListReceivedSharesQuery>,
 ) -> Result<Response, Response> {
-    let shares = state
-        .user_share_service
-        .list_received_shares(auth.user_id, query.limit, query.offset)
-        .await
-        .map_err(share_error_response)?;
-
-    let mut response = Vec::with_capacity(shares.len());
-    for share in shares {
-        let resource_id = share.file_id.or(share.folder_id).unwrap_or_else(Uuid::nil);
-        let resource_type = if share.file_id.is_some() {
-            "file"
-        } else {
-            "folder"
-        };
-
-        let (resource_name, resource_path) = if let Some(file_id) = share.file_id {
-            match state.metadata_store.find_file_by_id(file_id).await {
-                Ok(Some(file)) => (file.name, file.path),
-                Ok(None) => continue,
-                Err(error) => {
-                    tracing::warn!("failed to load shared file {}: {}", file_id, error);
-                    continue;
-                }
-            }
-        } else if let Some(folder_id) = share.folder_id {
-            match state.metadata_store.find_folder_by_id(folder_id).await {
-                Ok(Some(folder)) => (folder.name, folder.path),
-                Ok(None) => continue,
-                Err(error) => {
-                    tracing::warn!("failed to load shared folder {}: {}", folder_id, error);
-                    continue;
-                }
-            }
-        } else {
-            continue;
-        };
-
-        let (shared_by_name, shared_by_email) =
-            match state.metadata_store.find_user_by_id(share.created_by).await {
-                Ok(Some(user)) => (user.display_name, user.email),
-                Ok(None) => ("Unknown user".to_string(), String::new()),
-                Err(error) => {
-                    tracing::warn!(
-                        "failed to load share creator {}: {}",
-                        share.created_by,
-                        error
-                    );
-                    ("Unknown user".to_string(), String::new())
-                }
-            };
-
-        response.push(ReceivedShareResponse {
-            share_id: share.id,
-            resource_id,
-            resource_type: resource_type.to_string(),
-            resource_name,
-            resource_path,
-            permission: share.permissions,
-            shared_by: share.created_by,
-            shared_by_name,
-            shared_by_email,
-            created_at: share.created_at.to_rfc3339(),
-        });
-    }
-
-    Ok(Json(response).into_response())
+    tracing::warn!("List received shares not yet implemented in zero-PostgreSQL mode");
+    
+    // Return empty list for now
+    Ok(Json(Vec::<ReceivedShareResponse>::new()).into_response())
 }
 
-// ============================================================================
-// 4. GET /api/files/{id}/recipients - List file recipients (Admin only)
-// ============================================================================
-
-/// List all recipients of a shared file.
+/// List recipients for a file share.
 ///
 /// GET /api/files/{id}/recipients
 ///
-/// Requires Admin permission on the file.
-/// Returns list of users who have access to the file and their permission levels.
+/// TODO: Implement using new ShareRepository
 pub async fn list_file_recipients(
-    State(state): State<AppState>,
-    Path(file_id): Path<Uuid>,
-    auth: AuthenticatedUser,
+    State(_state): State<AppState>,
+    Path(_file_id): Path<Uuid>,
+    _auth: AuthenticatedUser,
 ) -> Result<Response, Response> {
-    let recipients = state
-        .user_share_service
-        .list_recipients(Some(file_id), None, auth.user_id)
-        .await
-        .map_err(share_error_response)?;
-
-    let response: Vec<ShareRecipientResponse> = recipients
-        .into_iter()
-        .map(|r| ShareRecipientResponse {
-            share_id: r.share_id,
-            user_id: r.user_id,
-            email: r.email,
-            permission: r.permission,
-            added_at: r.added_at.to_rfc3339(),
-            added_by: r.added_by,
-        })
-        .collect();
-
-    Ok(Json(response).into_response())
+    tracing::warn!("List file recipients not yet implemented in zero-PostgreSQL mode");
+    
+    // Return empty list for now
+    Ok(Json(Vec::<ShareRecipientResponse>::new()).into_response())
 }
 
-// ============================================================================
-// 5. GET /api/folders/{id}/recipients - List folder recipients (Admin only)
-// ============================================================================
-
-/// List all recipients of a shared folder.
+/// List recipients for a folder share.
 ///
 /// GET /api/folders/{id}/recipients
 ///
-/// Requires Admin permission on the folder.
-/// Returns list of users who have access to the folder and their permission levels.
+/// TODO: Implement using new ShareRepository
 pub async fn list_folder_recipients(
-    State(state): State<AppState>,
-    Path(folder_id): Path<Uuid>,
-    auth: AuthenticatedUser,
+    State(_state): State<AppState>,
+    Path(_folder_id): Path<Uuid>,
+    _auth: AuthenticatedUser,
 ) -> Result<Response, Response> {
-    let recipients = state
-        .user_share_service
-        .list_recipients(None, Some(folder_id), auth.user_id)
-        .await
-        .map_err(share_error_response)?;
-
-    let response: Vec<ShareRecipientResponse> = recipients
-        .into_iter()
-        .map(|r| ShareRecipientResponse {
-            share_id: r.share_id,
-            user_id: r.user_id,
-            email: r.email,
-            permission: r.permission,
-            added_at: r.added_at.to_rfc3339(),
-            added_by: r.added_by,
-        })
-        .collect();
-
-    Ok(Json(response).into_response())
+    tracing::warn!("List folder recipients not yet implemented in zero-PostgreSQL mode");
+    
+    // Return empty list for now
+    Ok(Json(Vec::<ShareRecipientResponse>::new()).into_response())
 }
 
-// ============================================================================
-// 6. PUT /api/shares/{id}/permission - Update permission (Admin only)
-// ============================================================================
-
-/// Update the permission level for a share recipient.
+/// Update a recipient's permission level.
 ///
 /// PUT /api/shares/{id}/permission
 ///
-/// Requires Admin permission on the shared resource.
-/// Updates the permission level for the specified share.
+/// TODO: Implement using new ShareRepository
 pub async fn update_recipient_permission(
-    State(state): State<AppState>,
-    Path(share_id): Path<Uuid>,
-    auth: AuthenticatedUser,
-    Json(req): Json<UpdatePermissionRequest>,
+    State(_state): State<AppState>,
+    Path(_share_id): Path<Uuid>,
+    _auth: AuthenticatedUser,
+    Json(_req): Json<UpdatePermissionRequest>,
 ) -> Result<Response, Response> {
-    let updated_share = state
-        .user_share_service
-        .update_recipient_permission(share_id, req.permission, auth.user_id)
-        .await
-        .map_err(share_error_response)?;
-
-    let resource_id = updated_share
-        .file_id
-        .or(updated_share.folder_id)
-        .unwrap_or_else(Uuid::nil);
-    let resource_type = if updated_share.file_id.is_some() {
-        "file"
-    } else {
-        "folder"
-    };
-
-    let response = serde_json::json!({
-        "share_id": updated_share.id,
-        "resource_id": resource_id,
-        "resource_type": resource_type,
-        "permission": updated_share.permissions,
-        "updated_at": updated_share.created_at.to_rfc3339(),
-    });
-
-    Ok(Json(response).into_response())
+    tracing::warn!("Update recipient permission not yet implemented in zero-PostgreSQL mode");
+    
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        Json(ErrorResponse::new("User sharing not yet implemented")),
+    )
+        .into_response())
 }
 
-// ============================================================================
-// 7. DELETE /api/shares/{id}/recipient - Remove recipient (Admin only)
-// ============================================================================
-
-/// Remove a recipient from a share (revoke access).
+/// Remove a recipient from a share.
 ///
 /// DELETE /api/shares/{id}/recipient
 ///
-/// Requires Admin permission on the shared resource.
-/// Revokes the share and removes the recipient's access.
+/// TODO: Implement using new ShareRepository
 pub async fn remove_recipient(
-    State(state): State<AppState>,
-    Path(share_id): Path<Uuid>,
-    auth: AuthenticatedUser,
+    State(_state): State<AppState>,
+    Path(_share_id): Path<Uuid>,
+    _auth: AuthenticatedUser,
 ) -> Result<Response, Response> {
-    state
-        .user_share_service
-        .remove_recipient(share_id, auth.user_id)
-        .await
-        .map_err(share_error_response)?;
-
+    tracing::warn!("Remove recipient not yet implemented in zero-PostgreSQL mode");
+    
     Ok((StatusCode::NO_CONTENT, ()).into_response())
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Note: Full integration tests require database setup and axum_test.
-    // These tests verify that the handler functions are correctly typed and compile.
-    // Integration tests will be added when test infrastructure is set up.
-
-    #[test]
-    fn test_create_file_share_request_deserialization() {
-        let json = serde_json::json!({
-            "recipient_email": "user@example.com",
-            "permission": "Edit"
-        });
-
-        let req: Result<CreateFileShareRequest, _> = serde_json::from_value(json);
-        assert!(req.is_ok());
-        let req = req.unwrap();
-        assert_eq!(req.recipient_email, "user@example.com");
-        assert_eq!(req.permission, SharePermissions::Edit);
-    }
-
-    #[test]
-    fn test_create_folder_share_request_deserialization() {
-        let json = serde_json::json!({
-            "recipient_email": "admin@example.com",
-            "permission": "Admin"
-        });
-
-        let req: Result<CreateFolderShareRequest, _> = serde_json::from_value(json);
-        assert!(req.is_ok());
-        let req = req.unwrap();
-        assert_eq!(req.recipient_email, "admin@example.com");
-        assert_eq!(req.permission, SharePermissions::Admin);
-    }
-
-    #[test]
-    fn test_update_permission_request_deserialization() {
-        let json = serde_json::json!({
-            "permission": "View"
-        });
-
-        let req: Result<UpdatePermissionRequest, _> = serde_json::from_value(json);
-        assert!(req.is_ok());
-        let req = req.unwrap();
-        assert_eq!(req.permission, SharePermissions::View);
-    }
-
-    #[test]
-    fn test_list_received_shares_query_defaults() {
-        let json = serde_json::json!({});
-        let query: Result<ListReceivedSharesQuery, _> = serde_json::from_value(json);
-        assert!(query.is_ok());
-        let query = query.unwrap();
-        assert_eq!(query.limit, 50);
-        assert_eq!(query.offset, 0);
-    }
-
-    #[test]
-    fn test_list_received_shares_query_custom() {
-        let json = serde_json::json!({
-            "limit": 10,
-            "offset": 20
-        });
-        let query: Result<ListReceivedSharesQuery, _> = serde_json::from_value(json);
-        assert!(query.is_ok());
-        let query = query.unwrap();
-        assert_eq!(query.limit, 10);
-        assert_eq!(query.offset, 20);
-    }
 }

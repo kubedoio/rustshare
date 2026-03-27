@@ -31,7 +31,7 @@ impl MetadataConfig {
     /// Load configuration from environment
     pub fn from_env() -> anyhow::Result<Self> {
         let backend_type = std::env::var("RUSTSHARE_METADATA_BACKEND")
-            .unwrap_or_else(|_| "postgres".to_string())
+            .unwrap_or_else(|_| "rustfs".to_string())
             .parse()?;
 
         Ok(Self {
@@ -55,7 +55,6 @@ impl MetadataConfig {
 pub struct MetadataSystemBuilder {
     config: MetadataConfig,
     s3_client: Option<aws_sdk_s3::Client>,
-    pg_pool: Option<sqlx::PgPool>,
 }
 
 impl MetadataSystemBuilder {
@@ -63,17 +62,11 @@ impl MetadataSystemBuilder {
         Self {
             config,
             s3_client: None,
-            pg_pool: None,
         }
     }
 
     pub fn with_s3_client(mut self, client: aws_sdk_s3::Client) -> Self {
         self.s3_client = Some(client);
-        self
-    }
-
-    pub fn with_pg_pool(mut self, pool: sqlx::PgPool) -> Self {
-        self.pg_pool = Some(pool);
         self
     }
 
@@ -87,7 +80,7 @@ impl MetadataSystemBuilder {
                 self.build_localfs_repo().await
             }
             _ => {
-                anyhow::bail!("Backend type {:?} not supported in this builder", self.config.backend_type)
+                anyhow::bail!("Backend type {:?} not supported in this builder. Use RustFs or LocalFs.", self.config.backend_type)
             }
         }
     }
@@ -232,12 +225,13 @@ pub struct MetadataAdminHandler {
 
 impl MetadataAdminHandler {
     pub fn new(
-        postgres_repo: Arc<dyn MetadataRepository>,
+        _postgres_repo: Arc<dyn MetadataRepository>,
         rustfs_repo: Arc<dyn MetadataRepository>,
     ) -> Self {
+        // PostgreSQL repo is no longer used; kept in signature for API compatibility
         Self {
             verifier: Arc::new(crate::admin::ParityVerifier::new(
-                Arc::clone(&postgres_repo),
+                Arc::clone(&rustfs_repo),
                 Arc::clone(&rustfs_repo),
             )),
             repair_tool: Arc::new(crate::admin::RepairTool::new(Arc::clone(&rustfs_repo))),

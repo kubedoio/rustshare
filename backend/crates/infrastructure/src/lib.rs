@@ -1,87 +1,33 @@
-pub mod repositories;
+//! # ⚠️ DEPRECATED - LEGACY CRATE
+//!
+//! This crate (`rustshare-infrastructure`) is **DEPRECATED** and will be removed in a future version.
+//!
+//! ## Migration Notice
+//!
+//! This crate previously contained SQLx-based repository implementations for PostgreSQL.
+//! As part of the clean break from PostgreSQL, all SQLx code has been removed.
+//!
+//! ## Replacement
+//!
+//! Use the new storage layer instead:
+//! - `rustshare_storage` crate - SQLite-based storage implementations
+//!
+//! ## What Was Removed
+//!
+//! - `UserRepository` - User database operations (SQLx)
+//! - `FileRepository` - File database operations (SQLx)
+//! - `FolderRepository` - Folder database operations (SQLx)
+//! - `ShareRepository` - Share database operations (SQLx)
+//! - `NotificationRepository` - Notification database operations (SQLx)
+//!
+//! ## Timeline
+//!
+//! - Now: This crate exports nothing and serves as a placeholder
+//! - Future: This crate will be completely removed
 
-// Implement service layer traits for repository types
-use anyhow::Result;
-use rustshare_core::domain::{
-    File, FileId, Folder, FolderId, Notification, NotificationId, Share, UserId,
-};
-use rustshare_core::services::{
-    CreateNotification, FileResolverOps, FolderResolverOps, NotificationRepositoryOps,
-    ShareResolverOps,
-};
+// This module is intentionally empty - all repository implementations have been removed
+// as part of the PostgreSQL to SQLite migration.
+//
+// Use rustshare_storage instead for all storage needs.
 
-use crate::repositories::{
-    FileRepository, FolderRepository, NotificationRepository, ShareRepository,
-};
-
-// ShareRepository implements ShareResolverOps
-impl ShareResolverOps for ShareRepository {
-    async fn find_user_share(
-        &self,
-        file_id: Option<FileId>,
-        folder_id: Option<FolderId>,
-        recipient_user_id: UserId,
-    ) -> Result<Option<Share>> {
-        self.find_user_share(file_id, folder_id, recipient_user_id)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))
-    }
-}
-
-// FileRepository implements FileResolverOps
-impl FileResolverOps for FileRepository {
-    async fn find_file_by_id(&self, id: FileId) -> Result<Option<File>> {
-        self.get_by_id(id).await.map_err(|e| anyhow::anyhow!(e))
-    }
-}
-
-// FolderRepository implements FolderResolverOps
-impl FolderResolverOps for FolderRepository {
-    async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>> {
-        self.get_by_id(id).await.map_err(|e| anyhow::anyhow!(e))
-    }
-}
-
-// NotificationRepository implements NotificationRepositoryOps
-impl NotificationRepositoryOps for NotificationRepository {
-    async fn create(&self, request: CreateNotification) -> Result<Notification, sqlx::Error> {
-        self.create(request).await
-    }
-
-    async fn find_by_id(
-        &self,
-        notification_id: NotificationId,
-    ) -> Result<Option<Notification>, sqlx::Error> {
-        self.find_by_id(notification_id).await
-    }
-
-    async fn list_for_user(
-        &self,
-        user_id: UserId,
-        unread_only: bool,
-        limit: i64,
-        offset: i64,
-    ) -> Result<Vec<Notification>, sqlx::Error> {
-        self.list_for_user(user_id, unread_only, limit, offset)
-            .await
-    }
-
-    async fn count_for_user(&self, user_id: UserId, unread_only: bool) -> Result<i64, sqlx::Error> {
-        self.count_for_user(user_id, unread_only).await
-    }
-
-    async fn count_unread(&self, user_id: UserId) -> Result<i64, sqlx::Error> {
-        self.count_unread(user_id).await
-    }
-
-    async fn mark_as_read(
-        &self,
-        notification_id: NotificationId,
-    ) -> Result<Notification, sqlx::Error> {
-        self.mark_as_read(notification_id).await
-    }
-
-    async fn delete(&self, notification_id: NotificationId) -> Result<(), sqlx::Error> {
-        self.delete(notification_id).await
-    }
-}
+// Re-export nothing - the crate is deprecated

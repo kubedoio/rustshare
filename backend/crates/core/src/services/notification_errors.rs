@@ -21,7 +21,7 @@ pub enum NotificationError {
 
     /// Database operation failed.
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(String),
 }
 
 #[cfg(test)]
@@ -56,7 +56,10 @@ mod tests {
         assert!(msg.contains(&notification_id.to_string()));
     }
 
-    // Note: Database error tests removed as they require sqlx::Error which cannot
-    // be easily constructed in unit tests. The #[from] attribute ensures proper
-    // automatic conversion from sqlx::Error to NotificationError::Database.
+    #[test]
+    fn test_notification_error_database() {
+        let msg = "connection failed";
+        let err = NotificationError::Database(msg.to_string());
+        assert_eq!(err.to_string(), format!("Database error: {}", msg));
+    }
 }

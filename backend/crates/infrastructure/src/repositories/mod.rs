@@ -1,11 +1,9 @@
-pub mod file_repository;
-pub mod folder_repository;
-pub mod notification_repository;
-pub mod share_repository;
-pub mod user_repository;
+//! # DEPRECATED - Repository Module
+//!
+//! This module previously contained SQLx-based repository implementations.
+//! All implementations have been removed as part of the PostgreSQL deprecation.
+//!
+//! Use `rustshare_storage` crate instead for storage implementations.
 
-pub use file_repository::FileRepository;
-pub use folder_repository::FolderRepository;
-pub use notification_repository::NotificationRepository;
-pub use share_repository::ShareRepository;
-pub use user_repository::UserRepository;
+// All repository implementations removed - this crate is deprecated.
+// Use rustshare_storage instead.

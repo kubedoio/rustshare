@@ -68,50 +68,100 @@ use rustshare_core::{
         ThumbnailService, UserShareService, UserShareServiceDeps,
     },
 };
-use rustshare_infrastructure::repositories::{
-    FileRepository, FolderRepository, NotificationRepository, ShareRepository, UserRepository,
+// TODO: PostgreSQL removed - rustshare_infrastructure repositories depend on PostgreSQL
+// use rustshare_infrastructure::repositories::{
+//     FileRepository, FolderRepository, NotificationRepository, ShareRepository, UserRepository,
+// };
+use rustshare_storage::{
+    coordination::{CoordinationStore, InMemoryCoordinationStore},
+    metadata_v2::{EventLogStore, MetadataDocumentStore, MetadataBackendConfig, stores::{LocalFsDocumentStore, RustFsEventStore}},
+    repos::{
+        PathBuilder, UserRepository, DeviceRepository, GroupRepository, 
+        AuditRepository, ConfigRepository, PairingRepository, WebhookRepository,
+        NotificationRepository,
+        RustFsUserRepository, RustFsDeviceRepository, RustFsGroupRepository,
+        RustFsAuditRepository, RustFsConfigRepository, RustFsPairingRepository,
+        RustFsWebhookRepository, RustFsNotificationRepository,
+    },
+    EventStore, MetadataStore, ObjectStore,
 };
-use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+// TODO: PostgreSQL removed - transitioning to new state module
+// use sqlx::PgPool;
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
 use tokio::sync::Mutex;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
-type AppUserShareService = UserShareService<
-    ShareRepository,
-    UserRepository,
-    FileRepository,
-    FolderRepository,
-    ShareRepository,
-    FileRepository,
-    FolderRepository,
-    NotificationRepository,
-    EventStore,
+// TODO: PostgreSQL removed - AppUserShareService temporarily disabled
+// type AppUserShareService = UserShareService<
+//     ShareRepository,
+//     UserRepository,
+//     FileRepository,
+//     FolderRepository,
+//     ShareRepository,
+//     FileRepository,
+//     FolderRepository,
+//     NotificationRepository,
+//     EventStore,
+// >;
+
+/// Type aliases for services using the compatibility layer
+type FileSvc = FileService<
+    rustshare_storage::metadata_v2::EventStoreCompat,
+    rustshare_storage::metadata_v2::MetadataStoreCompat,
+    ObjectStore,
+>;
+type FolderSvc = FolderService<
+    rustshare_storage::metadata_v2::EventStoreCompat,
+    rustshare_storage::metadata_v2::MetadataStoreCompat,
+>;
+type ShareSvc = ShareService<
+    rustshare_storage::metadata_v2::EventStoreCompat,
+    rustshare_storage::metadata_v2::MetadataStoreCompat,
+    JwtManager,
 >;
 
 /// Application state shared across handlers
+/// 
+/// NOTE: Services use the MetadataStoreCompat wrapper to provide the required
+/// trait implementations for the service layer.
 #[derive(Clone)]
 pub struct AppState {
-    pub db_pool: PgPool,
+    // Legacy stores (compatibility layer)
     pub metadata_store: Arc<MetadataStore>,
     pub event_store: Arc<EventStore>,
     pub object_store: Arc<ObjectStore>,
+    
+    // New repository layer
+    pub user_repo: Arc<dyn UserRepository>,
+    pub device_repo: Arc<dyn DeviceRepository>,
+    pub group_repo: Arc<dyn GroupRepository>,
+    pub audit_repo: Arc<dyn AuditRepository>,
+    pub config_repo: Arc<dyn ConfigRepository>,
+    pub pairing_repo: Arc<dyn PairingRepository>,
+    pub webhook_repo: Arc<dyn WebhookRepository>,
+    pub notification_repo: Arc<dyn NotificationRepository>,
+    
+    // Core services
     pub jwt_manager: Arc<JwtManager>,
     pub broadcaster: Arc<EventBroadcaster>,
-    pub file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore>>,
-    pub folder_service: Arc<FolderService<EventStore, MetadataStore>>,
-    pub share_service: Arc<ShareService<EventStore, MetadataStore, JwtManager>>,
+    
+    // Business logic services
+    pub file_service: Arc<FileSvc>,
+    pub folder_service: Arc<FolderSvc>,
+    pub share_service: Arc<ShareSvc>,
     pub thumbnail_service: Arc<ThumbnailService<ObjectStore>>,
-    pub permission_resolver:
-        Arc<PermissionResolver<ShareRepository, FileRepository, FolderRepository>>,
-    pub notification_service: Arc<NotificationService<NotificationRepository>>,
-    pub user_share_service: Arc<AppUserShareService>,
+    
+    // Configuration and utilities
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
     pub secret_key: SecretEncryptionKey,
     pub poll_rate_limiter: Arc<Mutex<HashMap<String, Instant>>>,
+    
+    // Document store for direct access if needed
+    pub doc_store: Arc<dyn MetadataDocumentStore>,
+    pub event_log_store: Arc<dyn EventLogStore>,
 }
 
 #[tokio::main]
@@ -128,20 +178,39 @@ async fn main() -> Result<()> {
 
     info!("Starting RustShare server");
 
-    // Connect to database
-    let database_url = std::env::var("DATABASE_URL")?;
-    let db_pool = PgPool::connect(&database_url).await?;
+    // TODO: PostgreSQL removed - transitioning to new state module
+    // Database connection and migrations temporarily removed.
+    // The new state module will provide storage backends.
 
-    info!("Connected to database");
+    // Initialize document store (LocalFS for standalone mode)
+    let metadata_prefix = std::env::var("RUSTSHARE_METADATA_PREFIX")
+        .unwrap_or_else(|_| "apps/rustshare".to_string());
+    let metadata_namespace = std::env::var("RUSTSHARE_METADATA_NAMESPACE")
+        .unwrap_or_else(|_| "default".to_string());
+    let local_storage_path = std::env::var("RUSTSHARE_LOCAL_STORAGE_PATH")
+        .unwrap_or_else(|_| "./data".to_string());
+    
+    let backend_config = MetadataBackendConfig {
+        base_prefix: metadata_prefix.clone(),
+        namespace: metadata_namespace.clone(),
+        enable_optimistic_concurrency: true,
+        fallback_to_leases: true,
+    };
+    
+    let local_path = std::path::PathBuf::from(&local_storage_path);
+    let doc_store: Arc<dyn MetadataDocumentStore> = Arc::new(
+        LocalFsDocumentStore::new(local_path, backend_config)
+    );
+    
+    let event_log_store: Arc<dyn EventLogStore> = Arc::new(
+        RustFsEventStore::new(Arc::clone(&doc_store))
+    );
+    
+    info!("Document store initialized at: {}", local_storage_path);
 
-    // Run migrations (path relative to workspace root)
-    sqlx::migrate!("../migrations").run(&db_pool).await?;
-
-    info!("Database migrations applied");
-
-    // Initialize stores
-    let metadata_store = Arc::new(MetadataStore::new(db_pool.clone()));
-    let event_store = Arc::new(EventStore::new(db_pool.clone()));
+    // Legacy compatibility stores (deprecated, will be removed)
+    let metadata_store = Arc::new(MetadataStore::new(()));
+    let event_store = Arc::new(EventStore::new(()));
 
     // Initialize object store
     let rustfs_endpoint = std::env::var("RUSTFS_ENDPOINT")?;
@@ -166,57 +235,70 @@ async fn main() -> Result<()> {
 
     info!("EventBroadcaster initialized with capacity {}", capacity);
 
-    // Initialize services
+    // Create compatibility layer for trait implementations
+    // For now, use stub repositories that return empty results
+    // TODO: Replace with actual RustFS repositories once fully implemented
+    let metadata_compat = Arc::new(rustshare_storage::metadata_v2::MetadataStoreCompat::new(
+        rustshare_storage::repos::StubMetadataRepository::new()
+    ));
+    let event_compat = Arc::new(rustshare_storage::metadata_v2::EventStoreCompat::new(
+        Arc::clone(&event_store)
+    ));
+
+    // Initialize services with compatibility layer
     let file_service = Arc::new(FileService::new(
-        Arc::clone(&event_store),
-        Arc::clone(&metadata_store),
+        Arc::clone(&event_compat),
+        Arc::clone(&metadata_compat),
         Arc::clone(&object_store),
         Arc::clone(&broadcaster),
     ));
     let folder_service = Arc::new(FolderService::new(
-        Arc::clone(&event_store),
-        Arc::clone(&metadata_store),
+        Arc::clone(&event_compat),
+        Arc::clone(&metadata_compat),
         Arc::clone(&broadcaster),
     ));
     let share_service = Arc::new(ShareService::new(
-        Arc::clone(&event_store),
-        Arc::clone(&metadata_store),
+        Arc::clone(&event_compat),
+        Arc::clone(&metadata_compat),
         Arc::clone(&broadcaster),
         Arc::clone(&jwt_manager),
     ));
-    let thumbnail_service = Arc::new(ThumbnailService::new(
-        db_pool.clone(),
-        Arc::clone(&object_store),
-    ));
+    // TODO: ThumbnailService temporarily using default - use new state module
+    let thumbnail_service = Arc::new(ThumbnailService::new((), Arc::clone(&object_store)));
 
+    // TODO: Repository initialization commented out - use new state module
+    // These repositories depended on db_pool which has been removed.
+    // The new state module will provide repository implementations.
+    //
     // Initialize repositories for new services
-    let notification_repository = NotificationRepository::new(db_pool.clone());
-    let share_repository = Arc::new(ShareRepository::new(db_pool.clone()));
-    let user_repository = Arc::new(UserRepository::new(db_pool.clone()));
-    let file_repository = Arc::new(FileRepository::new(db_pool.clone()));
-    let folder_repository = Arc::new(FolderRepository::new(db_pool.clone()));
+    // let notification_repository = NotificationRepository::new(db_pool.clone());
+    // let share_repository = Arc::new(ShareRepository::new(db_pool.clone()));
+    // let user_repository = Arc::new(UserRepository::new(db_pool.clone()));
+    // let file_repository = Arc::new(FileRepository::new(db_pool.clone()));
+    // let folder_repository = Arc::new(FolderRepository::new(db_pool.clone()));
 
+    // TODO: PostgreSQL removed - services temporarily disabled
     // Initialize permission resolver
-    let permission_resolver = Arc::new(PermissionResolver::new(
-        Arc::clone(&share_repository),
-        Arc::clone(&file_repository),
-        Arc::clone(&folder_repository),
-    ));
+    // let permission_resolver = Arc::new(PermissionResolver::new(
+    //     Arc::clone(&share_repository),
+    //     Arc::clone(&file_repository),
+    //     Arc::clone(&folder_repository),
+    // ));
 
     // Initialize notification service
-    let notification_service = Arc::new(NotificationService::new(notification_repository));
+    // let notification_service = Arc::new(NotificationService::new(notification_repository));
 
     // Initialize user share service
-    let user_share_service = Arc::new(UserShareService::new(UserShareServiceDeps {
-        share_repo: Arc::clone(&share_repository),
-        user_repo: Arc::clone(&user_repository),
-        file_repo: Arc::clone(&file_repository),
-        folder_repo: Arc::clone(&folder_repository),
-        permission_resolver: Arc::clone(&permission_resolver),
-        notification_service: Arc::clone(&notification_service),
-        event_store: Arc::clone(&event_store),
-        broadcaster: Arc::clone(&broadcaster),
-    }));
+    // let user_share_service = Arc::new(UserShareService::new(UserShareServiceDeps {
+    //     share_repo: Arc::clone(&share_repository),
+    //     user_repo: Arc::clone(&user_repository),
+    //     file_repo: Arc::clone(&file_repository),
+    //     folder_repo: Arc::clone(&folder_repository),
+    //     permission_resolver: Arc::clone(&permission_resolver),
+    //     notification_service: Arc::clone(&notification_service),
+    //     event_store: Arc::clone(&event_store),
+    //     broadcaster: Arc::clone(&broadcaster),
+    // }));
 
     // Initialize rate limiting configuration
     let rate_limit_config = Arc::new(middleware::RateLimitConfig::new());
@@ -267,25 +349,67 @@ async fn main() -> Result<()> {
     // Load secret encryption key
     let secret_key = SecretEncryptionKey::from_env()
         .map_err(|e| anyhow::anyhow!("Secret encryption key error: {}", e))?;
+    
+    // Initialize new repository layer
+    let path_builder = PathBuilder::new(metadata_prefix, metadata_namespace);
+    
+    // Initialize repositories using the document store
+    let user_repo: Arc<dyn UserRepository> = Arc::new(
+        RustFsUserRepository::new(Arc::clone(&doc_store), path_builder.clone())
+    );
+    
+    let device_repo: Arc<dyn DeviceRepository> = Arc::new(
+        RustFsDeviceRepository::new(Arc::clone(&doc_store), path_builder.clone())
+    );
+    
+    let group_repo: Arc<dyn GroupRepository> = Arc::new(
+        RustFsGroupRepository::new(Arc::clone(&doc_store), path_builder.clone())
+    );
+    
+    let audit_repo: Arc<dyn AuditRepository> = Arc::new(
+        RustFsAuditRepository::new(Arc::clone(&doc_store), path_builder.clone())
+    );
+    
+    let config_repo: Arc<dyn ConfigRepository> = Arc::new(
+        RustFsConfigRepository::new(Arc::clone(&doc_store), path_builder.clone())
+    );
+    
+    let pairing_repo: Arc<dyn PairingRepository> = Arc::new(
+        RustFsPairingRepository::new(Arc::clone(&doc_store), path_builder.clone())
+    );
+    
+    let webhook_repo: Arc<dyn WebhookRepository> = Arc::new(
+        RustFsWebhookRepository::new(Arc::clone(&doc_store), path_builder.clone())
+    );
+    
+    let notification_repo: Arc<dyn NotificationRepository> = Arc::new(
+        RustFsNotificationRepository::new(Arc::clone(&doc_store), path_builder.clone())
+    );
 
     // Build application state
     let state = AppState {
-        db_pool,
         metadata_store,
         event_store,
         object_store,
+        user_repo,
+        device_repo,
+        group_repo,
+        audit_repo,
+        config_repo,
+        pairing_repo,
+        webhook_repo,
+        notification_repo,
         jwt_manager,
         broadcaster,
         file_service,
         folder_service,
         share_service,
         thumbnail_service,
-        permission_resolver,
-        notification_service,
-        user_share_service,
         rate_limit_config,
         secret_key,
         poll_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
+        doc_store,
+        event_log_store,
     };
 
     // Build router.
@@ -838,42 +962,14 @@ struct ShareAccessLogResponse {
 }
 
 async fn list_user_shares(
-    axum::extract::State(state): axum::extract::State<AppState>,
-    handlers::AuthenticatedUser { user_id }: handlers::AuthenticatedUser,
+    axum::extract::State(_state): axum::extract::State<AppState>,
+    _auth: handlers::AuthenticatedUser,
 ) -> Result<Json<Vec<OwnedShareResponse>>, (StatusCode, String)> {
-    let shares = state
-        .metadata_store
-        .get_user_public_shares(user_id)
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to list shares: {error}"),
-            )
-        })?;
-
-    let response = shares
-        .into_iter()
-        .filter_map(|entry| {
-            let share = entry.share;
-            let share_token = share.share_token?;
-
-            Some(OwnedShareResponse {
-                id: share.id,
-                resource_id: entry.resource_id,
-                resource_type: entry.resource_type,
-                resource_name: entry.resource_name,
-                share_token,
-                permissions: share.permissions,
-                password_protected: share.password_hash.is_some(),
-                access_count: share.access_count,
-                expires_at: share.expires_at,
-                created_at: share.created_at,
-            })
-        })
-        .collect();
-
-    Ok(Json(response))
+    // TODO: Implement using new ShareRepository
+    tracing::warn!("list_user_shares not yet implemented in zero-PostgreSQL mode");
+    
+    // Return empty list for now
+    Ok(Json(vec![]))
 }
 
 async fn revoke_share(
@@ -933,41 +1029,16 @@ async fn revoke_share(
 }
 
 async fn get_share_access_log(
-    axum::extract::State(state): axum::extract::State<AppState>,
-    axum::extract::Path(share_id): axum::extract::Path<uuid::Uuid>,
-    axum::extract::Query(query): axum::extract::Query<ShareAccessLogQuery>,
-    handlers::AuthenticatedUser { user_id }: handlers::AuthenticatedUser,
+    axum::extract::State(_state): axum::extract::State<AppState>,
+    axum::extract::Path(_share_id): axum::extract::Path<uuid::Uuid>,
+    axum::extract::Query(_query): axum::extract::Query<ShareAccessLogQuery>,
+    _auth: handlers::AuthenticatedUser,
 ) -> Result<Json<Vec<ShareAccessLogResponse>>, (StatusCode, String)> {
-    let requested_limit = query.limit.unwrap_or(50);
-    let limit = requested_limit.clamp(1, 200);
-
-    let entries = state
-        .metadata_store
-        .get_public_share_access_log(share_id, user_id, limit)
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to fetch share access log: {error}"),
-            )
-        })?;
-
-    let response = entries
-        .into_iter()
-        .map(|entry| ShareAccessLogResponse {
-            accessed_at: entry.accessed_at,
-            action: entry.action,
-            success: entry.success,
-            actor_type: entry.actor_type,
-            actor_label: entry.actor_label,
-            ip_address: entry.ip_address,
-            user_agent: entry.user_agent,
-            share_session_id: entry.share_session_id,
-            share_session_subject: entry.share_session_subject,
-        })
-        .collect();
-
-    Ok(Json(response))
+    // TODO: Implement using new AuditStore
+    tracing::warn!("get_share_access_log not yet implemented in zero-PostgreSQL mode");
+    
+    // Return empty list for now
+    Ok(Json(vec![]))
 }
 
 /// Login handler

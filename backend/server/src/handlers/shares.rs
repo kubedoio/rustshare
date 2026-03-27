@@ -71,14 +71,14 @@ pub async fn create_public_file_share(
             share.id
         );
         share_error_response(rustshare_core::services::ShareError::Database(
-            sqlx::Error::PoolClosed,
+            "Invalid share state".to_string(),
         ))
     })?;
 
     let resource_id = share.file_id.ok_or_else(|| {
         tracing::error!("File ID is None after create_share for share {}", share.id);
         share_error_response(rustshare_core::services::ShareError::Database(
-            sqlx::Error::PoolClosed,
+            "Invalid share state".to_string(),
         ))
     })?;
 
@@ -124,7 +124,7 @@ pub async fn create_public_folder_share(
             share.id
         );
         share_error_response(rustshare_core::services::ShareError::Database(
-            sqlx::Error::PoolClosed,
+            "Invalid share state".to_string(),
         ))
     })?;
 
@@ -134,7 +134,7 @@ pub async fn create_public_folder_share(
             share.id
         );
         share_error_response(rustshare_core::services::ShareError::Database(
-            sqlx::Error::PoolClosed,
+            "Invalid share state".to_string(),
         ))
     })?;
 

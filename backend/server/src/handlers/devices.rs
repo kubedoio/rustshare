@@ -6,7 +6,7 @@ use axum::{
     Json,
 };
 use serde::Serialize;
-use sqlx::FromRow;
+use serde_json::json;
 use uuid::Uuid;
 
 use crate::handlers::AuthenticatedUser;
@@ -32,29 +32,6 @@ pub struct ListDevicesResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Internal row type
-// ---------------------------------------------------------------------------
-
-#[derive(FromRow)]
-struct DeviceRow {
-    id: Uuid,
-    device_name: String,
-    created_at: chrono::DateTime<chrono::Utc>,
-    last_used_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-impl From<DeviceRow> for DeviceListResponse {
-    fn from(row: DeviceRow) -> Self {
-        DeviceListResponse {
-            id: row.id.to_string(),
-            device_name: row.device_name,
-            created_at: row.created_at,
-            last_used_at: row.last_used_at,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
@@ -65,54 +42,69 @@ pub async fn list_devices(
     State(state): State<AppState>,
     AuthenticatedUser { user_id }: AuthenticatedUser,
 ) -> Result<Json<ListDevicesResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let rows: Vec<DeviceRow> = sqlx::query_as(
-        r#"
-        SELECT id, device_name, created_at, last_used_at
-        FROM device_tokens
-        WHERE user_id = $1 AND revoked_at IS NULL
-        ORDER BY created_at DESC
-        "#,
-    )
-    .bind(user_id)
-    .fetch_all(&state.db_pool)
-    .await
-    .map_err(db_error)?;
-
+    let devices = state.device_repo
+        .list_by_user(user_id.into())
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to list devices: {}", e);
+            internal_error("Failed to list devices")
+        })?;
+    
+    let device_responses: Vec<DeviceListResponse> = devices
+        .into_iter()
+        .filter(|d| d.is_valid()) // Only show valid (non-revoked, non-expired) devices
+        .map(|d| DeviceListResponse {
+            id: d.id.to_string(),
+            device_name: d.device_name,
+            created_at: d.created_at,
+            last_used_at: Some(d.last_used_at),
+        })
+        .collect();
+    
     Ok(Json(ListDevicesResponse {
-        devices: rows.into_iter().map(DeviceListResponse::from).collect(),
+        devices: device_responses,
     }))
 }
 
 /// DELETE /api/v1/user/devices/:id
 ///
-/// Revokes a device token (sets revoked_at = NOW()).
+/// Revokes a device token.
 /// Users can only revoke their own devices.
-/// Returns 404 if the device doesn't belong to the user.
 pub async fn revoke_device(
     State(state): State<AppState>,
     AuthenticatedUser { user_id }: AuthenticatedUser,
     Path(device_id): Path<Uuid>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    // First, verify the device belongs to the user and is not already revoked
-    let result = sqlx::query(
-        r#"
-        UPDATE device_tokens
-        SET revoked_at = NOW()
-        WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
-        "#,
-    )
-    .bind(device_id)
-    .bind(user_id)
-    .execute(&state.db_pool)
-    .await
-    .map_err(db_error)?;
-
-    // If no rows were affected, the device either doesn't exist,
-    // doesn't belong to the user, or is already revoked
-    if result.rows_affected() == 0 {
-        return Err(not_found("Device not found"));
+    // First verify the device belongs to the user
+    let device = state.device_repo
+        .get(device_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get device: {}", e);
+            internal_error("Failed to revoke device")
+        })?;
+    
+    let device = device.ok_or_else(|| {
+        not_found("Device not found")
+    })?;
+    
+    // Verify ownership
+    if device.user_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "Cannot revoke device that does not belong to you" })),
+        ));
     }
-
+    
+    // Revoke the device
+    state.device_repo
+        .delete(device_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to revoke device: {}", e);
+            internal_error("Failed to revoke device")
+        })?;
+    
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -120,16 +112,15 @@ pub async fn revoke_device(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn db_error(e: sqlx::Error) -> (StatusCode, Json<serde_json::Value>) {
-    tracing::error!("Database error: {:?}", e);
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({ "error": "Database error" })),
-    )
+fn not_found(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::NOT_FOUND, Json(json!({ "error": msg })))
 }
 
-fn not_found(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": msg })))
+fn internal_error(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": msg })),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -139,31 +130,6 @@ fn not_found(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Test that SQL query syntax is valid by checking it compiles
-    #[test]
-    fn test_list_devices_query_syntax() {
-        // The query string is validated by sqlx at compile time
-        // This test ensures the query is syntactically correct
-        let query = r#"
-            SELECT id, device_name, created_at, last_used_at
-            FROM device_tokens
-            WHERE user_id = $1 AND revoked_at IS NULL
-            ORDER BY created_at DESC
-        "#;
-        assert!(!query.is_empty());
-    }
-
-    /// Test that revoke device query syntax is valid
-    #[test]
-    fn test_revoke_device_query_syntax() {
-        let query = r#"
-            UPDATE device_tokens
-            SET revoked_at = NOW()
-            WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
-        "#;
-        assert!(!query.is_empty());
-    }
 
     /// Test DeviceListResponse serialization
     #[test]
@@ -206,23 +172,5 @@ mod tests {
         assert!(json.contains("Device 1"));
         assert!(json.contains("Device 2"));
         assert!(json.contains("devices"));
-    }
-
-    /// Test DeviceRow to DeviceListResponse conversion
-    #[test]
-    fn test_device_row_conversion() {
-        let now = chrono::Utc::now();
-        let row = DeviceRow {
-            id: Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap(),
-            device_name: "My Device".to_string(),
-            created_at: now,
-            last_used_at: Some(now),
-        };
-
-        let response: DeviceListResponse = row.into();
-        assert_eq!(response.id, "550e8400-e29b-41d4-a716-446655440000");
-        assert_eq!(response.device_name, "My Device");
-        assert_eq!(response.created_at, now);
-        assert_eq!(response.last_used_at, Some(now));
     }
 }

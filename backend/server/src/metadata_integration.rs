@@ -1,19 +1,20 @@
 //! Metadata system integration for the server
 //!
-//! This module handles the integration of the new metadata_v2 system
-//! alongside the existing PostgreSQL-based system.
+//! TODO: This module is deprecated - it was used during the migration from
+//! PostgreSQL to RustFS. It should be removed or rewritten for the new
+//! zero-PostgreSQL architecture.
 
 use std::sync::Arc;
 
 use rustshare_storage::{
-    admin, metadata_v2, repos, service_integration, EventStore, MetadataStore, ObjectStore,
+    metadata_v2, repos, service_integration, EventStore, MetadataStore, ObjectStore,
 };
 
 /// Extended application state with new metadata repositories
+/// 
+/// DEPRECATED: This is being replaced by the new AppState in main.rs
 #[derive(Clone)]
 pub struct MetadataState {
-    /// Legacy PostgreSQL pool
-    pub db_pool: sqlx::PgPool,
     /// Legacy metadata store
     pub metadata_store: Arc<MetadataStore>,
     /// Legacy event store
@@ -28,13 +29,15 @@ pub struct MetadataState {
 
 impl MetadataState {
     /// Initialize the metadata system
+    /// 
+    /// TODO: Remove db_pool parameter - this is a temporary measure
     pub async fn from_env(
-        db_pool: sqlx::PgPool,
+        _db_pool_placeholder: Option<()>,
         object_store: Arc<ObjectStore>,
     ) -> anyhow::Result<Self> {
         // Initialize legacy stores
-        let metadata_store = Arc::new(MetadataStore::new(db_pool.clone()));
-        let event_store = Arc::new(EventStore::new(db_pool.clone()));
+        let metadata_store = Arc::new(MetadataStore::new(()));
+        let event_store = Arc::new(EventStore::new(()));
 
         // Load configuration
         let config = service_integration::MetadataConfig::from_env()?;
@@ -42,7 +45,7 @@ impl MetadataState {
         // Initialize new metadata system if not using postgres-only mode
         let (new_repo, compat) = match config.backend_type {
             metadata_v2::MetadataBackendType::Postgres => {
-                tracing::info!("Using PostgreSQL-only metadata backend");
+                tracing::info!("Using PostgreSQL-only metadata backend (deprecated)");
                 (None, None)
             }
             _ => {
@@ -57,8 +60,7 @@ impl MetadataState {
 
                 // Build metadata system
                 let builder = service_integration::MetadataSystemBuilder::new(config.clone())
-                    .with_s3_client(s3_client)
-                    .with_pg_pool(db_pool.clone());
+                    .with_s3_client(s3_client);
 
                 let repo = builder.build().await?;
                 let compat = metadata_v2::MetadataStoreCompat::new(Arc::clone(&repo));
@@ -68,7 +70,6 @@ impl MetadataState {
         };
 
         Ok(Self {
-            db_pool,
             metadata_store,
             event_store,
             new_repo,
@@ -125,9 +126,9 @@ impl MetadataState {
 /// Configuration for metadata backend selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MetadataBackendMode {
-    /// Use PostgreSQL only (legacy)
+    /// Use PostgreSQL only (legacy - DEPRECATED)
     PostgresOnly,
-    /// Use RustFS for reads, PostgreSQL for writes (migration)
+    /// Use RustFS for reads, PostgreSQL for writes (migration - DEPRECATED)
     RustFsReads,
     /// Use RustFS for all operations (new system)
     RustFsFull,
@@ -139,7 +140,7 @@ impl MetadataBackendMode {
     /// Determine mode from environment
     pub fn from_env() -> Self {
         let backend = std::env::var("RUSTSHARE_METADATA_BACKEND")
-            .unwrap_or_else(|_| "postgres".to_string());
+            .unwrap_or_else(|_| "rustfs".to_string());
 
         match backend.as_str() {
             "rustfs" => Self::RustFsFull,

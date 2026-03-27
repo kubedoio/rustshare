@@ -1,0 +1,174 @@
+# RustShare Distributed Deployment
+#
+# This is the zero-PostgreSQL distributed deployment configuration.
+# It supports multiple RustShare instances with Redis coordination.
+#
+# Use this for:
+# - Production environments
+# - High availability deployments
+# - Horizontal scaling
+#
+# Components:
+# - 2+ RustShare backend instances (load balanced)
+# - Redis for coordination and ephemeral state
+# - RustFS for durable metadata and object storage
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rustfs:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: rustfsadmin
+      MINIO_ROOT_PASSWORD: changeme
+    volumes:
+      - rustfs_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "nc -z localhost 9000 && nc -z localhost 9001"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend-1:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      args:
+        VITE_API_URL: /api/v1
+        VITE_WS_URL: /api/ws
+    ports:
+      - "8080:8080"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    environment:
+      # Runtime Profile - distributed mode (Redis required)
+      RUSTSHARE_RUNTIME_PROFILE: distributed
+      RUSTSHARE_REDIS_ENABLED: "true"
+      RUSTSHARE_REDIS_URL: redis://redis:6379
+      
+      # RustFS Configuration
+      RUSTFS_ENDPOINT: http://rustfs:9000
+      RUSTFS_PUBLIC_ENDPOINT: http://localhost:9000
+      RUSTFS_REGION: us-east-1
+      RUSTFS_BUCKET: rustshare-files
+      AWS_ACCESS_KEY_ID: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: changeme
+      
+      # Metadata Configuration
+      RUSTSHARE_METADATA_PREFIX: apps/rustshare
+      RUSTSHARE_METADATA_NAMESPACE: default
+      
+      # Security
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
+      RUSTSHARE_SECRET_ENCRYPTION_KEY: ${RUSTSHARE_SECRET_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+      
+      # Admin User
+      RUSTSHARE_ADMIN_USERNAME: admin
+      RUSTSHARE_ADMIN_EMAIL: admin@localhost
+      RUSTSHARE_ADMIN_PASSWORD: admin123
+      
+      # Logging
+      RUST_LOG: ${RUST_LOG:-info,rustshare=debug}
+      
+      # Rate Limiting
+      RUSTSHARE_RATE_LIMIT_AUTH_LOGIN_PER_MINUTE: ${RUSTSHARE_RATE_LIMIT_AUTH_LOGIN_PER_MINUTE:-10}
+      RUSTSHARE_RATE_LIMIT_OIDC_LOGIN_PER_MINUTE: ${RUSTSHARE_RATE_LIMIT_OIDC_LOGIN_PER_MINUTE:-30}
+      
+      # Frontend
+      FRONTEND_DIST_DIR: /app/frontend-build
+    depends_on:
+      redis:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+
+  backend-2:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      args:
+        VITE_API_URL: /api/v1
+        VITE_WS_URL: /api/ws
+    ports:
+      - "8081:8080"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    environment:
+      # Runtime Profile - distributed mode (Redis required)
+      RUSTSHARE_RUNTIME_PROFILE: distributed
+      RUSTSHARE_REDIS_ENABLED: "true"
+      RUSTSHARE_REDIS_URL: redis://redis:6379
+      
+      # RustFS Configuration
+      RUSTFS_ENDPOINT: http://rustfs:9000
+      RUSTFS_PUBLIC_ENDPOINT: http://localhost:9000
+      RUSTFS_REGION: us-east-1
+      RUSTFS_BUCKET: rustshare-files
+      AWS_ACCESS_KEY_ID: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: changeme
+      
+      # Metadata Configuration
+      RUSTSHARE_METADATA_PREFIX: apps/rustshare
+      RUSTSHARE_METADATA_NAMESPACE: default
+      
+      # Security
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
+      RUSTSHARE_SECRET_ENCRYPTION_KEY: ${RUSTSHARE_SECRET_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+      
+      # Admin User
+      RUSTSHARE_ADMIN_USERNAME: admin
+      RUSTSHARE_ADMIN_EMAIL: admin@localhost
+      RUSTSHARE_ADMIN_PASSWORD: admin123
+      
+      # Logging
+      RUST_LOG: ${RUST_LOG:-info,rustshare=debug}
+      
+      # Rate Limiting
+      RUSTSHARE_RATE_LIMIT_AUTH_LOGIN_PER_MINUTE: ${RUSTSHARE_RATE_LIMIT_AUTH_LOGIN_PER_MINUTE:-10}
+      RUSTSHARE_RATE_LIMIT_OIDC_LOGIN_PER_MINUTE: ${RUSTSHARE_RATE_LIMIT_OIDC_LOGIN_PER_MINUTE:-30}
+      
+      # Frontend
+      FRONTEND_DIST_DIR: /app/frontend-build
+    depends_on:
+      redis:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx-distributed.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend-1
+      - backend-2
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  redis_data:
+  rustfs_data:

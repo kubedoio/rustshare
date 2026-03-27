@@ -1,4 +1,7 @@
 //! Admin panel handlers. All routes require `AdminUser` extractor (is_admin = true).
+//!
+//! TODO: This module needs to be rewritten to use the new AuditStore
+//! for audit logging instead of PostgreSQL.
 
 pub mod audit;
 pub mod config;
@@ -6,39 +9,22 @@ pub mod groups;
 pub mod users;
 pub mod webhooks;
 
-use sqlx::PgPool;
+use serde_json::json;
 use uuid::Uuid;
 
-/// Record an admin action in the `admin_actions` table.
+/// Record an admin action in the audit log.
 /// Errors are logged as warnings — audit failures must not block the admin operation.
+///
+/// TODO: Replace PostgreSQL audit logging with AuditStore (RustFS-based)
 pub async fn log_admin_action(
-    pool: &PgPool,
-    actor_id: Uuid,
-    action_type: &str,
-    target_type: Option<&str>,
-    target_id: Option<Uuid>,
-    detail: serde_json::Value,
+    _actor_id: Uuid,
+    _action_type: &str,
+    _target_type: Option<&str>,
+    _target_id: Option<Uuid>,
+    _detail: serde_json::Value,
 ) {
-    let result = sqlx::query(
-        r#"
-        INSERT INTO admin_actions (actor_id, action_type, target_type, target_id, detail)
-        VALUES ($1, $2, $3, $4, $5)
-        "#,
-    )
-    .bind(actor_id)
-    .bind(action_type)
-    .bind(target_type)
-    .bind(target_id)
-    .bind(detail)
-    .execute(pool)
-    .await;
-
-    if let Err(e) = result {
-        tracing::warn!(
-            actor_id = %actor_id,
-            action_type = action_type,
-            target_id = ?target_id,
-            "Failed to log admin action: {:?}", e
-        );
-    }
+    // TODO: Implement using AuditStore for audit logging
+    // This requires rewriting to use RustFS instead of PostgreSQL
+    
+    tracing::warn!("Admin audit logging not yet implemented in zero-PostgreSQL mode");
 }

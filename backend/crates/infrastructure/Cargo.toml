@@ -2,18 +2,10 @@
 name = "rustshare-infrastructure"
 version.workspace = true
 edition.workspace = true
+# ⚠️ DEPRECATED: This crate is legacy and will be removed in a future version.
+# All SQLx-based repository implementations have been removed.
+# Use rustshare_storage instead for storage implementations.
 
 [dependencies]
-rustshare-core = { path = "../core" }
-
-# Database
-sqlx = { workspace = true }
-
-# Serialization
-serde = { workspace = true }
-
-# Utilities
-uuid = { workspace = true }
-chrono = { workspace = true }
-thiserror = { workspace = true }
-anyhow = { workspace = true }
+# All dependencies removed - this crate is deprecated and exports nothing.
+# Use rustshare_storage instead.

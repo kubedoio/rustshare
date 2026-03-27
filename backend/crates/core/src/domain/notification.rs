@@ -7,8 +7,7 @@ use super::UserId;
 pub type NotificationId = Uuid;
 
 /// Type of notification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "TEXT")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationType {
     ShareReceived,
@@ -42,8 +41,7 @@ impl std::str::FromStr for NotificationType {
 }
 
 /// Type of resource referenced by notification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "TEXT")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceType {
     File,
@@ -78,7 +76,7 @@ impl std::str::FromStr for ResourceType {
 ///
 /// Notifications are persistent and stored in the database. They complement
 /// real-time WebSocket notifications for offline users.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Notification {
     pub id: NotificationId,
     pub user_id: UserId,

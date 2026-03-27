@@ -3,6 +3,7 @@
 //! Provides endpoints for the device pairing flow:
 //! - POST /api/v1/auth/device/request - Generate user_code and device_code
 //! - POST /api/v1/auth/device/poll - Check approval status and issue token
+//! - POST /api/v1/auth/device/approve - Approve a pairing request
 
 use axum::{
     extract::State,
@@ -15,8 +16,12 @@ use rand::{distributions::Uniform, Rng};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use sqlx::Row;
 use std::time::{Duration, Instant};
+use uuid::Uuid;
+
+use rustshare_storage::metadata_v2::schemas::{
+    DeviceTokenDocument, PairingRequestDocument, PairingStatus,
+};
 
 use crate::handlers::AuthenticatedUser;
 use crate::AppState;
@@ -31,6 +36,7 @@ const USER_CODE_LENGTH: usize = 8;
 const DEVICE_CODE_LENGTH: usize = 32;
 const TOKEN_LENGTH: usize = 32;
 const POLL_RATE_LIMIT_SECONDS: u64 = 5;
+const PAIRING_TTL_SECONDS: i64 = 300; // 5 minutes
 
 /// Response for QR info endpoint
 #[derive(Serialize)]
@@ -116,73 +122,78 @@ pub async fn device_approve(
     AuthenticatedUser { user_id }: AuthenticatedUser,
     Json(body): Json<DeviceApproveRequest>,
 ) -> Result<Json<DeviceApproveResponse>, (StatusCode, Json<serde_json::Value>)> {
-    // Look up pair request by user_code (case-insensitive)
-    let row = sqlx::query(
-        r#"
-        SELECT
-            id,
-            user_id,
-            approved_at IS NOT NULL as is_approved,
-            expires_at < NOW() as is_expired
-        FROM device_pair_requests
-        WHERE UPPER(user_code) = UPPER($1)
-        "#,
-    )
-    .bind(&body.user_code)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|e| server_error(format!("Database error: {}", e)))?;
-
-    let (id, is_approved, is_expired) = match row {
-        Some(row) => {
-            let id: uuid::Uuid = row.try_get("id")
-                .map_err(|e| server_error(format!("Failed to get id: {}", e)))?;
-            let is_approved: bool = row.try_get("is_approved").unwrap_or(false);
-            let is_expired: bool = row.try_get("is_expired").unwrap_or(true);
-            (id, is_approved, is_expired)
-        }
-        None => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "code_not_found"})),
-            ));
-        }
-    };
-
-    // Check if expired
-    if is_expired {
+    // Find the pairing request by user_code
+    let pairing = state.pairing_repo
+        .get_by_user_code(&body.user_code.to_uppercase())
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get pairing request: {}", e);
+            internal_error("Failed to process approval")
+        })?;
+    
+    let mut pairing = pairing.ok_or_else(|| {
+        not_found("Invalid or expired user code")
+    })?;
+    
+    // Check if already approved or expired
+    if pairing.status == PairingStatus::Approved {
         return Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "code_not_found"})),
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Pairing request already approved"})),
         ));
     }
-
-    // Check if already approved
-    if is_approved {
+    
+    if pairing.is_expired() {
         return Err((
-            StatusCode::CONFLICT,
-            Json(json!({"error": "already_approved"})),
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Pairing request has expired"})),
         ));
     }
-
-    // Update the pair request with user_id and approved_at
-    sqlx::query(
-        r#"
-        UPDATE device_pair_requests
-        SET user_id = $1, approved_at = NOW()
-        WHERE id = $2
-        "#,
-    )
-    .bind(user_id)
-    .bind(id)
-    .execute(&state.db_pool)
-    .await
-    .map_err(|e| server_error(format!("Failed to approve pair request: {}", e)))?;
-
-    // Return device_name - the actual device name is captured at poll time
-    // when the token is created, so we return a placeholder here
+    
+    if pairing.status == PairingStatus::Expired {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Pairing request has expired"})),
+        ));
+    }
+    
+    // Generate a device token
+    let token = gen_token();
+    let token_hash = hash_token(&token);
+    
+    // Create the device token
+    let device_id = Uuid::new_v4();
+    let device = DeviceTokenDocument::new(
+        device_id,
+        user_id,
+        token_hash,
+        pairing.device_name.clone().unwrap_or_else(|| "Unknown Device".to_string()),
+        pairing.device_type.clone().unwrap_or_else(|| "unknown".to_string()),
+        None, // No expiration
+    );
+    
+    // Save the device
+    state.device_repo
+        .create(&device)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to create device: {}", e);
+            internal_error("Failed to create device")
+        })?;
+    
+    // Mark pairing as approved
+    pairing.approve(user_id, device_id, token);
+    
+    state.pairing_repo
+        .update(&pairing)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to update pairing: {}", e);
+            internal_error("Failed to complete approval")
+        })?;
+    
     Ok(Json(DeviceApproveResponse {
-        device_name: "Device".to_string(),
+        device_name: device.device_name,
     }))
 }
 
@@ -225,42 +236,50 @@ fn server_error(msg: impl Into<String>) -> (StatusCode, Json<serde_json::Value>)
     )
 }
 
+fn not_found(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::NOT_FOUND, Json(json!({ "error": msg })))
+}
+
+fn internal_error(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": msg })),
+    )
+}
+
 /// POST /api/v1/auth/device/request
 /// Generates a new device pair request with user_code and device_code
 pub async fn device_request(
     State(state): State<AppState>,
 ) -> Result<Json<DeviceRequestResponse>, (StatusCode, Json<serde_json::Value>)> {
-    // Get TTL from oidc_config table (device_pair_code_ttl_seconds)
-    let ttl_seconds: i32 = sqlx::query_scalar(
-        "SELECT COALESCE(device_pair_code_ttl_seconds, 300) FROM oidc_config LIMIT 1",
-    )
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|e| server_error(format!("Database error: {}", e)))?
-    .unwrap_or(300);
-    let ttl_seconds_i64 = i64::from(ttl_seconds);
-
     let user_code = gen_user_code();
     let device_code = gen_device_code();
-
-    // Insert into device_pair_requests
-    sqlx::query(
-        r#"
-        INSERT INTO device_pair_requests (id, device_code, user_code, expires_at)
-        VALUES (gen_random_uuid(), $1, $2, NOW() + INTERVAL '1 second' * $3)
-        "#,
-    )
-    .bind(&device_code)
-    .bind(&user_code)
-    .bind(f64::from(ttl_seconds))
-    .execute(&state.db_pool)
-    .await
-    .map_err(|e| server_error(format!("Failed to create pair request: {}", e)))?;
-
+    
+    // Create a pairing request
+    let pairing_id = Uuid::new_v4();
+    let token = gen_token();
+    let token_hash = hash_token(&token);
+    
+    let pairing = PairingRequestDocument::new(
+        pairing_id,
+        user_code.clone(),
+        device_code.clone(),
+        token_hash,
+        PAIRING_TTL_SECONDS,
+    );
+    
+    state.pairing_repo
+        .create(&pairing)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to create pairing request: {}", e);
+            internal_error("Failed to create pairing request")
+        })?;
+    
     Ok(Json(DeviceRequestResponse {
         user_code,
         device_code,
-        expires_in: ttl_seconds_i64,
+        expires_in: PAIRING_TTL_SECONDS,
     }))
 }
 
@@ -268,7 +287,7 @@ pub async fn device_request(
 /// Polls for approval status and issues token when approved
 pub async fn device_poll(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
     Json(req): Json<DevicePollRequest>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     // Check rate limit
@@ -294,108 +313,44 @@ pub async fn device_poll(
         rate_limiter.insert(rate_limit_key, now);
     }
 
-    // Look up the pair request
-    let row = sqlx::query(
-        r#"
-        SELECT
-            user_id,
-            approved_at IS NOT NULL as is_approved,
-            expires_at < NOW() as is_expired
-        FROM device_pair_requests
-        WHERE device_code = $1
-        "#,
-    )
-    .bind(&req.device_code)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|e| server_error(format!("Database error: {}", e)))?;
-
-    let (user_id_opt, is_approved, is_expired) = match row {
-        Some(row) => {
-            let user_id: Option<uuid::Uuid> = row.try_get("user_id").ok();
-            let is_approved: bool = row.try_get("is_approved").unwrap_or(false);
-            let is_expired: bool = row.try_get("is_expired").unwrap_or(true);
-            (user_id, is_approved, is_expired)
-        }
+    // Get the pairing request
+    let pairing = state.pairing_repo
+        .get_by_device_code(&req.device_code)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get pairing request: {}", e);
+            internal_error("Failed to check pairing status")
+        })?;
+    
+    let pairing = match pairing {
+        Some(p) => p,
         None => {
-            // Device code not found - treat as expired
-            return Ok(
-                Json(DevicePollResponse::Expired {}).into_response()
-            );
+            return Ok(Json(DevicePollResponse::Expired {}).into_response());
         }
     };
-
+    
     // Check if expired
-    if is_expired {
-        // Clean up expired request
-        let _ = sqlx::query("DELETE FROM device_pair_requests WHERE device_code = $1")
-            .bind(&req.device_code)
-            .execute(&state.db_pool)
-            .await;
-
+    if pairing.is_expired() {
         return Ok(Json(DevicePollResponse::Expired {}).into_response());
     }
-
-    // Check if still pending
-    if !is_approved {
-        return Ok(Json(DevicePollResponse::Pending {}).into_response());
-    }
-
-    // Approved - generate token and clean up
-    let user_id = user_id_opt.ok_or_else(|| {
-        server_error("Approved request missing user_id")
-    })?;
-
-    let raw_token = gen_token();
-    let token_hash = hash_token(&raw_token);
-
-    // Get device name from User-Agent header
-    let device_name = headers
-        .get(axum::http::header::USER_AGENT)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| {
-            if s.len() > 255 {
-                &s[..255]
+    
+    // Check status
+    match pairing.status {
+        PairingStatus::Approved => {
+            if let Some(token) = pairing.access_token {
+                Ok(Json(DevicePollResponse::Approved { token }).into_response())
             } else {
-                s
+                // This shouldn't happen, but handle it gracefully
+                Ok(Json(DevicePollResponse::Pending {}).into_response())
             }
-        })
-        .unwrap_or("Unknown device")
-        .to_string();
-
-    // Insert token and delete pair request in a transaction
-    let mut tx = state
-        .db_pool
-        .begin()
-        .await
-        .map_err(|e| server_error(format!("Transaction error: {}", e)))?;
-
-    // Insert the device token
-    sqlx::query(
-        r#"
-        INSERT INTO device_tokens (id, user_id, token_hash, device_name)
-        VALUES (gen_random_uuid(), $1, $2, $3)
-        "#,
-    )
-    .bind(user_id)
-    .bind(&token_hash)
-    .bind(&device_name)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| server_error(format!("Failed to create token: {}", e)))?;
-
-    // Delete the pair request
-    sqlx::query("DELETE FROM device_pair_requests WHERE device_code = $1")
-        .bind(&req.device_code)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| server_error(format!("Failed to clean up pair request: {}", e)))?;
-
-    tx.commit()
-        .await
-        .map_err(|e| server_error(format!("Transaction commit error: {}", e)))?;
-
-    Ok(Json(DevicePollResponse::Approved { token: raw_token }).into_response())
+        }
+        PairingStatus::Expired => {
+            Ok(Json(DevicePollResponse::Expired {}).into_response())
+        }
+        _ => {
+            Ok(Json(DevicePollResponse::Pending {}).into_response())
+        }
+    }
 }
 
 #[cfg(test)]

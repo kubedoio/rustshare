@@ -39,7 +39,7 @@ pub enum ShareError {
 
     /// Database operation failed.
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(String),
 
     /// Password hashing operation failed.
     #[error("Password hashing error: {0}")]
@@ -71,6 +71,12 @@ pub enum ShareError {
     /// Cannot remove the owner from a share.
     #[error("Cannot remove the owner from a share")]
     CannotRemoveOwner,
+}
+
+impl From<String> for ShareError {
+    fn from(s: String) -> Self {
+        ShareError::Database(s)
+    }
 }
 
 #[cfg(test)]
@@ -186,7 +192,10 @@ mod tests {
         assert_eq!(err.to_string(), "Cannot remove the owner from a share");
     }
 
-    // Note: Database error tests removed as they require sqlx::Error which cannot
-    // be easily constructed in unit tests. The #[from] attribute ensures proper
-    // automatic conversion from sqlx::Error to ShareError::Database.
+    #[test]
+    fn test_share_error_database() {
+        let msg = "connection failed";
+        let err = ShareError::Database(msg.to_string());
+        assert_eq!(err.to_string(), format!("Database error: {}", msg));
+    }
 }
