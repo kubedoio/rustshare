@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use rustshare_core::domain::{Folder, FolderTree};
-use rustshare_storage::metadata_v2::schemas::{FolderDocument, FileDocument, TombstoneDocument, TombstoneResourceType};
+use rustshare_storage::metadata_v2::schemas::{FolderDocument, FileDocument, TombstoneDocument};
 use rustshare_storage::metadata_v2::PutOptions;
 use rustshare_storage::MetadataDocumentStoreExt;
 
@@ -194,13 +194,12 @@ pub async fn delete_folder(
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
 ) -> Result<StatusCode, Response> {
-    use rustshare_storage::metadata_v2::schemas::{FolderDocument, FileDocument, TombstoneDocument, TombstoneResourceType};
     use chrono::Utc;
 
     // Load folder document
     let folder_key = format!("{}/{}/meta/folders/{}.json",
         state.metadata_prefix, state.metadata_namespace, folder_id);
-    let folder_doc = state.doc_store
+    let (folder_doc, _) = state.doc_store
         .get::<FolderDocument>(&folder_key).await
         .map_err(|e| {
             tracing::error!("Failed to load folder: {}", e);
@@ -272,14 +271,7 @@ pub async fn delete_folder(
         ))?;
 
     // Create tombstone for potential recovery
-    let tombstone = TombstoneDocument {
-        schema_version: 2,
-        resource_type: TombstoneResourceType::Folder,
-        resource_id: folder_id,
-        deleted_at: Utc::now(),
-        deleted_by: auth.user_id,
-        original_doc: serde_json::to_value(&updated_doc).unwrap(),
-    };
+    let tombstone = TombstoneDocument::from_folder(&updated_doc, auth.user_id);
 
     let tombstone_key = format!("{}/{}/meta/tombstones/folders/{}.json",
         state.metadata_prefix, state.metadata_namespace, folder_id);
