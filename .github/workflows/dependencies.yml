@@ -28,7 +28,7 @@ jobs:
           toolchain: stable
       
       - name: Cache cargo-outdated
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-outdated
           key: ${{ runner.os }}-cargo-outdated
@@ -113,7 +113,7 @@ jobs:
         uses: dtolnay/rust-action@stable
       
       - name: Cache cargo-audit
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-audit
           key: ${{ runner.os }}-cargo-audit
