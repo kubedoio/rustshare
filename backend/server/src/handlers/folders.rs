@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use rustshare_core::domain::{Folder, FolderTree};
+use rustshare_storage::metadata_v2::schemas::{FolderDocument, FileDocument};
+use rustshare_storage::MetadataDocumentStoreExt;
 
 use super::{folder_error_response, AuthenticatedUser};
 use crate::AppState;
@@ -112,15 +114,109 @@ pub async fn delete_folder(
 ///
 /// GET /api/folders/{id}/contents
 pub async fn get_folder_contents(
-    State(_state): State<AppState>,
-    _auth: AuthenticatedUser,
-    Path(_folder_id): Path<Uuid>,
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(folder_id): Path<Uuid>,
 ) -> Result<Json<FolderContentsWithShares>, Response> {
-    // TODO: Implement proper folder/file listing using V2 services
-    // For now, return empty lists to allow UI to load
+    let user_id = auth.user_id;
+    
+    // Build prefix for user's folders
+    let folder_prefix = format!("{}/{}/meta/folders/", 
+        state.metadata_prefix, state.metadata_namespace);
+    
+    // List all folders and filter by owner and parent
+    let folder_keys = state.doc_store
+        .list_prefix(&folder_prefix)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to list folders: {}", e);
+            use axum::{http::StatusCode, response::IntoResponse, Json};
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(super::ErrorResponse::new("Internal server error")),
+            )
+                .into_response()
+        })?;
+    
+    let mut folders_with_shares: Vec<FolderWithShares> = Vec::new();
+    for key in folder_keys {
+        if let Ok(Some((doc, _))) = state.doc_store.get::<FolderDocument>(&key).await {
+            // Filter by owner and specific parent
+            if doc.owner_id == user_id && !doc.deleted && doc.parent_id == Some(folder_id) {
+                // Get share info
+                let shares = state.share_repo
+                    .list_by_resource("folder", doc.id)
+                    .await
+                    .unwrap_or_default();
+                
+                folders_with_shares.push(FolderWithShares {
+                    id: doc.id,
+                    name: doc.name,
+                    path: doc.path,
+                    parent_folder_id: doc.parent_id,
+                    owner_id: doc.owner_id,
+                    created_at: doc.created_at,
+                    updated_at: doc.updated_at,
+                    is_shared: !shares.is_empty(),
+                    share_count: shares.len() as i64,
+                    share_expires_at: shares.iter().filter_map(|s| s.expires_at).min(),
+                });
+            }
+        }
+    }
+    
+    // Build prefix for user's files
+    let file_prefix = format!("{}/{}/meta/files/", 
+        state.metadata_prefix, state.metadata_namespace);
+    
+    // List all files and filter by owner and parent
+    let file_keys = state.doc_store
+        .list_prefix(&file_prefix)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to list files: {}", e);
+            use axum::{http::StatusCode, response::IntoResponse, Json};
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(super::ErrorResponse::new("Internal server error")),
+            )
+                .into_response()
+        })?;
+    
+    let mut files_with_shares: Vec<crate::handlers::files::FileWithShares> = Vec::new();
+    for key in file_keys {
+        if let Ok(Some((doc, _))) = state.doc_store.get::<FileDocument>(&key).await {
+            // Filter by owner and specific parent
+            if doc.owner_id == user_id && !doc.deleted && doc.parent_id == Some(folder_id) {
+                // Get share info
+                let shares = state.share_repo
+                    .list_by_resource("file", doc.id)
+                    .await
+                    .unwrap_or_default();
+                
+                files_with_shares.push(crate::handlers::files::FileWithShares {
+                    id: doc.id,
+                    name: doc.name,
+                    path: doc.path,
+                    content_hash: doc.content_ref.clone(),
+                    size: doc.size,
+                    mime_type: doc.mime_type.clone(),
+                    parent_folder_id: doc.parent_id,
+                    owner_id: doc.owner_id,
+                    current_version: doc.version_number,
+                    created_at: doc.created_at,
+                    modified_at: doc.updated_at,
+                    is_shared: !shares.is_empty(),
+                    share_count: shares.len() as i64,
+                    share_expires_at: shares.iter().filter_map(|s| s.expires_at).min(),
+                });
+            }
+        }
+    }
+    
     Ok(Json(FolderContentsWithShares { 
-        folders: Vec::new(), 
-        files: Vec::new() 
+        folders: folders_with_shares, 
+        files: files_with_shares 
     }))
 }
 
@@ -128,14 +224,108 @@ pub async fn get_folder_contents(
 ///
 /// GET /api/folders/root/contents
 pub async fn get_root_contents(
-    State(_state): State<AppState>,
-    _auth: AuthenticatedUser,
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
 ) -> Result<Json<FolderContentsWithShares>, Response> {
-    // TODO: Implement proper folder/file listing using V2 services
-    // For now, return empty lists to allow UI to load
+    let user_id = auth.user_id;
+    
+    // Build prefix for user's folders
+    let folder_prefix = format!("{}/{}/meta/folders/", 
+        state.metadata_prefix, state.metadata_namespace);
+    
+    // List all folders and filter by owner
+    let folder_keys = state.doc_store
+        .list_prefix(&folder_prefix)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to list folders: {}", e);
+            use axum::{http::StatusCode, response::IntoResponse, Json};
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(super::ErrorResponse::new("Internal server error")),
+            )
+                .into_response()
+        })?;
+    
+    let mut folders_with_shares: Vec<FolderWithShares> = Vec::new();
+    for key in folder_keys {
+        if let Ok(Some((doc, _))) = state.doc_store.get::<FolderDocument>(&key).await {
+            // Filter by owner and root (no parent)
+            if doc.owner_id == user_id && !doc.deleted && doc.parent_id.is_none() {
+                // Get share info
+                let shares = state.share_repo
+                    .list_by_resource("folder", doc.id)
+                    .await
+                    .unwrap_or_default();
+                
+                folders_with_shares.push(FolderWithShares {
+                    id: doc.id,
+                    name: doc.name,
+                    path: doc.path,
+                    parent_folder_id: doc.parent_id,
+                    owner_id: doc.owner_id,
+                    created_at: doc.created_at,
+                    updated_at: doc.updated_at,
+                    is_shared: !shares.is_empty(),
+                    share_count: shares.len() as i64,
+                    share_expires_at: shares.iter().filter_map(|s| s.expires_at).min(),
+                });
+            }
+        }
+    }
+    
+    // Build prefix for user's files
+    let file_prefix = format!("{}/{}/meta/files/", 
+        state.metadata_prefix, state.metadata_namespace);
+    
+    // List all files and filter by owner
+    let file_keys = state.doc_store
+        .list_prefix(&file_prefix)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to list files: {}", e);
+            use axum::{http::StatusCode, response::IntoResponse, Json};
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(super::ErrorResponse::new("Internal server error")),
+            )
+                .into_response()
+        })?;
+    
+    let mut files_with_shares: Vec<crate::handlers::files::FileWithShares> = Vec::new();
+    for key in file_keys {
+        if let Ok(Some((doc, _))) = state.doc_store.get::<FileDocument>(&key).await {
+            // Filter by owner and root (no parent)
+            if doc.owner_id == user_id && !doc.deleted && doc.parent_id.is_none() {
+                // Get share info
+                let shares = state.share_repo
+                    .list_by_resource("file", doc.id)
+                    .await
+                    .unwrap_or_default();
+                
+                files_with_shares.push(crate::handlers::files::FileWithShares {
+                    id: doc.id,
+                    name: doc.name,
+                    path: doc.path,
+                    content_hash: doc.content_ref.clone(),
+                    size: doc.size,
+                    mime_type: doc.mime_type.clone(),
+                    parent_folder_id: doc.parent_id,
+                    owner_id: doc.owner_id,
+                    current_version: doc.version_number,
+                    created_at: doc.created_at,
+                    modified_at: doc.updated_at,
+                    is_shared: !shares.is_empty(),
+                    share_count: shares.len() as i64,
+                    share_expires_at: shares.iter().filter_map(|s| s.expires_at).min(),
+                });
+            }
+        }
+    }
+    
     Ok(Json(FolderContentsWithShares { 
-        folders: Vec::new(), 
-        files: Vec::new() 
+        folders: folders_with_shares, 
+        files: files_with_shares 
     }))
 }
 

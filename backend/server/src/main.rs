@@ -158,7 +158,7 @@ pub struct AppState {
     pub jwt_manager: Arc<JwtManager>,
     pub broadcaster: Arc<EventBroadcaster>,
     
-    // Business logic services
+    // Business logic services (V1 - legacy)
     pub file_service: Arc<FileSvc>,
     pub folder_service: Arc<FolderSvc>,
     pub share_service: Arc<ShareSvc>,
@@ -172,6 +172,10 @@ pub struct AppState {
     // Document store for direct access if needed
     pub doc_store: Arc<dyn MetadataDocumentStore>,
     pub event_log_store: Arc<dyn EventLogStore>,
+    
+    // Metadata configuration for path building
+    pub metadata_prefix: String,
+    pub metadata_namespace: String,
 }
 
 #[tokio::main]
@@ -436,6 +440,8 @@ async fn main() -> Result<()> {
         poll_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
         doc_store,
         event_log_store,
+        metadata_prefix,
+        metadata_namespace,
     };
 
     // Build router.
