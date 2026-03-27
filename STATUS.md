@@ -4,13 +4,26 @@
 
 RustShare is a late-MVP / pre-release file-sharing platform with a strong web product core and a deliberately narrower scope than Nextcloud. The project is no longer a prototype shell: the main web app, sharing flows, realtime updates, async replication, and operator recovery tooling are all implemented and working.
 
-### Major Architecture Update: Zero-PostgreSQL (2026-03-27) ✅ COMPLETE
+### Major Architecture Update: Zero-PostgreSQL (2026-03-27) ✅ COMPLETE - DEFAULT
 
-RustShare now supports a **zero-PostgreSQL architecture**. The system can run entirely without PostgreSQL, using RustFS as the durable system of record for all metadata. This enables:
+RustShare now uses a **zero-PostgreSQL architecture by default**. The system runs entirely without PostgreSQL, using RustFS as the durable system of record for all metadata. This enables:
 
 - **Simpler deployments**: Just rustshare + rustfs (optionally + redis)
 - **Two runtime profiles**: Standalone (single-node) and Distributed (multi-node with Redis)
 - **Flexible scaling**: Start with standalone, migrate to distributed as needed
+- **Default docker-compose**: `docker-compose.yml` is now the standalone (non-PostgreSQL) version
+
+**Quick Start:**
+```bash
+# Default: Zero-PostgreSQL standalone mode
+docker compose up -d
+
+# For PostgreSQL (legacy): 
+docker compose -f docker-compose.postgres.yml up -d
+
+# For distributed (production with Redis):
+docker compose -f docker-compose.distributed.yml up -d
+```
 
 **Implementation Phases Completed:**
 - ✅ Phase 1: UserRepository, DeviceRepository, LookupStore migration
@@ -19,6 +32,7 @@ RustShare now supports a **zero-PostgreSQL architecture**. The system can run en
 - ✅ Phase 4: Share indicators (is_shared flags), notification creation
 - ✅ Phase 5: Event sourcing finalization, access count tracking
 - ✅ Phase 6: All tests passing (56 unit + 57 contract tests)
+- ✅ Phase 7: Default docker-compose is now standalone (zero-PostgreSQL)
 
 See [Zero-PostgreSQL Architecture](docs/ZERO_POSTGRES_ARCHITECTURE.md) for details.
 

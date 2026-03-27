@@ -1,0 +1,116 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: rustshare
+      POSTGRES_USER: rustshare
+      POSTGRES_PASSWORD: changeme
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rustshare"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    environment:
+      RUSTFS_ROOT_USER: rustfsadmin
+      RUSTFS_ROOT_PASSWORD: rustfsadmin
+      RUSTFS_DATA_DIR: /data
+      RUSTFS_LOGS_DIR: /logs
+    volumes:
+      - rustfs_data:/data
+      - rustfs_logs:/logs
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "nc -z localhost 9000 && nc -z localhost 9001"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      args:
+        VITE_API_URL: /api/v1
+        VITE_WS_URL: /api/ws
+    ports:
+      - "8080:8080"
+    # Increase file descriptor limits to handle many concurrent WebSocket connections
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    environment:
+      DATABASE_URL: postgres://rustshare:changeme@postgres:5432/rustshare
+      RUST_LOG: debug
+      RUSTFS_ENDPOINT: http://rustfs:9000
+      RUSTFS_PUBLIC_ENDPOINT: http://localhost:9000
+      RUSTFS_REGION: us-east-1
+      RUSTFS_BUCKET: rustshare-files
+      AWS_ACCESS_KEY_ID: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: rustfsadmin
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
+      RUSTSHARE_SECRET_ENCRYPTION_KEY: ${RUSTSHARE_SECRET_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+      RUSTSHARE_ADMIN_USERNAME: admin
+      RUSTSHARE_ADMIN_EMAIL: admin@localhost
+      RUSTSHARE_ADMIN_PASSWORD: admin123
+      RUSTSHARE_DEMO_VIEWER_USERNAME: viewer
+      RUSTSHARE_DEMO_VIEWER_EMAIL: viewer@localhost
+      RUSTSHARE_DEMO_VIEWER_PASSWORD: viewer123
+      RUSTSHARE_DEMO_VIEWER_DISPLAY_NAME: Viewer User
+      PASSWORD_LOGIN_ENABLED: ${PASSWORD_LOGIN_ENABLED:-true}
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URL: ${OIDC_REDIRECT_URL:-}
+      OIDC_LOGIN_LABEL: ${OIDC_LOGIN_LABEL:-}
+      OIDC_SCOPES: ${OIDC_SCOPES:-openid profile email}
+      OIDC_MOBILE_CLIENT_ID: ${OIDC_MOBILE_CLIENT_ID:-}
+      OIDC_MOBILE_CLIENT_SECRET: ${OIDC_MOBILE_CLIENT_SECRET:-}
+      OIDC_MOBILE_REDIRECT_URIS: ${OIDC_MOBILE_REDIRECT_URIS:-}
+      RUSTSHARE_RATE_LIMIT_AUTH_LOGIN_PER_MINUTE: ${RUSTSHARE_RATE_LIMIT_AUTH_LOGIN_PER_MINUTE:-10}
+      RUSTSHARE_RATE_LIMIT_OIDC_LOGIN_PER_MINUTE: ${RUSTSHARE_RATE_LIMIT_OIDC_LOGIN_PER_MINUTE:-30}
+      RUSTSHARE_RATE_LIMIT_SHARE_SESSION_PER_MINUTE: ${RUSTSHARE_RATE_LIMIT_SHARE_SESSION_PER_MINUTE:-5}
+      RUSTSHARE_RATE_LIMIT_SHARE_INFO_PER_MINUTE: ${RUSTSHARE_RATE_LIMIT_SHARE_INFO_PER_MINUTE:-30}
+      RUSTSHARE_RATE_LIMIT_SHARE_DOWNLOAD_PER_MINUTE: ${RUSTSHARE_RATE_LIMIT_SHARE_DOWNLOAD_PER_MINUTE:-30}
+      RUSTSHARE_RATE_LIMIT_SHARE_UPLOAD_PER_MINUTE: ${RUSTSHARE_RATE_LIMIT_SHARE_UPLOAD_PER_MINUTE:-20}
+      RUSTSHARE_RATE_LIMIT_AUTHENTICATED_SHARE_ADMIN_PER_MINUTE: ${RUSTSHARE_RATE_LIMIT_AUTHENTICATED_SHARE_ADMIN_PER_MINUTE:-120}
+      RUSTSHARE_DEFAULT_STORAGE_QUOTA_BYTES: ${RUSTSHARE_DEFAULT_STORAGE_QUOTA_BYTES:-10737418240}
+      # Metadata backend configuration (postgres | rustfs | dual_write | rustfs_reads | localfs)
+      RUSTSHARE_METADATA_BACKEND: ${RUSTSHARE_METADATA_BACKEND:-postgres}
+      RUSTSHARE_METADATA_PREFIX: ${RUSTSHARE_METADATA_PREFIX:-apps/rustshare}
+      RUSTSHARE_METADATA_NAMESPACE: ${RUSTSHARE_METADATA_NAMESPACE:-default}
+      RUSTSHARE_METADATA_CACHE: ${RUSTSHARE_METADATA_CACHE:-true}
+      FRONTEND_DIST_DIR: /app/frontend-build
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  postgres_data:
+  rustfs_data:
+  rustfs_logs:
