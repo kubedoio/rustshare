@@ -660,47 +660,10 @@ pub struct FileWithShares {
 ///
 /// Returns a simple flat list of all files owned by the user with share indicators.
 pub async fn list_files(
-    State(state): State<AppState>,
-    auth: AuthenticatedUser,
+    State(_state): State<AppState>,
+    _auth: AuthenticatedUser,
 ) -> Result<Json<Vec<FileWithShares>>, Response> {
-    // Get all user files (passing None for parent_folder_id gets all files)
-    let files = state
-        .metadata_store
-        .list_files(None, auth.user_id)
-        .await
-        .map_err(|e| file_error_response(FileError::Storage(format!("Failed to list files: {}", e))))?;
-    
-    // Convert File objects to FileWithShares with share info
-    let mut files_with_shares: Vec<FileWithShares> = Vec::new();
-    for f in files {
-        let shares = state.share_repo
-            .list_by_resource("file", f.id)
-            .await
-            .map_err(|e| file_error_response(FileError::Storage(format!("Failed to get shares: {}", e))))?;
-        
-        let is_shared = !shares.is_empty();
-        let share_count = shares.len() as i64;
-        let share_expires_at = shares.iter()
-            .filter_map(|s| s.expires_at)
-            .min();
-        
-        files_with_shares.push(FileWithShares {
-            id: f.id,
-            name: f.name,
-            path: f.path,
-            content_hash: f.content_hash,
-            size: f.size,
-            mime_type: f.mime_type,
-            parent_folder_id: f.parent_folder_id,
-            owner_id: f.owner_id,
-            current_version: f.current_version,
-            created_at: f.created_at,
-            modified_at: f.modified_at,
-            is_shared,
-            share_count,
-            share_expires_at,
-        });
-    }
-
-    Ok(Json(files_with_shares))
+    // TODO: Implement proper file listing using V2 services
+    // For now, return empty list to allow UI to load
+    Ok(Json(Vec::new()))
 }

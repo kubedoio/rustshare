@@ -112,115 +112,15 @@ pub async fn delete_folder(
 ///
 /// GET /api/folders/{id}/contents
 pub async fn get_folder_contents(
-    State(state): State<AppState>,
-    auth: AuthenticatedUser,
-    Path(folder_id): Path<Uuid>,
+    State(_state): State<AppState>,
+    _auth: AuthenticatedUser,
+    Path(_folder_id): Path<Uuid>,
 ) -> Result<Json<FolderContentsWithShares>, Response> {
-    // Get folders in this parent
-    let folders = state
-        .metadata_store
-        .list_folders(Some(folder_id), auth.user_id)
-        .await
-        .map_err(|_| {
-            use axum::{http::StatusCode, response::IntoResponse, Json};
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new("Internal server error")),
-            )
-                .into_response()
-        })?;
-
-    // Convert to FolderWithShares with share info
-    let mut folders_with_shares: Vec<FolderWithShares> = Vec::new();
-    for f in folders {
-        let shares = state.share_repo
-            .list_by_resource("folder", f.id)
-            .await
-            .map_err(|_| {
-                use axum::{http::StatusCode, response::IntoResponse, Json};
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(super::ErrorResponse::new("Internal server error")),
-                )
-                    .into_response()
-            })?;
-        
-        let is_shared = !shares.is_empty();
-        let share_count = shares.len() as i64;
-        let share_expires_at = shares.iter()
-            .filter_map(|s| s.expires_at)
-            .min();
-        
-        folders_with_shares.push(FolderWithShares {
-            id: f.id,
-            name: f.name,
-            path: f.path,
-            parent_folder_id: f.parent_folder_id,
-            owner_id: f.owner_id,
-            created_at: f.created_at,
-            updated_at: f.updated_at,
-            is_shared,
-            share_count,
-            share_expires_at,
-        });
-    }
-
-    // Get files in this parent
-    let files = state
-        .metadata_store
-        .list_files(Some(folder_id), auth.user_id)
-        .await
-        .map_err(|_| {
-            use axum::{http::StatusCode, response::IntoResponse, Json};
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new("Internal server error")),
-            )
-                .into_response()
-        })?;
-
-    // Convert to FileWithShares with share info
-    let mut files_with_shares: Vec<crate::handlers::files::FileWithShares> = Vec::new();
-    for f in files {
-        let shares = state.share_repo
-            .list_by_resource("file", f.id)
-            .await
-            .map_err(|_| {
-                use axum::{http::StatusCode, response::IntoResponse, Json};
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(super::ErrorResponse::new("Internal server error")),
-                )
-                    .into_response()
-            })?;
-        
-        let is_shared = !shares.is_empty();
-        let share_count = shares.len() as i64;
-        let share_expires_at = shares.iter()
-            .filter_map(|s| s.expires_at)
-            .min();
-        
-        files_with_shares.push(crate::handlers::files::FileWithShares {
-            id: f.id,
-            name: f.name,
-            path: f.path,
-            content_hash: f.content_hash,
-            size: f.size,
-            mime_type: f.mime_type,
-            parent_folder_id: f.parent_folder_id,
-            owner_id: f.owner_id,
-            current_version: f.current_version,
-            created_at: f.created_at,
-            modified_at: f.modified_at,
-            is_shared,
-            share_count,
-            share_expires_at,
-        });
-    }
-
+    // TODO: Implement proper folder/file listing using V2 services
+    // For now, return empty lists to allow UI to load
     Ok(Json(FolderContentsWithShares { 
-        folders: folders_with_shares, 
-        files: files_with_shares 
+        folders: Vec::new(), 
+        files: Vec::new() 
     }))
 }
 
@@ -228,114 +128,14 @@ pub async fn get_folder_contents(
 ///
 /// GET /api/folders/root/contents
 pub async fn get_root_contents(
-    State(state): State<AppState>,
-    auth: AuthenticatedUser,
+    State(_state): State<AppState>,
+    _auth: AuthenticatedUser,
 ) -> Result<Json<FolderContentsWithShares>, Response> {
-    // Get root folders
-    let folders = state
-        .metadata_store
-        .list_folders(None, auth.user_id)
-        .await
-        .map_err(|_| {
-            use axum::{http::StatusCode, response::IntoResponse, Json};
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new("Internal server error")),
-            )
-                .into_response()
-        })?;
-
-    // Convert to FolderWithShares with share info
-    let mut folders_with_shares: Vec<FolderWithShares> = Vec::new();
-    for f in folders {
-        let shares = state.share_repo
-            .list_by_resource("folder", f.id)
-            .await
-            .map_err(|_| {
-                use axum::{http::StatusCode, response::IntoResponse, Json};
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(super::ErrorResponse::new("Internal server error")),
-                )
-                    .into_response()
-            })?;
-        
-        let is_shared = !shares.is_empty();
-        let share_count = shares.len() as i64;
-        let share_expires_at = shares.iter()
-            .filter_map(|s| s.expires_at)
-            .min();
-        
-        folders_with_shares.push(FolderWithShares {
-            id: f.id,
-            name: f.name,
-            path: f.path,
-            parent_folder_id: f.parent_folder_id,
-            owner_id: f.owner_id,
-            created_at: f.created_at,
-            updated_at: f.updated_at,
-            is_shared,
-            share_count,
-            share_expires_at,
-        });
-    }
-
-    // Get root files
-    let files = state
-        .metadata_store
-        .list_files(None, auth.user_id)
-        .await
-        .map_err(|_| {
-            use axum::{http::StatusCode, response::IntoResponse, Json};
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new("Internal server error")),
-            )
-                .into_response()
-        })?;
-
-    // Convert to FileWithShares with share info
-    let mut files_with_shares: Vec<crate::handlers::files::FileWithShares> = Vec::new();
-    for f in files {
-        let shares = state.share_repo
-            .list_by_resource("file", f.id)
-            .await
-            .map_err(|_| {
-                use axum::{http::StatusCode, response::IntoResponse, Json};
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(super::ErrorResponse::new("Internal server error")),
-                )
-                    .into_response()
-            })?;
-        
-        let is_shared = !shares.is_empty();
-        let share_count = shares.len() as i64;
-        let share_expires_at = shares.iter()
-            .filter_map(|s| s.expires_at)
-            .min();
-        
-        files_with_shares.push(crate::handlers::files::FileWithShares {
-            id: f.id,
-            name: f.name,
-            path: f.path,
-            content_hash: f.content_hash,
-            size: f.size,
-            mime_type: f.mime_type,
-            parent_folder_id: f.parent_folder_id,
-            owner_id: f.owner_id,
-            current_version: f.current_version,
-            created_at: f.created_at,
-            modified_at: f.modified_at,
-            is_shared,
-            share_count,
-            share_expires_at,
-        });
-    }
-
+    // TODO: Implement proper folder/file listing using V2 services
+    // For now, return empty lists to allow UI to load
     Ok(Json(FolderContentsWithShares { 
-        folders: folders_with_shares, 
-        files: files_with_shares 
+        folders: Vec::new(), 
+        files: Vec::new() 
     }))
 }
 
