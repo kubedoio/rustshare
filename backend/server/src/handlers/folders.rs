@@ -579,34 +579,73 @@ pub async fn get_folder_tree(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
 ) -> Result<Json<FolderTree>, Response> {
-    // Find all user's root-level folders (folders with no parent)
-    let root_folders = state
-        .metadata_store
-        .list_folders(None, auth.user_id)
+    use rustshare_storage::metadata_v2::schemas::FolderDocument;
+    use rustshare_core::domain::FolderTree;
+    use std::collections::HashMap;
+
+    // List all user's folders
+    let folder_prefix = format!("{}/{}/meta/folders/",
+        state.metadata_prefix, state.metadata_namespace);
+    let folder_keys = state.doc_store
+        .list_prefix(&folder_prefix)
         .await
-        .map_err(|_| {
+        .map_err(|e| {
+            tracing::error!("Failed to list folders: {}", e);
             use axum::{http::StatusCode, response::IntoResponse, Json};
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(super::ErrorResponse::new("Internal server error")),
-            )
-                .into_response()
+            ).into_response()
         })?;
 
-    // Build subtrees for each root folder
-    let mut subtrees = Vec::new();
-    for folder in root_folders {
-        let subtree = state
-            .folder_service
-            .get_tree(folder.id, auth.user_id)
-            .await
-            .map_err(folder_error_response)?;
-        subtrees.push(subtree);
+    // Load all folders into a map
+    let mut all_folders: HashMap<Uuid, FolderDocument> = HashMap::new();
+    for key in folder_keys {
+        if let Ok(Some((doc, _))) = state.doc_store.get::<FolderDocument>(&key).await {
+            if doc.owner_id == auth.user_id && !doc.deleted {
+                all_folders.insert(doc.id, doc);
+            }
+        }
     }
 
-    // Create a virtual root folder to contain all root-level folders
+    // Build tree recursively
+    fn build_subtree(
+        folder_id: Uuid,
+        all_folders: &HashMap<Uuid, FolderDocument>,
+    ) -> Option<FolderTree> {
+        let folder_doc = all_folders.get(&folder_id)?;
+
+        let folder = Folder {
+            id: folder_doc.id,
+            name: folder_doc.name.clone(),
+            path: folder_doc.path.clone(),
+            parent_folder_id: folder_doc.parent_id,
+            owner_id: folder_doc.owner_id,
+            created_at: folder_doc.created_at,
+            updated_at: folder_doc.updated_at,
+            deleted: folder_doc.deleted,
+        };
+
+        // Find children (folders with this folder as parent)
+        let children: Vec<FolderTree> = all_folders
+            .values()
+            .filter(|f| f.parent_id == Some(folder_id))
+            .filter_map(|f| build_subtree(f.id, all_folders))
+            .collect();
+
+        Some(FolderTree::with_contents(folder, vec![], children))
+    }
+
+    // Build subtrees for each root folder
+    let subtrees: Vec<FolderTree> = all_folders
+        .values()
+        .filter(|f| f.parent_id.is_none())
+        .filter_map(|f| build_subtree(f.id, &all_folders))
+        .collect();
+
+    // Create virtual root folder
     let virtual_root = Folder {
-        id: Uuid::nil(), // Use nil UUID for virtual root
+        id: Uuid::nil(),
         name: "Root".to_string(),
         path: "/".to_string(),
         parent_folder_id: None,
@@ -616,21 +655,7 @@ pub async fn get_folder_tree(
         deleted: false,
     };
 
-    // Get files at root level (files with no parent folder)
-    let root_files = state
-        .metadata_store
-        .list_files(None, auth.user_id)
-        .await
-        .map_err(|_| {
-            use axum::{http::StatusCode, response::IntoResponse, Json};
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new("Internal server error")),
-            )
-                .into_response()
-        })?;
-
-    let tree = FolderTree::with_contents(virtual_root, root_files, subtrees);
+    let tree = FolderTree::with_contents(virtual_root, vec![], subtrees);
     Ok(Json(tree))
 }
 
