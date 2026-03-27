@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use rustshare_core::domain::{Folder, FolderTree};
 use rustshare_storage::metadata_v2::schemas::{FolderDocument, FileDocument};
+use rustshare_storage::metadata_v2::PutOptions;
 use rustshare_storage::MetadataDocumentStoreExt;
 
 use super::{folder_error_response, AuthenticatedUser};
@@ -59,11 +60,106 @@ pub async fn create_folder(
     auth: AuthenticatedUser,
     Json(req): Json<CreateFolderRequest>,
 ) -> Result<(StatusCode, Json<Folder>), Response> {
-    let folder = state
-        .folder_service
-        .create_folder(req.name, req.parent_folder_id, auth.user_id)
+    use chrono::Utc;
+    use uuid::Uuid;
+    use rustshare_storage::metadata_v2::schemas::FolderDocument;
+
+    let folder_id = Uuid::new_v4();
+
+    // Build path from parent or root
+    let path = if let Some(parent_id) = req.parent_folder_id {
+        // Load parent to get its path
+        let parent_key = format!("{}/{}/meta/folders/{}.json",
+            state.metadata_prefix, state.metadata_namespace, parent_id);
+        let parent_doc = state.doc_store
+            .get::<FolderDocument>(&parent_key).await
+            .map_err(|e| {
+                tracing::error!("Failed to load parent folder: {}", e);
+                use axum::{http::StatusCode, response::IntoResponse, Json};
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(super::ErrorResponse::new("Internal server error")),
+                ).into_response()
+            })?
+            .ok_or_else(|| {
+                use axum::{http::StatusCode, response::IntoResponse, Json};
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(super::ErrorResponse::new(format!("Parent folder not found: {}", parent_id))),
+                ).into_response()
+            })?;
+        format!("{}/{}", parent_doc.0.path, req.name)
+    } else {
+        format!("/{}", req.name)
+    };
+
+    // Check for duplicate names in the same parent
+    let folder_prefix = format!("{}/{}/meta/folders/",
+        state.metadata_prefix, state.metadata_namespace);
+    let folder_keys = state.doc_store
+        .list_prefix(&folder_prefix)
         .await
-        .map_err(folder_error_response)?;
+        .map_err(|e| {
+            tracing::error!("Failed to list folders: {}", e);
+            use axum::{http::StatusCode, response::IntoResponse, Json};
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(super::ErrorResponse::new("Internal server error")),
+            ).into_response()
+        })?;
+
+    for key in folder_keys {
+        if let Ok(Some((doc, _))) = state.doc_store.get::<FolderDocument>(&key).await {
+            if doc.owner_id == auth.user_id
+                && !doc.deleted
+                && doc.parent_id == req.parent_folder_id
+                && doc.name == req.name {
+                return Err(folder_error_response(
+                    rustshare_core::services::FolderError::DuplicateName(req.name)
+                ));
+            }
+        }
+    }
+
+    // Create folder document
+    let folder_doc = FolderDocument {
+        schema_version: 2,
+        id: folder_id,
+        namespace_id: Uuid::nil(),
+        owner_id: auth.user_id,
+        parent_id: req.parent_folder_id,
+        name: req.name.clone(),
+        path: path.clone(),
+        deleted: false,
+        version: 1,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+
+    // Store document
+    let key = format!("{}/{}/meta/folders/{}.json",
+        state.metadata_prefix, state.metadata_namespace, folder_id);
+    state.doc_store.put(&key, &folder_doc, PutOptions::default()).await
+        .map_err(|e| {
+            tracing::error!("Failed to store folder: {}", e);
+            use axum::{http::StatusCode, response::IntoResponse, Json};
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(super::ErrorResponse::new("Internal server error")),
+            ).into_response()
+        })?;
+
+    // Convert to domain Folder for response
+    let folder = Folder {
+        id: folder_id,
+        name: req.name,
+        path,
+        parent_folder_id: req.parent_folder_id,
+        owner_id: auth.user_id,
+        created_at: folder_doc.created_at,
+        updated_at: folder_doc.updated_at,
+        deleted: false,
+    };
 
     Ok((StatusCode::CREATED, Json(folder)))
 }
