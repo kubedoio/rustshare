@@ -119,18 +119,43 @@ impl MetadataDocumentStore for SystemDocumentStore {
                 })))
             }
             Err(e) => {
+                // Check if this is a NotFound/NoSuchKey error
+                // RustFS returns different error formats than AWS S3, so we check multiple patterns
                 let err_str = e.to_string();
-                if err_str.contains("NoSuchKey") || err_str.contains("NotFound") {
-                    Ok(None)
-                } else {
-                    tracing::error!(
-                        bucket = %self.bucket,
-                        key = %object_key,
-                        error = %e,
-                        "S3 get_object failed"
-                    );
-                    Err(anyhow::anyhow!("S3 error accessing bucket '{}', key '{}': {}", self.bucket, object_key, e))
+                let err_lower = err_str.to_lowercase();
+                
+                // Log the actual error for debugging (first time we see a new error pattern)
+                tracing::debug!(
+                    error = %err_str,
+                    "S3 get_object error details"
+                );
+                
+                if err_lower.contains("nosuchkey") 
+                    || err_lower.contains("notfound")
+                    || err_lower.contains("404")
+                    || err_lower.contains("not found")
+                    || err_str.contains("NoSuchKey")
+                    || err_str.contains("NotFound") {
+                    return Ok(None);
                 }
+                
+                // For metadata operations, treat generic "service error" as NotFound
+                // This handles cases where RustFS returns non-standard error responses
+                if err_str.contains("service error") && (key.contains("indexes/") || key.contains("meta/")) {
+                    tracing::debug!(
+                        key = %key,
+                        "Treating service error as NotFound for metadata key"
+                    );
+                    return Ok(None);
+                }
+                
+                tracing::error!(
+                    bucket = %self.bucket,
+                    key = %object_key,
+                    error = %e,
+                    "S3 get_object failed"
+                );
+                Err(anyhow::anyhow!("S3 error accessing bucket '{}', key '{}': {}", self.bucket, object_key, e))
             }
         }
     }
@@ -166,12 +191,25 @@ impl MetadataDocumentStore for SystemDocumentStore {
                 }))
             }
             Err(e) => {
+                // Check if this is a NotFound/NoSuchKey error
                 let err_str = e.to_string();
-                if err_str.contains("NoSuchKey") || err_str.contains("NotFound") {
-                    Ok(None)
-                } else {
-                    Err(e.into())
+                let err_lower = err_str.to_lowercase();
+                
+                if err_lower.contains("nosuchkey") 
+                    || err_lower.contains("notfound")
+                    || err_lower.contains("404")
+                    || err_lower.contains("not found")
+                    || err_str.contains("NoSuchKey")
+                    || err_str.contains("NotFound") {
+                    return Ok(None);
                 }
+                
+                // For metadata operations, treat generic "service error" as NotFound
+                if err_str.contains("service error") && (key.contains("indexes/") || key.contains("meta/")) {
+                    return Ok(None);
+                }
+                
+                Err(e.into())
             }
         }
     }
