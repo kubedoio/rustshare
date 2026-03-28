@@ -33,18 +33,12 @@ impl PathBuilder {
     
     /// Path for notification document
     fn notification_path(&self, user_id: Uuid, notification_id: Uuid) -> String {
-        format!(
-            "{}/{}/notifications/{}/{}.json",
-            self.base_prefix, self.namespace, user_id, notification_id
-        )
+        format!("notifications/{}/{}.json", user_id, notification_id)
     }
     
     /// Path for user notification index
     fn user_index_path(&self, user_id: Uuid) -> String {
-        format!(
-            "{}/{}/indexes/notifications/by-user/{}.json",
-            self.base_prefix, self.namespace, user_id
-        )
+        format!("indexes/notifications/by-user/{}.json", user_id)
     }
 }
 

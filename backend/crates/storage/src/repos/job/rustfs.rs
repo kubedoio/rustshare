@@ -33,18 +33,12 @@ impl PathBuilder {
     
     /// Path for job document
     fn job_path(&self, job_id: Uuid) -> String {
-        format!(
-            "{}/{}/jobs/{}.json",
-            self.base_prefix, self.namespace, job_id
-        )
+        format!("jobs/{}.json", job_id)
     }
     
     /// Path for job queue index
     fn queue_index_path(&self) -> String {
-        format!(
-            "{}/{}/indexes/jobs/queue.json",
-            self.base_prefix, self.namespace
-        )
+        format!("indexes/jobs/queue.json")
     }
 }
 

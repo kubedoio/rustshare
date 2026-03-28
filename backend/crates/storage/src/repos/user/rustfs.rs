@@ -31,36 +31,24 @@ impl PathBuilder {
     
     /// Path for user document
     fn user_path(&self, user_id: Uuid) -> String {
-        format!(
-            "{}/{}/users/{}.json",
-            self.base_prefix, self.namespace, user_id
-        )
+        format!("users/{}.json", user_id)
     }
     
     /// Path for email index entry
     fn email_index_path(&self, email: &str) -> String {
         let email_hash = Self::hash_string(email.to_lowercase().as_str());
-        format!(
-            "{}/{}/indexes/users/by-email/{}.json",
-            self.base_prefix, self.namespace, email_hash
-        )
+        format!("indexes/users/by-email/{}.json", email_hash)
     }
     
     /// Path for username index entry
     fn username_index_path(&self, username: &str) -> String {
         let username_hash = Self::hash_string(username.to_lowercase().as_str());
-        format!(
-            "{}/{}/indexes/users/by-username/{}.json",
-            self.base_prefix, self.namespace, username_hash
-        )
+        format!("indexes/users/by-username/{}.json", username_hash)
     }
     
     /// Path for user list index
     fn user_list_path(&self) -> String {
-        format!(
-            "{}/{}/indexes/users/all.json",
-            self.base_prefix, self.namespace
-        )
+        format!("indexes/users/all.json")
     }
     
     /// Simple hash for index keys

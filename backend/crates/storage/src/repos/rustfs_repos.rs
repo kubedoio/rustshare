@@ -29,29 +29,24 @@ impl PathBuilder {
     }
     
     pub fn folder(&self, id: FolderId) -> String {
-        format!("{}/{}/meta/folders/{}.json", self.base_prefix, self.namespace, id)
+        format!("folders/{}.json", id)
     }
     
     pub fn file(&self, id: FileId) -> String {
-        format!("{}/{}/meta/files/{}.json", self.base_prefix, self.namespace, id)
+        format!("files/{}.json", id)
     }
     
     pub fn file_version(&self, file_id: FileId, version_id: Uuid) -> String {
-        format!(
-            "{}/{}/meta/file_versions/{}/{}.json",
-            self.base_prefix, self.namespace, file_id, version_id
-        )
+        format!("file_versions/{}/{}.json", file_id, version_id)
     }
     
     pub fn share(&self, id: ShareId) -> String {
-        format!("{}/{}/meta/shares/{}.json", self.base_prefix, self.namespace, id)
+        format!("shares/{}.json", id)
     }
     
     pub fn event(&self, event: &EventDocument) -> String {
         format!(
-            "{}/{}/meta/events/{:04}/{:02}/{:02}/{}.json",
-            self.base_prefix,
-            self.namespace,
+            "events/{:04}/{:02}/{:02}/{}.json",
             event.occurred_at.year(),
             event.occurred_at.month(),
             event.occurred_at.day(),
@@ -60,74 +55,60 @@ impl PathBuilder {
     }
     
     pub fn tombstone(&self, resource_type: &str, resource_id: Uuid) -> String {
-        format!(
-            "{}/{}/meta/tombstones/{}/{}.json",
-            self.base_prefix, self.namespace, resource_type, resource_id
-        )
+        format!("tombstones/{}/{}.json", resource_type, resource_id)
     }
     
     pub fn folder_children_index(&self, folder_id: FolderId) -> String {
-        format!(
-            "{}/{}/indexes/folders/{}/children.json",
-            self.base_prefix, self.namespace, folder_id
-        )
+        format!("indexes/folders/{}/children.json", folder_id)
     }
     
     pub fn user_roots_index(&self, user_id: UserId) -> String {
-        format!(
-            "{}/{}/indexes/users/{}/roots.json",
-            self.base_prefix, self.namespace, user_id
-        )
+        format!("indexes/users/{}/roots.json", user_id)
     }
     
     pub fn shared_with_me_index(&self, user_id: UserId) -> String {
-        format!(
-            "{}/{}/indexes/users/{}/shared_with_me.json",
-            self.base_prefix, self.namespace, user_id
-        )
+        format!("indexes/users/{}/shared_with_me.json", user_id)
     }
     
     // User paths
     pub fn user(&self, id: UserId) -> String {
-        format!("{}/{}/meta/users/{}.json", self.base_prefix, self.namespace, id)
+        format!("users/{}.json", id)
     }
     
     // Device token paths
     pub fn device(&self, id: Uuid) -> String {
-        format!("{}/{}/meta/devices/{}.json", self.base_prefix, self.namespace, id)
+        format!("devices/{}.json", id)
     }
     
     // Group paths
     pub fn group(&self, id: Uuid) -> String {
-        format!("{}/{}/meta/groups/{}.json", self.base_prefix, self.namespace, id)
+        format!("groups/{}.json", id)
     }
     
     // Pairing paths
     pub fn pairing(&self, id: Uuid) -> String {
-        format!("{}/{}/meta/pairings/{}.json", self.base_prefix, self.namespace, id)
+        format!("pairings/{}.json", id)
     }
     
     // Webhook paths
     pub fn webhook(&self, id: Uuid) -> String {
-        format!("{}/{}/meta/webhooks/{}.json", self.base_prefix, self.namespace, id)
+        format!("webhooks/{}.json", id)
     }
     
     // Job paths
     pub fn job(&self, id: Uuid) -> String {
-        format!("{}/{}/meta/jobs/{}.json", self.base_prefix, self.namespace, id)
+        format!("jobs/{}.json", id)
     }
     
     // Config paths
     pub fn config(&self, config_type: &str) -> String {
-        format!("{}/{}/meta/config/{}.json", self.base_prefix, self.namespace, config_type)
+        format!("config/{}.json", config_type)
     }
     
     // Audit log path
     pub fn audit_entry(&self, occurred_at: DateTime<Utc>, id: Uuid) -> String {
         format!(
-            "{}/{}/audit/{:04}/{:02}/{:02}/{}.json",
-            self.base_prefix,
-            self.namespace,
+            "audit/{:04}/{:02}/{:02}/{}.json",
             occurred_at.year(),
             occurred_at.month(),
             occurred_at.day(),
@@ -137,67 +118,40 @@ impl PathBuilder {
     
     // Lookup paths
     pub fn email_lookup(&self, email_hash: &str) -> String {
-        format!(
-            "{}/{}/lookups/user_by_email/{}.json",
-            self.base_prefix, self.namespace, email_hash
-        )
+        format!("lookups/user_by_email/{}.json", email_hash)
     }
     
     pub fn token_lookup(&self, token_hash: &str) -> String {
-        format!(
-            "{}/{}/lookups/public_share_tokens/{}.json",
-            self.base_prefix, self.namespace, token_hash
-        )
+        format!("lookups/public_share_tokens/{}.json", token_hash)
     }
     
     pub fn pairing_code_lookup(&self, code: &str) -> String {
-        format!(
-            "{}/{}/lookups/pairing_codes/{}.json",
-            self.base_prefix, self.namespace, code
-        )
+        format!("lookups/pairing_codes/{}.json", code)
     }
     
     // Index paths
     pub fn user_devices_index(&self, user_id: UserId) -> String {
-        format!(
-            "{}/{}/indexes/users/{}/devices.json",
-            self.base_prefix, self.namespace, user_id
-        )
+        format!("indexes/users/{}/devices.json", user_id)
     }
     
     pub fn user_notifications_index(&self, user_id: UserId) -> String {
-        format!(
-            "{}/{}/indexes/users/{}/notifications.json",
-            self.base_prefix, self.namespace, user_id
-        )
+        format!("indexes/users/{}/notifications.json", user_id)
     }
     
     pub fn user_groups_index(&self, user_id: UserId) -> String {
-        format!(
-            "{}/{}/indexes/users/{}/groups.json",
-            self.base_prefix, self.namespace, user_id
-        )
+        format!("indexes/users/{}/groups.json", user_id)
     }
     
     pub fn group_members_index(&self, group_id: Uuid) -> String {
-        format!(
-            "{}/{}/indexes/groups/{}/members.json",
-            self.base_prefix, self.namespace, group_id
-        )
+        format!("indexes/groups/{}/members.json", group_id)
     }
     
     pub fn job_queue_index(&self) -> String {
-        format!(
-            "{}/{}/indexes/jobs/queue.json",
-            self.base_prefix, self.namespace
-        )
+        format!("indexes/jobs/queue.json")
     }
     
     pub fn resource_shares_index(&self, resource_id: Uuid) -> String {
-        format!(
-            "{}/{}/indexes/shares/by_resource/{}.json",
-            self.base_prefix, self.namespace, resource_id
-        )
+        format!("indexes/shares/by_resource/{}.json", resource_id)
     }
 }
 
@@ -330,9 +284,7 @@ impl FolderRepository for RustFsFolderRepository {
     
     async fn list_descendants(&self, folder_id: FolderId) -> Result<Vec<FolderDocument>, RepositoryError> {
         // This requires scanning - in production, maintain an index
-        let prefix = format!("{}/{}/meta/folders/", self.path_builder.base_prefix, self.path_builder.namespace);
-        
-        let keys = self.doc_store.list_prefix(&prefix).await
+        let keys = self.doc_store.list_prefix("folders/").await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
         let mut descendants = Vec::new();
@@ -365,9 +317,7 @@ impl FolderRepository for RustFsFolderRepository {
     
     async fn get_user_roots(&self, user_id: UserId) -> Result<Vec<FolderDocument>, RepositoryError> {
         // This requires scanning - use index in production
-        let prefix = format!("{}/{}/meta/folders/", self.path_builder.base_prefix, self.path_builder.namespace);
-        
-        let keys = self.doc_store.list_prefix(&prefix).await
+        let keys = self.doc_store.list_prefix("folders/").await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
         let mut roots = Vec::new();
@@ -404,9 +354,7 @@ impl FolderRepository for RustFsFolderRepository {
         }
         
         // Fall back to scanning
-        let prefix = format!("{}/{}/meta/folders/", self.path_builder.base_prefix, self.path_builder.namespace);
-        
-        let keys = self.doc_store.list_prefix(&prefix).await
+        let keys = self.doc_store.list_prefix("folders/").await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
         for key in keys {
@@ -570,9 +518,7 @@ impl FileRepository for RustFsFileRepository {
         }
         
         // Fall back to scanning
-        let prefix = format!("{}/{}/meta/files/", self.path_builder.base_prefix, self.path_builder.namespace);
-        
-        let keys = self.doc_store.list_prefix(&prefix).await
+        let keys = self.doc_store.list_prefix("files/").await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
         for key in keys {
@@ -610,9 +556,7 @@ impl RustFsFileVersionRepository {
 impl FileVersionRepository for RustFsFileVersionRepository {
     async fn get(&self, version_id: Uuid) -> Result<Option<FileVersionDocument>, RepositoryError> {
         // This requires scanning since version_id is in the path
-        let prefix = format!("{}/{}/meta/file_versions/", self.path_builder.base_prefix, self.path_builder.namespace);
-        
-        let keys = self.doc_store.list_prefix(&prefix).await
+        let keys = self.doc_store.list_prefix("file_versions/").await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
         for key in keys {
@@ -632,12 +576,7 @@ impl FileVersionRepository for RustFsFileVersionRepository {
         file_id: FileId,
         version_number: i32,
     ) -> Result<Option<FileVersionDocument>, RepositoryError> {
-        let prefix = format!(
-            "{}/{}/meta/file_versions/{}/",
-            self.path_builder.base_prefix, self.path_builder.namespace, file_id
-        );
-        
-        let keys = self.doc_store.list_prefix(&prefix).await
+        let keys = self.doc_store.list_prefix(&format!("file_versions/{}/", file_id)).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
         for key in keys {
@@ -662,12 +601,7 @@ impl FileVersionRepository for RustFsFileVersionRepository {
     }
     
     async fn list_by_file(&self, file_id: FileId) -> Result<Vec<FileVersionDocument>, RepositoryError> {
-        let prefix = format!(
-            "{}/{}/meta/file_versions/{}/",
-            self.path_builder.base_prefix, self.path_builder.namespace, file_id
-        );
-        
-        let keys = self.doc_store.list_prefix(&prefix).await
+        let keys = self.doc_store.list_prefix(&format!("file_versions/{}/", file_id)).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
         let mut versions = Vec::new();
@@ -738,9 +672,7 @@ impl ShareRepository for RustFsShareRepository {
     
     async fn get_by_token(&self, token_hash: &str) -> Result<Option<ShareDocument>, RepositoryError> {
         // This requires scanning - use an index in production
-        let prefix = format!("{}/{}/meta/shares/", self.path_builder.base_prefix, self.path_builder.namespace);
-        
-        let keys = self.doc_store.list_prefix(&prefix).await
+        let keys = self.doc_store.list_prefix("shares/").await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
         for key in keys {
@@ -816,9 +748,7 @@ impl ShareRepository for RustFsShareRepository {
         resource_type: &str,
         resource_id: Uuid,
     ) -> Result<Vec<ShareDocument>, RepositoryError> {
-        let prefix = format!("{}/{}/meta/shares/", self.path_builder.base_prefix, self.path_builder.namespace);
-        
-        let keys = self.doc_store.list_prefix(&prefix).await
+        let keys = self.doc_store.list_prefix("shares/").await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
         let mut shares = Vec::new();
@@ -838,9 +768,7 @@ impl ShareRepository for RustFsShareRepository {
     }
     
     async fn list_by_creator(&self, user_id: UserId) -> Result<Vec<ShareDocument>, RepositoryError> {
-        let prefix = format!("{}/{}/meta/shares/", self.path_builder.base_prefix, self.path_builder.namespace);
-        
-        let keys = self.doc_store.list_prefix(&prefix).await
+        let keys = self.doc_store.list_prefix("shares/").await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
         let mut shares = Vec::new();
@@ -858,9 +786,7 @@ impl ShareRepository for RustFsShareRepository {
     }
     
     async fn list_by_recipient(&self, user_id: UserId) -> Result<Vec<ShareDocument>, RepositoryError> {
-        let prefix = format!("{}/{}/meta/shares/", self.path_builder.base_prefix, self.path_builder.namespace);
-        
-        let keys = self.doc_store.list_prefix(&prefix).await
+        let keys = self.doc_store.list_prefix("shares/").await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
         let mut shares = Vec::new();
