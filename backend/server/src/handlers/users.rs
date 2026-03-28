@@ -8,6 +8,7 @@ use axum::{
 };
 use rustshare_auth::PasswordHasher;
 use rustshare_core::domain::Theme;
+use rustshare_core::services::ObjectStoreOps;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

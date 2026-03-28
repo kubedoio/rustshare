@@ -10,6 +10,10 @@ pub mod services;
 // RustShare V2 - User bucket isolation
 pub mod cross_bucket;
 pub mod user_bucket;
+pub mod user_bucket_object_store;
+
+// Hybrid storage (system bucket + per-user buckets)
+pub mod hybrid_store;
 
 // Compatibility modules (minimal stubs)
 pub mod event_store;
@@ -64,6 +68,16 @@ pub use services::models::{
 pub use user_bucket::{
     MemoryUserBucketStore, S3UserBucketStore, UserBucketConfig, UserBucketStore, UserId,
     UserBucketStoreFactory,
+};
+
+// Re-export user bucket object store
+pub use user_bucket_object_store::{
+    UserBucketObjectStore, UserBucketObjectStoreFactory,
+};
+
+// Re-export hybrid storage
+pub use hybrid_store::{
+    HybridStorageFactory, HybridStorageSystem, SystemDocumentStore,
 };
 
 // Re-export user bucket store types

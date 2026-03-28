@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use rustshare_core::{
     domain::SharePermissions,
-    services::{FileError, FileUploadActor},
+    services::{FileError, FileUploadActor, ObjectStoreOps},
 };
 use rustshare_storage::ShareAccessLogEntry;
 

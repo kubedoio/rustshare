@@ -92,8 +92,11 @@ impl FileVersion {
     }
 
     /// Returns the object storage key for this version's content.
+    /// 
+    /// In the per-user bucket architecture, the key includes the created_by user_id
+    /// to enable proper scoping: "{user_id}/blobs/{hash}"
     pub fn storage_key(&self) -> String {
-        format!("blobs/{}", self.content_hash)
+        format!("{}/blobs/{}", self.created_by, self.content_hash)
     }
 }
 

@@ -52,8 +52,11 @@ impl File {
     }
 
     /// Returns the object storage key for this file's content.
+    /// 
+    /// In the per-user bucket architecture, the key includes the owner_id
+    /// to enable proper scoping: "{owner_id}/blobs/{hash}"
     pub fn storage_key(&self) -> String {
-        format!("blobs/{}", self.content_hash)
+        format!("{}/blobs/{}", self.owner_id, self.content_hash)
     }
 }
 

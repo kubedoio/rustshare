@@ -6,7 +6,7 @@
 use std::{sync::Arc, time::Duration};
 
 use rustshare_core::events::EventBroadcaster;
-use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
+use rustshare_storage::{EventStore, MetadataStore};
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -51,13 +51,15 @@ impl ReplicationWorkerConfig {
     }
 }
 
-pub fn spawn_replication_worker(
+pub fn spawn_replication_worker<O>(
     _metadata_store: Arc<MetadataStore>,
-    _object_store: Arc<ObjectStore>,
+    _object_store: Arc<O>,
     _event_store: Arc<EventStore>,
     _broadcaster: Arc<EventBroadcaster>,
     config: ReplicationWorkerConfig,
-) {
+) where
+    O: rustshare_core::services::ObjectStoreOps + 'static,
+{
     if !config.enabled {
         info!("Replication worker disabled");
         return;

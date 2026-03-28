@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use rustshare_core::{
     domain::{File, FileVersion, ThumbnailSize},
-    services::{FileError, ThumbnailError},
+    services::{FileError, ObjectStoreOps, ThumbnailError},
 };
 
 use super::{file_error_response, AuthenticatedUser, ErrorResponse};

@@ -89,10 +89,10 @@ use rustshare_storage::{
     repos::user::RustFsUserRepository as DomainUserRepository,
     repos::rustfs_repos::RustFsUserMetadataRepository as MetadataUserRepository,
     session::{SessionManager, SessionConfig},
-    EventStore, MetadataStore, ObjectStore,
-    // Per-user bucket storage system
-    UserBucketStorageSystem, UserScopedStoreFactory,
-    UserBucketConfig, UserBucketStoreFactory,
+    EventStore, MetadataStore,
+    // Hybrid storage system (system bucket + per-user buckets)
+    HybridStorageFactory, HybridStorageSystem, SystemDocumentStore,
+    UserBucketObjectStore, UserBucketObjectStoreFactory,
 };
 use serde::{Deserialize, Serialize};
 // TODO: PostgreSQL removed - transitioning to new state module
@@ -117,10 +117,12 @@ use tracing::info;
 // >;
 
 /// Type aliases for services using the compatibility layer
+/// 
+/// NOTE: Uses UserBucketObjectStore for per-user isolated blob storage
 type FileSvc = FileService<
     rustshare_storage::metadata_v2::EventStoreCompat,
     rustshare_storage::metadata_v2::MetadataStoreCompat,
-    ObjectStore,
+    UserBucketObjectStore,
 >;
 type FolderSvc = FolderService<
     rustshare_storage::metadata_v2::EventStoreCompat,
@@ -136,12 +138,14 @@ type ShareSvc = ShareService<
 /// 
 /// NOTE: Services use the MetadataStoreCompat wrapper to provide the required
 /// trait implementations for the service layer.
+/// All durable data is stored in per-user S3 buckets (RustFS).
 #[derive(Clone)]
 pub struct AppState {
     // Legacy stores (compatibility layer)
     pub metadata_store: Arc<MetadataStore>,
     pub event_store: Arc<EventStore>,
-    pub object_store: Arc<ObjectStore>,
+    /// Per-user bucket object store (replaces shared ObjectStore)
+    pub object_store: Arc<UserBucketObjectStore>,
     
     // New repository layer
     pub user_repo: Arc<dyn UserRepository>,
@@ -166,7 +170,7 @@ pub struct AppState {
     pub file_service: Arc<FileSvc>,
     pub folder_service: Arc<FolderSvc>,
     pub share_service: Arc<ShareSvc>,
-    pub thumbnail_service: Arc<ThumbnailService<ObjectStore>>,
+    pub thumbnail_service: Arc<ThumbnailService<UserBucketObjectStore>>,
     
     // Configuration and utilities
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
@@ -196,43 +200,25 @@ async fn main() -> Result<()> {
 
     info!("Starting RustShare server");
 
-    // Initialize per-user bucket storage system (RustFS/S3 only - no local filesystem)
-    let rustfs_endpoint = std::env::var("RUSTFS_ENDPOINT")?;
-    let rustfs_region = std::env::var("RUSTFS_REGION")?;
-    let bucket_prefix = std::env::var("USER_BUCKET_PREFIX")
-        .unwrap_or_else(|_| "rustshare-user-".to_string());
+    // Initialize hybrid storage system:
+    // - System bucket for shared data (users, groups, config)
+    // - Per-user buckets for user-owned data (files, folders, shares, blobs)
+    info!("Initializing hybrid storage system");
     
-    info!("Initializing per-user bucket storage system");
-    info!("  Endpoint: {}", rustfs_endpoint);
-    info!("  Region: {}", rustfs_region);
-    info!("  Bucket Prefix: {}", bucket_prefix);
+    let hybrid_storage = HybridStorageFactory::from_env().await?;
+    let hybrid_storage = Arc::new(hybrid_storage);
     
-    // Create the unified per-user bucket storage system
-    let user_bucket_config = UserBucketConfig {
-        endpoint: rustfs_endpoint.clone(),
-        region: rustfs_region.clone(),
-        bucket_prefix: bucket_prefix.clone(),
-        base_prefix: "".to_string(),
-    };
+    info!("Hybrid storage system initialized");
     
-    let bucket_store = UserBucketStoreFactory::create_s3_with_config(user_bucket_config).await?;
-    let storage_system = Arc::new(UserBucketStorageSystem::new(bucket_store));
-    let store_factory = storage_system.store_factory();
+    // System document store for user accounts, groups, and system config
+    let doc_store: Arc<dyn MetadataDocumentStore> = hybrid_storage.system_store();
     
-    info!("Per-user bucket storage system initialized");
-    
-    // Legacy compatibility: Create a default user-scoped store for system-level operations
-    // This will be replaced with proper user-scoped stores per request
-    let system_user_id = uuid::Uuid::nil();
-    let doc_store: Arc<dyn MetadataDocumentStore> = store_factory.for_user(system_user_id);
-    
-    // For now, we keep the event_log_store interface compatible
-    // In the full implementation, this would use UserBucketEventStore per user
+    // Event log store (using system store for now - could be per-user in future)
     let event_log_store: Arc<dyn EventLogStore> = Arc::new(
         RustFsEventStore::new(Arc::clone(&doc_store))
     );
     
-    // Keep metadata configuration for path building in repositories
+    // Metadata configuration for path building
     let metadata_prefix = std::env::var("RUSTSHARE_METADATA_PREFIX")
         .unwrap_or_else(|_| "apps/rustshare".to_string());
     let metadata_namespace = std::env::var("RUSTSHARE_METADATA_NAMESPACE")
@@ -242,15 +228,11 @@ async fn main() -> Result<()> {
     let metadata_store = Arc::new(MetadataStore::new(()));
     let event_store = Arc::new(EventStore::new(()));
 
-    // Initialize object store
-    let rustfs_endpoint = std::env::var("RUSTFS_ENDPOINT")?;
-    let rustfs_region = std::env::var("RUSTFS_REGION")?;
-    let rustfs_bucket = std::env::var("RUSTFS_BUCKET")?;
-
-    let object_store =
-        Arc::new(ObjectStore::new(rustfs_endpoint, rustfs_region, rustfs_bucket).await?);
-
-    info!("Object store initialized");
+    // Initialize per-user bucket object store for blobs
+    // This stores file content in individual user buckets
+    let object_store = UserBucketObjectStoreFactory::create(hybrid_storage.user_bucket_store());
+    
+    info!("Per-user bucket object store initialized");
 
     // Initialize JWT manager
     let jwt_secret = std::env::var("JWT_SECRET")?;
