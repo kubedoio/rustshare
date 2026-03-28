@@ -73,7 +73,7 @@
 	</div>
 
 	<!-- Content -->
-	<div class="flex-1 overflow-auto px-4 py-4 md:px-5 lg:px-6 lg:py-5 xl:px-8">
+	<div class="flex-1 overflow-auto px-4 py-4 md:px-5 lg:px-6 lg:py-5 xl:px-6 2xl:px-8">
 		{#if isLoading}
 			<div class="flex items-center justify-center h-64">
 				<div class="animate-spin w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full"></div>

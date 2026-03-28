@@ -5,6 +5,34 @@
 @layer base {
 	:root {
 		color-scheme: light;
+		--color-base-100: #fbf9f5;
+		--color-base-200: #f6f3ee;
+		--color-base-300: #ded6ca;
+		--color-base-content: #151515;
+		--color-primary: #c65a1e;
+		--color-primary-content: #fff8f3;
+		--color-secondary: #7b4a2e;
+		--color-secondary-content: #fff8f3;
+		--color-accent: #b87542;
+		--color-accent-content: #fff8f3;
+		--color-neutral: #151515;
+		--color-neutral-content: #f3efe8;
+		--color-info: #366d8c;
+		--color-info-content: #eff6fb;
+		--color-success: #1d7a52;
+		--color-success-content: #edf8f2;
+		--color-warning: #a56a12;
+		--color-warning-content: #fff5e2;
+		--color-error: #b63e3e;
+		--color-error-content: #fff1f1;
+		--radius-selector: 0.625rem;
+		--radius-field: 0.625rem;
+		--radius-box: 1.25rem;
+		--size-selector: 0.25rem;
+		--size-field: 0.25rem;
+		--border: 1px;
+		--depth: 1;
+		--noise: 0;
 		--rs-canvas: #f6f3ee;
 		--rs-surface: #fbf9f5;
 		--rs-surface-raised: #ffffff;
@@ -33,6 +61,26 @@
 
 	html[data-theme='rustshare-dark'] {
 		color-scheme: dark;
+		--color-base-100: #181a1d;
+		--color-base-200: #1f2227;
+		--color-base-300: #2f343b;
+		--color-base-content: #f3efe8;
+		--color-primary: #d66a2d;
+		--color-primary-content: #ffffff;
+		--color-secondary: #b28366;
+		--color-secondary-content: #fff7f1;
+		--color-accent: #7b4a2e;
+		--color-accent-content: #fff7f1;
+		--color-neutral: #1b1815;
+		--color-neutral-content: #f3efe8;
+		--color-info: #5a8fae;
+		--color-info-content: #eff6fb;
+		--color-success: #3aa06f;
+		--color-success-content: #edf8f2;
+		--color-warning: #cf9129;
+		--color-warning-content: #1f1504;
+		--color-error: #d25a5a;
+		--color-error-content: #fff1f1;
 		--rs-canvas: #121315;
 		--rs-surface: #181a1d;
 		--rs-surface-raised: #1f2227;

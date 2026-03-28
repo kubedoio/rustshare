@@ -53,7 +53,7 @@
 		</button>
 	</div>
 {:else}
-	<div class="grid grid-cols-1 justify-center gap-4 sm:grid-cols-[repeat(auto-fill,minmax(15rem,19rem))]">
+	<div class="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(17rem,1fr))]">
 		<!-- Folders -->
 		{#each folders as folder (folder.id)}
 			<FileGridTile
