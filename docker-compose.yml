@@ -52,7 +52,7 @@ services:
       RUSTFS_REGION: us-east-1
       RUSTFS_BUCKET: rustshare-files
       AWS_ACCESS_KEY_ID: rustfsadmin
-      AWS_SECRET_ACCESS_KEY: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: changeme
       
       # Local Storage for Metadata (standalone mode)
       RUSTSHARE_LOCAL_STORAGE_PATH: /data/metadata

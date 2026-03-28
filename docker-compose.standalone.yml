@@ -69,7 +69,7 @@ services:
       RUSTFS_BUCKET: rustshare-files
       # Per-user buckets are created with this prefix: rustshare-user-{uuid}
       AWS_ACCESS_KEY_ID: rustfsadmin
-      AWS_SECRET_ACCESS_KEY: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: changeme
       
       # Per-User Bucket Configuration
       USER_BUCKET_PREFIX: rustshare-user-
