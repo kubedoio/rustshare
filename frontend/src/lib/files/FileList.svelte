@@ -42,7 +42,7 @@
 		$selectionStore.selectedFolderIds.size + $selectionStore.selectedFileIds.size === folders.length + files.length;
 </script>
 
-<div class="bg-base-100 rounded-xl border border-base-300 overflow-hidden">
+<div class="relative rounded-xl border border-base-300 bg-base-100">
 	<table class="w-full">
 		<thead>
 			<tr class="border-b border-base-300 bg-base-200/50">

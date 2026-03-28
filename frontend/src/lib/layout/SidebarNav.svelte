@@ -76,9 +76,9 @@
 
 <!-- Secondary Sidebar -->
 <aside 
-	class="fixed inset-y-0 left-0 z-50 flex w-[min(18rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] flex-col border-r border-base-300 bg-base-100/95 shadow-2xl backdrop-blur-xl transition-transform duration-300 ease-out lg:static lg:left-16 lg:z-40 lg:max-w-none lg:w-64 lg:bg-base-100 lg:shadow-none lg:backdrop-blur-none
+	class="fixed inset-y-0 left-0 z-50 flex w-[min(18rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] flex-col border-r border-base-300 bg-base-100/95 shadow-2xl backdrop-blur-xl transition-[transform,width,opacity] duration-300 ease-out lg:static lg:left-16 lg:z-40 lg:max-w-none lg:bg-base-100 lg:shadow-none lg:backdrop-blur-none
 		{mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-		{collapsed ? 'lg:w-0 lg:opacity-0 lg:overflow-hidden' : 'lg:w-64 lg:opacity-100'}"
+		{collapsed ? 'lg:w-0 lg:min-w-0 lg:overflow-hidden lg:border-r-0 lg:opacity-0' : 'lg:w-64 lg:min-w-64 lg:opacity-100'}"
 >
 	<!-- Header -->
 	<div class="h-14 px-5 flex items-center border-b border-base-300/80">

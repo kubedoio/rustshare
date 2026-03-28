@@ -6,6 +6,7 @@
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
 	import { replicationStateBadgeClass, formatReplicationStateLabel } from '$lib/stores/replication';
 	import { MoreVertical, Edit, Trash2, Share2, Move, Download, History, RefreshCw } from 'lucide-svelte';
+	import { tick } from 'svelte';
 
 	export let item: FileType | Folder;
 	export let isFolder: boolean;
@@ -37,6 +38,9 @@
 
 	let showActions = false;
 	let actionMenuRef: HTMLDivElement;
+	let actionButtonRef: HTMLButtonElement;
+	let menuTop = 0;
+	let menuLeft = 0;
 
 	function handleClick(e: MouseEvent) {
 		if (!selectionMode) {
@@ -66,15 +70,56 @@
 		showActions = false;
 	}
 
+	async function toggleActions(e: MouseEvent) {
+		e.stopPropagation();
+		showActions = !showActions;
+		if (showActions) {
+			await tick();
+			positionActionMenu();
+		}
+	}
+
+	function positionActionMenu() {
+		if (!actionButtonRef || !actionMenuRef) return;
+
+		const buttonRect = actionButtonRef.getBoundingClientRect();
+		const menuRect = actionMenuRef.getBoundingClientRect();
+		const viewportPadding = 12;
+		const menuSpacing = 8;
+		const shouldOpenUpward =
+			buttonRect.bottom + menuSpacing + menuRect.height > window.innerHeight - viewportPadding &&
+			buttonRect.top - menuSpacing - menuRect.height >= viewportPadding;
+
+		menuTop = shouldOpenUpward
+			? buttonRect.top - menuRect.height - menuSpacing
+			: buttonRect.bottom + menuSpacing;
+		menuLeft = Math.min(
+			Math.max(viewportPadding, buttonRect.right - menuRect.width),
+			window.innerWidth - menuRect.width - viewportPadding
+		);
+	}
+
+	function handleViewportChange() {
+		if (showActions) {
+			positionActionMenu();
+		}
+	}
+
 	// Close actions when clicking outside
 	function handleClickOutside(e: MouseEvent) {
-		if (actionMenuRef && !actionMenuRef.contains(e.target as Node)) {
+		const target = e.target as Node;
+		if (
+			actionMenuRef &&
+			!actionMenuRef.contains(target) &&
+			actionButtonRef &&
+			!actionButtonRef.contains(target)
+		) {
 			showActions = false;
 		}
 	}
 </script>
 
-<svelte:window on:click={handleClickOutside} />
+<svelte:window on:click={handleClickOutside} on:resize={handleViewportChange} on:scroll={handleViewportChange} />
 
 <tr 
 	class="group hover:bg-base-200/50 transition-colors {selected ? 'bg-brand-500/5' : ''}"
@@ -131,41 +176,46 @@
 	</td>
 	<td class="px-4 py-3 text-sm text-base-content/60 hidden sm:table-cell">{displaySize}</td>
 	<td class="px-4 py-3 text-sm text-base-content/60 hidden lg:table-cell">{displayDate}</td>
-	<td class="px-4 py-3">
-		<div class="relative" bind:this={actionMenuRef}>
-			<button
-				type="button"
-				class="p-2 text-base-content/40 hover:text-base-content hover:bg-base-200 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
-				on:click|stopPropagation={(e) => { e.stopPropagation(); showActions = !showActions; }}
-				aria-label="Actions"
-			>
-				<MoreVertical size={16} />
-			</button>
-			
-			{#if showActions}
-				<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-				<div class="absolute right-0 top-full mt-1 w-44 bg-base-100 rounded-xl shadow-lg shadow-black/20 border border-base-300 py-1 z-50"
-					on:click|stopPropagation>
-					<button
-						type="button"
-						class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-						on:click={(e) => handleAction(e, onRename)}
+		<td class="px-4 py-3">
+			<div class="relative">
+				<button
+					type="button"
+					bind:this={actionButtonRef}
+					class="rounded-lg p-2 text-base-content/40 opacity-0 transition-all hover:bg-base-200 hover:text-base-content group-hover:opacity-100"
+					on:click={toggleActions}
+					aria-label="Actions"
+				>
+					<MoreVertical size={16} />
+				</button>
+
+				{#if showActions}
+					<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+					<div
+						bind:this={actionMenuRef}
+						class="fixed z-[70] w-44 rounded-xl border border-base-300 bg-base-100 py-1 shadow-lg shadow-black/20"
+						style={`top: ${menuTop}px; left: ${menuLeft}px;`}
+						on:click|stopPropagation
 					>
-						<Edit size={14} />
-						Rename
-					</button>
-					<button
-						type="button"
-						class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-						on:click={(e) => handleAction(e, onShare)}
-					>
-						<Share2 size={14} />
-						Share
-					</button>
+						<button
+							type="button"
+							class="w-full flex items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200"
+							on:click={(e) => handleAction(e, onRename)}
+						>
+							<Edit size={14} />
+							Rename
+						</button>
+						<button
+							type="button"
+							class="w-full flex items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200"
+							on:click={(e) => handleAction(e, onShare)}
+						>
+							<Share2 size={14} />
+							Share
+						</button>
 						{#if !isFolder}
 							<button
 								type="button"
-								class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
+								class="w-full flex items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200"
 								on:click={(e) => handleAction(e, onDownload)}
 							>
 								<Download size={14} />
@@ -173,7 +223,7 @@
 							</button>
 							<button
 								type="button"
-								class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
+								class="w-full flex items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200"
 								on:click={(e) => handleAction(e, onVersionHistory)}
 							>
 								<History size={14} />
@@ -181,32 +231,32 @@
 							</button>
 							<button
 								type="button"
-								class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
+								class="w-full flex items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200"
 								on:click={(e) => handleAction(e, onReplace)}
 							>
 								<RefreshCw size={14} />
 								Replace file
 							</button>
 						{/if}
-					<button
-						type="button"
-						class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-						on:click={(e) => handleAction(e, onMove)}
-					>
-						<Move size={14} />
-						Move
-					</button>
-					<div class="border-t border-base-200 my-1"></div>
-					<button
-						type="button"
-						class="w-full flex items-center gap-2 px-4 py-2 text-sm text-error hover:bg-error/10 transition-colors text-left"
-						on:click={(e) => handleAction(e, onDelete)}
-					>
-						<Trash2 size={14} />
-						Delete
-					</button>
-				</div>
-			{/if}
-		</div>
-	</td>
+						<button
+							type="button"
+							class="w-full flex items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200"
+							on:click={(e) => handleAction(e, onMove)}
+						>
+							<Move size={14} />
+							Move
+						</button>
+						<div class="my-1 border-t border-base-200"></div>
+						<button
+							type="button"
+							class="w-full flex items-center gap-2 px-4 py-2 text-left text-sm text-error transition-colors hover:bg-error/10"
+							on:click={(e) => handleAction(e, onDelete)}
+						>
+							<Trash2 size={14} />
+							Delete
+						</button>
+					</div>
+				{/if}
+			</div>
+		</td>
 </tr>
