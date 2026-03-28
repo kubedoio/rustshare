@@ -34,11 +34,14 @@ RUN cargo build --release --bin rustshare-server
 # Runtime image
 FROM alpine:3.19
 
-RUN apk add --no-cache libgcc openssl ca-certificates
+RUN apk add --no-cache libgcc openssl ca-certificates wget
 
 COPY --from=builder /app/target/release/rustshare-server /usr/local/bin/
 COPY --from=frontend-builder /app/frontend/build /app/frontend-build
+COPY docker/wait-for-rustfs.sh /usr/local/bin/wait-for-rustfs.sh
+RUN chmod +x /usr/local/bin/wait-for-rustfs.sh
 
 ENV FRONTEND_DIST_DIR=/app/frontend-build
 
+ENTRYPOINT ["/usr/local/bin/wait-for-rustfs.sh"]
 CMD ["rustshare-server"]

@@ -370,14 +370,34 @@ impl HybridStorageFactory {
             namespace.clone(),
         ));
 
-        // Ensure system bucket exists
+        // Ensure system bucket exists with retries
         tracing::info!("Ensuring system bucket exists: {}", system_bucket);
-        match system_store.ensure_bucket().await {
-            Ok(_) => tracing::info!("System bucket ready: {}", system_bucket),
-            Err(e) => {
-                tracing::error!("Failed to ensure system bucket {}: {:?}", system_bucket, e);
-                return Err(anyhow::anyhow!("Failed to initialize system bucket '{}': {}", system_bucket, e));
+        let mut last_error = None;
+        for attempt in 1..=5 {
+            match system_store.ensure_bucket().await {
+                Ok(_) => {
+                    tracing::info!("System bucket ready: {}", system_bucket);
+                    last_error = None;
+                    break;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Attempt {}/5: Failed to ensure system bucket {}: {:?}",
+                        attempt, system_bucket, e
+                    );
+                    last_error = Some(e);
+                    if attempt < 5 {
+                        let delay = std::time::Duration::from_secs(2_u64.pow(attempt - 1));
+                        tracing::info!("Waiting {:?} before retry...", delay);
+                        tokio::time::sleep(delay).await;
+                    }
+                }
             }
+        }
+        
+        if let Some(e) = last_error {
+            tracing::error!("Failed to ensure system bucket {} after 5 attempts: {:?}", system_bucket, e);
+            return Err(anyhow::anyhow!("Failed to initialize system bucket '{}': {}", system_bucket, e));
         }
 
         // Create user bucket store - need new credentials instance for the second client

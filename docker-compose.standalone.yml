@@ -44,7 +44,11 @@ services:
       nofile:
         soft: 65536
         hard: 65536
-    # Restart policy to handle initial connection failures to RustFS
+    # Wait for RustFS to be healthy before starting
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    # Restart policy to handle initial connection failures
     restart: unless-stopped
     # Give RustFS more time to be fully ready
     deploy:
@@ -92,12 +96,6 @@ services:
       
       # Frontend
       FRONTEND_DIST_DIR: /app/frontend-build
-    # Wait for RustFS to be fully ready (healthcheck + additional delay for S3 service)
-    depends_on:
-      rustfs:
-        condition: service_healthy
-    # Add a small delay to ensure RustFS S3 service is fully initialized
-    command: ["/bin/sh", "-c", "echo 'Waiting for RustFS to be fully ready...' && sleep 5 && exec /usr/local/bin/rustshare-server"]
 
   nginx:
     image: nginx:alpine
