@@ -13,7 +13,7 @@
 	const PER_PAGE = 20;
 
 	const usersQuery = createQuery({
-		queryKey: ['admin', 'users', currentPage, searchQuery, statusFilter],
+		queryKey: () => ['admin', 'users', currentPage, searchQuery, statusFilter],
 		queryFn: () =>
 			listAdminUsers({
 				page: currentPage,

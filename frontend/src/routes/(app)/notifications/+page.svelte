@@ -15,7 +15,7 @@
   let unreadOnly = false;
 
   const notificationsQuery = createQuery({
-    queryKey: ['notifications', unreadOnly],
+    queryKey: () => ['notifications', unreadOnly],
     queryFn: () => listNotifications({ unreadOnly, limit: 100 })
   });
 

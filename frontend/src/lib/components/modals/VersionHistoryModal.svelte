@@ -22,16 +22,16 @@
 
   // Reactive query for file details
   const fileQuery = createQuery({
-    queryKey: ['file', fileId],
+    queryKey: () => ['file', fileId],
     queryFn: () => getFile(fileId),
-    enabled: open && !!fileId
+    enabled: () => open && !!fileId
   });
 
   // Reactive query for version history
   const versionsQuery = createQuery({
-    queryKey: ['file-versions', fileId],
+    queryKey: () => ['file-versions', fileId],
     queryFn: () => getFileVersions(fileId),
-    enabled: open && !!fileId
+    enabled: () => open && !!fileId
   });
 
   // Mutation for restoring version

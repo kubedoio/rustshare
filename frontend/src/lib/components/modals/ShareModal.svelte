@@ -41,17 +41,17 @@
 
 	// Query for existing shares
 	const sharesQuery = createQuery({
-		queryKey: ['public-shares', resourceType, resourceId],
+		queryKey: () => ['public-shares', resourceType, resourceId],
 		queryFn: () =>
 			resourceType === 'folder' ? listFolderShares(resourceId) : listFileShares(resourceId),
-		enabled: open
+		enabled: () => open
 	});
 
 	const recipientsQuery = createQuery({
-		queryKey: ['share-recipients', resourceType, resourceId],
+		queryKey: () => ['share-recipients', resourceType, resourceId],
 		queryFn: () =>
 			resourceType === 'folder' ? listFolderRecipients(resourceId) : listFileRecipients(resourceId),
-		enabled: open
+		enabled: () => open
 	});
 
 	// Mutation for creating share

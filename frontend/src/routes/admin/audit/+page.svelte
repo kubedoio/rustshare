@@ -9,7 +9,7 @@
 	const PER_PAGE = 50;
 
 	const auditQuery = createQuery({
-		queryKey: ['admin', 'audit', currentPage, filters],
+		queryKey: () => ['admin', 'audit', currentPage, filters],
 		queryFn: () =>
 			listAuditLog({
 				page: currentPage,

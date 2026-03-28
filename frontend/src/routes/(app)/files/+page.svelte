@@ -72,9 +72,9 @@
 	let toastMessage = '';
 	let toastType: 'success' | 'error' | 'info' = 'info';
 
-	// Query for folder contents - use derived store pattern for Svelte 5
+	// Query for folder contents - reactive to currentFolderId changes
 	const filesQuery = createQuery({
-		queryKey: ['folder-contents', currentFolderId],
+		queryKey: () => ['folder-contents', currentFolderId],
 		queryFn: () => getFolderContents(currentFolderId)
 	});
 

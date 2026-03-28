@@ -50,21 +50,21 @@
 	}
 
 	const fileQuery = createQuery({
-		queryKey: ['shared-file', resourceId],
+		queryKey: () => ['shared-file', resourceId],
 		queryFn: () => getFile(resourceId),
-		enabled: resourceType === 'file' && !!shareEntry
+		enabled: () => resourceType === 'file' && !!shareEntry
 	});
 
 	const folderContentsQuery = createQuery({
-		queryKey: ['shared-folder-contents', currentFolderId],
+		queryKey: () => ['shared-folder-contents', currentFolderId],
 		queryFn: () => getFolderContents(currentFolderId),
-		enabled: resourceType === 'folder' && !!shareEntry && !!currentFolderId
+		enabled: () => resourceType === 'folder' && !!shareEntry && !!currentFolderId
 	});
 
 	const currentFolderQuery = createQuery({
-		queryKey: ['shared-folder-meta', currentFolderId],
+		queryKey: () => ['shared-folder-meta', currentFolderId],
 		queryFn: () => getFolder(currentFolderId as string),
-		enabled:
+		enabled: () =>
 			resourceType === 'folder' &&
 			!!shareEntry &&
 			!!currentFolderId &&

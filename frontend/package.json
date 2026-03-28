@@ -47,6 +47,7 @@
   },
   "dependencies": {
     "@tanstack/svelte-query": "^6.1.10",
+    "@tanstack/svelte-query-devtools": "^6.1.10",
     "daisyui": "^5.5.19",
     "date-fns": "^4.1.0",
     "html5-qrcode": "^2.3.8",

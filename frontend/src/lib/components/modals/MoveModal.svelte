@@ -23,9 +23,9 @@
 
   // Query for folder tree
   const folderTreeQuery = createQuery({
-    queryKey: ['folder-tree'],
+    queryKey: () => ['folder-tree'],
     queryFn: getFolderTree,
-    enabled: open
+    enabled: () => open
   });
 
   // Build set of invalid folder IDs (folder itself + all descendants) to prevent circular moves

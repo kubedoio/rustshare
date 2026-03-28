@@ -33,15 +33,15 @@
 	$: currentFolderId = $page.url.searchParams.get('folder');
 
 	const shareQuery = createQuery({
-		queryKey: ['public-share', token],
+		queryKey: () => ['public-share', token],
 		queryFn: () => getPublicShareInfo(token),
 		enabled: Boolean(token)
 	});
 
 	const folderContentsQuery = createQuery({
-		queryKey: ['public-share-folder', token, currentFolderId, sessionToken],
+		queryKey: () => ['public-share-folder', token, currentFolderId, sessionToken],
 		queryFn: () => getPublicFolderContents(token, sessionToken, currentFolderId || undefined),
-		enabled: Boolean(
+		enabled: () => Boolean(
 			token &&
 			sessionToken &&
 			$shareQuery.data?.resource_type === 'folder' &&
