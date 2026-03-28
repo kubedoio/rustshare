@@ -1,0 +1,83 @@
+# RustShare Optimized Development Deployment
+# 
+# This configuration mounts pre-built frontend for fast iteration.
+# Build the frontend locally first: cd frontend && npm run build
+#
+# Usage:
+#   cd frontend && npm run build
+#   cd .. && docker-compose -f docker-compose.dev-optimized.yml up -d
+
+services:
+  rustfs:
+    image: rustfs/rustfs:latest
+    environment:
+      RUSTFS_ROOT_USER: rustfsadmin
+      RUSTFS_ROOT_PASSWORD: changeme
+      RUSTFS_DATA_DIR: /data
+      RUSTFS_LOGS_DIR: /logs
+    volumes:
+      - rustfs_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.cached.Dockerfile
+    ports:
+      - "8080:8080"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    environment:
+      RUSTSHARE_RUNTIME_PROFILE: standalone
+      RUSTFS_ENDPOINT: http://rustfs:9000
+      RUSTFS_PUBLIC_ENDPOINT: http://localhost:9000
+      RUSTFS_REGION: us-east-1
+      RUSTFS_BUCKET: rustshare-files
+      AWS_ACCESS_KEY_ID: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: changeme
+      RUSTSHARE_LOCAL_STORAGE_PATH: /data/metadata
+      RUSTSHARE_METADATA_PREFIX: apps/rustshare
+      RUSTSHARE_METADATA_NAMESPACE: default
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
+      RUSTSHARE_SECRET_ENCRYPTION_KEY: ${RUSTSHARE_SECRET_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+      RUSTSHARE_ADMIN_USERNAME: admin
+      RUSTSHARE_ADMIN_EMAIL: admin@localhost
+      RUSTSHARE_ADMIN_PASSWORD: admin123
+      RUST_LOG: ${RUST_LOG:-info,rustshare=debug}
+      RUSTSHARE_RATE_LIMIT_AUTH_LOGIN_PER_MINUTE: ${RUSTSHARE_RATE_LIMIT_AUTH_LOGIN_PER_MINUTE:-10}
+      RUSTSHARE_RATE_LIMIT_OIDC_LOGIN_PER_MINUTE: ${RUSTSHARE_RATE_LIMIT_OIDC_LOGIN_PER_MINUTE:-30}
+      FRONTEND_DIST_DIR: /app/frontend-build
+    volumes:
+      - metadata_data:/data/metadata
+      - ./frontend/build:/app/frontend-build:ro
+    depends_on:
+      rustfs:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend/build:/usr/share/nginx/html:ro
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  rustfs_data:
+  metadata_data:
