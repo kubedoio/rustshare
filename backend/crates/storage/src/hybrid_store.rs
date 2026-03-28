@@ -53,21 +53,29 @@ impl SystemDocumentStore {
     /// Ensure the system bucket exists
     pub async fn ensure_bucket(&self) -> anyhow::Result<()> {
         match self.client.head_bucket().bucket(&self.bucket).send().await {
-            Ok(_) => Ok(()),
-            Err(_) => {
+            Ok(_) => {
+                tracing::info!(bucket = %self.bucket, "System bucket already exists");
+                Ok(())
+            }
+            Err(head_err) => {
+                tracing::info!(
+                    bucket = %self.bucket,
+                    error = %head_err,
+                    "System bucket head check failed, attempting to create"
+                );
                 // Try to create the bucket
                 match self.client.create_bucket().bucket(&self.bucket).send().await {
                     Ok(_) => {
                         tracing::info!(bucket = %self.bucket, "Created system bucket");
                         Ok(())
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            bucket = %self.bucket,
-                            error = %e,
-                            "Failed to create system bucket, continuing anyway"
+                    Err(create_err) => {
+                        let err_msg = format!(
+                            "Failed to create system bucket '{}': head_error={}, create_error={}",
+                            self.bucket, head_err, create_err
                         );
-                        Ok(())
+                        tracing::error!("{}", err_msg);
+                        Err(anyhow::anyhow!(err_msg))
                     }
                 }
             }
@@ -115,7 +123,13 @@ impl MetadataDocumentStore for SystemDocumentStore {
                 if err_str.contains("NoSuchKey") || err_str.contains("NotFound") {
                     Ok(None)
                 } else {
-                    Err(e.into())
+                    tracing::error!(
+                        bucket = %self.bucket,
+                        key = %object_key,
+                        error = %e,
+                        "S3 get_object failed"
+                    );
+                    Err(anyhow::anyhow!("S3 error accessing bucket '{}', key '{}': {}", self.bucket, object_key, e))
                 }
             }
         }
@@ -319,8 +333,13 @@ impl HybridStorageFactory {
             .unwrap_or_else(|_| "default".to_string());
 
         // Load credentials from environment
-        let access_key = std::env::var("AWS_ACCESS_KEY_ID")?;
-        let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")?;
+        let access_key = std::env::var("AWS_ACCESS_KEY_ID")
+            .map_err(|e| anyhow::anyhow!("AWS_ACCESS_KEY_ID not set: {}", e))?;
+        let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")
+            .map_err(|e| anyhow::anyhow!("AWS_SECRET_ACCESS_KEY not set: {}", e))?;
+        
+        tracing::info!("Using S3 credentials - access_key_id starts with: {}", &access_key[..4.min(access_key.len())]);
+        
         let credentials = Credentials::new(
             access_key,
             secret_key,
@@ -346,13 +365,20 @@ impl HybridStorageFactory {
         // Create system document store
         let system_store = Arc::new(SystemDocumentStore::new(
             client.clone(),
-            system_bucket,
+            system_bucket.clone(),
             base_prefix.clone(),
             namespace.clone(),
         ));
 
         // Ensure system bucket exists
-        system_store.ensure_bucket().await?;
+        tracing::info!("Ensuring system bucket exists: {}", system_bucket);
+        match system_store.ensure_bucket().await {
+            Ok(_) => tracing::info!("System bucket ready: {}", system_bucket),
+            Err(e) => {
+                tracing::error!("Failed to ensure system bucket {}: {:?}", system_bucket, e);
+                return Err(anyhow::anyhow!("Failed to initialize system bucket '{}': {}", system_bucket, e));
+            }
+        }
 
         // Create user bucket store - need new credentials instance for the second client
         let credentials2 = Credentials::new(

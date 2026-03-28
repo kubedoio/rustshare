@@ -383,10 +383,26 @@ impl UserBucketStoreFactory {
     /// Create an S3-based store with explicit configuration
     pub async fn create_s3_with_config(config: UserBucketConfig) -> Result<Arc<dyn UserBucketStore>> {
         use aws_config::BehaviorVersion;
+        use aws_credential_types::Credentials;
+        
+        // Load credentials from environment
+        let access_key = std::env::var("AWS_ACCESS_KEY_ID")
+            .map_err(|e| anyhow::anyhow!("AWS_ACCESS_KEY_ID not set: {}", e))?;
+        let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")
+            .map_err(|e| anyhow::anyhow!("AWS_SECRET_ACCESS_KEY not set: {}", e))?;
+        
+        let credentials = Credentials::new(
+            access_key,
+            secret_key,
+            None,  // session token
+            None,  // expiration
+            "env",
+        );
         
         let sdk_config = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&config.endpoint)
             .region(aws_config::Region::new(config.region.clone()))
+            .credentials_provider(credentials)
             .load()
             .await;
 

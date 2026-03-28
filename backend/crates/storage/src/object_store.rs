@@ -13,15 +13,32 @@ pub struct ObjectStore {
 impl ObjectStore {
     /// Create new object store
     pub async fn new(endpoint: String, region: String, bucket: String) -> Result<Self> {
+        use aws_credential_types::Credentials;
+        
         // Check if there's a public endpoint for presigned URLs
         let public_endpoint = std::env::var("RUSTFS_PUBLIC_ENDPOINT").ok();
 
         // Use public endpoint for presigned URLs if configured
         let presign_endpoint = public_endpoint.clone().unwrap_or_else(|| endpoint.clone());
 
+        // Load credentials from environment
+        let access_key = std::env::var("AWS_ACCESS_KEY_ID")
+            .map_err(|e| anyhow::anyhow!("AWS_ACCESS_KEY_ID not set: {}", e))?;
+        let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")
+            .map_err(|e| anyhow::anyhow!("AWS_SECRET_ACCESS_KEY not set: {}", e))?;
+        
+        let credentials = Credentials::new(
+            access_key.clone(),
+            secret_key.clone(),
+            None,  // session token
+            None,  // expiration
+            "env",
+        );
+
         let config = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&endpoint)
-            .region(aws_config::Region::new(region))
+            .region(aws_config::Region::new(region.clone()))
+            .credentials_provider(credentials)
             .load()
             .await;
 
@@ -35,11 +52,18 @@ impl ObjectStore {
         ensure_bucket_exists(&client, &bucket).await?;
 
         // Create a second client for presigned URLs with public endpoint
+        let credentials2 = Credentials::new(
+            access_key,
+            secret_key,
+            None,  // session token
+            None,  // expiration
+            "env",
+        );
+        
         let presign_config = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&presign_endpoint)
-            .region(aws_config::Region::new(
-                config.region().unwrap().to_string(),
-            ))
+            .region(aws_config::Region::new(region))
+            .credentials_provider(credentials2)
             .load()
             .await;
 
