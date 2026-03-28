@@ -76,7 +76,7 @@ use rustshare_core::{
 //     FileRepository, FolderRepository, NotificationRepository, ShareRepository, UserRepository,
 // };
 use rustshare_storage::{
-    metadata_v2::{EventLogStore, MetadataDocumentStore, MetadataBackendConfig, stores::{LocalFsDocumentStore, RustFsEventStore}},
+    metadata_v2::{EventLogStore, MetadataDocumentStore, stores::RustFsEventStore},
     repos::{
         PathBuilder, UserRepository, UserMetadataRepository, DeviceRepository, GroupRepository, 
         AuditRepository, ConfigRepository, PairingRepository, WebhookRepository,
@@ -90,6 +90,9 @@ use rustshare_storage::{
     repos::rustfs_repos::RustFsUserMetadataRepository as MetadataUserRepository,
     session::{SessionManager, SessionConfig},
     EventStore, MetadataStore, ObjectStore,
+    // Per-user bucket storage system
+    UserBucketStorageSystem, UserScopedStoreFactory,
+    UserBucketConfig, UserBucketStoreFactory,
 };
 use serde::{Deserialize, Serialize};
 // TODO: PostgreSQL removed - transitioning to new state module
@@ -193,35 +196,47 @@ async fn main() -> Result<()> {
 
     info!("Starting RustShare server");
 
-    // TODO: PostgreSQL removed - transitioning to new state module
-    // Database connection and migrations temporarily removed.
-    // The new state module will provide storage backends.
-
-    // Initialize document store (LocalFS for standalone mode)
-    let metadata_prefix = std::env::var("RUSTSHARE_METADATA_PREFIX")
-        .unwrap_or_else(|_| "apps/rustshare".to_string());
-    let metadata_namespace = std::env::var("RUSTSHARE_METADATA_NAMESPACE")
-        .unwrap_or_else(|_| "default".to_string());
-    let local_storage_path = std::env::var("RUSTSHARE_LOCAL_STORAGE_PATH")
-        .unwrap_or_else(|_| "./data".to_string());
+    // Initialize per-user bucket storage system (RustFS/S3 only - no local filesystem)
+    let rustfs_endpoint = std::env::var("RUSTFS_ENDPOINT")?;
+    let rustfs_region = std::env::var("RUSTFS_REGION")?;
+    let bucket_prefix = std::env::var("USER_BUCKET_PREFIX")
+        .unwrap_or_else(|_| "rustshare-user-".to_string());
     
-    let backend_config = MetadataBackendConfig {
-        base_prefix: metadata_prefix.clone(),
-        namespace: metadata_namespace.clone(),
-        enable_optimistic_concurrency: true,
-        fallback_to_leases: true,
+    info!("Initializing per-user bucket storage system");
+    info!("  Endpoint: {}", rustfs_endpoint);
+    info!("  Region: {}", rustfs_region);
+    info!("  Bucket Prefix: {}", bucket_prefix);
+    
+    // Create the unified per-user bucket storage system
+    let user_bucket_config = UserBucketConfig {
+        endpoint: rustfs_endpoint.clone(),
+        region: rustfs_region.clone(),
+        bucket_prefix: bucket_prefix.clone(),
+        base_prefix: "".to_string(),
     };
     
-    let local_path = std::path::PathBuf::from(&local_storage_path);
-    let doc_store: Arc<dyn MetadataDocumentStore> = Arc::new(
-        LocalFsDocumentStore::new(local_path, backend_config)
-    );
+    let bucket_store = UserBucketStoreFactory::create_s3_with_config(user_bucket_config).await?;
+    let storage_system = Arc::new(UserBucketStorageSystem::new(bucket_store));
+    let store_factory = storage_system.store_factory();
     
+    info!("Per-user bucket storage system initialized");
+    
+    // Legacy compatibility: Create a default user-scoped store for system-level operations
+    // This will be replaced with proper user-scoped stores per request
+    let system_user_id = uuid::Uuid::nil();
+    let doc_store: Arc<dyn MetadataDocumentStore> = store_factory.for_user(system_user_id);
+    
+    // For now, we keep the event_log_store interface compatible
+    // In the full implementation, this would use UserBucketEventStore per user
     let event_log_store: Arc<dyn EventLogStore> = Arc::new(
         RustFsEventStore::new(Arc::clone(&doc_store))
     );
     
-    info!("Document store initialized at: {}", local_storage_path);
+    // Keep metadata configuration for path building in repositories
+    let metadata_prefix = std::env::var("RUSTSHARE_METADATA_PREFIX")
+        .unwrap_or_else(|_| "apps/rustshare".to_string());
+    let metadata_namespace = std::env::var("RUSTSHARE_METADATA_NAMESPACE")
+        .unwrap_or_else(|_| "default".to_string());
 
     // Legacy compatibility stores (deprecated, will be removed)
     let metadata_store = Arc::new(MetadataStore::new(()));

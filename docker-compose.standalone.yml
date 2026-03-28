@@ -46,18 +46,20 @@ services:
       # Runtime Profile - standalone mode (no Redis required)
       RUSTSHARE_RUNTIME_PROFILE: standalone
       
-      # RustFS Configuration
+      # RustFS Configuration - Per-User Bucket Architecture
       RUSTFS_ENDPOINT: http://rustfs:9000
       RUSTFS_PUBLIC_ENDPOINT: http://localhost:9000
       RUSTFS_REGION: us-east-1
+      # Legacy shared bucket (for transitional compatibility)
       RUSTFS_BUCKET: rustshare-files
+      # Per-user buckets are created with this prefix: rustshare-user-{uuid}
       AWS_ACCESS_KEY_ID: rustfsadmin
       AWS_SECRET_ACCESS_KEY: rustfsadmin
       
-      # Local Storage for Metadata (standalone mode)
-      RUSTSHARE_LOCAL_STORAGE_PATH: /data/metadata
+      # Per-User Bucket Configuration
+      USER_BUCKET_PREFIX: rustshare-user-
       
-      # Metadata Configuration
+      # Metadata Configuration (for path building)
       RUSTSHARE_METADATA_PREFIX: apps/rustshare
       RUSTSHARE_METADATA_NAMESPACE: default
       
@@ -79,8 +81,6 @@ services:
       
       # Frontend
       FRONTEND_DIST_DIR: /app/frontend-build
-    volumes:
-      - metadata_data:/data/metadata
     depends_on:
       rustfs:
         condition: service_healthy
@@ -101,4 +101,3 @@ services:
 
 volumes:
   rustfs_data:
-  metadata_data:

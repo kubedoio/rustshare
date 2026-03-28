@@ -66,6 +66,12 @@ pub use user_bucket::{
     UserBucketStoreFactory,
 };
 
+// Re-export user bucket store types
+pub use metadata_v2::user_bucket_store::{
+    UserBucketStorageSystem, UserBucketBlobStore, UserBucketEventStore,
+    UserScopedDocumentStore, UserScopedStoreFactory,
+};
+
 // Re-export cross-bucket types
 pub use cross_bucket::{
     CrossBucketReader, CrossBucketReaderExt, CrossBucketReaderFactory, MemoryCrossBucketReader, PortableStorageLocator,

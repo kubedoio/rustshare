@@ -375,9 +375,16 @@ impl UserBucketStore for MemoryUserBucketStore {
 pub struct UserBucketStoreFactory;
 
 impl UserBucketStoreFactory {
-    /// Create an S3-based store
+    /// Create an S3-based store from environment configuration
     pub async fn create_s3(config: UserBucketConfig) -> Result<Arc<dyn UserBucketStore>> {
-        let sdk_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        Self::create_s3_with_config(config).await
+    }
+    
+    /// Create an S3-based store with explicit configuration
+    pub async fn create_s3_with_config(config: UserBucketConfig) -> Result<Arc<dyn UserBucketStore>> {
+        use aws_config::BehaviorVersion;
+        
+        let sdk_config = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&config.endpoint)
             .region(aws_config::Region::new(config.region.clone()))
             .load()

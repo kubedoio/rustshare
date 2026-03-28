@@ -8,6 +8,7 @@ pub mod schemas;
 pub mod stores;
 pub mod coordination;
 pub mod runtime_cache;
+pub mod user_bucket_store;
 
 pub use compat::*;
 pub use schemas::*;
