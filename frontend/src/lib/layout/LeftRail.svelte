@@ -28,11 +28,11 @@
 </script>
 
 <!-- Far-left Icon Rail -->
-<aside class="hidden w-16 flex-col flex-shrink-0 border-r border-base-300 bg-base-100/80 backdrop-blur lg:flex z-30">
+<aside class="z-30 hidden w-[4.75rem] flex-shrink-0 flex-col border-r border-base-300/80 bg-gradient-to-b from-base-100 via-base-100 to-base-200/55 backdrop-blur lg:flex">
 	<!-- Logo -->
-	<div class="h-14 flex items-center justify-center border-b border-base-300">
+	<div class="flex h-16 items-center justify-center border-b border-base-300/80">
 		<a href="/dashboard" class="flex items-center justify-center" aria-label="RustShare">
-			<svg class="h-8 w-8" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+			<svg class="h-9 w-9" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
 				<rect x="2" y="6" width="28" height="20" rx="3" fill="currentColor" class="text-brand-500"/>
 				<rect x="2" y="9" width="28" height="4" fill="currentColor" class="text-brand-400"/>
 				<circle cx="24" cy="21" r="5" fill="currentColor" class="text-base-200"/>
@@ -43,14 +43,14 @@
 	</div>
 
 	<!-- Primary Navigation -->
-	<nav class="flex-1 py-4 px-2 space-y-1">
+	<nav class="flex-1 space-y-2 px-3 py-5">
 		{#each primaryItems as item}
 			<a
 				href={item.href}
-				class="group relative flex items-center justify-center w-12 h-12 rounded-xl transition-all duration-200
-					{isActive(item.href) 
-						? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25' 
-						: 'text-base-content/60 hover:text-base-content hover:bg-base-300'}"
+					class="group relative flex h-12 w-12 items-center justify-center rounded-2xl border transition-all duration-200
+						{isActive(item.href)
+							? 'border-brand-500/20 bg-brand-500/12 text-brand-600 shadow-sm shadow-brand-500/15'
+							: 'border-transparent text-base-content/55 hover:border-base-300/80 hover:bg-base-100 hover:text-base-content'}"
 				aria-current={isActive(item.href) ? 'page' : undefined}
 				aria-label={item.label}
 			>
@@ -73,7 +73,7 @@
 				</span>
 
 				<!-- Tooltip -->
-				<span class="absolute left-full ml-3 px-2 py-1 bg-base-300 text-xs font-medium text-base-content rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 whitespace-nowrap z-50">
+					<span class="invisible absolute left-full z-50 ml-3 whitespace-nowrap rounded-xl border border-base-300 bg-base-100 px-2.5 py-1.5 text-xs font-medium text-base-content opacity-0 shadow-sm transition-all duration-200 group-hover:visible group-hover:opacity-100">
 					{item.label}
 				</span>
 			</a>
@@ -81,14 +81,14 @@
 	</nav>
 
 	<!-- Secondary Navigation -->
-	<nav class="py-4 px-2 space-y-1 border-t border-base-300">
+	<nav class="space-y-2 border-t border-base-300/80 px-3 py-5">
 		{#each secondaryItems as item}
 			<a
 				href={item.href}
-				class="group relative flex items-center justify-center w-12 h-12 rounded-xl transition-all duration-200
-					{isActive(item.href) 
-						? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25' 
-						: 'text-base-content/60 hover:text-base-content hover:bg-base-300'}"
+					class="group relative flex h-12 w-12 items-center justify-center rounded-2xl border transition-all duration-200
+						{isActive(item.href)
+							? 'border-brand-500/20 bg-brand-500/12 text-brand-600 shadow-sm shadow-brand-500/15'
+							: 'border-transparent text-base-content/55 hover:border-base-300/80 hover:bg-base-100 hover:text-base-content'}"
 				aria-current={isActive(item.href) ? 'page' : undefined}
 				aria-label={item.label}
 			>
@@ -101,7 +101,7 @@
 					{/if}
 				</span>
 
-				<span class="absolute left-full ml-3 px-2 py-1 bg-base-300 text-xs font-medium text-base-content rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 whitespace-nowrap z-50">
+					<span class="invisible absolute left-full z-50 ml-3 whitespace-nowrap rounded-xl border border-base-300 bg-base-100 px-2.5 py-1.5 text-xs font-medium text-base-content opacity-0 shadow-sm transition-all duration-200 group-hover:visible group-hover:opacity-100">
 					{item.label}
 				</span>
 			</a>

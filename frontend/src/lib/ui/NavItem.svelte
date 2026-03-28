@@ -13,15 +13,15 @@
 
 <a
 	{href}
-	class="group flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200
-		{isActive 
-			? 'bg-brand-500/10 text-brand-400 border border-brand-500/20' 
-			: 'text-base-content/70 hover:text-base-content hover:bg-base-200/50 border border-transparent'}
+	class="group flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-all duration-200
+		{isActive
+			? 'border-brand-500/20 bg-brand-500/10 text-brand-600'
+			: 'border-transparent text-base-content/70 hover:border-base-300/70 hover:bg-base-200/55 hover:text-base-content'}
 		{compact ? 'justify-center' : ''}"
 	on:click={onClick}
 	aria-current={isActive ? 'page' : undefined}
 >
-	<span class="flex-shrink-0 {isActive ? 'text-brand-400' : 'text-base-content/50 group-hover:text-base-content/70'}">
+	<span class="flex-shrink-0 {isActive ? 'text-brand-600' : 'text-base-content/45 group-hover:text-base-content/70'}">
 		{#if icon === 'home'}
 			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
 				<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
@@ -99,10 +99,10 @@
 	</span>
 	
 	{#if !compact}
-		<span class="font-medium text-sm truncate flex-1">{label}</span>
+		<span class="flex-1 truncate font-data text-sm font-medium tracking-[0.01em]">{label}</span>
 		
 		{#if badge !== null && badge > 0}
-			<span class="ml-auto flex-shrink-0 min-w-[1.25rem] h-5 px-1.5 inline-flex items-center justify-center text-xs font-semibold bg-brand-500 text-white rounded-full">
+			<span class="ml-auto inline-flex h-5 min-w-[1.25rem] flex-shrink-0 items-center justify-center rounded-full bg-brand-500 px-1.5 text-xs font-semibold text-white">
 				{badge > 99 ? '99+' : badge}
 			</span>
 		{/if}

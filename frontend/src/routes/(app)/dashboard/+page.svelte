@@ -3,8 +3,7 @@
   import { getFolderContents } from '$lib/api/folders';
   import { currentUser } from '$lib/stores/auth';
   import ActivityFeed from '$lib/components/activity/ActivityFeed.svelte';
-  import type { File } from '$lib/api/types';
-  import { formatFileSize, formatDate, getMimeTypeIcon } from '$lib/utils/format';
+  import { formatFileSize, formatDate } from '$lib/utils/format';
 
   const rootContentsQuery = createQuery({
     queryKey: ['folder-contents', null],
@@ -34,43 +33,63 @@
 </svelte:head>
 
 <div class="space-y-6">
-  <!-- Welcome Section -->
-  <div class="flex items-center justify-between">
-    <div>
-      <h1 class="text-2xl font-semibold text-base-content">
-        {greeting}, {$currentUser?.display_name?.split(' ')[0] || 'User'}
-      </h1>
-      <p class="text-base-content/60 mt-1">Here's what's happening with your files</p>
+  <section class="overflow-hidden rounded-[2rem] border border-base-300/75 bg-gradient-to-br from-base-100 via-base-100 to-base-200/85 shadow-panel">
+    <div class="grid gap-6 px-6 py-7 lg:grid-cols-[1.15fr_0.85fr] lg:px-8 lg:py-8">
+      <div>
+        <div class="rs-kicker mb-4">Workspace overview</div>
+        <h1 class="font-display max-w-[12ch] text-4xl leading-[0.98] text-base-content lg:text-5xl">
+          {greeting}, {$currentUser?.display_name?.split(' ')[0] || 'User'}.
+        </h1>
+        <p class="mt-4 max-w-2xl text-sm leading-6 text-base-content/68 lg:text-base">
+          Keep an eye on storage, recent movement, and active operational work without burying the important actions under generic dashboard chrome.
+        </p>
+      </div>
+      <div class="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
+        <div class="rounded-[1.35rem] border border-base-300/75 bg-base-100/80 p-4">
+          <p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/42">Storage stance</p>
+          <p class="mt-2 font-data text-sm font-medium text-base-content">{#if $currentUser?.storage_quota}Quota-managed workspace{:else}No quota configured{/if}</p>
+        </div>
+        <div class="rounded-[1.35rem] border border-base-300/75 bg-base-100/80 p-4">
+          <p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/42">Share hygiene</p>
+          <p class="mt-2 font-data text-sm font-medium text-base-content">Review expiring links before they become forgotten access paths.</p>
+        </div>
+        <div class="rounded-[1.35rem] border border-base-300/75 bg-base-100/80 p-4">
+          <p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/42">Next move</p>
+          <a href="/files" class="mt-2 inline-flex font-data text-sm font-semibold text-brand-500 transition-colors hover:text-brand-600">
+            Open files workspace
+          </a>
+        </div>
+      </div>
     </div>
-  </div>
+  </section>
 
   <!-- Stats Grid -->
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-    <div class="bg-base-200 rounded-xl p-5 border border-base-300">
+    <div class="rounded-[1.5rem] border border-base-300/75 bg-base-100 p-5 shadow-sm">
       <div class="flex items-start justify-between">
         <div>
-          <p class="text-sm font-medium text-base-content/60">Total Files</p>
-          <p class="text-3xl font-semibold text-base-content mt-1">{totalFiles}</p>
+          <p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/42">Total Files</p>
+          <p class="mt-3 font-display text-4xl leading-none text-base-content">{totalFiles}</p>
         </div>
-        <div class="w-10 h-10 rounded-lg bg-brand-500/10 flex items-center justify-center">
+        <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-500/10 text-brand-500">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-brand-400">
             <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
             <polyline points="14 2 14 8 20 8"/>
           </svg>
         </div>
       </div>
-      <div class="mt-4 flex items-center text-sm text-base-content/60">
-        <span>{totalFolders} folders</span>
+      <div class="mt-4 flex items-center font-data text-sm text-base-content/60">
+        <span>{totalFolders} folders under current root view</span>
       </div>
     </div>
 
-    <div class="bg-base-200 rounded-xl p-5 border border-base-300">
+    <div class="rounded-[1.5rem] border border-base-300/75 bg-base-100 p-5 shadow-sm">
       <div class="flex items-start justify-between">
         <div>
-          <p class="text-sm font-medium text-base-content/60">Storage Used</p>
-          <p class="text-3xl font-semibold text-base-content mt-1">{formatFileSize(totalSize)}</p>
+          <p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/42">Storage Used</p>
+          <p class="mt-3 font-display text-4xl leading-none text-base-content">{formatFileSize(totalSize)}</p>
         </div>
-        <div class="w-10 h-10 rounded-lg bg-brand-500/10 flex items-center justify-center">
+        <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-500/10 text-brand-500">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-brand-400">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
             <polyline points="17 8 12 3 7 8"/>
@@ -78,7 +97,7 @@
           </svg>
         </div>
       </div>
-      <div class="mt-4 flex items-center text-sm text-base-content/60">
+      <div class="mt-4 flex items-center font-data text-sm text-base-content/60">
         {#if $currentUser?.storage_quota}
           <span>{Math.round((totalSize / $currentUser.storage_quota) * 100)}% of {formatFileSize($currentUser.storage_quota)}</span>
         {:else}
@@ -87,13 +106,13 @@
       </div>
     </div>
 
-    <div class="bg-base-200 rounded-xl p-5 border border-base-300">
+    <div class="rounded-[1.5rem] border border-base-300/75 bg-base-100 p-5 shadow-sm">
       <div class="flex items-start justify-between">
         <div>
-          <p class="text-sm font-medium text-base-content/60">Quick Action</p>
-          <p class="text-lg font-semibold text-base-content mt-1">Upload Files</p>
+          <p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/42">Quick Action</p>
+          <p class="mt-3 font-display text-3xl leading-none text-base-content">Upload Files</p>
         </div>
-        <div class="w-10 h-10 rounded-lg bg-brand-500/10 flex items-center justify-center">
+        <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-500/10 text-brand-500">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-brand-400">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
             <polyline points="17 8 12 3 7 8"/>
@@ -102,8 +121,8 @@
         </div>
       </div>
       <div class="mt-4">
-        <a href="/files" class="text-sm font-medium text-brand-400 hover:text-brand-300 transition-colors">
-          Go to Files →
+        <a href="/files" class="font-data text-sm font-semibold text-brand-500 transition-colors hover:text-brand-600">
+          Go to Files
         </a>
       </div>
     </div>
@@ -112,10 +131,10 @@
   <!-- Recent Files & Activity -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <!-- Recent Files -->
-    <div class="bg-base-200 rounded-xl border border-base-300 overflow-hidden">
-      <div class="px-5 py-4 border-b border-base-300 flex items-center justify-between">
-        <h2 class="font-semibold text-base-content">Recent Files</h2>
-        <a href="/files" class="text-sm font-medium text-brand-400 hover:text-brand-300 transition-colors">
+    <div class="overflow-hidden rounded-[1.65rem] border border-base-300/75 bg-base-100 shadow-sm">
+      <div class="flex items-center justify-between border-b border-base-300/80 px-5 py-4">
+        <h2 class="font-display text-2xl text-base-content">Recent Files</h2>
+        <a href="/files" class="font-data text-sm font-semibold text-brand-500 transition-colors hover:text-brand-600">
           View all
         </a>
       </div>
@@ -130,19 +149,19 @@
         </div>
       {:else if recentFiles.length === 0}
         <div class="p-8 text-center">
-          <div class="w-12 h-12 rounded-xl bg-base-300 flex items-center justify-center mx-auto mb-3">
+          <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-base-200">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6 text-base-content/30">
               <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
               <polyline points="14 2 14 8 20 8"/>
             </svg>
           </div>
-          <p class="text-base-content/60 text-sm">No files yet. Upload your first file to get started.</p>
+          <p class="font-data text-sm text-base-content/60">No files yet. Upload your first file to get started.</p>
         </div>
       {:else}
         <div class="divide-y divide-base-300">
           {#each recentFiles as file}
-            <a href="/files" class="flex items-center gap-4 px-5 py-3 hover:bg-base-300/50 transition-colors">
-              <div class="w-10 h-10 rounded-lg bg-base-300 flex items-center justify-center flex-shrink-0">
+            <a href="/files" class="flex items-center gap-4 px-5 py-3 transition-colors hover:bg-base-200/65">
+              <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl bg-base-200">
                 {#if file.mime_type.startsWith('image/')}
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-brand-400">
                     <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
@@ -168,8 +187,8 @@
                 {/if}
               </div>
               <div class="flex-1 min-w-0">
-                <p class="font-medium text-base-content text-sm truncate">{file.name}</p>
-                <p class="text-xs text-base-content/50">{formatFileSize(file.size)} • {formatDate(file.modified_at)}</p>
+                <p class="truncate font-data text-sm font-semibold text-base-content">{file.name}</p>
+                <p class="font-data text-xs text-base-content/50">{formatFileSize(file.size)} • {formatDate(file.modified_at)}</p>
               </div>
             </a>
           {/each}
@@ -178,9 +197,9 @@
     </div>
 
     <!-- Activity Feed -->
-    <div class="bg-base-200 rounded-xl border border-base-300 overflow-hidden">
-      <div class="px-5 py-4 border-b border-base-300">
-        <h2 class="font-semibold text-base-content">Recent Activity</h2>
+    <div class="overflow-hidden rounded-[1.65rem] border border-base-300/75 bg-base-100 shadow-sm">
+      <div class="border-b border-base-300/80 px-5 py-4">
+        <h2 class="font-display text-2xl text-base-content">Recent Activity</h2>
       </div>
       <div class="p-4">
         <ActivityFeed maxItems={8} showClearButton={true} />

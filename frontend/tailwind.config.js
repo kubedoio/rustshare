@@ -3,79 +3,85 @@ export default {
 	content: ['./src/**/*.{html,js,svelte,ts}'],
 	theme: {
 		extend: {
-		colors: {
-			// RustShare brand colors
-			brand: {
-				50: '#fef7f0',
-				100: '#fdecd9',
-				200: '#fbd4b3',
-				300: '#f7b580',
-				400: '#f28f4d',
-				500: '#ef6f28',
-				600: '#e1561e',
-				700: '#bb4119',
-				800: '#95351b',
-				900: '#782e19',
-				950: '#411509',
-			}
-		},
-		fontFamily: {
-			sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
-		},
-		fontSize: {
-			'2xs': ['0.625rem', { lineHeight: '0.875rem' }],
-		}
-	}
-},
-plugins: [require('daisyui')],
-	daisyui: {
-		themes: [
-			{
-				'rustshare-light': {
-					'primary': '#ef6f28',
-					'primary-content': '#fffaf5',
-					'secondary': '#c55b24',
-					'secondary-content': '#fffaf5',
-					'accent': '#d97706',
-					'accent-content': '#fffaf5',
-					'neutral': '#2a211d',
-					'neutral-content': '#fffaf5',
-					'base-100': '#fcfaf7',
-					'base-200': '#f4efe7',
-					'base-300': '#e6ddcf',
-					'base-content': '#251d17',
-					'info': '#ef6f28',
-					'success': '#1f9d68',
-					'warning': '#c17b11',
-					'error': '#d1495b',
-					'--rounded-btn': '0.75rem',
-					'--rounded-box': '1rem',
-					'--rounded-badge': '0.5rem',
+			colors: {
+				brand: {
+					50: '#fff4ec',
+					100: '#f8e2d2',
+					200: '#efc4a8',
+					300: '#e29b74',
+					400: '#d47648',
+					500: '#c65a1e',
+					600: '#a34716',
+					700: '#833a15',
+					800: '#683016',
+					900: '#562916',
+					950: '#2e1409'
 				}
 			},
-			{
-				'rustshare-dark': {
-					'primary': '#ef6f28',
-					'primary-content': '#ffffff',
-					'secondary': '#f28f4d',
-					'secondary-content': '#ffffff',
-					'accent': '#d97706',
-					'accent-content': '#ffffff',
-					'neutral': '#374151',
-					'neutral-content': '#f3f4f6',
-					'base-100': '#0f1115',
-					'base-200': '#181b21',
-					'base-300': '#21262d',
-					'base-content': '#f0f2f5',
-					'info': '#f28f4d',
-					'success': '#10b981',
-					'warning': '#f59e0b',
-					'error': '#ef4444',
-					'--rounded-btn': '0.75rem',
-					'--rounded-box': '1rem',
-					'--rounded-badge': '0.5rem',
-				}
+			fontFamily: {
+				sans: ['Instrument Sans', 'system-ui', 'sans-serif'],
+				display: ['Fraunces', 'Georgia', 'serif'],
+				data: ['IBM Plex Sans', 'system-ui', 'sans-serif'],
+				mono: ['IBM Plex Mono', 'monospace']
+			},
+			fontSize: {
+				'2xs': ['0.625rem', { lineHeight: '0.875rem' }]
+			},
+			boxShadow: {
+				panel: '0 18px 45px rgba(39, 25, 14, 0.08)',
+				'panel-dark': '0 22px 54px rgba(0, 0, 0, 0.24)'
 			}
+		}
+	},
+	plugins: [require('daisyui')],
+		daisyui: {
+		themes: [
+				{
+					'rustshare-light': {
+						'primary': '#c65a1e',
+						'primary-content': '#fff8f3',
+						'secondary': '#7b4a2e',
+						'secondary-content': '#fff8f3',
+						'accent': '#b87542',
+						'accent-content': '#fff8f3',
+						'neutral': '#151515',
+						'neutral-content': '#f3efe8',
+						'base-100': '#fbf9f5',
+						'base-200': '#f6f3ee',
+						'base-300': '#ded6ca',
+						'base-content': '#151515',
+						'info': '#366d8c',
+						'success': '#1d7a52',
+						'warning': '#a56a12',
+						'error': '#b63e3e',
+						'--rounded-btn': '0.625rem',
+						'--rounded-box': '1.25rem',
+						'--rounded-badge': '999px',
+					}
+				},
+				{
+					'rustshare-dark': {
+						'primary': '#d66a2d',
+						'primary-content': '#ffffff',
+						'secondary': '#b28366',
+						'secondary-content': '#fff7f1',
+						'accent': '#7b4a2e',
+						'accent-content': '#fff7f1',
+						'neutral': '#1b1815',
+						'neutral-content': '#f3efe8',
+						'base-100': '#121315',
+						'base-200': '#181a1d',
+						'base-300': '#24272c',
+						'base-content': '#f3efe8',
+						'info': '#5a8fae',
+						'success': '#3aa06f',
+						'warning': '#cf9129',
+						'error': '#d25a5a',
+						'--rounded-btn': '0.625rem',
+						'--rounded-box': '1.25rem',
+						'--rounded-badge': '999px',
+					}
+				}
 		],
 		darkTheme: 'rustshare-dark',
 		base: true,
