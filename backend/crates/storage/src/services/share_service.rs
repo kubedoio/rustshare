@@ -170,6 +170,25 @@ impl ShareServiceV2 {
         })
     }
 
+    /// Share a folder with another user (convenience method)
+    pub async fn create_folder_share(
+        &self,
+        owner_id: UserId,
+        folder_id: Uuid,
+        recipient_id: UserId,
+        permissions: SharePermissionV2,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> Result<ShareInfo, ShareError> {
+        self.create_share(
+            owner_id,
+            recipient_id,
+            folder_id,
+            ShareResourceTypeV2::Folder,
+            permissions,
+            expires_at,
+        ).await
+    }
+
     /// Get a share by ID (from owner's perspective)
     pub async fn get_outbound_share(
         &self,
@@ -248,6 +267,14 @@ impl ShareServiceV2 {
         }
 
         Ok(shares)
+    }
+
+    /// List received shares (alias for list_inbound_shares)
+    pub async fn list_received_shares(
+        &self,
+        recipient_id: UserId,
+    ) -> Result<Vec<ReceivedShareDocV2>, ShareError> {
+        self.list_inbound_shares(recipient_id).await
     }
 
     /// List inbound shares (shares received by the user)

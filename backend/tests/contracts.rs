@@ -28,14 +28,15 @@ use serde::{Deserialize, Serialize};
 
 // Re-export types from real implementations
 pub use rustshare_storage::{
-    MemoryUserBucketStore, MemoryCrossBucketReader, MemoryBlobStore,
-    UserBucketStore, CrossBucketReader, BlobStore,
+    MemoryUserBucketStore, MemoryCrossBucketReader,
+    UserBucketStore, CrossBucketReader,
     PortableStorageLocator,
     FileServiceV2, FolderServiceV2, ShareServiceV2, FavouriteServiceV2,
     V2ServiceFactory, ShareInfo, FavouriteDetail, FavouriteError,
     SharePermissionV2, ShareResourceTypeV2, FavouriteResourceType,
     FavouritesIndex, FileDocV2, FolderDocV2, FileVersionDocV2, TombstoneDocV2,
 };
+use rustshare_storage::metadata_v2::user_bucket_store::UserBucketBlobStore;
 
 pub use rustshare_storage::services::models::{
     FolderChildrenIndex, FolderChildRef, FolderChildType,
@@ -304,7 +305,7 @@ pub struct TestContext {
     pub user_buckets: Arc<dyn UserBucketStore>,
     pub cross_bucket: Arc<dyn CrossBucketReader>,
     pub coordination: Arc<dyn CoordinationStore>,
-    pub blob_store: Arc<dyn BlobStore>,
+    pub blob_store: Arc<UserBucketBlobStore>,
     pub service_factory: V2ServiceFactory,
     use_redis: bool,
 }
@@ -313,7 +314,7 @@ impl TestContext {
     /// Create a new test context
     pub async fn new() -> Self {
         let user_buckets: Arc<dyn UserBucketStore> = Arc::new(MemoryUserBucketStore::new());
-        let blob_store: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
+        let blob_store = Arc::new(UserBucketBlobStore::new(user_buckets.clone()));
         let cross_bucket: Arc<dyn CrossBucketReader> = Arc::new(MemoryCrossBucketReader::with_user_buckets(user_buckets.clone()));
         let coordination: Arc<dyn CoordinationStore> = Arc::new(MemoryCoordinationStore::new());
 

@@ -91,8 +91,9 @@ use rustshare_storage::{
     session::{SessionManager, SessionConfig},
     EventStore, MetadataStore,
     // Hybrid storage system (system bucket + per-user buckets)
-    HybridStorageFactory, HybridStorageSystem, SystemDocumentStore,
-    UserBucketObjectStore, UserBucketObjectStoreFactory,
+    HybridStorageFactory, UserBucketObjectStore, UserBucketObjectStoreFactory,
+    // V2 Services
+    FileServiceV2, FolderServiceV2, ShareServiceV2, FavouriteServiceV2, V2ServiceFactory,
 };
 use serde::{Deserialize, Serialize};
 // TODO: PostgreSQL removed - transitioning to new state module
@@ -166,11 +167,17 @@ pub struct AppState {
     pub jwt_manager: Arc<JwtManager>,
     pub broadcaster: Arc<EventBroadcaster>,
     
-    // Business logic services (V1 - legacy)
+    // Business logic services (V1 - legacy - being phased out)
     pub file_service: Arc<FileSvc>,
     pub folder_service: Arc<FolderSvc>,
     pub share_service: Arc<ShareSvc>,
     pub thumbnail_service: Arc<ThumbnailService<UserBucketObjectStore>>,
+    
+    // V2 Services (RustFS-only, per-user bucket architecture)
+    pub file_service_v2: Arc<FileServiceV2>,
+    pub folder_service_v2: Arc<FolderServiceV2>,
+    pub share_service_v2: Arc<ShareServiceV2>,
+    pub favourite_service_v2: Arc<FavouriteServiceV2>,
     
     // Configuration and utilities
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
@@ -286,6 +293,31 @@ async fn main() -> Result<()> {
     ));
     // TODO: ThumbnailService temporarily using default - use new state module
     let thumbnail_service = Arc::new(ThumbnailService::new((), Arc::clone(&object_store)));
+    
+    // Initialize V2 services (RustFS-only, per-user bucket architecture)
+    info!("Initializing V2 services with per-user bucket storage");
+    let bucket_prefix = std::env::var("USER_BUCKET_PREFIX")
+        .unwrap_or_else(|_| "rustshare-user-".to_string());
+    let v2_factory = V2ServiceFactory::new(
+        hybrid_storage.user_bucket_store(),
+        rustshare_storage::cross_bucket::CrossBucketReaderFactory::create(
+            hybrid_storage.user_bucket_store(),
+            bucket_prefix.clone(),
+        ),
+        Arc::new(rustshare_storage::metadata_v2::user_bucket_store::UserBucketBlobStore::new(
+            hybrid_storage.user_bucket_store(),
+        )),
+        std::env::var("RUSTFS_PUBLIC_ENDPOINT")
+            .or_else(|_| std::env::var("RUSTFS_ENDPOINT"))
+            .unwrap_or_else(|_| "http://localhost:9000".to_string()),
+    );
+    
+    let file_service_v2 = Arc::new(v2_factory.file_service());
+    let folder_service_v2 = Arc::new(v2_factory.folder_service());
+    let share_service_v2 = Arc::new(v2_factory.share_service());
+    let favourite_service_v2 = Arc::new(v2_factory.favourite_service());
+    
+    info!("V2 services initialized");
 
     // TODO: Repository initialization commented out - use new state module
     // These repositories depended on db_pool which has been removed.
@@ -435,6 +467,10 @@ async fn main() -> Result<()> {
         folder_service,
         share_service,
         thumbnail_service,
+        file_service_v2,
+        folder_service_v2,
+        share_service_v2,
+        favourite_service_v2,
         rate_limit_config,
         secret_key,
         poll_rate_limiter: Arc::new(Mutex::new(HashMap::new())),

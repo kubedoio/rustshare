@@ -1905,12 +1905,12 @@ mod tests {
         metadata_store.add_file_version(v2.clone());
         metadata_store.add_file_version(v3.clone());
 
-        // Put the content for version 1 in object store
+        // Put the content for version 1 in object store (V2 format: {user_id}/blobs/{hash})
         object_store
             .objects
             .lock()
             .unwrap()
-            .insert("blobs/hash1".to_string(), Bytes::from("Version 1 content"));
+            .insert(format!("{}/blobs/hash1", owner_id), Bytes::from("Version 1 content"));
 
         // Restore to version 1
         let restored_file = service.restore_version(file.id, 1, owner_id).await.unwrap();
@@ -2015,12 +2015,12 @@ mod tests {
         metadata_store.add_file_version(v1.clone());
         metadata_store.add_file_version(v2.clone());
 
-        // Put content for version 1
+        // Put content for version 1 (V2 format: {user_id}/blobs/{hash})
         object_store
             .objects
             .lock()
             .unwrap()
-            .insert("blobs/hash1".to_string(), Bytes::from("Content v1"));
+            .insert(format!("{}/blobs/hash1", owner_id), Bytes::from("Content v1"));
 
         // Restore to version 1
         service.restore_version(file.id, 1, owner_id).await.unwrap();

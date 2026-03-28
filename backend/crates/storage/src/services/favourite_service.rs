@@ -163,6 +163,24 @@ impl FavouriteServiceV2 {
         Ok(details)
     }
 
+    /// Star an owned file (convenience method)
+    pub async fn star_owned_file(
+        &self,
+        user_id: UserId,
+        file_id: Uuid,
+    ) -> Result<(), FavouriteError> {
+        self.add_favourite(user_id, file_id, FavouriteResourceType::OwnedFile).await
+    }
+
+    /// Remove a favourite (alias for remove_favourite)
+    pub async fn unstar(
+        &self,
+        user_id: UserId,
+        resource_id: Uuid,
+    ) -> Result<bool, FavouriteError> {
+        self.remove_favourite(user_id, resource_id).await
+    }
+
     /// Toggle favourite status (add if not present, remove if present)
     pub async fn toggle_favourite(
         &self,

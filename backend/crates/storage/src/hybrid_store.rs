@@ -306,6 +306,7 @@ impl HybridStorageFactory {
     /// Create a hybrid storage system from environment configuration
     pub async fn from_env() -> anyhow::Result<HybridStorageSystem> {
         use aws_config::BehaviorVersion;
+        use aws_credential_types::Credentials;
 
         let endpoint = std::env::var("RUSTFS_ENDPOINT")?;
         let region = std::env::var("RUSTFS_REGION")?;
@@ -317,10 +318,22 @@ impl HybridStorageFactory {
         let namespace = std::env::var("RUSTSHARE_METADATA_NAMESPACE")
             .unwrap_or_else(|_| "default".to_string());
 
-        // Create S3 client
+        // Load credentials from environment
+        let access_key = std::env::var("AWS_ACCESS_KEY_ID")?;
+        let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")?;
+        let credentials = Credentials::new(
+            access_key,
+            secret_key,
+            None,  // session token
+            None,  // expiration
+            "env",
+        );
+
+        // Create S3 client with explicit credentials
         let sdk_config = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&endpoint)
             .region(aws_config::Region::new(region.clone()))
+            .credentials_provider(credentials)
             .load()
             .await;
 
@@ -341,7 +354,24 @@ impl HybridStorageFactory {
         // Ensure system bucket exists
         system_store.ensure_bucket().await?;
 
-        // Create user bucket store
+        // Create user bucket store - need new credentials instance for the second client
+        let credentials2 = Credentials::new(
+            std::env::var("AWS_ACCESS_KEY_ID")?,
+            std::env::var("AWS_SECRET_ACCESS_KEY")?,
+            None,
+            None,
+            "env",
+        );
+        let sdk_config2 = aws_config::defaults(BehaviorVersion::latest())
+            .endpoint_url(&endpoint)
+            .region(aws_config::Region::new(region.clone()))
+            .credentials_provider(credentials2)
+            .load()
+            .await;
+        let s3_config2 = aws_sdk_s3::config::Builder::from(&sdk_config2)
+            .force_path_style(true)
+            .build();
+
         let user_config = UserBucketConfig {
             endpoint: endpoint.clone(),
             region: region.clone(),
@@ -349,7 +379,7 @@ impl HybridStorageFactory {
             base_prefix: "".to_string(),
         };
 
-        let user_client = S3Client::from_conf(s3_config);
+        let user_client = S3Client::from_conf(s3_config2);
         let user_bucket_store: Arc<dyn UserBucketStore> = 
             Arc::new(crate::user_bucket::S3UserBucketStore::new(user_client, user_config));
 

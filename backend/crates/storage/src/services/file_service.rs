@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::user_bucket::{UserBucketStore, UserId};
-use crate::BlobStore;
+use crate::metadata_v2::user_bucket_store::UserBucketBlobStore;
 
 use rustshare_core::domain::{File, FileVersion};
 use rustshare_core::services::FileError;
@@ -21,7 +21,7 @@ use super::paths::UserBucketPaths;
 /// File service using per-user bucket storage
 pub struct FileServiceV2 {
     user_buckets: Arc<dyn UserBucketStore>,
-    blob_store: Arc<dyn BlobStore>,
+    blob_store: Arc<UserBucketBlobStore>,
     indexes: Arc<UserBucketIndexes>,
 }
 
@@ -29,7 +29,7 @@ impl FileServiceV2 {
     /// Create a new file service
     pub fn new(
         user_buckets: Arc<dyn UserBucketStore>,
-        blob_store: Arc<dyn BlobStore>,
+        blob_store: Arc<UserBucketBlobStore>,
         indexes: Arc<UserBucketIndexes>,
     ) -> Self {
         Self {
@@ -63,11 +63,10 @@ impl FileServiceV2 {
             format!("/{}", name)
         };
 
-        // Store blob (content-addressed)
-        let blob_key = self.blob_store.content_key(&content_hash);
-        if !self.blob_store.exists(&blob_key).await.map_err(|e| FileError::Storage(e.to_string()))? {
+        // Store blob (content-addressed) in user's bucket
+        if !self.blob_store.exists(owner_id, &content_hash).await.map_err(|e| FileError::Storage(e.to_string()))? {
             self.blob_store
-                .put(&blob_key, content)
+                .put(owner_id, &content_hash, content)
                 .await
                 .map_err(|e| FileError::Storage(e.to_string()))?;
         }
@@ -515,11 +514,10 @@ impl FileServiceV2 {
         let content_hash = Self::calculate_sha256(&content);
         let size = content.len() as i64;
 
-        // Store blob
-        let blob_key = self.blob_store.content_key(&content_hash);
-        if !self.blob_store.exists(&blob_key).await.map_err(|e| FileError::Storage(e.to_string()))? {
+        // Store blob in user's bucket
+        if !self.blob_store.exists(user_id, &content_hash).await.map_err(|e| FileError::Storage(e.to_string()))? {
             self.blob_store
-                .put(&blob_key, content)
+                .put(user_id, &content_hash, content)
                 .await
                 .map_err(|e| FileError::Storage(e.to_string()))?;
         }

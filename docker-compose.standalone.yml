@@ -25,9 +25,11 @@ services:
       - "9001:9001"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+      start_interval: 2s
 
   backend:
     build:
@@ -42,6 +44,15 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    # Restart policy to handle initial connection failures to RustFS
+    restart: unless-stopped
+    # Give RustFS more time to be fully ready
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 10
+        window: 60s
     environment:
       # Runtime Profile - standalone mode (no Redis required)
       RUSTSHARE_RUNTIME_PROFILE: standalone
@@ -81,9 +92,12 @@ services:
       
       # Frontend
       FRONTEND_DIST_DIR: /app/frontend-build
+    # Wait for RustFS to be fully ready (healthcheck + additional delay for S3 service)
     depends_on:
       rustfs:
         condition: service_healthy
+    # Add a small delay to ensure RustFS S3 service is fully initialized
+    command: ["/bin/sh", "-c", "echo 'Waiting for RustFS to be fully ready...' && sleep 5 && exec /usr/local/bin/rustshare-server"]
 
   nginx:
     image: nginx:alpine

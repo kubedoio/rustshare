@@ -16,12 +16,13 @@ pub use folder_service::FolderServiceV2;
 pub use share_service::{ShareServiceV2, ShareInfo};
 
 use std::sync::Arc;
+use crate::metadata_v2::user_bucket_store::UserBucketBlobStore;
 
 /// Service factory for creating V2 services with shared dependencies
 pub struct V2ServiceFactory {
     user_buckets: Arc<dyn crate::UserBucketStore>,
     cross_bucket_reader: Arc<dyn crate::CrossBucketReader>,
-    blob_store: Arc<dyn crate::BlobStore>,
+    blob_store: Arc<UserBucketBlobStore>,
     indexes: Arc<indexes::UserBucketIndexes>,
     storage_endpoint: String,
 }
@@ -31,7 +32,7 @@ impl V2ServiceFactory {
     pub fn new(
         user_buckets: Arc<dyn crate::UserBucketStore>,
         cross_bucket_reader: Arc<dyn crate::CrossBucketReader>,
-        blob_store: Arc<dyn crate::BlobStore>,
+        blob_store: Arc<UserBucketBlobStore>,
         storage_endpoint: String,
     ) -> Self {
         let indexes = Arc::new(indexes::UserBucketIndexes::new(user_buckets.clone()));
@@ -90,13 +91,13 @@ impl V2ServiceFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MemoryUserBucketStore, MemoryCrossBucketReader, MemoryBlobStore};
+    use crate::{MemoryUserBucketStore, MemoryCrossBucketReader};
 
     #[tokio::test]
     async fn test_service_factory_creation() {
         let user_buckets = Arc::new(MemoryUserBucketStore::new());
         let cross_bucket_reader = Arc::new(MemoryCrossBucketReader::new());
-        let blob_store = Arc::new(MemoryBlobStore::new());
+        let blob_store = Arc::new(UserBucketBlobStore::new(user_buckets.clone()));
 
         let factory = V2ServiceFactory::new(
             user_buckets,

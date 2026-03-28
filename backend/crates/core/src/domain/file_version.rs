@@ -107,6 +107,7 @@ mod tests {
 
     #[test]
     fn test_file_version_storage_key() {
+        let created_by = Uuid::new_v4();
         let version = FileVersion {
             id: Uuid::new_v4(),
             file_id: Uuid::new_v4(),
@@ -116,10 +117,11 @@ mod tests {
             replication_state: ReplicationState::PrimaryWritten,
             change_description: Some("Initial version".to_string()),
             created_at: Utc::now(),
-            created_by: Uuid::new_v4(),
+            created_by,
         };
 
-        assert_eq!(version.storage_key(), "blobs/def789ghi012");
+        // V2 format: {user_id}/blobs/{hash}
+        assert_eq!(version.storage_key(), format!("{}/blobs/def789ghi012", created_by));
     }
 
     #[test]

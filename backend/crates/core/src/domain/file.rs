@@ -82,12 +82,15 @@ mod tests {
             deleted: false,
         };
 
-        assert_eq!(file.storage_key(), "blobs/abc123def456");
+        // V2 format: {user_id}/blobs/{hash}
+        let expected = format!("{}/blobs/abc123def456", file.owner_id);
+        assert_eq!(file.storage_key(), expected);
     }
 
     #[test]
     fn test_content_addressed_storage() {
         let hash = "sha256_content_hash";
+        let owner_id = Uuid::new_v4();
         let file = File {
             id: Uuid::new_v4(),
             name: "test.txt".to_string(),
@@ -96,14 +99,15 @@ mod tests {
             size: 100,
             mime_type: "text/plain".to_string(),
             parent_folder_id: None,
-            owner_id: Uuid::new_v4(),
+            owner_id,
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
             deleted: false,
         };
 
-        assert_eq!(file.storage_key(), format!("blobs/{}", hash));
+        // V2 format: {user_id}/blobs/{hash}
+        assert_eq!(file.storage_key(), format!("{}/blobs/{}", owner_id, hash));
     }
 
     #[test]

@@ -651,6 +651,26 @@ impl FolderServiceV2 {
         }
     }
 
+    /// List children (files and folders) for a folder
+    /// Convenience method that returns domain types instead of doc types
+    pub async fn list_children(
+        &self,
+        user_id: UserId,
+        folder_id: Uuid,
+    ) -> Result<(Vec<Folder>, Vec<rustshare_core::domain::File>), FolderError> {
+        let (folder_docs, file_docs) = self.get_contents(user_id, Some(folder_id)).await?;
+        
+        let folders = folder_docs.into_iter()
+            .map(|doc| doc.to_domain())
+            .collect();
+        
+        let files = file_docs.into_iter()
+            .map(|doc| doc.to_domain())
+            .collect();
+        
+        Ok((folders, files))
+    }
+
     // Helper methods
 
     fn validate_folder_name(name: &str) -> Result<(), FolderError> {
