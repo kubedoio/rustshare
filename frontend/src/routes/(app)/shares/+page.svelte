@@ -4,6 +4,20 @@
 	import { queryClient } from '$lib/query-client';
 	import type { Share, ShareAccessLogEntry } from '$lib/api/types';
 	import Toast from '$lib/components/common/Toast.svelte';
+	import {
+		Activity,
+		Clock3,
+		Copy,
+		FileText,
+		FolderOpen,
+		Globe,
+		Link2,
+		Lock,
+		Shield,
+		Trash2,
+		Upload,
+		Users
+	} from 'lucide-svelte';
 
 	let showToast = false;
 	let toastMessage = '';
@@ -128,36 +142,96 @@
 			minute: '2-digit'
 		});
 	}
+
+	function isExpired(expiresAt: string | null): boolean {
+		return expiresAt ? new Date(expiresAt) < new Date() : false;
+	}
+
+	function isExpiringSoon(expiresAt: string | null): boolean {
+		if (!expiresAt || isExpired(expiresAt)) return false;
+		return new Date(expiresAt).getTime() - Date.now() < 1000 * 60 * 60 * 24 * 3;
+	}
+
+	function permissionBadgeClass(permission: Share['permissions']): string {
+		switch (permission) {
+			case 'Admin':
+				return 'border-error/20 bg-error/10 text-error';
+			case 'Edit':
+				return 'border-warning/20 bg-warning/10 text-warning';
+			default:
+				return 'border-brand-500/20 bg-brand-500/10 text-brand-500';
+		}
+	}
+
+	$: shares = $sharesQuery.data || [];
+	$: activeShareCount = shares.filter((share) => !isExpired(share.expires_at)).length;
+	$: expiringSoonCount = shares.filter((share) => isExpiringSoon(share.expires_at)).length;
+	$: totalAccessCount = shares.reduce((sum, share) => sum + share.access_count, 0);
 </script>
 
-<div class="p-4 lg:p-6 max-w-7xl container mx-auto">
-	<div class="space-y-4">
+<div class="mx-auto max-w-6xl space-y-6 p-4 lg:p-6">
+	<div class="space-y-6">
 		<!-- Header -->
-		<div class="flex items-center justify-between">
-			<div>
-				<h1 class="text-2xl lg:text-3xl font-bold">Shared Links</h1>
-				<p class="text-base-content/70 mt-1">Manage public links created from files and folders</p>
+		<div class="overflow-hidden rounded-[2rem] border border-base-300/70 bg-gradient-to-br from-base-200 via-base-100 to-base-100">
+			<div class="flex flex-col gap-6 p-6 lg:flex-row lg:items-end lg:justify-between lg:p-8">
+				<div class="max-w-2xl">
+					<div class="mb-4 inline-flex items-center gap-2 rounded-full border border-brand-500/20 bg-brand-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
+						<Link2 class="h-3.5 w-3.5" />
+						Share Control Center
+					</div>
+					<h1 class="text-3xl font-semibold tracking-tight text-base-content lg:text-4xl">
+						Shared links that feel managed, not forgotten
+					</h1>
+					<p class="mt-3 max-w-xl text-sm leading-6 text-base-content/70 lg:text-base">
+						Review every public link, see what is still active, and revoke access before stale links turn into clutter.
+					</p>
+				</div>
+				<a
+					href="/files"
+					class="inline-flex items-center justify-center rounded-2xl bg-brand-500 px-4 py-3 text-sm font-medium text-white shadow-sm shadow-brand-500/20 transition-colors hover:bg-brand-600"
+				>
+					Create from My Files
+				</a>
 			</div>
 		</div>
 
-		<div class="alert alert-info">
-			<svg
-				xmlns="http://www.w3.org/2000/svg"
-				fill="none"
-				viewBox="0 0 24 24"
-				class="w-6 h-6 shrink-0 stroke-current"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width="2"
-					d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"
-				></path>
-			</svg>
-			<span>
-				Public links can now be audited here. Create and edit links from the Share action in My
-				Files, then use this page for revocation and access-log review.
-			</span>
+		<div class="grid gap-4 md:grid-cols-3">
+			<div class="rounded-3xl border border-base-300/70 bg-base-100 p-5 shadow-sm">
+				<div class="flex items-start justify-between">
+					<div>
+						<p class="text-sm font-medium text-base-content/60">Active links</p>
+						<p class="mt-2 text-3xl font-semibold text-base-content">{activeShareCount}</p>
+					</div>
+					<div class="rounded-2xl bg-brand-500/10 p-3 text-brand-500">
+						<Globe class="h-5 w-5" />
+					</div>
+				</div>
+				<p class="mt-3 text-sm text-base-content/60">Links that are still usable right now.</p>
+			</div>
+			<div class="rounded-3xl border border-base-300/70 bg-base-100 p-5 shadow-sm">
+				<div class="flex items-start justify-between">
+					<div>
+						<p class="text-sm font-medium text-base-content/60">Expiring soon</p>
+						<p class="mt-2 text-3xl font-semibold text-base-content">{expiringSoonCount}</p>
+					</div>
+					<div class="rounded-2xl bg-warning/10 p-3 text-warning">
+						<Clock3 class="h-5 w-5" />
+					</div>
+				</div>
+				<p class="mt-3 text-sm text-base-content/60">Links worth reviewing in the next few days.</p>
+			</div>
+			<div class="rounded-3xl border border-base-300/70 bg-base-100 p-5 shadow-sm">
+				<div class="flex items-start justify-between">
+					<div>
+						<p class="text-sm font-medium text-base-content/60">Recorded visits</p>
+						<p class="mt-2 text-3xl font-semibold text-base-content">{totalAccessCount}</p>
+					</div>
+					<div class="rounded-2xl bg-success/10 p-3 text-success">
+						<Activity class="h-5 w-5" />
+					</div>
+				</div>
+				<p class="mt-3 text-sm text-base-content/60">Total tracked opens and downloads across links.</p>
+			</div>
 		</div>
 
 		<!-- Shares List -->
@@ -184,175 +258,150 @@
 			</div>
 		{:else if $sharesQuery.data && $sharesQuery.data.length === 0}
 			<!-- Empty State -->
-			<div class="py-16 flex flex-col items-center justify-center text-center">
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					fill="none"
-					viewBox="0 0 24 24"
-					stroke-width="1.5"
-					stroke="currentColor"
-					class="w-20 h-20 lg:w-24 lg:h-24 text-base-content/20 mb-4"
-				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z"
-					/>
-				</svg>
-				<h3 class="text-lg font-semibold mb-2">No shared links yet</h3>
-				<p class="text-base-content/70 mb-4">
-					Create and manage share links from the Share action on any file or folder in My Files
+			<div class="rounded-[2rem] border border-dashed border-base-300 bg-base-100 px-6 py-16 text-center">
+				<div class="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-brand-500/10 text-brand-500">
+					<Link2 class="h-8 w-8" />
+				</div>
+				<h3 class="text-xl font-semibold text-base-content">No shared links yet</h3>
+				<p class="mx-auto mt-3 max-w-md text-sm leading-6 text-base-content/65">
+					Create a share from any file or folder in My Files, then come back here to review access, expiry, and link health in one place.
 				</p>
-				<a href="/files" class="btn btn-primary"> Go to My Files </a>
+				<a
+					href="/files"
+					class="mt-6 inline-flex items-center justify-center rounded-2xl bg-brand-500 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-brand-600"
+				>
+					Go to My Files
+				</a>
 			</div>
 		{:else if $sharesQuery.data}
-			<!-- Shares Table -->
-			<div class="bg-base-100 rounded-lg shadow overflow-x-auto">
-				<table class="table-zebra table">
-					<thead>
-						<tr>
-							<th>Resource</th>
-							<th>Created</th>
-							<th>Expires</th>
-							<th>Status</th>
-							<th class="text-right">Actions</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each $sharesQuery.data as share}
-							{@const expiryStatus = getExpiryStatus(share.expires_at)}
-							<tr class="hover">
-								<td>
-									<div class="gap-3 flex items-center">
-										<span class="text-2xl">{share.resource_type === 'folder' ? '📁' : '📄'}</span>
-										<div>
-											<div class="font-medium">{share.resource_name || 'Unknown Resource'}</div>
-											<div class="text-xs text-base-content/60 gap-2 flex">
-												<span class="badge badge-xs badge-ghost">
+			<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+				<div class="space-y-4">
+					{#each $sharesQuery.data as share}
+						{@const expiryStatus = getExpiryStatus(share.expires_at)}
+						{@const shareUrl = getShareUrl(share.share_token)}
+						<div class="rounded-[1.75rem] border border-base-300/70 bg-base-100 p-5 shadow-sm transition-colors hover:border-brand-500/15">
+							<div class="flex flex-col gap-5">
+								<div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+									<div class="flex items-start gap-4">
+										<div class="rounded-2xl border border-base-300/70 bg-base-200/70 p-3 text-brand-500">
+											{#if share.resource_type === 'folder'}
+												<FolderOpen class="h-5 w-5" />
+											{:else}
+												<FileText class="h-5 w-5" />
+											{/if}
+										</div>
+										<div class="min-w-0">
+											<h2 class="truncate text-lg font-semibold text-base-content">
+												{share.resource_name || 'Unknown resource'}
+											</h2>
+											<div class="mt-2 flex flex-wrap gap-2 text-xs font-medium">
+												<span class="rounded-full border border-base-300 bg-base-200 px-2.5 py-1 text-base-content/70">
 													{share.resource_type === 'folder' ? 'Folder' : 'File'}
 												</span>
+												<span class="rounded-full border px-2.5 py-1 {permissionBadgeClass(share.permissions)}">
+													{share.permissions}
+												</span>
 												{#if share.upload_only}
-													<span class="badge badge-xs badge-warning">Upload Only</span>
+													<span class="rounded-full border border-warning/20 bg-warning/10 px-2.5 py-1 text-warning">
+														Upload only
+													</span>
 												{/if}
 												{#if share.password_protected}
-													<span class="badge badge-xs badge-ghost">🔒 Password</span>
+													<span class="rounded-full border border-base-300 bg-base-200 px-2.5 py-1 text-base-content/70">
+														<Lock class="mr-1 inline h-3 w-3" />
+														Password
+													</span>
 												{/if}
-												<span class="badge badge-xs badge-ghost">{share.permissions}</span>
-												<span class="badge badge-xs badge-ghost">
-													{share.access_count} access{share.access_count === 1 ? '' : 'es'}
-												</span>
 											</div>
 										</div>
 									</div>
-								</td>
-								<td>{formatDate(share.created_at)}</td>
-								<td>
-									<span class="badge {expiryStatus.class}">
-										{expiryStatus.text}
-									</span>
-								</td>
-								<td>
-									{#if expiryStatus.text === 'Expired'}
-										<span class="badge badge-ghost">Inactive</span>
-									{:else}
-										<span class="badge badge-success">Active</span>
-									{/if}
-								</td>
-								<td class="text-right">
-									<div class="dropdown dropdown-end">
+									<div class="flex flex-wrap gap-2">
 										<button
 											type="button"
-											class="btn btn-ghost btn-xs"
-											aria-label="Open share actions"
+											class="inline-flex items-center gap-2 rounded-xl border border-base-300 bg-base-100 px-3 py-2 text-sm font-medium text-base-content/75 transition-colors hover:border-brand-500/20 hover:text-base-content"
+											on:click={() => copyShareLink(share.share_token)}
 										>
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke-width="1.5"
-												stroke="currentColor"
-												class="w-4 h-4"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z"
-												/>
-											</svg>
+											<Copy class="h-4 w-4" />
+											Copy link
 										</button>
-										<ul class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-[1]">
-											<li>
-												<button type="button" on:click={() => copyShareLink(share.share_token)}>
-													<svg
-														xmlns="http://www.w3.org/2000/svg"
-														fill="none"
-														viewBox="0 0 24 24"
-														stroke-width="1.5"
-														stroke="currentColor"
-														class="w-4 h-4"
-													>
-														<path
-															stroke-linecap="round"
-															stroke-linejoin="round"
-															d="M8.25 7.5V6.108c0-1.135.845-2.098 1.976-2.192.373-.03.748-.057 1.123-.08M15.75 18H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08M15.75 18.75v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5A3.375 3.375 0 006.375 7.5H5.25m11.9-3.664A2.251 2.251 0 0015 2.25h-1.5a2.251 2.251 0 00-2.15 1.586m5.8 0c.065.21.1.433.1.664v.75h-6V4.5c0-.231.035-.454.1-.664M6.75 7.5H4.875c-.621 0-1.125.504-1.125 1.125v12c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V16.5a9 9 0 00-9-9z"
-														/>
-													</svg>
-													Copy Link
-												</button>
-											</li>
-											<li>
-												<button type="button" on:click={() => toggleShareActivity(share)}>
-													<svg
-														xmlns="http://www.w3.org/2000/svg"
-														fill="none"
-														viewBox="0 0 24 24"
-														stroke-width="1.5"
-														stroke="currentColor"
-														class="w-4 h-4"
-													>
-														<path
-															stroke-linecap="round"
-															stroke-linejoin="round"
-															d="M3 3v18h18M7.5 15l3-3 2.25 2.25L16.5 9"
-														/>
-													</svg>
-													{activeShareActivityId === share.id ? 'Hide Activity' : 'View Activity'}
-												</button>
-											</li>
-											<li>
-												<button
-													type="button"
-													on:click={() => handleRevokeShare(share)}
-													class="text-error"
-												>
-													<svg
-														xmlns="http://www.w3.org/2000/svg"
-														fill="none"
-														viewBox="0 0 24 24"
-														stroke-width="1.5"
-														stroke="currentColor"
-														class="w-4 h-4"
-													>
-														<path
-															stroke-linecap="round"
-															stroke-linejoin="round"
-															d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-														/>
-													</svg>
-													Revoke
-												</button>
-											</li>
-										</ul>
+										<button
+											type="button"
+											class="inline-flex items-center gap-2 rounded-xl border border-base-300 bg-base-100 px-3 py-2 text-sm font-medium text-base-content/75 transition-colors hover:border-brand-500/20 hover:text-base-content"
+											on:click={() => toggleShareActivity(share)}
+										>
+											<Activity class="h-4 w-4" />
+											{activeShareActivityId === share.id ? 'Hide activity' : 'View activity'}
+										</button>
+										<button
+											type="button"
+											class="inline-flex items-center gap-2 rounded-xl border border-error/20 bg-error/5 px-3 py-2 text-sm font-medium text-error transition-colors hover:bg-error/10"
+											on:click={() => handleRevokeShare(share)}
+										>
+											<Trash2 class="h-4 w-4" />
+											Revoke
+										</button>
 									</div>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+								</div>
 
-			{#if activeShareActivityId}
-				<div class="bg-base-100 rounded-lg shadow p-4">
+								<div class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-3">
+									<p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/45">Share URL</p>
+									<p class="mt-2 truncate font-mono text-xs text-base-content/70">{shareUrl}</p>
+								</div>
+
+								<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+									<div class="rounded-2xl border border-base-300/70 bg-base-100 px-4 py-3">
+										<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">Created</p>
+										<p class="mt-2 text-sm font-medium text-base-content">{formatDate(share.created_at)}</p>
+									</div>
+									<div class="rounded-2xl border border-base-300/70 bg-base-100 px-4 py-3">
+										<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">Expiry</p>
+										<p class="mt-2 text-sm font-medium text-base-content">{expiryStatus.text}</p>
+									</div>
+									<div class="rounded-2xl border border-base-300/70 bg-base-100 px-4 py-3">
+										<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">Access</p>
+										<p class="mt-2 text-sm font-medium text-base-content">
+											{share.access_count} visit{share.access_count === 1 ? '' : 's'}
+										</p>
+									</div>
+									<div class="rounded-2xl border border-base-300/70 bg-base-100 px-4 py-3">
+										<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">Status</p>
+										<p class="mt-2 text-sm font-medium {isExpired(share.expires_at) ? 'text-error' : 'text-success'}">
+											{isExpired(share.expires_at) ? 'Inactive' : 'Active'}
+										</p>
+									</div>
+								</div>
+							</div>
+						</div>
+					{/each}
+				</div>
+
+				<div class="space-y-4">
+					<div class="rounded-[1.75rem] border border-base-300/70 bg-base-100 p-5 shadow-sm">
+						<h2 class="text-lg font-semibold text-base-content">What to watch</h2>
+						<div class="mt-4 space-y-3 text-sm text-base-content/70">
+							<div class="flex items-start gap-3">
+								<div class="rounded-xl bg-brand-500/10 p-2 text-brand-500">
+									<Users class="h-4 w-4" />
+								</div>
+								<p>Use access counts to find links people still depend on before revoking them.</p>
+							</div>
+							<div class="flex items-start gap-3">
+								<div class="rounded-xl bg-warning/10 p-2 text-warning">
+									<Clock3 class="h-4 w-4" />
+								</div>
+								<p>Expiring links are fine, silent expired links are not. Review them before they surprise people.</p>
+							</div>
+							<div class="flex items-start gap-3">
+								<div class="rounded-xl bg-base-200 p-2 text-base-content/70">
+									<Shield class="h-4 w-4" />
+								</div>
+								<p>Password-protected and upload-only links stand out more clearly now, which is the point.</p>
+							</div>
+						</div>
+					</div>
+
+					{#if activeShareActivityId}
+						<div class="rounded-[1.75rem] border border-base-300/70 bg-base-100 p-5 shadow-sm">
 					<div class="mb-3 flex items-center justify-between">
 						<div>
 							<h2 class="text-lg font-semibold">Share Activity</h2>
@@ -365,50 +414,45 @@
 						</button>
 					</div>
 
-					{#if shareActivityLoading}
-						<div class="py-8 flex justify-center">
-							<span class="loading loading-spinner loading-md"></span>
-						</div>
-					{:else if shareActivityError}
-						<div class="alert alert-error">
-							<span>{shareActivityError}</span>
-						</div>
-					{:else if shareActivity.length === 0}
-						<div class="text-sm text-base-content/70 py-4">
-							No recorded access yet for this share.
-						</div>
-					{:else}
-						<div class="overflow-x-auto">
-							<table class="table-sm table">
-								<thead>
-									<tr>
-										<th>Time</th>
-										<th>Action</th>
-										<th>Actor</th>
-										<th>IP</th>
-										<th>Status</th>
-									</tr>
-								</thead>
-								<tbody>
+							{#if shareActivityLoading}
+								<div class="py-8 flex justify-center">
+									<span class="loading loading-spinner loading-md"></span>
+								</div>
+							{:else if shareActivityError}
+								<div class="alert alert-error">
+									<span>{shareActivityError}</span>
+								</div>
+							{:else if shareActivity.length === 0}
+								<div class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-4 text-sm text-base-content/70">
+									No recorded access yet for this share.
+								</div>
+							{:else}
+								<div class="space-y-3">
 									{#each shareActivity as entry}
-										<tr>
-											<td>{formatAccessTime(entry.accessed_at)}</td>
-											<td class="text-xs uppercase">{entry.action}</td>
-											<td>{entry.actor_label || entry.actor_type || 'Anonymous'}</td>
-											<td class="font-mono text-xs">{entry.ip_address || 'Unknown'}</td>
-											<td>
-												<span class="badge {entry.success ? 'badge-success' : 'badge-error'}">
+										<div class="rounded-2xl border border-base-300/70 bg-base-200/35 px-4 py-3">
+											<div class="flex items-start justify-between gap-3">
+												<div>
+													<p class="text-sm font-medium text-base-content">
+														{entry.actor_label || entry.actor_type || 'Anonymous'}
+													</p>
+													<p class="mt-1 text-xs uppercase tracking-[0.16em] text-base-content/45">{entry.action}</p>
+												</div>
+												<span class="rounded-full px-2.5 py-1 text-xs font-medium {entry.success ? 'bg-success/10 text-success' : 'bg-error/10 text-error'}">
 													{entry.success ? 'Success' : 'Failed'}
 												</span>
-											</td>
-										</tr>
+											</div>
+											<div class="mt-3 space-y-1 text-xs text-base-content/60">
+												<p>{formatAccessTime(entry.accessed_at)}</p>
+												<p class="font-mono">{entry.ip_address || 'Unknown IP'}</p>
+											</div>
+										</div>
 									{/each}
-								</tbody>
-							</table>
+								</div>
+							{/if}
 						</div>
 					{/if}
 				</div>
-			{/if}
+			</div>
 		{/if}
 	</div>
 </div>

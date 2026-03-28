@@ -53,6 +53,8 @@
 	let showVersionHistoryModal = false;
 	let showFilePreviewModal = false;
 	let showReplaceFileModal = false;
+	let bulkMoveFileIds: string[] = [];
+	let bulkMoveLoading = false;
 
 	// Targets
 	let renameTarget: File | Folder | null = null;
@@ -315,6 +317,76 @@
 		selectionStore.deselectAll();
 	}
 
+	async function handleBulkDownload() {
+		const selectedFileIds = new Set($selectionStore.selectedFileIds);
+		const selectedFiles = sortedFiles.filter((file) => selectedFileIds.has(file.id));
+		const skippedFolderCount = $selectionStore.selectedFolderIds.size;
+
+		if (selectedFiles.length === 0) {
+			showNotification(
+				skippedFolderCount > 0
+					? 'Bulk download is available for files only right now'
+					: 'Select at least one file to download',
+				'info'
+			);
+			return;
+		}
+
+		let successCount = 0;
+
+		for (const file of selectedFiles) {
+			try {
+				const response = await downloadFile(file.id);
+				let downloadUrl = response.url;
+				if (downloadUrl.includes('/rustshare-files/')) {
+					const path = downloadUrl.split('/rustshare-files/')[1];
+					downloadUrl = `/storage/${path}`;
+				}
+				window.open(downloadUrl, '_blank');
+				activityStore.addActivity('file_downloaded', file.name);
+				successCount += 1;
+			} catch (error) {
+				console.error('Failed to download selected file:', file.name, error);
+			}
+		}
+
+		if (successCount === 0) {
+			showNotification('Failed to start the selected downloads', 'error');
+			return;
+		}
+
+		const parts = [`Started ${successCount} download${successCount === 1 ? '' : 's'}`];
+		if (skippedFolderCount > 0) {
+			parts.push(`skipped ${skippedFolderCount} folder${skippedFolderCount === 1 ? '' : 's'}`);
+		}
+
+		showNotification(parts.join(', '), skippedFolderCount > 0 ? 'info' : 'success');
+	}
+
+	function handleBulkMove() {
+		const selectedFileIds = Array.from($selectionStore.selectedFileIds);
+
+		if (selectedFileIds.length === 0) {
+			showNotification(
+				$selectionStore.selectedFolderIds.size > 0
+					? 'Bulk move currently supports files only. Deselect folders and try again.'
+					: 'Select at least one file to move',
+				'info'
+			);
+			return;
+		}
+
+		if ($selectionStore.selectedFolderIds.size > 0) {
+			showNotification('Bulk move currently supports files only. Deselect folders and try again.', 'info');
+			return;
+		}
+
+		bulkMoveFileIds = selectedFileIds;
+		moveTarget = null;
+		moveType = 'file';
+		showMoveModal = true;
+	}
+
 	async function handleBulkDelete() {
 		if (!$hasSelection) return;
 		const fileIds = Array.from($selectionStore.selectedFileIds);
@@ -392,7 +464,31 @@
 		showMoveModal = true;
 	}
 
-	function handleMoveConfirm(event: CustomEvent<{ targetFolderId: string | null }>) {
+	async function handleMoveConfirm(event: CustomEvent<{ targetFolderId: string | null }>) {
+		if (bulkMoveFileIds.length > 0) {
+			bulkMoveLoading = true;
+
+			try {
+				for (const fileId of bulkMoveFileIds) {
+					await moveFile(fileId, event.detail.targetFolderId);
+				}
+
+				queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
+				queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
+				selectionStore.clear();
+				selectionMode = false;
+				showNotification(`Moved ${bulkMoveFileIds.length} selected file${bulkMoveFileIds.length === 1 ? '' : 's'}`, 'success');
+			} catch (error) {
+				showNotification(error instanceof Error ? error.message : 'Failed to move selected files', 'error');
+			} finally {
+				bulkMoveLoading = false;
+				bulkMoveFileIds = [];
+				showMoveModal = false;
+			}
+
+			return;
+		}
+
 		if (!moveTarget) return;
 		if (moveType === 'file') {
 			$moveFileMutation.mutate({ fileId: moveTarget.id, targetFolderId: event.detail.targetFolderId });
@@ -555,6 +651,8 @@
 		onSelectAll={handleSelectAll}
 		onDeselectAll={handleDeselectAll}
 		onBulkDelete={handleBulkDelete}
+		onBulkDownload={handleBulkDownload}
+		onBulkMove={handleBulkMove}
 		onRenameFile={handleRenameFile}
 		onDeleteFile={handleDeleteFile}
 		onShareFile={handleShareFile}
@@ -599,12 +697,12 @@
 {#if showMoveModal}
 	<MoveModal
 		open={showMoveModal}
-		loading={$moveFileMutation.isPending || $moveFolderMutation.isPending}
-		itemName={moveTarget?.name || ''}
+		loading={$moveFileMutation.isPending || $moveFolderMutation.isPending || bulkMoveLoading}
+		itemName={bulkMoveFileIds.length > 0 ? `${bulkMoveFileIds.length} selected file${bulkMoveFileIds.length === 1 ? '' : 's'}` : moveTarget?.name || ''}
 		itemType={moveType}
-		itemId={moveTarget?.id || null}
-		currentFolderId={moveCurrentFolderId}
-		on:close={() => { showMoveModal = false; moveTarget = null; }}
+		itemId={bulkMoveFileIds.length > 0 ? null : moveTarget?.id || null}
+		currentFolderId={bulkMoveFileIds.length > 0 ? currentFolderId : moveCurrentFolderId}
+		on:close={() => { showMoveModal = false; moveTarget = null; bulkMoveFileIds = []; }}
 		on:confirm={handleMoveConfirm}
 	/>
 {/if}

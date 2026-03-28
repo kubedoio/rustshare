@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { fileSortState, setSortField, setSortOrder, setViewMode, type SortField, type SortOrder } from '$lib/stores/fileSort';
-	import { selectionCount, hasSelection } from '$lib/stores/selection';
+	import { selectionCount, hasSelection, selectionStore } from '$lib/stores/selection';
 
 	export let selectionMode = false;
 	export let onToggleSelection: () => void;
 	export let onSelectAll: () => void;
 	export let onDeselectAll: () => void;
 	export let onBulkDelete: () => void;
+	export let onBulkDownload: () => void;
+	export let onBulkMove: () => void;
 	export let onNewFolder: () => void;
 	export let onUpload: () => void;
 	export let isUploading = false;
@@ -24,6 +26,9 @@
 		const newOrder: SortOrder = $fileSortState.order === 'asc' ? 'desc' : 'asc';
 		setSortOrder(newOrder);
 	}
+
+	$: selectedFileCount = $selectionStore.selectedFileIds.size;
+	$: selectedFolderCount = $selectionStore.selectedFolderIds.size;
 </script>
 
 <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
@@ -53,9 +58,16 @@
 		{#if selectionMode}
 			<!-- Selection mode toolbar -->
 			<div class="flex flex-wrap items-center gap-2 rounded-xl border border-base-300/70 bg-base-200/80 px-3 py-2">
-				<span class="text-sm font-medium text-base-content">
-					{$selectionCount} selected
-				</span>
+				<div class="mr-1">
+					<span class="text-sm font-medium text-base-content">{$selectionCount} selected</span>
+					{#if selectedFileCount || selectedFolderCount}
+						<p class="text-xs text-base-content/55">
+							{#if selectedFileCount}{selectedFileCount} file{selectedFileCount === 1 ? '' : 's'}{/if}
+							{#if selectedFileCount && selectedFolderCount} and {/if}
+							{#if selectedFolderCount}{selectedFolderCount} folder{selectedFolderCount === 1 ? '' : 's'}{/if}
+						</p>
+					{/if}
+				</div>
 				<div class="w-px h-4 bg-base-300 mx-1"></div>
 				<button
 					type="button"
@@ -70,6 +82,22 @@
 					on:click={onDeselectAll}
 				>
 					None
+				</button>
+				<button
+					type="button"
+					class="text-sm text-base-content/70 transition-colors hover:text-base-content disabled:cursor-not-allowed disabled:text-base-content/30"
+					on:click={onBulkDownload}
+					disabled={selectedFileCount === 0}
+				>
+					Download
+				</button>
+				<button
+					type="button"
+					class="text-sm text-base-content/70 transition-colors hover:text-base-content disabled:cursor-not-allowed disabled:text-base-content/30"
+					on:click={onBulkMove}
+					disabled={selectedFileCount === 0 || selectedFolderCount > 0}
+				>
+					Move
 				</button>
 				<button
 					type="button"

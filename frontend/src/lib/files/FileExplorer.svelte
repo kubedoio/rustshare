@@ -28,6 +28,8 @@
 	export let onSelectAll: () => void;
 	export let onDeselectAll: () => void;
 	export let onBulkDelete: () => void;
+	export let onBulkDownload: () => void;
+	export let onBulkMove: () => void;
 
 	// Item action handlers
 	export let onRenameFile: (file: FileType) => void;
@@ -84,6 +86,8 @@
 			{onSelectAll}
 			{onDeselectAll}
 			{onBulkDelete}
+			{onBulkDownload}
+			{onBulkMove}
 			{onFolderClick}
 			{onFileClick}
 			{onRenameFile}

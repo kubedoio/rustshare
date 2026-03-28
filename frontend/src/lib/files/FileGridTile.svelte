@@ -34,9 +34,12 @@
 	let tileRef: HTMLDivElement;
 
 	function handleClick(e: MouseEvent) {
-		if (!selectionMode) {
-			onSelect(e);
+		if (selectionMode) {
+			onToggle();
+			return;
 		}
+
+		onSelect(e);
 	}
 
 	function handleAction(action: () => void) {

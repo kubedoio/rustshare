@@ -90,7 +90,7 @@
 					{selectionMode}
 					selected={$selectionStore.selectedFileIds.has(file.id)}
 					replicationStatus={replicationStatuses[file.id]}
-					onSelect={() => onFileClick(file)}
+					onSelect={(e) => (selectionMode ? handleFileToggle(file, e) : onFileClick(file))}
 					onToggleSelect={() => handleFileToggle(file)}
 					onNavigate={() => {}}
 					onRename={() => onRenameFile(file)}

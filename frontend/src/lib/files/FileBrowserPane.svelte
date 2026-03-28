@@ -24,6 +24,8 @@
 	export let onSelectAll: () => void;
 	export let onDeselectAll: () => void;
 	export let onBulkDelete: () => void;
+	export let onBulkDownload: () => void;
+	export let onBulkMove: () => void;
 
 	export let onFolderClick: (folder: Folder) => void;
 	export let onFileClick: (file: FileType) => void;
@@ -58,6 +60,8 @@
 			onSelectAll={onSelectAll}
 			onDeselectAll={onDeselectAll}
 			onBulkDelete={onBulkDelete}
+			onBulkDownload={onBulkDownload}
+			onBulkMove={onBulkMove}
 			onNewFolder={onNewFolder}
 			onUpload={onUpload}
 		/>
