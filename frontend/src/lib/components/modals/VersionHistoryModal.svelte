@@ -21,14 +21,14 @@
   }>();
 
   // Reactive query for file details
-  $: fileQuery = createQuery({
+  const fileQuery = createQuery({
     queryKey: ['file', fileId],
     queryFn: () => getFile(fileId),
     enabled: open && !!fileId
   });
 
   // Reactive query for version history
-  $: versionsQuery = createQuery({
+  const versionsQuery = createQuery({
     queryKey: ['file-versions', fileId],
     queryFn: () => getFileVersions(fileId),
     enabled: open && !!fileId

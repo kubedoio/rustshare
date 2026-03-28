@@ -7,7 +7,7 @@
 
 	$: userId = $page.params.id;
 
-	$: userQuery = createQuery({
+	const userQuery = createQuery({
 		queryKey: ['admin', 'user', userId],
 		queryFn: () => getAdminUser(userId ?? ''),
 		enabled: !!userId

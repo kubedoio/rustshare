@@ -40,14 +40,14 @@
 	let recipientPermissionDrafts: Record<string, 'View' | 'Edit' | 'Admin'> = {};
 
 	// Query for existing shares
-	$: sharesQuery = createQuery({
+	const sharesQuery = createQuery({
 		queryKey: ['public-shares', resourceType, resourceId],
 		queryFn: () =>
 			resourceType === 'folder' ? listFolderShares(resourceId) : listFileShares(resourceId),
 		enabled: open
 	});
 
-	$: recipientsQuery = createQuery({
+	const recipientsQuery = createQuery({
 		queryKey: ['share-recipients', resourceType, resourceId],
 		queryFn: () =>
 			resourceType === 'folder' ? listFolderRecipients(resourceId) : listFileRecipients(resourceId),

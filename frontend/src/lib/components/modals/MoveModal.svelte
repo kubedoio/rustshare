@@ -22,7 +22,7 @@
   let invalidFolderIds = new Set<string>();
 
   // Query for folder tree
-  $: folderTreeQuery = createQuery({
+  const folderTreeQuery = createQuery({
     queryKey: ['folder-tree'],
     queryFn: getFolderTree,
     enabled: open

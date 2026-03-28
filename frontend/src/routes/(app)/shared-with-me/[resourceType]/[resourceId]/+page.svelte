@@ -49,19 +49,19 @@
 		nestedPath = [];
 	}
 
-	$: fileQuery = createQuery({
+	const fileQuery = createQuery({
 		queryKey: ['shared-file', resourceId],
 		queryFn: () => getFile(resourceId),
 		enabled: resourceType === 'file' && !!shareEntry
 	});
 
-	$: folderContentsQuery = createQuery({
+	const folderContentsQuery = createQuery({
 		queryKey: ['shared-folder-contents', currentFolderId],
 		queryFn: () => getFolderContents(currentFolderId),
 		enabled: resourceType === 'folder' && !!shareEntry && !!currentFolderId
 	});
 
-	$: currentFolderQuery = createQuery({
+	const currentFolderQuery = createQuery({
 		queryKey: ['shared-folder-meta', currentFolderId],
 		queryFn: () => getFolder(currentFolderId as string),
 		enabled:

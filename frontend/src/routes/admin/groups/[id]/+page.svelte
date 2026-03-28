@@ -7,7 +7,7 @@
 
 	$: groupId = $page.params.id;
 
-	$: groupQuery = createQuery({
+	const groupQuery = createQuery({
 		queryKey: ['admin', 'group', groupId],
 		queryFn: () => getAdminGroup(groupId ?? ''),
 		enabled: !!groupId
