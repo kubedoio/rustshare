@@ -40,12 +40,12 @@
 >
 	{#if isFilesPage}
 		<!-- Files page uses full-height layout without padding -->
-		<div class="h-full">
+		<div class="h-full min-h-0">
 			<slot />
 		</div>
 	{:else}
 		<!-- Other pages use standard padding -->
-		<div class="p-4 lg:p-6 max-w-7xl mx-auto">
+		<div class="mx-auto w-full max-w-[88rem] p-4 md:p-6 lg:px-8 lg:py-7">
 			<slot />
 		</div>
 	{/if}

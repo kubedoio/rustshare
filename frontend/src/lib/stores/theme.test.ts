@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
 import { themeStore, getCurrentTheme, type Theme } from '$lib/stores/theme';
 
+const daisyThemes = ['rustshare-light', 'rustshare-dark'];
+
 describe('Theme Store', () => {
   beforeEach(() => {
     // Clear localStorage
@@ -39,23 +41,22 @@ describe('Theme Store', () => {
       themeStore.setTheme('light');
       expect(get(themeStore)).toBe('light');
       expect(localStorage.getItem('theme-preference')).toBe('light');
-      expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+      expect(document.documentElement.getAttribute('data-theme')).toBe('rustshare-light');
     });
 
     it('should set dark theme', () => {
       themeStore.setTheme('dark');
       expect(get(themeStore)).toBe('dark');
       expect(localStorage.getItem('theme-preference')).toBe('dark');
-      expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+      expect(document.documentElement.getAttribute('data-theme')).toBe('rustshare-dark');
     });
 
     it('should set system theme', () => {
       themeStore.setTheme('system');
       expect(get(themeStore)).toBe('system');
       expect(localStorage.getItem('theme-preference')).toBe('system');
-      // data-theme should be resolved to light or dark based on system preference
       const dataTheme = document.documentElement.getAttribute('data-theme');
-      expect(dataTheme === 'light' || dataTheme === 'dark').toBe(true);
+      expect(daisyThemes).toContain(dataTheme);
     });
   });
 
@@ -64,14 +65,14 @@ describe('Theme Store', () => {
       themeStore.setTheme('light');
       themeStore.toggleTheme();
       expect(get(themeStore)).toBe('dark');
-      expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+      expect(document.documentElement.getAttribute('data-theme')).toBe('rustshare-dark');
     });
 
     it('should toggle from dark to light', () => {
       themeStore.setTheme('dark');
       themeStore.toggleTheme();
       expect(get(themeStore)).toBe('light');
-      expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+      expect(document.documentElement.getAttribute('data-theme')).toBe('rustshare-light');
     });
 
     it('should toggle from system preference', () => {
@@ -109,17 +110,17 @@ describe('Theme Store', () => {
   describe('Theme Application', () => {
     it('should apply theme to document root', () => {
       themeStore.setTheme('light');
-      expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+      expect(document.documentElement.getAttribute('data-theme')).toBe('rustshare-light');
 
       themeStore.setTheme('dark');
-      expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+      expect(document.documentElement.getAttribute('data-theme')).toBe('rustshare-dark');
     });
 
     it('should resolve system theme to actual value', () => {
       themeStore.setTheme('system');
       const dataTheme = document.documentElement.getAttribute('data-theme');
       expect(dataTheme).not.toBe('system');
-      expect(dataTheme === 'light' || dataTheme === 'dark').toBe(true);
+      expect(daisyThemes).toContain(dataTheme);
     });
   });
 
@@ -156,7 +157,7 @@ describe('Theme Store', () => {
 
       // But data-theme should be updated
       const dataTheme = document.documentElement.getAttribute('data-theme');
-      expect(dataTheme === 'light' || dataTheme === 'dark').toBe(true);
+      expect(daisyThemes).toContain(dataTheme);
     });
 
     it('should not react to system changes when not in system mode', () => {
@@ -171,7 +172,7 @@ describe('Theme Store', () => {
 
       // Should remain light
       expect(get(themeStore)).toBe('light');
-      expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+      expect(document.documentElement.getAttribute('data-theme')).toBe('rustshare-light');
       expect(document.documentElement.getAttribute('data-theme')).toBe(initialDataTheme);
     });
   });

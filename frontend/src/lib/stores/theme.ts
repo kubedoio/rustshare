@@ -2,6 +2,7 @@ import { writable } from 'svelte/store';
 import { updateUserTheme } from '$lib/api/users';
 
 export type Theme = 'light' | 'dark' | 'system';
+type DaisyTheme = 'rustshare-light' | 'rustshare-dark';
 
 const STORAGE_KEY = 'theme-preference';
 
@@ -34,12 +35,15 @@ function resolveTheme(theme: Theme): 'light' | 'dark' {
 	return theme;
 }
 
+function resolveDocumentTheme(theme: Theme): DaisyTheme {
+	return resolveTheme(theme) === 'dark' ? 'rustshare-dark' : 'rustshare-light';
+}
+
 // Apply theme to document
 function applyTheme(theme: Theme) {
 	if (!canUseDom()) return;
 
-	const resolvedTheme = resolveTheme(theme);
-	document.documentElement.setAttribute('data-theme', resolvedTheme);
+	document.documentElement.setAttribute('data-theme', resolveDocumentTheme(theme));
 }
 
 function createThemeStore() {

@@ -57,9 +57,9 @@
 	}
 </script>
 
-<div class="flex h-full">
+<div class="flex h-full min-h-0 bg-base-100">
 	<!-- Folder Tree Sidebar -->
-	<div class="w-64 flex-shrink-0 border-r border-base-300 h-full overflow-hidden">
+	<div class="hidden h-full w-72 flex-shrink-0 overflow-hidden border-r border-base-300/80 bg-base-100/70 xl:block">
 		<FolderTree 
 			selectedFolderId={currentFolderId}
 			onSelectFolder={handleFolderSelectFromTree}
@@ -67,7 +67,7 @@
 	</div>
 
 	<!-- File Browser Pane -->
-	<div class="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+	<div class="flex-1 flex min-h-0 min-w-0 flex-col overflow-hidden">
 		<FileBrowserPane
 			{folders}
 			{files}

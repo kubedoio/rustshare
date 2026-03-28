@@ -26,22 +26,22 @@
 	}
 </script>
 
-<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+<div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
 	<!-- Left: Title and filter chips -->
-	<div class="flex items-center gap-4">
-		<h1 class="text-xl font-semibold text-base-content">All files</h1>
-		
+	<div class="flex flex-wrap items-center gap-3 md:gap-4">
+		<h1 class="text-2xl font-semibold tracking-tight text-base-content">All files</h1>
+
 		<!-- Filter chips -->
-		<div class="hidden sm:flex items-center gap-2">
+		<div class="hidden items-center gap-2 md:flex">
 			<button
 				type="button"
-				class="px-3 py-1.5 text-sm font-medium rounded-full transition-colors bg-brand-500/10 text-brand-400 border border-brand-500/20"
+				class="rounded-full border border-brand-500/20 bg-brand-500/10 px-3 py-1.5 text-sm font-medium text-brand-500 transition-colors"
 			>
 				Recents
 			</button>
 			<button
 				type="button"
-				class="px-3 py-1.5 text-sm font-medium rounded-full transition-colors text-base-content/60 hover:text-base-content hover:bg-base-200"
+				class="rounded-full px-3 py-1.5 text-sm font-medium text-base-content/60 transition-colors hover:bg-base-200 hover:text-base-content"
 			>
 				Starred
 			</button>
@@ -49,10 +49,10 @@
 	</div>
 
 	<!-- Right: Actions -->
-	<div class="flex items-center gap-2">
+	<div class="flex flex-wrap items-center justify-end gap-2">
 		{#if selectionMode}
 			<!-- Selection mode toolbar -->
-			<div class="flex items-center gap-2 bg-base-200 rounded-lg px-3 py-1.5">
+			<div class="flex flex-wrap items-center gap-2 rounded-xl border border-base-300/70 bg-base-200/80 px-3 py-2">
 				<span class="text-sm font-medium text-base-content">
 					{$selectionCount} selected
 				</span>
@@ -93,7 +93,7 @@
 			<div class="relative">
 				<button
 					type="button"
-					class="flex items-center gap-2 px-3 py-2 text-sm font-medium text-base-content/70 hover:text-base-content hover:bg-base-200 rounded-lg transition-colors"
+					class="flex items-center gap-2 rounded-xl border border-base-300/70 bg-base-200/80 px-3 py-2 text-sm font-medium text-base-content/70 transition-colors hover:border-brand-500/20 hover:text-base-content"
 					on:click={() => sortMenuOpen = !sortMenuOpen}
 					aria-expanded={sortMenuOpen}
 				>
@@ -156,7 +156,7 @@
 			</div>
 
 			<!-- View mode toggle -->
-			<div class="flex items-center bg-base-200 rounded-lg p-1">
+			<div class="flex items-center rounded-xl border border-base-300/70 bg-base-200/80 p-1">
 				<button
 					type="button"
 					class="p-1.5 rounded-md transition-all
@@ -186,12 +186,12 @@
 				</button>
 			</div>
 
-			<div class="w-px h-6 bg-base-300 mx-1"></div>
+			<div class="mx-1 hidden h-6 w-px bg-base-300 lg:block"></div>
 
 			<!-- New Folder button -->
 			<button
 				type="button"
-				class="hidden sm:flex items-center gap-2 px-3 py-2 text-sm font-medium text-base-content/80 hover:text-base-content hover:bg-base-200 rounded-lg transition-colors"
+				class="flex items-center gap-2 rounded-xl border border-base-300/70 bg-base-100 px-3 py-2 text-sm font-medium text-base-content/80 transition-colors hover:border-brand-500/20 hover:text-base-content"
 				on:click={onNewFolder}
 				disabled={isUploading}
 			>
@@ -200,13 +200,13 @@
 					<line x1="12" x2="12" y1="10" y2="16"/>
 					<line x1="9" x2="15" y1="13" y2="13"/>
 				</svg>
-				<span>New folder</span>
+				<span class="hidden sm:inline">New folder</span>
 			</button>
 
 			<!-- Upload button -->
 			<button
 				type="button"
-				class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors shadow-sm shadow-brand-500/20"
+				class="flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-brand-500/20 transition-colors hover:bg-brand-600"
 				on:click={onUpload}
 				disabled={isUploading}
 			>
@@ -221,7 +221,7 @@
 			<!-- Selection mode button -->
 			<button
 				type="button"
-				class="p-2 text-base-content/60 hover:text-base-content hover:bg-base-200 rounded-lg transition-colors"
+				class="rounded-xl border border-base-300/70 bg-base-100 p-2 text-base-content/60 transition-colors hover:border-brand-500/20 hover:text-base-content"
 				on:click={onToggleSelection}
 				aria-label="Select multiple"
 			>
@@ -236,5 +236,10 @@
 
 <!-- Click outside to close sort menu -->
 {#if sortMenuOpen}
-	<div class="fixed inset-0 z-40" on:click={() => sortMenuOpen = false}></div>
+	<button
+		type="button"
+		class="fixed inset-0 z-40 cursor-default"
+		aria-label="Close sort menu"
+		on:click={() => sortMenuOpen = false}
+	></button>
 {/if}

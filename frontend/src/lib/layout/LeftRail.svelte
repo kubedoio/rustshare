@@ -28,7 +28,7 @@
 </script>
 
 <!-- Far-left Icon Rail -->
-<aside class="w-16 bg-base-200 border-r border-base-300 flex flex-col flex-shrink-0 z-30">
+<aside class="hidden w-16 flex-col flex-shrink-0 border-r border-base-300 bg-base-100/80 backdrop-blur lg:flex z-30">
 	<!-- Logo -->
 	<div class="h-14 flex items-center justify-center border-b border-base-300">
 		<a href="/dashboard" class="flex items-center justify-center" aria-label="RustShare">

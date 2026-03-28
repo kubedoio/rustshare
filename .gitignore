@@ -41,3 +41,5 @@ launch-smoke-reports/
 
 # Workspace helpers
 .worktrees/
+.gstack/
+.claude/

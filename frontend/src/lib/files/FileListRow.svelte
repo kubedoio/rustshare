@@ -162,24 +162,32 @@
 						<Share2 size={14} />
 						Share
 					</button>
-					{#if !isFolder}
-						<button
-							type="button"
-							class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-							on:click={(e) => handleAction(e, onDownload)}
-						>
-							<Download size={14} />
-							Download
-						</button>
-						<button
-							type="button"
-							class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-							on:click={(e) => handleAction(e, onVersionHistory)}
-						>
-							<History size={14} />
-							Version history
-						</button>
-					{/if}
+						{#if !isFolder}
+							<button
+								type="button"
+								class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
+								on:click={(e) => handleAction(e, onDownload)}
+							>
+								<Download size={14} />
+								Download
+							</button>
+							<button
+								type="button"
+								class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
+								on:click={(e) => handleAction(e, onVersionHistory)}
+							>
+								<History size={14} />
+								Version history
+							</button>
+							<button
+								type="button"
+								class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
+								on:click={(e) => handleAction(e, onReplace)}
+							>
+								<RefreshCw size={14} />
+								Replace file
+							</button>
+						{/if}
 					<button
 						type="button"
 						class="w-full flex items-center gap-2 px-4 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"

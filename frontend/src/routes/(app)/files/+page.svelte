@@ -574,71 +574,87 @@
 <UploadProgress tasks={uploadTasks} onClose={handleCloseProgress} />
 
 <!-- Modals -->
-<RenameModal
-	open={showRenameModal}
-	loading={$renameFileMutation.isPending || $renameFolderMutation.isPending}
-	itemName={renameTarget?.name || ''}
-	itemType={renameType}
-	on:close={() => { showRenameModal = false; renameTarget = null; }}
-	on:confirm={handleRenameConfirm}
-/>
+{#if showRenameModal}
+	<RenameModal
+		open={showRenameModal}
+		loading={$renameFileMutation.isPending || $renameFolderMutation.isPending}
+		itemName={renameTarget?.name || ''}
+		itemType={renameType}
+		on:close={() => { showRenameModal = false; renameTarget = null; }}
+		on:confirm={handleRenameConfirm}
+	/>
+{/if}
 
-<DeleteConfirmation
-	open={showDeleteModal}
-	loading={$deleteFileMutation.isPending || $deleteFolderMutation.isPending}
-	itemName={deleteTarget?.name || ''}
-	itemType={deleteType}
-	on:close={() => { showDeleteModal = false; deleteTarget = null; }}
-	on:confirm={handleDeleteConfirm}
-/>
+{#if showDeleteModal}
+	<DeleteConfirmation
+		open={showDeleteModal}
+		loading={$deleteFileMutation.isPending || $deleteFolderMutation.isPending}
+		itemName={deleteTarget?.name || ''}
+		itemType={deleteType}
+		on:close={() => { showDeleteModal = false; deleteTarget = null; }}
+		on:confirm={handleDeleteConfirm}
+	/>
+{/if}
 
-<MoveModal
-	open={showMoveModal}
-	loading={$moveFileMutation.isPending || $moveFolderMutation.isPending}
-	itemName={moveTarget?.name || ''}
-	itemType={moveType}
-	itemId={moveTarget?.id || null}
-	currentFolderId={moveCurrentFolderId}
-	on:close={() => { showMoveModal = false; moveTarget = null; }}
-	on:confirm={handleMoveConfirm}
-/>
+{#if showMoveModal}
+	<MoveModal
+		open={showMoveModal}
+		loading={$moveFileMutation.isPending || $moveFolderMutation.isPending}
+		itemName={moveTarget?.name || ''}
+		itemType={moveType}
+		itemId={moveTarget?.id || null}
+		currentFolderId={moveCurrentFolderId}
+		on:close={() => { showMoveModal = false; moveTarget = null; }}
+		on:confirm={handleMoveConfirm}
+	/>
+{/if}
 
-<CreateFolderModal
-	open={showCreateFolderModal}
-	loading={$createFolderMutation.isPending}
-	on:close={() => showCreateFolderModal = false}
-	on:confirm={handleCreateFolder}
-/>
+{#if showCreateFolderModal}
+	<CreateFolderModal
+		open={showCreateFolderModal}
+		loading={$createFolderMutation.isPending}
+		on:close={() => showCreateFolderModal = false}
+		on:confirm={handleCreateFolder}
+	/>
+{/if}
 
-<ShareModal
-	open={showShareModal}
-	resourceId={shareTarget?.id || ''}
-	resourceName={shareTarget?.name || ''}
-	resourceType={shareType}
-	on:close={() => { showShareModal = false; shareTarget = null; }}
-	on:notification={handleShareNotification}
-/>
+{#if showShareModal}
+	<ShareModal
+		open={showShareModal}
+		resourceId={shareTarget?.id || ''}
+		resourceName={shareTarget?.name || ''}
+		resourceType={shareType}
+		on:close={() => { showShareModal = false; shareTarget = null; }}
+		on:notification={handleShareNotification}
+	/>
+{/if}
 
-<VersionHistoryModal
-	open={showVersionHistoryModal}
-	fileId={versionHistoryTarget?.id || ''}
-	fileName={versionHistoryTarget?.name || ''}
-	on:close={() => { showVersionHistoryModal = false; versionHistoryTarget = null; }}
-	on:restored={handleVersionRestored}
-/>
+{#if showVersionHistoryModal && versionHistoryTarget}
+	<VersionHistoryModal
+		open={showVersionHistoryModal}
+		fileId={versionHistoryTarget.id}
+		fileName={versionHistoryTarget.name}
+		on:close={() => { showVersionHistoryModal = false; versionHistoryTarget = null; }}
+		on:restored={handleVersionRestored}
+	/>
+{/if}
 
-<FilePreviewModal
-	open={showFilePreviewModal}
-	file={previewTarget}
-	on:close={() => { showFilePreviewModal = false; previewTarget = null; }}
-/>
+{#if showFilePreviewModal && previewTarget}
+	<FilePreviewModal
+		open={showFilePreviewModal}
+		file={previewTarget}
+		on:close={() => { showFilePreviewModal = false; previewTarget = null; }}
+	/>
+{/if}
 
-<ReplaceFileModal
-	open={showReplaceFileModal}
-	file={replaceFileTarget}
-	on:close={() => { showReplaceFileModal = false; replaceFileTarget = null; }}
-	on:success={handleReplaceSuccess}
-/>
+{#if showReplaceFileModal && replaceFileTarget}
+	<ReplaceFileModal
+		open={showReplaceFileModal}
+		file={replaceFileTarget}
+		on:close={() => { showReplaceFileModal = false; replaceFileTarget = null; }}
+		on:success={handleReplaceSuccess}
+	/>
+{/if}
 
 <!-- Toast -->
 {#if showToast}

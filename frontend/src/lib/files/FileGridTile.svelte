@@ -5,7 +5,7 @@
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
 	import { replicationStateBadgeClass, formatReplicationStateLabel } from '$lib/stores/replication';
 	import { formatFileSize, formatDate } from '$lib/utils/format';
-	import { MoreVertical, Edit, Trash2, Share2, Move, Download, History, Check } from 'lucide-svelte';
+	import { MoreVertical, Edit, Trash2, Share2, Move, Download, History, RefreshCw } from 'lucide-svelte';
 
 	export let item: FileType | Folder;
 	export let isFolder: boolean;
@@ -58,10 +58,10 @@
 	bind:this={tileRef}
 	role="button"
 	tabindex="0"
-	class="group relative flex flex-col p-3 rounded-xl border transition-all cursor-pointer
+	class="group relative flex min-h-[15.5rem] flex-col rounded-2xl border p-4 transition-all cursor-pointer
 		{selected
-			? 'bg-brand-500/10 border-brand-500/30 ring-1 ring-brand-500/30'
-			: 'bg-base-200 border-transparent hover:border-base-300 hover:bg-base-200/80'}"
+			? 'border-brand-500/30 bg-brand-500/10 ring-1 ring-brand-500/30'
+			: 'border-base-300/70 bg-base-200/65 hover:border-brand-500/20 hover:bg-base-200'}"
 	on:click={handleClick}
 	on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleClick(e as any); }}
 >
@@ -79,7 +79,7 @@
 	{/if}
 
 	<!-- Actions Menu -->
-	<div class="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
+	<div class="absolute top-2 right-2 z-20 opacity-0 transition-opacity group-hover:opacity-100">
 		<button
 			type="button"
 			class="p-1.5 bg-base-100/90 backdrop-blur-sm rounded-lg text-base-content/60 hover:text-base-content shadow-sm"
@@ -91,8 +91,10 @@
 
 		{#if showActions}
 			<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-			<div class="absolute right-0 top-full mt-1 w-40 bg-base-100 rounded-xl shadow-lg shadow-black/20 border border-base-300 py-1 z-50"
-				on:click|stopPropagation>
+			<div
+				class="absolute right-0 top-full z-50 mt-1 w-40 rounded-xl border border-base-300 bg-base-100 py-1 shadow-lg shadow-black/20"
+				on:click|stopPropagation
+			>
 				<button
 					type="button"
 					class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
@@ -118,6 +120,22 @@
 						<Download size={14} />
 						Download
 					</button>
+					<button
+						type="button"
+						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
+						on:click|stopPropagation={() => handleAction(onVersionHistory)}
+					>
+						<History size={14} />
+						Version history
+					</button>
+					<button
+						type="button"
+						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
+						on:click|stopPropagation={() => handleAction(onReplace)}
+					>
+						<RefreshCw size={14} />
+						Replace file
+					</button>
 				{/if}
 				<button
 					type="button"
@@ -141,14 +159,14 @@
 	</div>
 
 	<!-- Preview -->
-	<div class="aspect-square mb-3 flex items-center justify-center">
+	<div class="mb-4 flex aspect-[4/3] items-center justify-center rounded-xl border border-base-300/60 bg-base-100/80 p-3">
 		<FilePreview {item} {isFolder} size="xl" showThumbnail={!isFolder} />
 	</div>
 
 	<!-- Info -->
-	<div class="min-w-0">
-		<div class="flex items-start gap-1.5 mb-1">
-			<p class="text-sm font-medium text-base-content truncate flex-1" title={item.name}>
+	<div class="min-w-0 space-y-2">
+		<div class="flex items-start gap-1.5">
+			<p class="flex-1 truncate text-sm font-medium leading-5 text-base-content" title={item.name}>
 				{item.name}
 			</p>
 			{#if item.is_shared}
@@ -161,7 +179,7 @@
 			{/if}
 		</div>
 
-		<div class="flex items-center gap-2 text-xs text-base-content/50">
+		<div class="flex items-center gap-2 text-xs text-base-content/55">
 			{#if isFolder}
 				<span>Folder</span>
 			{:else}

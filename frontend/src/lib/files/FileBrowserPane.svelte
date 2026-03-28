@@ -48,9 +48,9 @@
 	}
 </script>
 
-<div class="flex flex-col h-full bg-base-100">
+<div class="flex h-full min-h-0 flex-col bg-base-100">
 	<!-- Toolbar -->
-	<div class="px-4 py-3 border-b border-base-300">
+	<div class="border-b border-base-300/80 px-4 py-3 md:px-5 md:py-4 lg:px-6">
 		<FileToolbar
 			{selectionMode}
 			{isUploading}
@@ -64,12 +64,12 @@
 	</div>
 
 	<!-- Breadcrumbs -->
-	<div class="px-4 py-2 border-b border-base-300 bg-base-200/30">
+	<div class="border-b border-base-300/70 bg-base-200/35 px-4 py-2.5 md:px-5 lg:px-6">
 		<Breadcrumbs {folderPath} on:navigate={handleBreadcrumbNavigate} />
 	</div>
 
 	<!-- Content -->
-	<div class="flex-1 overflow-auto p-4">
+	<div class="flex-1 overflow-auto px-4 py-4 md:px-5 lg:px-6 lg:py-5 xl:px-8">
 		{#if isLoading}
 			<div class="flex items-center justify-center h-64">
 				<div class="animate-spin w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full"></div>

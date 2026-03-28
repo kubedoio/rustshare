@@ -70,8 +70,8 @@
           <p class="text-sm font-medium text-base-content/60">Storage Used</p>
           <p class="text-3xl font-semibold text-base-content mt-1">{formatFileSize(totalSize)}</p>
         </div>
-        <div class="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-accent">
+        <div class="w-10 h-10 rounded-lg bg-brand-500/10 flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-brand-400">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
             <polyline points="17 8 12 3 7 8"/>
             <line x1="12" x2="12" y1="3" y2="15"/>
@@ -93,8 +93,8 @@
           <p class="text-sm font-medium text-base-content/60">Quick Action</p>
           <p class="text-lg font-semibold text-base-content mt-1">Upload Files</p>
         </div>
-        <div class="w-10 h-10 rounded-lg bg-secondary/10 flex items-center justify-center">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-secondary">
+        <div class="w-10 h-10 rounded-lg bg-brand-500/10 flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-brand-400">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
             <polyline points="17 8 12 3 7 8"/>
             <line x1="12" x2="12" y1="3" y2="15"/>
@@ -144,18 +144,18 @@
             <a href="/files" class="flex items-center gap-4 px-5 py-3 hover:bg-base-300/50 transition-colors">
               <div class="w-10 h-10 rounded-lg bg-base-300 flex items-center justify-center flex-shrink-0">
                 {#if file.mime_type.startsWith('image/')}
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-purple-400">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-brand-400">
                     <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
                     <circle cx="9" cy="9" r="2"/>
                     <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
                   </svg>
                 {:else if file.mime_type.startsWith('video/')}
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-red-400">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-brand-300">
                     <path d="m22 8-6 4 6 4V8Z"/>
                     <rect width="14" height="12" x="2" y="6" rx="2" ry="2"/>
                   </svg>
                 {:else if file.mime_type.includes('pdf')}
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-red-500">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-brand-500">
                     <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
                     <polyline points="14 2 14 8 20 8"/>
                     <path d="M10 13v-1a2 2 0 0 1 2-2h1"/>
