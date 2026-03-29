@@ -46,7 +46,7 @@
 <svelte:window on:click={handleClickOutside} />
 
 <header
-	class="flex h-16 items-center gap-3 border-b border-base-300/80 bg-base-100/90 px-4 backdrop-blur-xl lg:px-6"
+	class="relative z-[90] flex h-16 items-center gap-3 border-b border-base-300/80 bg-base-100/90 px-4 backdrop-blur-xl lg:px-6"
 >
 	<div class="flex items-center gap-2">
 		<button
