@@ -5,10 +5,11 @@
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
 	import { replicationStateBadgeClass, formatReplicationStateLabel } from '$lib/stores/replication';
 	import { formatFileSize, formatDate } from '$lib/utils/format';
-	import { MoreVertical, Edit, Trash2, Share2, Move, Download, History, RefreshCw } from 'lucide-svelte';
+	import { MoreVertical, Edit, Trash2, Share2, Move, Download, History, RefreshCw, RotateCcw, Star } from 'lucide-svelte';
 
 	export let item: FileType | Folder;
 	export let isFolder: boolean;
+	export let workspaceMode: 'all' | 'photos' | 'recent' | 'starred' | 'deleted' = 'all';
 	export let selected: boolean = false;
 	export let selectionMode: boolean = false;
 	export let replicationStatus: ReplicationStatus | null = null;
@@ -18,6 +19,9 @@
 	export let onToggle: () => void = () => {};
 	export let onRename: () => void = () => {};
 	export let onDelete: () => void = () => {};
+	export let onToggleStar: () => void = () => {};
+	export let onRestore: () => void = () => {};
+	export let onPermanentDelete: () => void = () => {};
 	export let onShare: () => void = () => {};
 	export let onMove: () => void = () => {};
 	export let onDownload: () => void = () => {};
@@ -27,8 +31,11 @@
 	$: fileItem = isFolder ? null : (item as FileType);
 	$: displaySize = isFolder ? null : formatFileSize(fileItem?.size || 0);
 	$: displayDate = formatDate(
-		isFolder ? (item as Folder).updated_at : (item as FileType).modified_at
+		workspaceMode === 'deleted'
+			? (item.deleted_at ?? (isFolder ? (item as Folder).updated_at : (item as FileType).modified_at))
+			: (isFolder ? (item as Folder).updated_at : (item as FileType).modified_at)
 	);
+	$: isStarred = Boolean(item?.starred_at);
 
 	let showActions = false;
 	let tileRef: HTMLDivElement;
@@ -38,6 +45,8 @@
 			onToggle();
 			return;
 		}
+		if (workspaceMode === 'deleted') return;
+		if (isFolder && workspaceMode !== 'all') return;
 
 		onSelect(e);
 	}
@@ -98,72 +107,100 @@
 				class="absolute right-0 top-full z-50 mt-1 w-40 rounded-xl border border-base-300 bg-base-100 py-1 shadow-lg shadow-black/20"
 				on:click|stopPropagation
 			>
-				<button
-					type="button"
-					class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-					on:click|stopPropagation={() => handleAction(onRename)}
-				>
-					<Edit size={14} />
-					Rename
-				</button>
-				<button
-					type="button"
-					class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-					on:click|stopPropagation={() => handleAction(onShare)}
-				>
-					<Share2 size={14} />
-					Share
-				</button>
-				{#if !isFolder}
+				{#if workspaceMode === 'deleted'}
 					<button
 						type="button"
 						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-						on:click|stopPropagation={() => handleAction(onDownload)}
+						on:click|stopPropagation={() => handleAction(onRestore)}
 					>
-						<Download size={14} />
-						Download
+						<RotateCcw size={14} />
+						Restore
+					</button>
+					<div class="border-t border-base-200 my-1"></div>
+					<button
+						type="button"
+						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-error hover:bg-error/10 transition-colors text-left"
+						on:click|stopPropagation={() => handleAction(onPermanentDelete)}
+					>
+						<Trash2 size={14} />
+						Delete permanently
+					</button>
+				{:else}
+					<button
+						type="button"
+						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
+						on:click|stopPropagation={() => handleAction(onRename)}
+					>
+						<Edit size={14} />
+						Rename
 					</button>
 					<button
 						type="button"
 						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-						on:click|stopPropagation={() => handleAction(onVersionHistory)}
+						on:click|stopPropagation={() => handleAction(onToggleStar)}
 					>
-						<History size={14} />
-						Version history
+						<Star size={14} />
+						{isStarred ? 'Remove star' : 'Add to starred'}
 					</button>
 					<button
 						type="button"
 						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-						on:click|stopPropagation={() => handleAction(onReplace)}
+						on:click|stopPropagation={() => handleAction(onShare)}
 					>
-						<RefreshCw size={14} />
-						Replace file
+						<Share2 size={14} />
+						Share
+					</button>
+					{#if !isFolder}
+						<button
+							type="button"
+							class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
+							on:click|stopPropagation={() => handleAction(onDownload)}
+						>
+							<Download size={14} />
+							Download
+						</button>
+						<button
+							type="button"
+							class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
+							on:click|stopPropagation={() => handleAction(onVersionHistory)}
+						>
+							<History size={14} />
+							Version history
+						</button>
+						<button
+							type="button"
+							class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
+							on:click|stopPropagation={() => handleAction(onReplace)}
+						>
+							<RefreshCw size={14} />
+							Replace file
+						</button>
+					{/if}
+					<button
+						type="button"
+						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
+						on:click|stopPropagation={() => handleAction(onMove)}
+					>
+						<Move size={14} />
+						Move
+					</button>
+					<div class="border-t border-base-200 my-1"></div>
+					<button
+						type="button"
+						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-error hover:bg-error/10 transition-colors text-left"
+						on:click|stopPropagation={() => handleAction(onDelete)}
+					>
+						<Trash2 size={14} />
+						Delete
 					</button>
 				{/if}
-				<button
-					type="button"
-					class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-					on:click|stopPropagation={() => handleAction(onMove)}
-				>
-					<Move size={14} />
-					Move
-				</button>
-				<div class="border-t border-base-200 my-1"></div>
-				<button
-					type="button"
-					class="w-full flex items-center gap-2 px-3 py-2 text-sm text-error hover:bg-error/10 transition-colors text-left"
-					on:click|stopPropagation={() => handleAction(onDelete)}
-				>
-					<Trash2 size={14} />
-					Delete
-				</button>
 			</div>
 		{/if}
 	</div>
 
 	<!-- Preview -->
 	<div class="mb-4 flex aspect-[4/3] items-center justify-center rounded-xl border border-base-300/60 bg-base-100/80 p-3">
-		<FilePreview {item} {isFolder} size="xl" showThumbnail={!isFolder} />
+		<FilePreview {item} {isFolder} size="xl" showThumbnail={!isFolder && workspaceMode !== 'deleted'} />
 	</div>
 
 	<!-- Info -->
@@ -179,6 +216,9 @@
 					shareExpiresAt={item.share_expires_at || null}
 					size="sm"
 				/>
+			{/if}
+			{#if isStarred}
+				<Star size={14} class="text-brand-500" />
 			{/if}
 		</div>
 

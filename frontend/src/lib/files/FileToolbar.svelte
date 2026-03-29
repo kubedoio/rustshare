@@ -5,6 +5,8 @@
 	export let title = 'All files';
 	export let description = '';
 	export let canCreateFolder = true;
+	export let canUpload = true;
+	export let allowSelectionMode = true;
 	export let selectionMode = false;
 	export let onToggleSelection: () => void;
 	export let onSelectAll: () => void;
@@ -226,32 +228,36 @@
 			{/if}
 
 			<!-- Upload button -->
-			<button
-				type="button"
-				class="flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-1.5 text-sm font-medium text-white shadow-sm shadow-brand-500/20 transition-colors hover:bg-brand-600"
-				on:click={onUpload}
-				disabled={isUploading}
-			>
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
-					<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-					<polyline points="17 8 12 3 7 8"/>
-					<line x1="12" x2="12" y1="3" y2="15"/>
-				</svg>
-				<span class="hidden sm:inline">Upload</span>
-			</button>
+			{#if canUpload}
+				<button
+					type="button"
+					class="flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-1.5 text-sm font-medium text-white shadow-sm shadow-brand-500/20 transition-colors hover:bg-brand-600"
+					on:click={onUpload}
+					disabled={isUploading}
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+						<polyline points="17 8 12 3 7 8"/>
+						<line x1="12" x2="12" y1="3" y2="15"/>
+					</svg>
+					<span class="hidden sm:inline">Upload</span>
+				</button>
+			{/if}
 
 			<!-- Selection mode button -->
-			<button
-				type="button"
-				class="rounded-xl border border-base-300/70 bg-base-100 p-1.5 text-base-content/60 transition-colors hover:border-brand-500/20 hover:text-base-content"
-				on:click={onToggleSelection}
-				aria-label="Select multiple"
-			>
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
-					<path d="M9 12l2 2 4-4"/>
-					<circle cx="12" cy="12" r="10"/>
-				</svg>
-			</button>
+			{#if allowSelectionMode}
+				<button
+					type="button"
+					class="rounded-xl border border-base-300/70 bg-base-100 p-1.5 text-base-content/60 transition-colors hover:border-brand-500/20 hover:text-base-content"
+					on:click={onToggleSelection}
+					aria-label="Select multiple"
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
+						<path d="M9 12l2 2 4-4"/>
+						<circle cx="12" cy="12" r="10"/>
+					</svg>
+				</button>
+			{/if}
 		{/if}
 	</div>
 </div>

@@ -1,8 +1,17 @@
 import { apiClient } from "./client";
 import type { File, FileVersion } from "./types";
+import type { FolderContents } from "./folders";
 
 export async function listAllFiles(): Promise<File[]> {
   return apiClient.get<File[]>("/files");
+}
+
+export async function getStarredContents(): Promise<FolderContents> {
+  return apiClient.get<FolderContents>("/files/starred");
+}
+
+export async function getDeletedContents(): Promise<FolderContents> {
+  return apiClient.get<FolderContents>("/files/deleted");
 }
 
 export async function uploadFile(
@@ -55,6 +64,18 @@ export async function moveFile(
 
 export async function deleteFile(fileId: string): Promise<void> {
   return apiClient.delete<void>(`/files/${fileId}`);
+}
+
+export async function permanentlyDeleteFile(fileId: string): Promise<void> {
+  return apiClient.delete<void>(`/files/${fileId}/permanent`);
+}
+
+export async function restoreFileFromTrash(fileId: string): Promise<void> {
+  return apiClient.post<void>(`/files/${fileId}/restore-from-trash`, null);
+}
+
+export async function setFileStarred(fileId: string, starred: boolean): Promise<void> {
+  return apiClient.patch<void>(`/files/${fileId}/star`, { starred });
 }
 
 export async function updateFile(

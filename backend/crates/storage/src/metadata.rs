@@ -648,8 +648,8 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         sqlx::query(
             r#"
-            INSERT INTO files (id, name, path, size, mime_type, content_hash, storage_key, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            INSERT INTO files (id, name, path, size, mime_type, content_hash, storage_key, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id, starred_at, deleted_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULL, NULL)
             "#,
         )
         .bind(file.id)
@@ -675,7 +675,7 @@ impl MetadataStore {
     pub async fn find_file_by_id(&self, id: Uuid) -> Result<Option<File>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id FROM files WHERE id = $1"#,
+            r#"SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id FROM files WHERE id = $1 AND deleted_at IS NULL"#,
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -708,7 +708,7 @@ impl MetadataStore {
             r#"
             SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id
             FROM files
-            WHERE path = $1 AND owner_id = $2
+            WHERE path = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(path)
@@ -767,8 +767,13 @@ impl MetadataStore {
 
     /// Delete a file from the projection table
     pub async fn delete_file(&self, id: Uuid) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query("DELETE FROM files WHERE id = $1")
+        sqlx::query(
+            r#"
+            UPDATE files
+            SET deleted_at = NOW(), starred_at = NULL
+            WHERE id = $1 AND deleted_at IS NULL
+            "#,
+        )
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -786,7 +791,10 @@ impl MetadataStore {
             r#"
             SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id
             FROM files
-            WHERE owner_id = $1 AND tenant_id = $2 AND (parent_folder_id = $3 OR ($3 IS NULL AND parent_folder_id IS NULL))
+            WHERE owner_id = $1
+              AND tenant_id = $2
+              AND deleted_at IS NULL
+              AND (parent_folder_id = $3 OR ($3 IS NULL AND parent_folder_id IS NULL))
             ORDER BY name ASC
             "#,
         )
@@ -816,6 +824,106 @@ impl MetadataStore {
         }
 
         Ok(files)
+    }
+
+    pub async fn set_file_starred(&self, id: Uuid, owner_id: Uuid, starred: bool) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE files
+            SET starred_at = CASE WHEN $3 THEN NOW() ELSE NULL END
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(id)
+        .bind(owner_id)
+        .bind(starred)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn restore_file(&self, id: Uuid, owner_id: Uuid, tenant_id: Uuid) -> Result<bool> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, parent_folder_id
+            FROM files
+            WHERE id = $1 AND owner_id = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL
+            "#,
+        )
+        .bind(id)
+        .bind(owner_id)
+        .bind(tenant_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(false);
+        };
+
+        let name: String = row.try_get("name")?;
+        let parent_folder_id: Option<Uuid> = row.try_get("parent_folder_id")?;
+
+        let parent_path = if let Some(parent_id) = parent_folder_id {
+            sqlx::query_scalar::<_, String>(
+                r#"
+                SELECT path
+                FROM folders
+                WHERE id = $1 AND owner_id = $2 AND tenant_id = $3 AND deleted_at IS NULL
+                "#,
+            )
+            .bind(parent_id)
+            .bind(owner_id)
+            .bind(tenant_id)
+            .fetch_optional(&self.pool)
+            .await?
+        } else {
+            None
+        };
+
+        let restored_parent_id = if parent_path.is_some() {
+            parent_folder_id
+        } else {
+            None
+        };
+        let restored_path = if let Some(parent_path) = parent_path {
+            if parent_path == "/" {
+                format!("/{}", name)
+            } else {
+                format!("{}/{}", parent_path.trim_end_matches('/'), name)
+            }
+        } else {
+            format!("/{}", name)
+        };
+
+        let result = sqlx::query(
+            r#"
+            UPDATE files
+            SET deleted_at = NULL, parent_folder_id = $2, path = $3
+            WHERE id = $1 AND owner_id = $4 AND tenant_id = $5 AND deleted_at IS NOT NULL
+            "#,
+        )
+        .bind(id)
+        .bind(restored_parent_id)
+        .bind(restored_path)
+        .bind(owner_id)
+        .bind(tenant_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn permanently_delete_file(&self, id: Uuid, owner_id: Uuid) -> Result<bool> {
+        let result = sqlx::query(
+            "DELETE FROM files WHERE id = $1 AND owner_id = $2 AND deleted_at IS NOT NULL",
+        )
+        .bind(id)
+        .bind(owner_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
     }
 
     /// Create a new file version in the projection table
@@ -1271,8 +1379,8 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         sqlx::query(
             r#"
-            INSERT INTO folders (id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO folders (id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id, starred_at, deleted_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, NULL)
             "#,
         )
         .bind(folder.id)
@@ -1296,7 +1404,7 @@ impl MetadataStore {
             r#"
             SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id
             FROM folders
-            WHERE id = $1
+            WHERE id = $1 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
@@ -1327,7 +1435,7 @@ impl MetadataStore {
             r#"
             SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id
             FROM folders
-            WHERE path = $1 AND owner_id = $2
+            WHERE path = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(path)
@@ -1377,11 +1485,27 @@ impl MetadataStore {
 
     /// Delete a folder from the projection table
     pub async fn delete_folder(&self, id: Uuid) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query("DELETE FROM folders WHERE id = $1")
+        sqlx::query(
+            r#"
+            UPDATE folders
+            SET deleted_at = NOW(), starred_at = NULL
+            WHERE id = $1 AND deleted_at IS NULL
+            "#,
+        )
             .bind(id)
             .execute(&self.pool)
             .await?;
+
+        sqlx::query(
+            r#"
+            UPDATE files
+            SET deleted_at = COALESCE(deleted_at, NOW()), starred_at = NULL
+            WHERE parent_folder_id = $1 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -1401,7 +1525,10 @@ impl MetadataStore {
             r#"
             SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id
             FROM folders
-            WHERE owner_id = $1 AND tenant_id = $2 AND (parent_folder_id = $3 OR ($3 IS NULL AND parent_folder_id IS NULL))
+            WHERE owner_id = $1
+              AND tenant_id = $2
+              AND deleted_at IS NULL
+              AND (parent_folder_id = $3 OR ($3 IS NULL AND parent_folder_id IS NULL))
             ORDER BY name ASC
             "#,
         )
@@ -1430,6 +1557,169 @@ impl MetadataStore {
         Ok(folders)
     }
 
+    pub async fn set_folder_starred(&self, id: Uuid, owner_id: Uuid, starred: bool) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE folders
+            SET starred_at = CASE WHEN $3 THEN NOW() ELSE NULL END
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(id)
+        .bind(owner_id)
+        .bind(starred)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn restore_folder(&self, id: Uuid, owner_id: Uuid, tenant_id: Uuid) -> Result<bool> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, path, parent_folder_id
+            FROM folders
+            WHERE id = $1 AND owner_id = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL
+            "#,
+        )
+        .bind(id)
+        .bind(owner_id)
+        .bind(tenant_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(false);
+        };
+
+        let name: String = row.try_get("name")?;
+        let old_path: String = row.try_get("path")?;
+        let parent_folder_id: Option<Uuid> = row.try_get("parent_folder_id")?;
+
+        let parent_row = if let Some(parent_id) = parent_folder_id {
+            sqlx::query(
+                r#"
+                SELECT id, path
+                FROM folders
+                WHERE id = $1 AND owner_id = $2 AND tenant_id = $3 AND deleted_at IS NULL
+                "#,
+            )
+            .bind(parent_id)
+            .bind(owner_id)
+            .bind(tenant_id)
+            .fetch_optional(&self.pool)
+            .await?
+        } else {
+            None
+        };
+
+        let restored_parent_id: Option<Uuid> = parent_row
+            .as_ref()
+            .and_then(|value| value.try_get("id").ok());
+        let restored_path = if let Some(parent_row) = &parent_row {
+            let parent_path: String = parent_row.try_get("path")?;
+            if parent_path == "/" {
+                format!("/{}", name)
+            } else {
+                format!("{}/{}", parent_path.trim_end_matches('/'), name)
+            }
+        } else {
+            format!("/{}", name)
+        };
+
+        let duplicate = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT COUNT(*)
+            FROM folders
+            WHERE owner_id = $1
+              AND tenant_id = $2
+              AND deleted_at IS NULL
+              AND parent_folder_id IS NOT DISTINCT FROM $3
+              AND name = $4
+              AND id <> $5
+            "#,
+        )
+        .bind(owner_id)
+        .bind(tenant_id)
+        .bind(restored_parent_id)
+        .bind(&name)
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        if duplicate > 0 {
+            anyhow::bail!("A folder named `{}` already exists in the restore destination", name);
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE folders
+            SET deleted_at = NULL, parent_folder_id = $2, path = $3
+            WHERE id = $1 AND owner_id = $4 AND tenant_id = $5 AND deleted_at IS NOT NULL
+            "#,
+        )
+        .bind(id)
+        .bind(restored_parent_id)
+        .bind(&restored_path)
+        .bind(owner_id)
+        .bind(tenant_id)
+        .execute(&self.pool)
+        .await?;
+
+        let old_prefix = format!("{}/%", old_path.trim_end_matches('/'));
+        let new_prefix = format!("{}/", restored_path.trim_end_matches('/'));
+
+        sqlx::query(
+            r#"
+            UPDATE folders
+            SET deleted_at = NULL,
+                path = $2 || substr(path, length($3) + 1)
+            WHERE owner_id = $1
+              AND tenant_id = $4
+              AND path LIKE $5
+            "#,
+        )
+        .bind(owner_id)
+        .bind(&new_prefix)
+        .bind(&old_path)
+        .bind(tenant_id)
+        .bind(&old_prefix)
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            UPDATE files
+            SET deleted_at = NULL,
+                path = $2 || substr(path, length($3) + 1)
+            WHERE owner_id = $1
+              AND tenant_id = $4
+              AND path LIKE $5
+            "#,
+        )
+        .bind(owner_id)
+        .bind(&new_prefix)
+        .bind(&old_path)
+        .bind(tenant_id)
+        .bind(&old_prefix)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(true)
+    }
+
+    pub async fn permanently_delete_folder(&self, id: Uuid, owner_id: Uuid) -> Result<bool> {
+        let result = sqlx::query(
+            "DELETE FROM folders WHERE id = $1 AND owner_id = $2 AND deleted_at IS NOT NULL",
+        )
+        .bind(id)
+        .bind(owner_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Find all descendant folders of a given folder using recursive CTE
     ///
     /// Returns all folders in the subtree rooted at the specified folder,
@@ -1442,7 +1732,7 @@ impl MetadataStore {
                 -- Base case: start with the specified folder
                 SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id
                 FROM folders
-                WHERE id = $1
+                WHERE id = $1 AND deleted_at IS NULL
 
                 UNION ALL
 
@@ -1450,6 +1740,7 @@ impl MetadataStore {
                 SELECT f.id, f.name, f.path, f.parent_folder_id, f.owner_id, f.created_at, f.updated_at, f.tenant_id
                 FROM folders f
                 INNER JOIN folder_tree ft ON f.parent_folder_id = ft.id
+                WHERE f.deleted_at IS NULL
             )
             SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id
             FROM folder_tree

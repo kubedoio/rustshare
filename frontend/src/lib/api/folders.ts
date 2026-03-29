@@ -64,3 +64,15 @@ export async function moveFolder(folderId: string, targetFolderId: string | null
 export async function deleteFolder(folderId: string): Promise<void> {
   return apiClient.delete<void>(`/folders/${folderId}`);
 }
+
+export async function permanentlyDeleteFolder(folderId: string): Promise<void> {
+  return apiClient.delete<void>(`/folders/${folderId}/permanent`);
+}
+
+export async function restoreFolderFromTrash(folderId: string): Promise<void> {
+  return apiClient.post<void>(`/folders/${folderId}/restore-from-trash`, null);
+}
+
+export async function setFolderStarred(folderId: string, starred: boolean): Promise<void> {
+  return apiClient.patch<void>(`/folders/${folderId}/star`, { starred });
+}

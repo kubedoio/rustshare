@@ -644,6 +644,8 @@ pub struct FileWithShares {
     pub current_version: i32,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub modified_at: chrono::DateTime<chrono::Utc>,
+    pub starred_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
     // Share info
     pub is_shared: bool,
     pub share_count: i64,
@@ -666,7 +668,7 @@ pub async fn list_files(
         SELECT
             f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
-            f.created_at, f.modified_at,
+            f.created_at, f.modified_at, f.starred_at, f.deleted_at,
             EXISTS(
                 SELECT 1 FROM shares
                 WHERE file_id = f.id
@@ -685,13 +687,230 @@ pub async fn list_files(
             ) as share_expires_at
         FROM files f
         WHERE f.owner_id = $1
+          AND f.tenant_id = $2
+          AND f.deleted_at IS NULL
         ORDER BY f.created_at DESC
         "#,
     )
     .bind(auth.user_id)
+    .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
     .map_err(|e| file_error_response(FileError::Storage(format!("Failed to list files: {}", e))))?;
 
     Ok(Json(files))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkspaceStarRequest {
+    pub starred: bool,
+}
+
+pub async fn toggle_file_star(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(file_id): Path<Uuid>,
+    Json(req): Json<WorkspaceStarRequest>,
+) -> Result<StatusCode, Response> {
+    let updated = state
+        .metadata_store
+        .set_file_starred(file_id, auth.user_id, req.starred)
+        .await
+        .map_err(|e| file_error_response(FileError::Storage(format!("Failed to update star state: {}", e))))?;
+
+    if !updated {
+        return Err(file_error_response(FileError::NotFound(file_id)));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn restore_file_from_trash(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(file_id): Path<Uuid>,
+) -> Result<StatusCode, Response> {
+    let restored = state
+        .metadata_store
+        .restore_file(file_id, auth.user_id, auth.tenant_id)
+        .await
+        .map_err(|e| file_error_response(FileError::Storage(format!("Failed to restore file: {}", e))))?;
+
+    if !restored {
+        return Err(file_error_response(FileError::NotFound(file_id)));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn permanently_delete_file(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(file_id): Path<Uuid>,
+) -> Result<StatusCode, Response> {
+    let deleted = state
+        .metadata_store
+        .permanently_delete_file(file_id, auth.user_id)
+        .await
+        .map_err(|e| file_error_response(FileError::Storage(format!("Failed to permanently delete file: {}", e))))?;
+
+    if !deleted {
+        return Err(file_error_response(FileError::NotFound(file_id)));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn list_starred_items(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+) -> Result<Json<crate::handlers::folders::FolderContentsWithShares>, Response> {
+    let folders = sqlx::query_as::<_, crate::handlers::folders::FolderWithShares>(
+        r#"
+        SELECT
+            f.id, f.name, f.path, f.parent_folder_id, f.owner_id,
+            f.created_at, f.updated_at, f.starred_at, f.deleted_at,
+            EXISTS(
+                SELECT 1 FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+            ) as is_shared,
+            (
+                SELECT COUNT(*) FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+            ) as share_count,
+            (
+                SELECT MIN(expires_at) FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+                AND expires_at IS NOT NULL
+            ) as share_expires_at
+        FROM folders f
+        WHERE f.owner_id = $1
+          AND f.tenant_id = $2
+          AND f.deleted_at IS NULL
+          AND f.starred_at IS NOT NULL
+        ORDER BY f.starred_at DESC NULLS LAST, f.name ASC
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(auth.tenant_id)
+    .fetch_all(&state.db_pool)
+    .await
+    .map_err(|e| file_error_response(FileError::Storage(format!("Failed to list starred folders: {}", e))))?;
+
+    let files = sqlx::query_as::<_, FileWithShares>(
+        r#"
+        SELECT
+            f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
+            f.parent_folder_id, f.owner_id, f.current_version,
+            f.created_at, f.modified_at, f.starred_at, f.deleted_at,
+            EXISTS(
+                SELECT 1 FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+            ) as is_shared,
+            (
+                SELECT COUNT(*) FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+            ) as share_count,
+            (
+                SELECT MIN(expires_at) FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+                AND expires_at IS NOT NULL
+            ) as share_expires_at
+        FROM files f
+        WHERE f.owner_id = $1
+          AND f.tenant_id = $2
+          AND f.deleted_at IS NULL
+          AND f.starred_at IS NOT NULL
+        ORDER BY f.starred_at DESC NULLS LAST, f.name ASC
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(auth.tenant_id)
+    .fetch_all(&state.db_pool)
+    .await
+    .map_err(|e| file_error_response(FileError::Storage(format!("Failed to list starred files: {}", e))))?;
+
+    Ok(Json(crate::handlers::folders::FolderContentsWithShares { folders, files }))
+}
+
+pub async fn list_deleted_items(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+) -> Result<Json<crate::handlers::folders::FolderContentsWithShares>, Response> {
+    let folders = sqlx::query_as::<_, crate::handlers::folders::FolderWithShares>(
+        r#"
+        SELECT
+            f.id, f.name, f.path, f.parent_folder_id, f.owner_id,
+            f.created_at, f.updated_at, f.starred_at, f.deleted_at,
+            EXISTS(
+                SELECT 1 FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+            ) as is_shared,
+            (
+                SELECT COUNT(*) FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+            ) as share_count,
+            (
+                SELECT MIN(expires_at) FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+                AND expires_at IS NOT NULL
+            ) as share_expires_at
+        FROM folders f
+        WHERE f.owner_id = $1
+          AND f.tenant_id = $2
+          AND f.deleted_at IS NOT NULL
+        ORDER BY f.deleted_at DESC NULLS LAST, f.name ASC
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(auth.tenant_id)
+    .fetch_all(&state.db_pool)
+    .await
+    .map_err(|e| file_error_response(FileError::Storage(format!("Failed to list deleted folders: {}", e))))?;
+
+    let files = sqlx::query_as::<_, FileWithShares>(
+        r#"
+        SELECT
+            f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
+            f.parent_folder_id, f.owner_id, f.current_version,
+            f.created_at, f.modified_at, f.starred_at, f.deleted_at,
+            EXISTS(
+                SELECT 1 FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+            ) as is_shared,
+            (
+                SELECT COUNT(*) FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+            ) as share_count,
+            (
+                SELECT MIN(expires_at) FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+                AND expires_at IS NOT NULL
+            ) as share_expires_at
+        FROM files f
+        WHERE f.owner_id = $1
+          AND f.tenant_id = $2
+          AND f.deleted_at IS NOT NULL
+        ORDER BY f.deleted_at DESC NULLS LAST, f.name ASC
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(auth.tenant_id)
+    .fetch_all(&state.db_pool)
+    .await
+    .map_err(|e| file_error_response(FileError::Storage(format!("Failed to list deleted files: {}", e))))?;
+
+    Ok(Json(crate::handlers::folders::FolderContentsWithShares { folders, files }))
 }

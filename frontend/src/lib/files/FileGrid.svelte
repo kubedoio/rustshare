@@ -9,14 +9,21 @@
 	export let emptyTitle = 'This folder is empty';
 	export let emptyDescription = 'Upload files or create folders to get started';
 	export let emptyActionLabel: string | null = 'Upload files';
+	export let workspaceMode: 'all' | 'photos' | 'recent' | 'starred' | 'deleted' = 'all';
 	export let onFolderClick: (folder: Folder) => void;
 	export let onFileClick: (file: FileType) => void;
 	export let onRenameFolder: (folder: Folder) => void = () => {};
 	export let onDeleteFolder: (folder: Folder) => void = () => {};
+	export let onToggleFolderStar: (folder: Folder) => void = () => {};
+	export let onRestoreFolder: (folder: Folder) => void = () => {};
+	export let onPermanentDeleteFolder: (folder: Folder) => void = () => {};
 	export let onShareFolder: (folder: Folder) => void = () => {};
 	export let onMoveFolder: (folder: Folder) => void = () => {};
 	export let onRenameFile: (file: FileType) => void = () => {};
 	export let onDeleteFile: (file: FileType) => void = () => {};
+	export let onToggleFileStar: (file: FileType) => void = () => {};
+	export let onRestoreFile: (file: FileType) => void = () => {};
+	export let onPermanentDeleteFile: (file: FileType) => void = () => {};
 	export let onShareFile: (file: FileType) => void = () => {};
 	export let onVersionHistory: (file: FileType) => void = () => {};
 	export let onMoveFile: (file: FileType) => void = () => {};
@@ -64,12 +71,16 @@
 			<FileGridTile
 				item={folder}
 				isFolder={true}
+				{workspaceMode}
 				selected={selectionMode && $selectionStore.selectedFolderIds.has(folder.id)}
 				{selectionMode}
 				onSelect={() => onFolderClick(folder)}
 				onToggle={() => handleFolderToggle(folder)}
 				onRename={() => onRenameFolder(folder)}
 				onDelete={() => onDeleteFolder(folder)}
+				onToggleStar={() => onToggleFolderStar(folder)}
+				onRestore={() => onRestoreFolder(folder)}
+				onPermanentDelete={() => onPermanentDeleteFolder(folder)}
 				onShare={() => onShareFolder(folder)}
 				onMove={() => onMoveFolder(folder)}
 			/>
@@ -80,6 +91,7 @@
 			<FileGridTile
 				item={file}
 				isFolder={false}
+				{workspaceMode}
 				selected={selectionMode && $selectionStore.selectedFileIds.has(file.id)}
 				{selectionMode}
 				replicationStatus={replicationStatuses[file.id]}
@@ -87,6 +99,9 @@
 				onToggle={() => handleFileToggle(file)}
 				onRename={() => onRenameFile(file)}
 				onDelete={() => onDeleteFile(file)}
+				onToggleStar={() => onToggleFileStar(file)}
+				onRestore={() => onRestoreFile(file)}
+				onPermanentDelete={() => onPermanentDeleteFile(file)}
 				onShare={() => onShareFile(file)}
 				onMove={() => onMoveFile(file)}
 				onDownload={() => onDownloadFile(file)}

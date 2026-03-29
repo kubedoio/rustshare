@@ -23,6 +23,8 @@ export interface File {
 	current_version: number;
 	created_at: string;
 	modified_at: string;
+	starred_at?: string | null;
+	deleted_at?: string | null;
 	// Share indicators
 	is_shared?: boolean;
 	share_count?: number;
@@ -38,6 +40,8 @@ export interface Folder {
 	owner_id: string;
 	created_at: string;
 	updated_at: string;
+	starred_at?: string | null;
+	deleted_at?: string | null;
 	// Share indicators
 	is_shared?: boolean;
 	share_count?: number;

@@ -594,10 +594,21 @@ async fn main() -> Result<()> {
         )
         // File routes (Task 15-19)
         .route("/api/v1/files", get(handlers::list_files))
+        .route("/api/v1/files/starred", get(handlers::list_starred_items))
+        .route("/api/v1/files/deleted", get(handlers::list_deleted_items))
         .route("/api/v1/files/upload", post(handlers::upload_file))
         .route("/api/v1/files/{id}", get(handlers::get_file))
         .route("/api/v1/files/{id}", put(handlers::update_file))
         .route("/api/v1/files/{id}", delete(handlers::delete_file))
+        .route("/api/v1/files/{id}/star", patch(handlers::toggle_file_star))
+        .route(
+            "/api/v1/files/{id}/restore-from-trash",
+            post(handlers::restore_file_from_trash),
+        )
+        .route(
+            "/api/v1/files/{id}/permanent",
+            delete(handlers::permanently_delete_file),
+        )
         .route("/api/v1/files/{id}/download", get(handlers::download_file))
         .route(
             "/api/v1/files/{id}/content",
@@ -843,6 +854,15 @@ async fn main() -> Result<()> {
         .route(
             "/api/v1/folders/{id}/contents",
             get(handlers::get_folder_contents),
+        )
+        .route("/api/v1/folders/{id}/star", patch(handlers::toggle_folder_star))
+        .route(
+            "/api/v1/folders/{id}/restore-from-trash",
+            post(handlers::restore_folder_from_trash),
+        )
+        .route(
+            "/api/v1/folders/{id}/permanent",
+            delete(handlers::permanently_delete_folder),
         )
         .route("/api/v1/folders/{id}/move", post(handlers::move_folder))
         .route("/api/v1/folders/{id}/rename", post(handlers::rename_folder))

@@ -1,7 +1,27 @@
 <script lang="ts">
 	import { createQuery, createMutation } from '@tanstack/svelte-query';
-	import { downloadFile, uploadFile, renameFile, deleteFile, moveFile } from '$lib/api/files';
-	import { getFolderContents, createFolder, renameFolder, deleteFolder, moveFolder } from '$lib/api/folders';
+	import {
+		deleteFile,
+		downloadFile,
+		getDeletedContents,
+		getStarredContents,
+		moveFile,
+		permanentlyDeleteFile,
+		renameFile,
+		restoreFileFromTrash,
+		setFileStarred,
+		uploadFile
+	} from '$lib/api/files';
+	import {
+		createFolder,
+		deleteFolder,
+		getFolderContents,
+		moveFolder,
+		permanentlyDeleteFolder,
+		renameFolder,
+		restoreFolderFromTrash,
+		setFolderStarred
+	} from '$lib/api/folders';
 	import { queryClient } from '$lib/query-client';
 	import { searchQuery } from '$lib/stores/search';
 	import { fileSortState } from '$lib/stores/fileSort';
@@ -74,18 +94,21 @@
 	let toastMessage = '';
 	let toastType: 'success' | 'error' | 'info' = 'info';
 
-	// Query for folder contents
+	// Query for the active workspace view
 	$: filesQuery = createQuery({
-		queryKey: ['folder-contents', currentFolderId],
-		queryFn: () => getFolderContents(currentFolderId)
+		queryKey: ['file-workspace', workspaceMode, currentFolderId],
+		queryFn: () => {
+			if (workspaceMode === 'starred') return getStarredContents();
+			if (workspaceMode === 'deleted') return getDeletedContents();
+			return getFolderContents(currentFolderId);
+		}
 	});
 
 	// Mutations
 	const uploadMutation = createMutation({
 		mutationFn: (file: globalThis.File) => uploadFile(currentFolderId, file),
 		onSuccess: (_, file) => {
-			queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
-			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			activityStore.addActivity('file_uploaded', file.name);
 		}
 	});
@@ -93,8 +116,7 @@
 	const createFolderMutation = createMutation({
 		mutationFn: (name: string) => createFolder(name, currentFolderId),
 		onSuccess: (folder) => {
-			queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
-			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			showCreateFolderModal = false;
 			showNotification('Folder created', 'success');
 			activityStore.addActivity('folder_created', folder.name);
@@ -108,7 +130,7 @@
 		mutationFn: ({ fileId, newName }: { fileId: string; newName: string }) => renameFile(fileId, newName),
 		onSuccess: (_, { newName }) => {
 			const oldName = renameTarget?.name || 'File';
-			queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			showRenameModal = false;
 			renameTarget = null;
 			showNotification('File renamed', 'success');
@@ -120,8 +142,7 @@
 		mutationFn: ({ folderId, newName }: { folderId: string; newName: string }) => renameFolder(folderId, newName),
 		onSuccess: (_, { newName }) => {
 			const oldName = renameTarget?.name || 'Folder';
-			queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
-			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			showRenameModal = false;
 			renameTarget = null;
 			showNotification('Folder renamed', 'success');
@@ -133,10 +154,10 @@
 		mutationFn: (fileId: string) => deleteFile(fileId),
 		onSuccess: (_, fileId) => {
 			const fileName = deleteTarget?.name || 'File';
-			queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			showDeleteModal = false;
 			deleteTarget = null;
-			showNotification('File deleted', 'success');
+			showNotification('File moved to deleted', 'success');
 			activityStore.addActivity('file_deleted', fileName);
 		}
 	});
@@ -145,11 +166,10 @@
 		mutationFn: (folderId: string) => deleteFolder(folderId),
 		onSuccess: () => {
 			const folderName = deleteTarget?.name || 'Folder';
-			queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
-			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			showDeleteModal = false;
 			deleteTarget = null;
-			showNotification('Folder deleted', 'success');
+			showNotification('Folder moved to deleted', 'success');
 			activityStore.addActivity('folder_deleted', folderName);
 		}
 	});
@@ -158,8 +178,7 @@
 		mutationFn: ({ fileId, targetFolderId }: { fileId: string; targetFolderId: string | null }) => moveFile(fileId, targetFolderId),
 		onSuccess: () => {
 			const fileName = moveTarget?.name || 'File';
-			queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
-			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			showMoveModal = false;
 			moveTarget = null;
 			showNotification('File moved', 'success');
@@ -171,12 +190,67 @@
 		mutationFn: ({ folderId, targetFolderId }: { folderId: string; targetFolderId: string | null }) => moveFolder(folderId, targetFolderId),
 		onSuccess: () => {
 			const folderName = moveTarget?.name || 'Folder';
-			queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
-			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			showMoveModal = false;
 			moveTarget = null;
 			showNotification('Folder moved', 'success');
 			activityStore.addActivity('folder_moved', folderName);
+		}
+	});
+
+	const fileStarMutation = createMutation({
+		mutationFn: ({ fileId, starred }: { fileId: string; starred: boolean }) =>
+			setFileStarred(fileId, starred),
+		onSuccess: (_, variables) => {
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			showNotification(
+				variables.starred ? 'File added to starred' : 'File removed from starred',
+				'success'
+			);
+		}
+	});
+
+	const folderStarMutation = createMutation({
+		mutationFn: ({ folderId, starred }: { folderId: string; starred: boolean }) =>
+			setFolderStarred(folderId, starred),
+		onSuccess: (_, variables) => {
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			showNotification(
+				variables.starred ? 'Folder added to starred' : 'Folder removed from starred',
+				'success'
+			);
+		}
+	});
+
+	const restoreFileMutation = createMutation({
+		mutationFn: (fileId: string) => restoreFileFromTrash(fileId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			showNotification('File restored', 'success');
+		}
+	});
+
+	const restoreFolderMutation = createMutation({
+		mutationFn: (folderId: string) => restoreFolderFromTrash(folderId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			showNotification('Folder restored', 'success');
+		}
+	});
+
+	const permanentlyDeleteFileMutation = createMutation({
+		mutationFn: (fileId: string) => permanentlyDeleteFile(fileId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			showNotification('File deleted permanently', 'success');
+		}
+	});
+
+	const permanentlyDeleteFolderMutation = createMutation({
+		mutationFn: (folderId: string) => permanentlyDeleteFolder(folderId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			showNotification('Folder deleted permanently', 'success');
 		}
 	});
 
@@ -203,12 +277,13 @@
 	$: baseFolders = ($filesQuery.data?.folders || []).filter((folder) => matchesSearch(folder.name));
 	$: baseFiles = ($filesQuery.data?.files || []).filter((file) => matchesSearch(file.name));
 
-	$: filteredFolders = workspaceMode === 'all' ? baseFolders : [];
+	$: filteredFolders =
+		workspaceMode === 'all' || workspaceMode === 'starred' || workspaceMode === 'deleted'
+			? baseFolders
+			: [];
 	$: filteredFiles = workspaceMode === 'photos'
 		? baseFiles.filter((file) => file.mime_type.startsWith('image/'))
-		: workspaceMode === 'starred' || workspaceMode === 'deleted'
-			? []
-			: baseFiles;
+		: baseFiles;
 
 	$: sortedFolders = [...filteredFolders].sort((a, b) => {
 		if (activeSortField === 'name') {
@@ -257,9 +332,9 @@
 			: workspaceMode === 'recent'
 				? 'The latest changes in this workspace, sorted by most recent first.'
 				: workspaceMode === 'starred'
-					? 'Saved shortcuts will land here once starring is wired through the backend.'
+					? 'Pinned folders and files that need fast access without digging through the tree.'
 					: workspaceMode === 'deleted'
-						? 'Recoverable items will show up here when trash support is live.'
+						? 'Recently deleted items live here until you restore them or remove them permanently.'
 						: 'Folders and files, tuned for quick scanning instead of dashboard theater.';
 
 	$: workspaceEmptyTitle =
@@ -268,9 +343,9 @@
 			: workspaceMode === 'recent'
 				? 'No recent file activity'
 				: workspaceMode === 'starred'
-					? 'Starred files are not available yet'
+					? 'Nothing is starred yet'
 					: workspaceMode === 'deleted'
-						? 'Deleted files are not available yet'
+						? 'Deleted items will show up here'
 						: 'No files yet';
 
 	$: workspaceEmptyDescription =
@@ -279,9 +354,9 @@
 			: workspaceMode === 'recent'
 				? 'Modify or upload a file and it will show up here.'
 				: workspaceMode === 'starred'
-					? 'The sidebar link is ready, but the actual starring model still needs backend support.'
+					? 'Star a folder or file from its action menu and it will show up here.'
 					: workspaceMode === 'deleted'
-						? 'Trash and restore still need backend support before this view can become real.'
+						? 'Deleting a folder or file moves it here instead of removing it immediately.'
 						: 'Upload your first file or create a folder to get started.';
 
 	$: workspaceEmptyActionLabel =
@@ -292,6 +367,12 @@
 	$: showFolderTree = workspaceMode === 'all';
 	$: showBreadcrumbs = workspaceMode === 'all';
 	$: canCreateFolder = workspaceMode === 'all';
+	$: canUpload = workspaceMode === 'all' || workspaceMode === 'photos' || workspaceMode === 'recent';
+	$: allowSelectionMode = workspaceMode !== 'deleted';
+	$: if (!allowSelectionMode && selectionMode) {
+		selectionMode = false;
+		selectionStore.clear();
+	}
 
 	// Handlers
 	function handleFolderSelect(folderId: string | null, path: Folder[]) {
@@ -319,6 +400,7 @@
 	}
 
 	function handleFileClick(file: File) {
+		if (workspaceMode === 'deleted') return;
 		previewTarget = file;
 		showFilePreviewModal = true;
 	}
@@ -330,6 +412,7 @@
 	}
 
 	async function handleFilesSelected(files: globalThis.File[]) {
+		if (!canUpload) return;
 		if (files.length === 0) return;
 
 		const newTasks: UploadTask[] = files.map(file => ({
@@ -473,8 +556,7 @@
 			for (const folderId of folderIds) await deleteFolder(folderId);
 			selectionStore.clear();
 			selectionMode = false;
-			queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
-			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			showNotification(`Deleted ${fileIds.length + folderIds.length} item(s)`, 'success');
 		} catch (error) {
 			showNotification('Failed to delete some items', 'error');
@@ -547,8 +629,7 @@
 					await moveFile(fileId, event.detail.targetFolderId);
 				}
 
-				queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
-				queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
+				queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 				selectionStore.clear();
 				selectionMode = false;
 				showNotification(`Moved ${bulkMoveFileIds.length} selected file${bulkMoveFileIds.length === 1 ? '' : 's'}`, 'success');
@@ -595,6 +676,7 @@
 	}
 
 	async function handleDownloadFile(file: File) {
+		if (workspaceMode === 'deleted') return;
 		try {
 			const response = await downloadFile(file.id);
 			let downloadUrl = response.url;
@@ -616,7 +698,7 @@
 	}
 
 	function handleReplaceSuccess() {
-		queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 		const fileName = replaceFileTarget?.name || 'File';
 		showNotification(`${fileName} was modified`, 'success');
 		if (replaceFileTarget) {
@@ -631,8 +713,34 @@
 	}
 
 	function handleVersionRestored() {
-		queryClient.invalidateQueries({ queryKey: ['folder-contents', currentFolderId] });
+		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 		showNotification('File version restored', 'success');
+	}
+
+	function handleToggleFileStar(file: File) {
+		$fileStarMutation.mutate({ fileId: file.id, starred: !file.starred_at });
+	}
+
+	function handleToggleFolderStar(folder: Folder) {
+		$folderStarMutation.mutate({ folderId: folder.id, starred: !folder.starred_at });
+	}
+
+	function handleRestoreFile(file: File) {
+		$restoreFileMutation.mutate(file.id);
+	}
+
+	function handleRestoreFolder(folder: Folder) {
+		$restoreFolderMutation.mutate(folder.id);
+	}
+
+	function handlePermanentDeleteFile(file: File) {
+		if (!confirm(`Permanently delete ${file.name}? This cannot be undone.`)) return;
+		$permanentlyDeleteFileMutation.mutate(file.id);
+	}
+
+	function handlePermanentDeleteFolder(folder: Folder) {
+		if (!confirm(`Permanently delete ${folder.name} and everything inside it? This cannot be undone.`)) return;
+		$permanentlyDeleteFolderMutation.mutate(folder.id);
 	}
 
 	// Keyboard shortcuts
@@ -640,6 +748,7 @@
 		if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
 
 		if (event.key === 'a' && (event.ctrlKey || event.metaKey)) {
+			if (!allowSelectionMode) return;
 			event.preventDefault();
 			if (!selectionMode) selectionMode = true;
 			handleSelectAll();
@@ -666,10 +775,12 @@
 
 		switch (event.key.toLowerCase()) {
 			case 'u':
+				if (!canUpload) return;
 				event.preventDefault();
 				document.getElementById('upload-file-input')?.click();
 				break;
 			case 'n':
+				if (!canCreateFolder) return;
 				event.preventDefault();
 				showCreateFolderModal = true;
 				break;
@@ -704,7 +815,7 @@
 	}}
 />
 
-<DropZone on:filesDropped={(e) => handleFilesSelected(e.detail)} disabled={isUploading}>
+<DropZone on:filesDropped={(e) => handleFilesSelected(e.detail)} disabled={!canUpload || isUploading}>
 	<FileExplorer
 		folders={sortedFolders}
 		files={sortedFiles}
@@ -715,9 +826,12 @@
 		emptyTitle={workspaceEmptyTitle}
 		emptyDescription={workspaceEmptyDescription}
 		emptyActionLabel={workspaceEmptyActionLabel}
+		{workspaceMode}
 		{showFolderTree}
 		{showBreadcrumbs}
 		{canCreateFolder}
+		{canUpload}
+		{allowSelectionMode}
 		isLoading={$filesQuery.isLoading}
 		error={$filesQuery.error}
 		{replicationStatuses}
@@ -737,6 +851,9 @@
 		onBulkMove={handleBulkMove}
 		onRenameFile={handleRenameFile}
 		onDeleteFile={handleDeleteFile}
+		onToggleFileStar={handleToggleFileStar}
+		onRestoreFile={handleRestoreFile}
+		onPermanentDeleteFile={handlePermanentDeleteFile}
 		onShareFile={handleShareFile}
 		onVersionHistory={handleVersionHistory}
 		onMoveFile={handleMoveFile}
@@ -744,6 +861,9 @@
 		onReplaceFile={handleReplaceFile}
 		onRenameFolder={handleRenameFolder}
 		onDeleteFolder={handleDeleteFolder}
+		onToggleFolderStar={handleToggleFolderStar}
+		onRestoreFolder={handleRestoreFolder}
+		onPermanentDeleteFolder={handlePermanentDeleteFolder}
 		onShareFolder={handleShareFolder}
 		onMoveFolder={handleMoveFolder}
 		on:breadcrumbNavigate={handleBreadcrumbNavigate}

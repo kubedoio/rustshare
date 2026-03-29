@@ -29,6 +29,8 @@ pub struct FolderWithShares {
     pub owner_id: Uuid,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub starred_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
     // Share info
     pub is_shared: bool,
     pub share_count: i64,
@@ -121,7 +123,7 @@ pub async fn get_folder_contents(
         r#"
         SELECT
             f.id, f.name, f.path, f.parent_folder_id, f.owner_id,
-            f.created_at, f.updated_at,
+            f.created_at, f.updated_at, f.starred_at, f.deleted_at,
             EXISTS(
                 SELECT 1 FROM shares
                 WHERE folder_id = f.id
@@ -139,12 +141,13 @@ pub async fn get_folder_contents(
                 AND expires_at IS NOT NULL
             ) as share_expires_at
         FROM folders f
-        WHERE f.parent_folder_id = $1 AND f.owner_id = $2
+        WHERE f.parent_folder_id = $1 AND f.owner_id = $2 AND f.tenant_id = $3 AND f.deleted_at IS NULL
         ORDER BY f.name
         "#,
     )
     .bind(folder_id)
     .bind(auth.user_id)
+    .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
     .map_err(|_| {
@@ -162,7 +165,7 @@ pub async fn get_folder_contents(
         SELECT
             f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
-            f.created_at, f.modified_at,
+            f.created_at, f.modified_at, f.starred_at, f.deleted_at,
             EXISTS(
                 SELECT 1 FROM shares
                 WHERE file_id = f.id
@@ -180,12 +183,13 @@ pub async fn get_folder_contents(
                 AND expires_at IS NOT NULL
             ) as share_expires_at
         FROM files f
-        WHERE f.parent_folder_id = $1 AND f.owner_id = $2
+        WHERE f.parent_folder_id = $1 AND f.owner_id = $2 AND f.tenant_id = $3 AND f.deleted_at IS NULL
         ORDER BY f.name
         "#,
     )
     .bind(folder_id)
     .bind(auth.user_id)
+    .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
     .map_err(|_| {
@@ -212,7 +216,7 @@ pub async fn get_root_contents(
         r#"
         SELECT
             f.id, f.name, f.path, f.parent_folder_id, f.owner_id,
-            f.created_at, f.updated_at,
+            f.created_at, f.updated_at, f.starred_at, f.deleted_at,
             EXISTS(
                 SELECT 1 FROM shares
                 WHERE folder_id = f.id
@@ -230,11 +234,12 @@ pub async fn get_root_contents(
                 AND expires_at IS NOT NULL
             ) as share_expires_at
         FROM folders f
-        WHERE f.parent_folder_id IS NULL AND f.owner_id = $1
+        WHERE f.parent_folder_id IS NULL AND f.owner_id = $1 AND f.tenant_id = $2 AND f.deleted_at IS NULL
         ORDER BY f.name
         "#,
     )
     .bind(auth.user_id)
+    .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
     .map_err(|_| {
@@ -252,7 +257,7 @@ pub async fn get_root_contents(
         SELECT
             f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
-            f.created_at, f.modified_at,
+            f.created_at, f.modified_at, f.starred_at, f.deleted_at,
             EXISTS(
                 SELECT 1 FROM shares
                 WHERE file_id = f.id
@@ -270,11 +275,12 @@ pub async fn get_root_contents(
                 AND expires_at IS NOT NULL
             ) as share_expires_at
         FROM files f
-        WHERE f.parent_folder_id IS NULL AND f.owner_id = $1
+        WHERE f.parent_folder_id IS NULL AND f.owner_id = $1 AND f.tenant_id = $2 AND f.deleted_at IS NULL
         ORDER BY f.name
         "#,
     )
     .bind(auth.user_id)
+    .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
     .map_err(|_| {
@@ -352,6 +358,100 @@ pub async fn get_folder_tree(
 
     let tree = FolderTree::with_contents(virtual_root, root_files, subtrees);
     Ok(Json(tree))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkspaceStarRequest {
+    pub starred: bool,
+}
+
+pub async fn toggle_folder_star(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(folder_id): Path<Uuid>,
+    Json(req): Json<WorkspaceStarRequest>,
+) -> Result<StatusCode, Response> {
+    let updated = state
+        .metadata_store
+        .set_folder_starred(folder_id, auth.user_id, req.starred)
+        .await
+        .map_err(|e| {
+            use axum::response::IntoResponse;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(super::ErrorResponse::new(format!(
+                    "Failed to update folder star state: {}",
+                    e
+                ))),
+            )
+                .into_response()
+        })?;
+
+    if !updated {
+        return Err(folder_error_response(rustshare_core::services::FolderError::NotFound(
+            folder_id,
+        )));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn restore_folder_from_trash(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(folder_id): Path<Uuid>,
+) -> Result<StatusCode, Response> {
+    let restored = state
+        .metadata_store
+        .restore_folder(folder_id, auth.user_id, auth.tenant_id)
+        .await
+        .map_err(|e| {
+            use axum::response::IntoResponse;
+            let status = if e.to_string().contains("already exists") {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(super::ErrorResponse::new(e.to_string()))).into_response()
+        })?;
+
+    if !restored {
+        return Err(folder_error_response(rustshare_core::services::FolderError::NotFound(
+            folder_id,
+        )));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn permanently_delete_folder(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(folder_id): Path<Uuid>,
+) -> Result<StatusCode, Response> {
+    let deleted = state
+        .metadata_store
+        .permanently_delete_folder(folder_id, auth.user_id)
+        .await
+        .map_err(|e| {
+            use axum::response::IntoResponse;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(super::ErrorResponse::new(format!(
+                    "Failed to permanently delete folder: {}",
+                    e
+                ))),
+            )
+                .into_response()
+        })?;
+
+    if !deleted {
+        return Err(folder_error_response(rustshare_core::services::FolderError::NotFound(
+            folder_id,
+        )));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ============================================================================

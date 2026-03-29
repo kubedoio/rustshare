@@ -16,8 +16,11 @@
 	export let emptyTitle = 'No files yet';
 	export let emptyDescription = 'Upload your first file to get started';
 	export let emptyActionLabel: string | null = 'Upload files';
+	export let workspaceMode: 'all' | 'photos' | 'recent' | 'starred' | 'deleted' = 'all';
 	export let showBreadcrumbs = true;
 	export let canCreateFolder = true;
+	export let canUpload = true;
+	export let allowSelectionMode = true;
 	export let isLoading: boolean = false;
 	export let error: Error | null = null;
 	export let replicationStatuses: Record<string, ReplicationStatus> = {};
@@ -39,6 +42,9 @@
 
 	export let onRenameFile: (file: FileType) => void;
 	export let onDeleteFile: (file: FileType) => void;
+	export let onToggleFileStar: (file: FileType) => void;
+	export let onRestoreFile: (file: FileType) => void;
+	export let onPermanentDeleteFile: (file: FileType) => void;
 	export let onShareFile: (file: FileType) => void;
 	export let onVersionHistory: (file: FileType) => void;
 	export let onMoveFile: (file: FileType) => void;
@@ -47,6 +53,9 @@
 
 	export let onRenameFolder: (folder: Folder) => void;
 	export let onDeleteFolder: (folder: Folder) => void;
+	export let onToggleFolderStar: (folder: Folder) => void;
+	export let onRestoreFolder: (folder: Folder) => void;
+	export let onPermanentDeleteFolder: (folder: Folder) => void;
 	export let onShareFolder: (folder: Folder) => void;
 	export let onMoveFolder: (folder: Folder) => void;
 
@@ -60,10 +69,12 @@
 <div class="flex h-full min-h-0 flex-col bg-base-100">
 	<!-- Toolbar -->
 	<div class="border-b border-base-300/80 px-4 py-3 md:px-5 md:py-4 lg:px-6">
-		<FileToolbar
-			{title}
-			{description}
-			{canCreateFolder}
+			<FileToolbar
+				{title}
+				{description}
+				{canCreateFolder}
+				{canUpload}
+				{allowSelectionMode}
 			{selectionMode}
 			{isUploading}
 			onToggleSelection={onToggleSelection}
@@ -117,16 +128,23 @@
 					{emptyTitle}
 					{emptyDescription}
 					{emptyActionLabel}
+					{workspaceMode}
 					{replicationStatuses}
 					{selectionMode}
 					onFolderClick={onFolderClick}
 					onFileClick={onFileClick}
 					onRenameFolder={onRenameFolder}
 					onDeleteFolder={onDeleteFolder}
+					onToggleFolderStar={onToggleFolderStar}
+					onRestoreFolder={onRestoreFolder}
+					onPermanentDeleteFolder={onPermanentDeleteFolder}
 					onShareFolder={onShareFolder}
 					onMoveFolder={onMoveFolder}
 					onRenameFile={onRenameFile}
 					onDeleteFile={onDeleteFile}
+					onToggleFileStar={onToggleFileStar}
+					onRestoreFile={onRestoreFile}
+					onPermanentDeleteFile={onPermanentDeleteFile}
 					onMoveFile={onMoveFile}
 					onDownloadFile={onDownloadFile}
 					onReplaceFile={onReplaceFile}
@@ -140,16 +158,23 @@
 					{emptyTitle}
 					{emptyDescription}
 					{emptyActionLabel}
+					{workspaceMode}
 					{replicationStatuses}
 					{selectionMode}
 					onFolderClick={onFolderClick}
 					onFileClick={onFileClick}
 					onRenameFolder={onRenameFolder}
 					onDeleteFolder={onDeleteFolder}
+					onToggleFolderStar={onToggleFolderStar}
+					onRestoreFolder={onRestoreFolder}
+					onPermanentDeleteFolder={onPermanentDeleteFolder}
 					onShareFolder={onShareFolder}
 					onMoveFolder={onMoveFolder}
 					onRenameFile={onRenameFile}
 					onDeleteFile={onDeleteFile}
+					onToggleFileStar={onToggleFileStar}
+					onRestoreFile={onRestoreFile}
+					onPermanentDeleteFile={onPermanentDeleteFile}
 					onMoveFile={onMoveFile}
 					onDownloadFile={onDownloadFile}
 					onReplaceFile={onReplaceFile}
