@@ -1,4 +1,4 @@
-FROM node:20-alpine AS frontend-builder
+FROM node:20-bookworm-slim AS frontend-builder
 
 WORKDIR /app/frontend
 
@@ -8,7 +8,13 @@ ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_WS_URL=$VITE_WS_URL
 
 COPY frontend/package*.json ./
-RUN npm install --legacy-peer-deps
+RUN npm install --legacy-peer-deps \
+    && ARCH="$(dpkg --print-architecture)" \
+    && case "$ARCH" in \
+        amd64) npm install --no-save "@rolldown/binding-linux-x64-gnu@1.0.0-rc.12" "lightningcss-linux-x64-gnu@1.32.0" ;; \
+        arm64) npm install --no-save "@rolldown/binding-linux-arm64-gnu@1.0.0-rc.12" "lightningcss-linux-arm64-gnu@1.32.0" ;; \
+        *) echo "Unsupported frontend builder architecture: ${ARCH}" >&2; exit 1 ;; \
+    esac
 
 COPY frontend ./
 RUN npm run build

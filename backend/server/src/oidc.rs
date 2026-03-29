@@ -6,8 +6,8 @@ use axum::{
 };
 use openidconnect::{
     core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata},
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
+    AuthorizationCode, ClientId, ClientSecret, CsrfToken, Nonce, PkceCodeChallenge,
+    PkceCodeVerifier, RedirectUrl, TokenResponse,
 };
 use rustshare_auth::generate_web_session_token;
 use rustshare_core::domain::{OidcLoginState, User};
@@ -16,6 +16,10 @@ use url::Url;
 
 use crate::{
     middleware,
+    oidc_runtime::{
+        load_oidc_runtime_settings, load_provider_metadata, oidc_http_client,
+        MobileOidcRuntimeConfig,
+    },
     web_session::{build_session_cookie, create_user_session},
     AppState,
 };
@@ -77,139 +81,35 @@ pub struct MobileUserResponse {
     pub is_admin: bool,
 }
 
-#[derive(Clone)]
-struct OidcConfig {
-    issuer_url: String,
-    client_id: String,
-    client_secret: String,
-    redirect_url: String,
-    login_label: Option<String>,
-}
-
-impl OidcConfig {
-    fn from_env() -> Option<Self> {
-        let issuer_url = non_empty_env("OIDC_ISSUER_URL")?;
-        let client_id = non_empty_env("OIDC_CLIENT_ID")?;
-        let client_secret = non_empty_env("OIDC_CLIENT_SECRET")?;
-        let redirect_url = non_empty_env("OIDC_REDIRECT_URL")?;
-        let login_label = non_empty_env("OIDC_LOGIN_LABEL");
-
-        Some(Self {
-            issuer_url,
-            client_id,
-            client_secret,
-            redirect_url,
-            login_label,
-        })
-    }
-
-    fn label(&self) -> String {
-        self.login_label
-            .clone()
-            .unwrap_or_else(|| "Single Sign-On".to_string())
-    }
-
-    async fn discover_provider(
-        &self,
-    ) -> Result<(CoreProviderMetadata, openidconnect::reqwest::Client), String> {
-        let http_client = openidconnect::reqwest::ClientBuilder::new()
-            .redirect(openidconnect::reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| format!("Failed to build OIDC HTTP client: {error}"))?;
-
-        let provider_metadata = CoreProviderMetadata::discover_async(
-            IssuerUrl::new(self.issuer_url.clone())
-                .map_err(|error| format!("Invalid OIDC issuer URL: {error}"))?,
-            &http_client,
-        )
+pub async fn auth_config(
+    State(state): State<AppState>,
+) -> Result<Json<AuthConfigResponse>, (StatusCode, String)> {
+    let oidc_settings = load_oidc_runtime_settings(&state)
         .await
-        .map_err(|error| format!("OIDC discovery failed: {error}"))?;
+        .map_err(internal_oidc_error)?;
+    let web_oidc = oidc_settings.web_login_config();
+    let mobile_oidc = oidc_settings.mobile_config();
 
-        Ok((provider_metadata, http_client))
-    }
-}
-
-#[derive(Clone)]
-struct MobileOidcConfig {
-    issuer_url: String,
-    client_id: String,
-    client_secret: Option<String>,
-    allowed_redirect_uris: Vec<String>,
-}
-
-impl MobileOidcConfig {
-    fn from_env() -> Option<Self> {
-        let issuer_url = non_empty_env("OIDC_ISSUER_URL")?;
-        let client_id = non_empty_env("OIDC_MOBILE_CLIENT_ID")?;
-        let client_secret = non_empty_env("OIDC_MOBILE_CLIENT_SECRET");
-        let allowed_redirect_uris = mobile_redirect_uris_from_env();
-
-        if allowed_redirect_uris.is_empty() {
-            return None;
-        }
-
-        Some(Self {
-            issuer_url,
-            client_id,
-            client_secret,
-            allowed_redirect_uris,
-        })
-    }
-
-    async fn discover_provider(
-        &self,
-    ) -> Result<(CoreProviderMetadata, openidconnect::reqwest::Client), String> {
-        let http_client = openidconnect::reqwest::ClientBuilder::new()
-            .redirect(openidconnect::reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| format!("Failed to build OIDC HTTP client: {error}"))?;
-
-        let provider_metadata = CoreProviderMetadata::discover_async(
-            IssuerUrl::new(self.issuer_url.clone())
-                .map_err(|error| format!("Invalid OIDC issuer URL: {error}"))?,
-            &http_client,
-        )
-        .await
-        .map_err(|error| format!("OIDC discovery failed: {error}"))?;
-
-        Ok((provider_metadata, http_client))
-    }
-
-    fn allows_redirect_uri(&self, redirect_uri: &str) -> bool {
-        self.allowed_redirect_uris
-            .iter()
-            .any(|allowed| allowed == redirect_uri)
-    }
-}
-
-pub async fn auth_config() -> impl IntoResponse {
-    let oidc = OidcConfig::from_env();
-    let mobile_oidc = MobileOidcConfig::from_env();
-
-    Json(AuthConfigResponse {
+    Ok(Json(AuthConfigResponse {
         password_login_enabled: password_login_enabled(),
-        oidc_enabled: oidc.is_some(),
-        oidc_login_label: oidc.map(|config| config.label()),
+        oidc_enabled: web_oidc.is_some(),
+        oidc_login_label: web_oidc.map(|config| config.login_label()),
         oidc_mobile_enabled: mobile_oidc.is_some(),
-    })
-}
-
-fn non_empty_env(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    }))
 }
 
 pub async fn oidc_login(
     State(state): State<AppState>,
     Query(query): Query<OidcLoginQuery>,
 ) -> Result<Redirect, (StatusCode, String)> {
-    let config = OidcConfig::from_env()
+    let settings = load_oidc_runtime_settings(&state)
+        .await
+        .map_err(internal_oidc_error)?;
+    let config = settings
+        .web_login_config()
         .ok_or_else(|| (StatusCode::NOT_FOUND, "OIDC is not configured".to_string()))?;
     let redirect_to = sanitize_redirect_target(query.redirect_to.as_deref());
-    let (provider_metadata, _http_client) = config
-        .discover_provider()
+    let provider_metadata = load_provider_metadata(&state, &config.issuer_url)
         .await
         .map_err(internal_oidc_error)?;
     let client = CoreClient::from_provider_metadata(
@@ -233,7 +133,7 @@ pub async fn oidc_login(
         Nonce::new_random,
     );
 
-    for scope in configured_scopes() {
+    for scope in config.scopes() {
         auth_request = auth_request.add_scope(scope);
     }
 
@@ -262,9 +162,13 @@ pub async fn oidc_login(
 }
 
 pub async fn mobile_oidc_authorize(
+    State(state): State<AppState>,
     Json(req): Json<MobileOidcAuthorizeRequest>,
 ) -> Result<Json<MobileOidcAuthorizeResponse>, (StatusCode, String)> {
-    let config = MobileOidcConfig::from_env().ok_or_else(|| {
+    let settings = load_oidc_runtime_settings(&state)
+        .await
+        .map_err(internal_oidc_error)?;
+    let config = settings.mobile_config().ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             "Mobile OIDC is not configured".to_string(),
@@ -278,8 +182,7 @@ pub async fn mobile_oidc_authorize(
         &req.nonce,
     )?;
 
-    let (provider_metadata, _http_client) = config
-        .discover_provider()
+    let provider_metadata = load_provider_metadata(&state, &config.issuer_url)
         .await
         .map_err(internal_oidc_error)?;
     let authorization_url = build_mobile_authorization_url(&config, &provider_metadata, &req)?;
@@ -291,7 +194,10 @@ pub async fn mobile_oidc_exchange(
     State(state): State<AppState>,
     Json(req): Json<MobileOidcExchangeRequest>,
 ) -> Result<Json<MobileOidcExchangeResponse>, (StatusCode, String)> {
-    let config = MobileOidcConfig::from_env().ok_or_else(|| {
+    let settings = load_oidc_runtime_settings(&state)
+        .await
+        .map_err(internal_oidc_error)?;
+    let config = settings.mobile_config().ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             "Mobile OIDC is not configured".to_string(),
@@ -299,10 +205,10 @@ pub async fn mobile_oidc_exchange(
     })?;
     validate_mobile_oidc_exchange_request(&config, &req)?;
 
-    let (provider_metadata, http_client) = config
-        .discover_provider()
+    let provider_metadata = load_provider_metadata(&state, &config.issuer_url)
         .await
         .map_err(internal_oidc_error)?;
+    let http_client = oidc_http_client().map_err(internal_oidc_error)?;
     let client = CoreClient::from_provider_metadata(
         provider_metadata,
         ClientId::new(config.client_id.clone()),
@@ -369,7 +275,7 @@ pub async fn mobile_oidc_exchange(
             )
         })?;
 
-    let user = find_or_create_oidc_user(&state, &email).await?;
+    let user = find_or_create_oidc_user(&state, &email, settings.auto_provision_users).await?;
     let token = state
         .jwt_manager
         .generate(user.id, user.email.clone())
@@ -444,12 +350,16 @@ pub async fn oidc_callback(
         ));
     }
 
-    let config = OidcConfig::from_env()
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "OIDC is not configured".to_string()))?;
-    let (provider_metadata, http_client) = config
-        .discover_provider()
+    let settings = load_oidc_runtime_settings(&state)
         .await
         .map_err(internal_oidc_error)?;
+    let config = settings
+        .web_login_config()
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "OIDC is not configured".to_string()))?;
+    let provider_metadata = load_provider_metadata(&state, &config.issuer_url)
+        .await
+        .map_err(internal_oidc_error)?;
+    let http_client = oidc_http_client().map_err(internal_oidc_error)?;
     let client = CoreClient::from_provider_metadata(
         provider_metadata,
         ClientId::new(config.client_id.clone()),
@@ -516,17 +426,22 @@ pub async fn oidc_callback(
                 "OIDC provider did not return an e-mail address".to_string(),
             )
         })?;
-    let user = find_or_create_oidc_user(&state, &email).await?;
+    let user = find_or_create_oidc_user(&state, &email, config.auto_provision_users).await?;
 
     let user_agent = headers
         .get(header::USER_AGENT)
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_string());
     let ip_address = middleware::extract_client_ip(&headers, None).map(|value| value.to_string());
-    let session_token =
-        create_user_session(&state, user.id, user.tenant_id, user_agent.clone(), ip_address.clone())
-            .await
-            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    let session_token = create_user_session(
+        &state,
+        user.id,
+        user.tenant_id,
+        user_agent.clone(),
+        ip_address.clone(),
+    )
+    .await
+    .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
 
     if let Err(error) = state
         .metadata_store
@@ -564,31 +479,8 @@ pub fn password_login_enabled() -> bool {
         .unwrap_or(true)
 }
 
-fn configured_scopes() -> Vec<Scope> {
-    let raw_scopes =
-        std::env::var("OIDC_SCOPES").unwrap_or_else(|_| "openid profile email".to_string());
-
-    raw_scopes
-        .split_whitespace()
-        .filter(|scope| !scope.is_empty())
-        .map(|scope| Scope::new(scope.to_string()))
-        .collect()
-}
-
-fn mobile_redirect_uris_from_env() -> Vec<String> {
-    let raw = std::env::var("OIDC_MOBILE_REDIRECT_URIS")
-        .or_else(|_| std::env::var("OIDC_MOBILE_REDIRECT_URI"))
-        .unwrap_or_default();
-
-    raw.split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
 fn validate_mobile_oidc_request(
-    config: &MobileOidcConfig,
+    config: &MobileOidcRuntimeConfig,
     redirect_uri: &str,
     code_challenge: &str,
     state: &str,
@@ -629,7 +521,7 @@ fn validate_mobile_oidc_request(
 }
 
 fn validate_mobile_oidc_exchange_request(
-    config: &MobileOidcConfig,
+    config: &MobileOidcRuntimeConfig,
     req: &MobileOidcExchangeRequest,
 ) -> Result<(), (StatusCode, String)> {
     if !config.allows_redirect_uri(&req.redirect_uri) {
@@ -667,7 +559,7 @@ fn validate_mobile_oidc_exchange_request(
 }
 
 fn build_mobile_authorization_url(
-    config: &MobileOidcConfig,
+    config: &MobileOidcRuntimeConfig,
     provider_metadata: &CoreProviderMetadata,
     req: &MobileOidcAuthorizeRequest,
 ) -> Result<String, (StatusCode, String)> {
@@ -677,7 +569,8 @@ fn build_mobile_authorization_url(
                 "Invalid provider authorization endpoint URL: {error}"
             ))
         })?;
-    let scope_value = configured_scopes()
+    let scope_value = config
+        .scopes()
         .into_iter()
         .map(|scope| scope.to_string())
         .collect::<Vec<_>>()
@@ -712,6 +605,7 @@ fn sanitize_redirect_target(value: Option<&str>) -> String {
 async fn find_or_create_oidc_user(
     state: &AppState,
     email: &str,
+    auto_provision_users: bool,
 ) -> Result<User, (StatusCode, String)> {
     if let Some(user) = state
         .metadata_store
@@ -728,6 +622,13 @@ async fn find_or_create_oidc_user(
             return Err((StatusCode::FORBIDDEN, "account_disabled".to_string()));
         }
         return Ok(user);
+    }
+
+    if !auto_provision_users {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "OIDC user provisioning is disabled for this deployment".to_string(),
+        ));
     }
 
     let username = allocate_username(state, email).await?;
@@ -835,6 +736,7 @@ fn default_storage_quota_bytes() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::oidc_runtime::mobile_redirect_uris_from_env;
 
     #[test]
     fn sanitize_redirect_target_only_accepts_internal_paths() {

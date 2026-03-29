@@ -42,14 +42,16 @@ mod handlers;
 mod metadata_integration;
 mod middleware;
 mod oidc;
+mod oidc_runtime;
 mod replication;
 mod replication_handlers;
 mod web_session;
 
-use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
 use crate::handlers::{
     ensure_optional_seed_user, get_share_access_log, list_user_shares, login, logout, revoke_share,
 };
+use crate::oidc_runtime::{seed_oidc_config_from_env, OidcRuntimeCache};
+use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
 use anyhow::Result;
 use axum::{
     extract::DefaultBodyLimit,
@@ -59,7 +61,6 @@ use axum::{
     Json, Router,
 };
 use rustshare_auth::{JwtManager, PasswordHasher};
-use rustshare_crypto::SecretEncryptionKey;
 use rustshare_core::{
     domain::User,
     events::EventBroadcaster,
@@ -69,6 +70,7 @@ use rustshare_core::{
         UserShareService, UserShareServiceDeps,
     },
 };
+use rustshare_crypto::SecretEncryptionKey;
 use rustshare_infrastructure::repositories::{
     FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
     ShareRepository, UserRepository,
@@ -77,11 +79,11 @@ use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use serde::Serialize;
 use sqlx::PgPool;
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
-use uuid::Uuid;
 use tokio::sync::Mutex;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::info;
+use uuid::Uuid;
 
 type AppUserShareService = UserShareService<
     ShareRepository,
@@ -118,13 +120,24 @@ impl UploadObjectStoreAdapter {
 
 #[async_trait::async_trait]
 impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
-    async fn put_chunk(&self, session_id: Uuid, chunk_index: u32, data: bytes::Bytes) -> Result<(), rustshare_core::services::UploadError> {
+    async fn put_chunk(
+        &self,
+        session_id: Uuid,
+        chunk_index: u32,
+        data: bytes::Bytes,
+    ) -> Result<(), rustshare_core::services::UploadError> {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-        self.inner.put(&key, data).await
+        self.inner
+            .put(&key, data)
+            .await
             .map_err(|e| rustshare_core::services::UploadError::Storage(e.to_string()))
     }
 
-    async fn get_chunk(&self, session_id: Uuid, chunk_index: u32) -> Result<Option<bytes::Bytes>, rustshare_core::services::UploadError> {
+    async fn get_chunk(
+        &self,
+        session_id: Uuid,
+        chunk_index: u32,
+    ) -> Result<Option<bytes::Bytes>, rustshare_core::services::UploadError> {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
         match self.inner.get(&key).await {
             Ok(data) => Ok(Some(data)),
@@ -132,13 +145,23 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
         }
     }
 
-    async fn delete_chunk(&self, session_id: Uuid, chunk_index: u32) -> Result<(), rustshare_core::services::UploadError> {
+    async fn delete_chunk(
+        &self,
+        session_id: Uuid,
+        chunk_index: u32,
+    ) -> Result<(), rustshare_core::services::UploadError> {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-        self.inner.delete(&key).await
+        self.inner
+            .delete(&key)
+            .await
             .map_err(|e| rustshare_core::services::UploadError::Storage(e.to_string()))
     }
 
-    async fn delete_session_chunks(&self, session_id: Uuid, total_chunks: u32) -> Result<(), rustshare_core::services::UploadError> {
+    async fn delete_session_chunks(
+        &self,
+        session_id: Uuid,
+        total_chunks: u32,
+    ) -> Result<(), rustshare_core::services::UploadError> {
         for chunk_index in 0..total_chunks {
             let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
             let _ = self.inner.delete(&key).await;
@@ -146,24 +169,40 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
         Ok(())
     }
 
-    async fn chunk_exists(&self, session_id: Uuid, chunk_index: u32) -> Result<bool, rustshare_core::services::UploadError> {
+    async fn chunk_exists(
+        &self,
+        session_id: Uuid,
+        chunk_index: u32,
+    ) -> Result<bool, rustshare_core::services::UploadError> {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-        self.inner.exists(&key).await
+        self.inner
+            .exists(&key)
+            .await
             .map_err(|e| rustshare_core::services::UploadError::Storage(e.to_string()))
     }
 
-    async fn assemble_chunks(&self, session_id: Uuid, total_chunks: u32, final_key: &str) -> Result<(), rustshare_core::services::UploadError> {
+    async fn assemble_chunks(
+        &self,
+        session_id: Uuid,
+        total_chunks: u32,
+        final_key: &str,
+    ) -> Result<(), rustshare_core::services::UploadError> {
         // Download all chunks and concatenate
         let mut assembled = Vec::new();
         for chunk_index in 0..total_chunks {
             let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-            let chunk_data = self.inner.get(&key).await
+            let chunk_data = self
+                .inner
+                .get(&key)
+                .await
                 .map_err(|e| rustshare_core::services::UploadError::Storage(e.to_string()))?;
             assembled.extend_from_slice(&chunk_data);
         }
 
         // Upload assembled file
-        self.inner.put(final_key, bytes::Bytes::from(assembled)).await
+        self.inner
+            .put(final_key, bytes::Bytes::from(assembled))
+            .await
             .map_err(|e| rustshare_core::services::UploadError::Storage(e.to_string()))
     }
 }
@@ -182,13 +221,23 @@ impl UploadMetadataStoreAdapter {
 
 #[async_trait::async_trait]
 impl rustshare_core::services::UploadMetadataStore for UploadMetadataStoreAdapter {
-    async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<rustshare_core::domain::Folder>, rustshare_core::services::UploadError> {
-        self.inner.find_folder_by_id(id).await
+    async fn find_folder_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<rustshare_core::domain::Folder>, rustshare_core::services::UploadError> {
+        self.inner
+            .find_folder_by_id(id)
+            .await
             .map_err(|e| rustshare_core::services::UploadError::Database(e.to_string()))
     }
 
-    async fn create_file(&self, file: &rustshare_core::domain::File) -> Result<(), rustshare_core::services::UploadError> {
-        self.inner.create_file(file).await
+    async fn create_file(
+        &self,
+        file: &rustshare_core::domain::File,
+    ) -> Result<(), rustshare_core::services::UploadError> {
+        self.inner
+            .create_file(file)
+            .await
             .map_err(|e| rustshare_core::services::UploadError::Database(e.to_string()))
     }
 
@@ -197,7 +246,9 @@ impl rustshare_core::services::UploadMetadataStore for UploadMetadataStoreAdapte
         _file: &rustshare_core::domain::File,
         version: &rustshare_core::domain::FileVersion,
     ) -> Result<(), rustshare_core::services::UploadError> {
-        self.inner.create_file_version(version).await
+        self.inner
+            .create_file_version(version)
+            .await
             .map_err(|e| rustshare_core::services::UploadError::Database(e.to_string()))
     }
 }
@@ -222,6 +273,7 @@ pub struct AppState {
     // pub upload_service: Option<Arc<AppUploadService>>, // TODO: Fix upload service type issues
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
     pub secret_key: SecretEncryptionKey,
+    pub oidc_runtime_cache: OidcRuntimeCache,
     pub poll_rate_limiter: Arc<Mutex<HashMap<String, Instant>>>,
     pub default_tenant_id: uuid::Uuid,
 }
@@ -355,21 +407,21 @@ async fn main() -> Result<()> {
     // Use local filesystem document store for upload session metadata
     let upload_doc_store_path = std::env::var("RUSTSHARE_UPLOAD_STORE_PATH")
         .unwrap_or_else(|_| "/tmp/rustshare-uploads".to_string());
-    
+
     let upload_backend_config = rustshare_storage::metadata_v2::MetadataBackendConfig {
         base_prefix: "apps/rustshare".to_string(),
         namespace: "uploads".to_string(),
         enable_optimistic_concurrency: true,
         fallback_to_leases: true,
     };
-    
+
     let upload_doc_store: Arc<dyn rustshare_storage::metadata_v2::MetadataDocumentStore> = Arc::new(
         rustshare_storage::metadata_v2::stores::LocalFsDocumentStore::new(
             std::path::PathBuf::from(&upload_doc_store_path),
             upload_backend_config,
-        )
+        ),
     );
-    
+
     let upload_session_repo = rustshare_storage::repos::RustFsUploadSessionRepository::new(
         upload_doc_store,
         "apps/rustshare".to_string(),
@@ -384,7 +436,10 @@ async fn main() -> Result<()> {
         Arc::clone(&broadcaster),
     ));
 
-    info!("Upload service initialized with store path: {}", upload_doc_store_path);
+    info!(
+        "Upload service initialized with store path: {}",
+        upload_doc_store_path
+    );
 
     // Initialize rate limiting configuration
     let rate_limit_config = Arc::new(middleware::RateLimitConfig::new());
@@ -459,6 +514,10 @@ async fn main() -> Result<()> {
     let secret_key = SecretEncryptionKey::from_env()
         .map_err(|e| anyhow::anyhow!("Secret encryption key error: {}", e))?;
 
+    if seed_oidc_config_from_env(&db_pool, &secret_key).await? {
+        info!("Seeded initial OIDC config from environment bootstrap values");
+    }
+
     // Build application state
     let state = AppState {
         db_pool,
@@ -479,6 +538,7 @@ async fn main() -> Result<()> {
         // upload_service: None,
         rate_limit_config,
         secret_key,
+        oidc_runtime_cache: OidcRuntimeCache::new(),
         poll_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
         default_tenant_id,
     };
@@ -527,10 +587,7 @@ async fn main() -> Result<()> {
             post(handlers::device_auth::device_approve),
         )
         // Device management routes
-        .route(
-            "/api/v1/user/devices",
-            get(handlers::devices::list_devices),
-        )
+        .route("/api/v1/user/devices", get(handlers::devices::list_devices))
         .route(
             "/api/v1/user/devices/{id}",
             delete(handlers::devices::revoke_device),
@@ -542,7 +599,10 @@ async fn main() -> Result<()> {
         .route("/api/v1/files/{id}", put(handlers::update_file))
         .route("/api/v1/files/{id}", delete(handlers::delete_file))
         .route("/api/v1/files/{id}/download", get(handlers::download_file))
-        .route("/api/v1/files/{id}/content", get(handlers::download_file_content))
+        .route(
+            "/api/v1/files/{id}/content",
+            get(handlers::download_file_content),
+        )
         .route("/api/v1/files/{id}/preview", get(handlers::preview_file))
         .route(
             "/api/v1/files/{id}/versions",
@@ -730,18 +790,12 @@ async fn main() -> Result<()> {
         //     post(handlers::register_chat_webhook),
         // )
         // SCIM provisioning endpoints (webhook-style, not full RFC 7644)
-        .route(
-            "/api/v1/scim/users",
-            post(handlers::scim::provision_user),
-        )
+        .route("/api/v1/scim/users", post(handlers::scim::provision_user))
         .route(
             "/api/v1/scim/users/{external_id}",
             delete(handlers::scim::deprovision_user),
         )
-        .route(
-            "/api/v1/scim/groups",
-            post(handlers::scim::provision_group),
-        )
+        .route("/api/v1/scim/groups", post(handlers::scim::provision_group))
         .route(
             "/api/v1/scim/groups/{external_id}",
             delete(handlers::scim::delete_group),
@@ -777,10 +831,7 @@ async fn main() -> Result<()> {
             "/scim/v2/ResourceTypes",
             get(handlers::scim_v2::get_resource_types),
         )
-        .route(
-            "/scim/v2/Schemas",
-            get(handlers::scim_v2::get_schemas),
-        )
+        .route("/scim/v2/Schemas", get(handlers::scim_v2::get_schemas))
         // Folder routes (Task 20-22)
         // NOTE: More specific routes (with literal path segments) must come BEFORE parameterized routes
         .route("/api/v1/folders", post(handlers::create_folder))
@@ -864,25 +915,19 @@ async fn main() -> Result<()> {
         )
         .route("/api/v1/me/password", patch(handlers::update_user_password))
         // Profile routes (Task 17)
-        .route(
-            "/api/v1/users/me/profile",
-            get(handlers::get_profile),
-        )
-        .route(
-            "/api/v1/users/me/profile",
-            patch(handlers::update_profile),
-        )
+        .route("/api/v1/users/me/profile", get(handlers::get_profile))
+        .route("/api/v1/users/me/profile", patch(handlers::update_profile))
         // Avatar routes (Task 18)
         .route(
             "/api/v1/users/me/avatar",
             post(handlers::upload_avatar).delete(handlers::delete_avatar),
         )
-        .route(
-            "/api/v1/users/{id}/avatar",
-            get(handlers::get_avatar),
-        )
+        .route("/api/v1/users/{id}/avatar", get(handlers::get_avatar))
         // Internal user share routes
-        .route("/api/v1/files/{id}/share", post(handlers::create_file_share))
+        .route(
+            "/api/v1/files/{id}/share",
+            post(handlers::create_file_share),
+        )
         .route(
             "/api/v1/folders/{id}/share",
             post(handlers::create_folder_share),
@@ -1029,5 +1074,3 @@ async fn api_not_found() -> impl IntoResponse {
 struct HealthResponse {
     status: String,
 }
-
-

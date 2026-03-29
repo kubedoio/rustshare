@@ -6,14 +6,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::{uuid, Uuid};
 
-use crate::{handlers::AdminUser, AppState};
 use super::log_admin_action;
+use crate::{
+    handlers::AdminUser,
+    oidc_runtime::{invalidate_oidc_runtime_cache, OIDC_CONFIG_ID},
+    AppState,
+};
 
 // ---------------------------------------------------------------------------
 // Fixed singleton row IDs (pre-seeded by migrations)
 // ---------------------------------------------------------------------------
 
-const OIDC_CONFIG_ID: uuid::Uuid = uuid!("00000000-0000-0000-0000-000000000001");
 const SMTP_CONFIG_ID: uuid::Uuid = uuid!("00000000-0000-0000-0000-000000000002");
 
 // ---------------------------------------------------------------------------
@@ -28,6 +31,8 @@ struct OidcConfigRow {
     client_id: Option<String>,
     client_secret_enc: Option<String>,
     issuer_url: Option<String>,
+    redirect_url: Option<String>,
+    login_label: Option<String>,
     scopes: Option<Vec<String>>,
     auto_provision_users: bool,
     device_pair_code_ttl_seconds: Option<i32>,
@@ -48,6 +53,8 @@ pub struct OidcConfigResponse {
     /// `"***"` when a secret is stored; `null` when none is set.
     pub client_secret: Option<String>,
     pub issuer_url: Option<String>,
+    pub redirect_url: Option<String>,
+    pub login_label: Option<String>,
     pub scopes: Vec<String>,
     pub auto_provision_users: bool,
     pub device_pair_code_ttl_seconds: Option<i32>,
@@ -64,6 +71,8 @@ impl From<OidcConfigRow> for OidcConfigResponse {
             client_id: row.client_id,
             client_secret: row.client_secret_enc.as_deref().map(|_| "***".to_string()),
             issuer_url: row.issuer_url,
+            redirect_url: row.redirect_url,
+            login_label: row.login_label,
             scopes: row.scopes.unwrap_or_default(),
             auto_provision_users: row.auto_provision_users,
             device_pair_code_ttl_seconds: row.device_pair_code_ttl_seconds,
@@ -82,6 +91,8 @@ pub struct UpdateOidcConfigRequest {
     /// `null` / absent means "clear the stored secret".
     pub client_secret: Option<String>,
     pub issuer_url: Option<String>,
+    pub redirect_url: Option<String>,
+    pub login_label: Option<String>,
     pub scopes: Option<Vec<String>>,
     pub auto_provision_users: Option<bool>,
     pub device_pair_code_ttl_seconds: Option<i32>,
@@ -169,7 +180,7 @@ pub async fn get_oidc_config(
 ) -> Result<Json<OidcConfigResponse>, (StatusCode, Json<serde_json::Value>)> {
     let row = sqlx::query_as::<_, OidcConfigRow>(
         "SELECT id, enabled, provider_name, client_id, client_secret_enc,
-                issuer_url, scopes, auto_provision_users, device_pair_code_ttl_seconds,
+                issuer_url, redirect_url, login_label, scopes, auto_provision_users, device_pair_code_ttl_seconds,
                 updated_by, updated_at
          FROM oidc_config
          WHERE id = $1",
@@ -192,14 +203,16 @@ pub async fn update_oidc_config(
     // Validate TTL value
     if let Some(ttl) = req.device_pair_code_ttl_seconds {
         if ![300, 600, 1800].contains(&ttl) {
-            return Err(bad_request("device_pair_code_ttl_seconds must be 300, 600, or 1800"));
+            return Err(bad_request(
+                "device_pair_code_ttl_seconds must be 300, 600, or 1800",
+            ));
         }
     }
 
     // Fetch existing row to use as fallback for fields not provided.
     let current = sqlx::query_as::<_, OidcConfigRow>(
         "SELECT id, enabled, provider_name, client_id, client_secret_enc,
-                issuer_url, scopes, auto_provision_users, device_pair_code_ttl_seconds,
+                issuer_url, redirect_url, login_label, scopes, auto_provision_users, device_pair_code_ttl_seconds,
                 updated_by, updated_at
          FROM oidc_config
          WHERE id = $1",
@@ -214,9 +227,15 @@ pub async fn update_oidc_config(
     let new_provider_name = req.provider_name.or(current.provider_name);
     let new_client_id = req.client_id.or(current.client_id);
     let new_issuer_url = req.issuer_url.or(current.issuer_url);
+    let new_redirect_url = req.redirect_url.or(current.redirect_url);
+    let new_login_label = req.login_label.or(current.login_label);
     let new_scopes = req.scopes.or(current.scopes);
-    let new_auto_provision = req.auto_provision_users.unwrap_or(current.auto_provision_users);
-    let new_device_pair_ttl = req.device_pair_code_ttl_seconds.or(current.device_pair_code_ttl_seconds);
+    let new_auto_provision = req
+        .auto_provision_users
+        .unwrap_or(current.auto_provision_users);
+    let new_device_pair_ttl = req
+        .device_pair_code_ttl_seconds
+        .or(current.device_pair_code_ttl_seconds);
 
     // Determine encrypted secret:
     //   - If req.client_secret is Some(s) and s is non-empty → encrypt it.
@@ -239,14 +258,16 @@ pub async fn update_oidc_config(
              client_id                     = $4,
              client_secret_enc             = $5,
              issuer_url                    = $6,
-             scopes                        = $7,
-             auto_provision_users          = $8,
-             device_pair_code_ttl_seconds  = $9,
-             updated_by                    = $10,
+             redirect_url                  = $7,
+             login_label                   = $8,
+             scopes                        = $9,
+             auto_provision_users          = $10,
+             device_pair_code_ttl_seconds  = $11,
+             updated_by                    = $12,
              updated_at                    = NOW()
          WHERE id = $1
          RETURNING id, enabled, provider_name, client_id, client_secret_enc,
-                   issuer_url, scopes, auto_provision_users, device_pair_code_ttl_seconds,
+                   issuer_url, redirect_url, login_label, scopes, auto_provision_users, device_pair_code_ttl_seconds,
                    updated_by, updated_at",
     )
     .bind(OIDC_CONFIG_ID)
@@ -255,6 +276,8 @@ pub async fn update_oidc_config(
     .bind(new_client_id)
     .bind(new_secret_enc)
     .bind(new_issuer_url)
+    .bind(new_redirect_url)
+    .bind(new_login_label)
     .bind(new_scopes)
     .bind(new_auto_provision)
     .bind(new_device_pair_ttl)
@@ -274,6 +297,8 @@ pub async fn update_oidc_config(
     )
     .await;
 
+    invalidate_oidc_runtime_cache(&state).await;
+
     Ok(Json(OidcConfigResponse::from(row)))
 }
 
@@ -285,7 +310,7 @@ pub async fn test_oidc_config(
     // Read current issuer_url
     let row = sqlx::query_as::<_, OidcConfigRow>(
         "SELECT id, enabled, provider_name, client_id, client_secret_enc,
-                issuer_url, scopes, auto_provision_users, device_pair_code_ttl_seconds,
+                issuer_url, redirect_url, login_label, scopes, auto_provision_users, device_pair_code_ttl_seconds,
                 updated_by, updated_at
          FROM oidc_config
          WHERE id = $1",
@@ -319,16 +344,16 @@ pub async fn test_oidc_config(
         Ok(resp) => {
             if resp.status().is_success() {
                 Ok(Json(json!({
-                    "status": "ok",
-                    "detail": "Discovery document fetched successfully"
+                    "success": true,
+                    "message": "Discovery document fetched successfully"
                 })))
             } else {
                 let status_code = resp.status();
                 Err((
                     StatusCode::BAD_GATEWAY,
                     Json(json!({
-                        "status": "error",
-                        "detail": format!("Discovery URL returned HTTP {}", status_code)
+                        "success": false,
+                        "message": format!("Discovery URL returned HTTP {}", status_code)
                     })),
                 ))
             }
@@ -336,8 +361,8 @@ pub async fn test_oidc_config(
         Err(e) => Err((
             StatusCode::BAD_GATEWAY,
             Json(json!({
-                "status": "error",
-                "detail": format!("{}", e)
+                "success": false,
+                "message": format!("{}", e)
             })),
         )),
     }
@@ -493,4 +518,3 @@ fn internal_error(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
         Json(json!({ "error": msg })),
     )
 }
-

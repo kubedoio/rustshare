@@ -205,6 +205,17 @@ docker compose up -d
 docker compose up -d backend postgres rustfs
 ```
 
+### Pilot Compose Profile
+
+For a release-style pilot install, use the image-based override instead of the local build path:
+
+```bash
+export RUSTSHARE_BACKEND_IMAGE=ghcr.io/scolak/rustshare-backend:latest
+docker compose -f docker-compose.yml -f docker-compose.pilot.yml up -d
+```
+
+The `pilot-release.yml` workflow validates this profile, boots the stack, and waits for `/health` before publishing the backend image.
+
 ### Check Health
 
 ```bash
@@ -430,6 +441,12 @@ RUSTSHARE_METADATA_CACHE=true             # Enable in-memory caching
 RUSTSHARE_METADATA_PREFIX=apps/rustshare  # Object prefix in storage
 RUSTSHARE_METADATA_NAMESPACE=default      # Namespace for multi-tenancy
 ```
+
+OIDC bootstrap semantics:
+
+- Environment variables seed the initial `oidc_config` row on first boot when the row is still blank.
+- After that, the admin OIDC settings page becomes the runtime source of truth for web login.
+- Updating OIDC in the admin UI invalidates the in-process cache immediately, so `/api/v1/auth/config` and the OIDC login flow read the same saved values.
 
 ### Metadata Backend Migration
 

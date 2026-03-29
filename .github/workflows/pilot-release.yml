@@ -1,0 +1,97 @@
+name: Pilot Release
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/pilot-release.yml'
+      - 'docker-compose.yml'
+      - 'docker-compose.pilot.yml'
+      - 'docker/backend.Dockerfile'
+      - 'backend/**'
+      - 'frontend/**'
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/rustshare-backend
+
+jobs:
+  pilot-compose-smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build pilot backend image
+        run: docker build -f docker/backend.Dockerfile -t rustshare-backend:pilot .
+
+      - name: Validate pilot compose profile
+        env:
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+        run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml config >/tmp/pilot-compose.yaml
+
+      - name: Boot pilot stack
+        env:
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+          JWT_SECRET: ci-pilot-secret
+          RUSTSHARE_SECRET_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml up -d postgres rustfs backend nginx
+
+      - name: Wait for health endpoint
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1/health >/tmp/pilot-health.json; then
+              cat /tmp/pilot-health.json
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Pilot stack did not become healthy in time" >&2
+          exit 1
+
+      - name: Show service status on failure
+        if: failure()
+        env:
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.pilot.yml ps
+          docker compose -f docker-compose.yml -f docker-compose.pilot.yml logs --tail=200
+
+      - name: Tear down pilot stack
+        if: always()
+        env:
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+        run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml down -v
+
+  publish-pilot-image:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push tagged pilot image
+        run: |
+          docker build -f docker/backend.Dockerfile \
+            -t $IMAGE_NAME:${GITHUB_SHA} \
+            -t $IMAGE_NAME:latest \
+            .
+          docker push $IMAGE_NAME:${GITHUB_SHA}
+          docker push $IMAGE_NAME:latest

@@ -19,12 +19,13 @@ use sqlx::Row;
 use std::time::{Duration, Instant};
 
 use crate::handlers::AuthenticatedUser;
+use crate::oidc_runtime::load_oidc_runtime_settings;
 use crate::AppState;
 
 /// User code alphabet - excludes ambiguous characters: 0, O, 1, I, L
 const USER_CODE_ALPHABET: &[char] = &[
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'U',
-    'V', 'W', 'X', 'Y', 'Z', '2', '3', '4', '5', '6', '7', '8', '9',
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'U', 'V',
+    'W', 'X', 'Y', 'Z', '2', '3', '4', '5', '6', '7', '8', '9',
 ];
 
 const USER_CODE_LENGTH: usize = 8;
@@ -135,7 +136,8 @@ pub async fn device_approve(
 
     let (id, is_approved, is_expired) = match row {
         Some(row) => {
-            let id: uuid::Uuid = row.try_get("id")
+            let id: uuid::Uuid = row
+                .try_get("id")
                 .map_err(|e| server_error(format!("Failed to get id: {}", e)))?;
             let is_approved: bool = row.try_get("is_approved").unwrap_or(false);
             let is_expired: bool = row.try_get("is_expired").unwrap_or(true);
@@ -230,14 +232,10 @@ fn server_error(msg: impl Into<String>) -> (StatusCode, Json<serde_json::Value>)
 pub async fn device_request(
     State(state): State<AppState>,
 ) -> Result<Json<DeviceRequestResponse>, (StatusCode, Json<serde_json::Value>)> {
-    // Get TTL from oidc_config table (device_pair_code_ttl_seconds)
-    let ttl_seconds: i32 = sqlx::query_scalar(
-        "SELECT COALESCE(device_pair_code_ttl_seconds, 300) FROM oidc_config LIMIT 1",
-    )
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|e| server_error(format!("Database error: {}", e)))?
-    .unwrap_or(300);
+    let ttl_seconds = load_oidc_runtime_settings(&state)
+        .await
+        .map(|settings| settings.device_pair_code_ttl_seconds())
+        .unwrap_or(300);
     let ttl_seconds_i64 = i64::from(ttl_seconds);
 
     let user_code = gen_user_code();
@@ -319,9 +317,7 @@ pub async fn device_poll(
         }
         None => {
             // Device code not found - treat as expired
-            return Ok(
-                Json(DevicePollResponse::Expired {}).into_response()
-            );
+            return Ok(Json(DevicePollResponse::Expired {}).into_response());
         }
     };
 
@@ -342,9 +338,7 @@ pub async fn device_poll(
     }
 
     // Approved - generate token and clean up
-    let user_id = user_id_opt.ok_or_else(|| {
-        server_error("Approved request missing user_id")
-    })?;
+    let user_id = user_id_opt.ok_or_else(|| server_error("Approved request missing user_id"))?;
 
     let raw_token = gen_token();
     let token_hash = hash_token(&raw_token);
@@ -353,13 +347,7 @@ pub async fn device_poll(
     let device_name = headers
         .get(axum::http::header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
-        .map(|s| {
-            if s.len() > 255 {
-                &s[..255]
-            } else {
-                s
-            }
-        })
+        .map(|s| if s.len() > 255 { &s[..255] } else { s })
         .unwrap_or("Unknown device")
         .to_string();
 
@@ -507,7 +495,10 @@ mod tests {
     #[tokio::test]
     async fn device_qr_info_defaults_to_https_when_no_x_forwarded_proto() {
         let mut headers = HeaderMap::new();
-        headers.insert(axum::http::header::HOST, "secure.example.com".parse().unwrap());
+        headers.insert(
+            axum::http::header::HOST,
+            "secure.example.com".parse().unwrap(),
+        );
 
         let result = device_qr_info(headers).await;
         assert!(result.is_ok());
@@ -521,14 +512,20 @@ mod tests {
         let _lock = ENV_VAR_MUTEX.lock().unwrap();
 
         // Set the environment variable
-        std::env::set_var("RUSTSHARE_PUBLIC_URL", "http://env-fallback.example.com:8080");
+        std::env::set_var(
+            "RUSTSHARE_PUBLIC_URL",
+            "http://env-fallback.example.com:8080",
+        );
 
         let headers = HeaderMap::new();
         let result = device_qr_info(headers).await;
         assert!(result.is_ok());
 
         let response = result.unwrap();
-        assert_eq!(response.0.instance_url, "http://env-fallback.example.com:8080");
+        assert_eq!(
+            response.0.instance_url,
+            "http://env-fallback.example.com:8080"
+        );
 
         // Clean up
         std::env::remove_var("RUSTSHARE_PUBLIC_URL");

@@ -26,7 +26,9 @@ const OIDC_CONFIG_ID: &str = "00000000-0000-0000-0000-000000000001";
 async fn test_pool() -> sqlx::PgPool {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
-    sqlx::PgPool::connect(&url).await.expect("DB connect failed")
+    sqlx::PgPool::connect(&url)
+        .await
+        .expect("DB connect failed")
 }
 
 /// Build a test SecretEncryptionKey by setting the env var temporarily.
@@ -75,7 +77,8 @@ async fn reset_oidc_config(pool: &sqlx::PgPool) {
     sqlx::query(
         "UPDATE oidc_config
          SET enabled = false, provider_name = NULL, client_id = NULL,
-             client_secret_enc = NULL, issuer_url = NULL, scopes = NULL,
+             client_secret_enc = NULL, issuer_url = NULL, redirect_url = NULL,
+             login_label = NULL, scopes = NULL,
              auto_provision_users = false, updated_by = NULL, updated_at = NOW()
          WHERE id = $1",
     )
@@ -100,11 +103,17 @@ async fn test_secret_encryption_roundtrip() {
     let encrypted = encrypt_secret(plaintext, &key).expect("encrypt_secret failed");
 
     // Must not store the plaintext
-    assert_ne!(encrypted, plaintext, "Encrypted value must not equal plaintext");
+    assert_ne!(
+        encrypted, plaintext,
+        "Encrypted value must not equal plaintext"
+    );
     assert!(!encrypted.is_empty(), "Encrypted value must not be empty");
 
     let decrypted = decrypt_secret(&encrypted, &key).expect("decrypt_secret failed");
-    assert_eq!(decrypted, plaintext, "Decrypted value must match original plaintext");
+    assert_eq!(
+        decrypted, plaintext,
+        "Decrypted value must match original plaintext"
+    );
 }
 
 /// Each call to encrypt_secret must produce a different ciphertext (random nonce).
@@ -117,7 +126,10 @@ async fn test_encryption_produces_different_ciphertexts() {
     let enc1 = encrypt_secret(plaintext, &key).unwrap();
     let enc2 = encrypt_secret(plaintext, &key).unwrap();
 
-    assert_ne!(enc1, enc2, "Ciphertexts for the same plaintext must differ (random nonce)");
+    assert_ne!(
+        enc1, enc2,
+        "Ciphertexts for the same plaintext must differ (random nonce)"
+    );
 
     // Both must decrypt to the same value
     assert_eq!(decrypt_secret(&enc1, &key).unwrap(), plaintext);
@@ -146,9 +158,11 @@ async fn test_oidc_config_update_stores_encrypted_secret() {
              client_id            = $4,
              client_secret_enc    = $5,
              issuer_url           = $6,
-             scopes               = $7,
-             auto_provision_users = $8,
-             updated_by           = $9,
+             redirect_url         = $7,
+             login_label          = $8,
+             scopes               = $9,
+             auto_provision_users = $10,
+             updated_by           = $11,
              updated_at           = NOW()
          WHERE id = $1",
     )
@@ -158,6 +172,8 @@ async fn test_oidc_config_update_stores_encrypted_secret() {
     .bind("client-id-123")
     .bind(&secret_enc)
     .bind("https://idp.example.com")
+    .bind("https://rustshare.example.com/api/v1/auth/oidc/callback")
+    .bind("Continue with school SSO")
     .bind(vec!["openid", "email", "profile"])
     .bind(false)
     .bind(actor_id)
@@ -167,7 +183,8 @@ async fn test_oidc_config_update_stores_encrypted_secret() {
 
     // Read back
     let row = sqlx::query(
-        "SELECT enabled, provider_name, client_id, client_secret_enc, issuer_url
+        "SELECT enabled, provider_name, client_id, client_secret_enc, issuer_url,
+                redirect_url, login_label
          FROM oidc_config WHERE id = $1",
     )
     .bind(oidc_id)
@@ -177,13 +194,22 @@ async fn test_oidc_config_update_stores_encrypted_secret() {
 
     let stored_enc: Option<String> = row.try_get("client_secret_enc").unwrap();
     let client_id: Option<String> = row.try_get("client_id").unwrap();
+    let redirect_url: Option<String> = row.try_get("redirect_url").unwrap();
+    let login_label: Option<String> = row.try_get("login_label").unwrap();
     let enabled: bool = row.try_get("enabled").unwrap();
 
     assert!(enabled, "OIDC config must be enabled after update");
     assert_eq!(client_id.as_deref(), Some("client-id-123"));
+    assert_eq!(
+        redirect_url.as_deref(),
+        Some("https://rustshare.example.com/api/v1/auth/oidc/callback")
+    );
+    assert_eq!(login_label.as_deref(), Some("Continue with school SSO"));
 
     // The stored value must not be the plaintext
-    let stored = stored_enc.as_deref().expect("client_secret_enc must be set");
+    let stored = stored_enc
+        .as_deref()
+        .expect("client_secret_enc must be set");
     assert_ne!(
         stored, plaintext_secret,
         "Plaintext must not be stored in DB"
@@ -301,4 +327,54 @@ async fn test_oidc_config_update() {
         .ok();
     reset_oidc_config(&pool).await;
     cleanup(&pool, &[actor_id]).await;
+}
+
+/// Runtime-only fields for the login path should persist alongside the identity provider values.
+#[tokio::test]
+#[ignore]
+async fn test_oidc_runtime_fields_persist() {
+    let pool = test_pool().await;
+    let oidc_id: Uuid = OIDC_CONFIG_ID.parse().unwrap();
+
+    sqlx::query(
+        "UPDATE oidc_config
+         SET enabled = true,
+             issuer_url = $2,
+             redirect_url = $3,
+             login_label = $4,
+             updated_at = NOW()
+         WHERE id = $1",
+    )
+    .bind(oidc_id)
+    .bind("https://issuer.school.test")
+    .bind("https://files.school.test/api/v1/auth/oidc/callback")
+    .bind("Continue with school SSO")
+    .execute(&pool)
+    .await
+    .expect("update runtime fields");
+
+    let row = sqlx::query(
+        "SELECT enabled, issuer_url, redirect_url, login_label
+         FROM oidc_config
+         WHERE id = $1",
+    )
+    .bind(oidc_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch runtime fields");
+
+    let enabled: bool = row.try_get("enabled").unwrap();
+    let issuer_url: Option<String> = row.try_get("issuer_url").unwrap();
+    let redirect_url: Option<String> = row.try_get("redirect_url").unwrap();
+    let login_label: Option<String> = row.try_get("login_label").unwrap();
+
+    assert!(enabled);
+    assert_eq!(issuer_url.as_deref(), Some("https://issuer.school.test"));
+    assert_eq!(
+        redirect_url.as_deref(),
+        Some("https://files.school.test/api/v1/auth/oidc/callback")
+    );
+    assert_eq!(login_label.as_deref(), Some("Continue with school SSO"));
+
+    reset_oidc_config(&pool).await;
 }

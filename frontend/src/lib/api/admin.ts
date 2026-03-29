@@ -161,8 +161,11 @@ export interface OidcConfig {
 	client_id?: string;
 	client_secret: string | null;
 	issuer_url?: string;
+	redirect_url?: string;
+	login_label?: string;
 	scopes?: string[];
 	auto_provision_users: boolean;
+	device_pair_code_ttl_seconds?: number | null;
 }
 
 export interface OidcConfigRequest {
@@ -171,8 +174,11 @@ export interface OidcConfigRequest {
 	client_id?: string;
 	client_secret?: string;
 	issuer_url?: string;
+	redirect_url?: string;
+	login_label?: string;
 	scopes?: string[];
 	auto_provision_users?: boolean;
+	device_pair_code_ttl_seconds?: number;
 }
 
 export interface SmtpConfig {

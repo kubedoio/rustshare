@@ -29,6 +29,8 @@ describe('OidcConfigForm admin API functions', () => {
 			client_id: 'my-client-id',
 			client_secret: null,
 			issuer_url: 'https://accounts.google.com',
+			redirect_url: 'https://files.example.edu/api/v1/auth/oidc/callback',
+			login_label: 'Continue with school SSO',
 			scopes: ['openid', 'email', 'profile'],
 			auto_provision_users: true
 		};
@@ -47,6 +49,8 @@ describe('OidcConfigForm admin API functions', () => {
 			provider_name: 'Okta',
 			client_id: 'okta-client',
 			issuer_url: 'https://okta.example.com',
+			redirect_url: 'https://files.example.edu/api/v1/auth/oidc/callback',
+			login_label: 'Continue with school SSO',
 			scopes: ['openid', 'email'],
 			auto_provision_users: false
 		};
@@ -56,6 +60,8 @@ describe('OidcConfigForm admin API functions', () => {
 			client_id: 'okta-client',
 			client_secret: null,
 			issuer_url: 'https://okta.example.com',
+			redirect_url: 'https://files.example.edu/api/v1/auth/oidc/callback',
+			login_label: 'Continue with school SSO',
 			scopes: ['openid', 'email'],
 			auto_provision_users: false
 		};
@@ -131,5 +137,26 @@ describe('OidcConfigForm admin API functions', () => {
 
 		// Secret is null from server — UI should show placeholder, not the value
 		expect(result.client_secret).toBeNull();
+	});
+
+	it('keeps redirect and login label fields in the OIDC contract', async () => {
+		const request: OidcConfigRequest = {
+			redirect_url: 'https://files.school.test/api/v1/auth/oidc/callback',
+			login_label: 'Continue with school SSO'
+		};
+		const response: OidcConfig = {
+			enabled: true,
+			client_secret: null,
+			redirect_url: 'https://files.school.test/api/v1/auth/oidc/callback',
+			login_label: 'Continue with school SSO',
+			auto_provision_users: false
+		};
+		vi.mocked(apiClient.put).mockResolvedValue(response);
+
+		const result = await updateOidcConfig(request);
+
+		expect(apiClient.put).toHaveBeenCalledWith('/admin/config/oidc', request);
+		expect(result.redirect_url).toBe('https://files.school.test/api/v1/auth/oidc/callback');
+		expect(result.login_label).toBe('Continue with school SSO');
 	});
 });
