@@ -11,6 +11,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rand::Rng;
 use std::sync::Arc;
+use uuid::Uuid;
 
 use rustshare_crypto::PasswordHasher;
 
@@ -82,6 +83,7 @@ pub trait MetadataStoreOps: Send + Sync {
         &self,
         parent_id: Option<uuid::Uuid>,
         owner_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
     ) -> Result<Vec<File>>;
 
     /// List folders in a folder for an owner.
@@ -89,6 +91,7 @@ pub trait MetadataStoreOps: Send + Sync {
         &self,
         parent_id: Option<uuid::Uuid>,
         owner_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
     ) -> Result<Vec<Folder>>;
 
     /// List all descendant folders, including the root folder.
@@ -169,6 +172,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         permissions: SharePermissions,
         password: Option<String>,
         expires_at: Option<DateTime<Utc>>,
+        tenant_id: Uuid,
     ) -> Result<Share, ShareError> {
         // Verify file exists
         let file = self
@@ -196,6 +200,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             permissions,
             password_hash,
             expires_at,
+            tenant_id,
         );
 
         // Store in metadata store
@@ -244,6 +249,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         password: Option<String>,
         expires_at: Option<DateTime<Utc>>,
         upload_only: bool,
+        tenant_id: Uuid,
     ) -> Result<Share, ShareError> {
         let folder = self
             .metadata_store
@@ -269,6 +275,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             permissions,
             password_hash,
             expires_at,
+            tenant_id,
         );
         share.upload_only = upload_only;
 
@@ -700,13 +707,13 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
 
         let folders = self
             .metadata_store
-            .list_folders(Some(target_folder.id), root_folder.owner_id)
+            .list_folders(Some(target_folder.id), root_folder.owner_id, target_folder.tenant_id)
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
 
         let files = self
             .metadata_store
-            .list_files(Some(target_folder.id), root_folder.owner_id)
+            .list_files(Some(target_folder.id), root_folder.owner_id, target_folder.tenant_id)
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
 
@@ -832,7 +839,7 @@ mod tests {
                 .collect())
         }
 
-        async fn list_files(&self, parent_id: Option<Uuid>, owner_id: Uuid) -> Result<Vec<File>> {
+        async fn list_files(&self, parent_id: Option<Uuid>, owner_id: Uuid, _tenant_id: Uuid) -> Result<Vec<File>> {
             Ok(self
                 .files
                 .lock()
@@ -847,6 +854,7 @@ mod tests {
             &self,
             parent_id: Option<Uuid>,
             owner_id: Uuid,
+            _tenant_id: Uuid,
         ) -> Result<Vec<Folder>> {
             Ok(self
                 .folders

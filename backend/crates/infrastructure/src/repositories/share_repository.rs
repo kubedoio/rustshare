@@ -5,7 +5,8 @@ use uuid::Uuid;
 
 /// Repository for share database operations.
 pub struct ShareRepository {
-    pool: PgPool,
+    /// The database pool (public for use by other repositories).
+    pub pool: PgPool,
 }
 
 impl ShareRepository {
@@ -39,9 +40,11 @@ impl ShareRepository {
             upload_only: row.try_get("upload_only")?,
             access_count: row.try_get("access_count")?,
             recipient_user_id: row.try_get("recipient_user_id")?,
+            recipient_group_id: row.try_get("recipient_group_id")?,
             created_by: row.try_get("created_by")?,
             created_at: row.try_get("created_at")?,
             revoked_at: row.try_get("revoked_at")?,
+            tenant_id: row.try_get("tenant_id")?,
         })
     }
 
@@ -61,7 +64,7 @@ impl ShareRepository {
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
                    expires_at, upload_only, access_count, recipient_user_id, created_by,
-                   created_at, revoked_at
+                   created_at, revoked_at, tenant_id
             FROM shares
             WHERE recipient_user_id = $1
               AND file_id IS NOT DISTINCT FROM $2::uuid
@@ -90,7 +93,7 @@ impl ShareRepository {
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
                    expires_at, upload_only, access_count, recipient_user_id, created_by,
-                   created_at, revoked_at
+                   created_at, revoked_at, tenant_id
             FROM shares
             WHERE recipient_user_id = $1
               AND revoked_at IS NULL
@@ -117,7 +120,7 @@ impl ShareRepository {
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
                    expires_at, upload_only, access_count, recipient_user_id, created_by,
-                   created_at, revoked_at
+                   created_at, revoked_at, tenant_id
             FROM shares
             WHERE recipient_user_id IS NOT NULL
               AND file_id IS NOT DISTINCT FROM $1::uuid
@@ -151,12 +154,12 @@ impl ShareRepository {
             INSERT INTO shares (
                 id, file_id, folder_id, share_token, permissions,
                 password_hash, expires_at, upload_only, access_count,
-                recipient_user_id, created_by, created_at, revoked_at
+                recipient_user_id, created_by, created_at, revoked_at, tenant_id
             )
-            VALUES ($1, $2, $3, NULL, $4, NULL, NULL, FALSE, 0, $5, $6, $7, NULL)
+            VALUES ($1, $2, $3, NULL, $4, NULL, NULL, FALSE, 0, $5, $6, $7, NULL, '00000000-0000-0000-0000-000000000000')
             RETURNING id, file_id, folder_id, share_token, permissions, password_hash,
                       expires_at, upload_only, access_count, recipient_user_id, created_by,
-                      created_at, revoked_at
+                      created_at, revoked_at, tenant_id
             "#,
         )
         .bind(id)
@@ -185,7 +188,7 @@ impl ShareRepository {
             WHERE id = $1
             RETURNING id, file_id, folder_id, share_token, permissions, password_hash,
                       expires_at, upload_only, access_count, recipient_user_id, created_by,
-                      created_at, revoked_at
+                      created_at, revoked_at, tenant_id
             "#,
         )
         .bind(share_id)
@@ -222,7 +225,7 @@ impl ShareRepository {
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
                    expires_at, upload_only, access_count, recipient_user_id, created_by,
-                   created_at, revoked_at
+                   created_at, revoked_at, tenant_id
             FROM shares
             WHERE id = $1
             "#,

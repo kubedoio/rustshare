@@ -92,6 +92,7 @@ pub struct Notification {
     pub action_url: Option<String>,
     pub read: bool,
     pub created_at: DateTime<Utc>,
+    pub tenant_id: Uuid,
 }
 
 impl Notification {
@@ -104,6 +105,7 @@ impl Notification {
         resource_id: Uuid,
         resource_type: ResourceType,
         action_url: Option<String>,
+        tenant_id: Uuid,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -116,6 +118,7 @@ impl Notification {
             action_url,
             read: false,
             created_at: Utc::now(),
+            tenant_id,
         }
     }
 }
@@ -140,6 +143,7 @@ mod tests {
             action_url: Some("/files/123".to_string()),
             read: false,
             created_at: Utc::now(),
+            tenant_id: Uuid::nil(),
         };
 
         assert_eq!(notification.user_id, user_id);

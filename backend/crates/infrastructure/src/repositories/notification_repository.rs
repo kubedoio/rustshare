@@ -31,6 +31,7 @@ impl NotificationRepository {
             action_url: row.try_get("action_url")?,
             read: row.try_get("read")?,
             created_at: row.try_get("created_at")?,
+            tenant_id: row.try_get("tenant_id")?,
         })
     }
 
@@ -48,11 +49,11 @@ impl NotificationRepository {
             r#"
             INSERT INTO notifications (
                 id, user_id, notification_type, title, message,
-                resource_id, resource_type, action_url, read, created_at
+                resource_id, resource_type, action_url, read, created_at, tenant_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE, $9, '00000000-0000-0000-0000-000000000000')
             RETURNING id, user_id, notification_type, title, message,
-                      resource_id, resource_type, action_url, read, created_at
+                      resource_id, resource_type, action_url, read, created_at, tenant_id
             "#,
         )
         .bind(id)
@@ -78,7 +79,7 @@ impl NotificationRepository {
         let row = sqlx::query(
             r#"
             SELECT id, user_id, notification_type, title, message,
-                   resource_id, resource_type, action_url, read, created_at
+                   resource_id, resource_type, action_url, read, created_at, tenant_id
             FROM notifications
             WHERE id = $1
             "#,
@@ -102,7 +103,7 @@ impl NotificationRepository {
             sqlx::query(
                 r#"
                 SELECT id, user_id, notification_type, title, message,
-                       resource_id, resource_type, action_url, read, created_at
+                       resource_id, resource_type, action_url, read, created_at, tenant_id
                 FROM notifications
                 WHERE user_id = $1 AND read = FALSE
                 ORDER BY created_at DESC
@@ -118,7 +119,7 @@ impl NotificationRepository {
             sqlx::query(
                 r#"
                 SELECT id, user_id, notification_type, title, message,
-                       resource_id, resource_type, action_url, read, created_at
+                       resource_id, resource_type, action_url, read, created_at, tenant_id
                 FROM notifications
                 WHERE user_id = $1
                 ORDER BY created_at DESC
@@ -195,7 +196,7 @@ impl NotificationRepository {
             SET read = TRUE
             WHERE id = $1
             RETURNING id, user_id, notification_type, title, message,
-                      resource_id, resource_type, action_url, read, created_at
+                      resource_id, resource_type, action_url, read, created_at, tenant_id
             "#,
         )
         .bind(notification_id)

@@ -1,6 +1,10 @@
 //! HTTP request handlers for RustShare API endpoints.
 
 pub mod admin;
+pub mod ai;
+pub mod auth;
+// TODO: Fix chat_integration compilation errors
+// mod chat_integration;
 pub mod device_auth;
 pub mod devices;
 mod extractors;
@@ -9,6 +13,11 @@ mod folders;
 mod notifications;
 mod profile;
 mod public_shares;
+// mod upload;
+pub mod scim;
+pub mod scim_v2;
+// TODO: Fix search_service compilation errors
+// mod search;
 mod shares;
 mod sync;
 mod user_shares;
@@ -32,14 +41,35 @@ pub use public_shares::{
     get_shared_folder_contents, upload_shared_folder_file,
 };
 pub use shares::{
-    create_public_file_share, create_public_folder_share, list_public_file_shares,
-    list_public_folder_shares,
+    create_public_file_share, create_public_folder_share, get_share_access_log,
+    list_public_file_shares, list_public_folder_shares, list_user_shares, revoke_share,
+    OwnedShareResponse, ShareAccessLogQuery, ShareAccessLogResponse,
 };
-pub use sync::sync_handler;
+pub use sync::{sync_handler, get_sync_cursor, get_sync_delta};
+// pub use upload::{
+//     abort_upload_session, complete_upload, create_upload_session, get_upload_session_status,
+//     list_upload_sessions, upload_chunk, upload_error_response,
+//     CompleteUploadResponseBody, CreateUploadSessionResponse, UploadChunkResponse, UploadSessionStatusResponse,
+// };
 pub use user_shares::{
     create_file_share, create_folder_share, list_file_recipients, list_folder_recipients,
     list_received_shares, remove_recipient, update_recipient_permission,
 };
+pub use ai::{
+    ask_question, semantic_search, summarize_file, AskQuestionRequest, AskQuestionResponse,
+    SemanticSearchRequest, SemanticSearchResponse, SummarizeRequest, SummarizeResponse,
+};
+pub use auth::{
+    ensure_optional_seed_user, log_user_security_event, login, logout, LoginRequest, LoginResponse,
+    UserResponse,
+};
+// TODO: Fix chat_integration compilation errors
+// pub use chat_integration::{
+//     dispatch_webhooks, list_chat_webhooks, receive_chat_event, register_chat_webhook,
+//     unfurl_link, unfurl_link_public, DispatchWebhookResponse, UnfurlLinkRequest, UnfurlLinkResponse,
+//     WebhookDispatchResult, WebhookListResponse,
+// };
+// pub use search::search;
 pub use users::{
     delete_avatar, delete_user_session, get_avatar, get_user_profile,
     list_user_security_events, list_user_sessions, update_user_password, update_user_theme,

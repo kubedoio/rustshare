@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use super::UserId;
 
@@ -67,6 +68,8 @@ pub struct User {
     pub avatar_path: Option<String>,
     /// Whether email can be shared with other users
     pub email_sharing_enabled: bool,
+    /// Tenant this user belongs to
+    pub tenant_id: Uuid,
 }
 
 impl User {
@@ -78,8 +81,8 @@ impl User {
         email: String,
         is_admin: bool,
         storage_quota: i64,
+        tenant_id: Uuid,
     ) -> Self {
-        use uuid::Uuid;
         Self {
             id: Uuid::new_v4(),
             username,
@@ -96,6 +99,7 @@ impl User {
             surname: None,
             avatar_path: None,
             email_sharing_enabled: true,
+            tenant_id,
         }
     }
 
@@ -112,6 +116,7 @@ mod tests {
 
     #[test]
     fn test_user_creation() {
+        let tenant_id = Uuid::new_v4();
         let user = User::new(
             "alice".to_string(),
             "Alice Smith".to_string(),
@@ -119,6 +124,7 @@ mod tests {
             "alice@example.com".to_string(),
             false,
             10_737_418_240, // 10 GB
+            tenant_id,
         );
 
         assert_eq!(user.username, "alice");
@@ -126,11 +132,13 @@ mod tests {
         assert_eq!(user.email, "alice@example.com");
         assert!(!user.is_admin);
         assert_eq!(user.storage_quota, 10_737_418_240);
+        assert_eq!(user.tenant_id, tenant_id);
         assert!(!user.id.is_nil());
     }
 
     #[test]
     fn test_admin_user_creation() {
+        let tenant_id = Uuid::new_v4();
         let admin = User::new(
             "admin".to_string(),
             "Administrator".to_string(),
@@ -138,8 +146,10 @@ mod tests {
             "admin@example.com".to_string(),
             true,
             107_374_182_400, // 100 GB
+            tenant_id,
         );
 
         assert!(admin.is_admin);
+        assert_eq!(admin.tenant_id, tenant_id);
     }
 }

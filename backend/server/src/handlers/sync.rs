@@ -4,7 +4,7 @@ use axum::{
         Query, State,
     },
     http::{HeaderMap, StatusCode},
-    response::Response,
+    response::{IntoResponse, Response, Json},
 };
 use chrono::{DateTime, Utc};
 use futures_util::{SinkExt, StreamExt};
@@ -14,12 +14,15 @@ use rustshare_core::events::{
     Event, EventType, NotificationCreatedPayload, ReplicationStateChangedPayload,
     ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload,
 };
+use rustshare_storage::repos::sync::{DeltaResult, SyncCursor, SyncDelta};
+use rustshare_storage::metadata_v2::SyncCursorDocument;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::extractors::bearer_token_from_headers;
+use super::{AuthenticatedUser, ErrorResponse};
 use crate::web_session::{extract_cookie_value, resolve_user_session};
 use crate::AppState;
 
@@ -1265,5 +1268,388 @@ mod tests {
             !should_send,
             "Share viewer should not receive UserCreated event"
         );
+    }
+}
+
+// ============================================================================
+// HTTP Sync API Endpoints (for Desktop Client)
+// ============================================================================
+
+/// Query parameters for delta requests
+#[derive(Debug, Deserialize)]
+pub struct DeltaQuery {
+    /// The opaque cursor from the previous response
+    pub cursor: String,
+    /// Maximum number of items to return (default: 100, max: 1000)
+    pub limit: Option<usize>,
+}
+
+/// Response for the cursor endpoint
+#[derive(Debug, Serialize)]
+pub struct CursorResponse {
+    /// The opaque cursor token to use for delta requests
+    pub cursor: String,
+    /// The device ID
+    pub device_id: Uuid,
+    /// The last event ID at this cursor position
+    pub last_event_id: Uuid,
+    /// When this cursor was created/updated
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Response for the delta endpoint
+#[derive(Debug, Serialize)]
+pub struct DeltaResponse {
+    /// The delta items
+    pub items: Vec<rustshare_storage::repos::sync::SyncDelta>,
+    /// The next cursor (if has_more is true)
+    pub next_cursor: Option<String>,
+    /// Whether there are more items to fetch
+    pub has_more: bool,
+    /// Total count (if available)
+    pub total_count: Option<usize>,
+}
+
+/// Response for listing device sync status
+#[derive(Debug, Serialize)]
+pub struct DeviceListResponse {
+    /// List of devices with sync info
+    pub devices: Vec<DeviceSyncStatus>,
+}
+
+/// Sync status for a single device
+#[derive(Debug, Serialize)]
+pub struct DeviceSyncStatus {
+    /// Device ID
+    pub device_id: Uuid,
+    /// When the device last synced
+    pub last_sync_at: DateTime<Utc>,
+    /// Last event ID processed
+    pub last_event_id: Uuid,
+}
+
+/// Get or create a sync cursor for the current device
+///
+/// GET /api/v1/sync/cursor
+///
+/// Returns a cursor that represents the current sync checkpoint.
+/// Clients should store this cursor and use it for subsequent delta requests.
+///
+/// # Authentication
+///
+/// Requires a valid user session (cookie or bearer token).
+pub async fn get_sync_cursor(
+    State(state): State<AppState>,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    // For now, use the user_id as the device_id if not provided
+    // In a full implementation, we would get the device_id from a device auth token
+    let device_id = user_id;
+
+    // Create a simple in-memory sync repository using the event store
+    // In production, this would use a proper repository implementation
+    let cursor_doc = match get_or_create_cursor_impl(&state, user_id, device_id).await {
+        Ok(cursor) => cursor,
+        Err(e) => {
+            error!("Failed to get or create cursor: {}", e);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new("Failed to create sync cursor")),
+            ));
+        }
+    };
+
+    let response = CursorResponse {
+        cursor: cursor_doc.cursor,
+        device_id: cursor_doc.device_id,
+        last_event_id: cursor_doc.last_event_id,
+        updated_at: cursor_doc.updated_at,
+    };
+
+    Ok((StatusCode::OK, Json(response)))
+}
+
+/// Get delta changes since a cursor
+///
+/// GET /api/v1/sync/delta?cursor=xxx&limit=100
+///
+/// Returns all changes that have occurred since the given cursor position.
+/// The response includes a new cursor for the next page if there are more items.
+///
+/// # Authentication
+///
+/// Requires a valid user session (cookie or bearer token).
+pub async fn get_sync_delta(
+    State(state): State<AppState>,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+    Query(query): Query<DeltaQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let limit = query.limit.unwrap_or(100).min(1000).max(1);
+
+    // Get delta from the event store
+    let delta_result = match get_delta_impl(&state, user_id, &query.cursor, limit).await {
+        Ok(result) => result,
+        Err(e) => {
+            error!("Failed to get delta: {}", e);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new("Failed to retrieve sync delta")),
+            ));
+        }
+    };
+
+    let response = DeltaResponse {
+        items: delta_result.items,
+        next_cursor: delta_result.next_cursor,
+        has_more: delta_result.has_more,
+        total_count: delta_result.total_count,
+    };
+
+    Ok((StatusCode::OK, Json(response)))
+}
+
+/// Internal implementation to get or create a cursor
+///
+/// For Phase 1, we use a simple implementation that:
+/// 1. Creates a cursor based on the current time
+/// 2. Stores it in memory (in production, this would persist to the document store)
+async fn get_or_create_cursor_impl(
+    _state: &AppState,
+    user_id: Uuid,
+    device_id: Uuid,
+) -> anyhow::Result<SyncCursorDocument> {
+    use rustshare_storage::metadata_v2::schemas::SyncCursorDocument;
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    let now = Utc::now();
+    let timestamp_millis = now.timestamp_millis();
+    let nonce = Uuid::new_v4();
+    let token = format!("{}:{}", timestamp_millis, nonce);
+    let cursor = STANDARD.encode(token);
+
+    Ok(SyncCursorDocument::new(
+        user_id,
+        device_id,
+        cursor,
+        Uuid::nil(), // No events processed yet
+        None,        // No device info
+    ))
+}
+
+/// Internal implementation to get delta changes
+///
+/// For Phase 1, we use the existing EventStore to query events
+/// that have occurred since the cursor timestamp.
+async fn get_delta_impl(
+    state: &AppState,
+    user_id: Uuid,
+    cursor: &str,
+    limit: usize,
+) -> anyhow::Result<DeltaResult> {
+    use rustshare_storage::repos::sync::{SyncDelta, parse_cursor};
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use rustshare_core::events::Event;
+
+    // Parse the cursor to get the timestamp
+    let since_timestamp = match parse_cursor(cursor) {
+        Ok(ts) => ts,
+        Err(e) => {
+            anyhow::bail!("Invalid cursor: {}", e);
+        }
+    };
+
+    // Get events from the event store using the last_seen_event_id pattern
+    // We use a nil UUID as the starting point since we don't have a proper event log cursor yet
+    let events: Vec<Event> = state
+        .event_store
+        .get_events_since(user_id, None, limit as i64)
+        .await?;
+
+    // Convert events to sync deltas
+    let mut items = Vec::new();
+    let mut last_timestamp = since_timestamp;
+    let mut _last_event_id = Uuid::nil();
+
+    for event in &events {
+        // Skip events that occurred before our cursor timestamp
+        if event.timestamp <= since_timestamp {
+            continue;
+        }
+
+        // Convert event to delta (simplified for Phase 1)
+        if let Some(delta) = event_to_delta(event) {
+            items.push(delta);
+        }
+
+        last_timestamp = event.timestamp;
+        _last_event_id = event.id;
+    }
+
+    // Generate next cursor
+    let has_more = events.len() == limit;
+    let next_cursor = if has_more {
+        let timestamp_millis = last_timestamp.timestamp_millis();
+        let nonce = Uuid::new_v4();
+        let token = format!("{}:{}", timestamp_millis, nonce);
+        Some(STANDARD.encode(token))
+    } else {
+        None
+    };
+
+    Ok(DeltaResult {
+        items,
+        next_cursor,
+        has_more,
+        total_count: None,
+    })
+}
+
+/// Convert a core Event to a SyncDelta
+fn event_to_delta(event: &Event) -> Option<SyncDelta> {
+    use rustshare_core::events::*;
+    use rustshare_storage::repos::sync::SyncDelta;
+
+    match event.event_type {
+        EventType::FileUploaded => {
+            let payload: FileUploadedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            Some(SyncDelta::FileCreated {
+                event_id: event.id,
+                timestamp: event.timestamp,
+                file_id: payload.file_id,
+                name: payload.name,
+                path: payload.path,
+                parent_id: payload.parent_folder_id,
+                size: payload.size,
+                mime_type: payload.mime_type,
+                content_hash: payload.content_hash,
+                version_id: Uuid::new_v4(), // In real impl, this comes from the event
+            })
+        }
+        EventType::FileModified => {
+            let payload: FileModifiedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            Some(SyncDelta::FileModified {
+                event_id: event.id,
+                timestamp: event.timestamp,
+                file_id: payload.file_id,
+                name: "unknown".to_string(), // Would need to look up file
+                path: "unknown".to_string(),
+                size: payload.new_size,
+                mime_type: "application/octet-stream".to_string(),
+                content_hash: payload.new_content_hash,
+                version_id: Uuid::new_v4(),
+                version_number: payload.new_version,
+            })
+        }
+        EventType::FileRenamed => {
+            let payload: FileRenamedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            Some(SyncDelta::FileRenamed {
+                event_id: event.id,
+                timestamp: event.timestamp,
+                file_id: payload.file_id,
+                old_name: payload.old_name,
+                new_name: payload.new_name,
+                old_path: payload.old_path,
+                new_path: payload.new_path,
+            })
+        }
+        EventType::FileMoved => {
+            let payload: FileMovedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            Some(SyncDelta::FileMoved {
+                event_id: event.id,
+                timestamp: event.timestamp,
+                file_id: payload.file_id,
+                name: "unknown".to_string(),
+                old_parent_id: payload.old_parent_folder_id,
+                new_parent_id: payload.new_parent_folder_id,
+                old_path: payload.old_path,
+                new_path: payload.new_path,
+            })
+        }
+        EventType::FileDeleted => {
+            let payload: FileDeletedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            Some(SyncDelta::FileDeleted {
+                event_id: event.id,
+                timestamp: event.timestamp,
+                file_id: payload.file_id,
+                name: payload.file_name,
+                path: "unknown".to_string(),
+                parent_id: payload.folder_id,
+            })
+        }
+        EventType::FolderCreated => {
+            let payload: FolderCreatedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            Some(SyncDelta::FolderCreated {
+                event_id: event.id,
+                timestamp: event.timestamp,
+                folder_id: payload.folder_id,
+                name: payload.name,
+                path: payload.path,
+                parent_id: payload.parent_folder_id,
+            })
+        }
+        EventType::FolderRenamed => {
+            let payload: FolderRenamedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            Some(SyncDelta::FolderRenamed {
+                event_id: event.id,
+                timestamp: event.timestamp,
+                folder_id: payload.folder_id,
+                old_name: payload.old_name,
+                new_name: payload.new_name,
+                old_path: payload.old_path,
+                new_path: payload.new_path,
+            })
+        }
+        EventType::FolderMoved => {
+            let payload: FolderMovedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            Some(SyncDelta::FolderMoved {
+                event_id: event.id,
+                timestamp: event.timestamp,
+                folder_id: payload.folder_id,
+                name: "unknown".to_string(),
+                old_parent_id: payload.old_parent_folder_id,
+                new_parent_id: payload.new_parent_folder_id,
+                old_path: payload.old_path,
+                new_path: payload.new_path,
+            })
+        }
+        EventType::FolderDeleted => {
+            // FolderDeleted payload doesn't exist yet, use generic
+            Some(SyncDelta::FolderDeleted {
+                event_id: event.id,
+                timestamp: event.timestamp,
+                folder_id: event.aggregate_id,
+                name: "unknown".to_string(),
+                path: "unknown".to_string(),
+                parent_id: None,
+            })
+        }
+        EventType::ShareCreated => {
+            let payload: ShareCreatedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            Some(SyncDelta::ShareCreated {
+                event_id: event.id,
+                timestamp: event.timestamp,
+                share_id: payload.share_id,
+                resource_type: "file".to_string(),
+                resource_id: payload.file_id,
+                resource_name: "unknown".to_string(),
+                permissions: format!("{:?}", payload.permissions),
+                scope: "public".to_string(),
+                recipient_user_id: None,
+            })
+        }
+        EventType::ShareRevoked => {
+            let payload: ShareRevokedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            Some(SyncDelta::ShareRevoked {
+                event_id: event.id,
+                timestamp: event.timestamp,
+                share_id: payload.share_id,
+                resource_type: "file".to_string(),
+                resource_id: payload.file_id,
+            })
+        }
+        _ => {
+            // Other event types not yet mapped
+            None
+        }
     }
 }

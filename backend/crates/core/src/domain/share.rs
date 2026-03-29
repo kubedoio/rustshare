@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use super::{FileId, FolderId, ShareId, UserId};
 
@@ -49,8 +50,8 @@ impl Ord for SharePermissions {
 
 /// A share link that allows access to a file or folder.
 ///
-/// Supports both public shares (anonymous access via token) and user shares
-/// (authenticated user-to-user sharing).
+/// Supports both public shares (anonymous access via token), user shares
+/// (authenticated user-to-user sharing), and group shares (access via group membership).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Share {
     pub id: ShareId,
@@ -69,11 +70,14 @@ pub struct Share {
     pub upload_only: bool,
     /// Access count for public shares only
     pub access_count: i32,
-    /// Recipient user for user shares (None for public shares)
+    /// Recipient user for user shares (None for public/group shares)
     pub recipient_user_id: Option<UserId>,
+    /// Recipient group for group shares (None for public/user shares)
+    pub recipient_group_id: Option<Uuid>,
     pub created_by: UserId,
     pub created_at: DateTime<Utc>,
     pub revoked_at: Option<DateTime<Utc>>,
+    pub tenant_id: Uuid,
 }
 
 impl Share {
@@ -85,8 +89,8 @@ impl Share {
         permissions: SharePermissions,
         password_hash: Option<String>,
         expires_at: Option<DateTime<Utc>>,
+        tenant_id: Uuid,
     ) -> Self {
-        use uuid::Uuid;
         Self {
             id: Uuid::new_v4(),
             file_id: Some(file_id),
@@ -100,7 +104,9 @@ impl Share {
             permissions,
             access_count: 0,
             recipient_user_id: None,
+            recipient_group_id: None,
             revoked_at: None,
+            tenant_id,
         }
     }
 
@@ -112,8 +118,8 @@ impl Share {
         permissions: SharePermissions,
         password_hash: Option<String>,
         expires_at: Option<DateTime<Utc>>,
+        tenant_id: Uuid,
     ) -> Self {
-        use uuid::Uuid;
         Self {
             id: Uuid::new_v4(),
             file_id: None,
@@ -127,7 +133,9 @@ impl Share {
             permissions,
             access_count: 0,
             recipient_user_id: None,
+            recipient_group_id: None,
             revoked_at: None,
+            tenant_id,
         }
     }
 
@@ -195,7 +203,6 @@ pub struct ShareRecipient {
 mod tests {
     use super::*;
     use chrono::Duration;
-    use uuid::Uuid;
 
     #[test]
     fn test_share_not_expired() {
@@ -210,9 +217,11 @@ mod tests {
             upload_only: false,
             access_count: 0,
             recipient_user_id: None,
+            recipient_group_id: None,
             created_by: Uuid::new_v4(),
             created_at: Utc::now(),
             revoked_at: None,
+            tenant_id: Uuid::new_v4(),
         };
 
         assert!(!share.is_expired());
@@ -231,9 +240,11 @@ mod tests {
             upload_only: false,
             access_count: 5,
             recipient_user_id: None,
+            recipient_group_id: None,
             created_by: Uuid::new_v4(),
             created_at: Utc::now(),
             revoked_at: None,
+            tenant_id: Uuid::new_v4(),
         };
 
         assert!(share.is_expired());
@@ -252,9 +263,11 @@ mod tests {
             upload_only: false,
             access_count: 0,
             recipient_user_id: None,
+            recipient_group_id: None,
             created_by: Uuid::new_v4(),
             created_at: Utc::now(),
             revoked_at: None,
+            tenant_id: Uuid::new_v4(),
         };
 
         assert!(!share.is_expired());
@@ -273,9 +286,11 @@ mod tests {
             upload_only: false,
             access_count: 0,
             recipient_user_id: None,
+            recipient_group_id: None,
             created_by: Uuid::new_v4(),
             created_at: Utc::now(),
             revoked_at: None,
+            tenant_id: Uuid::new_v4(),
         };
 
         assert!(share.is_password_protected());
@@ -285,6 +300,7 @@ mod tests {
     fn test_share_new_constructor() {
         let file_id = Uuid::new_v4();
         let created_by = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
 
         let share = Share::new(
             file_id,
@@ -293,6 +309,7 @@ mod tests {
             SharePermissions::View,
             Some("hashed_password".to_string()),
             Some(Utc::now() + Duration::hours(24)),
+            tenant_id,
         );
 
         assert_eq!(share.file_id, Some(file_id));
@@ -302,6 +319,7 @@ mod tests {
         assert_eq!(share.password_hash, Some("hashed_password".to_string()));
         assert!(!share.upload_only);
         assert_eq!(share.access_count, 0);
+        assert_eq!(share.tenant_id, tenant_id);
         assert!(!share.id.is_nil());
         assert!(share.is_password_protected());
         assert!(!share.is_expired());
@@ -320,9 +338,11 @@ mod tests {
             upload_only: false,
             access_count: 0,
             recipient_user_id: Some(Uuid::new_v4()),
+            recipient_group_id: None,
             created_by: Uuid::new_v4(),
             created_at: Utc::now(),
             revoked_at: None,
+            tenant_id: Uuid::new_v4(),
         };
 
         assert!(share.is_user_share());
@@ -344,9 +364,11 @@ mod tests {
             upload_only: false,
             access_count: 0,
             recipient_user_id: Some(Uuid::new_v4()),
+            recipient_group_id: None,
             created_by: Uuid::new_v4(),
             created_at: Utc::now(),
             revoked_at: None,
+            tenant_id: Uuid::new_v4(),
         };
 
         assert!(share.is_folder_share());
@@ -367,9 +389,11 @@ mod tests {
             upload_only: false,
             access_count: 0,
             recipient_user_id: Some(Uuid::new_v4()),
+            recipient_group_id: None,
             created_by: Uuid::new_v4(),
             created_at: Utc::now(),
             revoked_at: None,
+            tenant_id: Uuid::new_v4(),
         };
 
         assert_eq!(share.resource_id(), file_id);

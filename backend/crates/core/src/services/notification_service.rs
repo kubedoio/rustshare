@@ -24,6 +24,7 @@ pub struct CreateNotification {
     pub resource_id: Uuid,
     pub resource_type: ResourceType,
     pub action_url: Option<String>,
+    pub tenant_id: Uuid,
 }
 
 /// Trait for notification repository operations needed by NotificationService.
@@ -257,6 +258,7 @@ mod tests {
                 action_url: request.action_url,
                 read: false,
                 created_at: Utc::now(),
+                tenant_id: request.tenant_id,
             };
             self.notifications
                 .lock()
@@ -379,6 +381,7 @@ mod tests {
             resource_id,
             resource_type,
             action_url: action_url.map(str::to_string),
+            tenant_id: Uuid::new_v4(),
         }
     }
 
@@ -594,6 +597,7 @@ mod tests {
                     resource_id,
                     resource_type: ResourceType::File,
                     action_url: None,
+                    tenant_id: Uuid::new_v4(),
                 })
                 .await
                 .unwrap();

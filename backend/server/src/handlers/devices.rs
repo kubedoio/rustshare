@@ -63,7 +63,7 @@ impl From<DeviceRow> for DeviceListResponse {
 /// Returns a list of active (non-revoked) device tokens for the calling user.
 pub async fn list_devices(
     State(state): State<AppState>,
-    AuthenticatedUser { user_id }: AuthenticatedUser,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
 ) -> Result<Json<ListDevicesResponse>, (StatusCode, Json<serde_json::Value>)> {
     let rows: Vec<DeviceRow> = sqlx::query_as(
         r#"
@@ -90,7 +90,7 @@ pub async fn list_devices(
 /// Returns 404 if the device doesn't belong to the user.
 pub async fn revoke_device(
     State(state): State<AppState>,
-    AuthenticatedUser { user_id }: AuthenticatedUser,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Path(device_id): Path<Uuid>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
     // First, verify the device belongs to the user and is not already revoked

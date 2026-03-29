@@ -175,15 +175,19 @@ pub trait SessionStorage: Send + Sync {
     async fn is_revoked(&self, session_hash: &str) -> Result<bool, SessionError>;
 }
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 /// Simple in-memory session storage (for standalone mode)
 pub struct InMemorySessionStorage {
-    // This would use the coordination store internally
-    // For now, a simplified implementation
+    sessions: Mutex<HashMap<String, (Uuid, bool)>>,
 }
 
 impl InMemorySessionStorage {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+        }
     }
 }
 
@@ -197,23 +201,31 @@ impl Default for InMemorySessionStorage {
 impl SessionStorage for InMemorySessionStorage {
     async fn store_session(
         &self,
-        _session_hash: &str,
-        _user_id: Uuid,
+        session_hash: &str,
+        user_id: Uuid,
         _ttl: Duration,
     ) -> Result<(), SessionError> {
-        // In standalone mode, we rely on JWT validation only
-        // Revocation doesn't persist across restarts (acceptable limitation)
+        let mut sessions = self.sessions.lock().unwrap();
+        sessions.insert(session_hash.to_string(), (user_id, false));
         Ok(())
     }
-    
-    async fn revoke_session(&self, _session_hash: &str, _ttl: Duration) -> Result<(), SessionError> {
-        // In standalone mode, revocation is in-memory only
+
+    async fn revoke_session(&self, session_hash: &str, _ttl: Duration) -> Result<(), SessionError> {
+        let mut sessions = self.sessions.lock().unwrap();
+        // Mark as revoked if exists, or insert as revoked if missing
+        sessions
+            .entry(session_hash.to_string())
+            .and_modify(|(_, revoked)| *revoked = true)
+            .or_insert((Uuid::nil(), true));
         Ok(())
     }
-    
-    async fn is_revoked(&self, _session_hash: &str) -> Result<bool, SessionError> {
-        // In standalone mode, we can't track revocation persistently
-        Ok(false)
+
+    async fn is_revoked(&self, session_hash: &str) -> Result<bool, SessionError> {
+        let sessions = self.sessions.lock().unwrap();
+        Ok(sessions
+            .get(session_hash)
+            .map(|(_, revoked)| *revoked)
+            .unwrap_or(false))
     }
 }
 
@@ -237,5 +249,45 @@ mod tests {
         assert_eq!(SessionType::Api.as_str(), "api");
         assert_eq!(SessionType::Device.as_str(), "device");
         assert_eq!(SessionType::Share.as_str(), "share");
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_session_storage_store_and_revoke() {
+        let storage = InMemorySessionStorage::new();
+        let user_id = Uuid::new_v4();
+
+        // Store session
+        storage.store_session("session1", user_id, Duration::from_secs(3600)).await.unwrap();
+        assert!(!storage.is_revoked("session1").await.unwrap());
+
+        // Revoke session
+        storage.revoke_session("session1", Duration::from_secs(3600)).await.unwrap();
+        assert!(storage.is_revoked("session1").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_session_storage_revoke_unknown_session() {
+        let storage = InMemorySessionStorage::new();
+
+        // Revoke a session that was never stored
+        storage.revoke_session("unknown_session", Duration::from_secs(3600)).await.unwrap();
+        assert!(storage.is_revoked("unknown_session").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_session_storage_multiple_sessions() {
+        let storage = InMemorySessionStorage::new();
+        let user_id = Uuid::new_v4();
+
+        storage.store_session("session_a", user_id, Duration::from_secs(3600)).await.unwrap();
+        storage.store_session("session_b", user_id, Duration::from_secs(3600)).await.unwrap();
+
+        assert!(!storage.is_revoked("session_a").await.unwrap());
+        assert!(!storage.is_revoked("session_b").await.unwrap());
+
+        storage.revoke_session("session_a", Duration::from_secs(3600)).await.unwrap();
+
+        assert!(storage.is_revoked("session_a").await.unwrap());
+        assert!(!storage.is_revoked("session_b").await.unwrap());
     }
 }

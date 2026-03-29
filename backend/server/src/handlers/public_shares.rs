@@ -673,6 +673,7 @@ pub async fn upload_shared_folder_file(
             Some(target_folder_id),
             file_data,
             mime_type,
+            share.tenant_id,
         )
         .await
         .map_err(super::file_error_response)?;

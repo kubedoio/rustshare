@@ -524,7 +524,7 @@ pub async fn oidc_callback(
         .map(|value| value.to_string());
     let ip_address = middleware::extract_client_ip(&headers, None).map(|value| value.to_string());
     let session_token =
-        create_user_session(&state, user.id, user_agent.clone(), ip_address.clone())
+        create_user_session(&state, user.id, user.tenant_id, user_agent.clone(), ip_address.clone())
             .await
             .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
 
@@ -745,6 +745,7 @@ async fn find_or_create_oidc_user(
         email.to_string(),
         false,
         default_storage_quota_bytes(),
+        state.default_tenant_id,
     );
 
     state

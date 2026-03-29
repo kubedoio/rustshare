@@ -6,41 +6,12 @@ use rustshare_core::domain::{
     File, FileId, Folder, FolderId, Notification, NotificationId, Share, UserId,
 };
 use rustshare_core::services::{
-    CreateNotification, FileResolverOps, FolderResolverOps, NotificationRepositoryOps,
-    ShareResolverOps,
+    CreateNotification, NotificationRepositoryOps,
 };
 
 use crate::repositories::{
-    FileRepository, FolderRepository, NotificationRepository, ShareRepository,
+    NotificationRepository,
 };
-
-// ShareRepository implements ShareResolverOps
-impl ShareResolverOps for ShareRepository {
-    async fn find_user_share(
-        &self,
-        file_id: Option<FileId>,
-        folder_id: Option<FolderId>,
-        recipient_user_id: UserId,
-    ) -> Result<Option<Share>> {
-        self.find_user_share(file_id, folder_id, recipient_user_id)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))
-    }
-}
-
-// FileRepository implements FileResolverOps
-impl FileResolverOps for FileRepository {
-    async fn find_file_by_id(&self, id: FileId) -> Result<Option<File>> {
-        self.get_by_id(id).await.map_err(|e| anyhow::anyhow!(e))
-    }
-}
-
-// FolderRepository implements FolderResolverOps
-impl FolderResolverOps for FolderRepository {
-    async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>> {
-        self.get_by_id(id).await.map_err(|e| anyhow::anyhow!(e))
-    }
-}
 
 // NotificationRepository implements NotificationRepositoryOps
 impl NotificationRepositoryOps for NotificationRepository {

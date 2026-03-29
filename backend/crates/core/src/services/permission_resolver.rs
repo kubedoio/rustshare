@@ -3,14 +3,16 @@
 //! This service handles permission checks with caching and folder inheritance:
 //! - Owner always has Admin permission (no DB lookup)
 //! - Direct share permissions (on file/folder)
+//! - Group share permissions (via group membership)
 //! - Folder inheritance (walk up to 50 levels max)
 //! - Per-request caching to avoid repeated tree walks
 
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use uuid::Uuid;
 
-use crate::domain::{File, FileId, Folder, FolderId, SharePermissions, UserId};
+use crate::domain::{File, FileId, Folder, FolderId, Share, SharePermissions, UserId};
 
 /// Resource type for permission checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,50 +28,69 @@ enum CacheKey {
     Folder(UserId, FolderId),
 }
 
-/// Trait for share repository operations needed by PermissionResolver.
+/// Combined trait for all operations needed by PermissionResolver.
+///
+/// This trait combines share resolution, file/folder metadata, and group membership
+/// operations to simplify the generic bounds for PermissionResolver.
 #[allow(async_fn_in_trait)]
-pub trait ShareResolverOps: Send + Sync {
+pub trait PermissionResolverOps: Send + Sync {
     /// Find a user share by resource and recipient.
     async fn find_user_share(
         &self,
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
         recipient_user_id: UserId,
-    ) -> Result<Option<crate::domain::Share>>;
-}
+    ) -> Result<Option<Share>>;
 
-/// Trait for file metadata operations needed by PermissionResolver.
-#[allow(async_fn_in_trait)]
-pub trait FileResolverOps: Send + Sync {
+    /// Find group shares by resource and group IDs.
+    /// Returns all shares where recipient_group_id matches any of the provided group_ids.
+    async fn find_group_shares(
+        &self,
+        file_id: Option<FileId>,
+        folder_id: Option<FolderId>,
+        group_ids: &[Uuid],
+    ) -> Result<Vec<Share>>;
+
+    /// Find user shares for multiple folders at once.
+    /// Returns all shares where the resource is one of the folder_ids and recipient matches user_id.
+    async fn find_user_shares_for_folders(
+        &self,
+        folder_ids: &[FolderId],
+        recipient_user_id: UserId,
+    ) -> Result<Vec<Share>>;
+
+    /// Find group shares for multiple folders at once.
+    /// Returns all shares where the resource is one of the folder_ids and recipient_group_id matches any group_ids.
+    async fn find_group_shares_for_folders(
+        &self,
+        folder_ids: &[FolderId],
+        group_ids: &[Uuid],
+    ) -> Result<Vec<Share>>;
+
     /// Find a file by ID.
     async fn find_file_by_id(&self, id: FileId) -> Result<Option<File>>;
-}
 
-/// Trait for folder metadata operations needed by PermissionResolver.
-#[allow(async_fn_in_trait)]
-pub trait FolderResolverOps: Send + Sync {
     /// Find a folder by ID.
     async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>>;
+
+    /// Get all group IDs that a user is a member of.
+    async fn get_user_group_ids(&self, user_id: UserId) -> Result<Vec<Uuid>>;
 }
 
 /// PermissionResolver service handles permission checks with caching and folder inheritance.
 ///
-/// Generic over ShareResolverOps, FileResolverOps, and FolderResolverOps implementations to support
-/// different backends and testing with mock implementations.
-pub struct PermissionResolver<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> {
-    share_ops: Arc<S>,
-    file_ops: Arc<F>,
-    folder_ops: Arc<D>,
+/// Generic over PermissionResolverOps implementations to support different backends
+/// and testing with mock implementations.
+pub struct PermissionResolver<Ops: PermissionResolverOps> {
+    ops: Arc<Ops>,
     cache: Mutex<HashMap<CacheKey, Option<SharePermissions>>>,
 }
 
-impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionResolver<S, F, D> {
+impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
     /// Create a new PermissionResolver instance.
-    pub fn new(share_ops: Arc<S>, file_ops: Arc<F>, folder_ops: Arc<D>) -> Self {
+    pub fn new(ops: Arc<Ops>) -> Self {
         Self {
-            share_ops,
-            file_ops,
-            folder_ops,
+            ops,
             cache: Mutex::new(HashMap::new()),
         }
     }
@@ -79,7 +100,8 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
     /// Checks in order:
     /// 1. Owner check (Admin permission, no DB lookup)
     /// 2. Direct share on file
-    /// 3. Folder ancestry (inherited permissions)
+    /// 3. Group shares on file (highest permission wins)
+    /// 4. Folder ancestry (inherited permissions from user and group shares)
     ///
     /// Returns true if user has the required permission or higher.
     pub async fn check_file_permission(
@@ -97,7 +119,7 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
 
         // Get file metadata
         let file = self
-            .file_ops
+            .ops
             .find_file_by_id(file_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("File not found"))?;
@@ -113,7 +135,7 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
 
         // 2. Check direct share on file
         if let Some(share) = self
-            .share_ops
+            .ops
             .find_user_share(Some(file_id), None, user_id)
             .await?
         {
@@ -124,10 +146,28 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
             }
         }
 
-        // 3. Walk up folder ancestry for inherited permissions
+        // 3. Check group shares on file
+        let user_groups = self.ops.get_user_group_ids(user_id).await?;
+        if !user_groups.is_empty() {
+            let group_shares = self
+                .ops
+                .find_group_shares(Some(file_id), None, &user_groups)
+                .await?;
+            let highest_group_perm = group_shares
+                .iter()
+                .filter(|s| s.revoked_at.is_none())
+                .map(|s| s.permissions)
+                .max();
+            if let Some(perm) = highest_group_perm {
+                self.cache.lock().unwrap().insert(cache_key, Some(perm));
+                return Ok(perm >= required);
+            }
+        }
+
+        // 4. Walk up folder ancestry for inherited permissions
         if let Some(parent_folder_id) = file.parent_folder_id {
             if let Some(inherited_perm) = self
-                .resolve_folder_ancestry(user_id, parent_folder_id)
+                .resolve_folder_ancestry(user_id, parent_folder_id, &user_groups)
                 .await?
             {
                 self.cache
@@ -148,7 +188,8 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
     /// Checks in order:
     /// 1. Owner check (Admin permission, no DB lookup)
     /// 2. Direct share on folder
-    /// 3. Parent folder ancestry (inherited permissions)
+    /// 3. Group shares on folder (highest permission wins)
+    /// 4. Parent folder ancestry (inherited permissions)
     ///
     /// Returns true if user has the required permission or higher.
     pub async fn check_folder_permission(
@@ -166,7 +207,7 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
 
         // Get folder metadata
         let folder = self
-            .folder_ops
+            .ops
             .find_folder_by_id(folder_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Folder not found"))?;
@@ -182,7 +223,7 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
 
         // 2. Check direct share on folder
         if let Some(share) = self
-            .share_ops
+            .ops
             .find_user_share(None, Some(folder_id), user_id)
             .await?
         {
@@ -193,10 +234,28 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
             }
         }
 
-        // 3. Walk up parent folder ancestry for inherited permissions
+        // 3. Check group shares on folder
+        let user_groups = self.ops.get_user_group_ids(user_id).await?;
+        if !user_groups.is_empty() {
+            let group_shares = self
+                .ops
+                .find_group_shares(None, Some(folder_id), &user_groups)
+                .await?;
+            let highest_group_perm = group_shares
+                .iter()
+                .filter(|s| s.revoked_at.is_none())
+                .map(|s| s.permissions)
+                .max();
+            if let Some(perm) = highest_group_perm {
+                self.cache.lock().unwrap().insert(cache_key, Some(perm));
+                return Ok(perm >= required);
+            }
+        }
+
+        // 4. Walk up parent folder ancestry for inherited permissions
         if let Some(parent_folder_id) = folder.parent_folder_id {
             if let Some(inherited_perm) = self
-                .resolve_folder_ancestry(user_id, parent_folder_id)
+                .resolve_folder_ancestry(user_id, parent_folder_id, &user_groups)
                 .await?
             {
                 self.cache
@@ -215,58 +274,113 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
     /// Walk up folder ancestry to find inherited permissions.
     ///
     /// Returns the highest permission found in the folder tree.
-    /// Walks up to 50 levels max to prevent infinite loops.
+    /// Uses ancestor_ids from folder documents for efficient lookup (2 queries instead of N).
+    /// Keeps max_depth protection as a safety net.
     async fn resolve_folder_ancestry(
         &self,
         user_id: UserId,
-        mut folder_id: FolderId,
+        folder_id: FolderId,
+        user_groups: &[Uuid],
     ) -> Result<Option<SharePermissions>> {
-        let mut permissions = Vec::new();
-        let mut max_depth = 50;
+        // Step 1: Fetch the starting folder to get its ancestor_ids
+        let folder = self
+            .ops
+            .find_folder_by_id(folder_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Folder not found in ancestry"))?;
 
-        while max_depth > 0 {
-            // Check cache for this folder
-            let cache_key = CacheKey::Folder(user_id, folder_id);
-            let cached = { self.cache.lock().unwrap().get(&cache_key).copied() };
-            if let Some(cached) = cached {
-                if let Some(perm) = cached {
-                    permissions.push(perm);
+        // Build the list of folder IDs to check: current folder + all ancestors
+        let mut folder_ids_to_check = vec![folder_id];
+        
+        // Add ancestor_ids from the folder document if available
+        // Folder documents now store ancestor_ids for efficient permission resolution
+        if let Some(ref ancestor_ids) = folder.ancestor_ids {
+            folder_ids_to_check.extend(ancestor_ids.iter().copied());
+        } else {
+            // Fallback: Walk up the tree using parent_folder_id
+            // This maintains backward compatibility with folders created before ancestor_ids
+            let mut current_id = folder.parent_folder_id;
+            let mut depth = 0;
+            const MAX_DEPTH: usize = 50;
+            
+            while let Some(parent_id) = current_id {
+                if depth >= MAX_DEPTH {
+                    return Err(anyhow::anyhow!("Max folder depth exceeded ({} levels)", MAX_DEPTH));
                 }
-                // If cached with no permission, continue walking up
-            } else {
-                // Check for share on this folder
-                if let Some(share) = self
-                    .share_ops
-                    .find_user_share(None, Some(folder_id), user_id)
-                    .await?
-                {
-                    if share.revoked_at.is_none() {
-                        let perm = share.permissions;
-                        self.cache.lock().unwrap().insert(cache_key, Some(perm));
-                        permissions.push(perm);
-                    }
+                folder_ids_to_check.push(parent_id);
+                
+                // Fetch parent to continue walking
+                if let Some(parent) = self.ops.find_folder_by_id(parent_id).await? {
+                    current_id = parent.parent_folder_id;
                 } else {
-                    self.cache.lock().unwrap().insert(cache_key, None);
+                    break;
                 }
+                depth += 1;
             }
-
-            // Get parent folder
-            let folder = self
-                .folder_ops
-                .find_folder_by_id(folder_id)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("Folder not found in ancestry"))?;
-
-            match folder.parent_folder_id {
-                Some(parent_id) => folder_id = parent_id,
-                None => break, // Reached root
-            }
-
-            max_depth -= 1;
         }
 
-        if max_depth == 0 {
-            return Err(anyhow::anyhow!("Max folder depth exceeded (50 levels)"));
+        // Step 2: Check cache for any folders we already know about
+        let mut permissions = Vec::new();
+        let mut uncached_folder_ids = Vec::new();
+        
+        for &fid in &folder_ids_to_check {
+            let cache_key = CacheKey::Folder(user_id, fid);
+            let cached = { self.cache.lock().unwrap().get(&cache_key).copied() };
+            match cached {
+                Some(Some(perm)) => permissions.push(perm),
+                Some(None) => {} // Cached as no permission, continue
+                None => uncached_folder_ids.push(fid),
+            }
+        }
+
+        // Step 3: Batch fetch shares for all uncached folders
+        if !uncached_folder_ids.is_empty() {
+            // Fetch user shares for all folders at once
+            let user_shares = self
+                .ops
+                .find_user_shares_for_folders(&uncached_folder_ids, user_id)
+                .await?;
+            
+            // Fetch group shares for all folders at once (if user has groups)
+            let group_shares = if !user_groups.is_empty() {
+                self.ops
+                    .find_group_shares_for_folders(&uncached_folder_ids, user_groups)
+                    .await?
+            } else {
+                Vec::new()
+            };
+
+            // Process results and update cache
+            for folder_id in uncached_folder_ids {
+                // Find highest user share for this folder
+                let user_perm = user_shares
+                    .iter()
+                    .find(|s| s.folder_id == Some(folder_id) && s.revoked_at.is_none())
+                    .map(|s| s.permissions);
+
+                // Find highest group share for this folder
+                let group_perm = group_shares
+                    .iter()
+                    .filter(|s| s.folder_id == Some(folder_id) && s.revoked_at.is_none())
+                    .map(|s| s.permissions)
+                    .max();
+
+                // Take the highest of user and group permissions
+                let found_perm = match (user_perm, group_perm) {
+                    (Some(u), Some(g)) => Some(u.max(g)),
+                    (Some(u), None) => Some(u),
+                    (None, Some(g)) => Some(g),
+                    (None, None) => None,
+                };
+
+                // Update cache
+                let cache_key = CacheKey::Folder(user_id, folder_id);
+                self.cache.lock().unwrap().insert(cache_key, found_perm);
+
+                if let Some(perm) = found_perm {
+                    permissions.push(perm);
+                }
+            }
         }
 
         // Return highest permission found
@@ -343,28 +457,47 @@ impl<S: ShareResolverOps, F: FileResolverOps, D: FolderResolverOps> PermissionRe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::Share;
     use chrono::Utc;
+    use std::collections::HashMap as StdHashMap;
     use std::sync::Mutex;
     use uuid::Uuid;
 
-    struct MockShareOps {
+    struct MockOps {
         shares: Mutex<Vec<Share>>,
+        files: Mutex<Vec<File>>,
+        folders: Mutex<Vec<Folder>>,
+        user_groups: Mutex<StdHashMap<UserId, Vec<Uuid>>>,
     }
 
-    impl MockShareOps {
+    impl MockOps {
         fn new() -> Self {
             Self {
                 shares: Mutex::new(Vec::new()),
+                files: Mutex::new(Vec::new()),
+                folders: Mutex::new(Vec::new()),
+                user_groups: Mutex::new(StdHashMap::new()),
             }
         }
 
         fn add_share(&self, share: Share) {
             self.shares.lock().unwrap().push(share);
         }
+
+        fn add_file(&self, file: File) {
+            self.files.lock().unwrap().push(file);
+        }
+
+        fn add_folder(&self, folder: Folder) {
+            self.folders.lock().unwrap().push(folder);
+        }
+
+        fn add_user_to_group(&self, user_id: UserId, group_id: Uuid) {
+            let mut map = self.user_groups.lock().unwrap();
+            map.entry(user_id).or_default().push(group_id);
+        }
     }
 
-    impl ShareResolverOps for MockShareOps {
+    impl PermissionResolverOps for MockOps {
         async fn find_user_share(
             &self,
             file_id: Option<FileId>,
@@ -381,25 +514,63 @@ mod tests {
                 })
                 .cloned())
         }
-    }
 
-    struct MockFileOps {
-        files: Mutex<Vec<File>>,
-    }
-
-    impl MockFileOps {
-        fn new() -> Self {
-            Self {
-                files: Mutex::new(Vec::new()),
-            }
+        async fn find_group_shares(
+            &self,
+            file_id: Option<FileId>,
+            folder_id: Option<FolderId>,
+            group_ids: &[Uuid],
+        ) -> Result<Vec<Share>> {
+            let shares = self.shares.lock().unwrap();
+            Ok(shares
+                .iter()
+                .filter(|s| {
+                    s.file_id == file_id
+                        && s.folder_id == folder_id
+                        && s.recipient_group_id
+                            .map(|gid| group_ids.contains(&gid))
+                            .unwrap_or(false)
+                })
+                .cloned()
+                .collect())
         }
 
-        fn add_file(&self, file: File) {
-            self.files.lock().unwrap().push(file);
+        async fn find_user_shares_for_folders(
+            &self,
+            folder_ids: &[FolderId],
+            recipient_user_id: UserId,
+        ) -> Result<Vec<Share>> {
+            let shares = self.shares.lock().unwrap();
+            Ok(shares
+                .iter()
+                .filter(|s| {
+                    s.file_id.is_none()
+                        && s.folder_id.map(|fid| folder_ids.contains(&fid)).unwrap_or(false)
+                        && s.recipient_user_id == Some(recipient_user_id)
+                })
+                .cloned()
+                .collect())
         }
-    }
 
-    impl FileResolverOps for MockFileOps {
+        async fn find_group_shares_for_folders(
+            &self,
+            folder_ids: &[FolderId],
+            group_ids: &[Uuid],
+        ) -> Result<Vec<Share>> {
+            let shares = self.shares.lock().unwrap();
+            Ok(shares
+                .iter()
+                .filter(|s| {
+                    s.file_id.is_none()
+                        && s.folder_id.map(|fid| folder_ids.contains(&fid)).unwrap_or(false)
+                        && s.recipient_group_id
+                            .map(|gid| group_ids.contains(&gid))
+                            .unwrap_or(false)
+                })
+                .cloned()
+                .collect())
+        }
+
         async fn find_file_by_id(&self, id: FileId) -> Result<Option<File>> {
             Ok(self
                 .files
@@ -409,25 +580,7 @@ mod tests {
                 .find(|f| f.id == id)
                 .cloned())
         }
-    }
 
-    struct MockFolderOps {
-        folders: Mutex<Vec<Folder>>,
-    }
-
-    impl MockFolderOps {
-        fn new() -> Self {
-            Self {
-                folders: Mutex::new(Vec::new()),
-            }
-        }
-
-        fn add_folder(&self, folder: Folder) {
-            self.folders.lock().unwrap().push(folder);
-        }
-    }
-
-    impl FolderResolverOps for MockFolderOps {
         async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>> {
             Ok(self
                 .folders
@@ -437,27 +590,22 @@ mod tests {
                 .find(|f| f.id == id)
                 .cloned())
         }
+
+        async fn get_user_group_ids(&self, user_id: UserId) -> Result<Vec<Uuid>> {
+            let map = self.user_groups.lock().unwrap();
+            Ok(map.get(&user_id).cloned().unwrap_or_default())
+        }
     }
 
-    fn setup() -> (
-        PermissionResolver<MockShareOps, MockFileOps, MockFolderOps>,
-        Arc<MockShareOps>,
-        Arc<MockFileOps>,
-        Arc<MockFolderOps>,
-    ) {
-        let share_ops = Arc::new(MockShareOps::new());
-        let file_ops = Arc::new(MockFileOps::new());
-        let folder_ops = Arc::new(MockFolderOps::new());
-
-        let resolver =
-            PermissionResolver::new(share_ops.clone(), file_ops.clone(), folder_ops.clone());
-
-        (resolver, share_ops, file_ops, folder_ops)
+    fn setup() -> (PermissionResolver<MockOps>, Arc<MockOps>) {
+        let ops = Arc::new(MockOps::new());
+        let resolver = PermissionResolver::new(ops.clone());
+        (resolver, ops)
     }
 
     #[tokio::test]
     async fn test_owner_has_admin_permission() {
-        let (resolver, _share_ops, file_ops, _folder_ops) = setup();
+        let (resolver, ops) = setup();
 
         let owner_id = Uuid::new_v4();
         let file = File::new(
@@ -470,7 +618,7 @@ mod tests {
             owner_id,
         );
         let file_id = file.id;
-        file_ops.add_file(file);
+        ops.add_file(file);
 
         // Owner should have Admin permission without any share record
         assert!(resolver
@@ -489,7 +637,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_direct_file_share() {
-        let (resolver, share_ops, file_ops, _folder_ops) = setup();
+        let (resolver, ops) = setup();
 
         let owner_id = Uuid::new_v4();
         let user_id = Uuid::new_v4();
@@ -504,7 +652,7 @@ mod tests {
             owner_id,
         );
         let file_id = file.id;
-        file_ops.add_file(file);
+        ops.add_file(file);
 
         // Create share with View permission
         let share = Share {
@@ -518,11 +666,13 @@ mod tests {
             upload_only: false,
             access_count: 0,
             recipient_user_id: Some(user_id),
+            recipient_group_id: None,
             created_by: owner_id,
             created_at: Utc::now(),
             revoked_at: None,
+            tenant_id: Uuid::new_v4(),
         };
-        share_ops.add_share(share);
+        ops.add_share(share);
 
         // User should have View permission
         assert!(resolver
@@ -538,7 +688,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_folder_permission_inheritance() {
-        let (resolver, share_ops, file_ops, folder_ops) = setup();
+        let (resolver, ops) = setup();
 
         let owner_id = Uuid::new_v4();
         let user_id = Uuid::new_v4();
@@ -546,7 +696,7 @@ mod tests {
         // Create folder hierarchy: root -> parent -> child
         let root_folder = Folder::new_root(owner_id);
         let root_id = root_folder.id;
-        folder_ops.add_folder(root_folder);
+        ops.add_folder(root_folder);
 
         let parent_folder = Folder::new_child(
             "parent".to_string(),
@@ -555,7 +705,7 @@ mod tests {
             owner_id,
         );
         let parent_id = parent_folder.id;
-        folder_ops.add_folder(parent_folder);
+        ops.add_folder(parent_folder);
 
         let child_folder = Folder::new_child(
             "child".to_string(),
@@ -564,7 +714,7 @@ mod tests {
             owner_id,
         );
         let child_id = child_folder.id;
-        folder_ops.add_folder(child_folder);
+        ops.add_folder(child_folder);
 
         // Create file in child folder
         let file = File::new(
@@ -577,7 +727,7 @@ mod tests {
             owner_id,
         );
         let file_id = file.id;
-        file_ops.add_file(file);
+        ops.add_file(file);
 
         // Share parent folder with Edit permission
         let share = Share {
@@ -591,11 +741,13 @@ mod tests {
             upload_only: false,
             access_count: 0,
             recipient_user_id: Some(user_id),
+            recipient_group_id: None,
             created_by: owner_id,
             created_at: Utc::now(),
             revoked_at: None,
+            tenant_id: Uuid::new_v4(),
         };
-        share_ops.add_share(share);
+        ops.add_share(share);
 
         // User should have Edit permission on file through inheritance
         assert!(resolver
@@ -614,7 +766,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_revoked_share_denied() {
-        let (resolver, share_ops, file_ops, _folder_ops) = setup();
+        let (resolver, ops) = setup();
 
         let owner_id = Uuid::new_v4();
         let user_id = Uuid::new_v4();
@@ -629,7 +781,7 @@ mod tests {
             owner_id,
         );
         let file_id = file.id;
-        file_ops.add_file(file);
+        ops.add_file(file);
 
         // Create revoked share
         let share = Share {
@@ -643,11 +795,13 @@ mod tests {
             upload_only: false,
             access_count: 0,
             recipient_user_id: Some(user_id),
+            recipient_group_id: None,
             created_by: owner_id,
             created_at: Utc::now(),
             revoked_at: Some(Utc::now()),
+            tenant_id: Uuid::new_v4(),
         };
-        share_ops.add_share(share);
+        ops.add_share(share);
 
         // User should not have permission
         assert!(!resolver
@@ -658,7 +812,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_caching_works() {
-        let (resolver, share_ops, file_ops, _folder_ops) = setup();
+        let (resolver, ops) = setup();
 
         let owner_id = Uuid::new_v4();
         let user_id = Uuid::new_v4();
@@ -673,7 +827,7 @@ mod tests {
             owner_id,
         );
         let file_id = file.id;
-        file_ops.add_file(file);
+        ops.add_file(file);
 
         // Create share
         let share = Share {
@@ -687,11 +841,13 @@ mod tests {
             upload_only: false,
             access_count: 0,
             recipient_user_id: Some(user_id),
+            recipient_group_id: None,
             created_by: owner_id,
             created_at: Utc::now(),
             revoked_at: None,
+            tenant_id: Uuid::new_v4(),
         };
-        share_ops.add_share(share);
+        ops.add_share(share);
 
         // First call should populate cache
         assert!(resolver
@@ -713,7 +869,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_permission_for_unshared_resource() {
-        let (resolver, _share_ops, file_ops, _folder_ops) = setup();
+        let (resolver, ops) = setup();
 
         let owner_id = Uuid::new_v4();
         let user_id = Uuid::new_v4();
@@ -728,7 +884,7 @@ mod tests {
             owner_id,
         );
         let file_id = file.id;
-        file_ops.add_file(file);
+        ops.add_file(file);
 
         // User has no share, should not have permission
         assert!(!resolver
@@ -739,13 +895,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_folder_owner_has_admin() {
-        let (resolver, _share_ops, _file_ops, folder_ops) = setup();
+        let (resolver, ops) = setup();
 
         let owner_id = Uuid::new_v4();
 
         let folder = Folder::new_root(owner_id);
         let folder_id = folder.id;
-        folder_ops.add_folder(folder);
+        ops.add_folder(folder);
 
         // Owner should have Admin permission
         assert!(resolver
@@ -764,7 +920,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_max_permission_from_multiple_shares() {
-        let (resolver, share_ops, file_ops, folder_ops) = setup();
+        let (resolver, ops) = setup();
 
         let owner_id = Uuid::new_v4();
         let user_id = Uuid::new_v4();
@@ -772,7 +928,7 @@ mod tests {
         // Create folder hierarchy: root -> parent
         let root_folder = Folder::new_root(owner_id);
         let root_id = root_folder.id;
-        folder_ops.add_folder(root_folder);
+        ops.add_folder(root_folder);
 
         let parent_folder = Folder::new_child(
             "parent".to_string(),
@@ -781,7 +937,7 @@ mod tests {
             owner_id,
         );
         let parent_id = parent_folder.id;
-        folder_ops.add_folder(parent_folder);
+        ops.add_folder(parent_folder);
 
         // Create file in parent folder
         let file = File::new(
@@ -794,7 +950,7 @@ mod tests {
             owner_id,
         );
         let file_id = file.id;
-        file_ops.add_file(file);
+        ops.add_file(file);
 
         // Share file with View permission
         let file_share = Share {
@@ -808,11 +964,13 @@ mod tests {
             upload_only: false,
             access_count: 0,
             recipient_user_id: Some(user_id),
+            recipient_group_id: None,
             created_by: owner_id,
             created_at: Utc::now(),
             revoked_at: None,
+            tenant_id: Uuid::new_v4(),
         };
-        share_ops.add_share(file_share);
+        ops.add_share(file_share);
 
         // Share parent folder with Admin permission
         let folder_share = Share {
@@ -826,11 +984,13 @@ mod tests {
             upload_only: false,
             access_count: 0,
             recipient_user_id: Some(user_id),
+            recipient_group_id: None,
             created_by: owner_id,
             created_at: Utc::now(),
             revoked_at: None,
+            tenant_id: Uuid::new_v4(),
         };
-        share_ops.add_share(folder_share);
+        ops.add_share(folder_share);
 
         // User should have View permission from direct share (direct share takes precedence)
         // This is correct because we check direct shares before ancestry
@@ -839,6 +999,487 @@ mod tests {
             .await
             .unwrap());
         assert!(!resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .await
+            .unwrap());
+    }
+
+    // Group share tests
+
+    #[tokio::test]
+    async fn test_group_share_provides_permission() {
+        let (resolver, ops) = setup();
+
+        let owner_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+
+        // Add user to group
+        ops.add_user_to_group(user_id, group_id);
+
+        let file = File::new(
+            "test.txt".to_string(),
+            "/test.txt".to_string(),
+            "hash".to_string(),
+            100,
+            "text/plain".to_string(),
+            None,
+            owner_id,
+        );
+        let file_id = file.id;
+        ops.add_file(file);
+
+        // Create group share with Edit permission
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file_id),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::Edit,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: Some(group_id),
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        ops.add_share(share);
+
+        // User should have Edit permission through group membership
+        assert!(resolver
+            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .await
+            .unwrap());
+        assert!(resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await
+            .unwrap());
+        assert!(!resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_non_group_member_denied() {
+        let (resolver, ops) = setup();
+
+        let owner_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+
+        // Note: user_id is NOT added to the group
+
+        let file = File::new(
+            "test.txt".to_string(),
+            "/test.txt".to_string(),
+            "hash".to_string(),
+            100,
+            "text/plain".to_string(),
+            None,
+            owner_id,
+        );
+        let file_id = file.id;
+        ops.add_file(file);
+
+        // Create group share
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file_id),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::Edit,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: Some(group_id),
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        ops.add_share(share);
+
+        // User should NOT have permission (not in the group)
+        assert!(!resolver
+            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_highest_permission_wins_direct_vs_group() {
+        let (resolver, ops) = setup();
+
+        let owner_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+
+        // Add user to group
+        ops.add_user_to_group(user_id, group_id);
+
+        let file = File::new(
+            "test.txt".to_string(),
+            "/test.txt".to_string(),
+            "hash".to_string(),
+            100,
+            "text/plain".to_string(),
+            None,
+            owner_id,
+        );
+        let file_id = file.id;
+        ops.add_file(file);
+
+        // Create group share with Admin permission
+        let group_share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file_id),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::Admin,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: Some(group_id),
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        ops.add_share(group_share);
+
+        // Create direct share with View permission (lower)
+        let direct_share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file_id),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(user_id),
+            recipient_group_id: None,
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        ops.add_share(direct_share);
+
+        // User should have View permission because direct share takes precedence
+        // (Direct shares are checked before group shares)
+        assert!(resolver
+            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .await
+            .unwrap());
+        assert!(!resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_highest_permission_wins_multiple_groups() {
+        let (resolver, ops) = setup();
+
+        let owner_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let group1_id = Uuid::new_v4();
+        let group2_id = Uuid::new_v4();
+
+        // Add user to both groups
+        ops.add_user_to_group(user_id, group1_id);
+        ops.add_user_to_group(user_id, group2_id);
+
+        let file = File::new(
+            "test.txt".to_string(),
+            "/test.txt".to_string(),
+            "hash".to_string(),
+            100,
+            "text/plain".to_string(),
+            None,
+            owner_id,
+        );
+        let file_id = file.id;
+        ops.add_file(file);
+
+        // Create group share for group1 with View permission
+        let share1 = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file_id),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: Some(group1_id),
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        ops.add_share(share1);
+
+        // Create group share for group2 with Admin permission (higher)
+        let share2 = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file_id),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::Admin,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: Some(group2_id),
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        ops.add_share(share2);
+
+        // User should have Admin permission (highest from all group shares)
+        assert!(resolver
+            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .await
+            .unwrap());
+        assert!(resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await
+            .unwrap());
+        assert!(resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_group_share_folder_inheritance() {
+        let (resolver, ops) = setup();
+
+        let owner_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+
+        // Add user to group
+        ops.add_user_to_group(user_id, group_id);
+
+        // Create folder hierarchy: root -> parent -> child
+        let root_folder = Folder::new_root(owner_id);
+        let root_id = root_folder.id;
+        ops.add_folder(root_folder);
+
+        let parent_folder = Folder::new_child(
+            "parent".to_string(),
+            "/parent".to_string(),
+            root_id,
+            owner_id,
+        );
+        let parent_id = parent_folder.id;
+        ops.add_folder(parent_folder);
+
+        let child_folder = Folder::new_child(
+            "child".to_string(),
+            "/parent/child".to_string(),
+            parent_id,
+            owner_id,
+        );
+        let child_id = child_folder.id;
+        ops.add_folder(child_folder);
+
+        // Create file in child folder
+        let file = File::new(
+            "test.txt".to_string(),
+            "/parent/child/test.txt".to_string(),
+            "hash".to_string(),
+            100,
+            "text/plain".to_string(),
+            Some(child_id),
+            owner_id,
+        );
+        let file_id = file.id;
+        ops.add_file(file);
+
+        // Share parent folder with group with Edit permission
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: None,
+            folder_id: Some(parent_id),
+            share_token: None,
+            permissions: SharePermissions::Edit,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: Some(group_id),
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        ops.add_share(share);
+
+        // User should have Edit permission on file through group share inheritance
+        assert!(resolver
+            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .await
+            .unwrap());
+        assert!(resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await
+            .unwrap());
+        assert!(!resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_revoked_group_share_denied() {
+        let (resolver, ops) = setup();
+
+        let owner_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+
+        // Add user to group
+        ops.add_user_to_group(user_id, group_id);
+
+        let file = File::new(
+            "test.txt".to_string(),
+            "/test.txt".to_string(),
+            "hash".to_string(),
+            100,
+            "text/plain".to_string(),
+            None,
+            owner_id,
+        );
+        let file_id = file.id;
+        ops.add_file(file);
+
+        // Create revoked group share
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file_id),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::Edit,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: Some(group_id),
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: Some(Utc::now()),
+            tenant_id: Uuid::new_v4(),
+        };
+        ops.add_share(share);
+
+        // User should not have permission (share is revoked)
+        assert!(!resolver
+            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_user_and_group_share_highest_in_ancestry() {
+        let (resolver, ops) = setup();
+
+        let owner_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+
+        // Add user to group
+        ops.add_user_to_group(user_id, group_id);
+
+        // Create folder hierarchy: root -> parent
+        let root_folder = Folder::new_root(owner_id);
+        let root_id = root_folder.id;
+        ops.add_folder(root_folder);
+
+        let parent_folder = Folder::new_child(
+            "parent".to_string(),
+            "/parent".to_string(),
+            root_id,
+            owner_id,
+        );
+        let parent_id = parent_folder.id;
+        ops.add_folder(parent_folder);
+
+        // Create file in parent folder
+        let file = File::new(
+            "test.txt".to_string(),
+            "/parent/test.txt".to_string(),
+            "hash".to_string(),
+            100,
+            "text/plain".to_string(),
+            Some(parent_id),
+            owner_id,
+        );
+        let file_id = file.id;
+        ops.add_file(file);
+
+        // Share parent folder with user (View permission)
+        let user_share = Share {
+            id: Uuid::new_v4(),
+            file_id: None,
+            folder_id: Some(parent_id),
+            share_token: None,
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(user_id),
+            recipient_group_id: None,
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        ops.add_share(user_share);
+
+        // Share parent folder with group (Admin permission - higher)
+        let group_share = Share {
+            id: Uuid::new_v4(),
+            file_id: None,
+            folder_id: Some(parent_id),
+            share_token: None,
+            permissions: SharePermissions::Admin,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: Some(group_id),
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        ops.add_share(group_share);
+
+        // User should have Admin permission (highest from user + group shares in ancestry)
+        assert!(resolver
             .check_file_permission(user_id, file_id, SharePermissions::Admin)
             .await
             .unwrap());

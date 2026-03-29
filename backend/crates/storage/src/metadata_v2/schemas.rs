@@ -35,6 +35,8 @@ pub struct FolderDocument {
     pub path: String,
     /// Owner user ID
     pub owner_id: Uuid,
+    /// Tenant ID
+    pub tenant_id: Uuid,
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
     /// Last update timestamp
@@ -43,6 +45,9 @@ pub struct FolderDocument {
     pub version: u64,
     /// Soft delete flag
     pub deleted: bool,
+    /// Ancestor folder IDs (parent, grandparent, etc. - root first)
+    /// Used for efficient permission resolution without tree walking
+    pub ancestor_ids: Vec<Uuid>,
 }
 
 impl FolderDocument {
@@ -54,6 +59,8 @@ impl FolderDocument {
         name: String,
         path: String,
         owner_id: Uuid,
+        tenant_id: Uuid,
+        ancestor_ids: Vec<Uuid>,
     ) -> Self {
         let now = Utc::now();
         Self {
@@ -64,15 +71,17 @@ impl FolderDocument {
             name,
             path,
             owner_id,
+            tenant_id,
             created_at: now,
             updated_at: now,
             version: 1,
             deleted: false,
+            ancestor_ids,
         }
     }
     
     /// Create a root folder for a user
-    pub fn new_root(namespace_id: Uuid, owner_id: Uuid) -> Self {
+    pub fn new_root(namespace_id: Uuid, owner_id: Uuid, tenant_id: Uuid) -> Self {
         let id = Uuid::new_v4();
         Self::new(
             id,
@@ -81,6 +90,8 @@ impl FolderDocument {
             "Root".to_string(),
             "/".to_string(),
             owner_id,
+            tenant_id,
+            Vec::new(), // Root has no ancestors
         )
     }
     
@@ -91,6 +102,8 @@ impl FolderDocument {
         parent_path: &str,
         name: String,
         owner_id: Uuid,
+        tenant_id: Uuid,
+        parent_ancestor_ids: Vec<Uuid>,
     ) -> Self {
         let id = Uuid::new_v4();
         let path = if parent_path == "/" {
@@ -98,7 +111,9 @@ impl FolderDocument {
         } else {
             format!("{}/{}", parent_path, name)
         };
-        Self::new(id, namespace_id, Some(parent_id), name, path, owner_id)
+        let mut ancestor_ids = parent_ancestor_ids;
+        ancestor_ids.push(parent_id);
+        Self::new(id, namespace_id, Some(parent_id), name, path, owner_id, tenant_id, ancestor_ids)
     }
     
     /// Increment version on mutation
@@ -143,6 +158,8 @@ pub struct FileDocument {
     pub path: String,
     /// Owner user ID
     pub owner_id: Uuid,
+    /// Tenant ID
+    pub tenant_id: Uuid,
     /// Current version ID (points to FileVersionDocument)
     pub current_version_id: Uuid,
     /// Version number (incremented on each update)
@@ -174,6 +191,7 @@ impl FileDocument {
         name: String,
         path: String,
         owner_id: Uuid,
+        tenant_id: Uuid,
         version_id: Uuid,
         size: i64,
         mime_type: String,
@@ -189,6 +207,7 @@ impl FileDocument {
             name,
             path,
             owner_id,
+            tenant_id,
             current_version_id: version_id,
             version_number: 1,
             size,
@@ -286,6 +305,8 @@ pub struct FileVersionDocument {
     pub checksum: String,
     /// User who created this version
     pub created_by: Uuid,
+    /// Tenant ID
+    pub tenant_id: Uuid,
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
     /// Optional change description
@@ -302,6 +323,7 @@ impl FileVersionDocument {
         size: i64,
         created_by: Uuid,
         change_description: Option<String>,
+        tenant_id: Uuid,
     ) -> Self {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
@@ -312,6 +334,7 @@ impl FileVersionDocument {
             size,
             checksum: content_hash,
             created_by,
+            tenant_id,
             created_at: Utc::now(),
             change_description,
         }
@@ -397,6 +420,8 @@ pub struct ShareDocument {
     pub access_count: i32,
     /// Creator user ID
     pub created_by: Uuid,
+    /// Tenant ID
+    pub tenant_id: Uuid,
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
     /// Revocation timestamp
@@ -416,6 +441,7 @@ impl ShareDocument {
         password_hash: Option<String>,
         expires_at: Option<DateTime<Utc>>,
         created_by: Uuid,
+        tenant_id: Uuid,
     ) -> Self {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
@@ -431,6 +457,7 @@ impl ShareDocument {
             upload_only: false,
             access_count: 0,
             created_by,
+            tenant_id,
             created_at: Utc::now(),
             revoked_at: None,
             version: 1,
@@ -445,6 +472,7 @@ impl ShareDocument {
         permissions: SharePermission,
         recipient_user_id: Uuid,
         created_by: Uuid,
+        tenant_id: Uuid,
     ) -> Self {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
@@ -460,6 +488,7 @@ impl ShareDocument {
             upload_only: false,
             access_count: 0,
             created_by,
+            tenant_id,
             created_at: Utc::now(),
             revoked_at: None,
             version: 1,
@@ -547,6 +576,8 @@ pub struct EventDocument {
     pub correlation_id: Option<Uuid>,
     /// Event payload (type-specific)
     pub payload: serde_json::Value,
+    /// Tenant ID
+    pub tenant_id: Uuid,
 }
 
 impl EventDocument {
@@ -557,6 +588,7 @@ impl EventDocument {
         resource_type: String,
         resource_id: Uuid,
         payload: serde_json::Value,
+        tenant_id: Uuid,
     ) -> Self {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
@@ -568,6 +600,7 @@ impl EventDocument {
             occurred_at: Utc::now(),
             correlation_id: None,
             payload,
+            tenant_id,
         }
     }
     
@@ -603,6 +636,8 @@ pub struct TombstoneDocument {
     pub original_path: Option<String>,
     /// Serialized original document (for restore)
     pub restore_data: Option<serde_json::Value>,
+    /// Tenant ID
+    pub tenant_id: Uuid,
 }
 
 impl TombstoneDocument {
@@ -618,6 +653,7 @@ impl TombstoneDocument {
             previous_parent_id: file.parent_id,
             original_path: Some(file.path.clone()),
             restore_data: Some(serde_json::to_value(file).unwrap_or_default()),
+            tenant_id: file.tenant_id,
         }
     }
     
@@ -633,7 +669,93 @@ impl TombstoneDocument {
             previous_parent_id: folder.parent_id,
             original_path: Some(folder.path.clone()),
             restore_data: Some(serde_json::to_value(folder).unwrap_or_default()),
+            tenant_id: folder.tenant_id,
         }
+    }
+}
+
+// ============================================================================
+// Sync Cursor Document
+// ============================================================================
+
+/// Sync cursor document for device synchronization checkpoint
+/// 
+/// Each device maintains its own cursor that tracks the last event
+/// the device has successfully processed. This enables reliable
+/// incremental sync for desktop clients.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncCursorDocument {
+    /// Schema version
+    pub schema_version: u32,
+    /// User ID (owner of this cursor)
+    pub user_id: Uuid,
+    /// Device ID (unique per device)
+    pub device_id: Uuid,
+    /// Opaque cursor token (base64 encoded timestamp+nonce)
+    pub cursor: String,
+    /// Last event ID processed by this device
+    pub last_event_id: Uuid,
+    /// Last updated timestamp
+    pub updated_at: DateTime<Utc>,
+    /// Device info (optional, for display/management)
+    pub device_info: Option<String>,
+}
+
+impl SyncCursorDocument {
+    /// Create a new sync cursor document
+    pub fn new(
+        user_id: Uuid,
+        device_id: Uuid,
+        cursor: String,
+        last_event_id: Uuid,
+        device_info: Option<String>,
+    ) -> Self {
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            user_id,
+            device_id,
+            cursor,
+            last_event_id,
+            updated_at: Utc::now(),
+            device_info,
+        }
+    }
+    
+    /// Update the cursor and last event ID
+    pub fn update(&mut self, cursor: String, last_event_id: Uuid) {
+        self.cursor = cursor;
+        self.last_event_id = last_event_id;
+        self.updated_at = Utc::now();
+    }
+    
+    /// Parse cursor token to extract timestamp
+    /// 
+    /// Cursor format: base64(timestamp_millis + ":" + nonce)
+    pub fn parse_cursor_timestamp(&self) -> Option<chrono::DateTime<Utc>> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        
+        let decoded = STANDARD.decode(&self.cursor).ok()?;
+        let decoded_str = String::from_utf8(decoded).ok()?;
+        let parts: Vec<&str> = decoded_str.split(':').collect();
+        
+        if parts.len() != 2 {
+            return None;
+        }
+        
+        let timestamp_millis: i64 = parts[0].parse().ok()?;
+        chrono::DateTime::from_timestamp_millis(timestamp_millis)
+    }
+    
+    /// Generate a new cursor token from a timestamp
+    /// 
+    /// Cursor format: base64(timestamp_millis + ":" + uuid_v4)
+    pub fn generate_cursor(timestamp: DateTime<Utc>) -> String {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        
+        let timestamp_millis = timestamp.timestamp_millis();
+        let nonce = Uuid::new_v4();
+        let token = format!("{}:{}", timestamp_millis, nonce);
+        STANDARD.encode(token)
     }
 }
 
@@ -832,6 +954,8 @@ pub struct UserDocument {
     pub created_at: DateTime<Utc>,
     /// Last update timestamp
     pub updated_at: DateTime<Utc>,
+    /// Tenant ID
+    pub tenant_id: Uuid,
     /// Document version for optimistic concurrency
     pub version: u64,
 }
@@ -846,6 +970,7 @@ impl UserDocument {
         password_hash: String,
         is_admin: bool,
         storage_quota_bytes: i64,
+        tenant_id: Uuid,
     ) -> Self {
         let now = Utc::now();
         Self {
@@ -864,6 +989,7 @@ impl UserDocument {
             email_verified_at: None,
             created_at: now,
             updated_at: now,
+            tenant_id,
             version: 1,
         }
     }
@@ -937,6 +1063,8 @@ pub struct NotificationDocument {
     pub read: bool,
     /// When notification was read
     pub read_at: Option<DateTime<Utc>>,
+    /// Tenant ID
+    pub tenant_id: Uuid,
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
 }
@@ -952,6 +1080,7 @@ impl NotificationDocument {
         notification_type: NotificationType,
         title: String,
         message: String,
+        tenant_id: Uuid,
     ) -> Self {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
@@ -965,6 +1094,7 @@ impl NotificationDocument {
             message,
             read: false,
             read_at: None,
+            tenant_id,
             created_at: Utc::now(),
         }
     }
@@ -976,18 +1106,24 @@ impl NotificationDocument {
     }
 }
 
-/// Reference to a notification in an index
+/// Notification reference (for indexes)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NotificationRef {
+    /// Notification ID
     pub notification_id: Uuid,
+    /// Notification type
     pub notification_type: NotificationType,
+    /// Resource type
     pub resource_type: String,
+    /// Resource ID
     pub resource_id: Uuid,
+    /// Read status
     pub read: bool,
+    /// Creation timestamp
     pub created_at: DateTime<Utc>,
 }
 
-/// User notification index (rebuildable projection)
+/// User notification index
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserNotificationIndex {
     /// Schema version
@@ -998,9 +1134,9 @@ pub struct UserNotificationIndex {
     pub version: u64,
     /// Last updated
     pub updated_at: DateTime<Utc>,
-    /// Notification references (sorted by created_at desc)
+    /// Notifications (sorted by created_at desc)
     pub notifications: Vec<NotificationRef>,
-    /// Unread count (denormalized for efficiency)
+    /// Unread count
     pub unread_count: u32,
 }
 
@@ -1017,24 +1153,24 @@ impl UserNotificationIndex {
         }
     }
     
-    /// Add a notification
-    pub fn add_notification(&mut self, notif: &NotificationRef) {
-        self.notifications.push(notif.clone());
-        // Sort by created_at desc
-        self.notifications.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        if !notif.read {
+    /// Add a notification reference
+    pub fn add_notification(&mut self, notification: &NotificationRef) {
+        self.notifications.push(notification.clone());
+        if !notification.read {
             self.unread_count += 1;
         }
+        // Sort by created_at descending
+        self.notifications.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         self.version += 1;
         self.updated_at = Utc::now();
     }
     
-    /// Mark a notification as read
+    /// Mark notification as read
     pub fn mark_read(&mut self, notification_id: Uuid) {
         if let Some(notif) = self.notifications.iter_mut().find(|n| n.notification_id == notification_id) {
             if !notif.read {
                 notif.read = true;
-                self.unread_count = self.unread_count.saturating_sub(1);
+                self.unread_count = (self.unread_count - 1).max(0);
                 self.version += 1;
                 self.updated_at = Utc::now();
             }
@@ -1044,10 +1180,11 @@ impl UserNotificationIndex {
     /// Remove a notification
     pub fn remove_notification(&mut self, notification_id: Uuid) {
         if let Some(pos) = self.notifications.iter().position(|n| n.notification_id == notification_id) {
-            let notif = self.notifications.remove(pos);
+            let notif = &self.notifications[pos];
             if !notif.read {
-                self.unread_count = self.unread_count.saturating_sub(1);
+                self.unread_count = (self.unread_count - 1).max(0);
             }
+            self.notifications.remove(pos);
             self.version += 1;
             self.updated_at = Utc::now();
         }
@@ -1057,16 +1194,6 @@ impl UserNotificationIndex {
 // ============================================================================
 // Job Types and Document
 // ============================================================================
-
-/// Job types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum JobType {
-    Replication,
-    ThumbnailGeneration,
-    VirusScan,
-    MetadataExtraction,
-}
 
 /// Job status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1079,153 +1206,44 @@ pub enum JobStatus {
     Cancelled,
 }
 
-/// Job result
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct JobResult {
-    pub success: bool,
-    pub message: Option<String>,
-    pub output: Option<serde_json::Value>,
+/// Job priority
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobPriority {
+    Low,
+    Normal,
+    High,
+    Critical,
 }
 
-/// Job document (canonical)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct JobDocument {
-    /// Schema version
-    pub schema_version: u32,
-    /// Unique job identifier
-    pub id: Uuid,
-    /// Job type
-    pub job_type: JobType,
-    /// Resource type being processed
-    pub resource_type: String,
-    /// Resource ID being processed
-    pub resource_id: Uuid,
-    /// Job status
-    pub status: JobStatus,
-    /// Priority (higher = more important)
-    pub priority: i32,
-    /// Job-specific payload
-    pub payload: serde_json::Value,
-    /// Job result (if completed)
-    pub result: Option<JobResult>,
-    /// Retry count
-    pub retry_count: u32,
-    /// Maximum retries
-    pub max_retries: u32,
-    /// Creation timestamp
-    pub created_at: DateTime<Utc>,
-    /// Scheduled execution time
-    pub scheduled_at: DateTime<Utc>,
-    /// When job started
-    pub started_at: Option<DateTime<Utc>>,
-    /// When job completed
-    pub completed_at: Option<DateTime<Utc>>,
-    /// Error message (if failed)
-    pub error_message: Option<String>,
-    /// Worker ID that claimed the job
-    pub worker_id: Option<String>,
-    /// Document version
-    pub version: u64,
-}
-
-impl JobDocument {
-    /// Create a new pending job
-    pub fn new(
-        id: Uuid,
-        job_type: JobType,
-        resource_type: String,
-        resource_id: Uuid,
-        priority: i32,
-        payload: serde_json::Value,
-        max_retries: u32,
-    ) -> Self {
-        let now = Utc::now();
-        Self {
-            schema_version: CURRENT_SCHEMA_VERSION,
-            id,
-            job_type,
-            resource_type,
-            resource_id,
-            status: JobStatus::Pending,
-            priority,
-            payload,
-            result: None,
-            retry_count: 0,
-            max_retries,
-            created_at: now,
-            scheduled_at: now,
-            started_at: None,
-            completed_at: None,
-            error_message: None,
-            worker_id: None,
-            version: 1,
-        }
-    }
-    
-    /// Mark job as running
-    pub fn mark_running(&mut self, worker_id: String) {
-        self.status = JobStatus::Running;
-        self.worker_id = Some(worker_id);
-        self.started_at = Some(Utc::now());
-        self.version += 1;
-    }
-    
-    /// Mark job as completed
-    pub fn mark_completed(&mut self, result: JobResult) {
-        self.status = JobStatus::Completed;
-        self.result = Some(result);
-        self.completed_at = Some(Utc::now());
-        self.version += 1;
-    }
-    
-    /// Mark job as failed
-    pub fn mark_failed(&mut self, error_message: String) {
-        self.status = JobStatus::Failed;
-        self.error_message = Some(error_message);
-        self.completed_at = Some(Utc::now());
-        self.retry_count += 1;
-        self.version += 1;
-        
-        // Reset to pending if retries remain
-        if self.retry_count < self.max_retries {
-            self.status = JobStatus::Pending;
-            self.scheduled_at = Utc::now() + chrono::Duration::seconds(60 * (self.retry_count as i64));
-            self.worker_id = None;
-            self.started_at = None;
-            self.completed_at = None;
-        }
-    }
-    
-    /// Check if job can be retried
-    pub fn can_retry(&self) -> bool {
-        self.status == JobStatus::Failed && self.retry_count < self.max_retries
-    }
-    
-    /// Check if job is in terminal state
-    pub fn is_terminal(&self) -> bool {
-        matches!(self.status, JobStatus::Completed | JobStatus::Cancelled)
-            || (matches!(self.status, JobStatus::Failed) && !self.can_retry())
+impl Default for JobPriority {
+    fn default() -> Self {
+        Self::Normal
     }
 }
 
-/// Reference to a job in a queue
+/// Job reference (for queue index)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JobRef {
+    /// Job ID
     pub job_id: Uuid,
+    /// Job type
     pub job_type: JobType,
+    /// Resource type
     pub resource_type: String,
+    /// Resource ID
     pub resource_id: Uuid,
+    /// Priority (higher = more important)
     pub priority: i32,
+    /// Created at
     pub created_at: DateTime<Utc>,
 }
 
-/// Job queue index (rebuildable projection)
+/// Job queue index
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JobQueueIndex {
     /// Schema version
     pub schema_version: u32,
-    /// Namespace
-    pub namespace: String,
     /// Index version
     pub version: u64,
     /// Last updated
@@ -1234,16 +1252,15 @@ pub struct JobQueueIndex {
     pub pending: Vec<JobRef>,
     /// Running jobs
     pub running: Vec<JobRef>,
-    /// Recently completed (last 100)
+    /// Recently completed jobs (for tracking)
     pub completed_recent: Vec<JobRef>,
 }
 
 impl JobQueueIndex {
-    /// Create a new empty queue index
-    pub fn new(namespace: String) -> Self {
+    /// Create a new empty index
+    pub fn new(_namespace: String) -> Self {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
-            namespace,
             version: 1,
             updated_at: Utc::now(),
             pending: Vec::new(),
@@ -1252,15 +1269,15 @@ impl JobQueueIndex {
         }
     }
     
-    /// Add a job to pending
-    pub fn add_pending(&mut self, job_ref: JobRef) {
-        self.pending.push(job_ref);
+    /// Add a pending job
+    pub fn add_pending(&mut self, job: JobRef) {
+        self.pending.push(job);
         self.sort_pending();
         self.version += 1;
         self.updated_at = Utc::now();
     }
     
-    /// Move job to running
+    /// Mark job as running
     pub fn mark_running(&mut self, job_id: Uuid) {
         if let Some(pos) = self.pending.iter().position(|j| j.job_id == job_id) {
             let job = self.pending.remove(pos);
@@ -1270,654 +1287,225 @@ impl JobQueueIndex {
         }
     }
     
-    /// Move job to completed
+    /// Mark job as completed/failed/cancelled
     pub fn mark_completed(&mut self, job_id: Uuid) {
         if let Some(pos) = self.running.iter().position(|j| j.job_id == job_id) {
             let job = self.running.remove(pos);
-            self.completed_recent.insert(0, job);
-            // Keep only last 100
+            self.completed_recent.push(job);
+            // Keep only recent 100 completed jobs
             if self.completed_recent.len() > 100 {
-                self.completed_recent.truncate(100);
+                self.completed_recent.remove(0);
             }
             self.version += 1;
             self.updated_at = Utc::now();
         }
     }
     
-    /// Remove a job (e.g., cancelled)
+    /// Remove a job from any queue
     pub fn remove_job(&mut self, job_id: Uuid) {
         self.pending.retain(|j| j.job_id != job_id);
         self.running.retain(|j| j.job_id != job_id);
+        self.completed_recent.retain(|j| j.job_id != job_id);
         self.version += 1;
         self.updated_at = Utc::now();
     }
     
+    /// Sort pending jobs by priority
     fn sort_pending(&mut self) {
-        // Sort by priority desc, then created_at asc
         self.pending.sort_by(|a, b| {
-            b.priority.cmp(&a.priority)
-                .then_with(|| a.created_at.cmp(&b.created_at))
+            let priority_order = b.priority - a.priority;
+            if priority_order != 0 {
+                return priority_order.cmp(&0);
+            }
+            a.created_at.cmp(&b.created_at)
         });
     }
 }
 
-// ============================================================================
-// Device Token Document
-// ============================================================================
-
-/// Device token document (canonical)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DeviceTokenDocument {
-    /// Schema version
-    pub schema_version: u32,
-    /// Unique token identifier
-    pub id: Uuid,
-    /// User ID
-    pub user_id: Uuid,
-    /// Token hash (for lookup)
-    pub token_hash: String,
-    /// Device name
-    pub device_name: String,
-    /// Device type
-    pub device_type: String, // "ios", "android", "desktop", "web"
-    /// Last used timestamp
-    pub last_used_at: DateTime<Utc>,
-    /// Creation timestamp
-    pub created_at: DateTime<Utc>,
-    /// Expiration timestamp
-    pub expires_at: Option<DateTime<Utc>>,
-    /// Revocation timestamp
-    pub revoked_at: Option<DateTime<Utc>>,
-}
-
-impl DeviceTokenDocument {
-    /// Create a new device token
-    pub fn new(
-        id: Uuid,
-        user_id: Uuid,
-        token_hash: String,
-        device_name: String,
-        device_type: String,
-        expires_at: Option<DateTime<Utc>>,
-    ) -> Self {
-        let now = Utc::now();
-        Self {
-            schema_version: CURRENT_SCHEMA_VERSION,
-            id,
-            user_id,
-            token_hash,
-            device_name,
-            device_type,
-            last_used_at: now,
-            created_at: now,
-            expires_at,
-            revoked_at: None,
-        }
-    }
-    
-    /// Check if token is valid
-    pub fn is_valid(&self) -> bool {
-        if self.revoked_at.is_some() {
-            return false;
-        }
-        if let Some(expires) = self.expires_at {
-            return Utc::now() < expires;
-        }
-        true
-    }
-    
-    /// Revoke the token
-    pub fn revoke(&mut self) {
-        self.revoked_at = Some(Utc::now());
-    }
-    
-    /// Update last used
-    pub fn touch(&mut self) {
-        self.last_used_at = Utc::now();
+impl Default for JobQueueIndex {
+    fn default() -> Self {
+        Self::new("default".to_string())
     }
 }
 
-// ============================================================================
-// User Group Document
-// ============================================================================
+/// Job type enum
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobType {
+    Replication,
+    ThumbnailGeneration,
+    VirusScan,
+    MetadataExtraction,
+}
 
-/// User group document (canonical)
+/// Correct Job document schema for job queue
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct UserGroupDocument {
+pub struct JobDocument {
     /// Schema version
     pub schema_version: u32,
-    /// Unique group identifier
+    /// Unique job identifier
     pub id: Uuid,
-    /// Group name
-    pub name: String,
-    /// Group description
-    pub description: String,
-    /// Creator user ID
-    pub created_by: Uuid,
+    /// Job type
+    pub job_type: JobType,
+    /// Resource type
+    pub resource_type: String,
+    /// Resource ID
+    pub resource_id: Uuid,
+    /// Job status
+    pub status: JobStatus,
+    /// Priority (higher = more important)
+    pub priority: i32,
+    /// Job payload
+    pub payload: serde_json::Value,
+    /// Job result (if completed)
+    pub result: Option<serde_json::Value>,
+    /// Retry count
+    pub retry_count: u32,
+    /// Maximum retries
+    pub max_retries: u32,
+    /// Tenant ID
+    pub tenant_id: Uuid,
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
-    /// Last update timestamp
-    pub updated_at: DateTime<Utc>,
-    /// Member user IDs
-    pub member_ids: Vec<Uuid>,
-    /// Document version
+    /// Scheduled run time
+    pub scheduled_at: DateTime<Utc>,
+    /// Started at
+    pub started_at: Option<DateTime<Utc>>,
+    /// Completed at
+    pub completed_at: Option<DateTime<Utc>>,
+    /// Worker ID that claimed the job
+    pub worker_id: Option<String>,
+    /// Error message (if failed)
+    pub error_message: Option<String>,
+    /// Document version for optimistic concurrency
     pub version: u64,
 }
 
-impl UserGroupDocument {
-    /// Create a new user group
-    pub fn new(id: Uuid, name: String, description: String, created_by: Uuid) -> Self {
-        let now = Utc::now();
-        Self {
-            schema_version: CURRENT_SCHEMA_VERSION,
-            id,
-            name,
-            description,
-            created_by,
-            created_at: now,
-            updated_at: now,
-            member_ids: Vec::new(),
-            version: 1,
-        }
-    }
-    
-    /// Add a member
-    pub fn add_member(&mut self, user_id: Uuid) {
-        if !self.member_ids.contains(&user_id) {
-            self.member_ids.push(user_id);
-            self.bump_version();
-        }
-    }
-    
-    /// Remove a member
-    pub fn remove_member(&mut self, user_id: Uuid) {
-        if let Some(pos) = self.member_ids.iter().position(|&id| id == user_id) {
-            self.member_ids.remove(pos);
-            self.bump_version();
-        }
-    }
-    
-    /// Check if user is member
-    pub fn is_member(&self, user_id: Uuid) -> bool {
-        self.member_ids.contains(&user_id)
-    }
-    
-    fn bump_version(&mut self) {
-        self.version += 1;
-        self.updated_at = Utc::now();
-    }
-}
-
-// ============================================================================
-// System Configuration Documents
-// ============================================================================
-
-/// Configuration types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConfigType {
-    Oidc,
-    Smtp,
-    Webhooks,
-    Server,
-    Security,
-}
-
-/// System configuration document (canonical)
+/// Search result entry
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SystemConfigDocument {
+pub struct SearchResult {
+    /// Resource ID
+    pub id: Uuid,
+    /// Resource type ("file" or "folder")
+    pub resource_type: String,
+    /// Resource name
+    pub name: String,
+    /// Full path
+    pub path: String,
+    /// Parent folder ID
+    pub parent_id: Option<Uuid>,
+    /// Owner ID
+    pub owner_id: Uuid,
+    /// Updated at
+    pub updated_at: DateTime<Utc>,
+}
+
+impl SearchResult {
+    /// Create a new search result
+    pub fn new(
+        id: Uuid,
+        resource_type: String,
+        name: String,
+        path: String,
+        owner_id: Uuid,
+        updated_at: DateTime<Utc>,
+    ) -> Self {
+        // Extract parent_id from path
+        let parent_id = None; // Would need to look up based on path
+        Self {
+            id,
+            resource_type,
+            name,
+            path,
+            parent_id,
+            owner_id,
+            updated_at,
+        }
+    }
+}
+
+/// Search index entry for a resource
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SearchIndexEntry {
+    /// Resource ID
+    pub resource_id: Uuid,
+    /// Resource type
+    pub resource_type: String,
+    /// Resource name
+    pub name: String,
+    /// Full path
+    pub path: String,
+    /// Owner ID
+    pub owner_id: Uuid,
+    /// Updated at
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Search index document (per term)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SearchIndexDocument {
     /// Schema version
     pub schema_version: u32,
-    /// Configuration type
-    pub config_type: ConfigType,
-    /// Configuration payload
-    pub config: serde_json::Value,
+    /// Search term
+    pub term: String,
+    /// Tenant ID
+    pub tenant_id: Uuid,
+    /// Matching entries
+    pub entries: Vec<SearchIndexEntry>,
     /// Last updated
     pub updated_at: DateTime<Utc>,
-    /// Updated by
-    pub updated_by: Option<Uuid>,
     /// Document version
     pub version: u64,
 }
 
-impl SystemConfigDocument {
-    /// Create a new config document
-    pub fn new(config_type: ConfigType, config: serde_json::Value, updated_by: Option<Uuid>) -> Self {
+impl SearchIndexDocument {
+    /// Create a new search index document
+    pub fn new(tenant_id: Uuid, term: String) -> Self {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
-            config_type,
-            config,
+            term,
+            tenant_id,
+            entries: Vec::new(),
             updated_at: Utc::now(),
-            updated_by,
             version: 1,
         }
     }
     
-    /// Update configuration
-    pub fn update(&mut self, config: serde_json::Value, updated_by: Option<Uuid>) {
-        self.config = config;
+    /// Add or update an entry
+    pub fn upsert_entry(&mut self, entry: SearchIndexEntry) {
+        if let Some(existing) = self.entries.iter_mut().find(|e| e.resource_id == entry.resource_id) {
+            *existing = entry;
+        } else {
+            self.entries.push(entry);
+        }
         self.updated_at = Utc::now();
-        self.updated_by = updated_by;
         self.version += 1;
     }
-}
-
-// ============================================================================
-// Replication Target Document
-// ============================================================================
-
-/// Replication target types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReplicationTargetType {
-    S3,
-    S3Compatible,
-    AzureBlob,
-    Gcs,
-}
-
-/// Replication target document (canonical)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ReplicationTargetDocument {
-    /// Schema version
-    pub schema_version: u32,
-    /// Unique target identifier
-    pub id: Uuid,
-    /// Target name
-    pub name: String,
-    /// Target type
-    pub target_type: ReplicationTargetType,
-    /// Endpoint URL (for S3-compatible)
-    pub endpoint: String,
-    /// Region
-    pub region: String,
-    /// Bucket/container name
-    pub bucket: String,
-    /// Path prefix
-    pub path_prefix: String,
-    /// Access key ID (encrypted)
-    pub access_key_id: String,
-    /// Secret access key (encrypted)
-    pub secret_access_key: String,
-    /// Whether target is enabled
-    pub enabled: bool,
-    /// Priority (lower = higher priority)
-    pub priority: i32,
-    /// Creator user ID
-    pub created_by: Uuid,
-    /// Creation timestamp
-    pub created_at: DateTime<Utc>,
-    /// Last update timestamp
-    pub updated_at: DateTime<Utc>,
-    /// Document version
-    pub version: u64,
-}
-
-impl ReplicationTargetDocument {
-    /// Create a new replication target
-    pub fn new(
-        id: Uuid,
-        name: String,
-        target_type: ReplicationTargetType,
-        endpoint: String,
-        region: String,
-        bucket: String,
-        created_by: Uuid,
-    ) -> Self {
-        let now = Utc::now();
-        Self {
-            schema_version: CURRENT_SCHEMA_VERSION,
-            id,
-            name,
-            target_type,
-            endpoint,
-            region,
-            bucket,
-            path_prefix: String::new(),
-            access_key_id: String::new(),
-            secret_access_key: String::new(),
-            enabled: true,
-            priority: 0,
-            created_by,
-            created_at: now,
-            updated_at: now,
-            version: 1,
-        }
-    }
     
-    fn bump_version(&mut self) {
-        self.version += 1;
+    /// Remove an entry
+    pub fn remove(&mut self, resource_id: Uuid) {
+        self.entries.retain(|e| e.resource_id != resource_id);
         self.updated_at = Utc::now();
+        self.version += 1;
+    }
+    
+    /// Remove an entry (alias for compatibility)
+    pub fn remove_entry(&mut self, resource_id: Uuid) {
+        self.remove(resource_id);
+    }
+    
+    /// Check if the index is empty
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 }
 
-// ============================================================================
-// Thumbnail Document
-// ============================================================================
-
-/// Thumbnail metadata document (derived)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ThumbnailDocument {
-    /// Schema version
-    pub schema_version: u32,
-    /// Source file ID
-    pub file_id: Uuid,
-    /// Thumbnail blob key
-    pub thumbnail_key: String,
-    /// Width in pixels
-    pub width: u32,
-    /// Height in pixels
-    pub height: u32,
-    /// Format
-    pub format: String, // "webp", "jpeg", "png"
-    /// Size in bytes
-    pub size_bytes: u64,
-    /// Creation timestamp
-    pub created_at: DateTime<Utc>,
-}
-
-impl ThumbnailDocument {
-    /// Create a new thumbnail document
-    pub fn new(
-        file_id: Uuid,
-        thumbnail_key: String,
-        width: u32,
-        height: u32,
-        format: String,
-        size_bytes: u64,
-    ) -> Self {
-        Self {
-            schema_version: CURRENT_SCHEMA_VERSION,
-            file_id,
-            thumbnail_key,
-            width,
-            height,
-            format,
-            size_bytes,
-            created_at: Utc::now(),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_folder_document_creation() {
-        let folder = FolderDocument::new_root(Uuid::new_v4(), Uuid::new_v4());
-        assert_eq!(folder.schema_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(folder.name, "Root");
-        assert_eq!(folder.path, "/");
-        assert!(!folder.deleted);
-    }
-    
-    #[test]
-    fn test_file_document_version_update() {
-        let mut file = FileDocument::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            None,
-            "test.txt".to_string(),
-            "/test.txt".to_string(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            100,
-            "text/plain".to_string(),
-            "abc123".to_string(),
-        );
-        
-        let old_version = file.version;
-        file.update_version(Uuid::new_v4(), 200, "def456".to_string(), None);
-        
-        assert_eq!(file.version_number, 2);
-        assert_eq!(file.size, 200);
-        assert!(file.version > old_version);
-    }
-    
-    #[test]
-    fn test_share_active_status() {
-        let share = ShareDocument::new_public(
-            Uuid::new_v4(),
-            "file".to_string(),
-            Uuid::new_v4(),
-            SharePermission::View,
-            "token_hash".to_string(),
-            None,
-            None,
-            Uuid::new_v4(),
-        );
-        
-        assert!(share.is_active());
-        
-        let mut expired = share.clone();
-        expired.expires_at = Some(Utc::now() - chrono::Duration::hours(1));
-        assert!(!expired.is_active());
-        
-        let mut revoked = share;
-        revoked.revoke();
-        assert!(!revoked.is_active());
-    }
-    
-    #[test]
-    fn test_folder_children_index() {
-        let mut index = FolderChildrenIndex::new(Uuid::new_v4());
-        let child = FolderChildEntry {
-            id: Uuid::new_v4(),
-            kind: "file".to_string(),
-            name: "test.txt".to_string(),
-            deleted: false,
-            size: Some(100),
-            mime: Some("text/plain".to_string()),
-            updated_at: Utc::now(),
-        };
-        
-        index.upsert_child(child.clone());
-        assert_eq!(index.children.len(), 1);
-        
-        // Update same child
-        let mut updated = child.clone();
-        updated.size = Some(200);
-        index.upsert_child(updated);
-        assert_eq!(index.children.len(), 1);
-        assert_eq!(index.children[0].size, Some(200));
-    }
-
-    #[test]
-    fn test_user_document() {
-        let user = UserDocument::new(
-            Uuid::new_v4(),
-            "johndoe".to_string(),
-            "John Doe".to_string(),
-            "john@example.com".to_string(),
-            "argon2hash".to_string(),
-            false,
-            10_737_418_240,
-        );
-        
-        assert_eq!(user.schema_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(user.username, "johndoe");
-        assert!(user.can_authenticate());
-        
-        let mut disabled_user = user.clone();
-        disabled_user.disable(Some("Test disable".to_string()));
-        assert!(!disabled_user.can_authenticate());
-        assert!(disabled_user.disabled_at.is_some());
-        
-        disabled_user.enable();
-        assert!(disabled_user.can_authenticate());
-        assert!(!disabled_user.disabled);
-    }
-
-    #[test]
-    fn test_notification_index() {
-        let user_id = Uuid::new_v4();
-        let mut index = UserNotificationIndex::new(user_id);
-        
-        let notif_ref = NotificationRef {
-            notification_id: Uuid::new_v4(),
-            notification_type: NotificationType::FileShared,
-            resource_type: "file".to_string(),
-            resource_id: Uuid::new_v4(),
-            read: false,
-            created_at: Utc::now(),
-        };
-        
-        index.add_notification(&notif_ref);
-        assert_eq!(index.notifications.len(), 1);
-        assert_eq!(index.unread_count, 1);
-        
-        index.mark_read(notif_ref.notification_id);
-        assert_eq!(index.unread_count, 0);
-        assert!(index.notifications[0].read);
-    }
-
-    #[test]
-    fn test_job_document_lifecycle() {
-        let mut job = JobDocument::new(
-            Uuid::new_v4(),
-            JobType::Replication,
-            "file_version".to_string(),
-            Uuid::new_v4(),
-            10,
-            serde_json::json!({"target_id": Uuid::new_v4()}),
-            3,
-        );
-        
-        assert_eq!(job.status, JobStatus::Pending);
-        assert!(!job.is_terminal());
-        
-        job.mark_running("worker1".to_string());
-        assert_eq!(job.status, JobStatus::Running);
-        assert!(job.worker_id.is_some());
-        
-        job.mark_completed(JobResult {
-            success: true,
-            message: Some("Done".to_string()),
-            output: None,
-        });
-        assert_eq!(job.status, JobStatus::Completed);
-        assert!(job.is_terminal());
-    }
-
-    #[test]
-    fn test_job_retry_logic() {
-        let mut job = JobDocument::new(
-            Uuid::new_v4(),
-            JobType::ThumbnailGeneration,
-            "file".to_string(),
-            Uuid::new_v4(),
-            5,
-            serde_json::Value::Null,
-            3,
-        );
-        
-        job.mark_running("worker1".to_string());
-        job.mark_failed("Network error".to_string());
-        
-        // Should be pending again with retry
-        assert_eq!(job.status, JobStatus::Pending);
-        assert_eq!(job.retry_count, 1);
-        assert!(job.can_retry());
-        
-        // Exhaust retries
-        job.mark_running("worker1".to_string());
-        job.mark_failed("Error 2".to_string());
-        job.mark_running("worker1".to_string());
-        job.mark_failed("Error 3".to_string());
-        job.mark_running("worker1".to_string());
-        job.mark_failed("Final error".to_string());
-        
-        assert_eq!(job.status, JobStatus::Failed);
-        assert!(!job.can_retry());
-        assert!(job.is_terminal());
-    }
-
-    #[test]
-    fn test_job_queue_index() {
-        let mut index = JobQueueIndex::new("default".to_string());
-        
-        let job1 = JobRef {
-            job_id: Uuid::new_v4(),
-            job_type: JobType::Replication,
-            resource_type: "file".to_string(),
-            resource_id: Uuid::new_v4(),
-            priority: 10,
-            created_at: Utc::now(),
-        };
-        
-        let job2 = JobRef {
-            job_id: Uuid::new_v4(),
-            job_type: JobType::ThumbnailGeneration,
-            resource_type: "file".to_string(),
-            resource_id: Uuid::new_v4(),
-            priority: 5,
-            created_at: Utc::now(),
-        };
-        
-        index.add_pending(job2);
-        index.add_pending(job1);
-        
-        // Higher priority should be first
-        assert_eq!(index.pending.len(), 2);
-        assert_eq!(index.pending[0].priority, 10);
-        
-        index.mark_running(job1.job_id);
-        assert_eq!(index.pending.len(), 1);
-        assert_eq!(index.running.len(), 1);
-    }
-
-    #[test]
-    fn test_device_token() {
-        let mut token = DeviceTokenDocument::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            "hash123".to_string(),
-            "My iPhone".to_string(),
-            "ios".to_string(),
-            None,
-        );
-        
-        assert!(token.is_valid());
-        
-        token.revoke();
-        assert!(!token.is_valid());
-    }
-
-    #[test]
-    fn test_user_group() {
-        let mut group = UserGroupDocument::new(
-            Uuid::new_v4(),
-            "Admins".to_string(),
-            "Administrators".to_string(),
-            Uuid::new_v4(),
-        );
-        
-        let user1 = Uuid::new_v4();
-        let user2 = Uuid::new_v4();
-        
-        group.add_member(user1);
-        group.add_member(user2);
-        assert_eq!(group.member_ids.len(), 2);
-        assert!(group.is_member(user1));
-        
-        group.remove_member(user1);
-        assert_eq!(group.member_ids.len(), 1);
-        assert!(!group.is_member(user1));
-    }
-
-    #[test]
-    fn test_system_config() {
-        let mut config = SystemConfigDocument::new(
-            ConfigType::Oidc,
-            serde_json::json!({"provider": "google"}),
-            Some(Uuid::new_v4()),
-        );
-        
-        assert_eq!(config.config_type, ConfigType::Oidc);
-        
-        config.update(serde_json::json!({"provider": "github"}), None);
-        assert_eq!(config.config["provider"], "github");
-        assert_eq!(config.version, 2);
-    }
+/// Tokenize a search query into normalized terms
+pub fn tokenize_search_query(query: &str) -> Vec<String> {
+    query
+        .to_lowercase()
+        .split_whitespace()
+        .map(|s| s.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }

@@ -5,6 +5,7 @@ use crate::metadata_v2::{
     schemas::{UserDocument, CURRENT_SCHEMA_VERSION},
     MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions,
 };
+use crate::repos::PathBuilder;
 use async_trait::async_trait;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -13,63 +14,6 @@ use uuid::Uuid;
 pub struct RustFsUserRepository {
     doc_store: Arc<dyn MetadataDocumentStore>,
     path_builder: PathBuilder,
-}
-
-/// Path builder for user storage
-struct PathBuilder {
-    base_prefix: String,
-    namespace: String,
-}
-
-impl PathBuilder {
-    fn new(base_prefix: String, namespace: String) -> Self {
-        Self {
-            base_prefix,
-            namespace,
-        }
-    }
-    
-    /// Path for user document
-    fn user_path(&self, user_id: Uuid) -> String {
-        format!(
-            "{}/{}/users/{}.json",
-            self.base_prefix, self.namespace, user_id
-        )
-    }
-    
-    /// Path for email index entry
-    fn email_index_path(&self, email: &str) -> String {
-        let email_hash = Self::hash_string(email.to_lowercase().as_str());
-        format!(
-            "{}/{}/indexes/users/by-email/{}.json",
-            self.base_prefix, self.namespace, email_hash
-        )
-    }
-    
-    /// Path for username index entry
-    fn username_index_path(&self, username: &str) -> String {
-        let username_hash = Self::hash_string(username.to_lowercase().as_str());
-        format!(
-            "{}/{}/indexes/users/by-username/{}.json",
-            self.base_prefix, self.namespace, username_hash
-        )
-    }
-    
-    /// Path for user list index
-    fn user_list_path(&self) -> String {
-        format!(
-            "{}/{}/indexes/users/all.json",
-            self.base_prefix, self.namespace
-        )
-    }
-    
-    /// Simple hash for index keys
-    fn hash_string(s: &str) -> String {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(s.as_bytes());
-        hex::encode(hasher.finalize())
-    }
 }
 
 /// Email index entry
@@ -483,6 +427,7 @@ mod tests {
             surname: None,
             avatar_path: None,
             email_sharing_enabled: true,
+            tenant_id: Uuid::nil(),
         }
     }
 

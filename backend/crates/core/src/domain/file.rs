@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use super::{FileId, FolderId, UserId};
 
@@ -20,6 +21,7 @@ pub struct File {
     pub current_version: i32,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
+    pub tenant_id: Uuid,
 }
 
 impl File {
@@ -32,8 +34,8 @@ impl File {
         mime_type: String,
         parent_folder_id: Option<FolderId>,
         owner_id: UserId,
+        tenant_id: Uuid,
     ) -> Self {
-        use uuid::Uuid;
         Self {
             id: Uuid::new_v4(),
             name,
@@ -46,6 +48,7 @@ impl File {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            tenant_id,
         }
     }
 
@@ -58,7 +61,6 @@ impl File {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
 
     #[test]
     fn test_file_storage_key() {
@@ -74,6 +76,7 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            tenant_id: Uuid::new_v4(),
         };
 
         assert_eq!(file.storage_key(), "blobs/abc123def456");
@@ -94,6 +97,7 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            tenant_id: Uuid::new_v4(),
         };
 
         assert_eq!(file.storage_key(), format!("blobs/{}", hash));
@@ -103,6 +107,7 @@ mod tests {
     fn test_file_new_constructor() {
         let owner_id = Uuid::new_v4();
         let parent_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
 
         let file = File::new(
             "document.pdf".to_string(),
@@ -112,6 +117,7 @@ mod tests {
             "application/pdf".to_string(),
             Some(parent_id),
             owner_id,
+            tenant_id,
         );
 
         assert_eq!(file.name, "document.pdf");
@@ -121,6 +127,7 @@ mod tests {
         assert_eq!(file.mime_type, "application/pdf");
         assert_eq!(file.parent_folder_id, Some(parent_id));
         assert_eq!(file.owner_id, owner_id);
+        assert_eq!(file.tenant_id, tenant_id);
         assert_eq!(file.current_version, 1);
         assert!(!file.id.is_nil());
     }

@@ -12,81 +12,7 @@ use crate::metadata_v2::{
     MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions, RuntimeMetadataCache,
 };
 use crate::metadata_v2::schemas::*;
-
-/// Path builder for RustFS storage layout
-#[derive(Clone)]
-pub struct PathBuilder {
-    base_prefix: String,
-    namespace: String,
-}
-
-impl PathBuilder {
-    pub fn new(base_prefix: String, namespace: String) -> Self {
-        Self {
-            base_prefix,
-            namespace,
-        }
-    }
-    
-    pub fn folder(&self, id: FolderId) -> String {
-        format!("{}/{}/meta/folders/{}.json", self.base_prefix, self.namespace, id)
-    }
-    
-    pub fn file(&self, id: FileId) -> String {
-        format!("{}/{}/meta/files/{}.json", self.base_prefix, self.namespace, id)
-    }
-    
-    pub fn file_version(&self, file_id: FileId, version_id: Uuid) -> String {
-        format!(
-            "{}/{}/meta/file_versions/{}/{}.json",
-            self.base_prefix, self.namespace, file_id, version_id
-        )
-    }
-    
-    pub fn share(&self, id: ShareId) -> String {
-        format!("{}/{}/meta/shares/{}.json", self.base_prefix, self.namespace, id)
-    }
-    
-    pub fn event(&self, event: &EventDocument) -> String {
-        format!(
-            "{}/{}/meta/events/{:04}/{:02}/{:02}/{}.json",
-            self.base_prefix,
-            self.namespace,
-            event.occurred_at.year(),
-            event.occurred_at.month(),
-            event.occurred_at.day(),
-            event.id
-        )
-    }
-    
-    pub fn tombstone(&self, resource_type: &str, resource_id: Uuid) -> String {
-        format!(
-            "{}/{}/meta/tombstones/{}/{}.json",
-            self.base_prefix, self.namespace, resource_type, resource_id
-        )
-    }
-    
-    pub fn folder_children_index(&self, folder_id: FolderId) -> String {
-        format!(
-            "{}/{}/indexes/folders/{}/children.json",
-            self.base_prefix, self.namespace, folder_id
-        )
-    }
-    
-    pub fn user_roots_index(&self, user_id: UserId) -> String {
-        format!(
-            "{}/{}/indexes/users/{}/roots.json",
-            self.base_prefix, self.namespace, user_id
-        )
-    }
-    
-    pub fn shared_with_me_index(&self, user_id: UserId) -> String {
-        format!(
-            "{}/{}/indexes/users/{}/shared_with_me.json",
-            self.base_prefix, self.namespace, user_id
-        )
-    }
-}
+use crate::repos::PathBuilder;
 
 /// RustFS-backed folder repository
 pub struct RustFsFolderRepository {
@@ -119,7 +45,7 @@ impl FolderRepository for RustFsFolderRepository {
             }
         }
         
-        let key = self.path_builder.folder(id);
+        let key = self.path_builder.folder_path(id);
         let result = self.doc_store.get::<FolderDocument>(&key).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
@@ -134,7 +60,7 @@ impl FolderRepository for RustFsFolderRepository {
     }
     
     async fn create(&self, folder: &FolderDocument) -> Result<(), RepositoryError> {
-        let key = self.path_builder.folder(folder.id);
+        let key = self.path_builder.folder_path(folder.id);
         
         // Use if-none-match to ensure we don't overwrite
         let opts = PutOptions {
@@ -160,7 +86,7 @@ impl FolderRepository for RustFsFolderRepository {
     }
     
     async fn update(&self, folder: &FolderDocument) -> Result<(), RepositoryError> {
-        let key = self.path_builder.folder(folder.id);
+        let key = self.path_builder.folder_path(folder.id);
         
         self.doc_store.put(&key, folder, PutOptions::default()).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -179,7 +105,7 @@ impl FolderRepository for RustFsFolderRepository {
         
         // Create tombstone
         let tombstone = TombstoneDocument::from_folder(&folder, deleted_by);
-        let tombstone_key = self.path_builder.tombstone("folders", id);
+        let tombstone_key = self.path_builder.tombstone_path("folders", id);
         
         self.doc_store.put(&tombstone_key, &tombstone, PutOptions::default()).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -189,7 +115,7 @@ impl FolderRepository for RustFsFolderRepository {
         deleted_folder.deleted = true;
         deleted_folder.bump_version();
         
-        let folder_key = self.path_builder.folder(id);
+        let folder_key = self.path_builder.folder_path(id);
         self.doc_store.put(&folder_key, &deleted_folder, PutOptions::default()).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
@@ -202,7 +128,7 @@ impl FolderRepository for RustFsFolderRepository {
     }
     
     async fn hard_delete(&self, id: FolderId) -> Result<(), RepositoryError> {
-        let key = self.path_builder.folder(id);
+        let key = self.path_builder.folder_path(id);
         
         self.doc_store.delete(&key).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -217,7 +143,7 @@ impl FolderRepository for RustFsFolderRepository {
     
     async fn list_descendants(&self, folder_id: FolderId) -> Result<Vec<FolderDocument>, RepositoryError> {
         // This requires scanning - in production, maintain an index
-        let prefix = format!("{}/{}/meta/folders/", self.path_builder.base_prefix, self.path_builder.namespace);
+        let prefix = format!("{}/{}/meta/folders/", self.path_builder.base_prefix(), self.path_builder.namespace());
         
         let keys = self.doc_store.list_prefix(&prefix).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -226,7 +152,7 @@ impl FolderRepository for RustFsFolderRepository {
         let mut stack = vec![folder_id];
         
         while let Some(current_id) = stack.pop() {
-            let key = self.path_builder.folder(current_id);
+            let key = self.path_builder.folder_path(current_id);
             
             if let Some((folder, _)) = self.doc_store.get::<FolderDocument>(&key).await
                 .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
@@ -252,7 +178,7 @@ impl FolderRepository for RustFsFolderRepository {
     
     async fn get_user_roots(&self, user_id: UserId) -> Result<Vec<FolderDocument>, RepositoryError> {
         // This requires scanning - use index in production
-        let prefix = format!("{}/{}/meta/folders/", self.path_builder.base_prefix, self.path_builder.namespace);
+        let prefix = format!("{}/{}/meta/folders/", self.path_builder.base_prefix(), self.path_builder.namespace());
         
         let keys = self.doc_store.list_prefix(&prefix).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -279,7 +205,7 @@ impl FolderRepository for RustFsFolderRepository {
     ) -> Result<bool, RepositoryError> {
         // Check children index if available, otherwise scan
         if let Some(parent_id) = parent_id {
-            let index_key = self.path_builder.folder_children_index(parent_id);
+            let index_key = self.path_builder.folder_children_index_path(parent_id);
             
             if let Some((index, _)) = self.doc_store.get::<FolderChildrenIndex>(&index_key).await
                 .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
@@ -291,7 +217,7 @@ impl FolderRepository for RustFsFolderRepository {
         }
         
         // Fall back to scanning
-        let prefix = format!("{}/{}/meta/folders/", self.path_builder.base_prefix, self.path_builder.namespace);
+        let prefix = format!("{}/{}/meta/folders/", self.path_builder.base_prefix(), self.path_builder.namespace());
         
         let keys = self.doc_store.list_prefix(&prefix).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -309,6 +235,36 @@ impl FolderRepository for RustFsFolderRepository {
         }
         
         Ok(false)
+    }
+
+    async fn batch_update(&self, folders: &[FolderDocument]) -> Result<(), RepositoryError> {
+        // Update all folders in parallel for efficiency
+        let mut results = Vec::new();
+        
+        for folder in folders {
+            let key = self.path_builder.folder_path(folder.id);
+            let result = self.doc_store.put(&key, folder, PutOptions::default()).await;
+            results.push((folder.id, result));
+            
+            // Update cache for each folder
+            if let Some(ref cache) = self.cache {
+                cache.put_folder(folder.clone());
+            }
+        }
+        
+        // Check for any errors
+        let errors: Vec<_> = results
+            .into_iter()
+            .filter_map(|(id, result)| result.err().map(|e| (id, e)))
+            .collect();
+        
+        if !errors.is_empty() {
+            return Err(RepositoryError::StorageError(
+                format!("Failed to update {} folders: {:?}", errors.len(), errors)
+            ));
+        }
+        
+        Ok(())
     }
 }
 
@@ -343,7 +299,7 @@ impl FileRepository for RustFsFileRepository {
             }
         }
         
-        let key = self.path_builder.file(id);
+        let key = self.path_builder.file_path(id);
         let result = self.doc_store.get::<FileDocument>(&key).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
@@ -358,7 +314,7 @@ impl FileRepository for RustFsFileRepository {
     }
     
     async fn create(&self, file: &FileDocument) -> Result<(), RepositoryError> {
-        let key = self.path_builder.file(file.id);
+        let key = self.path_builder.file_path(file.id);
         
         let opts = PutOptions {
             if_none_match: Some("*".to_string()),
@@ -383,7 +339,7 @@ impl FileRepository for RustFsFileRepository {
     }
     
     async fn update(&self, file: &FileDocument) -> Result<(), RepositoryError> {
-        let key = self.path_builder.file(file.id);
+        let key = self.path_builder.file_path(file.id);
         
         self.doc_store.put(&key, file, PutOptions::default()).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -401,7 +357,7 @@ impl FileRepository for RustFsFileRepository {
         
         // Create tombstone
         let tombstone = TombstoneDocument::from_file(&file, deleted_by);
-        let tombstone_key = self.path_builder.tombstone("files", id);
+        let tombstone_key = self.path_builder.tombstone_path("files", id);
         
         self.doc_store.put(&tombstone_key, &tombstone, PutOptions::default()).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -411,7 +367,7 @@ impl FileRepository for RustFsFileRepository {
         deleted_file.deleted = true;
         deleted_file.bump_version();
         
-        let file_key = self.path_builder.file(id);
+        let file_key = self.path_builder.file_path(id);
         self.doc_store.put(&file_key, &deleted_file, PutOptions::default()).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
@@ -424,7 +380,7 @@ impl FileRepository for RustFsFileRepository {
     }
     
     async fn hard_delete(&self, id: FileId) -> Result<(), RepositoryError> {
-        let key = self.path_builder.file(id);
+        let key = self.path_builder.file_path(id);
         
         self.doc_store.delete(&key).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -445,7 +401,7 @@ impl FileRepository for RustFsFileRepository {
     ) -> Result<bool, RepositoryError> {
         // Check children index if available
         if let Some(parent_id) = parent_id {
-            let index_key = self.path_builder.folder_children_index(parent_id);
+            let index_key = self.path_builder.folder_children_index_path(parent_id);
             
             if let Some((index, _)) = self.doc_store.get::<FolderChildrenIndex>(&index_key).await
                 .map_err(|e| RepositoryError::StorageError(e.to_string()))? {
@@ -457,7 +413,7 @@ impl FileRepository for RustFsFileRepository {
         }
         
         // Fall back to scanning
-        let prefix = format!("{}/{}/meta/files/", self.path_builder.base_prefix, self.path_builder.namespace);
+        let prefix = format!("{}/{}/meta/files/", self.path_builder.base_prefix(), self.path_builder.namespace());
         
         let keys = self.doc_store.list_prefix(&prefix).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -497,7 +453,7 @@ impl RustFsFileVersionRepository {
 impl FileVersionRepository for RustFsFileVersionRepository {
     async fn get(&self, version_id: Uuid) -> Result<Option<FileVersionDocument>, RepositoryError> {
         // This requires scanning since version_id is in the path
-        let prefix = format!("{}/{}/meta/file_versions/", self.path_builder.base_prefix, self.path_builder.namespace);
+        let prefix = format!("{}/{}/meta/file_versions/", self.path_builder.base_prefix(), self.path_builder.namespace());
         
         let keys = self.doc_store.list_prefix(&prefix).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -521,7 +477,7 @@ impl FileVersionRepository for RustFsFileVersionRepository {
     ) -> Result<Option<FileVersionDocument>, RepositoryError> {
         let prefix = format!(
             "{}/{}/meta/file_versions/{}/",
-            self.path_builder.base_prefix, self.path_builder.namespace, file_id
+            self.path_builder.base_prefix(), self.path_builder.namespace(), file_id
         );
         
         let keys = self.doc_store.list_prefix(&prefix).await
@@ -540,7 +496,7 @@ impl FileVersionRepository for RustFsFileVersionRepository {
     }
     
     async fn create(&self, version: &FileVersionDocument) -> Result<(), RepositoryError> {
-        let key = self.path_builder.file_version(version.file_id, version.id);
+        let key = self.path_builder.file_version_path(version.file_id, version.id);
         
         self.doc_store.put(&key, version, PutOptions::default()).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -551,7 +507,7 @@ impl FileVersionRepository for RustFsFileVersionRepository {
     async fn list_by_file(&self, file_id: FileId) -> Result<Vec<FileVersionDocument>, RepositoryError> {
         let prefix = format!(
             "{}/{}/meta/file_versions/{}/",
-            self.path_builder.base_prefix, self.path_builder.namespace, file_id
+            self.path_builder.base_prefix(), self.path_builder.namespace(), file_id
         );
         
         let keys = self.doc_store.list_prefix(&prefix).await
@@ -609,7 +565,7 @@ impl ShareRepository for RustFsShareRepository {
             }
         }
         
-        let key = self.path_builder.share(id);
+        let key = self.path_builder.share_path(id);
         let result = self.doc_store.get::<ShareDocument>(&key).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
@@ -625,7 +581,7 @@ impl ShareRepository for RustFsShareRepository {
     
     async fn get_by_token(&self, token_hash: &str) -> Result<Option<ShareDocument>, RepositoryError> {
         // This requires scanning - use an index in production
-        let prefix = format!("{}/{}/meta/shares/", self.path_builder.base_prefix, self.path_builder.namespace);
+        let prefix = format!("{}/{}/meta/shares/", self.path_builder.base_prefix(), self.path_builder.namespace());
         
         let keys = self.doc_store.list_prefix(&prefix).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -643,7 +599,7 @@ impl ShareRepository for RustFsShareRepository {
     }
     
     async fn create(&self, share: &ShareDocument) -> Result<(), RepositoryError> {
-        let key = self.path_builder.share(share.id);
+        let key = self.path_builder.share_path(share.id);
         
         self.doc_store.put(&key, share, PutOptions::default()).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -657,7 +613,7 @@ impl ShareRepository for RustFsShareRepository {
     }
     
     async fn update(&self, share: &ShareDocument) -> Result<(), RepositoryError> {
-        let key = self.path_builder.share(share.id);
+        let key = self.path_builder.share_path(share.id);
         
         self.doc_store.put(&key, share, PutOptions::default()).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -685,7 +641,7 @@ impl ShareRepository for RustFsShareRepository {
     }
     
     async fn delete(&self, id: ShareId) -> Result<(), RepositoryError> {
-        let key = self.path_builder.share(id);
+        let key = self.path_builder.share_path(id);
         
         self.doc_store.delete(&key).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -703,7 +659,7 @@ impl ShareRepository for RustFsShareRepository {
         resource_type: &str,
         resource_id: Uuid,
     ) -> Result<Vec<ShareDocument>, RepositoryError> {
-        let prefix = format!("{}/{}/meta/shares/", self.path_builder.base_prefix, self.path_builder.namespace);
+        let prefix = format!("{}/{}/meta/shares/", self.path_builder.base_prefix(), self.path_builder.namespace());
         
         let keys = self.doc_store.list_prefix(&prefix).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -725,7 +681,7 @@ impl ShareRepository for RustFsShareRepository {
     }
     
     async fn list_by_creator(&self, user_id: UserId) -> Result<Vec<ShareDocument>, RepositoryError> {
-        let prefix = format!("{}/{}/meta/shares/", self.path_builder.base_prefix, self.path_builder.namespace);
+        let prefix = format!("{}/{}/meta/shares/", self.path_builder.base_prefix(), self.path_builder.namespace());
         
         let keys = self.doc_store.list_prefix(&prefix).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -745,7 +701,7 @@ impl ShareRepository for RustFsShareRepository {
     }
     
     async fn list_by_recipient(&self, user_id: UserId) -> Result<Vec<ShareDocument>, RepositoryError> {
-        let prefix = format!("{}/{}/meta/shares/", self.path_builder.base_prefix, self.path_builder.namespace);
+        let prefix = format!("{}/{}/meta/shares/", self.path_builder.base_prefix(), self.path_builder.namespace());
         
         let keys = self.doc_store.list_prefix(&prefix).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -835,7 +791,7 @@ impl FolderChildrenIndexRepository for RustFsFolderChildrenIndexRepository {
             }
         }
         
-        let key = self.path_builder.folder_children_index(folder_id);
+        let key = self.path_builder.folder_children_index_path(folder_id);
         let result = self.doc_store.get::<FolderChildrenIndex>(&key).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
         
@@ -850,7 +806,7 @@ impl FolderChildrenIndexRepository for RustFsFolderChildrenIndexRepository {
     }
     
     async fn save(&self, index: &FolderChildrenIndex) -> Result<(), RepositoryError> {
-        let key = self.path_builder.folder_children_index(index.folder_id);
+        let key = self.path_builder.folder_children_index_path(index.folder_id);
         
         self.doc_store.put(&key, index, PutOptions::default()).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -888,7 +844,7 @@ impl RustFsTombstoneRepository {
 #[async_trait]
 impl TombstoneRepository for RustFsTombstoneRepository {
     async fn get(&self, resource_type: &str, resource_id: Uuid) -> Result<Option<TombstoneDocument>, RepositoryError> {
-        let key = self.path_builder.tombstone(resource_type, resource_id);
+        let key = self.path_builder.tombstone_path(resource_type, resource_id);
         
         self.doc_store.get::<TombstoneDocument>(&key).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))
@@ -896,7 +852,7 @@ impl TombstoneRepository for RustFsTombstoneRepository {
     }
     
     async fn create(&self, tombstone: &TombstoneDocument) -> Result<(), RepositoryError> {
-        let key = self.path_builder.tombstone(&tombstone.resource_type, tombstone.resource_id);
+        let key = self.path_builder.tombstone_path(&tombstone.resource_type, tombstone.resource_id);
         
         self.doc_store.put(&key, tombstone, PutOptions::default()).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -905,7 +861,7 @@ impl TombstoneRepository for RustFsTombstoneRepository {
     }
     
     async fn list_by_user(&self, user_id: UserId) -> Result<Vec<TombstoneDocument>, RepositoryError> {
-        let prefix = format!("{}/{}/meta/tombstones/", self.path_builder.base_prefix, self.path_builder.namespace);
+        let prefix = format!("{}/{}/meta/tombstones/", self.path_builder.base_prefix(), self.path_builder.namespace());
         
         let keys = self.doc_store.list_prefix(&prefix).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;
@@ -925,7 +881,7 @@ impl TombstoneRepository for RustFsTombstoneRepository {
     }
     
     async fn delete(&self, resource_type: &str, resource_id: Uuid) -> Result<(), RepositoryError> {
-        let key = self.path_builder.tombstone(resource_type, resource_id);
+        let key = self.path_builder.tombstone_path(resource_type, resource_id);
         
         self.doc_store.delete(&key).await
             .map_err(|e| RepositoryError::StorageError(e.to_string()))?;

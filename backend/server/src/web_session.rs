@@ -54,6 +54,7 @@ pub async fn resolve_user_session(
 pub async fn create_user_session(
     state: &AppState,
     user_id: uuid::Uuid,
+    tenant_id: uuid::Uuid,
     user_agent: Option<String>,
     ip_address: Option<String>,
 ) -> Result<String, String> {
@@ -64,6 +65,7 @@ pub async fn create_user_session(
         session_ttl_seconds(),
         user_agent,
         ip_address,
+        tenant_id,
     );
 
     state

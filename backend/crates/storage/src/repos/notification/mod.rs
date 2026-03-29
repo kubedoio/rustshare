@@ -42,7 +42,7 @@ pub trait NotificationRepository: Send + Sync {
     async fn create_notification(&self, notification: &Notification) -> Result<(), NotificationRepositoryError>;
     
     /// Get notification by ID
-    async fn get_notification(&self, id: Uuid) -> Result<Option<Notification>, NotificationRepositoryError>;
+    async fn get_notification(&self, user_id: Uuid, id: Uuid) -> Result<Option<Notification>, NotificationRepositoryError>;
     
     /// Get notifications for a user
     async fn get_user_notifications(
@@ -55,13 +55,13 @@ pub trait NotificationRepository: Send + Sync {
     async fn count_unread(&self, user_id: Uuid) -> Result<u32, NotificationRepositoryError>;
     
     /// Mark a notification as read
-    async fn mark_read(&self, id: Uuid) -> Result<(), NotificationRepositoryError>;
+    async fn mark_read(&self, user_id: Uuid, id: Uuid) -> Result<(), NotificationRepositoryError>;
     
     /// Mark all notifications as read for a user
     async fn mark_all_read(&self, user_id: Uuid) -> Result<u32, NotificationRepositoryError>;
     
     /// Delete a notification
-    async fn delete_notification(&self, id: Uuid) -> Result<(), NotificationRepositoryError>;
+    async fn delete_notification(&self, user_id: Uuid, id: Uuid) -> Result<(), NotificationRepositoryError>;
     
     /// Delete all notifications for a user
     async fn delete_all_for_user(&self, user_id: Uuid) -> Result<u32, NotificationRepositoryError>;
@@ -115,6 +115,7 @@ pub mod conversions {
             action_url: None, // Not stored in document
             read: doc.read,
             created_at: doc.created_at,
+            tenant_id: doc.tenant_id,
         }
     }
     
@@ -133,6 +134,7 @@ pub mod conversions {
             read: notification.read,
             read_at: None, // Will be set when marked read
             created_at: notification.created_at,
+            tenant_id: notification.tenant_id,
         }
     }
 }

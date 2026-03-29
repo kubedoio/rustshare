@@ -108,6 +108,7 @@ pub async fn upload_file(
             parent_folder_id,
             file_data,
             mime_type,
+            auth.tenant_id,
         )
         .await
         .map_err(file_error_response)?;
@@ -543,7 +544,7 @@ pub struct ThumbnailParams {
 /// - size: "sm" | "md" | "lg" (default: "md")
 pub async fn get_file_thumbnail(
     State(state): State<AppState>,
-    AuthenticatedUser { user_id }: AuthenticatedUser,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
     Query(params): Query<ThumbnailParams>,
 ) -> Result<Response, Response> {

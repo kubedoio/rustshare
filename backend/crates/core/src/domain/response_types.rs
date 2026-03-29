@@ -97,6 +97,7 @@ mod tests {
     #[test]
     fn test_folder_contents_with_files() {
         let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
         let file = File {
             id: Uuid::new_v4(),
             name: "test.txt".to_string(),
@@ -109,6 +110,7 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            tenant_id,
         };
 
         let contents = FolderContents::with_contents(vec![file.clone()], vec![]);
@@ -120,7 +122,8 @@ mod tests {
     #[test]
     fn test_folder_contents_with_folders() {
         let owner_id = Uuid::new_v4();
-        let folder = Folder::new_root(owner_id);
+        let tenant_id = Uuid::new_v4();
+        let folder = Folder::new_root(owner_id, tenant_id);
 
         let contents = FolderContents::with_contents(vec![], vec![folder.clone()]);
         assert_eq!(contents.files.len(), 0);
@@ -131,6 +134,7 @@ mod tests {
     #[test]
     fn test_folder_contents_with_mixed_contents() {
         let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
         let file = File {
             id: Uuid::new_v4(),
             name: "test.txt".to_string(),
@@ -143,9 +147,10 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            tenant_id,
         };
 
-        let folder = Folder::new_root(owner_id);
+        let folder = Folder::new_root(owner_id, tenant_id);
 
         let contents = FolderContents::with_contents(vec![file.clone()], vec![folder.clone()]);
         assert_eq!(contents.files.len(), 1);
@@ -157,7 +162,8 @@ mod tests {
     #[test]
     fn test_folder_tree_structure() {
         let owner_id = Uuid::new_v4();
-        let folder = Folder::new_root(owner_id);
+        let tenant_id = Uuid::new_v4();
+        let folder = Folder::new_root(owner_id, tenant_id);
         let tree = FolderTree {
             folder: folder.clone(),
             subfolders: vec![],
@@ -172,7 +178,8 @@ mod tests {
     #[test]
     fn test_folder_tree_new() {
         let owner_id = Uuid::new_v4();
-        let folder = Folder::new_root(owner_id);
+        let tenant_id = Uuid::new_v4();
+        let folder = Folder::new_root(owner_id, tenant_id);
         let tree = FolderTree::new(folder.clone());
 
         assert_eq!(tree.folder, folder);
@@ -183,7 +190,8 @@ mod tests {
     #[test]
     fn test_folder_tree_with_files() {
         let owner_id = Uuid::new_v4();
-        let folder = Folder::new_root(owner_id);
+        let tenant_id = Uuid::new_v4();
+        let folder = Folder::new_root(owner_id, tenant_id);
         let file = File {
             id: Uuid::new_v4(),
             name: "document.pdf".to_string(),
@@ -196,6 +204,7 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            tenant_id,
         };
 
         let tree = FolderTree::with_contents(folder.clone(), vec![file.clone()], vec![]);
@@ -209,9 +218,10 @@ mod tests {
     #[test]
     fn test_folder_tree_with_subfolders() {
         let owner_id = Uuid::new_v4();
-        let root_folder = Folder::new_root(owner_id);
+        let tenant_id = Uuid::new_v4();
+        let root_folder = Folder::new_root(owner_id, tenant_id);
         let subfolder =
-            Folder::new_child("Documents".to_string(), "/Documents".to_string(), root_folder.id, owner_id);
+            Folder::new_child("Documents".to_string(), "/Documents".to_string(), root_folder.id, owner_id, tenant_id);
         let subtree = FolderTree::new(subfolder.clone());
 
         let tree = FolderTree::with_contents(root_folder.clone(), vec![], vec![subtree.clone()]);
@@ -225,7 +235,8 @@ mod tests {
     #[test]
     fn test_folder_tree_recursive_structure() {
         let owner_id = Uuid::new_v4();
-        let root_folder = Folder::new_root(owner_id);
+        let tenant_id = Uuid::new_v4();
+        let root_folder = Folder::new_root(owner_id, tenant_id);
         let file = File {
             id: Uuid::new_v4(),
             name: "readme.md".to_string(),
@@ -238,6 +249,7 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            tenant_id,
         };
 
         let subfolder1 = Folder::new_child(
@@ -245,6 +257,7 @@ mod tests {
             "/Documents".to_string(),
             root_folder.id,
             owner_id,
+            tenant_id,
         );
 
         let subfolder2 = Folder::new_child(
@@ -252,6 +265,7 @@ mod tests {
             "/Projects".to_string(),
             root_folder.id,
             owner_id,
+            tenant_id,
         );
 
         let subtree1 = FolderTree::new(subfolder1.clone());

@@ -8,6 +8,7 @@ use crate::metadata_v2::{
     },
     MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions,
 };
+use crate::repos::PathBuilder;
 use async_trait::async_trait;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -16,37 +17,6 @@ use uuid::Uuid;
 pub struct RustFsNotificationRepository {
     doc_store: Arc<dyn MetadataDocumentStore>,
     path_builder: PathBuilder,
-}
-
-/// Path builder for notification storage
-struct PathBuilder {
-    base_prefix: String,
-    namespace: String,
-}
-
-impl PathBuilder {
-    fn new(base_prefix: String, namespace: String) -> Self {
-        Self {
-            base_prefix,
-            namespace,
-        }
-    }
-    
-    /// Path for notification document
-    fn notification_path(&self, user_id: Uuid, notification_id: Uuid) -> String {
-        format!(
-            "{}/{}/notifications/{}/{}.json",
-            self.base_prefix, self.namespace, user_id, notification_id
-        )
-    }
-    
-    /// Path for user notification index
-    fn user_index_path(&self, user_id: Uuid) -> String {
-        format!(
-            "{}/{}/indexes/notifications/by-user/{}.json",
-            self.base_prefix, self.namespace, user_id
-        )
-    }
 }
 
 impl RustFsNotificationRepository {
@@ -131,12 +101,14 @@ impl NotificationRepository for RustFsNotificationRepository {
         Ok(())
     }
     
-    async fn get_notification(&self, id: Uuid) -> Result<Option<Notification>, NotificationRepositoryError> {
-        // We need to know the user_id to find the notification
-        // This is inefficient - we'd need to scan or maintain a separate index
-        // For now, return None (notifications are typically accessed via user query)
-        // TODO: Implement global notification index if needed
-        Ok(None)
+    async fn get_notification(&self, user_id: Uuid, id: Uuid) -> Result<Option<Notification>, NotificationRepositoryError> {
+        let path = self.path_builder.notification_path(user_id, id);
+        
+        match self.doc_store.get::<NotificationDocument>(&path).await {
+            Ok(Some((doc, _))) => Ok(Some(super::conversions::doc_to_notification(doc))),
+            Ok(None) => Ok(None),
+            Err(e) => Err(NotificationRepositoryError::Storage(e.to_string())),
+        }
     }
     
     async fn get_user_notifications(
@@ -155,13 +127,22 @@ impl NotificationRepository for RustFsNotificationRepository {
             .take(query.limit.unwrap_or(usize::MAX))
             .collect();
         
-        // Fetch full documents
+        // Fetch full documents in parallel
+        let paths: Vec<String> = refs
+            .iter()
+            .map(|r| self.path_builder.notification_path(user_id, r.notification_id))
+            .collect();
+        let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
+        
         let mut notifications = Vec::new();
-        for notif_ref in refs {
-            let path = self.path_builder.notification_path(user_id, notif_ref.notification_id);
-            
-            if let Ok(Some((doc, _))) = self.doc_store.get::<NotificationDocument>(&path).await {
-                notifications.push(super::conversions::doc_to_notification(doc));
+        if !path_refs.is_empty() {
+            match self.doc_store.get_multi::<NotificationDocument>(&path_refs).await {
+                Ok(results) => {
+                    for (_, doc, _) in results {
+                        notifications.push(super::conversions::doc_to_notification(doc));
+                    }
+                }
+                Err(e) => return Err(NotificationRepositoryError::Storage(e.to_string())),
             }
         }
         
@@ -173,12 +154,28 @@ impl NotificationRepository for RustFsNotificationRepository {
         Ok(index.unread_count)
     }
     
-    async fn mark_read(&self, id: Uuid) -> Result<(), NotificationRepositoryError> {
-        // We need to find the notification first
-        // For efficiency, we should scan user indexes or maintain a reverse index
-        // For now, this is a no-op that would need the user_id
-        // TODO: Implement with global index or require user_id parameter
-        Ok(())
+    async fn mark_read(&self, user_id: Uuid, id: Uuid) -> Result<(), NotificationRepositoryError> {
+        let path = self.path_builder.notification_path(user_id, id);
+        
+        match self.doc_store.get::<NotificationDocument>(&path).await {
+            Ok(Some((mut doc, meta))) => {
+                doc.read = true;
+                doc.read_at = Some(chrono::Utc::now());
+                
+                self.doc_store
+                    .put(&path, &doc, PutOptions {
+                        if_match: Some(meta.etag),
+                        ..Default::default()
+                    })
+                    .await
+                    .map_err(|e| NotificationRepositoryError::Storage(e.to_string()))?;
+                
+                self.mark_read_in_index(user_id, id).await?;
+                Ok(())
+            }
+            Ok(None) => Err(NotificationRepositoryError::NotFound(id)),
+            Err(e) => Err(NotificationRepositoryError::Storage(e.to_string())),
+        }
     }
     
     async fn mark_all_read(&self, user_id: Uuid) -> Result<u32, NotificationRepositoryError> {
@@ -213,10 +210,23 @@ impl NotificationRepository for RustFsNotificationRepository {
         Ok(count)
     }
     
-    async fn delete_notification(&self, id: Uuid) -> Result<(), NotificationRepositoryError> {
-        // Similar to mark_read, we need user_id
-        // TODO: Implement with global index or require user_id parameter
-        Ok(())
+    async fn delete_notification(&self, user_id: Uuid, id: Uuid) -> Result<(), NotificationRepositoryError> {
+        let path = self.path_builder.notification_path(user_id, id);
+        
+        // Check if the notification exists first
+        match self.doc_store.get::<NotificationDocument>(&path).await {
+            Ok(Some(_)) => {
+                self.doc_store
+                    .delete(&path)
+                    .await
+                    .map_err(|e| NotificationRepositoryError::Storage(e.to_string()))?;
+                
+                self.remove_from_index(user_id, id).await?;
+                Ok(())
+            }
+            Ok(None) => Err(NotificationRepositoryError::NotFound(id)),
+            Err(e) => Err(NotificationRepositoryError::Storage(e.to_string())),
+        }
     }
     
     async fn delete_all_for_user(&self, user_id: Uuid) -> Result<u32, NotificationRepositoryError> {
@@ -283,6 +293,7 @@ mod tests {
             action_url: None,
             read: false,
             created_at: chrono::Utc::now(),
+            tenant_id: Uuid::nil(),
         }
     }
 
@@ -354,5 +365,78 @@ mod tests {
         let query = NotificationQuery::default();
         let notifs = repo.get_user_notifications(user_id, query).await.unwrap();
         assert_eq!(notifs.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_notification() {
+        let (repo, _temp) = create_test_repository().await;
+        let user_id = Uuid::new_v4();
+        let notif_id = Uuid::new_v4();
+        
+        let notif = create_test_notification(user_id, notif_id, "Test get");
+        repo.create_notification(&notif).await.unwrap();
+        
+        // Get existing notification
+        let retrieved = repo.get_notification(user_id, notif_id).await.unwrap();
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.id, notif_id);
+        assert_eq!(retrieved.user_id, user_id);
+        assert_eq!(retrieved.title, "Test get");
+        
+        // Get non-existent notification
+        let missing = repo.get_notification(user_id, Uuid::new_v4()).await.unwrap();
+        assert!(missing.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_mark_read() {
+        let (repo, _temp) = create_test_repository().await;
+        let user_id = Uuid::new_v4();
+        let notif_id = Uuid::new_v4();
+        
+        let notif = create_test_notification(user_id, notif_id, "Test read");
+        repo.create_notification(&notif).await.unwrap();
+        
+        // Mark as read
+        repo.mark_read(user_id, notif_id).await.unwrap();
+        
+        // Verify via get_notification
+        let retrieved = repo.get_notification(user_id, notif_id).await.unwrap().unwrap();
+        assert!(retrieved.read);
+        
+        // Verify via index (unread count)
+        let unread = repo.count_unread(user_id).await.unwrap();
+        assert_eq!(unread, 0);
+        
+        // Mark non-existent notification should fail
+        let result = repo.mark_read(user_id, Uuid::new_v4()).await;
+        assert!(matches!(result, Err(NotificationRepositoryError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_delete_notification() {
+        let (repo, _temp) = create_test_repository().await;
+        let user_id = Uuid::new_v4();
+        let notif_id = Uuid::new_v4();
+        
+        let notif = create_test_notification(user_id, notif_id, "Test delete");
+        repo.create_notification(&notif).await.unwrap();
+        
+        // Delete notification
+        repo.delete_notification(user_id, notif_id).await.unwrap();
+        
+        // Verify deleted
+        let retrieved = repo.get_notification(user_id, notif_id).await.unwrap();
+        assert!(retrieved.is_none());
+        
+        // Verify index updated
+        let query = NotificationQuery::default();
+        let notifs = repo.get_user_notifications(user_id, query).await.unwrap();
+        assert_eq!(notifs.len(), 0);
+        
+        // Delete non-existent notification should fail
+        let result = repo.delete_notification(user_id, Uuid::new_v4()).await;
+        assert!(matches!(result, Err(NotificationRepositoryError::NotFound(_))));
     }
 }

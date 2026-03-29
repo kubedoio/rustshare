@@ -85,6 +85,19 @@ impl MetadataDocumentStore for RustFsDocumentStore {
         }
     }
     
+    async fn get_multi_raw(&self, keys: &[&str]) -> Result<Vec<(String, Vec<u8>, ObjectMetadata)>> {
+        let futures: Vec<_> = keys.iter().map(|key| self.get_raw(key)).collect();
+        let results = futures::future::join_all(futures).await;
+        
+        let mut out = Vec::new();
+        for (i, result) in results.into_iter().enumerate() {
+            if let Some((data, meta)) = result? {
+                out.push((keys[i].to_string(), data, meta));
+            }
+        }
+        Ok(out)
+    }
+    
     async fn head(&self, key: &str) -> Result<Option<ObjectMetadata>> {
         let object_key = self.build_key(key);
         
@@ -281,6 +294,19 @@ impl MetadataDocumentStore for LocalFsDocumentStore {
         };
         
         Ok(Some((data, object_metadata)))
+    }
+    
+    async fn get_multi_raw(&self, keys: &[&str]) -> Result<Vec<(String, Vec<u8>, ObjectMetadata)>> {
+        let futures: Vec<_> = keys.iter().map(|key| self.get_raw(key)).collect();
+        let results = futures::future::join_all(futures).await;
+        
+        let mut out = Vec::new();
+        for (i, result) in results.into_iter().enumerate() {
+            if let Some((data, meta)) = result? {
+                out.push((keys[i].to_string(), data, meta));
+            }
+        }
+        Ok(out)
     }
     
     async fn head(&self, key: &str) -> Result<Option<ObjectMetadata>> {
@@ -667,6 +693,21 @@ impl EventLogStore for RustFsEventStore {
         
         Ok(filtered)
     }
+    
+    async fn read_since(
+        &self,
+        since: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<EventDocument>> {
+        // Read events from the timestamp up to now
+        let now = Utc::now();
+        let mut events = self.read_range(since, now, limit).await?;
+        
+        // Filter to only events strictly after 'since'
+        events.retain(|e| e.occurred_at > since);
+        
+        Ok(events)
+    }
 }
 
 /// Simple index store wrapper around document store
@@ -705,5 +746,69 @@ impl IndexStore for DocumentIndexStore {
     async fn delete(&self, key: &str) -> Result<()> {
         let full_key = self.build_key(key);
         self.doc_store.delete(&full_key).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    struct TestDoc {
+        pub id: String,
+        pub value: i32,
+    }
+
+    #[tokio::test]
+    async fn test_localfs_get_multi_returns_docs_and_omits_missing() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config = MetadataBackendConfig {
+            base_prefix: "test".to_string(),
+            namespace: "default".to_string(),
+            enable_optimistic_concurrency: true,
+            fallback_to_leases: true,
+        };
+        let store = LocalFsDocumentStore::new(temp_dir.path().to_path_buf(), config);
+
+        // Store two documents
+        let doc1 = TestDoc {
+            id: "doc1".to_string(),
+            value: 1,
+        };
+        let doc2 = TestDoc {
+            id: "doc2".to_string(),
+            value: 2,
+        };
+        store.put("doc1", &doc1, PutOptions::default()).await.unwrap();
+        store.put("doc2", &doc2, PutOptions::default()).await.unwrap();
+
+        // Fetch multiple including a missing key
+        let keys = vec!["doc1", "missing", "doc2"];
+        let results = store.get_multi::<TestDoc>(&keys).await.unwrap();
+
+        // Should return 2 results, omitting missing
+        assert_eq!(results.len(), 2);
+
+        // Order should match input order for existing keys
+        assert_eq!(results[0].0, "doc1");
+        assert_eq!(results[0].1, doc1);
+        assert_eq!(results[1].0, "doc2");
+        assert_eq!(results[1].1, doc2);
+    }
+
+    #[tokio::test]
+    async fn test_localfs_get_multi_empty_input() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config = MetadataBackendConfig {
+            base_prefix: "test".to_string(),
+            namespace: "default".to_string(),
+            enable_optimistic_concurrency: true,
+            fallback_to_leases: true,
+        };
+        let store = LocalFsDocumentStore::new(temp_dir.path().to_path_buf(), config);
+
+        let results = store.get_multi::<TestDoc>(&[]).await.unwrap();
+        assert!(results.is_empty());
     }
 }

@@ -21,4 +21,5 @@ pub struct DeviceToken {
     pub created_at: DateTime<Utc>,
     pub last_used_at: DateTime<Utc>,
     pub revoked_at: Option<DateTime<Utc>>,
+    pub tenant_id: Uuid,
 }

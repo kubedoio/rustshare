@@ -86,6 +86,7 @@ pub mod conversions {
             surname: None,
             avatar_path: None,
             email_sharing_enabled: true,
+            tenant_id: doc.tenant_id,
         }
     }
     
@@ -107,6 +108,7 @@ pub mod conversions {
             email_verified_at: None, // Not in domain User
             created_at: user.created_at,
             updated_at: user.updated_at,
+            tenant_id: user.tenant_id,
             version: 1, // Will be managed by repository
         }
     }

@@ -1,7 +1,7 @@
 //! HTTP handlers for share operations.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
@@ -60,6 +60,7 @@ pub async fn create_public_file_share(
             req.permissions,
             req.password,
             req.expires_at,
+            auth.tenant_id,
         )
         .await
         .map_err(share_error_response)?;
@@ -114,6 +115,7 @@ pub async fn create_public_folder_share(
             req.password,
             req.expires_at,
             req.upload_only,
+            auth.tenant_id,
         )
         .await
         .map_err(share_error_response)?;
@@ -225,6 +227,171 @@ pub async fn list_public_folder_shares(
         .collect();
 
     Ok(Json(response).into_response())
+}
+
+#[derive(Serialize)]
+pub struct OwnedShareResponse {
+    pub id: uuid::Uuid,
+    pub resource_id: uuid::Uuid,
+    pub resource_type: String,
+    pub resource_name: String,
+    pub share_token: String,
+    pub permissions: SharePermissions,
+    pub password_protected: bool,
+    pub access_count: i32,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Deserialize)]
+pub struct ShareAccessLogQuery {
+    pub limit: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub struct ShareAccessLogResponse {
+    pub accessed_at: chrono::DateTime<chrono::Utc>,
+    pub action: String,
+    pub success: bool,
+    pub actor_type: Option<String>,
+    pub actor_label: Option<String>,
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+    pub share_session_id: Option<uuid::Uuid>,
+    pub share_session_subject: Option<String>,
+}
+
+pub async fn list_user_shares(
+    State(state): State<AppState>,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+) -> Result<Json<Vec<OwnedShareResponse>>, (StatusCode, String)> {
+    let shares = state
+        .metadata_store
+        .get_user_public_shares(user_id)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to list shares: {error}"),
+            )
+        })?;
+
+    let response = shares
+        .into_iter()
+        .filter_map(|entry| {
+            let share = entry.share;
+            let share_token = share.share_token?;
+
+            Some(OwnedShareResponse {
+                id: share.id,
+                resource_id: entry.resource_id,
+                resource_type: entry.resource_type,
+                resource_name: entry.resource_name,
+                share_token,
+                permissions: share.permissions,
+                password_protected: share.password_hash.is_some(),
+                access_count: share.access_count,
+                expires_at: share.expires_at,
+                created_at: share.created_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(response))
+}
+
+pub async fn revoke_share(
+    State(state): State<AppState>,
+    Path(share_id): Path<uuid::Uuid>,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+) -> Result<StatusCode, (StatusCode, String)> {
+    state
+        .share_service
+        .revoke_share(share_id, user_id)
+        .await
+        .map_err(|error| match error {
+            rustshare_core::services::ShareError::NotFound => {
+                (StatusCode::NOT_FOUND, error.to_string())
+            }
+            rustshare_core::services::ShareError::NotFoundById(_) => {
+                (StatusCode::NOT_FOUND, error.to_string())
+            }
+            rustshare_core::services::ShareError::PermissionDenied { .. } => {
+                (StatusCode::FORBIDDEN, error.to_string())
+            }
+            rustshare_core::services::ShareError::FileNotFound(_) => {
+                (StatusCode::NOT_FOUND, error.to_string())
+            }
+            rustshare_core::services::ShareError::Revoked => (StatusCode::GONE, error.to_string()),
+            rustshare_core::services::ShareError::Expired => (StatusCode::GONE, error.to_string()),
+            rustshare_core::services::ShareError::PasswordRequired => {
+                (StatusCode::UNAUTHORIZED, error.to_string())
+            }
+            rustshare_core::services::ShareError::InvalidPassword => {
+                (StatusCode::UNAUTHORIZED, error.to_string())
+            }
+            rustshare_core::services::ShareError::RecipientNotFound(_) => {
+                (StatusCode::NOT_FOUND, error.to_string())
+            }
+            rustshare_core::services::ShareError::InsufficientPermission { .. } => {
+                (StatusCode::FORBIDDEN, error.to_string())
+            }
+            rustshare_core::services::ShareError::CannotShareWithSelf => {
+                (StatusCode::BAD_REQUEST, error.to_string())
+            }
+            rustshare_core::services::ShareError::ShareAlreadyExists(_) => {
+                (StatusCode::CONFLICT, error.to_string())
+            }
+            rustshare_core::services::ShareError::CannotRemoveOwner => {
+                (StatusCode::FORBIDDEN, error.to_string())
+            }
+            rustshare_core::services::ShareError::Database(_)
+            | rustshare_core::services::ShareError::PasswordHash(_)
+            | rustshare_core::services::ShareError::Jwt(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal server error".to_string(),
+            ),
+        })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn get_share_access_log(
+    State(state): State<AppState>,
+    Path(share_id): Path<uuid::Uuid>,
+    Query(query): Query<ShareAccessLogQuery>,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+) -> Result<Json<Vec<ShareAccessLogResponse>>, (StatusCode, String)> {
+    let requested_limit = query.limit.unwrap_or(50);
+    let limit = requested_limit.clamp(1, 200);
+
+    let entries = state
+        .metadata_store
+        .get_public_share_access_log(share_id, user_id, limit)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to fetch share access log: {error}"),
+            )
+        })?;
+
+    let response = entries
+        .into_iter()
+        .map(|entry| ShareAccessLogResponse {
+            accessed_at: entry.accessed_at,
+            action: entry.action,
+            success: entry.success,
+            actor_type: entry.actor_type,
+            actor_label: entry.actor_label,
+            ip_address: entry.ip_address,
+            user_agent: entry.user_agent,
+            share_session_id: entry.share_session_id,
+            share_session_subject: entry.share_session_subject,
+        })
+        .collect();
+
+    Ok(Json(response))
 }
 
 #[cfg(test)]

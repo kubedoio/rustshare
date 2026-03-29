@@ -122,8 +122,8 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         sqlx::query(
             r#"
-            INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, created_at, updated_at, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
         )
         .bind(user.id)
@@ -135,6 +135,7 @@ impl MetadataStore {
         .bind(user.storage_quota)
         .bind(user.created_at)
         .bind(user.updated_at)
+        .bind(user.tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -153,9 +154,10 @@ impl MetadataStore {
                 created_at,
                 last_seen_at,
                 user_agent,
-                ip_address
+                ip_address,
+                tenant_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             "#,
         )
         .bind(session.id)
@@ -166,6 +168,7 @@ impl MetadataStore {
         .bind(session.last_seen_at)
         .bind(&session.user_agent)
         .bind(&session.ip_address)
+        .bind(session.tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -187,7 +190,8 @@ impl MetadataStore {
                 created_at,
                 last_seen_at,
                 user_agent,
-                ip_address
+                ip_address,
+                tenant_id
             FROM user_sessions
             WHERE session_token_hash = $1
             "#,
@@ -206,6 +210,7 @@ impl MetadataStore {
                 last_seen_at: row.try_get("last_seen_at")?,
                 user_agent: row.try_get("user_agent")?,
                 ip_address: row.try_get("ip_address")?,
+                tenant_id: row.try_get("tenant_id")?,
             }))
         } else {
             Ok(None)
@@ -250,7 +255,8 @@ impl MetadataStore {
                 created_at,
                 last_seen_at,
                 user_agent,
-                ip_address
+                ip_address,
+                tenant_id
             FROM user_sessions
             WHERE user_id = $1
             ORDER BY last_seen_at DESC
@@ -271,6 +277,7 @@ impl MetadataStore {
                     last_seen_at: row.try_get("last_seen_at")?,
                     user_agent: row.try_get("user_agent")?,
                     ip_address: row.try_get("ip_address")?,
+                    tenant_id: row.try_get("tenant_id")?,
                 })
             })
             .collect()
@@ -436,7 +443,7 @@ impl MetadataStore {
     pub async fn find_user_by_email(&self, email: &str) -> Result<Option<User>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled FROM users WHERE email = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, tenant_id FROM users WHERE email = $1"#,
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -462,6 +469,7 @@ impl MetadataStore {
                 surname: row.try_get("surname")?,
                 avatar_path: row.try_get("avatar_path")?,
                 email_sharing_enabled: row.try_get("email_sharing_enabled")?,
+                tenant_id: row.try_get("tenant_id")?,
             };
             Ok(Some(user))
         } else {
@@ -472,7 +480,7 @@ impl MetadataStore {
     /// Find user by username.
     pub async fn find_user_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled FROM users WHERE username = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, tenant_id FROM users WHERE username = $1"#,
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -495,6 +503,7 @@ impl MetadataStore {
                 surname: row.try_get("surname")?,
                 avatar_path: row.try_get("avatar_path")?,
                 email_sharing_enabled: row.try_get("email_sharing_enabled")?,
+                tenant_id: row.try_get("tenant_id")?,
             }))
         } else {
             Ok(None)
@@ -505,7 +514,7 @@ impl MetadataStore {
     pub async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled FROM users WHERE id = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, tenant_id FROM users WHERE id = $1"#,
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -531,6 +540,7 @@ impl MetadataStore {
                 surname: row.try_get("surname")?,
                 avatar_path: row.try_get("avatar_path")?,
                 email_sharing_enabled: row.try_get("email_sharing_enabled")?,
+                tenant_id: row.try_get("tenant_id")?,
             };
             Ok(Some(user))
         } else {
@@ -638,8 +648,8 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         sqlx::query(
             r#"
-            INSERT INTO files (id, name, path, size, mime_type, content_hash, storage_key, owner_id, parent_folder_id, current_version, created_at, modified_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            INSERT INTO files (id, name, path, size, mime_type, content_hash, storage_key, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             "#,
         )
         .bind(file.id)
@@ -654,6 +664,7 @@ impl MetadataStore {
         .bind(file.current_version)
         .bind(file.created_at)
         .bind(file.modified_at)
+        .bind(file.tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -664,7 +675,7 @@ impl MetadataStore {
     pub async fn find_file_by_id(&self, id: Uuid) -> Result<Option<File>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at FROM files WHERE id = $1"#,
+            r#"SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id FROM files WHERE id = $1"#,
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -683,6 +694,7 @@ impl MetadataStore {
                 current_version: row.try_get("current_version")?,
                 created_at: row.try_get("created_at")?,
                 modified_at: row.try_get("modified_at")?,
+                tenant_id: row.try_get("tenant_id")?,
             };
             Ok(Some(file))
         } else {
@@ -694,7 +706,7 @@ impl MetadataStore {
     pub async fn find_file_by_path(&self, path: &str, owner_id: Uuid) -> Result<Option<File>> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at
+            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id
             FROM files
             WHERE path = $1 AND owner_id = $2
             "#,
@@ -717,6 +729,7 @@ impl MetadataStore {
                 current_version: row.try_get("current_version")?,
                 created_at: row.try_get("created_at")?,
                 modified_at: row.try_get("modified_at")?,
+                tenant_id: row.try_get("tenant_id")?,
             };
             Ok(Some(file))
         } else {
@@ -731,7 +744,7 @@ impl MetadataStore {
             r#"
             UPDATE files
             SET name = $2, path = $3, size = $4, mime_type = $5, content_hash = $6,
-                storage_key = $7, parent_folder_id = $8, current_version = $9, modified_at = $10
+                storage_key = $7, parent_folder_id = $8, current_version = $9, modified_at = $10, tenant_id = $11
             WHERE id = $1
             "#,
         )
@@ -745,6 +758,7 @@ impl MetadataStore {
         .bind(file.parent_folder_id)
         .bind(file.current_version)
         .bind(file.modified_at)
+        .bind(file.tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -766,17 +780,18 @@ impl MetadataStore {
     ///
     /// Returns files owned by the specified user, optionally filtered by parent folder.
     /// Pass `None` for parent_id to get files in the root directory (no parent).
-    pub async fn list_files(&self, parent_id: Option<Uuid>, owner_id: Uuid) -> Result<Vec<File>> {
+    pub async fn list_files(&self, parent_id: Option<Uuid>, owner_id: Uuid, tenant_id: Uuid) -> Result<Vec<File>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
-            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at
+            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id
             FROM files
-            WHERE owner_id = $1 AND (parent_folder_id = $2 OR ($2 IS NULL AND parent_folder_id IS NULL))
+            WHERE owner_id = $1 AND tenant_id = $2 AND (parent_folder_id = $3 OR ($3 IS NULL AND parent_folder_id IS NULL))
             ORDER BY name ASC
             "#,
         )
         .bind(owner_id)
+        .bind(tenant_id)
         .bind(parent_id)
         .fetch_all(&self.pool)
         .await?;
@@ -795,6 +810,7 @@ impl MetadataStore {
                 current_version: row.try_get("current_version")?,
                 created_at: row.try_get("created_at")?,
                 modified_at: row.try_get("modified_at")?,
+                tenant_id: row.try_get("tenant_id")?,
             };
             files.push(file);
         }
@@ -817,9 +833,10 @@ impl MetadataStore {
                 replication_state,
                 created_by,
                 created_at,
-                change_description
+                change_description,
+                tenant_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
         )
         .bind(version.id)
@@ -832,6 +849,7 @@ impl MetadataStore {
         .bind(version.created_by)
         .bind(version.created_at)
         .bind(&version.change_description)
+        .bind(version.tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -843,7 +861,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
-            SELECT id, file_id, version_number, content_hash, size, replication_state, created_by, created_at, change_description
+            SELECT id, file_id, version_number, content_hash, size, replication_state, created_by, created_at, change_description, tenant_id
             FROM file_versions
             WHERE file_id = $1
             ORDER BY version_number DESC
@@ -866,6 +884,7 @@ impl MetadataStore {
                 created_by: row.try_get("created_by")?,
                 created_at: row.try_get("created_at")?,
                 change_description: row.try_get("change_description")?,
+                tenant_id: row.try_get("tenant_id")?,
             };
             versions.push(version);
         }
@@ -882,7 +901,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, file_id, version_number, content_hash, size, replication_state, created_by, created_at, change_description
+            SELECT id, file_id, version_number, content_hash, size, replication_state, created_by, created_at, change_description, tenant_id
             FROM file_versions
             WHERE file_id = $1 AND version_number = $2
             "#,
@@ -904,6 +923,7 @@ impl MetadataStore {
                 created_by: row.try_get("created_by")?,
                 created_at: row.try_get("created_at")?,
                 change_description: row.try_get("change_description")?,
+                tenant_id: row.try_get("tenant_id")?,
             };
             Ok(Some(version))
         } else {
@@ -1251,8 +1271,8 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         sqlx::query(
             r#"
-            INSERT INTO folders (id, name, path, parent_folder_id, owner_id, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO folders (id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
         )
         .bind(folder.id)
@@ -1262,6 +1282,7 @@ impl MetadataStore {
         .bind(folder.owner_id)
         .bind(folder.created_at)
         .bind(folder.updated_at)
+        .bind(folder.tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -1273,7 +1294,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id
             FROM folders
             WHERE id = $1
             "#,
@@ -1291,6 +1312,8 @@ impl MetadataStore {
                 owner_id: row.try_get("owner_id")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                tenant_id: row.try_get("tenant_id")?,
+                ancestor_ids: None, // Will be populated from folder_documents if available
             };
             Ok(Some(folder))
         } else {
@@ -1302,7 +1325,7 @@ impl MetadataStore {
     pub async fn find_folder_by_path(&self, path: &str, owner_id: Uuid) -> Result<Option<Folder>> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id
             FROM folders
             WHERE path = $1 AND owner_id = $2
             "#,
@@ -1321,6 +1344,8 @@ impl MetadataStore {
                 owner_id: row.try_get("owner_id")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                tenant_id: row.try_get("tenant_id")?,
+                ancestor_ids: None, // Will be populated from folder_documents if available
             };
             Ok(Some(folder))
         } else {
@@ -1334,7 +1359,7 @@ impl MetadataStore {
         sqlx::query(
             r#"
             UPDATE folders
-            SET name = $2, path = $3, parent_folder_id = $4, updated_at = $5
+            SET name = $2, path = $3, parent_folder_id = $4, updated_at = $5, tenant_id = $6
             WHERE id = $1
             "#,
         )
@@ -1343,6 +1368,7 @@ impl MetadataStore {
         .bind(&folder.path)
         .bind(folder.parent_folder_id)
         .bind(folder.updated_at)
+        .bind(folder.tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -1368,17 +1394,19 @@ impl MetadataStore {
         &self,
         parent_id: Option<Uuid>,
         owner_id: Uuid,
+        tenant_id: Uuid,
     ) -> Result<Vec<Folder>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id
             FROM folders
-            WHERE owner_id = $1 AND (parent_folder_id = $2 OR ($2 IS NULL AND parent_folder_id IS NULL))
+            WHERE owner_id = $1 AND tenant_id = $2 AND (parent_folder_id = $3 OR ($3 IS NULL AND parent_folder_id IS NULL))
             ORDER BY name ASC
             "#,
         )
         .bind(owner_id)
+        .bind(tenant_id)
         .bind(parent_id)
         .fetch_all(&self.pool)
         .await?;
@@ -1393,6 +1421,8 @@ impl MetadataStore {
                 owner_id: row.try_get("owner_id")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                tenant_id: row.try_get("tenant_id")?,
+                ancestor_ids: None, // Will be populated from folder_documents if available
             };
             folders.push(folder);
         }
@@ -1410,18 +1440,18 @@ impl MetadataStore {
             r#"
             WITH RECURSIVE folder_tree AS (
                 -- Base case: start with the specified folder
-                SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
+                SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id
                 FROM folders
                 WHERE id = $1
 
                 UNION ALL
 
                 -- Recursive case: get all direct children
-                SELECT f.id, f.name, f.path, f.parent_folder_id, f.owner_id, f.created_at, f.updated_at
+                SELECT f.id, f.name, f.path, f.parent_folder_id, f.owner_id, f.created_at, f.updated_at, f.tenant_id
                 FROM folders f
                 INNER JOIN folder_tree ft ON f.parent_folder_id = ft.id
             )
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id
             FROM folder_tree
             ORDER BY path ASC
             "#,
@@ -1440,6 +1470,8 @@ impl MetadataStore {
                 owner_id: row.try_get("owner_id")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                tenant_id: row.try_get("tenant_id")?,
+                ancestor_ids: None, // Will be populated from folder_documents if available
             };
             folders.push(folder);
         }
@@ -1451,8 +1483,8 @@ impl MetadataStore {
     pub async fn create_share(&self, share: &Share) -> Result<()> {
         sqlx::query(
             r#"
-            INSERT INTO shares (id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            INSERT INTO shares (id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             "#,
         )
         .bind(share.id)
@@ -1467,6 +1499,7 @@ impl MetadataStore {
         .bind(share.upload_only)
         .bind(share.access_count)
         .bind(share.created_at)
+        .bind(share.tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -1478,7 +1511,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
             WHERE share_token = $1
             "#,
@@ -1497,6 +1530,7 @@ impl MetadataStore {
                 folder_id: row.try_get("folder_id")?,
                 share_token: row.try_get("share_token")?,
                 recipient_user_id: row.try_get("recipient_user_id")?,
+                recipient_group_id: None, // Group shares not yet in database schema
                 created_by: row.try_get("created_by")?,
                 permissions,
                 password_hash: row.try_get("password_hash")?,
@@ -1505,6 +1539,7 @@ impl MetadataStore {
                 access_count: row.try_get("access_count")?,
                 created_at: row.try_get("created_at")?,
                 revoked_at: row.try_get("revoked_at")?,
+                tenant_id: row.try_get("tenant_id")?,
             };
             Ok(Some(share))
         } else {
@@ -1517,7 +1552,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
             WHERE id = $1
             "#,
@@ -1536,6 +1571,7 @@ impl MetadataStore {
                 folder_id: row.try_get("folder_id")?,
                 share_token: row.try_get("share_token")?,
                 recipient_user_id: row.try_get("recipient_user_id")?,
+                recipient_group_id: None, // Group shares not yet in database schema
                 created_by: row.try_get("created_by")?,
                 permissions,
                 password_hash: row.try_get("password_hash")?,
@@ -1544,6 +1580,7 @@ impl MetadataStore {
                 access_count: row.try_get("access_count")?,
                 created_at: row.try_get("created_at")?,
                 revoked_at: row.try_get("revoked_at")?,
+                tenant_id: row.try_get("tenant_id")?,
             };
             Ok(Some(share))
         } else {
@@ -1556,7 +1593,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
             WHERE file_id = $1 AND revoked_at IS NULL
             ORDER BY created_at DESC
@@ -1577,6 +1614,7 @@ impl MetadataStore {
                 folder_id: row.try_get("folder_id")?,
                 share_token: row.try_get("share_token")?,
                 recipient_user_id: row.try_get("recipient_user_id")?,
+                recipient_group_id: None, // Group shares not yet in database schema
                 created_by: row.try_get("created_by")?,
                 permissions,
                 password_hash: row.try_get("password_hash")?,
@@ -1585,6 +1623,7 @@ impl MetadataStore {
                 access_count: row.try_get("access_count")?,
                 created_at: row.try_get("created_at")?,
                 revoked_at: row.try_get("revoked_at")?,
+                tenant_id: row.try_get("tenant_id")?,
             };
             shares.push(share);
         }
@@ -1596,7 +1635,7 @@ impl MetadataStore {
     pub async fn get_folder_shares(&self, folder_id: Uuid) -> Result<Vec<Share>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
             WHERE folder_id = $1 AND revoked_at IS NULL
             ORDER BY created_at DESC
@@ -1617,6 +1656,7 @@ impl MetadataStore {
                 folder_id: row.try_get("folder_id")?,
                 share_token: row.try_get("share_token")?,
                 recipient_user_id: row.try_get("recipient_user_id")?,
+                recipient_group_id: None, // Group shares not yet in database schema
                 created_by: row.try_get("created_by")?,
                 permissions,
                 password_hash: row.try_get("password_hash")?,
@@ -1625,6 +1665,7 @@ impl MetadataStore {
                 access_count: row.try_get("access_count")?,
                 created_at: row.try_get("created_at")?,
                 revoked_at: row.try_get("revoked_at")?,
+                tenant_id: row.try_get("tenant_id")?,
             });
         }
 
@@ -1649,6 +1690,7 @@ impl MetadataStore {
                 s.access_count,
                 s.created_at,
                 s.revoked_at,
+                s.tenant_id,
                 COALESCE(s.file_id, s.folder_id) AS resource_id,
                 CASE
                     WHEN s.file_id IS NOT NULL THEN 'file'
@@ -1680,6 +1722,7 @@ impl MetadataStore {
                     folder_id: row.try_get("folder_id")?,
                     share_token: row.try_get("share_token")?,
                     recipient_user_id: row.try_get("recipient_user_id")?,
+                    recipient_group_id: None, // Group shares not yet in database schema
                     created_by: row.try_get("created_by")?,
                     permissions,
                     password_hash: row.try_get("password_hash")?,
@@ -1688,6 +1731,7 @@ impl MetadataStore {
                     access_count: row.try_get("access_count")?,
                     created_at: row.try_get("created_at")?,
                     revoked_at: row.try_get("revoked_at")?,
+                    tenant_id: row.try_get("tenant_id")?,
                 },
                 resource_id: row.try_get("resource_id")?,
                 resource_type: row.try_get("resource_type")?,
@@ -1755,13 +1799,14 @@ impl MetadataStore {
         sqlx::query(
             r#"
             UPDATE shares
-            SET password_hash = $2, expires_at = $3
+            SET password_hash = $2, expires_at = $3, tenant_id = $4
             WHERE id = $1
             "#,
         )
         .bind(share.id)
         .bind(&share.password_hash)
         .bind(share.expires_at)
+        .bind(share.tenant_id)
         .execute(&self.pool)
         .await?;
 

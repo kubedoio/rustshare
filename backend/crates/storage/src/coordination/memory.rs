@@ -7,12 +7,13 @@
 use super::*;
 use chrono::Utc;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 /// In-memory coordination store
 pub struct InMemoryCoordinationStore {
-    inner: Arc<Mutex<StoreState>>,
+    inner: Arc<RwLock<StoreState>>,
 }
 
 struct StoreState {
@@ -66,7 +67,7 @@ impl InMemoryCoordinationStore {
     /// Create a new in-memory coordination store
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(StoreState {
+            inner: Arc::new(RwLock::new(StoreState {
                 locks: HashMap::new(),
                 leases: HashMap::new(),
                 job_claims: HashMap::new(),
@@ -79,9 +80,9 @@ impl InMemoryCoordinationStore {
     }
 
     /// Clean up expired entries
-    fn cleanup_expired(&self) {
+    async fn cleanup_expired(&self) {
         let now = Utc::now();
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         
         state.locks.retain(|_, entry| entry.expires_at > now);
         state.leases.retain(|_, entry| entry.expires_at > now);
@@ -118,9 +119,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
         owner: &str,
         ttl: Duration,
     ) -> Result<LockToken, CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         
         // Check if already locked
         if let Some(existing) = state.locks.get(resource_id) {
@@ -152,9 +153,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
     }
 
     async fn release_lock(&self, token: &LockToken) -> Result<(), CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         
         if let Some(entry) = state.locks.get(&token.resource_id) {
             if entry.lock_id == token.lock_id {
@@ -174,9 +175,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
         token: &LockToken,
         additional_ttl: Duration,
     ) -> Result<LockToken, CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         
         if let Some(entry) = state.locks.get_mut(&token.resource_id) {
             if entry.lock_id == token.lock_id {
@@ -200,9 +201,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
     }
 
     async fn is_locked(&self, resource_id: &str) -> Result<bool, CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let state = self.inner.lock().unwrap();
+        let state = self.inner.read().await;
         
         if let Some(entry) = state.locks.get(resource_id) {
             Ok(entry.expires_at > Utc::now())
@@ -221,9 +222,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
         owner: &str,
         ttl: Duration,
     ) -> Result<LeaseInfo, CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         
         // Check if already leased
         if let Some(existing) = state.leases.get(resource_id) {
@@ -252,9 +253,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
     }
 
     async fn release_lease(&self, resource_id: &str, owner: &str) -> Result<(), CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         
         if let Some(entry) = state.leases.get(resource_id) {
             if entry.owner == owner {
@@ -273,9 +274,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
         owner: &str,
         additional_ttl: Duration,
     ) -> Result<LeaseInfo, CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         
         if let Some(entry) = state.leases.get_mut(resource_id) {
             if entry.owner == owner {
@@ -298,9 +299,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
     }
 
     async fn get_lease(&self, resource_id: &str) -> Result<Option<LeaseInfo>, CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let state = self.inner.lock().unwrap();
+        let state = self.inner.read().await;
         
         if let Some(entry) = state.leases.get(resource_id) {
             if entry.expires_at > Utc::now() {
@@ -325,9 +326,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
         worker_id: &str,
         ttl: Duration,
     ) -> Result<bool, CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         
         // Check if already claimed
         if let Some(existing) = state.job_claims.get(job_id) {
@@ -350,9 +351,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
     }
 
     async fn release_job_claim(&self, job_id: &str, worker_id: &str) -> Result<(), CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         
         if let Some(entry) = state.job_claims.get(job_id) {
             if entry.worker_id == worker_id {
@@ -369,9 +370,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
         worker_id: &str,
         additional_ttl: Duration,
     ) -> Result<bool, CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         
         if let Some(entry) = state.job_claims.get_mut(job_id) {
             if entry.worker_id == worker_id {
@@ -385,9 +386,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
     }
 
     async fn get_job_claim(&self, job_id: &str) -> Result<Option<WorkerClaim>, CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let state = self.inner.lock().unwrap();
+        let state = self.inner.read().await;
         
         if let Some(entry) = state.job_claims.get(job_id) {
             if entry.expires_at > Utc::now() {
@@ -412,9 +413,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
         max_requests: u32,
         window: Duration,
     ) -> Result<RateLimitStatus, CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         let now = Utc::now();
         
         let entry = state.rate_limits.entry(key.to_string()).or_insert_with(|| {
@@ -446,7 +447,7 @@ impl CoordinationStore for InMemoryCoordinationStore {
     }
 
     async fn reset_rate_limit(&self, key: &str) -> Result<(), CoordinationError> {
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         state.rate_limits.remove(key);
         Ok(())
     }
@@ -461,7 +462,7 @@ impl CoordinationStore for InMemoryCoordinationStore {
         user_id: &str,
         ttl: Duration,
     ) -> Result<(), CoordinationError> {
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         
         let expires_at = Utc::now() + chrono::Duration::from_std(ttl).unwrap_or_default();
         
@@ -478,7 +479,7 @@ impl CoordinationStore for InMemoryCoordinationStore {
     }
 
     async fn revoke_session(&self, token_hash: &str, ttl: Duration) -> Result<(), CoordinationError> {
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         
         let expires_at = Utc::now() + chrono::Duration::from_std(ttl).unwrap_or_default();
         
@@ -496,9 +497,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
     }
 
     async fn is_session_valid(&self, token_hash: &str) -> Result<bool, CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let state = self.inner.lock().unwrap();
+        let state = self.inner.read().await;
         
         if let Some(entry) = state.sessions.get(token_hash) {
             Ok(entry.expires_at > Utc::now() && !entry.revoked)
@@ -512,9 +513,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
         &self,
         token_hash: &str,
     ) -> Result<Option<CachedSession>, CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let state = self.inner.lock().unwrap();
+        let state = self.inner.read().await;
         
         if let Some(entry) = state.sessions.get(token_hash) {
             Ok(Some(CachedSession {
@@ -537,9 +538,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
         key: &str,
         ttl: Duration,
     ) -> Result<bool, CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         
         if state.idempotency_keys.contains_key(key) {
             return Ok(false);
@@ -566,7 +567,7 @@ impl CoordinationStore for InMemoryCoordinationStore {
         connection_id: &str,
         ttl: Duration,
     ) -> Result<(), CoordinationError> {
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         
         let expires_at = Utc::now() + chrono::Duration::from_std(ttl).unwrap_or_default();
         
@@ -589,7 +590,7 @@ impl CoordinationStore for InMemoryCoordinationStore {
         user_id: &str,
         connection_id: &str,
     ) -> Result<(), CoordinationError> {
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.write().await;
         
         if let Some(presence) = state.presence.get_mut(user_id) {
             presence.connections.remove(connection_id);
@@ -599,9 +600,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
     }
 
     async fn get_user_connections(&self, user_id: &str) -> Result<Vec<String>, CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let state = self.inner.lock().unwrap();
+        let state = self.inner.read().await;
         
         if let Some(presence) = state.presence.get(user_id) {
             Ok(presence.connections.keys().cloned().collect())
@@ -611,9 +612,9 @@ impl CoordinationStore for InMemoryCoordinationStore {
     }
 
     async fn is_user_online(&self, user_id: &str) -> Result<bool, CoordinationError> {
-        self.cleanup_expired();
+        self.cleanup_expired().await;
         
-        let state = self.inner.lock().unwrap();
+        let state = self.inner.read().await;
         
         if let Some(presence) = state.presence.get(user_id) {
             Ok(!presence.connections.is_empty())
@@ -646,7 +647,7 @@ mod tests {
         sleep(Duration::from_millis(100)).await;
         
         // Cleanup happens on next operation
-        coord.cleanup_expired();
+        coord.cleanup_expired().await;
         
         // Should no longer be locked
         assert!(!coord.is_locked("resource1").await.unwrap());
@@ -682,7 +683,7 @@ mod tests {
         sleep(Duration::from_millis(150)).await;
         
         // Cleanup
-        coord.cleanup_expired();
+        coord.cleanup_expired().await;
         
         // Should be allowed again (new window)
         let status = coord

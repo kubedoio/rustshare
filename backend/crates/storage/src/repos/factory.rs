@@ -114,6 +114,14 @@ impl RepositoryFactory {
     ) -> Arc<dyn TombstoneRepository> {
         Arc::new(RustFsTombstoneRepository::new(doc_store, path_builder))
     }
+    
+    /// Create search index repository
+    pub fn create_search_index_repo(
+        doc_store: Arc<dyn MetadataDocumentStore>,
+        path_builder: PathBuilder,
+    ) -> Arc<dyn SearchIndexRepository> {
+        Arc::new(RustFsSearchIndexRepository::new(doc_store, path_builder))
+    }
 }
 
 /// Combined metadata repository implementation
@@ -125,6 +133,7 @@ pub struct CombinedMetadataRepository {
     events: Arc<dyn EventRepository>,
     folder_children_index: Arc<dyn FolderChildrenIndexRepository>,
     tombstones: Arc<dyn TombstoneRepository>,
+    search_index: Arc<dyn SearchIndexRepository>,
 }
 
 impl CombinedMetadataRepository {
@@ -136,6 +145,7 @@ impl CombinedMetadataRepository {
         events: Arc<dyn EventRepository>,
         folder_children_index: Arc<dyn FolderChildrenIndexRepository>,
         tombstones: Arc<dyn TombstoneRepository>,
+        search_index: Arc<dyn SearchIndexRepository>,
     ) -> Self {
         Self {
             folders,
@@ -145,6 +155,7 @@ impl CombinedMetadataRepository {
             events,
             folder_children_index,
             tombstones,
+            search_index,
         }
     }
     
@@ -191,6 +202,11 @@ impl CombinedMetadataRepository {
             path_builder.clone(),
         );
         
+        let search_index = RepositoryFactory::create_search_index_repo(
+            Arc::clone(&doc_store),
+            path_builder.clone(),
+        );
+        
         Self::new(
             folders,
             files,
@@ -199,6 +215,7 @@ impl CombinedMetadataRepository {
             events,
             folder_children_index,
             tombstones,
+            search_index,
         )
     }
 }
@@ -230,6 +247,10 @@ impl MetadataRepository for CombinedMetadataRepository {
     
     fn tombstones(&self) -> &dyn TombstoneRepository {
         self.tombstones.as_ref()
+    }
+    
+    fn search_index(&self) -> &dyn SearchIndexRepository {
+        self.search_index.as_ref()
     }
 }
 

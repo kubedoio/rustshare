@@ -9,7 +9,8 @@ use crate::events::{
     AggregateType, Event, EventBroadcaster, EventType, NotificationCreatedPayload,
 };
 use crate::services::{
-    CreateNotification, NotificationService, PermissionResolver, Resource, ShareError,
+    permission_resolver::PermissionResolverOps, CreateNotification, NotificationService,
+    PermissionResolver, Resource, ShareError,
 };
 
 /// Trait for share repository operations needed by UserShareService.
@@ -74,15 +75,13 @@ pub trait FolderOps: Send + Sync {
     async fn get_by_id(&self, folder_id: FolderId) -> Result<Option<Folder>, sqlx::Error>;
 }
 
-pub struct UserShareService<SR, UR, FR, DR, S, F, D, N, E>
+pub struct UserShareService<SR, UR, FR, DR, P, N, E>
 where
     SR: ShareOps,
     UR: UserOps,
     FR: FileOps,
     DR: FolderOps,
-    S: crate::services::ShareResolverOps,
-    F: crate::services::FileResolverOps,
-    D: crate::services::FolderResolverOps,
+    P: PermissionResolverOps,
     N: crate::services::NotificationRepositoryOps,
     E: crate::services::ShareEventStoreOps,
 {
@@ -90,21 +89,19 @@ where
     user_repo: Arc<UR>,
     file_repo: Arc<FR>,
     folder_repo: Arc<DR>,
-    permission_resolver: Arc<PermissionResolver<S, F, D>>,
+    permission_resolver: Arc<PermissionResolver<P>>,
     notification_service: Arc<NotificationService<N>>,
     event_store: Arc<E>,
     broadcaster: Arc<EventBroadcaster>,
 }
 
-pub struct UserShareServiceDeps<SR, UR, FR, DR, S, F, D, N, E>
+pub struct UserShareServiceDeps<SR, UR, FR, DR, P, N, E>
 where
     SR: ShareOps,
     UR: UserOps,
     FR: FileOps,
     DR: FolderOps,
-    S: crate::services::ShareResolverOps,
-    F: crate::services::FileResolverOps,
-    D: crate::services::FolderResolverOps,
+    P: PermissionResolverOps,
     N: crate::services::NotificationRepositoryOps,
     E: crate::services::ShareEventStoreOps,
 {
@@ -112,21 +109,19 @@ where
     pub user_repo: Arc<UR>,
     pub file_repo: Arc<FR>,
     pub folder_repo: Arc<DR>,
-    pub permission_resolver: Arc<PermissionResolver<S, F, D>>,
+    pub permission_resolver: Arc<PermissionResolver<P>>,
     pub notification_service: Arc<NotificationService<N>>,
     pub event_store: Arc<E>,
     pub broadcaster: Arc<EventBroadcaster>,
 }
 
-impl<SR, UR, FR, DR, S, F, D, N, E> UserShareService<SR, UR, FR, DR, S, F, D, N, E>
+impl<SR, UR, FR, DR, P, N, E> UserShareService<SR, UR, FR, DR, P, N, E>
 where
     SR: ShareOps,
     UR: UserOps,
     FR: FileOps,
     DR: FolderOps,
-    S: crate::services::ShareResolverOps,
-    F: crate::services::FileResolverOps,
-    D: crate::services::FolderResolverOps,
+    P: PermissionResolverOps,
     N: crate::services::NotificationRepositoryOps,
     E: crate::services::ShareEventStoreOps,
 {
@@ -143,7 +138,7 @@ where
         format!("/shared-with-me/{resource_path}/{resource_id}")
     }
 
-    pub fn new(deps: UserShareServiceDeps<SR, UR, FR, DR, S, F, D, N, E>) -> Self {
+    pub fn new(deps: UserShareServiceDeps<SR, UR, FR, DR, P, N, E>) -> Self {
         Self {
             share_repo: deps.share_repo,
             user_repo: deps.user_repo,
@@ -305,6 +300,7 @@ where
                     crate::domain::ResourceType::File,
                     file_id,
                 )),
+                tenant_id: share.tenant_id,
             })
             .await
         {
@@ -412,6 +408,7 @@ where
                     crate::domain::ResourceType::Folder,
                     folder_id,
                 )),
+                tenant_id: share.tenant_id,
             })
             .await
         {
@@ -590,6 +587,7 @@ where
                         },
                         share.resource_id(),
                     )),
+                    tenant_id: updated_share.tenant_id,
                 })
                 .await
             {
@@ -702,6 +700,7 @@ where
                         crate::domain::ResourceType::Folder
                     },
                     action_url: Some("/shared-with-me".to_string()),
+                    tenant_id: share.tenant_id,
                 })
                 .await
             {

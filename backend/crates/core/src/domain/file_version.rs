@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
+use uuid::Uuid;
 
 use super::{FileId, UserId, VersionId};
 
@@ -65,6 +66,7 @@ pub struct FileVersion {
     pub change_description: Option<String>,
     pub created_at: DateTime<Utc>,
     pub created_by: UserId,
+    pub tenant_id: Uuid,
 }
 
 impl FileVersion {
@@ -76,8 +78,8 @@ impl FileVersion {
         size: i64,
         created_by: UserId,
         change_description: Option<String>,
+        tenant_id: Uuid,
     ) -> Self {
-        use uuid::Uuid;
         Self {
             id: Uuid::new_v4(),
             file_id,
@@ -88,6 +90,7 @@ impl FileVersion {
             created_at: Utc::now(),
             created_by,
             change_description,
+            tenant_id,
         }
     }
 
@@ -100,7 +103,6 @@ impl FileVersion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
 
     #[test]
     fn test_file_version_storage_key() {
@@ -114,6 +116,7 @@ mod tests {
             change_description: Some("Initial version".to_string()),
             created_at: Utc::now(),
             created_by: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
         };
 
         assert_eq!(version.storage_key(), "blobs/def789ghi012");
@@ -123,6 +126,7 @@ mod tests {
     fn test_file_version_new_constructor() {
         let file_id = Uuid::new_v4();
         let created_by = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
 
         let version = FileVersion::new(
             file_id,
@@ -131,6 +135,7 @@ mod tests {
             2048,
             created_by,
             Some("Initial version".to_string()),
+            tenant_id,
         );
 
         assert_eq!(version.file_id, file_id);
@@ -139,6 +144,7 @@ mod tests {
         assert_eq!(version.size, 2048);
         assert_eq!(version.replication_state, ReplicationState::PrimaryWritten);
         assert_eq!(version.created_by, created_by);
+        assert_eq!(version.tenant_id, tenant_id);
         assert_eq!(
             version.change_description,
             Some("Initial version".to_string())

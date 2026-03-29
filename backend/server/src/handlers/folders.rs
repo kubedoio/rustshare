@@ -59,7 +59,7 @@ pub async fn create_folder(
 ) -> Result<(StatusCode, Json<Folder>), Response> {
     let folder = state
         .folder_service
-        .create_folder(req.name, req.parent_folder_id, auth.user_id)
+        .create_folder(req.name, req.parent_folder_id, auth.user_id, auth.tenant_id)
         .await
         .map_err(folder_error_response)?;
 
@@ -301,7 +301,7 @@ pub async fn get_folder_tree(
     // Find all user's root-level folders (folders with no parent)
     let root_folders = state
         .metadata_store
-        .list_folders(None, auth.user_id)
+        .list_folders(None, auth.user_id, auth.tenant_id)
         .await
         .map_err(|_| {
             use axum::{http::StatusCode, response::IntoResponse, Json};
@@ -332,12 +332,14 @@ pub async fn get_folder_tree(
         owner_id: auth.user_id,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
+        tenant_id: auth.tenant_id,
+        ancestor_ids: Some(Vec::new()), // Virtual root has no ancestors
     };
 
     // Get files at root level (files with no parent folder)
     let root_files = state
         .metadata_store
-        .list_files(None, auth.user_id)
+        .list_files(None, auth.user_id, auth.tenant_id)
         .await
         .map_err(|_| {
             use axum::{http::StatusCode, response::IntoResponse, Json};

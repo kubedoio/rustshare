@@ -54,6 +54,7 @@ pub struct Job {
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub worker_id: Option<String>,
     pub error_message: Option<String>,
+    pub tenant_id: Uuid,
 }
 
 /// Query options for listing jobs
@@ -140,15 +141,25 @@ pub mod conversions {
             completed_at: doc.completed_at,
             worker_id: doc.worker_id,
             error_message: doc.error_message,
+            tenant_id: doc.tenant_id,
         }
     }
     
-    /// Convert Job to JobDocument (simplified - would need job_type parsing)
+    fn parse_job_type(job_type: &str) -> crate::metadata_v2::schemas::JobType {
+        match job_type {
+            "thumbnail_generation" => crate::metadata_v2::schemas::JobType::ThumbnailGeneration,
+            "virus_scan" => crate::metadata_v2::schemas::JobType::VirusScan,
+            "metadata_extraction" => crate::metadata_v2::schemas::JobType::MetadataExtraction,
+            _ => crate::metadata_v2::schemas::JobType::Replication,
+        }
+    }
+
+    /// Convert Job to JobDocument
     pub fn job_to_doc(job: &Job) -> JobDocument {
         JobDocument {
             schema_version: crate::metadata_v2::schemas::CURRENT_SCHEMA_VERSION,
             id: job.id,
-            job_type: crate::metadata_v2::schemas::JobType::Replication, // Default
+            job_type: parse_job_type(&job.job_type),
             resource_type: job.resource_type.clone(),
             resource_id: job.resource_id,
             status: from_core_status(job.status),
@@ -163,7 +174,126 @@ pub mod conversions {
             completed_at: job.completed_at,
             error_message: job.error_message.clone(),
             worker_id: job.worker_id.clone(),
+            tenant_id: job.tenant_id,
             version: 1,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metadata_v2::schemas::JobType;
+
+    #[test]
+    fn test_job_type_round_trip_replication() {
+        let job = Job {
+            id: Uuid::new_v4(),
+            job_type: "replication".to_string(),
+            resource_type: "file_version".to_string(),
+            resource_id: Uuid::new_v4(),
+            status: JobStatus::Pending,
+            priority: 10,
+            payload: serde_json::json!({"target": "s3"}),
+            retry_count: 0,
+            max_retries: 3,
+            created_at: chrono::Utc::now(),
+            scheduled_at: chrono::Utc::now(),
+            started_at: None,
+            completed_at: None,
+            worker_id: None,
+            error_message: None,
+            tenant_id: Uuid::nil(),
+        };
+
+        let doc = conversions::job_to_doc(&job);
+        assert_eq!(doc.job_type, JobType::Replication);
+
+        let round_trip = conversions::doc_to_job(doc);
+        assert_eq!(round_trip.job_type, "replication");
+    }
+
+    #[test]
+    fn test_job_type_round_trip_thumbnail_generation() {
+        let job = Job {
+            id: Uuid::new_v4(),
+            job_type: "thumbnail_generation".to_string(),
+            resource_type: "file_version".to_string(),
+            resource_id: Uuid::new_v4(),
+            status: JobStatus::Pending,
+            priority: 10,
+            payload: serde_json::json!({"target": "s3"}),
+            retry_count: 0,
+            max_retries: 3,
+            created_at: chrono::Utc::now(),
+            scheduled_at: chrono::Utc::now(),
+            started_at: None,
+            completed_at: None,
+            worker_id: None,
+            error_message: None,
+            tenant_id: Uuid::nil(),
+        };
+
+        let doc = conversions::job_to_doc(&job);
+        assert_eq!(doc.job_type, JobType::ThumbnailGeneration);
+
+        let round_trip = conversions::doc_to_job(doc);
+        assert_eq!(round_trip.job_type, "thumbnail_generation");
+    }
+
+    #[test]
+    fn test_job_type_round_trip_virus_scan() {
+        let job = Job {
+            id: Uuid::new_v4(),
+            job_type: "virus_scan".to_string(),
+            resource_type: "file_version".to_string(),
+            resource_id: Uuid::new_v4(),
+            status: JobStatus::Pending,
+            priority: 10,
+            payload: serde_json::json!({"target": "s3"}),
+            retry_count: 0,
+            max_retries: 3,
+            created_at: chrono::Utc::now(),
+            scheduled_at: chrono::Utc::now(),
+            started_at: None,
+            completed_at: None,
+            worker_id: None,
+            error_message: None,
+            tenant_id: Uuid::nil(),
+        };
+
+        let doc = conversions::job_to_doc(&job);
+        assert_eq!(doc.job_type, JobType::VirusScan);
+
+        let round_trip = conversions::doc_to_job(doc);
+        assert_eq!(round_trip.job_type, "virus_scan");
+    }
+
+    #[test]
+    fn test_job_type_round_trip_metadata_extraction() {
+        let job = Job {
+            id: Uuid::new_v4(),
+            job_type: "metadata_extraction".to_string(),
+            resource_type: "file_version".to_string(),
+            resource_id: Uuid::new_v4(),
+            status: JobStatus::Pending,
+            priority: 10,
+            payload: serde_json::json!({"target": "s3"}),
+            retry_count: 0,
+            max_retries: 3,
+            created_at: chrono::Utc::now(),
+            scheduled_at: chrono::Utc::now(),
+            started_at: None,
+            completed_at: None,
+            worker_id: None,
+            error_message: None,
+            tenant_id: Uuid::nil(),
+        };
+
+        let doc = conversions::job_to_doc(&job);
+        assert_eq!(doc.job_type, JobType::MetadataExtraction);
+
+        let round_trip = conversions::doc_to_job(doc);
+        assert_eq!(round_trip.job_type, "metadata_extraction");
     }
 }

@@ -1,5 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use super::UserId;
 
@@ -13,6 +14,7 @@ pub struct UserSession {
     pub last_seen_at: DateTime<Utc>,
     pub user_agent: Option<String>,
     pub ip_address: Option<String>,
+    pub tenant_id: Uuid,
 }
 
 impl UserSession {
@@ -22,6 +24,7 @@ impl UserSession {
         ttl_seconds: i64,
         user_agent: Option<String>,
         ip_address: Option<String>,
+        tenant_id: Uuid,
     ) -> Self {
         let now = Utc::now();
 
@@ -34,6 +37,7 @@ impl UserSession {
             last_seen_at: now,
             user_agent,
             ip_address,
+            tenant_id,
         }
     }
 

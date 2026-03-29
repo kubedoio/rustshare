@@ -14,6 +14,10 @@ pub mod factory;
 pub mod user;
 pub mod notification;
 pub mod job;
+pub mod path_builder;
+pub mod search;
+pub mod sync;
+pub mod upload_session;
 
 pub use traits::*;
 pub use rustfs_repos::*;
@@ -22,6 +26,9 @@ pub use factory::*;
 pub use user::*;
 pub use notification::*;
 pub use job::*;
+pub use path_builder::PathBuilder;
+pub use search::*;
+pub use upload_session::*;
 
 use thiserror::Error;
 

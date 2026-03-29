@@ -538,6 +538,7 @@ impl MetadataCoordination for NoOpCoordination {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::FutureExt;
     
     #[tokio::test]
     async fn test_in_memory_coordination() {

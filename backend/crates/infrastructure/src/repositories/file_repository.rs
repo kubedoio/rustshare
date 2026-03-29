@@ -3,7 +3,8 @@ use sqlx::PgPool;
 
 /// Repository for file database operations.
 pub struct FileRepository {
-    pool: PgPool,
+    /// The database pool (public for use by other repositories).
+    pub pool: PgPool,
 }
 
 impl FileRepository {
@@ -18,7 +19,7 @@ impl FileRepository {
             r#"
             SELECT id, name, path, content_hash, size, mime_type,
                    parent_folder_id, owner_id, current_version,
-                   created_at, modified_at
+                   created_at, modified_at, tenant_id
             FROM files
             WHERE id = $1
             "#,

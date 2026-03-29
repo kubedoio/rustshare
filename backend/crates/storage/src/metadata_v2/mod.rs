@@ -63,6 +63,10 @@ pub trait MetadataDocumentStore: Send + Sync {
     /// Get a document by key, returns raw bytes
     async fn get_raw(&self, key: &str) -> Result<Option<(Vec<u8>, ObjectMetadata)>>;
     
+    /// Get multiple documents by key in parallel
+    /// Returns (key, data, metadata) for all keys that exist. Missing keys are silently omitted.
+    async fn get_multi_raw(&self, keys: &[&str]) -> Result<Vec<(String, Vec<u8>, ObjectMetadata)>>;
+    
     /// Get document metadata without fetching content
     async fn head(&self, key: &str) -> Result<Option<ObjectMetadata>>;
     
@@ -93,6 +97,17 @@ pub trait MetadataDocumentStoreExt: MetadataDocumentStore {
             }
             None => Ok(None),
         }
+    }
+    
+    /// Get multiple documents by key in parallel
+    async fn get_multi<T: DeserializeOwned>(&self, keys: &[&str]) -> Result<Vec<(String, T, ObjectMetadata)>> {
+        let raw_results = self.get_multi_raw(keys).await?;
+        let mut results = Vec::with_capacity(raw_results.len());
+        for (key, data, meta) in raw_results {
+            let doc = serde_json::from_slice(&data)?;
+            results.push((key, doc, meta));
+        }
+        Ok(results)
     }
     
     /// Store a document
@@ -149,6 +164,16 @@ pub trait EventLogStore: Send + Sync {
         &self,
         resource_type: &str,
         resource_id: &str,
+        limit: usize,
+    ) -> Result<Vec<EventDocument>>;
+    
+    /// Read events since a given timestamp
+    /// 
+    /// Returns events that occurred after the given timestamp,
+    /// ordered by timestamp ascending, up to the limit.
+    async fn read_since(
+        &self,
+        since: DateTime<Utc>,
         limit: usize,
     ) -> Result<Vec<EventDocument>>;
 }

@@ -127,6 +127,8 @@ pub async fn resolve_bearer_token(token: &str, state: &AppState) -> Result<Uuid,
 #[derive(Debug, Clone)]
 pub struct AuthenticatedUser {
     pub user_id: Uuid,
+    /// Tenant ID for multi-tenant support (defaults to nil UUID for single-tenant mode).
+    pub tenant_id: Uuid,
 }
 
 #[derive(Debug, Clone)]
@@ -151,6 +153,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             {
                 return Ok(AuthenticatedUser {
                     user_id: session.user_id,
+                    tenant_id: Uuid::nil(), // TODO: Get tenant_id from session when available
                 });
             }
         }
@@ -164,7 +167,10 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             .await
             .map_err(|e| e.into_response())?;
 
-        Ok(AuthenticatedUser { user_id })
+        Ok(AuthenticatedUser { 
+            user_id,
+            tenant_id: Uuid::nil(), // TODO: Get tenant_id from JWT claims when available
+        })
     }
 }
 

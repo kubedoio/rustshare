@@ -45,6 +45,18 @@ pub trait FolderRepository: Send + Sync {
         name: &str,
         owner_id: UserId,
     ) -> Result<bool, RepositoryError>;
+
+    /// Batch update multiple folders (for cascade updates during moves).
+    ///
+    /// This is used when moving a folder to update ancestor_ids for all descendants
+    /// in a single operation for efficiency.
+    async fn batch_update(&self, folders: &[FolderDocument]) -> Result<(), RepositoryError> {
+        // Default implementation: update one by one
+        for folder in folders {
+            self.update(folder).await?;
+        }
+        Ok(())
+    }
 }
 
 /// Repository for file operations
@@ -248,4 +260,5 @@ pub trait MetadataRepository: Send + Sync {
     fn events(&self) -> &dyn EventRepository;
     fn folder_children_index(&self) -> &dyn FolderChildrenIndexRepository;
     fn tombstones(&self) -> &dyn TombstoneRepository;
+    fn search_index(&self) -> &dyn super::SearchIndexRepository;
 }

@@ -47,34 +47,37 @@ mod replication_handlers;
 mod web_session;
 
 use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
-use crate::web_session::{
-    build_expired_session_cookie, build_session_cookie, create_user_session, extract_cookie_value,
+use crate::handlers::{
+    ensure_optional_seed_user, get_share_access_log, list_user_shares, login, logout, revoke_share,
 };
 use anyhow::Result;
 use axum::{
     extract::DefaultBodyLimit,
-    http::{header, HeaderMap, HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
+    http::StatusCode,
+    response::IntoResponse,
     routing::{any, delete, get, patch, post, put},
     Json, Router,
 };
 use rustshare_auth::{JwtManager, PasswordHasher};
 use rustshare_crypto::SecretEncryptionKey;
 use rustshare_core::{
-    domain::{SharePermissions, User},
+    domain::User,
     events::EventBroadcaster,
     services::{
-        FileService, FolderService, NotificationService, PermissionResolver, ShareService,
-        ThumbnailService, UserShareService, UserShareServiceDeps,
+        AiService, ContentIndexer, FileService, FolderService, NotificationService,
+        PermissionResolver, ShareService, SimpleEmbeddingGenerator, ThumbnailService,
+        UserShareService, UserShareServiceDeps,
     },
 };
 use rustshare_infrastructure::repositories::{
-    FileRepository, FolderRepository, NotificationRepository, ShareRepository, UserRepository,
+    FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
+    ShareRepository, UserRepository,
 };
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sqlx::PgPool;
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
+use uuid::Uuid;
 use tokio::sync::Mutex;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
@@ -85,12 +88,119 @@ type AppUserShareService = UserShareService<
     UserRepository,
     FileRepository,
     FolderRepository,
-    ShareRepository,
-    FileRepository,
-    FolderRepository,
+    PermissionResolverRepository,
     NotificationRepository,
     EventStore,
 >;
+
+/// Type alias for AI service
+type AppAiService = AiService<SimpleEmbeddingGenerator, PermissionResolverRepository>;
+
+// Note: Upload service disabled due to trait mismatch between storage and core crates
+pub type AppUploadService = rustshare_core::services::UploadService<
+    rustshare_storage::repos::RustFsUploadSessionRepository,
+    UploadObjectStoreAdapter,
+    UploadMetadataStoreAdapter,
+    EventStore,
+>;
+
+/// Adapter for ObjectStore to implement UploadObjectStore trait
+#[derive(Clone)]
+pub struct UploadObjectStoreAdapter {
+    inner: Arc<ObjectStore>,
+}
+
+impl UploadObjectStoreAdapter {
+    pub fn new(inner: Arc<ObjectStore>) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait::async_trait]
+impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
+    async fn put_chunk(&self, session_id: Uuid, chunk_index: u32, data: bytes::Bytes) -> Result<(), rustshare_core::services::UploadError> {
+        let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
+        self.inner.put(&key, data).await
+            .map_err(|e| rustshare_core::services::UploadError::Storage(e.to_string()))
+    }
+
+    async fn get_chunk(&self, session_id: Uuid, chunk_index: u32) -> Result<Option<bytes::Bytes>, rustshare_core::services::UploadError> {
+        let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
+        match self.inner.get(&key).await {
+            Ok(data) => Ok(Some(data)),
+            Err(_) => Ok(None), // Chunk not found
+        }
+    }
+
+    async fn delete_chunk(&self, session_id: Uuid, chunk_index: u32) -> Result<(), rustshare_core::services::UploadError> {
+        let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
+        self.inner.delete(&key).await
+            .map_err(|e| rustshare_core::services::UploadError::Storage(e.to_string()))
+    }
+
+    async fn delete_session_chunks(&self, session_id: Uuid, total_chunks: u32) -> Result<(), rustshare_core::services::UploadError> {
+        for chunk_index in 0..total_chunks {
+            let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
+            let _ = self.inner.delete(&key).await;
+        }
+        Ok(())
+    }
+
+    async fn chunk_exists(&self, session_id: Uuid, chunk_index: u32) -> Result<bool, rustshare_core::services::UploadError> {
+        let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
+        self.inner.exists(&key).await
+            .map_err(|e| rustshare_core::services::UploadError::Storage(e.to_string()))
+    }
+
+    async fn assemble_chunks(&self, session_id: Uuid, total_chunks: u32, final_key: &str) -> Result<(), rustshare_core::services::UploadError> {
+        // Download all chunks and concatenate
+        let mut assembled = Vec::new();
+        for chunk_index in 0..total_chunks {
+            let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
+            let chunk_data = self.inner.get(&key).await
+                .map_err(|e| rustshare_core::services::UploadError::Storage(e.to_string()))?;
+            assembled.extend_from_slice(&chunk_data);
+        }
+
+        // Upload assembled file
+        self.inner.put(final_key, bytes::Bytes::from(assembled)).await
+            .map_err(|e| rustshare_core::services::UploadError::Storage(e.to_string()))
+    }
+}
+
+/// Adapter for MetadataStore to implement UploadMetadataStore trait
+#[derive(Clone)]
+pub struct UploadMetadataStoreAdapter {
+    inner: Arc<MetadataStore>,
+}
+
+impl UploadMetadataStoreAdapter {
+    pub fn new(inner: Arc<MetadataStore>) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait::async_trait]
+impl rustshare_core::services::UploadMetadataStore for UploadMetadataStoreAdapter {
+    async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<rustshare_core::domain::Folder>, rustshare_core::services::UploadError> {
+        self.inner.find_folder_by_id(id).await
+            .map_err(|e| rustshare_core::services::UploadError::Database(e.to_string()))
+    }
+
+    async fn create_file(&self, file: &rustshare_core::domain::File) -> Result<(), rustshare_core::services::UploadError> {
+        self.inner.create_file(file).await
+            .map_err(|e| rustshare_core::services::UploadError::Database(e.to_string()))
+    }
+
+    async fn create_file_version(
+        &self,
+        _file: &rustshare_core::domain::File,
+        version: &rustshare_core::domain::FileVersion,
+    ) -> Result<(), rustshare_core::services::UploadError> {
+        self.inner.create_file_version(version).await
+            .map_err(|e| rustshare_core::services::UploadError::Database(e.to_string()))
+    }
+}
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -105,13 +215,15 @@ pub struct AppState {
     pub folder_service: Arc<FolderService<EventStore, MetadataStore>>,
     pub share_service: Arc<ShareService<EventStore, MetadataStore, JwtManager>>,
     pub thumbnail_service: Arc<ThumbnailService<ObjectStore>>,
-    pub permission_resolver:
-        Arc<PermissionResolver<ShareRepository, FileRepository, FolderRepository>>,
+    pub permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
     pub notification_service: Arc<NotificationService<NotificationRepository>>,
     pub user_share_service: Arc<AppUserShareService>,
+    pub ai_service: Option<Arc<AppAiService>>,
+    // pub upload_service: Option<Arc<AppUploadService>>, // TODO: Fix upload service type issues
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
     pub secret_key: SecretEncryptionKey,
     pub poll_rate_limiter: Arc<Mutex<HashMap<String, Instant>>>,
+    pub default_tenant_id: uuid::Uuid,
 }
 
 #[tokio::main]
@@ -197,11 +309,9 @@ async fn main() -> Result<()> {
     let folder_repository = Arc::new(FolderRepository::new(db_pool.clone()));
 
     // Initialize permission resolver
-    let permission_resolver = Arc::new(PermissionResolver::new(
-        Arc::clone(&share_repository),
-        Arc::clone(&file_repository),
-        Arc::clone(&folder_repository),
-    ));
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(db_pool.clone()),
+    )));
 
     // Initialize notification service
     let notification_service = Arc::new(NotificationService::new(notification_repository));
@@ -218,10 +328,89 @@ async fn main() -> Result<()> {
         broadcaster: Arc::clone(&broadcaster),
     }));
 
+    // Initialize AI service
+    let ai_service_enabled = std::env::var("RUSTSHARE_AI_ENABLED")
+        .ok()
+        .and_then(|s| s.parse::<bool>().ok())
+        .unwrap_or(true);
+
+    let ai_service: Option<Arc<AppAiService>> = if ai_service_enabled {
+        let embedding_generator = Arc::new(SimpleEmbeddingGenerator::new());
+        let content_indexer = Arc::new(ContentIndexer::new(embedding_generator));
+        Some(Arc::new(AiService::new(
+            content_indexer,
+            Arc::clone(&permission_resolver),
+        )))
+    } else {
+        None
+    };
+
+    if ai_service.is_some() {
+        info!("AI service initialized");
+    } else {
+        info!("AI service disabled");
+    }
+
+    // Initialize upload service for resumable uploads
+    // Use local filesystem document store for upload session metadata
+    let upload_doc_store_path = std::env::var("RUSTSHARE_UPLOAD_STORE_PATH")
+        .unwrap_or_else(|_| "/tmp/rustshare-uploads".to_string());
+    
+    let upload_backend_config = rustshare_storage::metadata_v2::MetadataBackendConfig {
+        base_prefix: "apps/rustshare".to_string(),
+        namespace: "uploads".to_string(),
+        enable_optimistic_concurrency: true,
+        fallback_to_leases: true,
+    };
+    
+    let upload_doc_store: Arc<dyn rustshare_storage::metadata_v2::MetadataDocumentStore> = Arc::new(
+        rustshare_storage::metadata_v2::stores::LocalFsDocumentStore::new(
+            std::path::PathBuf::from(&upload_doc_store_path),
+            upload_backend_config,
+        )
+    );
+    
+    let upload_session_repo = rustshare_storage::repos::RustFsUploadSessionRepository::new(
+        upload_doc_store,
+        "apps/rustshare".to_string(),
+        "uploads".to_string(),
+    );
+
+    let upload_service = Arc::new(AppUploadService::new(
+        Arc::new(upload_session_repo),
+        Arc::new(UploadObjectStoreAdapter::new(Arc::clone(&object_store))),
+        Arc::new(UploadMetadataStoreAdapter::new(Arc::clone(&metadata_store))),
+        Arc::clone(&event_store),
+        Arc::clone(&broadcaster),
+    ));
+
+    info!("Upload service initialized with store path: {}", upload_doc_store_path);
+
     // Initialize rate limiting configuration
     let rate_limit_config = Arc::new(middleware::RateLimitConfig::new());
 
     info!("Rate limiting initialized");
+
+    // TODO: Fix chat_integration compilation errors
+    // // Initialize chat integration service
+    // let chat_webhook_secret = std::env::var("RUSTSHARE_CHAT_WEBHOOK_SECRET")
+    //     .unwrap_or_else(|_| "default_chat_webhook_secret_change_in_production".to_string());
+    // let webhook_dispatcher = Arc::new(HttpWebhookDispatcher::new());
+    // let chat_integration_service = Arc::new(ChatIntegrationService::new(
+    //     Arc::clone(&metadata_store),
+    //     Arc::clone(&event_store),
+    //     Arc::clone(&broadcaster),
+    //     chat_webhook_secret,
+    //     webhook_dispatcher,
+    // ));
+
+    // info!("Chat integration service initialized");
+
+    // Parse default tenant ID from env or use nil UUID
+    let default_tenant_id = std::env::var("RUSTSHARE_DEFAULT_TENANT_ID")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(uuid::Uuid::nil);
 
     let replication_worker_config = ReplicationWorkerConfig::from_env();
     spawn_replication_worker(
@@ -246,6 +435,7 @@ async fn main() -> Result<()> {
             admin_email.clone(),
             true,
             default_storage_quota_bytes(),
+            default_tenant_id,
         );
 
         metadata_store.create_user(&admin_user).await?;
@@ -261,6 +451,7 @@ async fn main() -> Result<()> {
         std::env::var("RUSTSHARE_DEMO_VIEWER_DISPLAY_NAME")
             .unwrap_or_else(|_| "Viewer User".to_string()),
         false,
+        default_tenant_id,
     )
     .await?;
 
@@ -283,9 +474,13 @@ async fn main() -> Result<()> {
         permission_resolver,
         notification_service,
         user_share_service,
+        ai_service,
+        // upload_service: Some(upload_service),
+        // upload_service: None,
         rate_limit_config,
         secret_key,
         poll_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
+        default_tenant_id,
     };
 
     // Build router.
@@ -363,6 +558,14 @@ async fn main() -> Result<()> {
             "/api/v1/files/{id}/thumbnail",
             get(handlers::get_file_thumbnail),
         )
+        // Upload session routes (TODO-004: Resumable uploads)
+        // Upload endpoints disabled - TODO: Fix upload service type issues
+        // .route("/api/v1/uploads/sessions", get(handlers::list_upload_sessions))
+        // .route("/api/v1/uploads/sessions", post(handlers::create_upload_session))
+        // .route("/api/v1/uploads/sessions/{id}", get(handlers::get_upload_session_status))
+        // .route("/api/v1/uploads/sessions/{id}/chunks/{index}", put(handlers::upload_chunk))
+        // .route("/api/v1/uploads/sessions/{id}/complete", post(handlers::complete_upload))
+        // .route("/api/v1/uploads/sessions/{id}", delete(handlers::abort_upload_session))
         .route(
             "/api/admin/replication/jobs",
             get(replication_handlers::list_replication_jobs),
@@ -500,6 +703,83 @@ async fn main() -> Result<()> {
         .route(
             "/api/v1/admin/integrations/webhooks/{id}/test",
             post(handlers::admin::webhooks::test_webhook),
+        )
+        // Chat integration routes (TODO: Uncomment when chat_integration module is fixed)
+        // .route(
+        //     "/api/v1/integrations/chat/unfurl",
+        //     post(handlers::unfurl_link),
+        // )
+        // .route(
+        //     "/api/v1/integrations/chat/unfurl/public",
+        //     post(handlers::unfurl_link_public),
+        // )
+        // .route(
+        //     "/api/v1/integrations/chat/events",
+        //     post(handlers::receive_chat_event),
+        // )
+        // .route(
+        //     "/api/v1/integrations/webhooks/dispatch",
+        //     post(handlers::dispatch_webhooks),
+        // )
+        // .route(
+        //     "/api/v1/admin/integrations/chat/webhooks",
+        //     get(handlers::list_chat_webhooks),
+        // )
+        // .route(
+        //     "/api/v1/admin/integrations/chat/webhooks",
+        //     post(handlers::register_chat_webhook),
+        // )
+        // SCIM provisioning endpoints (webhook-style, not full RFC 7644)
+        .route(
+            "/api/v1/scim/users",
+            post(handlers::scim::provision_user),
+        )
+        .route(
+            "/api/v1/scim/users/{external_id}",
+            delete(handlers::scim::deprovision_user),
+        )
+        .route(
+            "/api/v1/scim/groups",
+            post(handlers::scim::provision_group),
+        )
+        .route(
+            "/api/v1/scim/groups/{external_id}",
+            delete(handlers::scim::delete_group),
+        )
+        // SCIM v2 REST API endpoints (RFC 7643/7644 full compliance)
+        .route(
+            "/scim/v2/Users",
+            get(handlers::scim_v2::list_users).post(handlers::scim_v2::create_user),
+        )
+        .route(
+            "/scim/v2/Users/{id}",
+            get(handlers::scim_v2::get_user)
+                .put(handlers::scim_v2::update_user)
+                .patch(handlers::scim_v2::patch_user)
+                .delete(handlers::scim_v2::delete_user),
+        )
+        .route(
+            "/scim/v2/Groups",
+            get(handlers::scim_v2::list_groups).post(handlers::scim_v2::create_group),
+        )
+        .route(
+            "/scim/v2/Groups/{id}",
+            get(handlers::scim_v2::get_group)
+                .put(handlers::scim_v2::update_group)
+                .patch(handlers::scim_v2::patch_group)
+                .delete(handlers::scim_v2::delete_group),
+        )
+        .route(
+            "/scim/v2/ServiceProviderConfig",
+            get(handlers::scim_v2::get_service_provider_config),
+        )
+        .route(
+            "/scim/v2/ResourceTypes",
+            get(handlers::scim_v2::get_resource_types),
+        )
+        .route(
+            "/scim/v2/Schemas",
+            get(handlers::scim_v2::get_schemas),
         )
         // Folder routes (Task 20-22)
         // NOTE: More specific routes (with literal path segments) must come BEFORE parameterized routes
@@ -665,8 +945,18 @@ async fn main() -> Result<()> {
             "/api/v1/public/share/{token}/folder/upload",
             post(handlers::upload_shared_folder_file),
         )
+        // AI endpoints (TODO-001)
+        .route("/api/v1/ai/search", post(handlers::semantic_search))
+        .route("/api/v1/ai/summarize", post(handlers::summarize_file))
+        .route("/api/v1/ai/ask", post(handlers::ask_question))
+        // TODO: Fix search_service compilation errors
+        // // Search endpoint (Task Phase 1)
+        // .route("/api/v1/search", get(handlers::search))
         // WebSocket sync endpoint (Task Phase 3A)
         .route("/api/ws", get(handlers::sync_handler))
+        // HTTP Sync API endpoints (Desktop Client Sync)
+        .route("/api/v1/sync/cursor", get(handlers::get_sync_cursor))
+        .route("/api/v1/sync/delta", get(handlers::get_sync_delta))
         .route("/api", any(api_not_found))
         .route("/api/{*path}", any(api_not_found))
         .with_state(state.clone())
@@ -697,49 +987,6 @@ async fn main() -> Result<()> {
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
     .await?;
-
-    Ok(())
-}
-
-async fn ensure_optional_seed_user(
-    metadata_store: &Arc<MetadataStore>,
-    username_env: &str,
-    email_env: &str,
-    password_env: &str,
-    display_name: String,
-    is_admin: bool,
-) -> Result<()> {
-    let username = std::env::var(username_env).ok();
-    let email = std::env::var(email_env).ok();
-    let password = std::env::var(password_env).ok();
-
-    if username.is_none() && email.is_none() && password.is_none() {
-        return Ok(());
-    }
-
-    let username =
-        username.ok_or_else(|| anyhow::anyhow!("Missing required env {}", username_env))?;
-    let email = email.ok_or_else(|| anyhow::anyhow!("Missing required env {}", email_env))?;
-    let password =
-        password.ok_or_else(|| anyhow::anyhow!("Missing required env {}", password_env))?;
-
-    if metadata_store.find_user_by_email(&email).await?.is_some() {
-        return Ok(());
-    }
-
-    let password_hash = PasswordHasher::hash(&password)?;
-    let user = User::new(
-        username.clone(),
-        display_name,
-        password_hash,
-        email.clone(),
-        is_admin,
-        default_storage_quota_bytes(),
-    );
-
-    metadata_store.create_user(&user).await?;
-
-    info!("Seed user created: {} ({})", username, email);
 
     Ok(())
 }
@@ -783,346 +1030,4 @@ struct HealthResponse {
     status: String,
 }
 
-/// Login request
-#[derive(Deserialize)]
-struct LoginRequest {
-    email: String,
-    password: String,
-}
 
-/// Login response
-#[derive(Serialize)]
-struct LoginResponse {
-    token: String,
-    user: UserResponse,
-}
-
-#[derive(Serialize)]
-struct UserResponse {
-    id: String,
-    email: String,
-    display_name: String,
-    is_admin: bool,
-}
-
-#[derive(Serialize)]
-struct OwnedShareResponse {
-    id: uuid::Uuid,
-    resource_id: uuid::Uuid,
-    resource_type: String,
-    resource_name: String,
-    share_token: String,
-    permissions: SharePermissions,
-    password_protected: bool,
-    access_count: i32,
-    expires_at: Option<chrono::DateTime<chrono::Utc>>,
-    created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Deserialize)]
-struct ShareAccessLogQuery {
-    limit: Option<i64>,
-}
-
-#[derive(Serialize)]
-struct ShareAccessLogResponse {
-    accessed_at: chrono::DateTime<chrono::Utc>,
-    action: String,
-    success: bool,
-    actor_type: Option<String>,
-    actor_label: Option<String>,
-    ip_address: Option<String>,
-    user_agent: Option<String>,
-    share_session_id: Option<uuid::Uuid>,
-    share_session_subject: Option<String>,
-}
-
-async fn list_user_shares(
-    axum::extract::State(state): axum::extract::State<AppState>,
-    handlers::AuthenticatedUser { user_id }: handlers::AuthenticatedUser,
-) -> Result<Json<Vec<OwnedShareResponse>>, (StatusCode, String)> {
-    let shares = state
-        .metadata_store
-        .get_user_public_shares(user_id)
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to list shares: {error}"),
-            )
-        })?;
-
-    let response = shares
-        .into_iter()
-        .filter_map(|entry| {
-            let share = entry.share;
-            let share_token = share.share_token?;
-
-            Some(OwnedShareResponse {
-                id: share.id,
-                resource_id: entry.resource_id,
-                resource_type: entry.resource_type,
-                resource_name: entry.resource_name,
-                share_token,
-                permissions: share.permissions,
-                password_protected: share.password_hash.is_some(),
-                access_count: share.access_count,
-                expires_at: share.expires_at,
-                created_at: share.created_at,
-            })
-        })
-        .collect();
-
-    Ok(Json(response))
-}
-
-async fn revoke_share(
-    axum::extract::State(state): axum::extract::State<AppState>,
-    axum::extract::Path(share_id): axum::extract::Path<uuid::Uuid>,
-    handlers::AuthenticatedUser { user_id }: handlers::AuthenticatedUser,
-) -> Result<StatusCode, (StatusCode, String)> {
-    state
-        .share_service
-        .revoke_share(share_id, user_id)
-        .await
-        .map_err(|error| match error {
-            rustshare_core::services::ShareError::NotFound => {
-                (StatusCode::NOT_FOUND, error.to_string())
-            }
-            rustshare_core::services::ShareError::NotFoundById(_) => {
-                (StatusCode::NOT_FOUND, error.to_string())
-            }
-            rustshare_core::services::ShareError::PermissionDenied { .. } => {
-                (StatusCode::FORBIDDEN, error.to_string())
-            }
-            rustshare_core::services::ShareError::FileNotFound(_) => {
-                (StatusCode::NOT_FOUND, error.to_string())
-            }
-            rustshare_core::services::ShareError::Revoked => (StatusCode::GONE, error.to_string()),
-            rustshare_core::services::ShareError::Expired => (StatusCode::GONE, error.to_string()),
-            rustshare_core::services::ShareError::PasswordRequired => {
-                (StatusCode::UNAUTHORIZED, error.to_string())
-            }
-            rustshare_core::services::ShareError::InvalidPassword => {
-                (StatusCode::UNAUTHORIZED, error.to_string())
-            }
-            rustshare_core::services::ShareError::RecipientNotFound(_) => {
-                (StatusCode::NOT_FOUND, error.to_string())
-            }
-            rustshare_core::services::ShareError::InsufficientPermission { .. } => {
-                (StatusCode::FORBIDDEN, error.to_string())
-            }
-            rustshare_core::services::ShareError::CannotShareWithSelf => {
-                (StatusCode::BAD_REQUEST, error.to_string())
-            }
-            rustshare_core::services::ShareError::ShareAlreadyExists(_) => {
-                (StatusCode::CONFLICT, error.to_string())
-            }
-            rustshare_core::services::ShareError::CannotRemoveOwner => {
-                (StatusCode::FORBIDDEN, error.to_string())
-            }
-            rustshare_core::services::ShareError::Database(_)
-            | rustshare_core::services::ShareError::PasswordHash(_)
-            | rustshare_core::services::ShareError::Jwt(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Internal server error".to_string(),
-            ),
-        })?;
-
-    Ok(StatusCode::NO_CONTENT)
-}
-
-async fn get_share_access_log(
-    axum::extract::State(state): axum::extract::State<AppState>,
-    axum::extract::Path(share_id): axum::extract::Path<uuid::Uuid>,
-    axum::extract::Query(query): axum::extract::Query<ShareAccessLogQuery>,
-    handlers::AuthenticatedUser { user_id }: handlers::AuthenticatedUser,
-) -> Result<Json<Vec<ShareAccessLogResponse>>, (StatusCode, String)> {
-    let requested_limit = query.limit.unwrap_or(50);
-    let limit = requested_limit.clamp(1, 200);
-
-    let entries = state
-        .metadata_store
-        .get_public_share_access_log(share_id, user_id, limit)
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to fetch share access log: {error}"),
-            )
-        })?;
-
-    let response = entries
-        .into_iter()
-        .map(|entry| ShareAccessLogResponse {
-            accessed_at: entry.accessed_at,
-            action: entry.action,
-            success: entry.success,
-            actor_type: entry.actor_type,
-            actor_label: entry.actor_label,
-            ip_address: entry.ip_address,
-            user_agent: entry.user_agent,
-            share_session_id: entry.share_session_id,
-            share_session_subject: entry.share_session_subject,
-        })
-        .collect();
-
-    Ok(Json(response))
-}
-
-/// Login handler
-async fn login(
-    axum::extract::State(state): axum::extract::State<AppState>,
-    headers: HeaderMap,
-    Json(req): Json<LoginRequest>,
-) -> Result<Response, (StatusCode, String)> {
-    if !oidc::password_login_enabled() {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Password login is disabled for this deployment".to_string(),
-        ));
-    }
-
-    // Find user
-    let user = state
-        .metadata_store
-        .find_user_by_email(&req.email)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()))?;
-
-    // Verify password
-    let is_valid = PasswordHasher::verify(&req.password, &user.password_hash)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    if !is_valid {
-        return Err((StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()));
-    }
-
-    // Reject disabled accounts
-    if user.disabled_at.is_some() {
-        return Ok((
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "account_disabled" })),
-        )
-            .into_response());
-    }
-
-    // Keep JWT generation temporarily for compatibility while the web app migrates to cookies.
-    let token = state
-        .jwt_manager
-        .generate(user.id, user.email.clone())
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let user_agent = headers
-        .get(header::USER_AGENT)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.to_string());
-    let ip_address = middleware::extract_client_ip(&headers, None).map(|value| value.to_string());
-    let session_token =
-        create_user_session(&state, user.id, user_agent.clone(), ip_address.clone())
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    if let Err(error) = log_user_security_event(
-        &state,
-        rustshare_storage::UserSecurityEventRecord {
-            user_id: user.id,
-            event_type: "password_login",
-            description: "Signed in with email and password",
-            ip_address: ip_address.as_deref(),
-            user_agent: user_agent.as_deref(),
-            session_id: None,
-        },
-    )
-    .await
-    {
-        tracing::warn!(
-            "Failed to record password login security event: {:?}",
-            error
-        );
-    }
-
-    let mut response_headers = HeaderMap::new();
-    response_headers.insert(
-        header::SET_COOKIE,
-        HeaderValue::from_str(&build_session_cookie(&session_token))
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
-    );
-
-    Ok((
-        response_headers,
-        Json(LoginResponse {
-            token,
-            user: UserResponse {
-                id: user.id.to_string(),
-                email: user.email,
-                display_name: user.display_name,
-                is_admin: user.is_admin,
-            },
-        }),
-    )
-        .into_response())
-}
-
-async fn logout(
-    axum::extract::State(state): axum::extract::State<AppState>,
-    headers: HeaderMap,
-) -> Result<Response, (StatusCode, String)> {
-    if let Some(session_token) =
-        extract_cookie_value(&headers, rustshare_auth::WEB_SESSION_COOKIE_NAME)
-    {
-        let token_hash = rustshare_auth::hash_web_session_token(&session_token);
-        let session = state
-            .metadata_store
-            .find_user_session_by_token_hash(&token_hash)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-        let user_agent = headers
-            .get(header::USER_AGENT)
-            .and_then(|value| value.to_str().ok());
-        let ip_address =
-            middleware::extract_client_ip(&headers, None).map(|value| value.to_string());
-
-        state
-            .metadata_store
-            .delete_user_session_by_token_hash(&token_hash)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-        if let Some(session) = session {
-            if let Err(error) = log_user_security_event(
-                &state,
-                rustshare_storage::UserSecurityEventRecord {
-                    user_id: session.user_id,
-                    event_type: "logout",
-                    description: "Signed out of browser session",
-                    ip_address: ip_address.as_deref(),
-                    user_agent,
-                    session_id: Some(session.id),
-                },
-            )
-            .await
-            {
-                tracing::warn!("Failed to record logout security event: {:?}", error);
-            }
-        }
-    }
-
-    let mut response_headers = HeaderMap::new();
-    response_headers.insert(
-        header::SET_COOKIE,
-        HeaderValue::from_str(&build_expired_session_cookie())
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
-    );
-
-    Ok((response_headers, StatusCode::NO_CONTENT).into_response())
-}
-
-async fn log_user_security_event(
-    state: &AppState,
-    event: rustshare_storage::UserSecurityEventRecord<'_>,
-) -> anyhow::Result<()> {
-    state.metadata_store.create_user_security_event(event).await
-}

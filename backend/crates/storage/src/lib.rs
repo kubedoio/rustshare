@@ -152,8 +152,9 @@ impl FolderMetadataStoreOps for MetadataStore {
         &self,
         parent_id: Option<uuid::Uuid>,
         owner_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
     ) -> Result<Vec<rustshare_core::domain::Folder>> {
-        self.list_folders(parent_id, owner_id).await
+        self.list_folders(parent_id, owner_id, tenant_id).await
     }
 
     async fn find_descendant_folders(
@@ -167,8 +168,9 @@ impl FolderMetadataStoreOps for MetadataStore {
         &self,
         parent_id: Option<uuid::Uuid>,
         owner_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
     ) -> Result<Vec<rustshare_core::domain::File>> {
-        self.list_files(parent_id, owner_id).await
+        self.list_files(parent_id, owner_id, tenant_id).await
     }
 }
 
@@ -223,16 +225,18 @@ impl ShareMetadataStoreOps for MetadataStore {
         &self,
         parent_id: Option<uuid::Uuid>,
         owner_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
     ) -> Result<Vec<rustshare_core::domain::File>> {
-        self.list_files(parent_id, owner_id).await
+        self.list_files(parent_id, owner_id, tenant_id).await
     }
 
     async fn list_folders(
         &self,
         parent_id: Option<uuid::Uuid>,
         owner_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
     ) -> Result<Vec<rustshare_core::domain::Folder>> {
-        self.list_folders(parent_id, owner_id).await
+        self.list_folders(parent_id, owner_id, tenant_id).await
     }
 
     async fn find_descendant_folders(

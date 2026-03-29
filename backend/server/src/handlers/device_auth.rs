@@ -113,7 +113,7 @@ pub struct DeviceRequestResponse {
 /// Approves a device pair request using the user_code
 pub async fn device_approve(
     State(state): State<AppState>,
-    AuthenticatedUser { user_id }: AuthenticatedUser,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Json(body): Json<DeviceApproveRequest>,
 ) -> Result<Json<DeviceApproveResponse>, (StatusCode, Json<serde_json::Value>)> {
     // Look up pair request by user_code (case-insensitive)

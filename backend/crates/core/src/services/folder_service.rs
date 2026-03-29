@@ -6,9 +6,11 @@
 //! - Folder tree navigation
 //! - Event sourcing via EventStore
 //! - Metadata persistence via MetadataStore
+//! - Ancestor chain management for permission resolution
 
 use anyhow::Result;
 use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::domain::{File, Folder, FolderContents, FolderId, FolderTree, UserId};
 use crate::events::{
@@ -48,13 +50,14 @@ pub trait MetadataStoreOps: Send + Sync {
         &self,
         parent_id: Option<FolderId>,
         owner_id: UserId,
+        tenant_id: uuid::Uuid,
     ) -> Result<Vec<Folder>>;
 
     /// Find all descendant folders of a given folder using recursive CTE.
     async fn find_descendant_folders(&self, folder_id: FolderId) -> Result<Vec<Folder>>;
 
     /// List files with optional parent filter.
-    async fn list_files(&self, parent_id: Option<FolderId>, owner_id: UserId) -> Result<Vec<File>>;
+    async fn list_files(&self, parent_id: Option<FolderId>, owner_id: UserId, tenant_id: uuid::Uuid) -> Result<Vec<File>>;
 }
 
 /// FolderService manages folder operations with event sourcing.
@@ -98,12 +101,13 @@ where
         name: String,
         parent_folder_id: Option<FolderId>,
         owner_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<Folder, FolderError> {
         // Validate folder name
         self.validate_folder_name(&name)?;
 
-        // Construct path based on parent folder
-        let path = if let Some(parent_id) = parent_folder_id {
+        // Verify parent folder if specified, and construct path and ancestor_ids
+        let (_path, folder) = if let Some(parent_id) = parent_folder_id {
             // Verify parent folder exists and user has access
             let parent = self
                 .metadata_store
@@ -121,28 +125,25 @@ where
             }
 
             // Construct path: parent_path + "/" + name
-            format!("{}/{}", parent.path.trim_end_matches('/'), name)
+            let path = format!("{}/{}", parent.path.trim_end_matches('/'), name);
+
+            // Create folder with proper ancestor_ids from parent
+            let parent_ancestors = parent.ancestor_ids.as_deref();
+            let folder = Folder::new_child_with_ancestors(
+                name.clone(),
+                path.clone(),
+                parent_id,
+                parent_ancestors,
+                owner_id,
+                tenant_id,
+            );
+
+            (path, folder)
         } else {
             // Root folder
-            format!("/{}", name)
-        };
-
-        // Create the folder domain object
-        let folder = if let Some(parent_id) = parent_folder_id {
-            Folder::new_child(name.clone(), path.clone(), parent_id, owner_id)
-        } else {
-            // Root-level folder (no parent)
-            use chrono::Utc;
-            use uuid::Uuid;
-            Folder {
-                id: Uuid::new_v4(),
-                name: name.clone(),
-                path: path.clone(),
-                parent_folder_id: None,
-                owner_id,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-            }
+            let path = format!("/{}", name);
+            let folder = Folder::new_root(owner_id, tenant_id);
+            (path, folder)
         };
 
         // Emit FolderCreated event
@@ -220,14 +221,14 @@ where
         // Get files in this folder
         let files = self
             .metadata_store
-            .list_files(Some(folder.id), user_id)
+            .list_files(Some(folder.id), user_id, folder.tenant_id)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
         // Get subfolders in this folder
         let folders = self
             .metadata_store
-            .list_folders(Some(folder.id), user_id)
+            .list_folders(Some(folder.id), user_id, folder.tenant_id)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
@@ -261,14 +262,14 @@ where
         // Get files in this folder
         let files = self
             .metadata_store
-            .list_files(Some(folder.id), user_id)
+            .list_files(Some(folder.id), user_id, folder.tenant_id)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
         // Get immediate subfolders
         let subfolders = self
             .metadata_store
-            .list_folders(Some(folder.id), user_id)
+            .list_folders(Some(folder.id), user_id, folder.tenant_id)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
@@ -323,8 +324,8 @@ where
         folder.path = new_path.clone();
         folder.updated_at = chrono::Utc::now();
 
-        // Update descendants' paths
-        self.update_descendant_paths(folder_id, &old_path, &new_path, user_id)
+        // Update descendants' paths and ancestor_ids
+        self.update_descendant_paths_and_ancestors(folder_id, &old_path, &new_path, user_id)
             .await?;
 
         // Emit FolderRenamed event
@@ -386,18 +387,25 @@ where
         let old_path = folder.path.clone();
 
         // Verify new parent exists and check for circular reference
-        let new_path = if let Some(parent_id) = new_parent_id {
+        let (new_path, new_parent_ancestors) = if let Some(parent_id) = new_parent_id {
             // Check if new parent exists and user owns it
             let parent = self.get_folder(parent_id, user_id).await?;
 
-            // Check for circular reference: ensure we're not moving into our own descendant
-            let descendants = self
-                .metadata_store
-                .find_descendant_folders(folder_id)
-                .await
-                .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            // Check for circular reference using ancestor_ids if available
+            let would_create_cycle = if let Some(ref parent_ancestors) = parent.ancestor_ids {
+                // Fast path: check if folder_id is in parent's ancestors
+                parent_ancestors.contains(&folder_id)
+            } else {
+                // Slow path: check descendants
+                let descendants = self
+                    .metadata_store
+                    .find_descendant_folders(folder_id)
+                    .await
+                    .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+                descendants.iter().any(|d| d.id == parent_id)
+            };
 
-            if descendants.iter().any(|d| d.id == parent_id) {
+            if would_create_cycle {
                 return Err(FolderError::CircularReference {
                     folder_id,
                     target_id: parent_id,
@@ -405,16 +413,27 @@ where
             }
 
             // Calculate new path
-            format!("{}/{}", parent.path.trim_end_matches('/'), folder.name)
+            let new_path = format!("{}/{}", parent.path.trim_end_matches('/'), folder.name);
+            (new_path, parent.ancestor_ids.clone())
         } else {
             // Moving to root
-            format!("/{}", folder.name)
+            (format!("/{}", folder.name), Some(Vec::new()))
         };
 
         // Update folder
         folder.parent_folder_id = new_parent_id;
         folder.path = new_path.clone();
         folder.updated_at = chrono::Utc::now();
+
+        // Update ancestor_ids for the moved folder
+        let new_ancestor_ids = if let Some(parent_id) = new_parent_id {
+            let mut ancestors = new_parent_ancestors.unwrap_or_default();
+            ancestors.push(parent_id);
+            Some(ancestors)
+        } else {
+            Some(Vec::new()) // Root folder has no ancestors
+        };
+        folder.ancestor_ids = new_ancestor_ids;
 
         // Update descendants' paths
         self.update_descendant_paths(folder_id, &old_path, &new_path, user_id)
@@ -523,7 +542,26 @@ where
     /// Helper method to update paths of all descendant folders.
     ///
     /// Used when renaming or moving a folder to ensure all descendant paths remain consistent.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use update_descendant_paths_and_ancestors instead"
+    )]
     async fn update_descendant_paths(
+        &self,
+        folder_id: FolderId,
+        old_path: &str,
+        new_path: &str,
+        _user_id: UserId,
+    ) -> Result<(), FolderError> {
+        self.update_descendant_paths_and_ancestors(folder_id, old_path, new_path, _user_id)
+            .await
+    }
+
+    /// Helper method to update paths and ancestor_ids of all descendant folders.
+    ///
+    /// Used when moving a folder to ensure all descendant paths and ancestor_ids remain consistent.
+    /// This updates the ancestor_ids by replacing the old folder_id prefix with the new ancestor chain.
+    async fn update_descendant_paths_and_ancestors(
         &self,
         folder_id: FolderId,
         old_path: &str,
@@ -543,13 +581,44 @@ where
             .filter(|d| d.id != folder_id)
             .collect();
 
-        // Update each descendant's path
+        // Get the moved folder's new ancestor_ids to compute descendants' new ancestors
+        let moved_folder = self
+            .metadata_store
+            .find_folder_by_id(folder_id)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?
+            .ok_or(FolderError::NotFound(folder_id))?;
+
+        let new_moved_folder_ancestors = moved_folder.ancestor_ids.clone().unwrap_or_default();
+
+        // Update each descendant's path and ancestor_ids
         for mut descendant in descendants {
-            // Replace the old path prefix with the new path
+            let mut needs_update = false;
+
+            // Update path: replace the old path prefix with the new path
             if descendant.path.starts_with(old_path) {
                 descendant.path = descendant.path.replace(old_path, new_path);
-                descendant.updated_at = chrono::Utc::now();
+                needs_update = true;
+            }
 
+            // Update ancestor_ids: rebuild from the moved folder's new ancestors
+            if let Some(ref old_ancestor_ids) = descendant.ancestor_ids {
+                // Find where folder_id appears in the old ancestor chain
+                if let Some(pos) = old_ancestor_ids.iter().position(|&id| id == folder_id) {
+                    // Build new ancestors: moved_folder's ancestors + moved_folder + rest of old chain after folder_id
+                    let mut new_ancestors = new_moved_folder_ancestors.clone();
+                    new_ancestors.push(folder_id);
+                    // Add everything after folder_id from the old chain
+                    if pos + 1 < old_ancestor_ids.len() {
+                        new_ancestors.extend(&old_ancestor_ids[pos + 1..]);
+                    }
+                    descendant.ancestor_ids = Some(new_ancestors);
+                    needs_update = true;
+                }
+            }
+
+            if needs_update {
+                descendant.updated_at = chrono::Utc::now();
                 self.metadata_store
                     .update_folder(&descendant)
                     .await
@@ -659,6 +728,7 @@ mod tests {
             &self,
             parent_id: Option<FolderId>,
             owner_id: UserId,
+            _tenant_id: uuid::Uuid,
         ) -> Result<Vec<Folder>> {
             let folders = self.folders.lock().unwrap();
             let result: Vec<Folder> = folders
@@ -693,6 +763,7 @@ mod tests {
             &self,
             parent_id: Option<FolderId>,
             _owner_id: UserId,
+            _tenant_id: uuid::Uuid,
         ) -> Result<Vec<File>> {
             let files = self.files.lock().unwrap();
             Ok(files
@@ -1456,5 +1527,299 @@ mod tests {
         let result = service.delete_folder(folder.id, other_user_id).await;
 
         assert!(matches!(result, Err(FolderError::PermissionDenied { .. })));
+    }
+
+    // =======================================================================
+    // Ancestor ID Tests
+    // =======================================================================
+
+    #[tokio::test]
+    async fn test_create_folder_ancestor_ids_root() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(
+            event_store,
+            metadata_store.clone(),
+            Arc::new(EventBroadcaster::new(100)),
+        );
+
+        let owner_id = Uuid::new_v4();
+
+        // Create root-level folder
+        let folder = service
+            .create_folder("Documents".to_string(), None, owner_id)
+            .await
+            .unwrap();
+
+        // Root folder should have empty ancestor_ids
+        assert_eq!(folder.ancestor_ids, Some(Vec::new()));
+
+        // Verify by fetching from store
+        let stored = metadata_store
+            .find_folder_by_id(folder.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.ancestor_ids, Some(Vec::new()));
+    }
+
+    #[tokio::test]
+    async fn test_create_folder_ancestor_ids_nested() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(
+            event_store,
+            metadata_store.clone(),
+            Arc::new(EventBroadcaster::new(100)),
+        );
+
+        let owner_id = Uuid::new_v4();
+
+        // Create hierarchy: Documents/Work/Projects
+        let docs = service
+            .create_folder("Documents".to_string(), None, owner_id)
+            .await
+            .unwrap();
+        let work = service
+            .create_folder("Work".to_string(), Some(docs.id), owner_id)
+            .await
+            .unwrap();
+        let projects = service
+            .create_folder("Projects".to_string(), Some(work.id), owner_id)
+            .await
+            .unwrap();
+
+        // Verify ancestor_ids
+        assert_eq!(docs.ancestor_ids, Some(Vec::new()));
+        assert_eq!(work.ancestor_ids, Some(vec![docs.id]));
+        assert_eq!(projects.ancestor_ids, Some(vec![docs.id, work.id]));
+
+        // Verify by fetching from store
+        let stored_docs = metadata_store
+            .find_folder_by_id(docs.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let stored_work = metadata_store
+            .find_folder_by_id(work.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let stored_projects = metadata_store
+            .find_folder_by_id(projects.id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(stored_docs.ancestor_ids, Some(Vec::new()));
+        assert_eq!(stored_work.ancestor_ids, Some(vec![docs.id]));
+        assert_eq!(stored_projects.ancestor_ids, Some(vec![docs.id, work.id]));
+    }
+
+    #[tokio::test]
+    async fn test_move_folder_updates_ancestor_ids() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(
+            event_store,
+            metadata_store.clone(),
+            Arc::new(EventBroadcaster::new(100)),
+        );
+
+        let owner_id = Uuid::new_v4();
+
+        // Create two separate hierarchies:
+        // Source:      Destination:
+        // Work/        Archive/
+        //   Projects/
+        let work = service
+            .create_folder("Work".to_string(), None, owner_id)
+            .await
+            .unwrap();
+        let projects = service
+            .create_folder("Projects".to_string(), Some(work.id), owner_id)
+            .await
+            .unwrap();
+        let archive = service
+            .create_folder("Archive".to_string(), None, owner_id)
+            .await
+            .unwrap();
+
+        // Verify initial ancestor_ids
+        assert_eq!(work.ancestor_ids, Some(Vec::new()));
+        assert_eq!(projects.ancestor_ids, Some(vec![work.id]));
+        assert_eq!(archive.ancestor_ids, Some(Vec::new()));
+
+        // Move Work into Archive
+        service
+            .move_folder(work.id, Some(archive.id), owner_id)
+            .await
+            .unwrap();
+
+        // Verify updated ancestor_ids
+        let updated_work = metadata_store
+            .find_folder_by_id(work.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let updated_projects = metadata_store
+            .find_folder_by_id(projects.id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Work should now have Archive as ancestor
+        assert_eq!(updated_work.ancestor_ids, Some(vec![archive.id]));
+        // Projects should now have Archive and Work as ancestors
+        assert_eq!(updated_projects.ancestor_ids, Some(vec![archive.id, work.id]));
+    }
+
+    #[tokio::test]
+    async fn test_move_folder_to_root_updates_ancestor_ids() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(
+            event_store,
+            metadata_store.clone(),
+            Arc::new(EventBroadcaster::new(100)),
+        );
+
+        let owner_id = Uuid::new_v4();
+
+        // Create hierarchy: Documents/Work
+        let docs = service
+            .create_folder("Documents".to_string(), None, owner_id)
+            .await
+            .unwrap();
+        let work = service
+            .create_folder("Work".to_string(), Some(docs.id), owner_id)
+            .await
+            .unwrap();
+
+        // Verify initial ancestor_ids
+        assert_eq!(work.ancestor_ids, Some(vec![docs.id]));
+
+        // Move Work to root (no parent)
+        service.move_folder(work.id, None, owner_id).await.unwrap();
+
+        // Verify updated ancestor_ids
+        let updated_work = metadata_store
+            .find_folder_by_id(work.id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Work should now have empty ancestors (root folder)
+        assert_eq!(updated_work.ancestor_ids, Some(Vec::new()));
+    }
+
+    #[tokio::test]
+    async fn test_move_folder_circular_with_ancestor_ids() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(
+            event_store,
+            metadata_store,
+            Arc::new(EventBroadcaster::new(100)),
+        );
+
+        let owner_id = Uuid::new_v4();
+
+        // Create hierarchy with proper ancestor_ids: A/B/C
+        let folder_a = service
+            .create_folder("A".to_string(), None, owner_id)
+            .await
+            .unwrap();
+        let folder_b = service
+            .create_folder("B".to_string(), Some(folder_a.id), owner_id)
+            .await
+            .unwrap();
+        let folder_c = service
+            .create_folder("C".to_string(), Some(folder_b.id), owner_id)
+            .await
+            .unwrap();
+
+        // Verify ancestor_ids are set correctly
+        assert_eq!(folder_a.ancestor_ids, Some(Vec::new()));
+        assert_eq!(folder_b.ancestor_ids, Some(vec![folder_a.id]));
+        assert_eq!(folder_c.ancestor_ids, Some(vec![folder_a.id, folder_b.id]));
+
+        // Try to move A into C - this should be detected as circular
+        // because A is in C's ancestor_ids [A, B]
+        let result = service.move_folder(folder_a.id, Some(folder_c.id), owner_id).await;
+
+        assert!(matches!(result, Err(FolderError::CircularReference { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_deep_nesting_ancestor_ids() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(
+            event_store,
+            metadata_store.clone(),
+            Arc::new(EventBroadcaster::new(100)),
+        );
+
+        let owner_id = Uuid::new_v4();
+
+        // Create deeply nested hierarchy: A/B/C/D/E
+        let folder_a = service
+            .create_folder("A".to_string(), None, owner_id)
+            .await
+            .unwrap();
+        let folder_b = service
+            .create_folder("B".to_string(), Some(folder_a.id), owner_id)
+            .await
+            .unwrap();
+        let folder_c = service
+            .create_folder("C".to_string(), Some(folder_b.id), owner_id)
+            .await
+            .unwrap();
+        let folder_d = service
+            .create_folder("D".to_string(), Some(folder_c.id), owner_id)
+            .await
+            .unwrap();
+        let folder_e = service
+            .create_folder("E".to_string(), Some(folder_d.id), owner_id)
+            .await
+            .unwrap();
+
+        // Verify ancestor_ids at each level
+        assert_eq!(folder_a.ancestor_ids, Some(Vec::new()));
+        assert_eq!(folder_b.ancestor_ids, Some(vec![folder_a.id]));
+        assert_eq!(folder_c.ancestor_ids, Some(vec![folder_a.id, folder_b.id]));
+        assert_eq!(
+            folder_d.ancestor_ids,
+            Some(vec![folder_a.id, folder_b.id, folder_c.id])
+        );
+        assert_eq!(
+            folder_e.ancestor_ids,
+            Some(vec![folder_a.id, folder_b.id, folder_c.id, folder_d.id])
+        );
+
+        // Move C (with D and E) to root
+        service.move_folder(folder_c.id, None, owner_id).await.unwrap();
+
+        // Verify ancestor_ids were updated for C and all descendants
+        let updated_c = metadata_store
+            .find_folder_by_id(folder_c.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let updated_d = metadata_store
+            .find_folder_by_id(folder_d.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let updated_e = metadata_store
+            .find_folder_by_id(folder_e.id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(updated_c.ancestor_ids, Some(Vec::new()));
+        assert_eq!(updated_d.ancestor_ids, Some(vec![folder_c.id]));
+        assert_eq!(updated_e.ancestor_ids, Some(vec![folder_c.id, folder_d.id]));
     }
 }

@@ -100,7 +100,7 @@ fn validate_update_request(req: &UpdateProfileRequest) -> Result<(), Vec<String>
 /// - 500 Internal Server Error: Database error
 pub async fn get_profile(
     State(state): State<AppState>,
-    AuthenticatedUser { user_id }: AuthenticatedUser,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
 ) -> Response {
     match state.metadata_store.find_user_by_id(user_id).await {
         Ok(Some(user)) => {
@@ -164,7 +164,7 @@ pub async fn get_profile(
 /// - 500 Internal Server Error: Database error
 pub async fn update_profile(
     State(state): State<AppState>,
-    AuthenticatedUser { user_id }: AuthenticatedUser,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Json(req): Json<UpdateProfileRequest>,
 ) -> Response {
     // Validate request

@@ -76,6 +76,7 @@ impl<R: NotificationRepository> NotificationProjector<R> {
                 action_url: None,
                 read: false,
                 created_at: event.occurred_at,
+                tenant_id: Uuid::nil(),
             };
             
             debug!("Creating notification for user {}: {}", recipient_id, notification.title);
@@ -106,6 +107,7 @@ impl<R: NotificationRepository> NotificationProjector<R> {
                 action_url: None,
                 read: false,
                 created_at: event.occurred_at,
+                tenant_id: Uuid::nil(),
             };
             
             debug!("Creating revocation notification for user {}", recipient_id);
@@ -145,6 +147,7 @@ impl<R: NotificationRepository> NotificationProjector<R> {
                                 action_url: None,
                                 read: false,
                                 created_at: event.occurred_at,
+                                tenant_id: Uuid::nil(),
                             };
                             
                             if let Err(e) = self.repository.create_notification(&notification).await {
@@ -164,7 +167,7 @@ impl<R: NotificationRepository> NotificationProjector<R> {
 mod tests {
     use super::*;
     use crate::metadata_v2::stores::LocalFsDocumentStore;
-    use crate::metadata_v2::MetadataBackendConfig;
+    use crate::metadata_v2::{MetadataBackendConfig, MetadataDocumentStore};
     use crate::repos::notification::rustfs::RustFsNotificationRepository;
     use crate::repos::notification::NotificationQuery;
     use serde_json::json;

@@ -8,6 +8,7 @@ use crate::metadata_v2::{
     },
     MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions,
 };
+use crate::repos::PathBuilder;
 use async_trait::async_trait;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -16,37 +17,6 @@ use uuid::Uuid;
 pub struct RustFsJobRepository {
     doc_store: Arc<dyn MetadataDocumentStore>,
     path_builder: PathBuilder,
-}
-
-/// Path builder for job storage
-struct PathBuilder {
-    base_prefix: String,
-    namespace: String,
-}
-
-impl PathBuilder {
-    fn new(base_prefix: String, namespace: String) -> Self {
-        Self {
-            base_prefix,
-            namespace,
-        }
-    }
-    
-    /// Path for job document
-    fn job_path(&self, job_id: Uuid) -> String {
-        format!(
-            "{}/{}/jobs/{}.json",
-            self.base_prefix, self.namespace, job_id
-        )
-    }
-    
-    /// Path for job queue index
-    fn queue_index_path(&self) -> String {
-        format!(
-            "{}/{}/indexes/jobs/queue.json",
-            self.base_prefix, self.namespace
-        )
-    }
 }
 
 impl RustFsJobRepository {
@@ -64,7 +34,7 @@ impl RustFsJobRepository {
         
         match self.doc_store.get::<JobQueueIndex>(&index_path).await {
             Ok(Some((index, _))) => Ok(index),
-            Ok(None) => Ok(JobQueueIndex::new(self.path_builder.namespace.clone())),
+            Ok(None) => Ok(JobQueueIndex::new(self.path_builder.namespace().to_string())),
             Err(e) => Err(JobRepositoryError::Storage(e.to_string())),
         }
     }
@@ -228,11 +198,22 @@ impl JobRepository for RustFsJobRepository {
             .take(limit)
             .collect();
         
-        // Fetch full documents
+        // Fetch full documents in parallel
+        let paths: Vec<String> = job_refs
+            .iter()
+            .map(|r| self.path_builder.job_path(r.job_id))
+            .collect();
+        let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
+        
         let mut jobs = Vec::new();
-        for job_ref in job_refs {
-            if let Ok(Some(job)) = self.get_job(job_ref.job_id).await {
-                jobs.push(job);
+        if !path_refs.is_empty() {
+            match self.doc_store.get_multi::<JobDocument>(&path_refs).await {
+                Ok(results) => {
+                    for (_, doc, _) in results {
+                        jobs.push(super::conversions::doc_to_job(doc));
+                    }
+                }
+                Err(e) => return Err(JobRepositoryError::Storage(e.to_string())),
             }
         }
         
@@ -242,12 +223,25 @@ impl JobRepository for RustFsJobRepository {
     async fn get_pending_jobs(&self, limit: usize) -> Result<Vec<Job>, JobRepositoryError> {
         let index = self.get_or_create_index().await?;
         
+        let pending_refs: Vec<&JobRef> = index.pending.iter().take(limit).collect();
+        let paths: Vec<String> = pending_refs
+            .iter()
+            .map(|r| self.path_builder.job_path(r.job_id))
+            .collect();
+        let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
+        
         let mut jobs = Vec::new();
-        for job_ref in index.pending.iter().take(limit) {
-            if let Ok(Some(job)) = self.get_job(job_ref.job_id).await {
-                if job.status == JobStatus::Pending {
-                    jobs.push(job);
+        if !path_refs.is_empty() {
+            match self.doc_store.get_multi::<JobDocument>(&path_refs).await {
+                Ok(results) => {
+                    for (_, doc, _) in results {
+                        let job = super::conversions::doc_to_job(doc);
+                        if job.status == JobStatus::Pending {
+                            jobs.push(job);
+                        }
+                    }
                 }
+                Err(e) => return Err(JobRepositoryError::Storage(e.to_string())),
             }
         }
         
@@ -257,12 +251,25 @@ impl JobRepository for RustFsJobRepository {
     async fn get_running_jobs(&self) -> Result<Vec<Job>, JobRepositoryError> {
         let index = self.get_or_create_index().await?;
         
+        let paths: Vec<String> = index
+            .running
+            .iter()
+            .map(|r| self.path_builder.job_path(r.job_id))
+            .collect();
+        let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
+        
         let mut jobs = Vec::new();
-        for job_ref in &index.running {
-            if let Ok(Some(job)) = self.get_job(job_ref.job_id).await {
-                if job.status == JobStatus::Running {
-                    jobs.push(job);
+        if !path_refs.is_empty() {
+            match self.doc_store.get_multi::<JobDocument>(&path_refs).await {
+                Ok(results) => {
+                    for (_, doc, _) in results {
+                        let job = super::conversions::doc_to_job(doc);
+                        if job.status == JobStatus::Running {
+                            jobs.push(job);
+                        }
+                    }
                 }
+                Err(e) => return Err(JobRepositoryError::Storage(e.to_string())),
             }
         }
         
@@ -329,6 +336,7 @@ mod tests {
             completed_at: None,
             worker_id: None,
             error_message: None,
+            tenant_id: Uuid::nil(),
         }
     }
 

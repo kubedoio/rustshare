@@ -3,7 +3,8 @@ use sqlx::{PgPool, Row};
 
 /// Repository for user database operations.
 pub struct UserRepository {
-    pool: PgPool,
+    /// The database pool (public for use by other repositories).
+    pub pool: PgPool,
 }
 
 impl UserRepository {
@@ -27,6 +28,7 @@ impl UserRepository {
             surname: row.try_get("surname")?,
             avatar_path: row.try_get("avatar_path")?,
             email_sharing_enabled: row.try_get("email_sharing_enabled")?,
+            tenant_id: row.try_get("tenant_id")?,
         })
     }
 
@@ -42,7 +44,7 @@ impl UserRepository {
         let row = sqlx::query(
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
-                   storage_quota, theme, created_at, updated_at, disabled_at
+                   storage_quota, theme, created_at, updated_at, disabled_at, tenant_id
             FROM users
             WHERE LOWER(email) = $1
             "#,
@@ -59,7 +61,7 @@ impl UserRepository {
         let row = sqlx::query(
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
-                   storage_quota, theme, created_at, updated_at, disabled_at
+                   storage_quota, theme, created_at, updated_at, disabled_at, tenant_id
             FROM users
             WHERE id = $1
             "#,

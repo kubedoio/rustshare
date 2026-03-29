@@ -3,7 +3,8 @@ use sqlx::PgPool;
 
 /// Repository for folder database operations.
 pub struct FolderRepository {
-    pool: PgPool,
+    /// The database pool (public for use by other repositories).
+    pub pool: PgPool,
 }
 
 impl FolderRepository {
@@ -17,7 +18,7 @@ impl FolderRepository {
         let folder = sqlx::query_as::<_, Folder>(
             r#"
             SELECT id, name, path, parent_folder_id, owner_id,
-                   created_at, updated_at
+                   created_at, updated_at, tenant_id
             FROM folders
             WHERE id = $1
             "#,

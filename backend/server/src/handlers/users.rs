@@ -83,7 +83,7 @@ pub struct UserSecurityEventResponse {
 /// - 500 Internal Server Error: Database error
 pub async fn update_user_theme(
     State(state): State<AppState>,
-    AuthenticatedUser { user_id }: AuthenticatedUser,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Json(req): Json<UpdateThemeRequest>,
 ) -> Response {
     // Update theme in database
@@ -380,7 +380,7 @@ pub async fn delete_user_session(
 /// List recent security events for the authenticated user.
 pub async fn list_user_security_events(
     State(state): State<AppState>,
-    AuthenticatedUser { user_id }: AuthenticatedUser,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
 ) -> Response {
     match state
         .metadata_store
@@ -443,7 +443,7 @@ pub struct UserProfile {
 
 pub async fn get_user_profile(
     State(state): State<AppState>,
-    AuthenticatedUser { user_id }: AuthenticatedUser,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
 ) -> Response {
     // Get user from database
     match state.metadata_store.find_user_by_id(user_id).await {
@@ -509,7 +509,7 @@ const AVATAR_SIZE: u32 = 256;
 /// - 500 Internal Server Error: Processing or storage error
 pub async fn upload_avatar(
     State(state): State<AppState>,
-    AuthenticatedUser { user_id }: AuthenticatedUser,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
@@ -628,7 +628,7 @@ pub async fn upload_avatar(
 /// - 500 Internal Server Error: Database error
 pub async fn delete_avatar(
     State(state): State<AppState>,
-    AuthenticatedUser { user_id }: AuthenticatedUser,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
 ) -> Response {
     // Get current avatar_path
     let user = match state.metadata_store.find_user_by_id(user_id).await {
