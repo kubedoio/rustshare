@@ -14,7 +14,7 @@ use rustshare_core::events::{
     Event, EventType, NotificationCreatedPayload, ReplicationStateChangedPayload,
     ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload,
 };
-use rustshare_storage::repos::sync::{DeltaResult, SyncCursor, SyncDelta};
+use rustshare_storage::repos::sync::{DeltaResult, SyncDelta};
 use rustshare_storage::metadata_v2::SyncCursorDocument;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -1310,24 +1310,6 @@ pub struct DeltaResponse {
     pub total_count: Option<usize>,
 }
 
-/// Response for listing device sync status
-#[derive(Debug, Serialize)]
-pub struct DeviceListResponse {
-    /// List of devices with sync info
-    pub devices: Vec<DeviceSyncStatus>,
-}
-
-/// Sync status for a single device
-#[derive(Debug, Serialize)]
-pub struct DeviceSyncStatus {
-    /// Device ID
-    pub device_id: Uuid,
-    /// When the device last synced
-    pub last_sync_at: DateTime<Utc>,
-    /// Last event ID processed
-    pub last_event_id: Uuid,
-}
-
 /// Get or create a sync cursor for the current device
 ///
 /// GET /api/v1/sync/cursor
@@ -1446,7 +1428,7 @@ async fn get_delta_impl(
     cursor: &str,
     limit: usize,
 ) -> anyhow::Result<DeltaResult> {
-    use rustshare_storage::repos::sync::{SyncDelta, parse_cursor};
+    use rustshare_storage::repos::sync::parse_cursor;
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use rustshare_core::events::Event;
 

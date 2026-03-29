@@ -436,7 +436,7 @@ where
         folder.ancestor_ids = new_ancestor_ids;
 
         // Update descendants' paths
-        self.update_descendant_paths(folder_id, &old_path, &new_path, user_id)
+        self.update_descendant_paths_and_ancestors(folder_id, &old_path, &new_path, user_id)
             .await?;
 
         // Emit FolderMoved event
@@ -542,21 +542,6 @@ where
     /// Helper method to update paths of all descendant folders.
     ///
     /// Used when renaming or moving a folder to ensure all descendant paths remain consistent.
-    #[deprecated(
-        since = "0.1.0",
-        note = "Use update_descendant_paths_and_ancestors instead"
-    )]
-    async fn update_descendant_paths(
-        &self,
-        folder_id: FolderId,
-        old_path: &str,
-        new_path: &str,
-        _user_id: UserId,
-    ) -> Result<(), FolderError> {
-        self.update_descendant_paths_and_ancestors(folder_id, old_path, new_path, _user_id)
-            .await
-    }
-
     /// Helper method to update paths and ancestor_ids of all descendant folders.
     ///
     /// Used when moving a folder to ensure all descendant paths and ancestor_ids remain consistent.

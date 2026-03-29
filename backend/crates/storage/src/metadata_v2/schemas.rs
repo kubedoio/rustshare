@@ -901,7 +901,7 @@ pub trait SchemaMigration<T> {
 }
 
 /// Helper to handle schema version mismatches
-pub fn ensure_current_version<T>(doc: &mut T, current_version: u32) 
+pub fn ensure_current_version<T>(_doc: &mut T, current_version: u32) 
 where
     T: Serialize + DeserializeOwned,
 {

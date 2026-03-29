@@ -1,15 +1,14 @@
 //! RustFS-backed repository implementations
 
 use async_trait::async_trait;
-use chrono::Datelike;
 use rustshare_core::domain::{FileId, FolderId, ShareId, UserId};
 use std::sync::Arc;
 use uuid::Uuid;
 
 use super::{RepositoryError, *};
 use crate::metadata_v2::{
-    BlobStore, EventLogStore, FolderChildrenIndex, IndexStore, MetadataCoordination,
-    MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions, RuntimeMetadataCache,
+    EventLogStore, FolderChildrenIndex, MetadataDocumentStore, MetadataDocumentStoreExt,
+    PutOptions, RuntimeMetadataCache,
 };
 use crate::metadata_v2::schemas::*;
 use crate::repos::PathBuilder;

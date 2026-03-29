@@ -3,6 +3,16 @@
 -- so this must remain a forward-only change with a new version.
 
 ALTER TABLE user_sessions
-ADD COLUMN tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+ADD COLUMN IF NOT EXISTS tenant_id UUID;
 
-CREATE INDEX idx_user_sessions_tenant_id ON user_sessions(tenant_id);
+ALTER TABLE user_sessions
+ALTER COLUMN tenant_id SET DEFAULT '00000000-0000-0000-0000-000000000000';
+
+UPDATE user_sessions
+SET tenant_id = '00000000-0000-0000-0000-000000000000'
+WHERE tenant_id IS NULL;
+
+ALTER TABLE user_sessions
+ALTER COLUMN tenant_id SET NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_tenant_id ON user_sessions(tenant_id);

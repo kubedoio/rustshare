@@ -10,7 +10,6 @@
 pub mod traits;
 pub mod rustfs_repos;
 pub mod dual_write;
-pub mod factory;
 pub mod user;
 pub mod notification;
 pub mod job;
@@ -22,13 +21,18 @@ pub mod upload_session;
 pub use traits::*;
 pub use rustfs_repos::*;
 pub use dual_write::*;
-pub use factory::*;
-pub use user::*;
-pub use notification::*;
-pub use job::*;
 pub use path_builder::PathBuilder;
-pub use search::*;
-pub use upload_session::*;
+pub use search::{RustFsSearchIndexRepository, SearchIndexRepository};
+pub use upload_session::RustFsUploadSessionRepository;
+pub use user::{RustFsUserRepository, UserRepository, UserRepositoryError};
+pub use notification::{
+    NotificationProjector, NotificationQuery, NotificationRepository,
+    NotificationRepositoryError, RustFsNotificationRepository,
+};
+pub use job::{
+    Job, JobCoordinator, JobQuery, JobRepository, JobRepositoryError, JobStatus,
+    RustFsJobRepository,
+};
 
 use thiserror::Error;
 

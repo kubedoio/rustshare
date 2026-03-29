@@ -1,7 +1,7 @@
 //! Job coordinator for distributed job processing
 
 use super::{Job, JobRepository, JobStatus};
-use crate::coordination::{CoordinationStore, CoordinationError};
+use crate::coordination::CoordinationStore;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};

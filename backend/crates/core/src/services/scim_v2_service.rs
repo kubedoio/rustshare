@@ -1259,6 +1259,7 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
 }
 
 /// Generate a temporary password hash for SCIM-provisioned users.
+#[cfg(test)]
 fn generate_temporary_password_hash() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
@@ -1267,6 +1268,7 @@ fn generate_temporary_password_hash() -> String {
 }
 
 /// Simple base64 encoding.
+#[cfg(test)]
 fn base64_encode(input: &[u8]) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = String::new();

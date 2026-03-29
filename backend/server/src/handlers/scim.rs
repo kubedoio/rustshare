@@ -11,7 +11,6 @@ use axum::{
 use axum_extra::headers::{authorization::Bearer, Authorization, HeaderMapExt};
 use rustshare_core::services::{ScimGroup, ScimService, ScimUser};
 use sqlx::Row;
-use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -67,21 +66,6 @@ fn verify_scim_token(headers: &axum::http::HeaderMap) -> Result<(), (StatusCode,
 }
 
 // ---------------------------------------------------------------------------
-// Request types
-// ---------------------------------------------------------------------------
-
-/// Query parameters for SCIM user deprovisioning.
-#[derive(Debug, Deserialize)]
-pub struct DeprovisionQuery {
-    /// If true, permanently delete the user instead of disabling
-    #[serde(default)]
-    pub permanent: bool,
-}
-
-// ---------------------------------------------------------------------------
-// User handlers
-// ---------------------------------------------------------------------------
-
 /// POST /api/v1/scim/users
 /// Provision or update a user from SCIM data.
 pub async fn provision_user(
@@ -316,7 +300,7 @@ pub async fn delete_group(
 // ---------------------------------------------------------------------------
 
 use rustshare_core::services::{GroupRecord, ScimRepository};
-use rustshare_core::domain::{Theme, User};
+use rustshare_core::domain::User;
 use sqlx::PgPool;
 
 /// SQLx-based implementation of SCIM repository.

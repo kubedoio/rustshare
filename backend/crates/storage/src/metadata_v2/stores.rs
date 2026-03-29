@@ -258,14 +258,6 @@ impl LocalFsDocumentStore {
             .join("meta")
             .join(key)
     }
-    
-    fn build_lock_path(&self, key: &str) -> std::path::PathBuf {
-        self.base_path
-            .join(&self.config.base_prefix)
-            .join(&self.config.namespace)
-            .join("locks")
-            .join(format!("{}.lock", key.replace('/', "_")))
-    }
 }
 
 #[async_trait]

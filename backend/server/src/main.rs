@@ -37,9 +37,7 @@
 //! - Ensure target group health checks are configured
 //!
 
-mod admin;
 mod handlers;
-mod metadata_integration;
 mod middleware;
 mod oidc;
 mod oidc_runtime;
@@ -428,7 +426,7 @@ async fn main() -> Result<()> {
         "uploads".to_string(),
     );
 
-    let upload_service = Arc::new(AppUploadService::new(
+    let _upload_service = Arc::new(AppUploadService::new(
         Arc::new(upload_session_repo),
         Arc::new(UploadObjectStoreAdapter::new(Arc::clone(&object_store))),
         Arc::new(UploadMetadataStoreAdapter::new(Arc::clone(&metadata_store))),

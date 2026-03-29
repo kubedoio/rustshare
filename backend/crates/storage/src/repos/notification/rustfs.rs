@@ -2,10 +2,7 @@
 
 use super::*;
 use crate::metadata_v2::{
-    schemas::{
-        NotificationDocument, NotificationRef, UserNotificationIndex,
-        CURRENT_SCHEMA_VERSION,
-    },
+    schemas::{NotificationDocument, NotificationRef, UserNotificationIndex},
     MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions,
 };
 use crate::repos::PathBuilder;

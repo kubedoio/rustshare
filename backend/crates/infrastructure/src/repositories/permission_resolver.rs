@@ -7,7 +7,6 @@ use anyhow::Result;
 use rustshare_core::domain::{File, FileId, Folder, FolderId, Share, UserId};
 use rustshare_core::services::PermissionResolverOps;
 use sqlx::{PgPool, Row};
-use std::sync::Arc;
 use uuid::Uuid;
 
 use super::{FileRepository, FolderRepository, ShareRepository, UserRepository};

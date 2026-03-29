@@ -1000,8 +1000,8 @@ mod hex {
     }
 }
 
-// NOTE: Tests temporarily disabled - need tenant_id parameter updates
-#[cfg(IGNORE_TESTS)]
+// NOTE: Tests temporarily disabled until the tenant-aware fixtures are updated.
+#[cfg(any())]
 mod tests {
     use super::*;
     use std::collections::HashMap;

@@ -1,7 +1,7 @@
 //! Repair tools for fixing metadata inconsistencies
 
 use std::sync::Arc;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::OperationSummary;
@@ -136,7 +136,7 @@ impl RepairTool {
     
     /// Repair orphaned shares (pointing to non-existent resources)
     pub async fn repair_orphaned_shares(&self) -> Result<OperationSummary, RepositoryError> {
-        let mut summary = OperationSummary::new("repair_orphaned_shares");
+        let summary = OperationSummary::new("repair_orphaned_shares");
         
         // This would scan all shares and verify their resources exist
         // For now, this is a placeholder
@@ -150,7 +150,7 @@ impl RepairTool {
     pub async fn rebuild_folder_children_index(&self, folder_id: Uuid) -> Result<(), RepositoryError> {
         info!(folder_id = %folder_id, "Rebuilding folder children index");
         
-        let mut index = FolderChildrenIndex::new(folder_id);
+        let index = FolderChildrenIndex::new(folder_id);
         
         // Scan for folders with this parent
         // Note: In a real implementation, we'd have an efficient way to query by parent
@@ -169,7 +169,7 @@ impl RepairTool {
     
     /// Clean up expired leases
     pub async fn cleanup_expired_leases(&self) -> Result<OperationSummary, RepositoryError> {
-        let mut summary = OperationSummary::new("cleanup_expired_leases");
+        let summary = OperationSummary::new("cleanup_expired_leases");
         
         info!("Cleaning up expired leases");
         
@@ -240,7 +240,7 @@ impl RepairTool {
     
     /// Remove duplicate names in the same folder
     pub async fn fix_duplicate_names(&self) -> Result<OperationSummary, RepositoryError> {
-        let mut summary = OperationSummary::new("fix_duplicate_names");
+        let summary = OperationSummary::new("fix_duplicate_names");
         
         info!("Checking for duplicate names");
         

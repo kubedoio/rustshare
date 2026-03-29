@@ -9,7 +9,6 @@ pub mod metadata;
 pub mod metadata_v2;
 pub mod object_store;
 pub mod repos;
-pub mod service_integration;
 pub mod session;
 
 pub use event_store::EventStore;

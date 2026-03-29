@@ -256,14 +256,14 @@ impl MetadataCoordination for InMemoryCoordination {
 /// Object-store backed coordination using lease documents
 pub struct ObjectStoreCoordination {
     doc_store: Arc<dyn MetadataDocumentStore>,
-    owner_id: String,
+    _owner_id: String,
 }
 
 impl ObjectStoreCoordination {
     pub fn new(doc_store: Arc<dyn MetadataDocumentStore>, owner_id: String) -> Self {
         Self {
             doc_store,
-            owner_id,
+            _owner_id: owner_id,
         }
     }
     
@@ -343,7 +343,7 @@ impl MetadataCoordination for ObjectStoreCoordination {
         let key = self.lease_key(&lease.resource_id);
         
         // Check that we own the lease
-        if let Some((existing, metadata)) = self.doc_store.get::<LeaseDocument>(&key).await.map_err(
+        if let Some((existing, _metadata)) = self.doc_store.get::<LeaseDocument>(&key).await.map_err(
             |e| CoordinationError::Other(anyhow::anyhow!("Failed to get lease: {}", e)),
         )? {
             if existing.token != lease.token {
@@ -354,11 +354,6 @@ impl MetadataCoordination for ObjectStoreCoordination {
             }
             
             // Delete with ETag check
-            let opts = PutOptions {
-                if_match: Some(metadata.etag),
-                ..Default::default()
-            };
-            
             // We actually delete the lease document
             self.doc_store.delete(&key).await.map_err(|e| {
                 CoordinationError::Other(anyhow::anyhow!("Failed to delete lease: {}", e))

@@ -1,7 +1,7 @@
 //! RustFS-backed implementation of the sync repository
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -44,8 +44,6 @@ impl RustFsSyncRepository {
 
     /// Convert an EventDocument to a SyncDelta
     fn event_to_delta(&self, event: &EventDocument) -> Option<SyncDelta> {
-        use serde_json::from_value;
-
         match event.event_type {
             EventType::FileUploaded => {
                 let payload: serde_json::Value = event.payload.clone();
@@ -361,7 +359,6 @@ impl SyncRepository for RustFsSyncRepository {
 
         // Convert events to deltas
         let mut items = Vec::new();
-        let mut last_event_id = Uuid::nil();
         let mut last_timestamp = since_timestamp;
 
         for event in &events_to_process {
@@ -374,7 +371,6 @@ impl SyncRepository for RustFsSyncRepository {
                     items.push(delta);
                 }
             }
-            last_event_id = event.id;
             last_timestamp = event.occurred_at;
         }
 
@@ -449,7 +445,7 @@ impl RustFsSyncRepository {
     /// - The user performed the action (already checked in caller)
     /// - The event affects a resource owned by the user
     /// - The event affects a resource shared with the user
-    async fn is_event_relevant_to_user(&self, event: &EventDocument, user_id: Uuid) -> bool {
+    async fn is_event_relevant_to_user(&self, event: &EventDocument, _user_id: Uuid) -> bool {
         // For Phase 1, we keep this simple and include events where the user
         // is the actor. More sophisticated filtering can be added later.
         

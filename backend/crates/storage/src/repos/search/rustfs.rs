@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::metadata_v2::{
     schemas::{
         tokenize_search_query, FileDocument, FolderDocument, SearchIndexDocument,
-        SearchIndexEntry, SearchResult, CURRENT_SCHEMA_VERSION,
+        SearchIndexEntry, SearchResult,
     },
     MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions,
 };

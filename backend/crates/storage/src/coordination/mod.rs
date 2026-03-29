@@ -341,7 +341,7 @@ impl CoordinationStoreFactory {
     /// Create coordination store based on configuration
     pub async fn create(
         use_redis: bool,
-        redis_url: Option<&str>,
+        _redis_url: Option<&str>,
     ) -> Result<Box<dyn CoordinationStore>, CoordinationError> {
         if use_redis {
             #[cfg(feature = "redis-coordination")]

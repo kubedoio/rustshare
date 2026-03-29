@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    handlers::{AuthenticatedUser, ErrorResponse},
+    handlers::AuthenticatedUser,
     AppState,
 };
 
@@ -109,14 +109,6 @@ pub struct AiErrorResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
 }
-
-// ============================================================================
-// Rate Limiting
-// ============================================================================
-
-/// Rate limit configuration for AI endpoints.
-/// Contract A-04: Rate limiting on AI endpoints.
-const AI_RATE_LIMIT_PER_MINUTE: u32 = 30;
 
 /// Check if the request is within rate limits.
 /// For Phase 1.5, we use a simple per-user rate limit.

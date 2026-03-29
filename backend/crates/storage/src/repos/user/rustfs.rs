@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::metadata_v2::{
-    schemas::{UserDocument, CURRENT_SCHEMA_VERSION},
+    schemas::UserDocument,
     MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions,
 };
 use crate::repos::PathBuilder;

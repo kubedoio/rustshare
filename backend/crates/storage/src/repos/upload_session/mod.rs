@@ -3,20 +3,12 @@
 //! This module provides repository implementations for managing
 //! upload sessions and their associated chunks.
 
-use async_trait::async_trait;
-use rustshare_core::services::{
-    UploadError, UploadSession,
-    upload_session::ChunkInfo,
-    UploadSessionRepository,
-};
+use rustshare_core::services::UploadError;
 use uuid::Uuid;
 
 pub mod rustfs;
 
 pub use rustfs::RustFsUploadSessionRepository;
-
-// Re-export the core trait so users can use it from storage crate
-pub use rustshare_core::services::UploadSessionRepository as UploadSessionRepositoryTrait;
 
 /// Conversion between repository errors and upload errors
 impl From<super::RepositoryError> for UploadError {

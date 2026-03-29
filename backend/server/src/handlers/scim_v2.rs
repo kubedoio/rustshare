@@ -11,7 +11,7 @@ use axum::{
 };
 use axum_extra::headers::{authorization::Bearer, Authorization, HeaderMapExt};
 use rustshare_core::services::{
-    parse_filter, ScimPatchRequest, ScimV2Error, ScimV2ErrorResponse, ScimV2Group, ScimV2ListResponse,
+    ScimPatchRequest, ScimV2Error, ScimV2ErrorResponse, ScimV2Group, ScimV2ListResponse,
     ScimV2Repository, ScimV2Service, ScimV2User,
 };
 use serde::Deserialize;
@@ -26,6 +26,7 @@ use crate::AppState;
 // ---------------------------------------------------------------------------
 
 /// Query parameters for SCIM list operations.
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Default)]
 pub struct ListQuery {
     /// SCIM filter expression
@@ -75,19 +76,6 @@ fn verify_scim_token(headers: &HeaderMap) -> Result<(), ScimV2ErrorResponse> {
     }
 
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Content-Type helpers
-// ---------------------------------------------------------------------------
-
-/// Check if the request accepts application/scim+json.
-fn accepts_scim_json(headers: &HeaderMap) -> bool {
-    headers
-        .get(header::ACCEPT)
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.contains("application/scim+json") || v.contains("application/json"))
-        .unwrap_or(true)
 }
 
 /// Create a SCIM JSON response.
@@ -1068,7 +1056,7 @@ pub async fn get_schemas(
 // ---------------------------------------------------------------------------
 
 /// Get base URL for constructing resource locations.
-fn get_base_url(headers: &HeaderMap) -> String {
+fn get_base_url(_headers: &HeaderMap) -> String {
     // Try to construct from request headers, fallback to env or default
     std::env::var("RUSTSHARE_SCIM_BASE_URL")
         .unwrap_or_else(|_| "http://localhost:8080".to_string())

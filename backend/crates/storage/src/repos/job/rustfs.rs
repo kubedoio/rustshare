@@ -2,10 +2,7 @@
 
 use super::*;
 use crate::metadata_v2::{
-    schemas::{
-        JobDocument, JobQueueIndex, JobRef, JobStatus as DocJobStatus,
-        CURRENT_SCHEMA_VERSION,
-    },
+    schemas::{JobDocument, JobQueueIndex, JobRef},
     MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions,
 };
 use crate::repos::PathBuilder;
@@ -148,7 +145,7 @@ impl JobRepository for RustFsJobRepository {
         let path = self.path_builder.job_path(id);
         
         // Get job for index update
-        let job = self.get_job(id).await?;
+        let existing_job = self.get_job(id).await?;
         
         // Delete job
         self.doc_store
@@ -157,7 +154,7 @@ impl JobRepository for RustFsJobRepository {
             .map_err(|e| JobRepositoryError::Storage(e.to_string()))?;
         
         // Update index
-        if let Some(job) = job {
+        if existing_job.is_some() {
             let mut index = self.get_or_create_index().await?;
             index.remove_job(id);
             self.save_index(&index).await?;

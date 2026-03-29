@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::metadata_v2::{
     MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions,
 };
-use crate::repos::{PathBuilder, RepositoryError};
+use crate::repos::PathBuilder;
 
 use rustshare_core::services::UploadSessionRepository;
 
@@ -186,17 +186,12 @@ impl RustFsUploadSessionRepository {
     }
 
     /// Get the prefix for listing user sessions
-    fn user_sessions_prefix(&self, user_id: Uuid) -> String {
+    fn user_sessions_prefix(&self, _user_id: Uuid) -> String {
         format!(
             "{}/{}/uploads/sessions/",
             self.path_builder.base_prefix(),
             self.path_builder.namespace(),
         )
-    }
-
-    /// Convert repository error to upload error
-    fn map_err(&self, err: RepositoryError) -> UploadError {
-        err.into()
     }
 }
 

@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use rustshare_core::domain::{FileId, FolderId, ShareId, UserId};
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{error, warn};
 use uuid::Uuid;
 
 use super::{RepositoryError, *};
@@ -528,7 +528,7 @@ impl DualWriteVerifier {
     }
     
     /// Run verification on a sample of entities
-    pub async fn verify_sample(&self, sample_size: usize) -> Result<VerificationReport, RepositoryError> {
+    pub async fn verify_sample(&self, _sample_size: usize) -> Result<VerificationReport, RepositoryError> {
         // This would scan and verify a random sample
         // For now, return an empty report
         Ok(VerificationReport {

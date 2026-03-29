@@ -28,7 +28,6 @@ struct StoreState {
 
 struct LockEntry {
     lock_id: String,
-    owner: String,
     expires_at: DateTime<Utc>,
 }
 
@@ -139,7 +138,6 @@ impl CoordinationStore for InMemoryCoordinationStore {
             resource_id.to_string(),
             LockEntry {
                 lock_id: lock_id.clone(),
-                owner: owner.to_string(),
                 expires_at,
             },
         );

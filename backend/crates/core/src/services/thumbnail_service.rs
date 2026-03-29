@@ -198,11 +198,9 @@ where
         size: ThumbnailSize,
     ) -> Result<(Vec<u8>, String), ThumbnailError> {
         let (width, height) = size.dimensions();
-        let content = content.to_vec();
+        let _content = content.to_vec();
 
         let result = tokio::task::spawn_blocking(move || {
-            use image::imageops::FilterType;
-
             // Try to render PDF using pdf2image or similar
             // For now, generate a PDF icon placeholder with page count indicator
             // This is a simplified version - in production you'd use a PDF rendering library
@@ -301,7 +299,7 @@ where
             let mut img = image::RgbaImage::new(width, height);
             
             // Determine diagram type and color scheme
-            let (bg_color, icon_color, label) = if file_name.ends_with(".excalidraw") || file_name.ends_with(".excalidraw.json") {
+            let (bg_color, icon_color, _label) = if file_name.ends_with(".excalidraw") || file_name.ends_with(".excalidraw.json") {
                 // Excalidraw: light beige background
                 (image::Rgba([255, 250, 240, 255]), image::Rgba([105, 67, 53, 255]), "✏️")
             } else if file_name.ends_with(".drawio") || file_name.ends_with(".dio") {
