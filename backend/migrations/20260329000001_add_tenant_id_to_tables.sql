@@ -31,3 +31,7 @@ CREATE INDEX idx_user_groups_tenant_id ON user_groups(tenant_id);
 -- File thumbnails table
 ALTER TABLE file_thumbnails ADD COLUMN tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
 CREATE INDEX idx_file_thumbnails_tenant_id ON file_thumbnails(tenant_id);
+
+-- User sessions table
+ALTER TABLE user_sessions ADD COLUMN tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+CREATE INDEX idx_user_sessions_tenant_id ON user_sessions(tenant_id);
