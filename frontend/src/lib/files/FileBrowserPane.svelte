@@ -11,6 +11,13 @@
 	export let folders: Folder[] = [];
 	export let files: FileType[] = [];
 	export let folderPath: Folder[] = [];
+	export let title = 'All files';
+	export let description = '';
+	export let emptyTitle = 'No files yet';
+	export let emptyDescription = 'Upload your first file to get started';
+	export let emptyActionLabel: string | null = 'Upload files';
+	export let showBreadcrumbs = true;
+	export let canCreateFolder = true;
 	export let isLoading: boolean = false;
 	export let error: Error | null = null;
 	export let replicationStatuses: Record<string, ReplicationStatus> = {};
@@ -54,6 +61,9 @@
 	<!-- Toolbar -->
 	<div class="border-b border-base-300/80 px-4 py-3 md:px-5 md:py-4 lg:px-6">
 		<FileToolbar
+			{title}
+			{description}
+			{canCreateFolder}
 			{selectionMode}
 			{isUploading}
 			onToggleSelection={onToggleSelection}
@@ -68,9 +78,11 @@
 	</div>
 
 	<!-- Breadcrumbs -->
-	<div class="border-b border-base-300/70 bg-base-200/35 px-4 py-2.5 md:px-5 lg:px-6">
-		<Breadcrumbs {folderPath} on:navigate={handleBreadcrumbNavigate} />
-	</div>
+	{#if showBreadcrumbs}
+		<div class="border-b border-base-300/70 bg-base-200/35 px-4 py-2.5 md:px-5 lg:px-6">
+			<Breadcrumbs {folderPath} on:navigate={handleBreadcrumbNavigate} />
+		</div>
+	{/if}
 
 	<!-- Content -->
 	<div class="flex-1 overflow-auto px-4 py-4 md:px-5 lg:px-6 lg:py-5 xl:px-6 2xl:px-8">
@@ -102,6 +114,9 @@
 				<FileGrid
 					{folders}
 					{files}
+					{emptyTitle}
+					{emptyDescription}
+					{emptyActionLabel}
 					{replicationStatuses}
 					{selectionMode}
 					onFolderClick={onFolderClick}
@@ -122,6 +137,9 @@
 				<FileList
 					{folders}
 					{files}
+					{emptyTitle}
+					{emptyDescription}
+					{emptyActionLabel}
 					{replicationStatuses}
 					{selectionMode}
 					onFolderClick={onFolderClick}

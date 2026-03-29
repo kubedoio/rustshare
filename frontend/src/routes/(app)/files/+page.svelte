@@ -1,7 +1,6 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { createQuery, createMutation } from '@tanstack/svelte-query';
-	import { listAllFiles, downloadFile, uploadFile, renameFile, deleteFile, moveFile } from '$lib/api/files';
+	import { downloadFile, uploadFile, renameFile, deleteFile, moveFile } from '$lib/api/files';
 	import { getFolderContents, createFolder, renameFolder, deleteFolder, moveFolder } from '$lib/api/folders';
 	import { queryClient } from '$lib/query-client';
 	import { searchQuery } from '$lib/stores/search';
@@ -10,8 +9,7 @@
 	import { activityStore } from '$lib/stores/activity';
 	import { replicationStore, type ReplicationStatus } from '$lib/stores/replication';
 	import type { File, Folder } from '$lib/api/types';
-	import type { WebSocketEvent } from '$lib/websocket/events';
-	import type { FolderNode } from '$lib/stores/folderTree';
+	import { page } from '$app/stores';
 
 	// Components
 	import FileExplorer from '$lib/files/FileExplorer.svelte';
@@ -68,6 +66,8 @@
 	let versionHistoryTarget: File | null = null;
 	let previewTarget: File | null = null;
 	let replaceFileTarget: File | null = null;
+
+	type WorkspaceMode = 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
 
 	// Toast
 	let showToast = false;
@@ -180,21 +180,42 @@
 		}
 	});
 
-	// Filter and sort
-	$: filteredFolders = $searchQuery
-		? ($filesQuery.data?.folders || []).filter(f => f.name.toLowerCase().includes($searchQuery.toLowerCase()))
-		: $filesQuery.data?.folders || [];
+	$: urlFilter = $page.url.searchParams.get('filter');
+	$: urlSort = $page.url.searchParams.get('sort');
+	$: workspaceMode = urlFilter === 'photos'
+		? 'photos'
+		: urlFilter === 'starred'
+			? 'starred'
+			: urlFilter === 'deleted'
+				? 'deleted'
+				: urlSort === 'recent'
+					? 'recent'
+					: 'all';
 
-	$: filteredFiles = $searchQuery
-		? ($filesQuery.data?.files || []).filter(f => f.name.toLowerCase().includes($searchQuery.toLowerCase()))
-		: $filesQuery.data?.files || [];
+	$: activeSortField = workspaceMode === 'recent' ? 'modified_at' : $fileSortState.field;
+	$: activeSortOrder = workspaceMode === 'recent' ? 'desc' : $fileSortState.order;
+	$: searchTerm = $searchQuery.trim().toLowerCase();
+
+	function matchesSearch(name: string) {
+		return searchTerm.length === 0 || name.toLowerCase().includes(searchTerm);
+	}
+
+	$: baseFolders = ($filesQuery.data?.folders || []).filter((folder) => matchesSearch(folder.name));
+	$: baseFiles = ($filesQuery.data?.files || []).filter((file) => matchesSearch(file.name));
+
+	$: filteredFolders = workspaceMode === 'all' ? baseFolders : [];
+	$: filteredFiles = workspaceMode === 'photos'
+		? baseFiles.filter((file) => file.mime_type.startsWith('image/'))
+		: workspaceMode === 'starred' || workspaceMode === 'deleted'
+			? []
+			: baseFiles;
 
 	$: sortedFolders = [...filteredFolders].sort((a, b) => {
-		if ($fileSortState.field === 'name') {
-			return $fileSortState.order === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
+		if (activeSortField === 'name') {
+			return activeSortOrder === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
 		}
-		if ($fileSortState.field === 'modified_at') {
-			return $fileSortState.order === 'asc' 
+		if (activeSortField === 'modified_at') {
+			return activeSortOrder === 'asc' 
 				? new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
 				: new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
 		}
@@ -202,22 +223,75 @@
 	});
 
 	$: sortedFiles = [...filteredFiles].sort((a, b) => {
-		if ($fileSortState.field === 'name') {
-			return $fileSortState.order === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
+		if (activeSortField === 'name') {
+			return activeSortOrder === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
 		}
-		if ($fileSortState.field === 'modified_at') {
-			return $fileSortState.order === 'asc'
+		if (activeSortField === 'modified_at') {
+			return activeSortOrder === 'asc'
 				? new Date(a.modified_at).getTime() - new Date(b.modified_at).getTime()
 				: new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime();
 		}
-		if ($fileSortState.field === 'size') {
-			return $fileSortState.order === 'asc' ? a.size - b.size : b.size - a.size;
+		if (activeSortField === 'size') {
+			return activeSortOrder === 'asc' ? a.size - b.size : b.size - a.size;
 		}
-		if ($fileSortState.field === 'mime_type') {
-			return $fileSortState.order === 'asc' ? a.mime_type.localeCompare(b.mime_type) : b.mime_type.localeCompare(a.mime_type);
+		if (activeSortField === 'mime_type') {
+			return activeSortOrder === 'asc' ? a.mime_type.localeCompare(b.mime_type) : b.mime_type.localeCompare(a.mime_type);
 		}
 		return 0;
 	});
+
+	$: workspaceTitle =
+		workspaceMode === 'photos'
+			? 'Photos'
+			: workspaceMode === 'recent'
+				? 'Recent'
+				: workspaceMode === 'starred'
+					? 'Starred'
+					: workspaceMode === 'deleted'
+						? 'Deleted'
+						: 'All files';
+
+	$: workspaceDescription =
+		workspaceMode === 'photos'
+			? 'Image files in the current workspace, without the folder noise.'
+			: workspaceMode === 'recent'
+				? 'The latest changes in this workspace, sorted by most recent first.'
+				: workspaceMode === 'starred'
+					? 'Saved shortcuts will land here once starring is wired through the backend.'
+					: workspaceMode === 'deleted'
+						? 'Recoverable items will show up here when trash support is live.'
+						: 'Folders and files, tuned for quick scanning instead of dashboard theater.';
+
+	$: workspaceEmptyTitle =
+		workspaceMode === 'photos'
+			? 'No photos in this view'
+			: workspaceMode === 'recent'
+				? 'No recent file activity'
+				: workspaceMode === 'starred'
+					? 'Starred files are not available yet'
+					: workspaceMode === 'deleted'
+						? 'Deleted files are not available yet'
+						: 'No files yet';
+
+	$: workspaceEmptyDescription =
+		workspaceMode === 'photos'
+			? 'Upload an image into this folder and it will show up here.'
+			: workspaceMode === 'recent'
+				? 'Modify or upload a file and it will show up here.'
+				: workspaceMode === 'starred'
+					? 'The sidebar link is ready, but the actual starring model still needs backend support.'
+					: workspaceMode === 'deleted'
+						? 'Trash and restore still need backend support before this view can become real.'
+						: 'Upload your first file or create a folder to get started.';
+
+	$: workspaceEmptyActionLabel =
+		workspaceMode === 'all' || workspaceMode === 'photos' || workspaceMode === 'recent'
+			? 'Upload files'
+			: null;
+
+	$: showFolderTree = workspaceMode === 'all';
+	$: showBreadcrumbs = workspaceMode === 'all';
+	$: canCreateFolder = workspaceMode === 'all';
 
 	// Handlers
 	function handleFolderSelect(folderId: string | null, path: Folder[]) {
@@ -636,6 +710,14 @@
 		files={sortedFiles}
 		{currentFolderId}
 		{folderPath}
+		title={workspaceTitle}
+		description={workspaceDescription}
+		emptyTitle={workspaceEmptyTitle}
+		emptyDescription={workspaceEmptyDescription}
+		emptyActionLabel={workspaceEmptyActionLabel}
+		{showFolderTree}
+		{showBreadcrumbs}
+		{canCreateFolder}
 		isLoading={$filesQuery.isLoading}
 		error={$filesQuery.error}
 		{replicationStatuses}

@@ -2,6 +2,9 @@
 	import { fileSortState, setSortField, setSortOrder, setViewMode, type SortField, type SortOrder } from '$lib/stores/fileSort';
 	import { selectionCount, hasSelection, selectionStore } from '$lib/stores/selection';
 
+	export let title = 'All files';
+	export let description = '';
+	export let canCreateFolder = true;
 	export let selectionMode = false;
 	export let onToggleSelection: () => void;
 	export let onSelectAll: () => void;
@@ -33,8 +36,13 @@
 
 <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
 	<!-- Left: Title and filter chips -->
-	<div class="flex flex-wrap items-center gap-2 md:gap-3">
-		<h1 class="text-xl font-semibold tracking-tight text-base-content">All files</h1>
+	<div class="space-y-1">
+		<div class="flex flex-wrap items-center gap-2 md:gap-3">
+			<h1 class="text-xl font-semibold tracking-tight text-base-content">{title}</h1>
+		</div>
+		{#if description}
+			<p class="max-w-2xl text-sm text-base-content/55">{description}</p>
+		{/if}
 	</div>
 
 	<!-- Right: Actions -->
@@ -201,19 +209,21 @@
 			<div class="mx-1 hidden h-6 w-px bg-base-300 lg:block"></div>
 
 			<!-- New Folder button -->
-			<button
-				type="button"
-				class="flex items-center gap-2 rounded-xl border border-base-300/70 bg-base-100 px-3 py-1.5 text-sm font-medium text-base-content/80 transition-colors hover:border-brand-500/20 hover:text-base-content"
-				on:click={onNewFolder}
-				disabled={isUploading}
-			>
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
-					<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
-					<line x1="12" x2="12" y1="10" y2="16"/>
-					<line x1="9" x2="15" y1="13" y2="13"/>
-				</svg>
-				<span class="hidden sm:inline">New folder</span>
-			</button>
+			{#if canCreateFolder}
+				<button
+					type="button"
+					class="flex items-center gap-2 rounded-xl border border-base-300/70 bg-base-100 px-3 py-1.5 text-sm font-medium text-base-content/80 transition-colors hover:border-brand-500/20 hover:text-base-content"
+					on:click={onNewFolder}
+					disabled={isUploading}
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+						<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+						<line x1="12" x2="12" y1="10" y2="16"/>
+						<line x1="9" x2="15" y1="13" y2="13"/>
+					</svg>
+					<span class="hidden sm:inline">New folder</span>
+				</button>
+			{/if}
 
 			<!-- Upload button -->
 			<button

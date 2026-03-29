@@ -9,6 +9,14 @@
 	export let files: FileType[] = [];
 	export let currentFolderId: string | null = null;
 	export let folderPath: Folder[] = [];
+	export let title = 'All files';
+	export let description = '';
+	export let emptyTitle = 'No files yet';
+	export let emptyDescription = 'Upload your first file to get started';
+	export let emptyActionLabel: string | null = 'Upload files';
+	export let showFolderTree = true;
+	export let showBreadcrumbs = true;
+	export let canCreateFolder = true;
 	export let isLoading: boolean = false;
 	export let error: Error | null = null;
 	export let replicationStatuses: Record<string, ReplicationStatus> = {};
@@ -61,12 +69,14 @@
 
 <div class="flex h-full min-h-0 bg-base-100">
 	<!-- Folder Tree Sidebar -->
-	<div class="hidden h-full w-64 flex-shrink-0 overflow-hidden border-r border-base-300/80 bg-base-100/70 xl:block">
-		<FolderTree 
-			selectedFolderId={currentFolderId}
-			onSelectFolder={handleFolderSelectFromTree}
-		/>
-	</div>
+	{#if showFolderTree}
+		<div class="hidden h-full w-64 flex-shrink-0 overflow-hidden border-r border-base-300/80 bg-base-100/70 xl:block">
+			<FolderTree 
+				selectedFolderId={currentFolderId}
+				onSelectFolder={handleFolderSelectFromTree}
+			/>
+		</div>
+	{/if}
 
 	<!-- File Browser Pane -->
 	<div class="flex-1 flex min-h-0 min-w-0 flex-col overflow-hidden">
@@ -74,6 +84,13 @@
 			{folders}
 			{files}
 			{folderPath}
+			{title}
+			{description}
+			{emptyTitle}
+			{emptyDescription}
+			{emptyActionLabel}
+			{showBreadcrumbs}
+			{canCreateFolder}
 			{isLoading}
 			{error}
 			{replicationStatuses}

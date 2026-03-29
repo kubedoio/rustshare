@@ -6,6 +6,9 @@
 
 	export let folders: Folder[] = [];
 	export let files: FileType[] = [];
+	export let emptyTitle = 'No files yet';
+	export let emptyDescription = 'Upload your first file to get started';
+	export let emptyActionLabel: string | null = 'Upload files';
 	export let onFolderClick: (folder: Folder) => void;
 	export let onFileClick: (file: FileType) => void;
 	export let onRenameFolder: (folder: Folder) => void = () => {};
@@ -112,15 +115,17 @@
 					<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
 				</svg>
 			</div>
-			<h3 class="text-lg font-semibold text-base-content mb-1">No files yet</h3>
-			<p class="text-sm text-base-content/60 mb-4">Upload your first file to get started</p>
-			<button
-				type="button"
-				class="px-4 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors"
-				on:click={() => document.getElementById('upload-file-input')?.click()}
-			>
-				Upload files
-			</button>
+			<h3 class="text-lg font-semibold text-base-content mb-1">{emptyTitle}</h3>
+			<p class="text-sm text-base-content/60 mb-4">{emptyDescription}</p>
+			{#if emptyActionLabel}
+				<button
+					type="button"
+					class="px-4 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors"
+					on:click={() => document.getElementById('upload-file-input')?.click()}
+				>
+					{emptyActionLabel}
+				</button>
+			{/if}
 		</div>
 	{/if}
 </div>
