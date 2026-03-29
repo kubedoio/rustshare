@@ -31,26 +31,10 @@
 	$: selectedFolderCount = $selectionStore.selectedFolderIds.size;
 </script>
 
-<div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+<div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
 	<!-- Left: Title and filter chips -->
-	<div class="flex flex-wrap items-center gap-3 md:gap-4">
-		<h1 class="text-2xl font-semibold tracking-tight text-base-content">All files</h1>
-
-		<!-- Filter chips -->
-		<div class="hidden items-center gap-2 md:flex">
-			<button
-				type="button"
-				class="rounded-full border border-brand-500/20 bg-brand-500/10 px-3 py-1.5 text-sm font-medium text-brand-500 transition-colors"
-			>
-				Recents
-			</button>
-			<button
-				type="button"
-				class="rounded-full px-3 py-1.5 text-sm font-medium text-base-content/60 transition-colors hover:bg-base-200 hover:text-base-content"
-			>
-				Starred
-			</button>
-		</div>
+	<div class="flex flex-wrap items-center gap-2 md:gap-3">
+		<h1 class="text-xl font-semibold tracking-tight text-base-content">All files</h1>
 	</div>
 
 	<!-- Right: Actions -->
@@ -121,7 +105,7 @@
 			<div class="relative">
 				<button
 					type="button"
-					class="flex items-center gap-2 rounded-xl border border-base-300/70 bg-base-200/80 px-3 py-2 text-sm font-medium text-base-content/70 transition-colors hover:border-brand-500/20 hover:text-base-content"
+					class="flex items-center gap-2 rounded-xl border border-base-300/70 bg-base-200/80 px-3 py-1.5 text-sm font-medium text-base-content/70 transition-colors hover:border-brand-500/20 hover:text-base-content"
 					on:click={() => sortMenuOpen = !sortMenuOpen}
 					aria-expanded={sortMenuOpen}
 				>
@@ -219,7 +203,7 @@
 			<!-- New Folder button -->
 			<button
 				type="button"
-				class="flex items-center gap-2 rounded-xl border border-base-300/70 bg-base-100 px-3 py-2 text-sm font-medium text-base-content/80 transition-colors hover:border-brand-500/20 hover:text-base-content"
+				class="flex items-center gap-2 rounded-xl border border-base-300/70 bg-base-100 px-3 py-1.5 text-sm font-medium text-base-content/80 transition-colors hover:border-brand-500/20 hover:text-base-content"
 				on:click={onNewFolder}
 				disabled={isUploading}
 			>
@@ -234,7 +218,7 @@
 			<!-- Upload button -->
 			<button
 				type="button"
-				class="flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-brand-500/20 transition-colors hover:bg-brand-600"
+				class="flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-1.5 text-sm font-medium text-white shadow-sm shadow-brand-500/20 transition-colors hover:bg-brand-600"
 				on:click={onUpload}
 				disabled={isUploading}
 			>
@@ -249,7 +233,7 @@
 			<!-- Selection mode button -->
 			<button
 				type="button"
-				class="rounded-xl border border-base-300/70 bg-base-100 p-2 text-base-content/60 transition-colors hover:border-brand-500/20 hover:text-base-content"
+				class="rounded-xl border border-base-300/70 bg-base-100 p-1.5 text-base-content/60 transition-colors hover:border-brand-500/20 hover:text-base-content"
 				on:click={onToggleSelection}
 				aria-label="Select multiple"
 			>

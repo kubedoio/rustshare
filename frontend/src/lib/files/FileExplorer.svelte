@@ -61,7 +61,7 @@
 
 <div class="flex h-full min-h-0 bg-base-100">
 	<!-- Folder Tree Sidebar -->
-	<div class="hidden h-full w-64 flex-shrink-0 overflow-hidden border-r border-base-300/80 bg-base-100/70 2xl:block">
+	<div class="hidden h-full w-64 flex-shrink-0 overflow-hidden border-r border-base-300/80 bg-base-100/70 xl:block">
 		<FolderTree 
 			selectedFolderId={currentFolderId}
 			onSelectFolder={handleFolderSelectFromTree}

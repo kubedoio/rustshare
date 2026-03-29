@@ -13,13 +13,13 @@ export interface FileSortState {
 const defaultState: FileSortState = {
   field: 'name',
   order: 'asc',
-  viewMode: 'grid'
+  viewMode: 'list'
 };
 
 // Load from localStorage if available
 function loadState(): FileSortState {
   if (typeof window !== 'undefined') {
-    const stored = localStorage.getItem('file-sort-state');
+    const stored = localStorage.getItem('file-sort-state-v2');
     if (stored) {
       try {
         return { ...defaultState, ...JSON.parse(stored) };
@@ -34,7 +34,7 @@ function loadState(): FileSortState {
 // Save to localStorage
 function saveState(state: FileSortState) {
   if (typeof window !== 'undefined') {
-    localStorage.setItem('file-sort-state', JSON.stringify(state));
+    localStorage.setItem('file-sort-state-v2', JSON.stringify(state));
   }
 }
 
