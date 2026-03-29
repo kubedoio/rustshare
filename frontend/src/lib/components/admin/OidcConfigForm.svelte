@@ -64,7 +64,7 @@
 		client_secret = '';
 		issuer_url = $query.data.issuer_url ?? '';
 		redirect_url = $query.data.redirect_url ?? '';
-		login_label = $query.data.login_label ?? 'Continue with school SSO';
+		login_label = $query.data.login_label ?? 'Continue with SSO';
 		scopes_str = ($query.data.scopes ?? []).join(' ');
 		auto_provision_users = $query.data.auto_provision_users;
 	}
@@ -112,7 +112,7 @@
 				<p class="mt-2 text-sm leading-6 text-base-content/70">
 					Bootstrap can seed these fields once from environment variables, but the saved
 					admin settings are the runtime source of truth after that. Treat this page as the
-					operator control plane for school SSO.
+					operator control plane for SSO.
 				</p>
 			</div>
 			<div class="rounded-2xl border border-base-300/80 bg-base-200/50 px-4 py-3 text-sm text-base-content/70">
@@ -170,7 +170,7 @@
 						</p>
 						<h4 class="mt-2 text-lg font-semibold text-base-content">Identity provider details</h4>
 						<p class="mt-2 text-sm leading-6 text-base-content/68">
-							Start with the issuer your school already trusts. If discovery works here, the
+							Start with the issuer your organization already trusts. If discovery works here, the
 							login screen can use the same provider without extra environment wiring.
 						</p>
 
@@ -198,7 +198,7 @@
 									type="url"
 									class="input input-bordered"
 									bind:value={issuer_url}
-									placeholder="https://accounts.example.edu/realms/school"
+									placeholder="https://accounts.example.com/realms/team"
 									aria-describedby="issuer-help"
 									disabled={!enabled}
 								/>
@@ -318,7 +318,7 @@
 									type="text"
 									class="input input-bordered"
 									bind:value={login_label}
-									placeholder="Continue with school SSO"
+									placeholder="Continue with SSO"
 									disabled={!enabled}
 								/>
 							</div>
@@ -331,7 +331,7 @@
 						</p>
 						<h4 class="mt-2 text-lg font-semibold text-base-content">Pilot guardrails</h4>
 						<p class="mt-2 text-sm leading-6 text-base-content/68">
-							Keep provisioning intentional for the first school pilot and verify discovery
+							Keep provisioning intentional for the first pilot and verify discovery
 							before asking anyone else to use the login page.
 						</p>
 
@@ -354,7 +354,7 @@
 								<br />
 								2. Test discovery.
 								<br />
-								3. Open the login page and confirm the school SSO button appears.
+								3. Open the login page and confirm the SSO button appears.
 							</p>
 						</div>
 					</div>

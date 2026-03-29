@@ -153,7 +153,7 @@ impl OidcRuntimeSettings {
     pub fn login_label(&self) -> String {
         self.login_label
             .clone()
-            .unwrap_or_else(|| "Continue with school SSO".to_string())
+            .unwrap_or_else(|| "Continue with SSO".to_string())
     }
 
     pub fn web_login_config(&self) -> Option<OidcWebRuntimeConfig> {
@@ -209,7 +209,7 @@ impl OidcWebRuntimeConfig {
     pub fn login_label(&self) -> String {
         self.login_label
             .clone()
-            .unwrap_or_else(|| "Continue with school SSO".to_string())
+            .unwrap_or_else(|| "Continue with SSO".to_string())
     }
 
     pub fn scopes(&self) -> Vec<Scope> {
@@ -463,7 +463,7 @@ mod tests {
             client_secret: Some("secret".to_string()),
             issuer_url: Some("https://issuer.example.com".to_string()),
             redirect_url: Some("https://app.example.com/callback".to_string()),
-            login_label: Some("School SSO".to_string()),
+            login_label: Some("Organization SSO".to_string()),
             scopes: default_scopes(),
             auto_provision_users: false,
             device_pair_code_ttl_seconds: Some(600),

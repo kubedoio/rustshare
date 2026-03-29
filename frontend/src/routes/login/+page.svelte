@@ -79,11 +79,11 @@
 			<div class="max-w-3xl">
 				<p class="rs-kicker mb-6">Operational entrypoint</p>
 				<h1 class="font-display max-w-[13ch] text-4xl leading-[0.96] text-base-content sm:text-5xl xl:text-6xl">
-					School-safe file access starts with a calm login.
+					Controlled file access starts with a calm login.
 				</h1>
 				<p class="mt-6 max-w-2xl text-base leading-7 text-base-content/68 xl:text-lg">
-					RustShare is built for teams that need files, identity, and hosting under school
-					or nonprofit control. This screen is for system access, not product marketing.
+					RustShare is built for teams that need files, identity, and hosting under their own
+					control. This screen is for system access, not product marketing.
 				</p>
 			</div>
 
@@ -93,7 +93,7 @@
 						Identity
 					</p>
 					<p class="mt-3 font-data text-sm font-medium leading-6 text-base-content">
-						OIDC-first login when the school already has a source of truth.
+						OIDC-first login when the organization already has a source of truth.
 					</p>
 				</div>
 				<div class="rounded-[1.4rem] border border-base-300/80 bg-base-100/85 p-5 shadow-panel">
@@ -137,8 +137,8 @@
 					Trust statement
 				</p>
 				<p class="mt-2 font-data text-sm leading-6 text-base-content/74">
-					Use school SSO when it is configured. Password sign-in stays visible only as an
-					explicit fallback.
+					Use organization SSO when it is configured. Password sign-in stays visible only as
+					an explicit fallback.
 				</p>
 			</div>
 
@@ -165,7 +165,7 @@
 							<polyline points="10,17 15,12 10,7" />
 							<line x1="15" x2="3" y1="12" y2="12" />
 						</svg>
-						{authConfig.oidc_login_label || 'Continue with school SSO'}
+						{authConfig.oidc_login_label || 'Continue with SSO'}
 					</button>
 				{/if}
 
@@ -238,7 +238,7 @@
 					Operator note
 				</p>
 				<p class="mt-2 font-data text-sm leading-6 text-base-content/72">
-					If school SSO is missing here, the runtime config is probably incomplete rather than
+					If SSO is missing here, the runtime config is probably incomplete rather than
 					ignored. Check the admin OIDC page first.
 				</p>
 			</div>

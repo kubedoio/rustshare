@@ -29,14 +29,14 @@ describe('login page', () => {
 		vi.mocked(getAuthConfig).mockResolvedValue({
 			password_login_enabled: false,
 			oidc_enabled: true,
-			oidc_login_label: 'Continue with school SSO',
+			oidc_login_label: 'Continue with SSO',
 			oidc_mobile_enabled: false
 		});
 
 		render(LoginPage);
 
 		await waitFor(() => {
-			expect(screen.getByRole('button', { name: 'Continue with school SSO' })).toBeTruthy();
+			expect(screen.getByRole('button', { name: 'Continue with SSO' })).toBeTruthy();
 		});
 		expect(screen.queryByLabelText('Email')).toBeNull();
 	});
