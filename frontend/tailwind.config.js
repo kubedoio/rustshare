@@ -30,6 +30,15 @@ export default {
 			boxShadow: {
 				panel: '0 18px 45px rgba(39, 25, 14, 0.08)',
 				'panel-dark': '0 22px 54px rgba(0, 0, 0, 0.24)'
+			},
+			borderRadius: {
+				// Design system hierarchy: sm(6px) md(10px) lg(14px) xl(20px) pill(999px)
+				'sm': '0.375rem',    // 6px
+				'md': '0.625rem',    // 10px
+				'lg': '0.875rem',    // 14px
+				'xl': '1.25rem',     // 20px
+				'2xl': '1.5rem',     // 24px - for cards/panels
+				'3xl': '2rem'        // 32px - for large containers
 			}
 		}
 	},
@@ -61,7 +70,7 @@ export default {
 				},
 				{
 					'rustshare-dark': {
-						'primary': '#d66a2d',
+						'primary': '#c46a35',
 						'primary-content': '#ffffff',
 						'secondary': '#b28366',
 						'secondary-content': '#fff7f1',

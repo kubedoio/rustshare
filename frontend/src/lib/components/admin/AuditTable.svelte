@@ -121,21 +121,21 @@
 		<table class="table table-zebra w-full">
 			<thead>
 				<tr>
-					<th>Timestamp</th>
-					<th>Actor</th>
-					<th>Type</th>
-					<th>Action</th>
-					<th>Target</th>
-					<th>Detail</th>
+					<th class="font-data">Timestamp</th>
+					<th class="font-data">Actor</th>
+					<th class="font-data">Type</th>
+					<th class="font-data">Action</th>
+					<th class="font-data">Target</th>
+					<th class="font-data">Detail</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each entries as entry (entry.id)}
 					<tr>
-						<td class="text-xs text-base-content/70 whitespace-nowrap">
+						<td class="text-xs text-base-content/70 whitespace-nowrap font-data tabular-nums">
 							{formatDate(entry.occurred_at)}
 						</td>
-						<td class="text-sm font-medium">{entry.actor_label}</td>
+						<td class="text-sm font-medium font-data">{entry.actor_label}</td>
 						<td>
 							<span class="badge badge-ghost badge-sm capitalize">{entry.type}</span>
 						</td>
@@ -144,7 +144,7 @@
 								{entry.action_type}
 							</span>
 						</td>
-						<td class="text-sm text-base-content/70">{entry.target_label ?? '—'}</td>
+						<td class="text-sm text-base-content/70 font-data">{entry.target_label ?? '—'}</td>
 						<td>
 							{#if Object.keys(entry.detail).length > 0}
 								<button

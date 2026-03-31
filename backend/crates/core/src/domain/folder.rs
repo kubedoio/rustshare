@@ -24,12 +24,13 @@ pub struct Folder {
 }
 
 impl Folder {
-    /// Creates a new root folder for a user.
-    pub fn new_root(owner_id: UserId, tenant_id: Uuid) -> Self {
+    /// Creates a new root folder for a user with a specific name.
+    pub fn new_root_with_name(name: String, owner_id: UserId, tenant_id: Uuid) -> Self {
+        let path = format!("/{}", name);
         Self {
             id: Uuid::new_v4(),
-            name: "Root".to_string(),
-            path: "/".to_string(),
+            name,
+            path,
             parent_folder_id: None,
             owner_id,
             created_at: Utc::now(),
@@ -37,6 +38,12 @@ impl Folder {
             tenant_id,
             ancestor_ids: Some(Vec::new()), // Root has no ancestors
         }
+    }
+
+    /// Creates a new root folder for a user with default "Root" name.
+    /// Deprecated: Use new_root_with_name for user-created root folders.
+    pub fn new_root(owner_id: UserId, tenant_id: Uuid) -> Self {
+        Self::new_root_with_name("Root".to_string(), owner_id, tenant_id)
     }
 
     /// Creates a new subfolder under a parent folder.
@@ -101,7 +108,20 @@ mod tests {
         let folder = Folder::new_root(owner_id, tenant_id);
 
         assert_eq!(folder.name, "Root");
-        assert_eq!(folder.path, "/");
+        assert_eq!(folder.path, "/Root");
+        assert_eq!(folder.parent_folder_id, None);
+        assert_eq!(folder.owner_id, owner_id);
+        assert_eq!(folder.tenant_id, tenant_id);
+    }
+
+    #[test]
+    fn test_root_folder_with_name() {
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let folder = Folder::new_root_with_name("Projects".to_string(), owner_id, tenant_id);
+
+        assert_eq!(folder.name, "Projects");
+        assert_eq!(folder.path, "/Projects");
         assert_eq!(folder.parent_folder_id, None);
         assert_eq!(folder.owner_id, owner_id);
         assert_eq!(folder.tenant_id, tenant_id);

@@ -135,3 +135,7 @@
 | 2026-03-28 | Initial design system created | Defined from the rebuild docs, current RustShare UI, and the product thesis of secure, private-cloud file operations |
 | 2026-03-28 | Chose industrial-refined visual direction | Matches governance, auditability, and technical-team positioning better than consumer-cloud aesthetics |
 | 2026-03-28 | Chose Fraunces + Instrument Sans + IBM Plex pairing | Gives the product a distinct face while keeping dense operational surfaces readable |
+| 2026-04-01 | Design audit completed | Fixed hardcoded purple colors, added border-radius scale to Tailwind config, applied font-data to admin tables |
+| 2026-04-01 | Replaced purple-400 with info color | Purple not in design system; info (#366d8c) provides good contrast for image file indicators |
+| 2026-04-01 | Added tabular-nums to quota columns | Improves readability for numeric data in data tables |
+| 2026-04-01 | Desaturated dark mode primary color | `#d66a2d` → `#c46a35` (55% vs 67% saturation) — reduces eye strain on dark backgrounds per DESIGN.md guidance |

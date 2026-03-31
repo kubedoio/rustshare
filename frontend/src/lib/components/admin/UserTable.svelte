@@ -83,20 +83,20 @@
 		<table class="table table-zebra w-full">
 			<thead>
 				<tr>
-					<th>Username</th>
-					<th>Email</th>
-					<th>Status</th>
-					<th>Role</th>
-					<th>Quota</th>
-					<th>Created</th>
-					<th>Actions</th>
+					<th class="font-data">Username</th>
+					<th class="font-data">Email</th>
+					<th class="font-data">Status</th>
+					<th class="font-data">Role</th>
+					<th class="font-data">Quota</th>
+					<th class="font-data">Created</th>
+					<th class="font-data">Actions</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each users as user (user.id)}
 					<tr>
-						<td class="font-medium">{user.username}</td>
-						<td class="text-sm text-base-content/70">{user.email}</td>
+						<td class="font-medium font-data">{user.username}</td>
+						<td class="text-sm text-base-content/70 font-data">{user.email}</td>
 						<td>
 							{#if user.disabled_at}
 								<span class="badge badge-error badge-sm">Disabled</span>
@@ -111,8 +111,8 @@
 								<span class="badge badge-ghost badge-sm">User</span>
 							{/if}
 						</td>
-						<td class="text-sm">{formatBytes(user.storage_quota_bytes)}</td>
-						<td class="text-sm text-base-content/60">{formatDate(user.created_at)}</td>
+						<td class="text-sm font-data tabular-nums">{formatBytes(user.storage_quota_bytes)}</td>
+						<td class="text-sm text-base-content/60 font-data">{formatDate(user.created_at)}</td>
 						<td>
 							<div class="flex gap-1">
 								<a href="/admin/users/{user.id}" class="btn btn-ghost btn-xs">Edit</a>

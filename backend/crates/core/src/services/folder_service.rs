@@ -140,9 +140,9 @@ where
 
             (path, folder)
         } else {
-            // Root folder
-            let path = format!("/{}", name);
-            let folder = Folder::new_root(owner_id, tenant_id);
+            // Root folder with user-provided name
+            let folder = Folder::new_root_with_name(name, owner_id, tenant_id);
+            let path = folder.path.clone();
             (path, folder)
         };
 

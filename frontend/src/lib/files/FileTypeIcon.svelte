@@ -92,7 +92,7 @@
 		const lowerName = fileName.toLowerCase();
 		
 		// Images
-		if (mimeType.startsWith('image/')) return 'text-purple-400';
+		if (mimeType.startsWith('image/')) return 'text-info';
 		
 		// Videos
 		if (mimeType.startsWith('video/')) return 'text-red-400';

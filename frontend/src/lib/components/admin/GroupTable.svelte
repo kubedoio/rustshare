@@ -29,24 +29,24 @@
 		<table class="table table-zebra w-full">
 			<thead>
 				<tr>
-					<th>Name</th>
-					<th>Description</th>
-					<th>Members</th>
-					<th>Created</th>
-					<th>Actions</th>
+					<th class="font-data">Name</th>
+					<th class="font-data">Description</th>
+					<th class="font-data">Members</th>
+					<th class="font-data">Created</th>
+					<th class="font-data">Actions</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each groups as group (group.id)}
 					<tr>
-						<td class="font-medium">
+						<td class="font-medium font-data">
 							<a href="/admin/groups/{group.id}" class="link link-hover">{group.name}</a>
 						</td>
-						<td class="text-sm text-base-content/70">{group.description ?? '—'}</td>
+						<td class="text-sm text-base-content/70 font-data">{group.description ?? '—'}</td>
 						<td>
-							<span class="badge badge-ghost badge-sm">{group.member_count}</span>
+							<span class="badge badge-ghost badge-sm font-data tabular-nums">{group.member_count}</span>
 						</td>
-						<td class="text-sm text-base-content/60">
+						<td class="text-sm text-base-content/60 font-data">
 							{new Date(group.created_at).toLocaleDateString()}
 						</td>
 						<td>
