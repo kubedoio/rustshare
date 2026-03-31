@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import Toast from '$lib/components/common/Toast.svelte';
 	import { beginOidcLogin, getAuthConfig, type AuthConfig } from '$lib/api/auth';
 	import { authStore } from '$lib/stores/auth';
 
@@ -246,6 +245,4 @@
 	</div>
 </div>
 
-{#if showError}
-	<Toast message={errorMessage} type="error" onClose={() => (showError = false)} />
-{/if}
+
