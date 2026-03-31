@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { createQuery } from '@tanstack/svelte-query';
+	import { goto } from '$app/navigation';
 	import { getUnreadNotificationCount } from '$lib/api/notifications';
+	import { getFolderTree, type FolderTree } from '$lib/api/folders';
 	import NavItem from '$lib/ui/NavItem.svelte';
 
 	export let variant: 'files' | 'default' = 'default';
@@ -16,6 +18,69 @@
 	});
 
 	$: unreadCount = $unreadNotificationsQuery.data?.count ?? 0;
+
+	// Folder tree query for files variant
+	$: folderTreeQuery = createQuery({
+		queryKey: ['folder-tree'],
+		queryFn: getFolderTree,
+		enabled: variant === 'files'
+	});
+
+	// Track expanded folders in localStorage
+	let expandedFolders = new Set<string>();
+
+	// Load expanded state from localStorage on mount
+	$: if (variant === 'files' && typeof localStorage !== 'undefined') {
+		const saved = localStorage.getItem('sidebar-expanded-folders');
+		if (saved) {
+			try {
+				expandedFolders = new Set(JSON.parse(saved));
+			} catch {
+				expandedFolders = new Set();
+			}
+		}
+	}
+
+	function toggleFolder(folderId: string) {
+		const newExpanded = new Set(expandedFolders);
+		if (newExpanded.has(folderId)) {
+			newExpanded.delete(folderId);
+		} else {
+			newExpanded.add(folderId);
+		}
+		expandedFolders = newExpanded;
+		if (typeof localStorage !== 'undefined') {
+			localStorage.setItem('sidebar-expanded-folders', JSON.stringify([...newExpanded]));
+		}
+	}
+
+	function navigateToFolder(folderId: string) {
+		goto(`/files?folder=${folderId}`);
+		onClose();
+	}
+
+	function isFolderActive(folderId: string): boolean {
+		if (!$page.url.pathname.startsWith('/files')) return false;
+		const currentFolderId = $page.url.searchParams.get('folder');
+		return currentFolderId === folderId;
+	}
+
+	// Recursive component for folder tree
+	function renderFolderTree(nodes: FolderTree[], level = 0): any {
+		return nodes.map(node => {
+			const hasChildren = node.subfolders && node.subfolders.length > 0;
+			const isExpanded = expandedFolders.has(node.folder.id);
+			const isActive = isFolderActive(node.folder.id);
+
+			return {
+				node,
+				hasChildren,
+				isExpanded,
+				isActive,
+				level
+			};
+		});
+	}
 
 	interface NavSection {
 		title: string;
