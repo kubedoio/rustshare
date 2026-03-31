@@ -175,20 +175,17 @@ This repository includes design and planning documents that define the target sh
 
 ### Core documents
 
-- `01-product-spec.md`  
+- `docs/adr/01-product-spec.md`  
   Product scope, target users, Phase 1 priorities, and product boundaries.
 
-- `02-contract.md`  
+- `docs/adr/02-contract.md`  
   Behavioral contracts and acceptance rules that should be enforced through tests and validation.
 
-- `03-design.md`  
+- `docs/adr/03-design.md`  
   Architecture and system-design guidance for the intended RustShare direction.
 
-- `04-adr-new-design.md`  
-  Architecture Decision Record describing the accepted new design direction.
-
-- `00-readme.md`  
-  Original docs-pack readme explaining how to use the planning documents with an LLM.
+- `docs/adr/0001-ADR.md`  
+  Original ADR.
 
 ---
 
@@ -199,7 +196,7 @@ Recommended order:
 1. `03-design.md`
 2. `01-product-spec.md`
 3. `02-contract.md`
-4. `04-adr-new-design.md`
+4. `0001-ADR.md`
 
 Then instruct the LLM to:
 
