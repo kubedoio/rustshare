@@ -44,13 +44,13 @@ where
     ) -> Result<Option<FileThumbnail>, ThumbnailError> {
         let row = sqlx::query_as::<_, FileThumbnail>(
             r#"
-            SELECT id, file_id, size as "size: _", storage_path, content_type, generated_at
+            SELECT id, file_id, size, storage_path, content_type, generated_at
             FROM file_thumbnails
             WHERE file_id = $1 AND size = $2
             "#,
         )
         .bind(file_id)
-        .bind(size.as_str())
+        .bind(size)
         .fetch_optional(&self.db_pool)
         .await
         .map_err(|e| ThumbnailError::Database(e.to_string()))?;
@@ -161,11 +161,11 @@ where
                 storage_path = EXCLUDED.storage_path,
                 content_type = EXCLUDED.content_type,
                 generated_at = NOW()
-            RETURNING id, file_id, size as "size: _", storage_path, content_type, generated_at
+            RETURNING id, file_id, size, storage_path, content_type, generated_at
             "#,
         )
         .bind(file_id)
-        .bind(size.as_str())
+        .bind(size)
         .bind(&thumbnail_path)
         .bind(&content_type)
         .fetch_one(&self.db_pool)
