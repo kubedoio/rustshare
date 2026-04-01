@@ -256,6 +256,16 @@
 
 	$: urlFilter = $page.url.searchParams.get('filter');
 	$: urlSort = $page.url.searchParams.get('sort');
+	$: urlFolderId = $page.url.searchParams.get('folder');
+	
+	// Sync currentFolderId with URL folder param
+	$: if (urlFolderId && urlFolderId !== currentFolderId) {
+		currentFolderId = urlFolderId;
+	} else if (!urlFolderId && currentFolderId && !$page.url.searchParams.has('filter') && !$page.url.searchParams.has('sort')) {
+		// Only clear if we're on a plain /files page without filters
+		currentFolderId = null;
+	}
+	
 	$: workspaceMode = urlFilter === 'photos'
 		? 'photos'
 		: urlFilter === 'starred'
@@ -388,6 +398,8 @@
 	function handleBreadcrumbNavigate(event: CustomEvent<{ folderId: string | null }>) {
 		const targetId = event.detail.folderId;
 		if (targetId === null) {
+			// Navigate to root - update URL
+			goto('/files', { replaceState: true });
 			currentFolderId = null;
 			folderPath = [];
 		} else {
@@ -395,6 +407,8 @@
 			if (index !== -1) {
 				currentFolderId = targetId;
 				folderPath = folderPath.slice(0, index + 1);
+				// Update URL to reflect current folder
+				goto(`/files?folder=${targetId}`, { replaceState: true });
 			}
 		}
 	}

@@ -3,7 +3,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { createQuery } from '@tanstack/svelte-query';
-	import { getFolderTree, type FolderTreeNode } from '$lib/api/folders';
+	import { getFolderTree, type FolderTree } from '$lib/api/folders';
 	import { onMount } from 'svelte';
 
 	// Components
@@ -26,7 +26,7 @@
 	// === Folder Tree State ===
 	let expandedFolders = $state<Set<string>>(new Set());
 	let folderTreeQuery = $derived(
-		createQuery<FolderTreeNode>({
+		createQuery<FolderTree>({
 			queryKey: ['folder-tree'],
 			queryFn: () => getFolderTree(),
 			enabled: variant === 'files'
@@ -200,10 +200,10 @@
 					<div class="px-3 py-2">
 						<span class="loading loading-spinner loading-sm text-brand-500"></span>
 					</div>
-				{:else if $folderTreeQuery?.data?.children?.length}
+				{:else if $folderTreeQuery?.data?.subfolders?.length}
 					<nav class="space-y-0.5">
-						{#each $folderTreeQuery.data.children as folderTree (folderTree.folder.id)}
-							{@const hasChildren = folderTree.children && folderTree.children.length > 0}
+						{#each $folderTreeQuery.data.subfolders as folderTree (folderTree.folder.id)}
+							{@const hasChildren = folderTree.subfolders && folderTree.subfolders.length > 0}
 							{@const isExpanded = expandedFolders.has(folderTree.folder.id)}
 							{@const isActive = isFolderActive(folderTree.folder.id)}
 							<div class="group">
@@ -252,7 +252,7 @@
 								<!-- Children -->
 								{#if isExpanded && hasChildren}
 									<div class="ml-4">
-										{#each folderTree.children as child (child.folder.id)}
+										{#each folderTree.subfolders as child (child.folder.id)}
 											<button
 												type="button"
 												class="w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg transition-colors text-left
