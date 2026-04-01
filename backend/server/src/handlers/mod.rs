@@ -10,6 +10,7 @@ pub mod devices;
 mod extractors;
 mod files;
 mod folders;
+mod groups;
 mod notifications;
 mod profile;
 mod public_shares;
@@ -69,6 +70,10 @@ pub use users::{
     delete_avatar, delete_user_session, get_avatar, get_user_profile,
     list_user_security_events, list_user_sessions, update_user_password, update_user_theme,
     upload_avatar,
+};
+pub use groups::{
+    list_my_groups, get_my_group, create_file_group_share, create_folder_group_share,
+    list_file_group_shares, list_folder_group_shares,
 };
 
 use axum::{

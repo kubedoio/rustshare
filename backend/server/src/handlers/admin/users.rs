@@ -356,7 +356,7 @@ pub async fn get_admin_user(
     .ok_or_else(|| not_found("User not found"))?;
 
     let storage_used_bytes: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(size), 0) FROM (
+        "SELECT COALESCE(SUM(size), 0)::BIGINT FROM (
              SELECT DISTINCT ON (fv.storage_key) fv.size
              FROM file_versions fv
              JOIN files f ON f.id = fv.file_id

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import type { File } from '$lib/api/types';
+  import FileIcon from '$lib/components/icons/FileIcon.svelte';
 
   export let file: File;
   export let size: 'sm' | 'md' | 'lg' = 'md';
@@ -93,27 +94,16 @@
     }
   });
 
-  // Get file type icon emoji
-  function getFileIcon(mimeType: string, fileName: string): string {
+  // Special file types detection
+  function isSpecialFile(fileName: string): { type: string; icon: string } | null {
     const lowerName = fileName.toLowerCase();
-    
-    // Special file types
-    if (lowerName.endsWith('.excalidraw') || lowerName.endsWith('.excalidraw.json')) return '✏️';
-    if (lowerName.endsWith('.drawio') || lowerName.endsWith('.dio')) return '📐';
-    
-    // Standard MIME types
-    if (mimeType.startsWith('image/')) return '🖼️';
-    if (isPDF(mimeType)) return '📄';
-    if (isVideo(mimeType)) return '🎬';
-    if (mimeType.startsWith('audio/')) return '🎵';
-    if (mimeType.includes('text')) return '📝';
-    if (mimeType.includes('zip') || mimeType.includes('archive') || mimeType.includes('compressed')) return '📦';
-    if (mimeType.includes('word') || mimeType.includes('document')) return '📘';
-    if (mimeType.includes('excel') || mimeType.includes('spreadsheet') || mimeType.includes('sheet')) return '📊';
-    if (mimeType.includes('powerpoint') || mimeType.includes('presentation')) return '📽️';
-    if (mimeType.includes('json') || mimeType.includes('xml') || mimeType.includes('yaml')) return '📋';
-    if (mimeType.includes('javascript') || mimeType.includes('typescript') || mimeType.includes('python')) return '💻';
-    return '📄';
+    if (lowerName.endsWith('.excalidraw') || lowerName.endsWith('.excalidraw.json')) {
+      return { type: 'excalidraw', icon: 'pencil' };
+    }
+    if (lowerName.endsWith('.drawio') || lowerName.endsWith('.dio')) {
+      return { type: 'drawio', icon: 'diagram' };
+    }
+    return null;
   }
 </script>
 
@@ -122,7 +112,25 @@
     <span class="loading loading-spinner loading-xs"></span>
   {:else if error || !thumbnailUrl}
     <!-- Show file type icon -->
-    <span class="text-2xl">{getFileIcon(file.mime_type, file.name)}</span>
+    {#if isSpecialFile(file.name)}
+      {@const special = isSpecialFile(file.name)}
+      {#if special?.type === 'excalidraw'}
+        <svg class="w-10 h-10 text-base-content/50" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 19l7-7 3 3-7 7-3-3z"/>
+          <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
+          <path d="M2 2l7.586 7.586"/>
+          <circle cx="11" cy="11" r="2"/>
+        </svg>
+      {:else}
+        <svg class="w-10 h-10 text-base-content/50" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+          <line x1="3" y1="9" x2="21" y2="9"/>
+          <line x1="9" y1="21" x2="9" y2="9"/>
+        </svg>
+      {/if}
+    {:else}
+      <FileIcon mimeType={file.mime_type} size="lg" iconClass="text-base-content/50" />
+    {/if}
   {:else}
     <!-- Show thumbnail image -->
     <img

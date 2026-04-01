@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { File, Folder } from '$lib/api/types';
-	import { formatFileSize, formatDate, getMimeTypeIcon } from '$lib/utils/format';
+	import { formatFileSize, formatDate } from '$lib/utils/format';
 	import { selectionStore } from '$lib/stores/selection';
 	import { replicationStateBadgeClass, formatReplicationStateLabel, type ReplicationStatus } from '$lib/stores/replication';
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';

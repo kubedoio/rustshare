@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { createQuery, createMutation } from '@tanstack/svelte-query';
 	import {
 		deleteFile,
@@ -714,12 +715,28 @@
 		showMoveModal = true;
 	}
 
-	function handleMoveFileDirect(file: File, targetFolderId: string | null) {
-		$moveFileMutation.mutate({ fileId: file.id, targetFolderId });
+	function handleMoveFileWithFallback(file: File, targetFolderId: string | null) {
+		if (targetFolderId === null) {
+			// Open modal for user to select destination
+			moveTarget = file;
+			moveType = 'file';
+			showMoveModal = true;
+		} else {
+			// Direct move (e.g., from drag-and-drop)
+			$moveFileMutation.mutate({ fileId: file.id, targetFolderId });
+		}
 	}
 
-	function handleMoveFolderDirect(folder: Folder, targetFolderId: string | null) {
-		$moveFolderMutation.mutate({ folderId: folder.id, targetFolderId });
+	function handleMoveFolderWithFallback(folder: Folder, targetFolderId: string | null) {
+		if (targetFolderId === null) {
+			// Open modal for user to select destination
+			moveTarget = folder;
+			moveType = 'folder';
+			showMoveModal = true;
+		} else {
+			// Direct move (e.g., from drag-and-drop)
+			$moveFolderMutation.mutate({ folderId: folder.id, targetFolderId });
+		}
 	}
 
 	async function handleMoveConfirm(event: CustomEvent<{ targetFolderId: string | null }>) {
@@ -971,7 +988,7 @@
 		onPermanentDeleteFile={handlePermanentDeleteFile}
 		onShareFile={handleShareFile}
 		onVersionHistory={handleVersionHistory}
-		onMoveFile={handleMoveFileDirect}
+		onMoveFile={handleMoveFileWithFallback}
 		onDownloadFile={handleDownloadFile}
 		onReplaceFile={handleReplaceFile}
 		onRenameFolder={handleRenameFolderInline}
@@ -980,7 +997,7 @@
 		onRestoreFolder={handleRestoreFolder}
 		onPermanentDeleteFolder={handlePermanentDeleteFolder}
 		onShareFolder={handleShareFolder}
-		onMoveFolder={handleMoveFolderDirect}
+		onMoveFolder={handleMoveFolderWithFallback}
 		on:breadcrumbNavigate={handleBreadcrumbNavigate}
 	/>
 </DropZone>

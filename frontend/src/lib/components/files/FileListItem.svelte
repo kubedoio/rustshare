@@ -5,7 +5,8 @@
 		replicationStateBadgeClass,
 		type ReplicationStatus
 	} from '$lib/stores/replication';
-	import { formatFileSize, formatDate, getMimeTypeIcon } from '$lib/utils/format';
+	import { formatFileSize, formatDate } from '$lib/utils/format';
+	import FileIcon from '$lib/components/icons/FileIcon.svelte';
 	import { createEventDispatcher } from 'svelte';
 	import FileThumbnail from './FileThumbnail.svelte';
 import ShareIndicator from './ShareIndicator.svelte';
@@ -28,7 +29,6 @@ import ShareIndicator from './ShareIndicator.svelte';
 	}>();
 
 	$: fileItem = isFolder ? undefined : (item as File);
-	$: icon = isFolder ? '📁' : getMimeTypeIcon(fileItem?.mime_type || '');
 	$: displaySize = isFolder ? '-' : formatFileSize(fileItem?.size || 0);
 	$: displayDate = formatDate(
 		isFolder ? (item as Folder).updated_at : (item as File).modified_at
@@ -114,13 +114,17 @@ import ShareIndicator from './ShareIndicator.svelte';
 
 			<!-- Thumbnail or icon -->
 			{#if isFolder}
-				<span
-					class="text-2xl lg:text-3xl cursor-pointer"
+				<div
+					class="cursor-pointer text-brand-500 flex items-center justify-center"
 					on:click={onSelect}
 					on:keydown={(e) => e.key === 'Enter' && onSelect()}
 					role="button"
-					tabindex="0">{icon}</span
+					tabindex="0"
 				>
+					<svg class="w-10 h-10 lg:w-12 lg:h-12" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+					</svg>
+				</div>
 			{:else}
 				<FileThumbnail file={getFileItem()} size={'md'} />
 			{/if}

@@ -139,3 +139,4 @@
 | 2026-04-01 | Replaced purple-400 with info color | Purple not in design system; info (#366d8c) provides good contrast for image file indicators |
 | 2026-04-01 | Added tabular-nums to quota columns | Improves readability for numeric data in data tables |
 | 2026-04-01 | Desaturated dark mode primary color | `#d66a2d` → `#c46a35` (55% vs 67% saturation) — reduces eye strain on dark backgrounds per DESIGN.md guidance |
+| 2026-04-01 | Fixed login page 3-column feature grid | Converted from symmetric 3-column cards (AI Slop Pattern #2) to vertical stack with icon+text rows — more intentional, less generic SaaS template look |

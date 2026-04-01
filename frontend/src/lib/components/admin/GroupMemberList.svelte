@@ -59,7 +59,7 @@
 				</tr>
 			</thead>
 			<tbody>
-				{#each members as member (member.id)}
+				{#each members as member (member.user_id)}
 					<tr>
 						<td class="font-medium">{member.username}</td>
 						<td class="text-sm text-base-content/70">{member.email}</td>

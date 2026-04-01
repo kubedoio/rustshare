@@ -12,11 +12,21 @@
 		revokeShare,
 		updateSharePermission
 	} from '$lib/api/shares';
+	import {
+		listMyGroups,
+		createFileGroupShare,
+		createFolderGroupShare,
+		listFileGroupShares,
+		listFolderGroupShares,
+		type Group,
+		type GroupShareResponse
+	} from '$lib/api/groups';
 	import type { CreateShareRequest } from '$lib/api/shares';
 	import type { Share, ShareRecipient } from '$lib/api/types';
 	import { queryClient } from '$lib/query-client';
 	import { formatDate } from '$lib/utils/format';
 	import { createEventDispatcher } from 'svelte';
+	import { Users, UserPlus, Link, Loader2, Trash2, X, Mail, User } from 'lucide-svelte';
 
 	export let open = false;
 	export let resourceId: string;
@@ -33,11 +43,16 @@
 	let password = '';
 	let expiresAt = '';
 	let uploadOnly = false;
-	let recipientEmail = '';
-	let recipientPermission: 'View' | 'Edit' | 'Admin' = 'View';
-	let showCreateForm = false;
-	let activeTab: 'public' | 'people' = 'public';
+	let activeTab: 'public' | 'share' = 'public';
 	let recipientPermissionDrafts: Record<string, 'View' | 'Edit' | 'Admin'> = {};
+
+	// User sharing state
+	let recipientEmail = '';
+	let userPermission: 'View' | 'Edit' | 'Admin' = 'View';
+
+	// Group sharing state
+	let selectedGroupId = '';
+	let groupPermission: 'View' | 'Edit' | 'Admin' = 'View';
 
 	// Query for existing shares
 	$: sharesQuery = createQuery({
@@ -54,7 +69,24 @@
 		enabled: open
 	});
 
-	// Mutation for creating share
+	// Query for user's groups
+	$: groupsQuery = createQuery({
+		queryKey: ['my-groups'],
+		queryFn: listMyGroups,
+		enabled: open && activeTab === 'share'
+	});
+
+	// Query for existing group shares
+	$: groupSharesQuery = createQuery({
+		queryKey: ['group-shares', resourceType, resourceId],
+		queryFn: () =>
+			resourceType === 'folder'
+				? listFolderGroupShares(resourceId)
+				: listFileGroupShares(resourceId),
+		enabled: open && activeTab === 'share'
+	});
+
+	// Mutation for creating public share
 	const createShareMutation = createMutation({
 		mutationFn: async (request: CreateShareRequest) => {
 			return createShare(resourceType, resourceId, request);
@@ -65,13 +97,10 @@
 				message: 'Share link created successfully',
 				type: 'success'
 			});
-			// Reset form
 			permissions = 'View';
 			password = '';
 			expiresAt = '';
 			uploadOnly = false;
-			showCreateForm = false;
-			// Auto-copy the share URL
 			handleCopyLink(response.share_url);
 		},
 		onError: (error) => {
@@ -82,33 +111,63 @@
 		}
 	});
 
+	// Mutation for creating user share
 	const createUserShareMutation = createMutation({
 		mutationFn: async () => {
 			if (resourceType === 'folder') {
 				return createFolderUserShare(resourceId, {
 					recipient_email: recipientEmail.trim(),
-					permission: recipientPermission
+					permission: userPermission
 				});
 			}
-
 			return createFileUserShare(resourceId, {
 				recipient_email: recipientEmail.trim(),
-				permission: recipientPermission
+				permission: userPermission
 			});
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['share-recipients', resourceType, resourceId] });
 			queryClient.invalidateQueries({ queryKey: ['received-shares'] });
 			dispatch('notification', {
-				message: `${resourceType === 'folder' ? 'Folder' : 'File'} shared successfully`,
+				message: `Shared with ${recipientEmail.trim()}`,
 				type: 'success'
 			});
 			recipientEmail = '';
-			recipientPermission = 'View';
+			userPermission = 'View';
 		},
 		onError: (error) => {
 			dispatch('notification', {
-				message: error instanceof Error ? error.message : 'Failed to share file',
+				message: error instanceof Error ? error.message : 'Failed to share',
+				type: 'error'
+			});
+		}
+	});
+
+	// Mutation for creating group share
+	const createGroupShareMutation = createMutation({
+		mutationFn: async () => {
+			const request = {
+				group_id: selectedGroupId,
+				permission: groupPermission
+			};
+			if (resourceType === 'folder') {
+				return createFolderGroupShare(resourceId, request);
+			}
+			return createFileGroupShare(resourceId, request);
+		},
+		onSuccess: (data) => {
+			queryClient.invalidateQueries({ queryKey: ['group-shares', resourceType, resourceId] });
+			queryClient.invalidateQueries({ queryKey: ['received-shares'] });
+			dispatch('notification', {
+				message: `Shared with group "${data.group_name}"`,
+				type: 'success'
+			});
+			selectedGroupId = '';
+			groupPermission = 'View';
+		},
+		onError: (error) => {
+			dispatch('notification', {
+				message: error instanceof Error ? error.message : 'Failed to share with group',
 				type: 'error'
 			});
 		}
@@ -121,14 +180,15 @@
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['public-shares', resourceType, resourceId] });
+			queryClient.invalidateQueries({ queryKey: ['group-shares', resourceType, resourceId] });
 			dispatch('notification', {
-				message: 'Share link revoked successfully',
+				message: 'Access revoked successfully',
 				type: 'success'
 			});
 		},
 		onError: (error) => {
 			dispatch('notification', {
-				message: error instanceof Error ? error.message : 'Failed to revoke share',
+				message: error instanceof Error ? error.message : 'Failed to revoke access',
 				type: 'error'
 			});
 		}
@@ -203,7 +263,6 @@
 		}
 
 		if (expiresAt) {
-			// Convert datetime-local to ISO 8601
 			request.expires_at = new Date(expiresAt).toISOString();
 		}
 
@@ -214,20 +273,33 @@
 		$createShareMutation.mutate(request);
 	}
 
-	function handleCreateUserShare() {
+	function handleShareWithUser() {
 		if (!recipientEmail.trim()) {
 			dispatch('notification', {
-				message: 'Recipient email is required',
+				message: 'Please enter an email address',
 				type: 'error'
 			});
 			return;
 		}
-
 		$createUserShareMutation.mutate();
 	}
 
-	function handleRevoke(shareId: string) {
-		if (confirm('Are you sure you want to revoke this share link?')) {
+	function handleShareWithGroup() {
+		if (!selectedGroupId) {
+			dispatch('notification', {
+				message: 'Please select a group',
+				type: 'error'
+			});
+			return;
+		}
+		$createGroupShareMutation.mutate();
+	}
+
+	function handleRevoke(shareId: string, type: 'public' | 'group') {
+		const message = type === 'public' 
+			? 'Are you sure you want to revoke this share link?'
+			: 'Are you sure you want to remove this group\'s access?';
+		if (confirm(message)) {
 			$revokeShareMutation.mutate(shareId);
 		}
 	}
@@ -282,19 +354,25 @@
 
 	function handleClose() {
 		activeTab = 'public';
-		showCreateForm = false;
 		permissions = 'View';
 		password = '';
 		expiresAt = '';
 		uploadOnly = false;
 		recipientEmail = '';
-		recipientPermission = 'View';
+		userPermission = 'View';
+		selectedGroupId = '';
+		groupPermission = 'View';
 		dispatch('close');
 	}
 
 	function getShareUrl(token: string): string {
 		const baseUrl = window.location.origin;
 		return `${baseUrl}/share/${token}`;
+	}
+
+	function getGroupName(groupId: string, groups: Group[] = []): string {
+		const group = groups.find((g) => g.id === groupId);
+		return group?.name || 'Unknown Group';
 	}
 
 	$: if ($recipientsQuery.data) {
@@ -312,6 +390,7 @@
 		$createShareMutation.isPending ||
 		$revokeShareMutation.isPending ||
 		$createUserShareMutation.isPending ||
+		$createGroupShareMutation.isPending ||
 		$updateRecipientPermissionMutation.isPending ||
 		$removeRecipientMutation.isPending;
 </script>
@@ -327,141 +406,113 @@
 				class="tab"
 				on:click={() => (activeTab = 'public')}
 			>
-				Public Link
+				<Link class="w-4 h-4 mr-1" />
+				Link
 			</button>
 			<button
 				type="button"
-				class:tab-active={activeTab === 'people'}
+				class:tab-active={activeTab === 'share'}
 				class="tab"
-				on:click={() => (activeTab = 'people')}
+				on:click={() => (activeTab = 'share')}
 			>
-				People
+				<UserPlus class="w-4 h-4 mr-1" />
+				Share
 			</button>
 		</div>
 
 		{#if activeTab === 'public'}
 			<!-- Create new share form -->
 			<div class="mb-6">
-				{#if !showCreateForm}
-					<button type="button" class="btn btn-primary" on:click={() => (showCreateForm = true)}>
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke-width="1.5"
-							stroke="currentColor"
-							class="w-5 h-5"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"
-							/>
-						</svg>
-						Create New Share Link
-					</button>
-				{:else}
-					<div class="card bg-base-200 p-4">
-						<h4 class="font-semibold mb-3">
-							Create {resourceType === 'folder' ? 'Folder' : 'Share'} Link
-						</h4>
+				<div class="card bg-base-200 p-4">
+					<h4 class="font-semibold mb-3">Create Public Share Link</h4>
 
-						<form on:submit|preventDefault={handleCreateShare} class="space-y-4">
-							<!-- Permission selector -->
-							<div class="form-control">
-								<label class="label" for="permissions">
-									<span class="label-text">Permissions</span>
+					<form on:submit|preventDefault={handleCreateShare} class="space-y-4">
+						<!-- Permission selector -->
+						<div class="form-control">
+							<label class="label" for="permissions">
+								<span class="label-text">Permissions</span>
+							</label>
+							<select
+								id="permissions"
+								class="select select-bordered"
+								bind:value={permissions}
+								disabled={isLoading || (resourceType === 'folder' && uploadOnly)}
+							>
+								<option value="View">
+									{resourceType === 'folder'
+										? 'View & Download'
+										: 'View Only (Read, No Download)'}
+								</option>
+								<option value="Edit">
+									{resourceType === 'folder' ? 'View & Upload' : 'View & Download'}
+								</option>
+								<option value="Admin">Full Access (View, Download, Manage)</option>
+							</select>
+							{#if resourceType === 'folder'}
+								<label class="label gap-3 mt-2 cursor-pointer justify-start">
+									<input
+										type="checkbox"
+										class="checkbox checkbox-sm"
+										bind:checked={uploadOnly}
+										disabled={isLoading}
+									/>
+									<span class="label-text">
+										Upload only (allow uploads without browsing or downloading existing files)
+									</span>
 								</label>
-								<select
-									id="permissions"
-									class="select select-bordered"
-									bind:value={permissions}
-									disabled={isLoading || (resourceType === 'folder' && uploadOnly)}
-								>
-									<option value="View">
-										{resourceType === 'folder'
-											? 'View & Download'
-											: 'View Only (Read, No Download)'}
-									</option>
-									<option value="Edit">
-										{resourceType === 'folder' ? 'View & Upload' : 'View & Download'}
-									</option>
-									<option value="Admin">Full Access (View, Download, Manage)</option>
-								</select>
-								{#if resourceType === 'folder'}
-									<label class="label gap-3 mt-2 cursor-pointer justify-start">
-										<input
-											type="checkbox"
-											class="checkbox checkbox-sm"
-											bind:checked={uploadOnly}
-											disabled={isLoading}
-										/>
-										<span class="label-text">
-											Upload only (allow uploads without browsing or downloading existing files)
-										</span>
-									</label>
-									{#if uploadOnly}
-										<p class="text-xs text-base-content/60 mt-1">
-											Upload-only links are restricted drop points. They always hide folder contents
-											and file downloads from recipients.
-										</p>
-									{/if}
+								{#if uploadOnly}
+									<p class="text-xs text-base-content/60 mt-1">
+										Upload-only links are restricted drop points. They always hide folder contents
+										and file downloads from recipients.
+									</p>
 								{/if}
-							</div>
+							{/if}
+						</div>
 
-							<!-- Optional password -->
-							<div class="form-control">
-								<label class="label" for="password">
-									<span class="label-text">Password (optional)</span>
-								</label>
-								<input
-									id="password"
-									type="password"
-									placeholder="Leave empty for no password"
-									class="input input-bordered"
-									bind:value={password}
-									disabled={isLoading}
-								/>
-							</div>
+						<!-- Optional password -->
+						<div class="form-control">
+							<label class="label" for="password">
+								<span class="label-text">Password (optional)</span>
+							</label>
+							<input
+								id="password"
+								type="password"
+								placeholder="Leave empty for no password"
+								class="input input-bordered"
+								bind:value={password}
+								disabled={isLoading}
+							/>
+						</div>
 
-							<!-- Optional expiry date -->
-							<div class="form-control">
-								<label class="label" for="expires-at">
-									<span class="label-text">Expires At (optional)</span>
-								</label>
-								<input
-									id="expires-at"
-									type="datetime-local"
-									class="input input-bordered"
-									bind:value={expiresAt}
-									disabled={isLoading}
-								/>
-							</div>
+						<!-- Optional expiry date -->
+						<div class="form-control">
+							<label class="label" for="expires-at">
+								<span class="label-text">Expires At (optional)</span>
+							</label>
+							<input
+								id="expires-at"
+								type="datetime-local"
+								class="input input-bordered"
+								bind:value={expiresAt}
+								disabled={isLoading}
+							/>
+						</div>
 
-							<div class="gap-2 flex justify-end">
-								<button
-									type="button"
-									class="btn btn-ghost"
-									on:click={() => (showCreateForm = false)}
-									disabled={isLoading}
-								>
-									Cancel
-								</button>
-								<button type="submit" class="btn btn-primary" disabled={isLoading}>
-									{#if $createShareMutation.isPending}
-										<span class="loading loading-spinner loading-sm"></span>
-									{/if}
-									Generate Link
-								</button>
-							</div>
-						</form>
-					</div>
-				{/if}
+						<div class="flex justify-end">
+							<button type="submit" class="btn btn-primary" disabled={isLoading}>
+								{#if $createShareMutation.isPending}
+									<span class="loading loading-spinner loading-sm mr-2"></span>
+								{/if}
+								Generate Link
+							</button>
+						</div>
+					</form>
+				</div>
 			</div>
 
-			<!-- List existing shares -->
+			<!-- List existing public shares -->
 			<div>
-				<h4 class="font-semibold mb-3">Existing Shares</h4>
+				<h4 class="font-semibold mb-3">Existing Share Links</h4>
 
 				{#if $sharesQuery.isLoading}
 					<div class="py-8 flex justify-center">
@@ -541,7 +592,7 @@
 										<button
 											type="button"
 											class="btn btn-sm btn-error"
-											on:click={() => handleRevoke(share.id)}
+											on:click={() => handleRevoke(share.id, 'public')}
 											disabled={isLoading}
 										>
 											{#if $revokeShareMutation.isPending}
@@ -556,122 +607,221 @@
 					</div>
 				{:else}
 					<div class="py-8 text-base-content/60 text-center">
-						<p>No active shares for this {resourceType}</p>
+						<p>No active share links for this {resourceType}</p>
 					</div>
 				{/if}
 			</div>
 		{:else}
+			<!-- Combined Share Tab - Users and Groups -->
 			<div class="space-y-6">
+				<!-- Share with User Section -->
 				<div class="card bg-base-200 p-4">
-					<h4 class="font-semibold mb-3">Share with a Person</h4>
-					<form on:submit|preventDefault={handleCreateUserShare} class="space-y-4">
-						<div class="form-control">
-							<label class="label" for="recipient-email">
-								<span class="label-text">Recipient Email</span>
-							</label>
+					<h4 class="font-semibold mb-3 flex items-center gap-2">
+						<Mail class="w-4 h-4" />
+						Share with a Person
+					</h4>
+					<form on:submit|preventDefault={handleShareWithUser} class="space-y-3">
+						<div class="flex gap-2">
 							<input
-								id="recipient-email"
 								type="email"
-								class="input input-bordered"
-								placeholder="teammate@example.com"
+								class="input input-bordered flex-1"
+								placeholder="email@example.com"
 								bind:value={recipientEmail}
 								disabled={isLoading}
 							/>
-						</div>
-						<div class="form-control">
-							<label class="label" for="recipient-permission">
-								<span class="label-text">Permission</span>
-							</label>
 							<select
-								id="recipient-permission"
-								class="select select-bordered"
-								bind:value={recipientPermission}
+								class="select select-bordered w-28"
+								bind:value={userPermission}
 								disabled={isLoading}
 							>
 								<option value="View">View</option>
 								<option value="Edit">Edit</option>
-								<option value="Admin">Manage</option>
+								<option value="Admin">Admin</option>
 							</select>
-						</div>
-						<div class="flex justify-end">
-							<button type="submit" class="btn btn-primary" disabled={isLoading}>
+							<button 
+								type="submit" 
+								class="btn btn-primary"
+								disabled={isLoading || !recipientEmail.trim()}
+							>
 								{#if $createUserShareMutation.isPending}
-									<span class="loading loading-spinner loading-sm"></span>
+									<Loader2 class="w-4 h-4 animate-spin" />
+								{:else}
+									Share
 								{/if}
-								Share with Person
 							</button>
 						</div>
 					</form>
 				</div>
 
+				<!-- Share with Group Section -->
+				<div class="card bg-base-200 p-4">
+					<h4 class="font-semibold mb-3 flex items-center gap-2">
+						<Users class="w-4 h-4" />
+						Share with a Group
+					</h4>
+					<form on:submit|preventDefault={handleShareWithGroup} class="space-y-3">
+						{#if $groupsQuery.isLoading}
+							<div class="flex items-center gap-2 py-2 text-base-content/60">
+								<Loader2 class="w-4 h-4 animate-spin" />
+								<span>Loading groups...</span>
+							</div>
+						{:else if $groupsQuery.isError}
+							<div class="alert alert-error alert-sm">
+								<span>Failed to load groups</span>
+							</div>
+						{:else if $groupsQuery.data && $groupsQuery.data.length > 0}
+							<div class="flex gap-2">
+								<select
+									class="select select-bordered flex-1"
+									bind:value={selectedGroupId}
+									disabled={isLoading}
+								>
+									<option value="">Select a group...</option>
+									{#each $groupsQuery.data as group}
+										<option value={group.id}>
+											{group.name} ({group.member_count} members)
+										</option>
+									{/each}
+								</select>
+								<select
+									class="select select-bordered w-28"
+									bind:value={groupPermission}
+									disabled={isLoading}
+								>
+									<option value="View">View</option>
+									<option value="Edit">Edit</option>
+									<option value="Admin">Admin</option>
+								</select>
+								<button 
+									type="submit" 
+									class="btn btn-primary"
+									disabled={isLoading || !selectedGroupId}
+								>
+									{#if $createGroupShareMutation.isPending}
+										<Loader2 class="w-4 h-4 animate-spin" />
+									{:else}
+										Share
+									{/if}
+								</button>
+							</div>
+						{:else}
+							<div class="alert alert-info alert-sm">
+								<span>You are not a member of any groups yet.</span>
+							</div>
+						{/if}
+					</form>
+				</div>
+
+				<!-- Recipients and Group Shares List -->
 				<div>
 					<h4 class="font-semibold mb-3">People with Access</h4>
 					{#if $recipientsQuery.isLoading}
 						<div class="py-8 flex justify-center">
-							<span class="loading loading-spinner loading-md"></span>
+							<Loader2 class="w-6 h-6 animate-spin text-brand-500" />
 						</div>
 					{:else if $recipientsQuery.isError}
 						<div class="alert alert-error">
 							<span>Failed to load recipients: {$recipientsQuery.error?.message}</span>
 						</div>
 					{:else if $recipientsQuery.data && $recipientsQuery.data.length > 0}
-						<div class="space-y-3">
+						<div class="space-y-2 mb-6">
 							{#each $recipientsQuery.data as recipient}
-								<div class="card bg-base-200">
-									<div class="card-body p-4">
-										<div class="gap-4 lg:flex-row lg:items-center lg:justify-between flex flex-col">
-											<div class="min-w-0">
-												<div class="font-medium truncate">{recipient.email}</div>
-												<div class="text-sm text-base-content/60">
-													Added {formatDate(recipient.added_at)}
-												</div>
-											</div>
-											<div class="gap-2 sm:flex-row sm:items-center flex flex-col">
-												<select
-													class="select select-bordered select-sm"
-													value={currentRecipientPermission(recipient)}
-													disabled={isLoading}
-													on:change={(event) =>
-														handleRecipientPermissionSelect(recipient.share_id, event)}
-												>
-													<option value="View">View</option>
-													<option value="Edit">Edit</option>
-													<option value="Admin">Manage</option>
-												</select>
-												<button
-													type="button"
-													class="btn btn-sm btn-ghost"
-													on:click={() => handleSaveRecipientPermission(recipient)}
-													disabled={isLoading ||
-														currentRecipientPermission(recipient) === recipient.permission}
-												>
-													Save
-												</button>
-												<button
-													type="button"
-													class="btn btn-sm btn-error"
-													on:click={() => handleRemoveRecipient(recipient)}
-													disabled={isLoading}
-												>
-													Remove
-												</button>
+								<div class="flex items-center justify-between p-3 bg-base-200 rounded-lg">
+									<div class="flex items-center gap-3 min-w-0">
+										<div class="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center flex-shrink-0">
+											<User class="w-4 h-4 text-brand-600" />
+										</div>
+										<div class="min-w-0">
+											<div class="font-medium truncate">{recipient.email}</div>
+											<div class="text-xs text-base-content/60">
+												Added {formatDate(recipient.added_at)}
 											</div>
 										</div>
+									</div>
+									<div class="flex items-center gap-2">
+										<select
+											class="select select-bordered select-sm"
+											value={currentRecipientPermission(recipient)}
+											disabled={isLoading}
+											on:change={(event) =>
+												handleRecipientPermissionSelect(recipient.share_id, event)}
+										>
+											<option value="View">View</option>
+											<option value="Edit">Edit</option>
+											<option value="Admin">Admin</option>
+										</select>
+										<button
+											type="button"
+											class="btn btn-sm btn-ghost"
+											on:click={() => handleSaveRecipientPermission(recipient)}
+											disabled={isLoading ||
+												currentRecipientPermission(recipient) === recipient.permission}
+										>
+											Save
+										</button>
+										<button
+											type="button"
+											class="btn btn-sm btn-error btn-ghost"
+											on:click={() => handleRemoveRecipient(recipient)}
+											disabled={isLoading}
+											title="Remove access"
+										>
+											<Trash2 class="w-4 h-4" />
+										</button>
 									</div>
 								</div>
 							{/each}
 						</div>
 					{:else}
-						<div class="py-8 text-base-content/60 text-center">
-							<p>No people have access to this file yet</p>
+						<p class="text-base-content/60 text-sm mb-6">No individual users have access yet.</p>
+					{/if}
+
+					<h4 class="font-semibold mb-3">Groups with Access</h4>
+					{#if $groupSharesQuery.isLoading}
+						<div class="py-8 flex justify-center">
+							<Loader2 class="w-6 h-6 animate-spin text-brand-500" />
 						</div>
+					{:else if $groupSharesQuery.isError}
+						<div class="alert alert-error">
+							<span>Failed to load group shares: {$groupSharesQuery.error?.message}</span>
+						</div>
+					{:else if $groupSharesQuery.data && $groupSharesQuery.data.length > 0}
+						<div class="space-y-2">
+							{#each $groupSharesQuery.data as groupShare}
+								<div class="flex items-center justify-between p-3 bg-base-200 rounded-lg">
+									<div class="flex items-center gap-3 min-w-0">
+										<div class="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center flex-shrink-0">
+											<Users class="w-4 h-4 text-brand-600" />
+										</div>
+										<div class="min-w-0">
+											<div class="font-medium truncate">{groupShare.group_name}</div>
+											<div class="text-xs text-base-content/60">
+												<span class="badge badge-xs">{groupShare.permission}</span>
+												<span class="ml-2">Shared {formatDate(groupShare.created_at)}</span>
+											</div>
+										</div>
+									</div>
+									<button
+										type="button"
+										class="btn btn-sm btn-error btn-ghost"
+										on:click={() => handleRevoke(groupShare.share_id, 'group')}
+										disabled={isLoading}
+										title="Remove group access"
+									>
+										<Trash2 class="w-4 h-4" />
+									</button>
+								</div>
+							{/each}
+						</div>
+					{:else}
+						<p class="text-base-content/60 text-sm">No groups have access yet.</p>
 					{/if}
 				</div>
 			</div>
 		{/if}
 
 		<div class="modal-action">
-			<button type="button" class="btn" on:click={handleClose} disabled={isLoading}> Close </button>
+			<button type="button" class="btn" on:click={handleClose} disabled={isLoading}>Close</button>
 		</div>
 	</div>
 

@@ -291,19 +291,36 @@
 			{:else if $shareQuery.isError}
 				<div class="py-8 flex flex-col items-center justify-center">
 					{#if errorType === 'expired'}
-						<div class="text-6xl mb-4">⏰</div>
+						<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-error/10">
+							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-8 w-8 text-error">
+								<circle cx="12" cy="12" r="10"/>
+								<polyline points="12 6 12 12 16 14"/>
+							</svg>
+						</div>
 						<h2 class="card-title text-error mb-2">Share Expired</h2>
 						<p class="text-base-content/70 text-center">
 							This share link has expired and is no longer available.
 						</p>
 					{:else if errorType === 'not-found'}
-						<div class="text-6xl mb-4">🔍</div>
+						<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-error/10">
+							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-8 w-8 text-error">
+								<circle cx="11" cy="11" r="8"/>
+								<line x1="21" x2="16.65" y1="21" y2="16.65"/>
+								<line x1="8" x2="14" y1="11" y2="11"/>
+							</svg>
+						</div>
 						<h2 class="card-title text-error mb-2">Share Not Found</h2>
 						<p class="text-base-content/70 text-center">
 							This share link is invalid or has been revoked.
 						</p>
 					{:else}
-						<div class="text-6xl mb-4">⚠️</div>
+						<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-error/10">
+							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-8 w-8 text-error">
+								<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+								<line x1="12" x2="12" y1="9" y2="13"/>
+								<line x1="12" x2="12.01" y1="17" y2="17"/>
+							</svg>
+						</div>
 						<h2 class="card-title text-error mb-2">Error Loading Share</h2>
 						<p class="text-base-content/70 text-center">
 							{$shareQuery.error instanceof Error
@@ -317,11 +334,13 @@
 				{@const expired = isExpired(shareInfo)}
 
 				<div class="flex flex-col items-center">
-					<div class="text-6xl mb-4">
+					<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-500/10">
 						{#if shareInfo.resource_type === 'folder'}
-							📁
+							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-8 w-8 text-brand-500">
+								<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+							</svg>
 						{:else}
-							{getMimeTypeIcon(shareInfo.mime_type || 'application/octet-stream')}
+							<FileIcon mimeType={shareInfo.mime_type || 'application/octet-stream'} size="lg" iconClass="text-brand-500" />
 						{/if}
 					</div>
 

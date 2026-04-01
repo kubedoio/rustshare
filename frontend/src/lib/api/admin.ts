@@ -132,7 +132,6 @@ export interface AdminGroupDetail extends AdminGroup {
 }
 
 export interface GroupMember {
-	id: string;
 	user_id: string;
 	username: string;
 	email: string;

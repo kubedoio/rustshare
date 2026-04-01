@@ -86,30 +86,42 @@
 				</p>
 			</div>
 
-			<div class="mt-8 grid gap-4 sm:grid-cols-3">
-				<div class="rounded-[1.4rem] border border-base-300/80 bg-base-100/85 p-5 shadow-panel">
-					<p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/42">
-						Identity
-					</p>
-					<p class="mt-3 font-data text-sm font-medium leading-6 text-base-content">
-						OIDC-first login when the organization already has a source of truth.
-					</p>
+			<div class="mt-8 space-y-3">
+				<div class="flex items-start gap-4 rounded-xl border border-base-300/70 bg-base-100/60 px-4 py-3.5">
+					<div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500">
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+							<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+							<polyline points="10 17 15 12 10 7"/>
+						</svg>
+					</div>
+					<div>
+						<p class="text-sm font-semibold text-base-content">OIDC-first identity</p>
+						<p class="text-sm text-base-content/60">Connects to your existing source of truth.</p>
+					</div>
 				</div>
-				<div class="rounded-[1.4rem] border border-base-300/80 bg-base-100/85 p-5 shadow-panel">
-					<p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/42">
-						Control
-					</p>
-					<p class="mt-3 font-data text-sm font-medium leading-6 text-base-content">
-						Self-hosted deployment without the licensing trap that pushes admins into workarounds.
-					</p>
+				<div class="flex items-start gap-4 rounded-xl border border-base-300/70 bg-base-100/60 px-4 py-3.5">
+					<div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500">
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+							<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+							<path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+						</svg>
+					</div>
+					<div>
+						<p class="text-sm font-semibold text-base-content">Self-hosted control</p>
+						<p class="text-sm text-base-content/60">No licensing traps or vendor lock-in.</p>
+					</div>
 				</div>
-				<div class="rounded-[1.4rem] border border-base-300/80 bg-base-100/85 p-5 shadow-panel">
-					<p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/42">
-						Recovery
-					</p>
-					<p class="mt-3 font-data text-sm font-medium leading-6 text-base-content">
-						Clear runtime errors and fallback paths when the identity provider needs attention.
-					</p>
+				<div class="flex items-start gap-4 rounded-xl border border-base-300/70 bg-base-100/60 px-4 py-3.5">
+					<div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500">
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+							<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+							<path d="m9 12 2 2 4-4"/>
+						</svg>
+					</div>
+					<div>
+						<p class="text-sm font-semibold text-base-content">Clear recovery paths</p>
+						<p class="text-sm text-base-content/60">Explicit fallback when identity providers need attention.</p>
+					</div>
 				</div>
 			</div>
 		</section>

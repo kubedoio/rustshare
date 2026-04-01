@@ -87,7 +87,7 @@
       <div class="flex items-start justify-between">
         <div>
           <p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/42">Storage Used</p>
-          <p class="mt-2 font-display text-3xl leading-none text-base-content">{formatFileSize(totalSize)}</p>
+          <p class="mt-2 font-display text-2xl leading-none text-base-content">{formatFileSize(totalSize)}</p>
         </div>
         <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-brand-400">
@@ -110,7 +110,7 @@
       <div class="flex items-start justify-between">
         <div>
           <p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/42">Quick Action</p>
-          <p class="mt-2 font-display text-[2rem] leading-none text-base-content">Upload Files</p>
+          <p class="mt-2 font-display text-xl leading-none text-base-content">Upload Files</p>
         </div>
         <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-brand-400">

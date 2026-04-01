@@ -9,7 +9,8 @@
 	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { sharedResourcePath } from '$lib/utils/shared';
-	import { formatDate, formatFileSize, getMimeTypeIcon } from '$lib/utils/format';
+	import { formatDate, formatFileSize } from '$lib/utils/format';
+	import FileIcon from '$lib/components/icons/FileIcon.svelte';
 
 	type SharedResourceType = 'file' | 'folder';
 
@@ -222,7 +223,9 @@
 					{:else if $fileQuery.data}
 						<div class="space-y-5">
 							<div class="flex items-start gap-4">
-								<div class="text-5xl">{getMimeTypeIcon($fileQuery.data.mime_type)}</div>
+								<div class="flex h-14 w-14 items-center justify-center rounded-xl bg-brand-500/10">
+								<FileIcon mimeType={$fileQuery.data.mime_type} size="lg" iconClass="text-brand-500" />
+							</div>
 								<div>
 									<div class="text-xl font-semibold">{$fileQuery.data.name}</div>
 									<div class="text-sm text-base-content/60">{$fileQuery.data.path}</div>
@@ -395,7 +398,7 @@
 													class="font-medium flex items-center gap-3 hover:text-primary"
 													on:click={() => openPreview(file)}
 												>
-													<span class="text-xl">{getMimeTypeIcon(file.mime_type)}</span>
+													<FileIcon mimeType={file.mime_type} size="md" iconClass="text-base-content/70" />
 													<span>{file.name}</span>
 												</button>
 											</td>

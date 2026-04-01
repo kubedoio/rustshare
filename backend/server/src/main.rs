@@ -972,6 +972,25 @@ async fn main() -> Result<()> {
             "/api/v1/shares/{id}/recipient",
             delete(handlers::remove_recipient),
         )
+        // Group sharing routes
+        .route("/api/v1/groups/my", get(handlers::list_my_groups))
+        .route("/api/v1/groups/my/{id}", get(handlers::get_my_group))
+        .route(
+            "/api/v1/files/{id}/share/group",
+            post(handlers::create_file_group_share),
+        )
+        .route(
+            "/api/v1/files/{id}/share/groups",
+            get(handlers::list_file_group_shares),
+        )
+        .route(
+            "/api/v1/folders/{id}/share/group",
+            post(handlers::create_folder_group_share),
+        )
+        .route(
+            "/api/v1/folders/{id}/share/groups",
+            get(handlers::list_folder_group_shares),
+        )
         .route("/api/v1/notifications", get(handlers::list_notifications))
         .route(
             "/api/v1/notifications/unread-count",
