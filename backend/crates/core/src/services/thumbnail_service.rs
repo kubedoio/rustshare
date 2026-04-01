@@ -71,6 +71,8 @@ where
         file_name: &str,
         size: ThumbnailSize,
     ) -> Result<FileThumbnail, ThumbnailError> {
+        tracing::info!(file_id = %file_id, mime_type = mime_type, file_name = file_name, size = size.as_str(), "Starting thumbnail generation");
+
         // Check if file exists and get content hash for storage lookup
         let file_row = sqlx::query_as::<_, (String, i64, String)>(
             "SELECT name, size, content_hash FROM files WHERE id = $1"
@@ -78,30 +80,46 @@ where
         .bind(file_id)
         .fetch_optional(&self.db_pool)
         .await
-        .map_err(|e| ThumbnailError::Database(e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!(error = %e, "Database error fetching file");
+            ThumbnailError::Database(e.to_string())
+        })?;
 
         let (db_file_name, _file_size, content_hash) = match file_row {
             Some(row) => row,
-            None => return Err(ThumbnailError::NotFound),
+            None => {
+                tracing::warn!(file_id = %file_id, "File not found for thumbnail generation");
+                return Err(ThumbnailError::NotFound);
+            }
         };
 
         // Use filename from DB if not provided
         let file_name = if file_name.is_empty() { &db_file_name } else { file_name };
 
         if !is_file_thumbnail_supported(mime_type, file_name) {
+            tracing::warn!(mime_type = mime_type, file_name = file_name, "Unsupported file type for thumbnail");
             return Err(ThumbnailError::UnsupportedType);
         }
 
         // Get the file content from storage using content hash
         let file_path = format!("blobs/{}", content_hash);
+        tracing::debug!(file_path = %file_path, "Fetching file content from storage");
+        
         let content = self
             .storage
             .get(&file_path)
             .await
-            .map_err(|e| ThumbnailError::Storage(e.to_string()))?;
+            .map_err(|e| {
+                tracing::error!(error = %e, file_path = %file_path, "Storage error fetching file content");
+                ThumbnailError::Storage(e.to_string())
+            })?;
+        
+        tracing::debug!(content_size = content.len(), "File content fetched successfully");
 
         // Generate thumbnail based on file type
         let category = get_file_thumbnail_category(mime_type, file_name);
+        tracing::debug!(category = ?category, "Thumbnail category determined");
+        
         let (thumbnail_data, content_type) = match category {
             ThumbnailCategory::Image => {
                 self.generate_image_thumbnail(&content, size).await?
@@ -120,12 +138,19 @@ where
             }
         };
 
+        tracing::debug!(thumbnail_size = thumbnail_data.len(), content_type = %content_type, "Thumbnail generated");
+
         // Store thumbnail
         let thumbnail_path = format!("thumbnails/{}/{}.webp", file_id, size.as_str());
         self.storage
             .put(&thumbnail_path, thumbnail_data.into())
             .await
-            .map_err(|e| ThumbnailError::Storage(e.to_string()))?;
+            .map_err(|e| {
+                tracing::error!(error = %e, path = %thumbnail_path, "Storage error saving thumbnail");
+                ThumbnailError::Storage(e.to_string())
+            })?;
+
+        tracing::debug!(path = %thumbnail_path, "Thumbnail saved to storage");
 
         // Save to database
         let thumbnail = sqlx::query_as::<_, FileThumbnail>(
@@ -145,8 +170,12 @@ where
         .bind(&content_type)
         .fetch_one(&self.db_pool)
         .await
-        .map_err(|e| ThumbnailError::Database(e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!(error = %e, "Database error saving thumbnail metadata");
+            ThumbnailError::Database(e.to_string())
+        })?;
 
+        tracing::info!(file_id = %file_id, size = size.as_str(), "Thumbnail generation completed successfully");
         Ok(thumbnail)
     }
 
@@ -158,22 +187,35 @@ where
     ) -> Result<(Vec<u8>, String), ThumbnailError> {
         // Use tokio::task::spawn_blocking for CPU-intensive image processing
         let (width, height) = size.dimensions();
+        let content_len = content.len();
 
         let content = content.to_vec();
         let result = tokio::task::spawn_blocking(move || {
             use image::imageops::FilterType;
 
+            tracing::debug!(content_len = content_len, width = width, height = height, "Starting image thumbnail generation");
+
             // Load image
             let img = image::load_from_memory(&content)
-                .map_err(|e| ThumbnailError::Generation(format!("Failed to load image: {}", e)))?;
+                .map_err(|e| {
+                    tracing::error!(error = %e, "Failed to load image from memory");
+                    ThumbnailError::Generation(format!("Failed to load image: {}", e))
+                })?;
+
+            tracing::debug!(original_width = img.width(), original_height = img.height(), "Image loaded successfully");
 
             // Resize maintaining aspect ratio (fit within bounds)
             let resized = img.resize(width, height, FilterType::Lanczos3);
+
+            tracing::debug!(resized_width = resized.width(), resized_height = resized.height(), "Image resized");
 
             // Encode as WebP
             let mut output = Vec::new();
             let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut output);
             let rgba = resized.to_rgba8();
+            
+            tracing::debug!(rgba_len = rgba.len(), "Encoding WebP");
+            
             encoder
                 .encode(
                     &rgba,
@@ -181,14 +223,25 @@ where
                     resized.height(),
                     image::ColorType::Rgba8,
                 )
-                .map_err(|e| ThumbnailError::Generation(format!("WebP encode failed: {}", e)))?;
+                .map_err(|e| {
+                    tracing::error!(error = %e, "WebP encoding failed");
+                    ThumbnailError::Generation(format!("WebP encode failed: {}", e))
+                })?;
+
+            tracing::debug!(output_len = output.len(), "WebP encoding successful");
 
             Ok::<(Vec<u8>, String), ThumbnailError>((output, "image/webp".to_string()))
         })
-        .await
-        .map_err(|e| ThumbnailError::Generation(format!("Task failed: {}", e)))?;
+        .await;
 
-        result
+        match result {
+            Ok(Ok(data)) => Ok(data),
+            Ok(Err(e)) => Err(e),
+            Err(join_err) => {
+                tracing::error!(error = %join_err, "Thumbnail generation task panicked or was cancelled");
+                Err(ThumbnailError::Generation(format!("Task failed: {}", join_err)))
+            }
+        }
     }
 
     /// Generate PDF thumbnail by rendering first page
