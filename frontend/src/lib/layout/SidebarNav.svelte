@@ -119,10 +119,7 @@
 	class:z-50={mobileOpen}
 >
 	<!-- Logo Header -->
-	<div class="border-b p-4 flex-shrink-0"
-		class:border-slate-800={variant === 'admin'}
-		class:border-base-300/70={variant !== 'admin'}
-	>
+	<div class="border-b p-4 flex-shrink-0 {variant === 'admin' ? 'border-slate-800' : 'border-base-300/70'}">
 		<a href={variant === 'admin' ? '/admin' : '/files'} class="flex items-center gap-3">
 			<!-- Logo Icon -->
 			<div class="relative">
@@ -178,18 +175,16 @@
 					<div class="px-3 py-2">
 						<span class="loading loading-spinner loading-sm text-brand-500"></span>
 					</div>
-				{:else if $folderTreeQuery?.data?.subfolders?.length}
+				{:else if $folderTreeQuery?.data?.children?.length}
 					<nav class="space-y-0.5">
-						{#each $folderTreeQuery.data.subfolders as folderTree (folderTree.folder.id)}
-							{@const hasChildren = folderTree.subfolders && folderTree.subfolders.length > 0}
+						{#each $folderTreeQuery.data.children as folderTree (folderTree.folder.id)}
+							{@const hasChildren = folderTree.children && folderTree.children.length > 0}
 							{@const isExpanded = expandedFolders.has(folderTree.folder.id)}
 							{@const isActive = isFolderActive(folderTree.folder.id)}
-							<div>
-								<button
-									type="button"
-									class="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors text-left
+							<div class="group">
+								<div
+									class="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors cursor-pointer
 										{isActive ? 'bg-brand-500/10 text-brand-600 font-medium' : 'text-base-content hover:bg-base-200'}"
-									on:click={() => navigateToFolder(folderTree.folder.id)}
 								>
 									<!-- Expand/Collapse button -->
 									<button
@@ -209,7 +204,13 @@
 											<path d="m9 18 6-6-6-6" />
 										</svg>
 									</button>
-									<!-- Folder Icon -->
+									<!-- Clickable area for navigation -->
+									<button
+										type="button"
+										class="flex-1 flex items-center gap-2 text-left min-w-0"
+										on:click={() => navigateToFolder(folderTree.folder.id)}
+									>
+										<!-- Folder Icon -->
 									<svg
 										xmlns="http://www.w3.org/2000/svg"
 										viewBox="0 0 24 24"
@@ -222,10 +223,11 @@
 									</svg>
 									<span class="flex-1 truncate">{folderTree.folder.name}</span>
 								</button>
+								</div>
 								<!-- Children -->
 								{#if isExpanded && hasChildren}
 									<div class="ml-4">
-										{#each folderTree.subfolders as child (child.folder.id)}
+										{#each folderTree.children as child (child.folder.id)}
 											<button
 												type="button"
 												class="w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg transition-colors text-left
@@ -262,10 +264,7 @@
 
 	<!-- Footer -->
 	{#if !collapsed}
-		<div class="border-t p-4 flex-shrink-0"
-			class:border-slate-800={variant === 'admin'}
-			class:border-base-300/70={variant !== 'admin'}
-		>
+		<div class="border-t p-4 flex-shrink-0 {variant === 'admin' ? 'border-slate-800' : 'border-base-300/70'}">
 			<div class="rounded-xl p-3.5 border {variant === 'admin' ? 'bg-slate-900/70 border-slate-800' : 'bg-base-200/70 border-base-300/70'}">
 				<div class="flex items-center gap-2 mb-2">
 					<div class="w-2 h-2 rounded-full bg-success animate-pulse"></div>
