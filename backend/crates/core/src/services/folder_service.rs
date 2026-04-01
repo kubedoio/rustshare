@@ -488,8 +488,9 @@ where
         // Get and verify folder ownership
         let folder = self.get_folder(folder_id, user_id).await?;
 
-        // Check if it's a root folder (optional protection)
-        if folder.parent_folder_id.is_none() && folder.name == "Root" {
+        // Check if it's the system root folder (nil UUID) - only protect system folders
+        // User-created root folders should be deletable even if named "Root"
+        if folder.id.as_u128() == 0 {
             return Err(FolderError::CannotDeleteRoot(folder_id));
         }
 

@@ -1,57 +1,72 @@
 <script lang="ts">
+	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
-	import { createQuery } from '@tanstack/svelte-query';
 	import { goto } from '$app/navigation';
-	import { getUnreadNotificationCount } from '$lib/api/notifications';
-	import { getFolderTree, type FolderTree } from '$lib/api/folders';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { getFolderTree, type FolderTreeNode } from '$lib/api/folders';
+	import { onMount } from 'svelte';
+
+	// Components
 	import NavItem from '$lib/ui/NavItem.svelte';
 
-	export let variant: 'files' | 'default' = 'default';
-	export let collapsed = false;
-	export let mobileOpen = false;
-	export let onClose: () => void = () => {};
+	// Props
+	interface Props {
+		variant?: 'files' | 'admin' | 'default';
+		collapsed?: boolean;
+		mobileOpen?: boolean;
+		onClose?: () => void;
+	}
+	let { 
+		variant = 'files', 
+		collapsed = false,
+		mobileOpen = false,
+		onClose = () => {} 
+	}: Props = $props();
 
-	const unreadNotificationsQuery = createQuery({
-		queryKey: ['notifications', 'unread-count'],
-		queryFn: getUnreadNotificationCount,
-		refetchInterval: 30000
-	});
+	// === Folder Tree State ===
+	let expandedFolders = $state<Set<string>>(new Set());
+	let folderTreeQuery = $derived(
+		createQuery<FolderTreeNode>({
+			queryKey: ['folder-tree'],
+			queryFn: () => getFolderTree(),
+			enabled: variant === 'files'
+		})
+	);
 
-	$: unreadCount = $unreadNotificationsQuery.data?.count ?? 0;
-
-	// Folder tree query for files variant
-	$: folderTreeQuery = createQuery({
-		queryKey: ['folder-tree'],
-		queryFn: getFolderTree,
-		enabled: variant === 'files'
-	});
-
-	// Track expanded folders in localStorage
-	let expandedFolders = new Set<string>();
-
-	// Load expanded state from localStorage on mount
-	$: if (variant === 'files' && typeof localStorage !== 'undefined') {
+	// Load expanded folders from localStorage on mount
+	onMount(() => {
 		const saved = localStorage.getItem('sidebar-expanded-folders');
 		if (saved) {
 			try {
-				expandedFolders = new Set(JSON.parse(saved));
+				const parsed = JSON.parse(saved);
+				if (Array.isArray(parsed)) {
+					expandedFolders = new Set(parsed);
+				}
 			} catch {
-				expandedFolders = new Set();
+				// Invalid JSON, ignore
 			}
 		}
+	});
+
+	// Persist expanded folders to localStorage
+	function saveExpandedFolders() {
+		localStorage.setItem('sidebar-expanded-folders', JSON.stringify([...expandedFolders]));
 	}
 
 	function toggleFolder(folderId: string) {
-		const newExpanded = new Set(expandedFolders);
-		if (newExpanded.has(folderId)) {
-			newExpanded.delete(folderId);
+		if (expandedFolders.has(folderId)) {
+			expandedFolders.delete(folderId);
 		} else {
-			newExpanded.add(folderId);
+			expandedFolders.add(folderId);
 		}
-		expandedFolders = newExpanded;
-		if (typeof localStorage !== 'undefined') {
-			localStorage.setItem('sidebar-expanded-folders', JSON.stringify([...newExpanded]));
-		}
+		expandedFolders = expandedFolders; // trigger reactivity
+		saveExpandedFolders();
+	}
+
+	function isFolderActive(folderId: string): boolean {
+		if (!browser) return false;
+		const params = new URLSearchParams(window.location.search);
+		return params.get('folder') === folderId;
 	}
 
 	function navigateToFolder(folderId: string) {
@@ -59,137 +74,209 @@
 		onClose();
 	}
 
-	function isFolderActive(folderId: string): boolean {
-		if (!$page.url.pathname.startsWith('/files')) return false;
-		const currentFolderId = $page.url.searchParams.get('folder');
-		return currentFolderId === folderId;
-	}
-
-	// Recursive component for folder tree
-	function renderFolderTree(nodes: FolderTree[], level = 0): any {
-		return nodes.map(node => {
-			const hasChildren = node.subfolders && node.subfolders.length > 0;
-			const isExpanded = expandedFolders.has(node.folder.id);
-			const isActive = isFolderActive(node.folder.id);
-
-			return {
-				node,
-				hasChildren,
-				isExpanded,
-				isActive,
-				level
-			};
-		});
-	}
-
-	interface NavSection {
-		title: string;
-		items: Array<{
-			icon: string;
-			label: string;
-			href: string;
-			badge?: number;
-		}>;
-	}
-
-	const filesSections: NavSection[] = [
-		{
-			title: 'Browse',
-			items: [
-				{ icon: 'files', label: 'All files', href: '/files' },
-				{ icon: 'image', label: 'Photos', href: '/files?filter=photos' },
-				{ icon: 'share', label: 'Shared', href: '/shares' },
-			]
-		},
-		{
-			title: 'Manage',
-			items: [
-				{ icon: 'clock', label: 'Recent', href: '/files?sort=recent' },
-				{ icon: 'star', label: 'Starred', href: '/files?filter=starred' },
-				{ icon: 'trash', label: 'Deleted', href: '/files?filter=deleted' },
-			]
-		}
+	// === Navigation Items ===
+	const filesNav = [
+		{ href: '/files', icon: 'home', label: 'Home' },
+		{ href: '/files?folder=manage', icon: 'files', label: 'Manage' },
+		{ href: '/files?folder=shared', icon: 'users', label: 'Shared' },
 	];
 
-	const defaultSections: NavSection[] = [
-		{
-			title: 'Navigation',
-			items: [
-				{ icon: 'home', label: 'Dashboard', href: '/dashboard' },
-				{ icon: 'files', label: 'My Files', href: '/files' },
-				{ icon: 'users', label: 'Shared with Me', href: '/shared-with-me' },
-				{ icon: 'bell', label: 'Notifications', href: '/notifications', badge: unreadCount },
-				{ icon: 'settings', label: 'Settings', href: '/settings' },
-			]
-		}
+	const adminNav = [
+		{ href: '/admin', icon: 'home', label: 'Dashboard' },
+		{ href: '/admin/users', icon: 'users', label: 'Users' },
 	];
 
-	$: sections = variant === 'files' ? filesSections : defaultSections;
+	let navigation = $derived(variant === 'admin' ? adminNav : filesNav);
+
+	// Determine active state for navigation items
+	function isNavItemActive(href: string): boolean {
+		const currentPath = $page.url.pathname + $page.url.search;
+		if (href === '/files') {
+			return currentPath === '/files' || currentPath === '/files?';
+		}
+		return currentPath.startsWith(href);
+	}
 </script>
 
 <!-- Mobile overlay -->
 {#if mobileOpen}
 	<div
-		class="fixed inset-0 z-40 bg-black/45 backdrop-blur-sm lg:hidden"
+		class="fixed inset-0 bg-black/50 lg:hidden z-40"
 		on:click={onClose}
 		on:keydown={(e) => e.key === 'Escape' && onClose()}
 		role="button"
 		tabindex="0"
-		aria-label="Close sidebar"
 	></div>
 {/if}
 
-<!-- Secondary Sidebar -->
-<aside 
-	class="fixed inset-y-0 left-0 z-50 flex w-[min(18rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] flex-col border-r border-base-300/80 bg-base-100/96 shadow-2xl backdrop-blur-xl transition-[transform,width,opacity] duration-300 ease-out lg:static lg:left-16 lg:z-40 lg:max-w-none lg:bg-base-100 lg:shadow-none lg:backdrop-blur-none
+<aside
+	class="flex h-full flex-col border-r overflow-hidden transition-all duration-300 lg:translate-x-0
 		{mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-		{collapsed ? 'lg:w-0 lg:min-w-0 lg:overflow-hidden lg:border-r-0 lg:opacity-0' : 'lg:w-64 lg:min-w-64 lg:opacity-100'}"
+		{variant === 'admin' ? 'bg-slate-950 border-slate-800' : 'bg-base-100 border-base-300/70'}
+		{collapsed ? 'w-16' : 'w-64'}"
+	class:fixed={mobileOpen}
+	class:lg:static={true}
+	class:z-50={mobileOpen}
 >
-	<!-- Header -->
-	<div class="flex h-16 items-center border-b border-base-300/80 px-5">
-		{#if variant === 'files'}
-			<div>
-				<p class="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-base-content/40">Workspace</p>
-				<h2 class="font-display text-lg text-base-content">Files</h2>
+	<!-- Logo Header -->
+	<div class="border-b p-4 flex-shrink-0"
+		class:border-slate-800={variant === 'admin'}
+		class:border-base-300/70={variant !== 'admin'}
+	>
+		<a href={variant === 'admin' ? '/admin' : '/files'} class="flex items-center gap-3">
+			<!-- Logo Icon -->
+			<div class="relative">
+				<div
+					class="flex h-10 w-10 items-center justify-center rounded-xl shadow-sm flex-shrink-0
+						{variant === 'admin' ? 'bg-slate-800' : 'bg-gradient-to-br from-brand-500 to-brand-600'}"
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" 
+						class="h-5 w-5 {variant === 'admin' ? 'text-slate-200' : 'text-white'}">
+						<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+					</svg>
+				</div>
+				<!-- Status dot -->
+				<div
+					class="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 animate-pulse
+						{variant === 'admin' ? 'bg-brand-500 border-slate-950' : 'bg-success border-base-100'}"
+				></div>
 			</div>
-		{:else}
-			<div>
-				<p class="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-base-content/40">Navigation</p>
-				<h2 class="font-display text-lg text-base-content">Menu</h2>
-			</div>
-		{/if}
+			{#if !collapsed}
+				<div class="flex flex-col">
+					<span class="text-lg font-bold tracking-tight {variant === 'admin' ? 'text-slate-100' : 'text-brand-600'}">
+						RustShare
+					</span>
+					{#if variant === 'admin'}
+						<span class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Admin</span>
+					{/if}
+				</div>
+			{/if}
+		</a>
 	</div>
 
 	<!-- Navigation Sections -->
 	<div class="flex-1 overflow-y-auto py-5 px-3 space-y-7">
-		{#each sections as section}
-			<div>
+		<div class="space-y-0.5">
+			{#each navigation as item}
+				<NavItem
+					href={item.href}
+					icon={item.icon}
+					label={item.label}
+					compact={collapsed}
+					onClick={onClose}
+				/>
+			{/each}
+		</div>
+
+		<!-- My Folders Section (Files variant only) -->
+		{#if variant === 'files' && !collapsed}
+			<div class="pt-4">
 				<h3 class="px-3 text-xs font-semibold text-base-content/50 uppercase tracking-wider mb-2">
-					{section.title}
+					My Folders
 				</h3>
-				<nav class="space-y-0.5">
-					{#each section.items as item}
-						<NavItem
-							href={item.href}
-							icon={item.icon}
-							label={item.label}
-							badge={item.badge}
-							onClick={onClose}
-						/>
-					{/each}
-				</nav>
+				{#if $folderTreeQuery?.isLoading}
+					<div class="px-3 py-2">
+						<span class="loading loading-spinner loading-sm text-brand-500"></span>
+					</div>
+				{:else if $folderTreeQuery?.data?.subfolders?.length}
+					<nav class="space-y-0.5">
+						{#each $folderTreeQuery.data.subfolders as folderTree (folderTree.folder.id)}
+							{@const hasChildren = folderTree.subfolders && folderTree.subfolders.length > 0}
+							{@const isExpanded = expandedFolders.has(folderTree.folder.id)}
+							{@const isActive = isFolderActive(folderTree.folder.id)}
+							<div>
+								<button
+									type="button"
+									class="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors text-left
+										{isActive ? 'bg-brand-500/10 text-brand-600 font-medium' : 'text-base-content hover:bg-base-200'}"
+									on:click={() => navigateToFolder(folderTree.folder.id)}
+								>
+									<!-- Expand/Collapse button -->
+									<button
+										type="button"
+										class="w-5 h-5 flex items-center justify-center rounded hover:bg-base-300/50 transition-colors shrink-0
+											{hasChildren ? '' : 'invisible'}"
+										on:click|stopPropagation={() => toggleFolder(folderTree.folder.id)}
+									>
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											stroke-width="2"
+											class="w-3 h-3 transition-transform {isExpanded ? 'rotate-90' : ''}"
+										>
+											<path d="m9 18 6-6-6-6" />
+										</svg>
+									</button>
+									<!-- Folder Icon -->
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+										class="w-4 h-4 flex-shrink-0"
+									>
+										<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+									</svg>
+									<span class="flex-1 truncate">{folderTree.folder.name}</span>
+								</button>
+								<!-- Children -->
+								{#if isExpanded && hasChildren}
+									<div class="ml-4">
+										{#each folderTree.subfolders as child (child.folder.id)}
+											<button
+												type="button"
+												class="w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg transition-colors text-left
+													{isFolderActive(child.folder.id) ? 'bg-brand-500/10 text-brand-600 font-medium' : 'text-base-content hover:bg-base-200'}"
+												on:click={() => navigateToFolder(child.folder.id)}
+											>
+												<!-- Indent spacer for alignment -->
+												<span class="w-5 shrink-0"></span>
+												<!-- Folder Icon -->
+												<svg
+													xmlns="http://www.w3.org/2000/svg"
+													viewBox="0 0 24 24"
+													fill="none"
+													stroke="currentColor"
+													stroke-width="2"
+													class="w-4 h-4 flex-shrink-0"
+												>
+													<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+												</svg>
+												<span class="flex-1 truncate">{child.folder.name}</span>
+											</button>
+										{/each}
+									</div>
+								{/if}
+							</div>
+						{/each}
+					</nav>
+				{:else}
+					<p class="px-3 text-sm text-base-content/50">No folders yet</p>
+				{/if}
 			</div>
-		{/each}
+		{/if}
 	</div>
 
 	<!-- Footer -->
-		<div class="border-t border-base-300/80 p-4">
-			<div class="rounded-[1.15rem] border border-base-300/70 bg-base-200/70 p-3.5">
+	{#if !collapsed}
+		<div class="border-t p-4 flex-shrink-0"
+			class:border-slate-800={variant === 'admin'}
+			class:border-base-300/70={variant !== 'admin'}
+		>
+			<div class="rounded-xl p-3.5 border {variant === 'admin' ? 'bg-slate-900/70 border-slate-800' : 'bg-base-200/70 border-base-300/70'}">
 				<div class="flex items-center gap-2 mb-2">
 					<div class="w-2 h-2 rounded-full bg-success animate-pulse"></div>
-					<span class="text-xs font-medium text-base-content/80">System Online</span>
+					<span class="text-xs font-medium {variant === 'admin' ? 'text-slate-400' : 'text-base-content/80'}">
+						System Online
+					</span>
+				</div>
+				<p class="text-xs {variant === 'admin' ? 'text-slate-600' : 'text-base-content/50'}">
+					RustShare v1.0
+				</p>
 			</div>
-			<p class="text-xs text-base-content/50">RustShare v1.0</p>
 		</div>
-	</div>
+	{/if}
 </aside>
