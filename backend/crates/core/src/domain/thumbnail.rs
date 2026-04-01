@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 /// Thumbnail size variants
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "TEXT")]
+#[sqlx(type_name = "TEXT", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum ThumbnailSize {
     /// 40x40px
