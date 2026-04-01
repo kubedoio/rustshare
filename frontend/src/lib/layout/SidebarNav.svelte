@@ -77,8 +77,13 @@
 	// === Navigation Items ===
 	const filesNav = [
 		{ href: '/files', icon: 'home', label: 'Home' },
-		{ href: '/files?folder=manage', icon: 'files', label: 'Manage' },
 		{ href: '/files?folder=shared', icon: 'users', label: 'Shared' },
+	];
+
+	const libraryNav = [
+		{ href: '/files?filter=starred', icon: 'star', label: 'Starred' },
+		{ href: '/files?filter=photos', icon: 'image', label: 'Photos' },
+		{ href: '/files?sort=recent', icon: 'clock', label: 'Recent' },
 	];
 
 	const adminNav = [
@@ -153,6 +158,7 @@
 
 	<!-- Navigation Sections -->
 	<div class="flex-1 overflow-y-auto py-5 px-3 space-y-7">
+		<!-- Main Navigation -->
 		<div class="space-y-0.5">
 			{#each navigation as item}
 				<NavItem
@@ -164,6 +170,25 @@
 				/>
 			{/each}
 		</div>
+
+		<!-- Library Section (Files variant only) -->
+		{#if variant === 'files' && !collapsed}
+			<div>
+				<h3 class="px-3 text-xs font-semibold text-base-content/50 uppercase tracking-wider mb-2">
+					Library
+				</h3>
+				<div class="space-y-0.5">
+					{#each libraryNav as item}
+						<NavItem
+							href={item.href}
+							icon={item.icon}
+							label={item.label}
+							onClick={onClose}
+						/>
+					{/each}
+				</div>
+			</div>
+		{/if}
 
 		<!-- My Folders Section (Files variant only) -->
 		{#if variant === 'files' && !collapsed}
