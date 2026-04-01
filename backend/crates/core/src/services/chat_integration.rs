@@ -625,7 +625,7 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
     ) -> Result<Event, ChatIntegrationError> {
         let payload = ShareRevokedPayload {
             share_id: share.id,
-            file_id: share.resource_id(),
+            file_id: share.resource_id().unwrap_or(share.id),
             revoked_by,
         };
 

@@ -6,6 +6,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use tracing::warn;
 use uuid::Uuid;
 
 // ============================================================================
@@ -240,17 +241,22 @@ impl FileDocument {
         self.bump_version();
     }
     
-    /// Rename file (updates path)
-    pub fn rename(&mut self, new_name: String, new_path: String) {
-        self.name = new_name;
-        self.path = new_path;
+    /// Rename file (updates path).
+    ///
+    /// Both new_name and new_path accept `&str` or `String` to avoid
+    /// unnecessary allocations when the caller already owns the strings.
+    pub fn rename(&mut self, new_name: impl Into<String>, new_path: impl Into<String>) {
+        self.name = new_name.into();
+        self.path = new_path.into();
         self.bump_version();
     }
     
-    /// Move file to new parent
-    pub fn move_to(&mut self, new_parent_id: Option<Uuid>, new_path: String) {
+    /// Move file to new parent.
+    ///
+    /// The new_path accepts `&str` or `String` to avoid unnecessary allocations.
+    pub fn move_to(&mut self, new_parent_id: Option<Uuid>, new_path: impl Into<String>) {
         self.parent_id = new_parent_id;
-        self.path = new_path;
+        self.path = new_path.into();
         self.bump_version();
     }
     
@@ -721,9 +727,12 @@ impl SyncCursorDocument {
         }
     }
     
-    /// Update the cursor and last event ID
-    pub fn update(&mut self, cursor: String, last_event_id: Uuid) {
-        self.cursor = cursor;
+    /// Update the cursor and last event ID.
+    ///
+    /// The cursor can be any type that converts into a String,
+    /// such as `&str` or `String`.
+    pub fn update(&mut self, cursor: impl Into<String>, last_event_id: Uuid) {
+        self.cursor = cursor.into();
         self.last_event_id = last_event_id;
         self.updated_at = Utc::now();
     }

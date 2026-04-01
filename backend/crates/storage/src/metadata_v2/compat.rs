@@ -8,6 +8,7 @@ use rustshare_core::domain::{
     File, FileVersion, Folder, ReplicationJob, ReplicationState, Share,
 };
 use std::sync::Arc;
+use tracing::debug;
 
 use crate::repos::*;
 

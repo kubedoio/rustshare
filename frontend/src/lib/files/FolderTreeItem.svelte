@@ -1,96 +1,161 @@
 <script lang="ts">
-	import { ChevronRight, ChevronDown, Folder, FolderOpen } from 'lucide-svelte';
-	import type { FolderNode } from '$lib/stores/folderTree';
-	import { folderTreeStore } from '$lib/stores/folderTree';
-	import { slide } from 'svelte/transition';
+	import { Folder, ChevronRight, Loader2, Check, X } from 'lucide-svelte';
+	import { folderTreeStore, type FolderNode } from '$lib/stores/folderTree';
 
 	export let folder: FolderNode;
-	export let level: number = 0;
+	export let level = 0;
+	export let renamingFolderId: string | null = null;
+	export let renameValue = '';
+	export let renameInputRef: HTMLInputElement | null = null;
+	export let draggedOverFolderId: string | null = null;
+	
 	export let onSelect: (folder: FolderNode) => void;
 	export let onToggleExpand: (folder: FolderNode) => void;
+	export let onContextMenu: (e: MouseEvent, folder: FolderNode) => void;
+	export let onRenameConfirm: (folder: FolderNode) => void;
+	export let onRenameCancel: () => void;
+	export let onRenameKeydown: (e: KeyboardEvent, folder: FolderNode) => void;
+	export let onDragOver: (folderId: string) => void = () => {};
+	export let onDragLeave: () => void = () => {};
+	export let onDrop: (folder: FolderNode) => void = () => {};
 
-	$: isExpanded = $folderTreeStore.expandedIds.has(folder.id);
 	$: isSelected = $folderTreeStore.selectedId === folder.id;
+	$: isExpanded = $folderTreeStore.expandedIds.has(folder.id);
 	$: isLoading = $folderTreeStore.loadingIds.has(folder.id);
-	$: hasChildren = folder.children && folder.children.length > 0;
-	$: hasNoChildren = folder.children !== undefined && (!folder.children || folder.children.length === 0);
-	// Show expand button if: we have children, or we haven't checked yet (children undefined)
-	$: canExpand = hasChildren || !hasNoChildren;
-
-	const paddingLeft = level * 12 + 8;
+	$: isRenaming = renamingFolderId === folder.id;
+	$: isDragOver = draggedOverFolderId === folder.id;
 
 	function handleClick() {
 		onSelect(folder);
 	}
 
 	function handleToggle(e: MouseEvent) {
-		e.preventDefault();
 		e.stopPropagation();
 		onToggleExpand(folder);
 	}
 
-	function handleKeyDown(e: KeyboardEvent) {
-		if (e.key === 'Enter' || e.key === ' ') {
-			e.preventDefault();
-			onSelect(folder);
+	function handleContextMenu(e: MouseEvent) {
+		onContextMenu(e, folder);
+	}
+
+	// Drag and drop
+	function handleDragStart(e: DragEvent) {
+		if (e.dataTransfer) {
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('application/json', JSON.stringify({ 
+				id: folder.id, 
+				isFolder: true,
+				name: folder.name 
+			}));
 		}
+	}
+
+	function handleDragOver(e: DragEvent) {
+		e.preventDefault();
+		onDragOver(folder.id);
+	}
+
+	function handleDragLeave() {
+		onDragLeave();
+	}
+
+	function handleDrop(e: DragEvent) {
+		e.preventDefault();
+		onDrop(folder);
 	}
 </script>
 
 <div class="select-none">
 	<div
-		role="treeitem"
-		tabindex="0"
-		aria-selected={isSelected}
-		aria-expanded={canExpand ? isExpanded : undefined}
-		style="padding-left: {paddingLeft}px"
-		class="group flex items-center gap-1.5 py-1.5 pr-3 cursor-pointer transition-colors rounded-md mx-1
-			{isSelected ? 'bg-brand-500/15 text-brand-300' : 'text-base-content/70 hover:bg-base-200/50 hover:text-base-content'}"
+		class="group flex items-center gap-1.5 px-2 py-1.5 mx-1 rounded-md text-sm transition-all cursor-pointer
+			{isSelected 
+				? 'bg-brand-500/15 text-brand-600 font-medium' 
+				: 'text-base-content/70 hover:bg-base-200/50 hover:text-base-content'}
+			{isDragOver ? 'ring-2 ring-brand-500/50 bg-brand-500/10' : ''}"
+		style="padding-left: {level * 16 + 8}px"
 		on:click={handleClick}
-		on:keydown={handleKeyDown}
+		on:contextmenu={handleContextMenu}
+		draggable={!isRenaming}
+		on:dragstart={handleDragStart}
+		on:dragover={handleDragOver}
+		on:dragleave={handleDragLeave}
+		on:drop={handleDrop}
+		role="treeitem"
+		aria-selected={isSelected}
+		aria-expanded={isExpanded}
+		tabindex="0"
+		on:keydown={(e) => {
+			if (e.key === 'Enter') handleClick();
+			if (e.key === 'ArrowRight' && !isExpanded) onToggleExpand(folder);
+			if (e.key === 'ArrowLeft' && isExpanded) onToggleExpand(folder);
+		}}
 	>
-		<!-- Expand/Collapse Button -->
+		<!-- Expand/Collapse button -->
 		<button
 			type="button"
-			class="w-6 h-6 flex items-center justify-center rounded hover:bg-base-300/50 transition-colors flex-shrink-0
-				{canExpand ? 'opacity-100' : 'opacity-0 pointer-events-none'}"
-			on:click|preventDefault|stopPropagation={handleToggle}
-			aria-label={isExpanded ? 'Collapse folder' : 'Expand folder'}
-			disabled={!canExpand}
+			class="w-5 h-5 flex items-center justify-center rounded hover:bg-base-300/50 transition-colors shrink-0
+				{folder.children === undefined && !isLoading ? 'invisible' : ''}"
+			on:click={handleToggle}
+			tabindex="-1"
 		>
 			{#if isLoading}
-				<div class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
-			{:else if isExpanded}
-				<ChevronDown size={14} />
+				<Loader2 size={14} class="animate-spin text-base-content/40" />
 			{:else}
-				<ChevronRight size={14} />
+				<ChevronRight 
+					size={14} 
+					class="text-base-content/40 transition-transform {isExpanded ? 'rotate-90' : ''}" 
+				/>
 			{/if}
 		</button>
 
 		<!-- Folder Icon -->
-		<div class="flex-shrink-0 {isSelected ? 'text-brand-400' : 'text-brand-500/70 group-hover:text-brand-400'}">
-			{#if isExpanded}
-				<FolderOpen size={18} />
-			{:else}
-				<Folder size={18} />
-			{/if}
-		</div>
+		<Folder 
+			size={18} 
+			class="shrink-0 {isSelected ? 'text-brand-500' : 'text-base-content/50'}"
+		/>
 
-		<!-- Folder Name -->
-		<span class="text-sm truncate flex-1 font-medium">
-			{folder.name}
-		</span>
+		{#if isRenaming}
+			<!-- Inline Rename Input -->
+			<div class="flex items-center gap-1 flex-1 min-w-0">
+				<input
+					bind:this={renameInputRef}
+					type="text"
+					class="flex-1 min-w-0 px-1.5 py-0.5 text-sm bg-base-100 border border-brand-500 rounded focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+					value={renameValue}
+					on:input={(e) => renameValue = e.currentTarget.value}
+					on:keydown={(e) => onRenameKeydown(e, folder)}
+					on:blur={() => onRenameConfirm(folder)}
+					on:click|stopPropagation
+				/>
+			</div>
+		{:else}
+			<!-- Folder Name -->
+			<span class="flex-1 truncate select-none" title={folder.name}>
+				{folder.name}
+			</span>
+		{/if}
 	</div>
 
-	<!-- Children -->
-	{#if isExpanded && folder.children}
-		<div transition:slide={{ duration: 150 }} role="group">
+	<!-- Children - properly recursive with all props -->
+	{#if isExpanded && folder.children && folder.children.length > 0}
+		<div class="mt-0.5" role="group">
 			{#each folder.children as child (child.id)}
 				<svelte:self
 					folder={child}
 					level={level + 1}
+					{renamingFolderId}
+					{renameValue}
+					{renameInputRef}
+					{draggedOverFolderId}
 					{onSelect}
 					{onToggleExpand}
+					{onContextMenu}
+					{onRenameConfirm}
+					{onRenameCancel}
+					{onRenameKeydown}
+					{onDragOver}
+					{onDragLeave}
+					{onDrop}
 				/>
 			{/each}
 		</div>

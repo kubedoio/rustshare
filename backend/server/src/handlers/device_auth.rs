@@ -17,6 +17,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::time::{Duration, Instant};
+use tracing::debug;
 
 use crate::handlers::AuthenticatedUser;
 use crate::oidc_runtime::load_oidc_runtime_settings;
@@ -323,11 +324,14 @@ pub async fn device_poll(
 
     // Check if expired
     if is_expired {
-        // Clean up expired request
-        let _ = sqlx::query("DELETE FROM device_pair_requests WHERE device_code = $1")
+        // Clean up expired request - best effort
+        if let Err(e) = sqlx::query("DELETE FROM device_pair_requests WHERE device_code = $1")
             .bind(&req.device_code)
             .execute(&state.db_pool)
-            .await;
+            .await
+        {
+            tracing::debug!(device_code = %req.device_code, error = %e, "failed to clean up expired device pair request");
+        }
 
         return Ok(Json(DevicePollResponse::Expired {}).into_response());
     }

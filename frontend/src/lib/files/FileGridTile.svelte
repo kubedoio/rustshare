@@ -3,44 +3,152 @@
 	import type { ReplicationStatus } from '$lib/stores/replication';
 	import FilePreview from './FilePreview.svelte';
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
+	import ContextMenu from '$lib/components/common/ContextMenu.svelte';
+	import type { MenuItem } from '$lib/components/common/ContextMenu.svelte';
 	import { replicationStateBadgeClass, formatReplicationStateLabel } from '$lib/stores/replication';
 	import { formatFileSize, formatDate } from '$lib/utils/format';
-	import { MoreVertical, Edit, Trash2, Share2, Move, Download, History, RefreshCw, RotateCcw, Star } from 'lucide-svelte';
+	import { 
+		MoreVertical, 
+		Edit, 
+		Trash2, 
+		Share2, 
+		Move, 
+		Download, 
+		History, 
+		RefreshCw, 
+		RotateCcw, 
+		Star, 
+		FolderIcon, 
+		FileIcon, 
+		Check, 
+		X
+	} from 'lucide-svelte';
 
-	export let item: FileType | Folder;
-	export let isFolder: boolean;
-	export let workspaceMode: 'all' | 'photos' | 'recent' | 'starred' | 'deleted' = 'all';
-	export let selected: boolean = false;
-	export let selectionMode: boolean = false;
-	export let replicationStatus: ReplicationStatus | null = null;
+	// Props
+	interface Props {
+		item: FileType | Folder;
+		isFolder: boolean;
+		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+		selected?: boolean;
+		selectionMode?: boolean;
+		replicationStatus?: ReplicationStatus | null;
+		isDragging?: boolean;
+		isDropTarget?: boolean;
+		onSelect?: (e?: MouseEvent) => void;
+		onToggle?: () => void;
+		onRename?: (newName: string) => void;
+		onDelete?: () => void;
+		onToggleStar?: () => void;
+		onRestore?: () => void;
+		onPermanentDelete?: () => void;
+		onShare?: () => void;
+		onMove?: () => void;
+		onDownload?: () => void;
+		onVersionHistory?: () => void;
+		onReplace?: () => void;
+		onDragStart?: () => void;
+		onDragEnd?: () => void;
+		onDrop?: () => void;
+	}
 
-	// Event handlers (callback props)
-	export let onSelect: (e?: MouseEvent) => void = () => {};
-	export let onToggle: () => void = () => {};
-	export let onRename: () => void = () => {};
-	export let onDelete: () => void = () => {};
-	export let onToggleStar: () => void = () => {};
-	export let onRestore: () => void = () => {};
-	export let onPermanentDelete: () => void = () => {};
-	export let onShare: () => void = () => {};
-	export let onMove: () => void = () => {};
-	export let onDownload: () => void = () => {};
-	export let onVersionHistory: () => void = () => {};
-	export let onReplace: () => void = () => {};
+	let {
+		item,
+		isFolder,
+		workspaceMode = 'all',
+		selected = false,
+		selectionMode = false,
+		replicationStatus = null,
+		isDragging = false,
+		isDropTarget = false,
+		onSelect = () => {},
+		onToggle = () => {},
+		onRename = () => {},
+		onDelete = () => {},
+		onToggleStar = () => {},
+		onRestore = () => {},
+		onPermanentDelete = () => {},
+		onShare = () => {},
+		onMove = () => {},
+		onDownload = () => {},
+		onVersionHistory = () => {},
+		onReplace = () => {},
+		onDragStart = () => {},
+		onDragEnd = () => {},
+		onDrop = () => {}
+	}: Props = $props();
 
-	$: fileItem = isFolder ? null : (item as FileType);
-	$: displaySize = isFolder ? null : formatFileSize(fileItem?.size || 0);
-	$: displayDate = formatDate(
+	// Derived values
+	let fileItem = $derived(isFolder ? null : (item as FileType));
+	let displaySize = $derived(isFolder ? null : formatFileSize(fileItem?.size || 0));
+	let displayDate = $derived(formatDate(
 		workspaceMode === 'deleted'
 			? (item.deleted_at ?? (isFolder ? (item as Folder).updated_at : (item as FileType).modified_at))
 			: (isFolder ? (item as Folder).updated_at : (item as FileType).modified_at)
-	);
-	$: isStarred = Boolean(item?.starred_at);
+	));
+	let isStarred = $derived(Boolean(item?.starred_at));
 
-	let showActions = false;
+	// Context menu state
+	let showActions = $state(false);
+	let contextMenuVisible = $state(false);
+	let contextMenuX = $state(0);
+	let contextMenuY = $state(0);
 	let tileRef: HTMLDivElement;
 
+	// Inline rename state
+	let isRenaming = $state(false);
+	let renameValue = $state('');
+	let renameInputRef: HTMLInputElement;
+
+	let menuItems = $derived(buildMenuItems());
+
+	function buildMenuItems(): MenuItem[] {
+		const items: MenuItem[] = [];
+
+		if (workspaceMode === 'deleted') {
+			items.push(
+				{ id: 'restore', label: 'Restore', icon: RotateCcw, onClick: onRestore },
+				{ id: 'sep1', label: '', separator: true, onClick: () => {} },
+				{ id: 'delete', label: 'Delete permanently', icon: Trash2, danger: true, onClick: onPermanentDelete }
+			);
+		} else {
+			if (isFolder) {
+				items.push(
+					{ id: 'open', label: 'Open', icon: FolderIcon, shortcut: 'Enter', onClick: () => onSelect() },
+					{ id: 'sep1', label: '', separator: true, onClick: () => {} }
+				);
+			} else {
+				items.push(
+					{ id: 'open', label: 'Open', icon: FileIcon, shortcut: 'Enter', onClick: () => onSelect() },
+					{ id: 'download', label: 'Download', icon: Download, shortcut: '⌘D', onClick: onDownload },
+					{ id: 'sep1', label: '', separator: true, onClick: () => {} }
+				);
+			}
+
+			items.push(
+				{ id: 'rename', label: 'Rename', icon: Edit, shortcut: 'F2', onClick: startRename },
+				{ id: 'move', label: 'Move to...', icon: Move, onClick: onMove },
+				{ id: 'share', label: 'Share', icon: Share2, onClick: onShare }
+			);
+
+			if (!isFolder) {
+				items.push(
+					{ id: 'versions', label: 'Version history', icon: History, onClick: onVersionHistory },
+					{ id: 'replace', label: 'Replace file', icon: RefreshCw, onClick: onReplace }
+				);
+			}
+
+			items.push(
+				{ id: 'star', label: isStarred ? 'Remove from starred' : 'Add to starred', icon: Star, onClick: onToggleStar },
+				{ id: 'sep2', label: '', separator: true, onClick: () => {} },
+				{ id: 'delete', label: 'Move to trash', icon: Trash2, danger: true, shortcut: 'Del', onClick: onDelete }
+			);
+		}
+
+		return items;
+	}
+
 	function handleClick(e: MouseEvent) {
+		if (isRenaming) return;
 		if (selectionMode) {
 			onToggle();
 			return;
@@ -51,9 +159,70 @@
 		onSelect(e);
 	}
 
+	function handleContextMenu(e: MouseEvent) {
+		e.preventDefault();
+		contextMenuX = e.clientX;
+		contextMenuY = e.clientY;
+		contextMenuVisible = true;
+		showActions = false;
+	}
+
 	function handleAction(action: () => void) {
 		action();
 		showActions = false;
+	}
+
+	// Inline rename functions
+	function startRename() {
+		isRenaming = true;
+		renameValue = item.name;
+		setTimeout(() => {
+			renameInputRef?.focus();
+			renameInputRef?.select();
+		}, 0);
+	}
+
+	function confirmRename() {
+		if (renameValue.trim() && renameValue !== item.name) {
+			onRename(renameValue.trim());
+		}
+		isRenaming = false;
+	}
+
+	function cancelRename() {
+		isRenaming = false;
+		renameValue = item.name;
+	}
+
+	function handleRenameKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') {
+			confirmRename();
+		} else if (e.key === 'Escape') {
+			cancelRename();
+		}
+	}
+
+	// Drag and drop handlers
+	function handleDragStart(e: DragEvent) {
+		if (e.dataTransfer) {
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('application/json', JSON.stringify({ id: item.id, isFolder }));
+			onDragStart();
+		}
+	}
+
+	function handleDragOver(e: DragEvent) {
+		if (isFolder && !isDragging) {
+			e.preventDefault();
+			e.dataTransfer!.dropEffect = 'move';
+		}
+	}
+
+	function handleDrop(e: DragEvent) {
+		e.preventDefault();
+		if (isFolder && !isDragging) {
+			onDrop();
+		}
 	}
 
 	// Close actions when clicking outside
@@ -64,180 +233,217 @@
 	}
 </script>
 
-<svelte:window on:click={handleClickOutside} />
+<svelte:window onclick={handleClickOutside} />
 
 <div
 	bind:this={tileRef}
 	role="button"
 	tabindex="0"
-	class="group relative flex min-h-[15.5rem] flex-col rounded-2xl border p-4 transition-all cursor-pointer
+	class="group relative flex flex-col rounded-xl border overflow-hidden transition-all cursor-pointer bg-base-100
 		{selected
-			? 'border-brand-500/30 bg-brand-500/10 ring-1 ring-brand-500/30'
-			: 'border-base-300/70 bg-base-200/65 hover:border-brand-500/20 hover:bg-base-200'}"
-	on:click={handleClick}
-	on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleClick(e as any); }}
+			? 'border-brand-500/40 bg-brand-500/5 ring-1 ring-brand-500/30'
+			: 'border-base-300/60 hover:border-brand-500/30 hover:shadow-md hover:shadow-black/5'}
+		{isDragging ? 'opacity-40' : ''}
+		{isDropTarget ? 'border-brand-500 bg-brand-500/10 ring-2 ring-brand-500/30' : ''}"
+	onclick={handleClick}
+	onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleClick(e as any); }}
+	oncontextmenu={handleContextMenu}
+	draggable={!isRenaming}
+	ondragstart={handleDragStart}
+	ondragend={onDragEnd}
+	ondragover={handleDragOver}
+	ondrop={handleDrop}
 >
 	<!-- Checkbox (selection mode) -->
 	{#if selectionMode}
 		<div class="absolute top-2 left-2 z-10">
 			<input
 				type="checkbox"
-				class="w-4 h-4 rounded border-base-300 text-brand-500 focus:ring-brand-500 bg-base-100"
+				class="w-4 h-4 rounded border-base-300 text-brand-500 focus:ring-brand-500 bg-base-100 cursor-pointer"
 				checked={selected}
-				on:click|stopPropagation
-				on:change={onToggle}
+				onclick={(e) => e.stopPropagation()}
+				onchange={onToggle}
 			/>
 		</div>
 	{/if}
 
-	<!-- Actions Menu -->
-	<div class="absolute top-2 right-2 z-20 opacity-0 transition-opacity group-hover:opacity-100">
-		<button
-			type="button"
-			class="p-1.5 bg-base-100/90 backdrop-blur-sm rounded-lg text-base-content/60 hover:text-base-content shadow-sm"
-			on:click|stopPropagation={() => showActions = !showActions}
-			aria-label="Actions"
-		>
-			<MoreVertical size={14} />
-		</button>
-
-		{#if showActions}
-			<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-			<div
-				class="absolute right-0 top-full z-50 mt-1 w-40 rounded-xl border border-base-300 bg-base-100 py-1 shadow-lg shadow-black/20"
-				on:click|stopPropagation
+	<!-- Actions Menu Button -->
+	{#if !isRenaming}
+		<div class="absolute top-2 right-2 z-20 opacity-0 transition-opacity group-hover:opacity-100">
+			<button
+				type="button"
+				class="p-1.5 bg-base-100/90 backdrop-blur-sm rounded-lg text-base-content/50 hover:text-base-content shadow-sm border border-base-300/50 transition-colors"
+				onclick={(e) => { e.stopPropagation(); showActions = !showActions; }}
+				aria-label="Actions"
 			>
-				{#if workspaceMode === 'deleted'}
-					<button
-						type="button"
-						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-						on:click|stopPropagation={() => handleAction(onRestore)}
-					>
-						<RotateCcw size={14} />
-						Restore
-					</button>
-					<div class="border-t border-base-200 my-1"></div>
-					<button
-						type="button"
-						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-error hover:bg-error/10 transition-colors text-left"
-						on:click|stopPropagation={() => handleAction(onPermanentDelete)}
-					>
-						<Trash2 size={14} />
-						Delete permanently
-					</button>
-				{:else}
-					<button
-						type="button"
-						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-						on:click|stopPropagation={() => handleAction(onRename)}
-					>
-						<Edit size={14} />
-						Rename
-					</button>
-					<button
-						type="button"
-						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-						on:click|stopPropagation={() => handleAction(onToggleStar)}
-					>
-						<Star size={14} />
-						{isStarred ? 'Remove star' : 'Add to starred'}
-					</button>
-					<button
-						type="button"
-						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-						on:click|stopPropagation={() => handleAction(onShare)}
-					>
-						<Share2 size={14} />
-						Share
-					</button>
-					{#if !isFolder}
+				<MoreVertical size={14} />
+			</button>
+
+			{#if showActions}
+				<div
+					class="absolute right-0 top-full z-50 mt-1 w-44 rounded-xl border border-base-300/70 bg-base-100 py-1 shadow-xl shadow-black/20"
+					onclick={(e) => e.stopPropagation()}
+				>
+					{#if workspaceMode === 'deleted'}
 						<button
 							type="button"
-							class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-							on:click|stopPropagation={() => handleAction(onDownload)}
+							class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
+							onclick={(e) => { e.stopPropagation(); handleAction(onRestore); }}
 						>
-							<Download size={14} />
-							Download
+							<RotateCcw size={14} />
+							Restore
+						</button>
+						<div class="border-t border-base-200 my-1"></div>
+						<button
+							type="button"
+							class="w-full flex items-center gap-2 px-3 py-2 text-sm text-error hover:bg-error/10 transition-colors text-left"
+							onclick={(e) => { e.stopPropagation(); handleAction(onPermanentDelete); }}
+						>
+							<Trash2 size={14} />
+							Delete permanently
+						</button>
+					{:else}
+						<button
+							type="button"
+							class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
+							onclick={(e) => { e.stopPropagation(); startRename(); handleAction(() => {}); }}
+						>
+							<Edit size={14} />
+							Rename
 						</button>
 						<button
 							type="button"
-							class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-							on:click|stopPropagation={() => handleAction(onVersionHistory)}
+							class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
+							onclick={(e) => { e.stopPropagation(); handleAction(onToggleStar); }}
 						>
-							<History size={14} />
-							Version history
+							<Star size={14} class={isStarred ? 'fill-brand-500 text-brand-500' : ''} />
+							{isStarred ? 'Remove star' : 'Add to starred'}
 						</button>
 						<button
 							type="button"
-							class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-							on:click|stopPropagation={() => handleAction(onReplace)}
+							class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
+							onclick={(e) => { e.stopPropagation(); handleAction(onShare); }}
 						>
-							<RefreshCw size={14} />
-							Replace file
+							<Share2 size={14} />
+							Share
+						</button>
+						{#if !isFolder}
+							<button
+								type="button"
+								class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
+								onclick={(e) => { e.stopPropagation(); handleAction(onDownload); }}
+							>
+								<Download size={14} />
+								Download
+							</button>
+							<button
+								type="button"
+								class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
+								onclick={(e) => { e.stopPropagation(); handleAction(onVersionHistory); }}
+							>
+								<History size={14} />
+								Version history
+							</button>
+						{/if}
+						<button
+							type="button"
+							class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
+							onclick={(e) => { e.stopPropagation(); handleAction(onMove); }}
+						>
+							<Move size={14} />
+							Move
+						</button>
+						<div class="border-t border-base-200 my-1"></div>
+						<button
+							type="button"
+							class="w-full flex items-center gap-2 px-3 py-2 text-sm text-error hover:bg-error/10 transition-colors text-left"
+							onclick={(e) => { e.stopPropagation(); handleAction(onDelete); }}
+						>
+							<Trash2 size={14} />
+							Delete
 						</button>
 					{/if}
-					<button
-						type="button"
-						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200 transition-colors text-left"
-						on:click|stopPropagation={() => handleAction(onMove)}
-					>
-						<Move size={14} />
-						Move
-					</button>
-					<div class="border-t border-base-200 my-1"></div>
-					<button
-						type="button"
-						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-error hover:bg-error/10 transition-colors text-left"
-						on:click|stopPropagation={() => handleAction(onDelete)}
-					>
-						<Trash2 size={14} />
-						Delete
-					</button>
-				{/if}
-			</div>
-		{/if}
+				</div>
+			{/if}
+		</div>
+	{/if}
+
+	<!-- Preview Area -->
+	<div class="aspect-square bg-base-200/50 flex items-center justify-center p-4 border-b border-base-300/30">
+		<div class="w-full h-full flex items-center justify-center">
+			<FilePreview {item} {isFolder} size="xl" showThumbnail={!isFolder && workspaceMode !== 'deleted'} />
+		</div>
 	</div>
 
-	<!-- Preview -->
-	<div class="mb-4 flex aspect-[4/3] items-center justify-center rounded-xl border border-base-300/60 bg-base-100/80 p-3">
-		<FilePreview {item} {isFolder} size="xl" showThumbnail={!isFolder && workspaceMode !== 'deleted'} />
-	</div>
-
-	<!-- Info -->
-	<div class="min-w-0 space-y-2">
-		<div class="flex items-start gap-1.5">
-			<p class="flex-1 truncate text-sm font-medium leading-5 text-base-content" title={item.name}>
-				{item.name}
-			</p>
-			{#if item.is_shared}
-				<ShareIndicator
-					isShared={item.is_shared}
-					shareCount={item.share_count || 0}
-					shareExpiresAt={item.share_expires_at || null}
-					size="sm"
+	<!-- Info Area -->
+	<div class="p-3 min-w-0">
+		{#if isRenaming}
+			<div class="flex items-center gap-1">
+				<input
+					bind:this={renameInputRef}
+					type="text"
+					class="flex-1 min-w-0 px-2 py-1 text-sm bg-base-100 border border-brand-500 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+					value={renameValue}
+					oninput={(e) => renameValue = e.currentTarget.value}
+					onkeydown={handleRenameKeydown}
+					onblur={confirmRename}
 				/>
-			{/if}
-			{#if isStarred}
-				<Star size={14} class="text-brand-500" />
-			{/if}
-		</div>
-
-		<div class="flex items-center gap-2 text-xs text-base-content/55">
-			{#if isFolder}
-				<span>Folder</span>
-			{:else}
-				<span>{displaySize}</span>
-				<span>•</span>
-				<span>{displayDate}</span>
-			{/if}
-		</div>
-
-		{#if !isFolder && replicationStatus}
-			<div class="mt-2">
-				<span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium {replicationStateBadgeClass(replicationStatus.replicationState)}">
-					{formatReplicationStateLabel(replicationStatus.replicationState)}
+				<button
+					type="button"
+					class="p-1 text-success hover:bg-success/10 rounded-md"
+					onclick={(e) => { e.stopPropagation(); confirmRename(); }}
+				>
+					<Check size={14} />
+				</button>
+				<button
+					type="button"
+					class="p-1 text-error hover:bg-error/10 rounded-md"
+					onclick={(e) => { e.stopPropagation(); cancelRename(); }}
+				>
+					<X size={14} />
+				</button>
+			</div>
+		{:else}
+			<div class="flex items-start gap-1.5 min-w-0">
+				<p 
+					class="flex-1 truncate text-sm font-medium leading-5 text-base-content" 
+					title={item.name}
+					ondblclick={(e) => { e.stopPropagation(); startRename(); }}
+				>
+					{item.name}
+				</p>
+			</div>
+			
+			<div class="flex items-center gap-2 mt-1.5">
+				{#if item.is_shared}
+					<ShareIndicator
+						isShared={item.is_shared}
+						shareCount={item.share_count || 0}
+						shareExpiresAt={item.share_expires_at || null}
+						size="sm"
+					/>
+				{/if}
+				{#if isStarred}
+					<Star size={12} class="text-brand-500 fill-brand-500" />
+				{/if}
+				
+				<span class="text-xs text-base-content/50 truncate">
+					{#if isFolder}
+						Folder
+					{:else}
+						{displaySize} • {displayDate}
+					{/if}
 				</span>
 			</div>
 		{/if}
 	</div>
 </div>
+
+<!-- Context Menu -->
+<ContextMenu
+	items={menuItems}
+	x={contextMenuX}
+	y={contextMenuY}
+	visible={contextMenuVisible}
+	onClose={() => contextMenuVisible = false}
+/>

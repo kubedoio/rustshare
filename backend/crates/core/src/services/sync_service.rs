@@ -226,8 +226,10 @@ impl<R: SyncRepository> SyncService<R> {
             user_id, device_id
         );
         
-        // Delete the old cursor
-        let _ = self.repository.delete_cursor(user_id, device_id).await;
+        // Delete the old cursor - best effort, may not exist
+        if let Err(e) = self.repository.delete_cursor(user_id, device_id).await {
+            tracing::debug!(user_id = %user_id, device_id = %device_id, error = %e, "failed to delete old cursor");
+        }
         
         // Create a new cursor starting from now
         let cursor = self.repository.get_or_create_cursor(user_id, device_id).await?;

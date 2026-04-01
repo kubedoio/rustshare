@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Multipart, Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -223,14 +223,15 @@ pub async fn download_file_content(
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_DISPOSITION,
-        content_disposition.parse().unwrap(),
+        HeaderValue::from_str(&content_disposition)
+            .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
     );
     
     // Set Content-Type based on file's MIME type
-    headers.insert(
-        header::CONTENT_TYPE,
-        file.mime_type.parse().unwrap_or_else(|_| "application/octet-stream".parse().unwrap()),
-    );
+    let content_type = file.mime_type.parse().ok()
+        .or_else(|| HeaderValue::from_str("application/octet-stream").ok())
+        .unwrap_or_else(|| HeaderValue::from_static("application/octet-stream"));
+    headers.insert(header::CONTENT_TYPE, content_type);
 
     (StatusCode::OK, headers, content).into_response()
 }
@@ -270,14 +271,14 @@ pub async fn preview_file(
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_DISPOSITION,
-        "inline".parse().unwrap(),
+        HeaderValue::from_static("inline"),
     );
     
     // Set Content-Type based on file's MIME type
-    headers.insert(
-        header::CONTENT_TYPE,
-        file.mime_type.parse().unwrap_or_else(|_| "application/octet-stream".parse().unwrap()),
-    );
+    let content_type = file.mime_type.parse().ok()
+        .or_else(|| HeaderValue::from_str("application/octet-stream").ok())
+        .unwrap_or_else(|| HeaderValue::from_static("application/octet-stream"));
+    headers.insert(header::CONTENT_TYPE, content_type);
 
     (StatusCode::OK, headers, content).into_response()
 }

@@ -1,205 +1,214 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
-  import { createQuery } from '@tanstack/svelte-query';
-  import { getFolderTree } from '$lib/api/folders';
-  import type { FolderTree } from '$lib/api/folders';
-  import FolderTreeItem from './FolderTreeItem.svelte';
+	import { createEventDispatcher } from 'svelte';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { getFolderTree } from '$lib/api/folders';
+	import type { FolderTree } from '$lib/api/folders';
+	import { Home, Loader2, AlertCircle } from 'lucide-svelte';
+	import MoveFolderTreeItem from './MoveFolderTreeItem.svelte';
 
-  export let open = false;
-  export let loading = false;
-  export let itemName = '';
-  export let itemType: 'file' | 'folder' = 'file';
-  export let currentFolderId: string | null = null;
-  export let itemId: string | null = null;
+	export let open = false;
+	export let loading = false;
+	export let itemName = '';
+	export let itemType: 'file' | 'folder' = 'file';
+	export let currentFolderId: string | null = null;
+	export let itemId: string | null = null;
 
-  const dispatch = createEventDispatcher<{
-    close: void;
-    confirm: { targetFolderId: string | null };
-  }>();
+	const dispatch = createEventDispatcher<{
+		close: void;
+		confirm: { targetFolderId: string | null };
+	}>();
 
-  let selectedFolderId: string | null = null;
-  let error = '';
-  let invalidFolderIds = new Set<string>();
+	let selectedFolderId: string | null = null;
+	let error = '';
+	let invalidFolderIds = new Set<string>();
+	let expandedFolders = new Set<string>();
 
-  // Query for folder tree
-  $: folderTreeQuery = createQuery({
-    queryKey: ['folder-tree'],
-    queryFn: getFolderTree,
-    enabled: open
-  });
+	// Query for folder tree
+	$: folderTreeQuery = createQuery({
+		queryKey: ['folder-tree'],
+		queryFn: getFolderTree,
+		enabled: open
+	});
 
-  // Build set of invalid folder IDs (folder itself + all descendants) to prevent circular moves
-  function getDescendantIds(tree: FolderTree, folderId: string): Set<string> {
-    const ids = new Set<string>();
+	// Build set of invalid folder IDs (folder itself + all descendants) to prevent circular moves
+	function getDescendantIds(tree: FolderTree, folderId: string): Set<string> {
+		const ids = new Set<string>();
 
-    function traverse(t: FolderTree): boolean {
-      if (t.folder.id === folderId) {
-        ids.add(t.folder.id);
-        // Add all descendants
-        t.subfolders.forEach(child => traverseAll(child));
-        return true;
-      }
-      // Continue searching in subfolders
-      for (const child of t.subfolders) {
-        if (traverse(child)) return true;
-      }
-      return false;
-    }
+		function traverse(t: FolderTree): boolean {
+			if (t.folder.id === folderId) {
+				ids.add(t.folder.id);
+				t.subfolders.forEach(child => traverseAll(child));
+				return true;
+			}
+			for (const child of t.subfolders) {
+				if (traverse(child)) return true;
+			}
+			return false;
+		}
 
-    function traverseAll(t: FolderTree) {
-      ids.add(t.folder.id);
-      t.subfolders.forEach(child => traverseAll(child));
-    }
+		function traverseAll(t: FolderTree) {
+			ids.add(t.folder.id);
+			t.subfolders.forEach(child => traverseAll(child));
+		}
 
-    traverse(tree);
-    return ids;
-  }
+		traverse(tree);
+		return ids;
+	}
 
-  // Update invalid folder IDs when folder tree loads
-  $: if ($folderTreeQuery.data && itemType === 'folder' && itemId) {
-    invalidFolderIds = getDescendantIds($folderTreeQuery.data, itemId);
-  } else {
-    invalidFolderIds = new Set();
-  }
+	// Update invalid folder IDs when folder tree loads
+	$: if ($folderTreeQuery.data && itemType === 'folder' && itemId) {
+		invalidFolderIds = getDescendantIds($folderTreeQuery.data, itemId);
+	} else {
+		invalidFolderIds = new Set();
+	}
 
-  function handleSubmit() {
-    error = '';
+	function handleSubmit() {
+		error = '';
 
-    if (selectedFolderId === currentFolderId) {
-      error = 'Item is already in this folder';
-      return;
-    }
+		if (selectedFolderId === currentFolderId) {
+			error = 'Item is already in this folder';
+			return;
+		}
 
-    // Prevent circular moves for folders
-    if (itemType === 'folder' && selectedFolderId && invalidFolderIds.has(selectedFolderId)) {
-      error = 'Cannot move a folder into itself or its descendants';
-      return;
-    }
+		if (itemType === 'folder' && selectedFolderId && invalidFolderIds.has(selectedFolderId)) {
+			error = 'Cannot move a folder into itself or its descendants';
+			return;
+		}
 
-    dispatch('confirm', { targetFolderId: selectedFolderId });
-  }
+		dispatch('confirm', { targetFolderId: selectedFolderId });
+	}
 
-  function handleClose() {
-    selectedFolderId = null;
-    error = '';
-    dispatch('close');
-  }
+	function handleClose() {
+		selectedFolderId = null;
+		error = '';
+		expandedFolders = new Set();
+		dispatch('close');
+	}
 
-  function toggleFolder(node: FolderTree, expandedFolders: Set<string>): Set<string> {
-    const newSet = new Set(expandedFolders);
-    if (newSet.has(node.folder.id)) {
-      newSet.delete(node.folder.id);
-    } else {
-      newSet.add(node.folder.id);
-    }
-    return newSet;
-  }
+	function toggleFolder(folderId: string) {
+		const newExpanded = new Set(expandedFolders);
+		if (newExpanded.has(folderId)) {
+			newExpanded.delete(folderId);
+		} else {
+			newExpanded.add(folderId);
+		}
+		expandedFolders = newExpanded;
+	}
 
-  let expandedFolders = new Set<string>();
+	function selectFolder(folderId: string | null) {
+		selectedFolderId = folderId;
+		error = '';
+	}
 
-  $: if (open) {
-    selectedFolderId = null;
-    error = '';
-    expandedFolders = new Set();
-  }
+	// Reset when opened
+	$: if (open) {
+		selectedFolderId = null;
+		error = '';
+		expandedFolders = new Set();
+	}
 </script>
 
-<dialog class="modal" class:modal-open={open}>
-  <div class="modal-box max-w-2xl">
-    <h3 class="font-bold text-lg mb-4">
-      Move {itemType === 'folder' ? 'Folder' : 'File'}
-    </h3>
+{#if open}
+	<div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+		<!-- Backdrop -->
+		<button
+			type="button"
+			class="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-default"
+			on:click={handleClose}
+			aria-label="Close"
+		></button>
 
-    <p class="text-sm text-base-content/70 mb-4">
-      Move <strong>{itemName}</strong> to:
-    </p>
+		<!-- Modal -->
+		<div class="relative bg-base-100 rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+			<!-- Header -->
+			<div class="px-5 py-4 border-b border-base-300/50">
+				<h3 class="text-lg font-semibold text-base-content">
+					Move {itemType === 'folder' ? 'Folder' : 'File'}
+				</h3>
+				<p class="text-sm text-base-content/60 mt-1">
+					Choose a destination for <span class="font-medium text-base-content">{itemName}</span>
+				</p>
+			</div>
 
-    <div class="border border-base-300 rounded-lg p-4 max-h-96 overflow-y-auto">
-      {#if $folderTreeQuery.isLoading}
-        <div class="flex justify-center py-8">
-          <span class="loading loading-spinner loading-md"></span>
-        </div>
-      {:else if $folderTreeQuery.isError}
-        <div class="alert alert-error">
-          <span>Failed to load folders: {$folderTreeQuery.error?.message}</span>
-        </div>
-      {:else if $folderTreeQuery.data}
-        <!-- Root folder option -->
-        <button
-          type="button"
-          class="flex items-center gap-2 w-full text-left p-2 rounded hover:bg-base-200 transition-colors"
-          class:bg-primary={selectedFolderId === null}
-          class:text-primary-content={selectedFolderId === null}
-          on:click={() => (selectedFolderId = null)}
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke-width="1.5"
-            stroke="currentColor"
-            class="w-5 h-5"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"
-            />
-          </svg>
-          <span class="font-medium">Root</span>
-          {#if currentFolderId === null}
-            <span class="badge badge-sm ml-auto">Current</span>
-          {/if}
-        </button>
+			<!-- Folder Tree -->
+			<div class="p-4">
+				<div class="border border-base-300/50 rounded-lg bg-base-200/30 max-h-80 overflow-y-auto">
+					{#if $folderTreeQuery.isLoading}
+						<div class="flex items-center justify-center py-8">
+							<Loader2 size={24} class="animate-spin text-brand-500" />
+						</div>
+					{:else if $folderTreeQuery.isError}
+						<div class="flex items-center gap-2 px-4 py-4 text-error">
+							<AlertCircle size={18} />
+							<span>Failed to load folders</span>
+						</div>
+					{:else if $folderTreeQuery.data}
+						<!-- Root option -->
+						<button
+							type="button"
+							class="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors border-b border-base-300/30
+								{selectedFolderId === null 
+									? 'bg-brand-500/10 text-brand-600' 
+									: 'hover:bg-base-200/50'}"
+							on:click={() => selectFolder(null)}
+						>
+							<Home size={18} />
+							<span class="font-medium">Home</span>
+							{#if currentFolderId === null}
+								<span class="ml-auto text-xs px-2 py-0.5 rounded-full bg-base-300/50 text-base-content/60">Current</span>
+							{/if}
+						</button>
 
-        <!-- Folder tree - render subfolders of virtual root directly -->
-        {#if $folderTreeQuery.data && $folderTreeQuery.data.subfolders}
-          {#each $folderTreeQuery.data.subfolders as subfolder (subfolder.folder.id)}
-            <FolderTreeItem
-              node={subfolder}
-              {selectedFolderId}
-              {currentFolderId}
-              {expandedFolders}
-              {invalidFolderIds}
-              on:select={(e) => (selectedFolderId = e.detail)}
-              on:toggle={(e) => (expandedFolders = toggleFolder(e.detail, expandedFolders))}
-              level={0}
-            />
-          {/each}
-        {/if}
-      {/if}
-    </div>
+						<!-- Folder tree -->
+						{#if $folderTreeQuery.data.subfolders?.length > 0}
+							<div class="py-1">
+								{#each $folderTreeQuery.data.subfolders as folder (folder.folder.id)}
+									<MoveFolderTreeItem
+										{folder}
+										level={0}
+										{selectedFolderId}
+										{currentFolderId}
+										{invalidFolderIds}
+										{expandedFolders}
+										onSelect={selectFolder}
+										onToggle={toggleFolder}
+									/>
+								{/each}
+							</div>
+						{/if}
+					{/if}
+				</div>
 
-    {#if error}
-      <div class="alert alert-error mt-4">
-        <span>{error}</span>
-      </div>
-    {/if}
+				{#if error}
+					<div class="flex items-center gap-2 mt-3 px-3 py-2 bg-error/10 text-error rounded-lg text-sm">
+						<AlertCircle size={16} />
+						<span>{error}</span>
+					</div>
+				{/if}
+			</div>
 
-    <div class="modal-action">
-      <button
-        type="button"
-        class="btn btn-ghost"
-        on:click={handleClose}
-        disabled={loading}
-      >
-        Cancel
-      </button>
-      <button
-        type="button"
-        class="btn btn-primary"
-        on:click={handleSubmit}
-        disabled={loading}
-      >
-        {#if loading}
-          <span class="loading loading-spinner loading-sm"></span>
-        {/if}
-        Move Here
-      </button>
-    </div>
-  </div>
-
-  <form method="dialog" class="modal-backdrop">
-    <button type="button" on:click={handleClose} disabled={loading}>close</button>
-  </form>
-</dialog>
+			<!-- Actions -->
+			<div class="px-5 py-4 border-t border-base-300/50 flex justify-end gap-3">
+				<button
+					type="button"
+					class="px-4 py-2 text-sm font-medium text-base-content/70 hover:text-base-content hover:bg-base-200 rounded-lg transition-colors"
+					on:click={handleClose}
+					disabled={loading}
+				>
+					Cancel
+				</button>
+				<button
+					type="button"
+					class="px-4 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
+					on:click={handleSubmit}
+					disabled={loading || selectedFolderId === currentFolderId}
+				>
+					{#if loading}
+						<Loader2 size={16} class="animate-spin" />
+					{/if}
+					Move Here
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}

@@ -5,6 +5,7 @@ use chrono::TimeDelta;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, TokenData, Validation};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tracing::{debug, info};
 
 /// JWT claims structure
 #[derive(Debug, Serialize, Deserialize)]

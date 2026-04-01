@@ -5,63 +5,45 @@
 	import { createQuery } from '@tanstack/svelte-query';
 	import { getFolderTree, type FolderTree } from '$lib/api/folders';
 	import { onMount } from 'svelte';
-
-	// Components
-	import NavItem from '$lib/ui/NavItem.svelte';
+	import { 
+		ChevronRight, 
+		Folder, 
+		FolderOpen,
+		Home,
+		Users,
+		Star,
+		Image,
+		Clock,
+		Search,
+		Plus
+	} from 'lucide-svelte';
+	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
+	import SidebarFolderTree from '$lib/files/SidebarFolderTree.svelte';
 
 	// Props
 	interface Props {
 		variant?: 'files' | 'admin' | 'default';
-		collapsed?: boolean;
 		mobileOpen?: boolean;
 		onClose?: () => void;
+		onCreateFolder?: () => void;
 	}
 	let { 
 		variant = 'files', 
-		collapsed = false,
 		mobileOpen = false,
-		onClose = () => {} 
+		onClose = () => {},
+		onCreateFolder = () => {}
 	}: Props = $props();
 
-	// === Folder Tree State ===
-	let expandedFolders = $state<Set<string>>(new Set());
+	// Folder Tree Query - refetch on window focus to keep live
 	let folderTreeQuery = $derived(
 		createQuery<FolderTree>({
 			queryKey: ['folder-tree'],
 			queryFn: () => getFolderTree(),
-			enabled: variant === 'files'
+			enabled: variant === 'files',
+			refetchOnWindowFocus: true,
+			staleTime: 0
 		})
 	);
-
-	// Load expanded folders from localStorage on mount
-	onMount(() => {
-		const saved = localStorage.getItem('sidebar-expanded-folders');
-		if (saved) {
-			try {
-				const parsed = JSON.parse(saved);
-				if (Array.isArray(parsed)) {
-					expandedFolders = new Set(parsed);
-				}
-			} catch {
-				// Invalid JSON, ignore
-			}
-		}
-	});
-
-	// Persist expanded folders to localStorage
-	function saveExpandedFolders() {
-		localStorage.setItem('sidebar-expanded-folders', JSON.stringify([...expandedFolders]));
-	}
-
-	function toggleFolder(folderId: string) {
-		if (expandedFolders.has(folderId)) {
-			expandedFolders.delete(folderId);
-		} else {
-			expandedFolders.add(folderId);
-		}
-		expandedFolders = expandedFolders; // trigger reactivity
-		saveExpandedFolders();
-	}
 
 	function isFolderActive(folderId: string): boolean {
 		if (!browser) return false;
@@ -69,242 +51,201 @@
 		return params.get('folder') === folderId;
 	}
 
-	function navigateToFolder(folderId: string) {
-		goto(`/files?folder=${folderId}`);
+	function isRootActive(): boolean {
+		if (!browser) return false;
+		const pathname = window.location.pathname;
+		const search = window.location.search;
+		return pathname === '/files' && (!search || !search.includes('folder='));
+	}
+
+	function navigateToFolder(folderId: string | null) {
+		fileBrowserUi.selectFolder(folderId);
+		if (folderId) {
+			goto(`/files?folder=${folderId}`);
+		} else {
+			goto('/files');
+		}
 		onClose();
 	}
 
-	// === Navigation Items ===
-	const filesNav = [
-		{ href: '/files', icon: 'home', label: 'Home' },
-		{ href: '/shared-with-me', icon: 'users', label: 'Shared' },
-	];
-
+	// Navigation items
 	const libraryNav = [
-		{ href: '/files?filter=starred', icon: 'star', label: 'Starred' },
-		{ href: '/files?filter=photos', icon: 'image', label: 'Photos' },
-		{ href: '/files?sort=recent', icon: 'clock', label: 'Recent' },
+		{ href: '/files?filter=starred', icon: Star, label: 'Starred' },
+		{ href: '/files?filter=photos', icon: Image, label: 'Photos' },
+		{ href: '/files?sort=recent', icon: Clock, label: 'Recent' },
 	];
 
-	const adminNav = [
-		{ href: '/admin', icon: 'home', label: 'Dashboard' },
-		{ href: '/admin/users', icon: 'users', label: 'Users' },
-	];
-
-	let navigation = $derived(variant === 'admin' ? adminNav : filesNav);
-
-	// Determine active state for navigation items
-	function isNavItemActive(href: string): boolean {
+	function isLibraryActive(href: string): boolean {
 		const currentPath = $page.url.pathname + $page.url.search;
-		if (href === '/files') {
-			// Home is active only on plain /files without folder param
-			return currentPath === '/files' || currentPath === '/files?' || currentPath.startsWith('/files?filter=') || currentPath.startsWith('/files?sort=');
-		}
-		if (href === '/shared-with-me') {
-			return $page.url.pathname.startsWith('/shared-with-me');
-		}
-		return currentPath.startsWith(href);
+		return currentPath === href || currentPath.startsWith(href);
+	}
+
+	function getSubfolders(): FolderTree[] {
+		return $folderTreeQuery?.data?.subfolders || [];
 	}
 </script>
 
 <!-- Mobile overlay -->
 {#if mobileOpen}
-	<div
-		class="fixed inset-0 bg-black/50 lg:hidden z-40"
-		on:click={onClose}
-		on:keydown={(e) => e.key === 'Escape' && onClose()}
-		role="button"
-		tabindex="0"
-	></div>
+	<button
+		type="button"
+		class="fixed inset-0 bg-black/60 lg:hidden z-40 backdrop-blur-sm cursor-default"
+		onclick={onClose}
+		aria-label="Close sidebar"
+	></button>
 {/if}
 
 <aside
 	class="flex h-full flex-col border-r overflow-hidden transition-all duration-300 lg:translate-x-0
+		bg-base-100 border-base-300/50
 		{mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-		{variant === 'admin' ? 'bg-slate-950 border-slate-800' : 'bg-base-100 border-base-300/70'}
-		{collapsed ? 'w-16' : 'w-64'}"
+		w-64"
 	class:fixed={mobileOpen}
 	class:lg:static={true}
 	class:z-50={mobileOpen}
+	aria-label="Folder navigation"
 >
-	<!-- Logo Header -->
-	<div class="border-b p-4 flex-shrink-0 {variant === 'admin' ? 'border-slate-800' : 'border-base-300/70'}">
-		<a href={variant === 'admin' ? '/admin' : '/files'} class="flex items-center gap-3">
-			<!-- Logo Icon -->
-			<div class="relative">
-				<div
-					class="flex h-10 w-10 items-center justify-center rounded-xl shadow-sm flex-shrink-0
-						{variant === 'admin' ? 'bg-slate-800' : 'bg-gradient-to-br from-brand-500 to-brand-600'}"
-				>
-					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" 
-						class="h-5 w-5 {variant === 'admin' ? 'text-slate-200' : 'text-white'}">
-						<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
-					</svg>
-				</div>
-				<!-- Status dot -->
-				<div
-					class="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 animate-pulse
-						{variant === 'admin' ? 'bg-brand-500 border-slate-950' : 'bg-success border-base-100'}"
-				></div>
+	<!-- Header with Search -->
+	<div class="border-b border-base-300/50 p-3">
+		<div class="flex items-center gap-2">
+			<div class="flex-1 relative">
+				<Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-base-content/40" />
+				<input
+					type="text"
+					placeholder="Search files..."
+					class="w-full h-9 pl-9 pr-3 text-sm bg-base-200/50 border border-transparent rounded-lg
+						placeholder:text-base-content/40 focus:bg-base-100 focus:border-brand-500/30 focus:outline-none transition-all"
+					value={$fileBrowserUi.searchQuery}
+					oninput={(e) => fileBrowserUi.setSearchQuery(e.currentTarget.value)}
+				/>
 			</div>
-			{#if !collapsed}
-				<div class="flex flex-col">
-					<span class="text-lg font-bold tracking-tight {variant === 'admin' ? 'text-slate-100' : 'text-brand-600'}">
-						RustShare
-					</span>
-					{#if variant === 'admin'}
-						<span class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Admin</span>
-					{/if}
-				</div>
-			{/if}
-		</a>
+		</div>
 	</div>
 
 	<!-- Navigation Sections -->
-	<div class="flex-1 overflow-y-auto py-5 px-3 space-y-7">
-		<!-- Main Navigation -->
-		<div class="space-y-0.5">
-			{#each navigation as item}
-				<NavItem
-					href={item.href}
-					icon={item.icon}
-					label={item.label}
-					compact={collapsed}
-					onClick={onClose}
-				/>
-			{/each}
+	<div class="flex-1 overflow-y-auto py-2">
+		<!-- Quick Links -->
+		<nav class="px-2 mb-2" aria-label="Quick links">
+			<button
+				type="button"
+				class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+					{isRootActive() 
+						? 'bg-brand-500/10 text-brand-600 font-medium' 
+						: 'text-base-content/70 hover:bg-base-200/60'}"
+				onclick={() => navigateToFolder(null)}
+			>
+				<Home size={18} strokeWidth={1.75} />
+				<span>Home</span>
+			</button>
+			<a
+				href="/shared-with-me"
+				class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+					{$page.url.pathname.startsWith('/shared-with-me')
+						? 'bg-brand-500/10 text-brand-600 font-medium'
+						: 'text-base-content/70 hover:bg-base-200/60'}"
+				onclick={onClose}
+			>
+				<Users size={18} strokeWidth={1.75} />
+				<span>Shared</span>
+			</a>
+		</nav>
+
+		<!-- Library Section -->
+		<div class="px-2 mb-4">
+			<h3 class="px-3 text-[11px] font-semibold text-base-content/40 uppercase tracking-wider mb-1">
+				Library
+			</h3>
+			<nav class="space-y-0.5" aria-label="Library">
+				{#each libraryNav as item}
+					<a
+						href={item.href}
+						class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+							{isLibraryActive(item.href)
+								? 'bg-brand-500/10 text-brand-600 font-medium'
+								: 'text-base-content/70 hover:bg-base-200/60'}"
+						onclick={onClose}
+					>
+						<item.icon size={18} strokeWidth={1.75} />
+						<span>{item.label}</span>
+					</a>
+				{/each}
+			</nav>
 		</div>
 
-		<!-- Library Section (Files variant only) -->
-		{#if variant === 'files' && !collapsed}
-			<div>
-				<h3 class="px-3 text-xs font-semibold text-base-content/50 uppercase tracking-wider mb-2">
-					Library
+		<!-- Folders Section -->
+		<div class="px-2">
+			<div class="flex items-center justify-between px-3 mb-1">
+				<h3 class="text-[11px] font-semibold text-base-content/40 uppercase tracking-wider">
+					Folders
 				</h3>
-				<div class="space-y-0.5">
-					{#each libraryNav as item}
-						<NavItem
-							href={item.href}
-							icon={item.icon}
-							label={item.label}
-							onClick={onClose}
-						/>
-					{/each}
-				</div>
+				<button
+					type="button"
+					class="p-1 rounded-md text-base-content/40 hover:text-brand-500 hover:bg-brand-500/10 transition-colors"
+					onclick={onCreateFolder}
+					aria-label="Create new folder"
+					title="New folder"
+				>
+					<Plus size={14} strokeWidth={2} />
+				</button>
 			</div>
-		{/if}
-
-		<!-- My Folders Section (Files variant only) -->
-		{#if variant === 'files' && !collapsed}
-			<div class="pt-4">
-				<h3 class="px-3 text-xs font-semibold text-base-content/50 uppercase tracking-wider mb-2">
-					My Folders
-				</h3>
-				{#if $folderTreeQuery?.isLoading}
-					<div class="px-3 py-2">
-						<span class="loading loading-spinner loading-sm text-brand-500"></span>
+			
+			{#if $folderTreeQuery?.isLoading}
+				<div class="px-3 py-4">
+					<div class="flex items-center gap-2 text-sm text-base-content/50">
+						<div class="w-4 h-4 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin"></div>
+						<span>Loading folders...</span>
 					</div>
-				{:else if $folderTreeQuery?.data?.subfolders?.length}
-					<nav class="space-y-0.5">
-						{#each $folderTreeQuery.data.subfolders as folderTree (folderTree.folder.id)}
-							{@const hasChildren = folderTree.subfolders && folderTree.subfolders.length > 0}
-							{@const isExpanded = expandedFolders.has(folderTree.folder.id)}
-							{@const isActive = isFolderActive(folderTree.folder.id)}
-							<div class="group">
-								<div
-									class="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors cursor-pointer
-										{isActive ? 'bg-brand-500/10 text-brand-600 font-medium' : 'text-base-content hover:bg-base-200'}"
-								>
-									<!-- Expand/Collapse button -->
-									<button
-										type="button"
-										class="w-5 h-5 flex items-center justify-center rounded hover:bg-base-300/50 transition-colors shrink-0
-											{hasChildren ? '' : 'invisible'}"
-										on:click|stopPropagation={() => toggleFolder(folderTree.folder.id)}
-									>
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											stroke-width="2"
-											class="w-3 h-3 transition-transform {isExpanded ? 'rotate-90' : ''}"
-										>
-											<path d="m9 18 6-6-6-6" />
-										</svg>
-									</button>
-									<!-- Clickable area for navigation -->
-									<button
-										type="button"
-										class="flex-1 flex items-center gap-2 text-left min-w-0"
-										on:click={() => navigateToFolder(folderTree.folder.id)}
-									>
-										<!-- Folder Icon -->
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										viewBox="0 0 24 24"
-										fill="none"
-										stroke="currentColor"
-										stroke-width="2"
-										class="w-4 h-4 flex-shrink-0"
-									>
-										<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-									</svg>
-									<span class="flex-1 truncate">{folderTree.folder.name}</span>
-								</button>
-								</div>
-								<!-- Children -->
-								{#if isExpanded && hasChildren}
-									<div class="ml-4">
-										{#each folderTree.subfolders as child (child.folder.id)}
-											<button
-												type="button"
-												class="w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg transition-colors text-left
-													{isFolderActive(child.folder.id) ? 'bg-brand-500/10 text-brand-600 font-medium' : 'text-base-content hover:bg-base-200'}"
-												on:click={() => navigateToFolder(child.folder.id)}
-											>
-												<!-- Indent spacer for alignment -->
-												<span class="w-5 shrink-0"></span>
-												<!-- Folder Icon -->
-												<svg
-													xmlns="http://www.w3.org/2000/svg"
-													viewBox="0 0 24 24"
-													fill="none"
-													stroke="currentColor"
-													stroke-width="2"
-													class="w-4 h-4 flex-shrink-0"
-												>
-													<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-												</svg>
-												<span class="flex-1 truncate">{child.folder.name}</span>
-											</button>
-										{/each}
-									</div>
-								{/if}
-							</div>
-						{/each}
-					</nav>
-				{:else}
-					<p class="px-3 text-sm text-base-content/50">No folders yet</p>
-				{/if}
-			</div>
-		{/if}
+				</div>
+			{:else if $folderTreeQuery?.isError}
+				<div class="px-3 py-4 text-sm text-error">
+					<div class="flex items-center gap-2">
+						<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+							<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+						</svg>
+						<span>Failed to load folders</span>
+					</div>
+					<button 
+						type="button"
+						class="mt-2 text-xs text-brand-500 hover:text-brand-600"
+						onclick={() => $folderTreeQuery.refetch()}
+					>
+						Retry
+					</button>
+				</div>
+			{:else if getSubfolders().length > 0}
+				<nav class="space-y-0.5" aria-label="Folder tree">
+					<SidebarFolderTree 
+						folders={getSubfolders()}
+						onFolderClick={onClose}
+					/>
+				</nav>
+			{:else}
+				<div class="px-3 py-4 text-center">
+					<div class="w-10 h-10 rounded-xl bg-base-200/70 flex items-center justify-center mx-auto mb-2">
+						<Folder size={20} class="text-base-content/30" />
+					</div>
+					<p class="text-xs text-base-content/50">No folders yet</p>
+					<button
+						type="button"
+						class="mt-2 text-xs text-brand-500 hover:text-brand-600 font-medium"
+						onclick={onCreateFolder}
+					>
+						Create your first folder
+					</button>
+				</div>
+			{/if}
+		</div>
 	</div>
 
 	<!-- Footer -->
-	{#if !collapsed}
-		<div class="border-t p-4 flex-shrink-0 {variant === 'admin' ? 'border-slate-800' : 'border-base-300/70'}">
-			<div class="rounded-xl p-3.5 border {variant === 'admin' ? 'bg-slate-900/70 border-slate-800' : 'bg-base-200/70 border-base-300/70'}">
-				<div class="flex items-center gap-2 mb-2">
-					<div class="w-2 h-2 rounded-full bg-success animate-pulse"></div>
-					<span class="text-xs font-medium {variant === 'admin' ? 'text-slate-400' : 'text-base-content/80'}">
-						System Online
-					</span>
-				</div>
-				<p class="text-xs {variant === 'admin' ? 'text-slate-600' : 'text-base-content/50'}">
-					RustShare v1.0
-				</p>
+	<div class="border-t border-base-300/50 p-3">
+		<div class="rounded-lg p-2.5 bg-base-200/50 border border-base-300/30">
+			<div class="flex items-center gap-2">
+				<div class="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></div>
+				<span class="text-[11px] font-medium text-base-content/60">
+					System Online
+				</span>
 			</div>
 		</div>
-	{/if}
+	</div>
 </aside>

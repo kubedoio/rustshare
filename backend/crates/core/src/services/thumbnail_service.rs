@@ -1,6 +1,7 @@
 //! Thumbnail generation service
 
 use std::sync::Arc;
+use tracing::debug;
 use uuid::Uuid;
 
 use crate::domain::{
@@ -410,7 +411,9 @@ where
         // Delete from storage (best effort - don't fail if storage delete fails)
         for size in [ThumbnailSize::Sm, ThumbnailSize::Md, ThumbnailSize::Lg] {
             let path = format!("thumbnails/{}/{}.webp", file_id, size.as_str());
-            let _ = self.storage.delete(&path).await;
+            if let Err(e) = self.storage.delete(&path).await {
+                tracing::debug!(path = %path, error = %e, "failed to delete thumbnail from storage");
+            }
         }
 
         Ok(())

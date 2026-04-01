@@ -7,6 +7,7 @@ use rustshare_core::services::{
     UploadError,
 };
 use std::sync::Arc;
+use tracing::debug;
 use uuid::Uuid;
 
 use crate::metadata_v2::{
@@ -311,15 +312,19 @@ impl UploadSessionRepository for RustFsUploadSessionRepository {
     }
 
     async fn delete_session(&self, session_id: Uuid) -> Result<(), UploadError> {
-        // Delete session document
+        // Delete session document - best effort, may not exist
         let session_path = self.session_path(session_id);
-        let _ = self.doc_store.delete(&session_path).await;
+        if let Err(e) = self.doc_store.delete(&session_path).await {
+            tracing::debug!(session_id = %session_id, path = %session_path, error = %e, "failed to delete session document");
+        }
 
-        // Delete all chunk info documents
+        // Delete all chunk info documents - best effort
         let chunks = self.get_session_chunks(session_id).await?;
         for chunk in chunks {
             let chunk_path = self.chunk_path(session_id, chunk.chunk_index);
-            let _ = self.doc_store.delete(&chunk_path).await;
+            if let Err(e) = self.doc_store.delete(&chunk_path).await {
+                tracing::debug!(session_id = %session_id, chunk_index = chunk.chunk_index, error = %e, "failed to delete chunk info");
+            }
         }
 
         Ok(())

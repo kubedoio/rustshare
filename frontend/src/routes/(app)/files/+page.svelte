@@ -120,15 +120,15 @@
 	const createFolderMutation = createMutation({
 		mutationFn: (name: string) => createFolder(name, currentFolderId),
 		onSuccess: (folder) => {
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
-			// Also invalidate parent folder contents to refresh tree
+			// Immediately update UI - add folder to tree
+			folderTreeStore.addFolder(folder, currentFolderId);
+			// Expand parent folder so new folder is visible
 			if (currentFolderId) {
-				folderTreeStore.setFolderChildren(currentFolderId, 
-					[...($folderTreeStore.rootFolders.find(f => f.id === currentFolderId)?.children || []), 
-					{ id: folder.id, name: folder.name, path: folder.path, parent_folder_id: folder.parent_folder_id, children: undefined }]
-				);
+				folderTreeStore.setExpanded(currentFolderId, true);
 			}
+			// Refresh queries
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			showCreateFolderModal = false;
 			showNotification('Folder created', 'success');
 			activityStore.addActivity('folder_created', folder.name);
@@ -154,10 +154,11 @@
 		mutationFn: ({ folderId, newName }: { folderId: string; newName: string }) => renameFolder(folderId, newName),
 		onSuccess: (_, { folderId, newName }) => {
 			const oldName = renameTarget?.name || 'Folder';
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
-			// Update folder name in tree immediately
+			// Immediately update UI
 			folderTreeStore.updateFolderName(folderId, newName);
+			// Refresh queries
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			showRenameModal = false;
 			renameTarget = null;
 			showNotification('Folder renamed', 'success');
@@ -181,10 +182,11 @@
 		mutationFn: (folderId: string) => deleteFolder(folderId),
 		onSuccess: (_, folderId) => {
 			const folderName = deleteTarget?.name || 'Folder';
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
-			// Remove from folder tree store immediately
+			// Immediately update UI
 			folderTreeStore.removeFolder(folderId);
+			// Refresh queries
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			// If we deleted the current folder or one in its path, go to root
 			if (deleteTarget && (currentFolderId === deleteTarget.id || folderPath.some(f => f.id === deleteTarget?.id))) {
 				currentFolderId = null;
@@ -202,6 +204,7 @@
 		onSuccess: () => {
 			const fileName = moveTarget?.name || 'File';
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			showMoveModal = false;
 			moveTarget = null;
 			showNotification('File moved', 'success');
@@ -211,12 +214,17 @@
 
 	const moveFolderMutation = createMutation({
 		mutationFn: ({ folderId, targetFolderId }: { folderId: string; targetFolderId: string | null }) => moveFolder(folderId, targetFolderId),
-		onSuccess: (_, { folderId }) => {
+		onSuccess: (_, { folderId, targetFolderId }) => {
 			const folderName = moveTarget?.name || 'Folder';
+			// Immediately update UI - move folder in tree
+			folderTreeStore.moveFolder(folderId, targetFolderId);
+			// Expand destination folder so moved folder is visible
+			if (targetFolderId) {
+				folderTreeStore.setExpanded(targetFolderId, true);
+			}
+			// Refresh queries
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
-			// Remove folder from its old location in tree
-			folderTreeStore.removeFolder(folderId);
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			showMoveModal = false;
 			moveTarget = null;
 			showNotification('Folder moved', 'success');
@@ -641,7 +649,7 @@
 		}
 	}
 
-	// Rename handlers
+	// Rename handlers - support both modal and inline
 	function handleRenameFile(file: File) {
 		renameTarget = file;
 		renameType = 'file';
@@ -652,6 +660,14 @@
 		renameTarget = folder;
 		renameType = 'folder';
 		showRenameModal = true;
+	}
+
+	function handleRenameFileInline(file: File, newName: string) {
+		$renameFileMutation.mutate({ fileId: file.id, newName });
+	}
+
+	function handleRenameFolderInline(folder: Folder, newName: string) {
+		$renameFolderMutation.mutate({ folderId: folder.id, newName });
 	}
 
 	function handleRenameConfirm(event: CustomEvent<{ newName: string }>) {
@@ -685,7 +701,7 @@
 		}
 	}
 
-	// Move handlers
+	// Move handlers - support both modal and direct
 	function handleMoveFile(file: File) {
 		moveTarget = file;
 		moveType = 'file';
@@ -696,6 +712,14 @@
 		moveTarget = folder;
 		moveType = 'folder';
 		showMoveModal = true;
+	}
+
+	function handleMoveFileDirect(file: File, targetFolderId: string | null) {
+		$moveFileMutation.mutate({ fileId: file.id, targetFolderId });
+	}
+
+	function handleMoveFolderDirect(folder: Folder, targetFolderId: string | null) {
+		$moveFolderMutation.mutate({ folderId: folder.id, targetFolderId });
 	}
 
 	async function handleMoveConfirm(event: CustomEvent<{ targetFolderId: string | null }>) {
@@ -821,6 +845,19 @@
 		$permanentlyDeleteFolderMutation.mutate(folder.id);
 	}
 
+	// Listen for create folder event from sidebar
+	onMount(() => {
+		const handleCreateFolderEvent = () => {
+			if (canCreateFolder) {
+				showCreateFolderModal = true;
+			}
+		};
+		window.addEventListener('create-folder-requested', handleCreateFolderEvent);
+		return () => {
+			window.removeEventListener('create-folder-requested', handleCreateFolderEvent);
+		};
+	});
+
 	// Keyboard shortcuts
 	function handleKeyDown(event: KeyboardEvent) {
 		if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
@@ -927,23 +964,23 @@
 		onBulkDelete={handleBulkDelete}
 		onBulkDownload={handleBulkDownload}
 		onBulkMove={handleBulkMove}
-		onRenameFile={handleRenameFile}
+		onRenameFile={handleRenameFileInline}
 		onDeleteFile={handleDeleteFile}
 		onToggleFileStar={handleToggleFileStar}
 		onRestoreFile={handleRestoreFile}
 		onPermanentDeleteFile={handlePermanentDeleteFile}
 		onShareFile={handleShareFile}
 		onVersionHistory={handleVersionHistory}
-		onMoveFile={handleMoveFile}
+		onMoveFile={handleMoveFileDirect}
 		onDownloadFile={handleDownloadFile}
 		onReplaceFile={handleReplaceFile}
-		onRenameFolder={handleRenameFolder}
+		onRenameFolder={handleRenameFolderInline}
 		onDeleteFolder={handleDeleteFolder}
 		onToggleFolderStar={handleToggleFolderStar}
 		onRestoreFolder={handleRestoreFolder}
 		onPermanentDeleteFolder={handlePermanentDeleteFolder}
 		onShareFolder={handleShareFolder}
-		onMoveFolder={handleMoveFolder}
+		onMoveFolder={handleMoveFolderDirect}
 		on:breadcrumbNavigate={handleBreadcrumbNavigate}
 	/>
 </DropZone>

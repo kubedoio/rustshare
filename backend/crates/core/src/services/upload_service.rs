@@ -550,11 +550,14 @@ where
         session.mark_completed(file.id);
         self.repository.complete_session(session_id, file.id).await?;
 
-        // Cleanup chunks
-        let _ = self
+        // Cleanup chunks - best effort, log but don't fail if cleanup fails
+        if let Err(e) = self
             .object_store
             .delete_session_chunks(session_id, session.total_chunks())
-            .await;
+            .await
+        {
+            tracing::warn!(session_id = %session_id, error = %e, "failed to cleanup upload chunks");
+        }
 
         Ok(CompleteUploadResponse {
             session_id,
@@ -589,11 +592,14 @@ where
             return Err(UploadError::SessionAlreadyCompleted(session_id));
         }
 
-        // Delete chunks
-        let _ = self
+        // Delete chunks - best effort during abort
+        if let Err(e) = self
             .object_store
             .delete_session_chunks(session_id, session.total_chunks())
-            .await;
+            .await
+        {
+            tracing::warn!(session_id = %session_id, error = %e, "failed to delete chunks during abort");
+        }
 
         // Mark as aborted
         self.repository.abort_session(session_id).await?;
@@ -622,14 +628,19 @@ where
 
         let mut cleaned = 0;
         for session in expired {
-            // Delete chunks
-            let _ = self
+            // Delete chunks - best effort during cleanup
+            if let Err(e) = self
                 .object_store
                 .delete_session_chunks(session.id, session.total_chunks())
-                .await;
+                .await
+            {
+                tracing::warn!(session_id = %session.id, error = %e, "failed to delete chunks during cleanup");
+            }
 
             // Delete session
-            let _ = self.repository.delete_session(session.id).await;
+            if let Err(e) = self.repository.delete_session(session.id).await {
+                tracing::warn!(session_id = %session.id, error = %e, "failed to delete expired session");
+            }
             cleaned += 1;
         }
 

@@ -161,14 +161,9 @@ impl Share {
 
     /// Get the resource being shared (file or folder ID)
     ///
-    /// # Safety
-    /// This uses expect() which panics if both file_id and folder_id are None.
-    /// The database CHECK constraint guarantees this never happens, but callers
-    /// in test code should ensure one is set.
-    pub fn resource_id(&self) -> uuid::Uuid {
-        self.file_id
-            .or(self.folder_id)
-            .expect("Share must have file_id or folder_id")
+    /// Returns `None` if neither file_id nor folder_id is set (invalid state).
+    pub fn resource_id(&self) -> Option<uuid::Uuid> {
+        self.file_id.or(self.folder_id)
     }
 
     /// Checks if the share link has expired (public shares only).
@@ -396,7 +391,7 @@ mod tests {
             tenant_id: Uuid::new_v4(),
         };
 
-        assert_eq!(share.resource_id(), file_id);
+        assert_eq!(share.resource_id(), Some(file_id));
     }
 
     #[test]

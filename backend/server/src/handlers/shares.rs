@@ -345,6 +345,9 @@ pub async fn revoke_share(
             rustshare_core::services::ShareError::CannotRemoveOwner => {
                 (StatusCode::FORBIDDEN, error.to_string())
             }
+            rustshare_core::services::ShareError::InvalidState(_) => {
+                (StatusCode::CONFLICT, error.to_string())
+            }
             rustshare_core::services::ShareError::Database(_)
             | rustshare_core::services::ShareError::PasswordHash(_)
             | rustshare_core::services::ShareError::Jwt(_) => (

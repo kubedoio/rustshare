@@ -324,8 +324,10 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
         }
     });
 
-    // Wait for send task to complete
-    let _ = send_task.await;
+    // Wait for send task to complete - log but don't fail on error
+    if let Err(e) = send_task.await {
+        tracing::debug!(error = %e, "send task ended with error");
+    }
 
     match &client_identity {
         ClientIdentity::User(user_id) => {
@@ -543,23 +545,21 @@ mod tests {
     use uuid::Uuid;
 
     /// Helper to create a test metadata store
-    async fn create_test_metadata_store() -> (MetadataStore, PgPool) {
+    async fn create_test_metadata_store() -> Result<(MetadataStore, PgPool), sqlx::Error> {
         let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
             "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
         });
 
-        let pool = PgPool::connect(&database_url)
-            .await
-            .expect("Failed to connect to test database");
+        let pool = PgPool::connect(&database_url).await?;
 
         let metadata_store = MetadataStore::new(pool.clone());
-        (metadata_store, pool)
+        Ok((metadata_store, pool))
     }
 
     #[tokio::test]
     #[ignore] // Requires database
     async fn test_should_send_share_created_to_file_owner() {
-        let (metadata_store, _pool) = create_test_metadata_store().await;
+        let (metadata_store, _pool) = create_test_metadata_store().await.expect("Failed to create test metadata store");
 
         let owner_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
@@ -616,7 +616,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires database
     async fn test_should_send_share_revoked_to_file_owner() {
-        let (metadata_store, _pool) = create_test_metadata_store().await;
+        let (metadata_store, _pool) = create_test_metadata_store().await.expect("Failed to create test metadata store");
 
         let owner_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
@@ -669,7 +669,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires database
     async fn test_should_send_share_updated_to_file_owner() {
-        let (metadata_store, _pool) = create_test_metadata_store().await;
+        let (metadata_store, _pool) = create_test_metadata_store().await.expect("Failed to create test metadata store");
 
         let owner_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();

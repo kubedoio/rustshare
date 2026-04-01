@@ -573,7 +573,7 @@ where
                         "Your permission on '{}' changed from {:?} to {:?}",
                         resource_name, old_permission, new_permission
                     ),
-                    resource_id: share.resource_id(),
+                    resource_id: share.resource_id().unwrap_or(share.id),
                     resource_type: if share.is_file_share() {
                         crate::domain::ResourceType::File
                     } else {
@@ -585,7 +585,7 @@ where
                         } else {
                             crate::domain::ResourceType::Folder
                         },
-                        share.resource_id(),
+                        share.resource_id().unwrap_or(share.id),
                     )),
                     tenant_id: updated_share.tenant_id,
                 })
@@ -693,7 +693,7 @@ where
                     notification_type: crate::domain::NotificationType::ShareRevoked,
                     title: "Share access revoked".to_string(),
                     message: format!("Your access to '{}' was revoked", resource_name),
-                    resource_id: share.resource_id(),
+                    resource_id: share.resource_id().unwrap_or(share.id),
                     resource_type: if share.is_file_share() {
                         crate::domain::ResourceType::File
                     } else {

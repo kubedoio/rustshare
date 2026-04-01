@@ -1,61 +1,61 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
-  import type { Folder } from '$lib/api/types';
+	import { createEventDispatcher } from 'svelte';
+	import type { Folder } from '$lib/api/types';
+	import { Home, ChevronRight } from 'lucide-svelte';
 
-  export let folderPath: Folder[] = [];
+	export let folderPath: Folder[] = [];
 
-  const dispatch = createEventDispatcher<{
-    navigate: { folderId: string | null };
-  }>();
+	const dispatch = createEventDispatcher<{
+		navigate: { folderId: string | null };
+	}>();
 
-  function handleNavigate(folderId: string | null) {
-    dispatch('navigate', { folderId });
-  }
+	function handleNavigate(folderId: string | null) {
+		dispatch('navigate', { folderId });
+	}
 </script>
 
-<div class="breadcrumbs text-sm">
-  <ul>
-    <li>
-      <button
-        type="button"
-        class="btn btn-ghost btn-sm"
-        on:click={() => handleNavigate(null)}
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke-width="1.5"
-          stroke="currentColor"
-          class="w-4 h-4"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"
-          />
-        </svg>
-        Home
-      </button>
-    </li>
+<nav aria-label="Breadcrumb" class="flex items-center">
+	<ol class="flex items-center flex-wrap gap-1">
+		<!-- Home/Root -->
+		<li class="flex items-center">
+			<button
+				type="button"
+				class="flex items-center gap-1.5 px-2 py-1 text-sm font-medium text-base-content/70 hover:text-brand-600 hover:bg-brand-500/10 rounded-md transition-colors"
+				on:click={() => handleNavigate(null)}
+				aria-label="Home"
+			>
+				<Home size={16} />
+				<span>Home</span>
+			</button>
+		</li>
 
-    {#each folderPath as folder, index}
-      {#if index === folderPath.length - 1}
-        <!-- Last item is current folder - not clickable -->
-        <li>
-          <span class="text-base-content/60">{folder.name}</span>
-        </li>
-      {:else}
-        <li>
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm"
-            on:click={() => handleNavigate(folder.id)}
-          >
-            {folder.name}
-          </button>
-        </li>
-      {/if}
-    {/each}
-  </ul>
-</div>
+		{#each folderPath as folder, index}
+			{@const isLast = index === folderPath.length - 1}
+			<li class="flex items-center">
+				<ChevronRight size={16} class="text-base-content/30 mx-1" />
+				{#if isLast}
+					<!-- Current folder - not clickable -->
+					<span 
+						class="px-2 py-1 text-sm font-semibold text-base-content bg-base-200/60 rounded-md"
+						aria-current="page"
+						title={folder.name}
+					>
+						<span class="truncate max-w-[150px] sm:max-w-[200px] md:max-w-[300px] lg:max-w-[400px] inline-block align-bottom">
+							{folder.name}
+						</span>
+					</span>
+				{:else}
+					<!-- Parent folder - clickable -->
+					<button
+						type="button"
+						class="px-2 py-1 text-sm font-medium text-base-content/70 hover:text-brand-600 hover:bg-brand-500/10 rounded-md transition-colors truncate max-w-[150px] sm:max-w-[200px] md:max-w-[250px]"
+						on:click={() => handleNavigate(folder.id)}
+						title={folder.name}
+					>
+						{folder.name}
+					</button>
+				{/if}
+			</li>
+		{/each}
+	</ol>
+</nav>

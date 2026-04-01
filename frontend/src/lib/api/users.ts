@@ -149,12 +149,23 @@ export async function updateProfile(request: UpdateProfileRequest): Promise<Full
  * Upload a new avatar for the current user
  */
 export async function uploadAvatar(file: File): Promise<{ avatar_path: string }> {
+	// Get the JWT token from sessionStorage
+	const token = typeof window !== 'undefined' 
+		? window.sessionStorage.getItem('rustshare.websocket_token') 
+		: null;
+
+	const headers: Record<string, string> = {
+		'Content-Type': file.type,
+	};
+
+	if (token) {
+		headers['Authorization'] = `Bearer ${token}`;
+	}
+
 	const response = await fetch('/api/v1/users/me/avatar', {
 		method: 'POST',
 		body: file,
-		headers: {
-			'Content-Type': file.type
-		},
+		headers,
 		credentials: 'include'
 	});
 

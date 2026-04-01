@@ -205,11 +205,14 @@ impl Default for ScimSchemas {
 
 impl ScimV2User {
     /// Create a new SCIM v2 user with the User schema.
-    pub fn new(user_name: String) -> Self {
+    ///
+    /// The user_name can be any type that converts to String,
+    /// such as `&str` or `String`.
+    pub fn new(user_name: impl Into<String>) -> Self {
         Self {
             id: None,
             external_id: None,
-            user_name,
+            user_name: user_name.into(),
             name: None,
             display_name: None,
             nick_name: None,
@@ -296,11 +299,14 @@ impl ScimV2User {
 
 impl ScimV2Group {
     /// Create a new SCIM v2 group with the Group schema.
-    pub fn new(display_name: String) -> Self {
+    ///
+    /// The display_name can be any type that converts into a String,
+    /// such as `&str` or `String`.
+    pub fn new(display_name: impl Into<String>) -> Self {
         Self {
             id: None,
             external_id: None,
-            display_name,
+            display_name: display_name.into(),
             members: None,
             meta: None,
             schemas: ScimSchemas {

@@ -17,6 +17,7 @@ use rustshare_core::services::{
 use serde::Deserialize;
 use sqlx::PgPool;
 use std::sync::Arc;
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::AppState;
@@ -471,7 +472,9 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                                     for member in members {
                                         if let Some(user_id_str) = member.get("value").and_then(|v| v.as_str()) {
                                             if let Ok(user_id) = Uuid::parse_str(user_id_str) {
-                                                let _ = self.add_group_member(id, user_id).await;
+                                                if let Err(e) = self.add_group_member(id, user_id).await {
+                                                    tracing::warn!(group_id = %id, user_id = %user_id, error = %e, "failed to add group member");
+                                                }
                                             }
                                         }
                                     }
@@ -483,7 +486,9 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                             for member in members {
                                 if let Some(user_id_str) = member.get("value").and_then(|v| v.as_str()) {
                                     if let Ok(user_id) = Uuid::parse_str(user_id_str) {
-                                        let _ = self.add_group_member(id, user_id).await;
+                                        if let Err(e) = self.add_group_member(id, user_id).await {
+                                            tracing::warn!(group_id = %id, user_id = %user_id, error = %e, "failed to add group member");
+                                        }
                                     }
                                 }
                             }
@@ -496,7 +501,9 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                         if path.starts_with("members[value eq ") {
                             if let Some(user_id_str) = path.split("value eq \"").nth(1).and_then(|s| s.split("\"").next()) {
                                 if let Ok(user_id) = Uuid::parse_str(user_id_str) {
-                                    let _ = self.remove_group_member(id, user_id).await;
+                                    if let Err(e) = self.remove_group_member(id, user_id).await {
+                                        tracing::warn!(group_id = %id, user_id = %user_id, error = %e, "failed to remove group member");
+                                    }
                                 }
                             }
                         }

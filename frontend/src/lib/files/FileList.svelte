@@ -12,25 +12,29 @@
 	export let workspaceMode: 'all' | 'photos' | 'recent' | 'starred' | 'deleted' = 'all';
 	export let onFolderClick: (folder: Folder) => void;
 	export let onFileClick: (file: FileType) => void;
-	export let onRenameFolder: (folder: Folder) => void = () => {};
+	export let onRenameFolder: (folder: Folder, newName: string) => void = () => {};
 	export let onDeleteFolder: (folder: Folder) => void = () => {};
 	export let onToggleFolderStar: (folder: Folder) => void = () => {};
 	export let onRestoreFolder: (folder: Folder) => void = () => {};
 	export let onPermanentDeleteFolder: (folder: Folder) => void = () => {};
 	export let onShareFolder: (folder: Folder) => void = () => {};
-	export let onMoveFolder: (folder: Folder) => void = () => {};
-	export let onRenameFile: (file: FileType) => void = () => {};
+	export let onMoveFolder: (folder: Folder, targetFolderId: string | null) => void = () => {};
+	export let onRenameFile: (file: FileType, newName: string) => void = () => {};
 	export let onDeleteFile: (file: FileType) => void = () => {};
 	export let onToggleFileStar: (file: FileType) => void = () => {};
 	export let onRestoreFile: (file: FileType) => void = () => {};
 	export let onPermanentDeleteFile: (file: FileType) => void = () => {};
 	export let onShareFile: (file: FileType) => void = () => {};
 	export let onVersionHistory: (file: FileType) => void = () => {};
-	export let onMoveFile: (file: FileType) => void = () => {};
+	export let onMoveFile: (file: FileType, targetFolderId: string | null) => void = () => {};
 	export let onDownloadFile: (file: FileType) => void = () => {};
 	export let onReplaceFile: (file: FileType) => void = () => {};
 	export let selectionMode = false;
 	export let replicationStatuses: Record<string, ReplicationStatus> = {};
+
+	// Drag and drop state
+	let draggedItem: { id: string; isFolder: boolean } | null = null;
+	let dragOverFolderId: string | null = null;
 
 	function handleFileToggle(file: FileType, event?: MouseEvent) {
 		const isShiftKey = event?.shiftKey ?? false;
@@ -46,6 +50,52 @@
 
 	function handleSelectAll() {
 		selectionStore.selectAll(files, folders);
+	}
+
+	// Drag handlers
+	function handleDragStart(item: { id: string; isFolder: boolean }) {
+		draggedItem = item;
+	}
+
+	function handleDragEnd() {
+		draggedItem = null;
+		dragOverFolderId = null;
+	}
+
+	function handleDragOverFolder(folderId: string) {
+		if (draggedItem && draggedItem.id !== folderId) {
+			dragOverFolderId = folderId;
+		}
+	}
+
+	function handleDragLeaveFolder() {
+		dragOverFolderId = null;
+	}
+
+	function handleDropOnFolder(folder: Folder) {
+		if (!draggedItem) return;
+		
+		// Can't drop a folder into itself or its children
+		if (draggedItem.id === folder.id) {
+			dragOverFolderId = null;
+			draggedItem = null;
+			return;
+		}
+
+		if (draggedItem.isFolder) {
+			const draggedFolder = folders.find(f => f.id === draggedItem?.id);
+			if (draggedFolder) {
+				onMoveFolder(draggedFolder, folder.id);
+			}
+		} else {
+			const draggedFile = files.find(f => f.id === draggedItem?.id);
+			if (draggedFile) {
+				onMoveFile(draggedFile, folder.id);
+			}
+		}
+		
+		dragOverFolderId = null;
+		draggedItem = null;
 	}
 
 	$: allSelected = folders.length + files.length > 0 &&
@@ -83,16 +133,23 @@
 					{workspaceMode}
 					{selectionMode}
 					selected={$selectionStore.selectedFolderIds.has(folder.id)}
+					isDragging={draggedItem?.id === folder.id}
+					isDropTarget={dragOverFolderId === folder.id}
 					onSelect={(e) => handleFolderToggle(folder, e)}
 					onToggleSelect={() => handleFolderToggle(folder)}
 					onNavigate={() => onFolderClick(folder)}
-					onRename={() => onRenameFolder(folder)}
+					onRename={(newName) => onRenameFolder(folder, newName)}
 					onDelete={() => onDeleteFolder(folder)}
 					onToggleStar={() => onToggleFolderStar(folder)}
 					onRestore={() => onRestoreFolder(folder)}
 					onPermanentDelete={() => onPermanentDeleteFolder(folder)}
 					onShare={() => onShareFolder(folder)}
-					onMove={() => onMoveFolder(folder)}
+					onMove={() => onMoveFolder(folder, null)}
+					onDragStart={() => handleDragStart({ id: folder.id, isFolder: true })}
+					onDragEnd={handleDragEnd}
+					onDrop={() => handleDropOnFolder(folder)}
+					onDragOver={() => handleDragOverFolder(folder.id)}
+					onDragLeave={handleDragLeaveFolder}
 				/>
 			{/each}
 
@@ -105,19 +162,22 @@
 					{selectionMode}
 					selected={$selectionStore.selectedFileIds.has(file.id)}
 					replicationStatus={replicationStatuses[file.id]}
+					isDragging={draggedItem?.id === file.id}
 					onSelect={(e) => (selectionMode ? handleFileToggle(file, e) : onFileClick(file))}
 					onToggleSelect={() => handleFileToggle(file)}
 					onNavigate={() => {}}
-					onRename={() => onRenameFile(file)}
+					onRename={(newName) => onRenameFile(file, newName)}
 					onDelete={() => onDeleteFile(file)}
 					onToggleStar={() => onToggleFileStar(file)}
 					onRestore={() => onRestoreFile(file)}
 					onPermanentDelete={() => onPermanentDeleteFile(file)}
 					onShare={() => onShareFile(file)}
-					onMove={() => onMoveFile(file)}
+					onMove={() => onMoveFile(file, null)}
 					onDownload={() => onDownloadFile(file)}
 					onVersionHistory={() => onVersionHistory(file)}
 					onReplace={() => onReplaceFile(file)}
+					onDragStart={() => handleDragStart({ id: file.id, isFolder: false })}
+					onDragEnd={handleDragEnd}
 				/>
 			{/each}
 		</tbody>

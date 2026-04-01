@@ -9,6 +9,7 @@ use axum::{
 use rustshare_auth::PasswordHasher;
 use rustshare_core::domain::Theme;
 use serde::{Deserialize, Serialize};
+use tracing::{error, warn};
 
 use crate::handlers::{AuthenticatedSession, AuthenticatedUser, ErrorResponse};
 use crate::AppState;
@@ -599,7 +600,9 @@ pub async fn upload_avatar(
     {
         tracing::error!("Failed to update user avatar_path: {:?}", e);
         // Try to clean up stored avatar
-        let _ = state.object_store.delete(&avatar_path).await;
+        if let Err(e) = state.object_store.delete(&avatar_path).await {
+                    tracing::warn!(avatar_path = %avatar_path, error = %e, "failed to delete old avatar");
+                }
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse::new("Failed to update avatar")),
@@ -652,7 +655,9 @@ pub async fn delete_avatar(
 
     // Delete from object storage if exists
     if let Some(avatar_path) = &user.avatar_path {
-        let _ = state.object_store.delete(avatar_path).await;
+        if let Err(e) = state.object_store.delete(avatar_path).await {
+                    tracing::warn!(avatar_path = %avatar_path, error = %e, "failed to delete avatar");
+                }
     }
 
     // Update database to clear avatar_path

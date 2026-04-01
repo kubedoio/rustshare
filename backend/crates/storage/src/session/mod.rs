@@ -114,10 +114,13 @@ pub struct SessionConfig {
 }
 
 impl SessionConfig {
-    /// Create default configuration
-    pub fn new(jwt_secret: String) -> Self {
+    /// Create default configuration.
+    ///
+    /// The jwt_secret can be any type that converts into a String,
+    /// such as `&str` or `String`.
+    pub fn new(jwt_secret: impl Into<String>) -> Self {
         Self {
-            jwt_secret,
+            jwt_secret: jwt_secret.into(),
             session_ttl: Duration::from_secs(24 * 3600), // 24 hours
             use_revocation_cache: true,
             revocation_cache_ttl: Duration::from_secs(24 * 3600),

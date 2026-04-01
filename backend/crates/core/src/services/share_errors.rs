@@ -71,6 +71,10 @@ pub enum ShareError {
     /// Cannot remove the owner from a share.
     #[error("Cannot remove the owner from a share")]
     CannotRemoveOwner,
+
+    /// Share is in an invalid state (invariant violated).
+    #[error("Share in invalid state: {0}")]
+    InvalidState(String),
 }
 
 #[cfg(test)]

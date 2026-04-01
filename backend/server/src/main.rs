@@ -162,7 +162,9 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
     ) -> Result<(), rustshare_core::services::UploadError> {
         for chunk_index in 0..total_chunks {
             let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-            let _ = self.inner.delete(&key).await;
+            if let Err(e) = self.inner.delete(&key).await {
+                    tracing::warn!(key = %key, error = %e, "failed to delete object during cleanup");
+                }
         }
         Ok(())
     }
@@ -1092,3 +1094,4 @@ async fn api_not_found() -> impl IntoResponse {
 struct HealthResponse {
     status: String,
 }
+// test

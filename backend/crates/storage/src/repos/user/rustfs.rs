@@ -8,6 +8,7 @@ use crate::metadata_v2::{
 use crate::repos::PathBuilder;
 use async_trait::async_trait;
 use std::sync::Arc;
+use tracing::debug;
 use uuid::Uuid;
 
 /// RustFS-backed user repository
@@ -138,9 +139,11 @@ impl RustFsUserRepository {
     ) -> Result<(), UserRepositoryError> {
         // Update email index if changed
         if old_user.email.to_lowercase() != new_user.email.to_lowercase() {
-            // Delete old index
+            // Delete old index - best effort, may not exist
             let old_email_path = self.path_builder.email_index_path(&old_user.email);
-            let _ = self.doc_store.delete(&old_email_path).await;
+            if let Err(e) = self.doc_store.delete(&old_email_path).await {
+                tracing::debug!(path = %old_email_path, error = %e, "failed to delete old email index");
+            }
             
             // Create new index
             let email_entry = EmailIndexEntry {
@@ -156,9 +159,11 @@ impl RustFsUserRepository {
         
         // Update username index if changed
         if old_user.username.to_lowercase() != new_user.username.to_lowercase() {
-            // Delete old index
+            // Delete old index - best effort, may not exist
             let old_username_path = self.path_builder.username_index_path(&old_user.username);
-            let _ = self.doc_store.delete(&old_username_path).await;
+            if let Err(e) = self.doc_store.delete(&old_username_path).await {
+                tracing::debug!(path = %old_username_path, error = %e, "failed to delete old username index");
+            }
             
             // Create new index
             let username_entry = UsernameIndexEntry {
@@ -202,17 +207,28 @@ impl UserRepository for RustFsUserRepository {
             ..Default::default()
         };
         
-        match self.doc_store.put_raw(&user_path, &serde_json::to_vec(&doc).unwrap(), opts).await {
+        let bytes = serde_json::to_vec(&doc)
+            .map_err(|e| UserRepositoryError::Storage(format!("failed to serialize user: {e}")))?;
+        
+        match self.doc_store.put_raw(&user_path, &bytes, opts).await {
             Ok(_) => {
                 // Update indexes
                 self.update_indexes_for_create(&doc).await?;
                 Ok(())
             }
             Err(e) => {
-                if e.to_string().contains("Precondition") || e.to_string().contains("409") {
+                // Check if this is a precondition/conflict error (document already exists)
+                // Both S3 (PreconditionFailed, 409) and LocalFs ("Precondition failed") return similar messages
+                let err_str = e.to_string();
+                let is_precondition_failed = err_str.contains("Precondition")
+                    || err_str.contains("412")  // HTTP 412 Precondition Failed
+                    || err_str.contains("409")  // HTTP 409 Conflict
+                    || err_str.contains("AlreadyExists");
+                
+                if is_precondition_failed {
                     Err(UserRepositoryError::Conflict)
                 } else {
-                    Err(UserRepositoryError::Storage(e.to_string()))
+                    Err(UserRepositoryError::Storage(err_str))
                 }
             }
         }
@@ -309,13 +325,17 @@ impl UserRepository for RustFsUserRepository {
             .await
             .map_err(|e| UserRepositoryError::Storage(e.to_string()))?;
         
-        // Delete email index
+        // Delete email index - best effort
         let email_path = self.path_builder.email_index_path(&existing.email);
-        let _ = self.doc_store.delete(&email_path).await;
+        if let Err(e) = self.doc_store.delete(&email_path).await {
+            tracing::debug!(path = %email_path, error = %e, "failed to delete email index");
+        }
         
-        // Delete username index
+        // Delete username index - best effort
         let username_path = self.path_builder.username_index_path(&existing.username);
-        let _ = self.doc_store.delete(&username_path).await;
+        if let Err(e) = self.doc_store.delete(&username_path).await {
+            tracing::debug!(path = %username_path, error = %e, "failed to delete username index");
+        }
         
         // Update user list
         self.remove_from_user_list(id).await?;

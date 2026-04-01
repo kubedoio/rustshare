@@ -212,11 +212,13 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         // Emit ShareCreated event
         let payload = ShareCreatedPayload {
             share_id: share.id,
-            file_id: share.file_id.expect("public share must have file_id"),
+            file_id: share
+                .file_id
+                .ok_or_else(|| ShareError::InvalidState("file_id missing".to_string()))?,
             share_token: share
                 .share_token
                 .clone()
-                .expect("public share must have share_token"),
+                .ok_or_else(|| ShareError::InvalidState("share_token missing".to_string()))?,
             permissions: share.permissions,
             password_protected: share.password_hash.is_some(),
             expires_at: share.expires_at,
@@ -288,11 +290,11 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
             share_id: share.id,
             file_id: share
                 .folder_id
-                .expect("public folder share must have folder_id"),
+                .ok_or_else(|| ShareError::InvalidState("folder_id missing".to_string()))?,
             share_token: share
                 .share_token
                 .clone()
-                .expect("public share must have share_token"),
+                .ok_or_else(|| ShareError::InvalidState("share_token missing".to_string()))?,
             permissions: share.permissions,
             password_protected: share.password_hash.is_some(),
             expires_at: share.expires_at,
@@ -440,7 +442,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
 
         if owner_id != user_id {
             return Err(ShareError::PermissionDenied {
-                file_id: share.resource_id(),
+                file_id: share.resource_id().unwrap_or(share.id),
                 user_id,
             });
         }
@@ -454,7 +456,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         // Emit ShareRevoked event
         let payload = ShareRevokedPayload {
             share_id: share.id,
-            file_id: share.resource_id(),
+            file_id: share.resource_id().unwrap_or(share.id),
             revoked_by: user_id,
         };
 
@@ -520,7 +522,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
 
         if owner_id != user_id {
             return Err(ShareError::PermissionDenied {
-                file_id: share.resource_id(),
+                file_id: share.resource_id().unwrap_or(share.id),
                 user_id,
             });
         }
@@ -552,7 +554,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         // Emit ShareUpdated event
         let payload = ShareUpdatedPayload {
             share_id: share.id,
-            file_id: share.resource_id(),
+            file_id: share.resource_id().unwrap_or(share.id),
             password_changed,
             expires_at_changed,
             new_expires_at: share.expires_at,

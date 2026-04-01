@@ -1,3 +1,6 @@
+# =============================================================================
+# Stage 1: Frontend Builder
+# =============================================================================
 FROM node:20-bookworm-slim AS frontend-builder
 
 WORKDIR /app/frontend
@@ -7,7 +10,10 @@ ARG VITE_WS_URL=/api/ws
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_WS_URL=$VITE_WS_URL
 
+# Copy package files first for better layer caching
 COPY frontend/package*.json ./
+
+# Install dependencies (cached if package.json hasn't changed)
 RUN npm install --legacy-peer-deps \
     && ARCH="$(dpkg --print-architecture)" \
     && case "$ARCH" in \
@@ -16,35 +22,58 @@ RUN npm install --legacy-peer-deps \
         *) echo "Unsupported frontend builder architecture: ${ARCH}" >&2; exit 1 ;; \
     esac
 
+# Copy frontend source and build
 COPY frontend ./
 RUN npm run build
 
-FROM rust:alpine AS builder
+# =============================================================================
+# Stage 2: Rust Builder
+# We use a two-step approach without caching the target directory to ensure
+# the binary is always built from the actual source code.
+# =============================================================================
+FROM rust:bookworm AS builder
 
 WORKDIR /app
 
 # Install build dependencies
-RUN apk add --no-cache musl-dev openssl-dev
+RUN apt-get update && apt-get install -y pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy manifests
-COPY backend/Cargo.toml backend/Cargo.lock ./
+# Copy all source code at once (no dummy file trick to avoid caching issues)
+COPY Cargo.toml Cargo.lock ./
+COPY rust-toolchain.toml ./
+COPY backend ./backend/
+COPY desktop ./desktop/
 
-# Copy source
-COPY backend/crates ./crates/
-COPY backend/server ./server/
-COPY backend/migrations ./migrations/
-
-# Build
+# Build the application
+ENV CARGO_NET_RETRY=10
 RUN cargo build --release --bin rustshare-server
 
-# Runtime image
-FROM alpine:3.19
+# Strip the binary for smaller size
+RUN strip target/release/rustshare-server
 
-RUN apk add --no-cache libgcc openssl ca-certificates
+# =============================================================================
+# Stage 3: Runtime Image
+# =============================================================================
+FROM debian:bookworm-slim
 
+RUN apt-get update && apt-get install -y ca-certificates libssl3 wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy binary and frontend build
 COPY --from=builder /app/target/release/rustshare-server /usr/local/bin/
 COPY --from=frontend-builder /app/frontend/build /app/frontend-build
 
 ENV FRONTEND_DIST_DIR=/app/frontend-build
+
+# Use non-root user for security
+RUN useradd -m -s /bin/sh appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/v1/health || exit 1
 
 CMD ["rustshare-server"]

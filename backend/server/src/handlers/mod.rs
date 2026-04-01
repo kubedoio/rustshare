@@ -151,6 +151,7 @@ pub fn share_error_response(err: ShareError) -> Response {
         ShareError::CannotShareWithSelf => (StatusCode::BAD_REQUEST, err.to_string()),
         ShareError::ShareAlreadyExists(_) => (StatusCode::CONFLICT, err.to_string()),
         ShareError::CannotRemoveOwner => (StatusCode::FORBIDDEN, err.to_string()),
+        ShareError::InvalidState(_) => (StatusCode::CONFLICT, err.to_string()),
         ShareError::Database(_) | ShareError::PasswordHash(_) | ShareError::Jwt(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Internal server error".to_string(),

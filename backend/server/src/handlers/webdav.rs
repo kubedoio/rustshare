@@ -88,8 +88,11 @@ async fn propfind(
     }
 
     let xml = render_multistatus(items);
+    // 207 Multi-Status is a valid WebDAV status code
+    let status = StatusCode::from_u16(207)
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     Ok((
-        StatusCode::from_u16(207).unwrap(),
+        status,
         [(
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/xml; charset=utf-8"),
@@ -200,17 +203,16 @@ async fn put_file(
                 .await
                 .map_err(map_put_error)?;
 
+            let etag = HeaderValue::from_str(&etag_for_file(&updated))
+                .unwrap_or_else(|_| HeaderValue::from_static("*"));
+            let last_modified = HeaderValue::from_str(&format_http_date(updated.modified_at))
+                .unwrap_or_else(|_| HeaderValue::from_static("0"));
+            
             response_without_body(
                 StatusCode::NO_CONTENT,
                 &[
-                    (
-                        header::ETAG,
-                        HeaderValue::from_str(&etag_for_file(&updated)).unwrap(),
-                    ),
-                    (
-                        header::LAST_MODIFIED,
-                        HeaderValue::from_str(&format_http_date(updated.modified_at)).unwrap(),
-                    ),
+                    (header::ETAG, etag),
+                    (header::LAST_MODIFIED, last_modified),
                 ],
             )
         }
@@ -227,17 +229,16 @@ async fn put_file(
                 .await
                 .map_err(map_put_error)?;
 
+            let etag = HeaderValue::from_str(&etag_for_file(&created))
+                .unwrap_or_else(|_| HeaderValue::from_static("*"));
+            let last_modified = HeaderValue::from_str(&format_http_date(created.modified_at))
+                .unwrap_or_else(|_| HeaderValue::from_static("0"));
+            
             response_without_body(
                 StatusCode::CREATED,
                 &[
-                    (
-                        header::ETAG,
-                        HeaderValue::from_str(&etag_for_file(&created)).unwrap(),
-                    ),
-                    (
-                        header::LAST_MODIFIED,
-                        HeaderValue::from_str(&format_http_date(created.modified_at)).unwrap(),
-                    ),
+                    (header::ETAG, etag),
+                    (header::LAST_MODIFIED, last_modified),
                 ],
             )
         }

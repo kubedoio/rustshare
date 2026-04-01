@@ -416,8 +416,17 @@ pub async fn get_shared_folder_contents(
         .await
         .map_err(super::share_error_response)?;
 
+    let root_folder_id = share.folder_id
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Invalid share: missing folder_id"})),
+            )
+                .into_response()
+        })?;
+    
     Ok(Json(SharedFolderContentsResponse {
-        root_folder_id: share.folder_id.expect("checked above"),
+        root_folder_id,
         current_folder_id: current_folder.id,
         current_folder_name: current_folder.name,
         path: current_folder.path,

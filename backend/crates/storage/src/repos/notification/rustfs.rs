@@ -8,6 +8,7 @@ use crate::metadata_v2::{
 use crate::repos::PathBuilder;
 use async_trait::async_trait;
 use std::sync::Arc;
+use tracing::debug;
 use uuid::Uuid;
 
 /// RustFS-backed notification repository
@@ -190,10 +191,12 @@ impl NotificationRepository for RustFsNotificationRepository {
                     if let Ok(Some((mut doc, meta))) = self.doc_store.get::<NotificationDocument>(&path).await {
                         doc.read = true;
                         doc.read_at = Some(chrono::Utc::now());
-                        let _ = self.doc_store.put(&path, &doc, PutOptions {
+                        if let Err(e) = self.doc_store.put(&path, &doc, PutOptions {
                             if_match: Some(meta.etag),
                             ..Default::default()
-                        }).await;
+                        }).await {
+                            tracing::debug!(path = %path, error = %e, "failed to update notification read status");
+                        }
                     }
                 }
             }
@@ -231,10 +234,12 @@ impl NotificationRepository for RustFsNotificationRepository {
         let count = index.notifications.len() as u32;
         
         if count > 0 {
-            // Delete all notification documents
+            // Delete all notification documents - best effort
             for notif_ref in &index.notifications {
                 let path = self.path_builder.notification_path(user_id, notif_ref.notification_id);
-                let _ = self.doc_store.delete(&path).await;
+                if let Err(e) = self.doc_store.delete(&path).await {
+                    tracing::debug!(path = %path, error = %e, "failed to delete notification");
+                }
             }
             
             // Clear index

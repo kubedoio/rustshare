@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 use crate::metadata_v2::{
@@ -76,7 +77,9 @@ impl RustFsSearchIndexRepository {
         
         // If the index is empty, delete it instead of storing an empty document
         if index.is_empty() {
-            let _ = self.doc_store.delete(&path).await;
+            if let Err(e) = self.doc_store.delete(&path).await {
+                tracing::debug!(path = %path, error = %e, "failed to delete empty search index");
+            }
             return Ok(());
         }
         

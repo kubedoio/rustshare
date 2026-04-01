@@ -12,14 +12,23 @@ pub struct OidcLoginState {
 }
 
 impl OidcLoginState {
-    pub fn new(state: String, pkce_verifier: String, nonce: String, redirect_to: String) -> Self {
+    /// Create a new OIDC login state.
+    ///
+    /// All string parameters can be any type that converts into a String,
+    /// such as `&str` or `String`.
+    pub fn new(
+        state: impl Into<String>,
+        pkce_verifier: impl Into<String>,
+        nonce: impl Into<String>,
+        redirect_to: impl Into<String>,
+    ) -> Self {
         let now = Utc::now();
 
         Self {
-            state,
-            pkce_verifier,
-            nonce,
-            redirect_to,
+            state: state.into(),
+            pkce_verifier: pkce_verifier.into(),
+            nonce: nonce.into(),
+            redirect_to: redirect_to.into(),
             expires_at: now + Duration::minutes(10),
             created_at: now,
         }

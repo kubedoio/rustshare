@@ -25,7 +25,11 @@ pub struct Folder {
 
 impl Folder {
     /// Creates a new root folder for a user with a specific name.
-    pub fn new_root_with_name(name: String, owner_id: UserId, tenant_id: Uuid) -> Self {
+    ///
+    /// The name can be any type that converts into a String,
+    /// such as `&str` or `String`.
+    pub fn new_root_with_name(name: impl Into<String>, owner_id: UserId, tenant_id: Uuid) -> Self {
+        let name = name.into();
         let path = format!("/{}", name);
         Self {
             id: Uuid::new_v4(),

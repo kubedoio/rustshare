@@ -40,7 +40,8 @@ impl EventBroadcaster {
     /// * `event` - The event to publish
     pub fn publish(&self, event: Event) {
         let arc_event = Arc::new(event);
-        // Ignore send errors - they only occur when there are no receivers
+        // Send errors only occur when there are no receivers, which is expected
+        // during shutdown or if no components are subscribed. This is not an error condition.
         let _ = self.tx.send(arc_event);
     }
 

@@ -5,6 +5,7 @@
 	import { authStore } from '$lib/stores/auth';
 	import { showKeyboardShortcuts } from '$lib/stores/ui';
 	import { searchQuery } from '$lib/stores/search';
+	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
 	import AppShell from '$lib/layout/AppShell.svelte';
 
 	// Check auth on mount
@@ -15,21 +16,38 @@
 	});
 
 	// Show search only on files page
-	$: showSearch = $page.url.pathname === '/files';
+	let showSearch = $derived($page.url.pathname === '/files');
 
 	// Determine sidebar variant based on route
-	$: sidebarVariant = $page.url.pathname.startsWith('/files') ? 'files' : 'default';
+	let sidebarVariant = $derived($page.url.pathname.startsWith('/files') ? 'files' : 'default');
 
 	// Check if this is the files page (needs full-height layout)
-	$: isFilesPage = $page.url.pathname === '/files';
+	let isFilesPage = $derived($page.url.pathname === '/files');
+
+	// Sync search query with store
+	$effect(() => {
+		if (showSearch && $searchQuery !== $fileBrowserUi.searchQuery) {
+			// Two-way sync would go here if needed
+		}
+	});
 
 	// Clear search when navigating away from files page
-	$: if (!showSearch) {
-		searchQuery.set('');
-	}
+	$effect(() => {
+		if (!showSearch) {
+			searchQuery.set('');
+		}
+	});
 
 	function handleSearchChange(query: string) {
 		searchQuery.set(query);
+		fileBrowserUi.setSearchQuery(query);
+	}
+
+	function handleCreateFolder() {
+		// Dispatch a custom event that the files page can listen to
+		if (browser) {
+			window.dispatchEvent(new CustomEvent('create-folder-requested'));
+		}
 	}
 </script>
 
@@ -37,6 +55,7 @@
 	{showSearch} 
 	onSearchChange={showSearch ? handleSearchChange : null}
 	sidebarVariant={sidebarVariant}
+	onCreateFolder={handleCreateFolder}
 >
 	{#if isFilesPage}
 		<!-- Files page uses full-height layout without padding -->

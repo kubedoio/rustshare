@@ -5,6 +5,7 @@ use aws_sdk_s3::Client as S3Client;
 use bytes::Bytes;
 use chrono::Datelike;
 use std::sync::Arc;
+use tracing::warn;
 
 /// RustFS/S3-backed metadata document store
 pub struct RustFsDocumentStore {

@@ -1,0 +1,61 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+docs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Rust - Local build artifacts
+target/
+# Keep Cargo.lock for reproducible builds in Docker
+!Cargo.lock
+!backend/**/Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# Frontend - Build artifacts and dependencies
+frontend/node_modules/
+frontend/dist/
+frontend/.cache/
+
+# Testing
+tests/
+**/*_test.rs
+**/*_tests.rs
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+Jenkinsfile
+
+# Docker
+docker-compose*.yml
+docker/*.Dockerfile
+.dockerignore
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Scripts that aren't needed in build
+scripts/*.sh
+scripts/*.py
+
+# Misc
+*.log
+*.tmp
+*.temp

@@ -32,18 +32,26 @@ pub struct JwtManager {
 }
 
 impl JwtManager {
-    pub fn new(secret: String) -> Self {
-        Self { secret }
+    /// Create a new JWT manager with the given secret.
+    ///
+    /// The secret can be any type that converts into a String,
+    /// such as `&str` or `String`.
+    pub fn new(secret: impl Into<String>) -> Self {
+        Self { secret: secret.into() }
     }
 
-    /// Generate a JWT token for a user
-    pub fn generate(&self, user_id: Uuid, email: String) -> Result<String, JwtError> {
+    /// Generate a JWT token for a user.
+    ///
+    /// The email parameter accepts any string type (`&str` or `String`)
+    /// to avoid unnecessary allocations.
+    pub fn generate(&self, user_id: Uuid, email: impl AsRef<str>) -> Result<String, JwtError> {
         let now = Utc::now();
         let expiration = now + Duration::hours(24);
+        let email = email.as_ref();
 
         let claims = Claims {
             sub: user_id.to_string(),
-            email,
+            email: email.to_string(),
             exp: expiration.timestamp(),
             iat: now.timestamp(),
             iss: "rustshare".to_string(),

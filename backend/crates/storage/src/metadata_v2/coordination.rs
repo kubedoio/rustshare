@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::time::{Duration, Instant};
+use tracing::debug;
 use uuid::Uuid;
 
 /// Lease token for coordination
@@ -232,9 +233,11 @@ impl MetadataCoordination for InMemoryCoordination {
             match self.acquire_lease(resource_id, ttl_secs, owner).await {
                 Ok(lease) => leases.push(lease),
                 Err(e) => {
-                    // Release any leases we acquired
+                    // Release any leases we acquired - best effort
                     for lease in leases {
-                        let _ = self.release_lease(&lease).await;
+                        if let Err(release_err) = self.release_lease(&lease).await {
+                            tracing::debug!(token = %lease.token, resource = %lease.resource_id, error = %release_err, "failed to release lease during cleanup");
+                        }
                     }
                     return Err(e);
                 }
@@ -244,9 +247,11 @@ impl MetadataCoordination for InMemoryCoordination {
         // Execute the operation
         let result = operation().await;
         
-        // Release all leases
+        // Release all leases - best effort
         for lease in leases {
-            let _ = self.release_lease(&lease).await;
+            if let Err(e) = self.release_lease(&lease).await {
+                tracing::debug!(token = %lease.token, resource = %lease.resource_id, error = %e, "failed to release lease");
+            }
         }
         
         result
@@ -458,9 +463,11 @@ impl MetadataCoordination for ObjectStoreCoordination {
             match self.acquire_lease(resource_id, ttl_secs, owner).await {
                 Ok(lease) => leases.push(lease),
                 Err(e) => {
-                    // Release any acquired leases
+                    // Release any acquired leases - best effort
                     for lease in leases {
-                        let _ = self.release_lease(&lease).await;
+                        if let Err(release_err) = self.release_lease(&lease).await {
+                            tracing::debug!(token = %lease.token, resource = %lease.resource_id, error = %release_err, "failed to release lease during cleanup");
+                        }
                     }
                     return Err(e);
                 }
@@ -470,9 +477,11 @@ impl MetadataCoordination for ObjectStoreCoordination {
         // Execute operation
         let result = operation().await;
         
-        // Release all leases
+        // Release all leases - best effort
         for lease in leases {
-            let _ = self.release_lease(&lease).await;
+            if let Err(e) = self.release_lease(&lease).await {
+                tracing::debug!(token = %lease.token, resource = %lease.resource_id, error = %e, "failed to release lease");
+            }
         }
         
         result

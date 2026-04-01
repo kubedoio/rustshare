@@ -169,7 +169,11 @@ fn quota_from_env(var_name: &str, default_per_minute: u32) -> Quota {
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
         .and_then(NonZeroU32::new)
-        .unwrap_or_else(|| NonZeroU32::new(default_per_minute).expect("default quota is non-zero"));
+        .unwrap_or_else(|| {
+            // Safety: default_per_minute is always > 0 (enforced by caller)
+            NonZeroU32::new(default_per_minute.max(1))
+                .expect("default_per_minute.max(1) is always non-zero")
+        });
 
     Quota::per_minute(per_minute)
 }

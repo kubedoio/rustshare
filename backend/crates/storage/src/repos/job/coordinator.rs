@@ -73,11 +73,13 @@ impl<R: JobRepository, C: CoordinationStore> JobCoordinator<R, C> {
                     
                     if let Err(e) = self.job_repo.update_job(&job).await {
                         error!("Failed to update job status: {}", e);
-                        // Release the claim
-                        let _ = self.coord_store.release_job_claim(
+                        // Release the claim - best effort
+                        if let Err(release_err) = self.coord_store.release_job_claim(
                             &job.id.to_string(),
                             &self.worker_id,
-                        ).await;
+                        ).await {
+                            debug!(job_id = %job.id, error = %release_err, "failed to release job claim");
+                        }
                         continue;
                     }
                     
@@ -198,10 +200,13 @@ impl<R: JobRepository, C: CoordinationStore> JobCoordinator<R, C> {
     
     /// Cancel a job
     pub async fn cancel_job(&self, job_id: Uuid) -> Result<(), CoordinatorError> {
-        // Release claim if we have it
-        let _ = self.coord_store
+        // Release claim if we have it - best effort
+        if let Err(e) = self.coord_store
             .release_job_claim(&job_id.to_string(), &self.worker_id)
-            .await;
+            .await
+        {
+            debug!(job_id = %job_id, error = %e, "failed to release job claim during cancel");
+        }
         
         // Get and update job
         let mut job = self.job_repo

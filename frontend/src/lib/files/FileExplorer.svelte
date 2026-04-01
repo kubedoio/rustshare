@@ -42,25 +42,25 @@
 	export let onBulkDownload: () => void;
 	export let onBulkMove: () => void;
 
-	// Item action handlers
-	export let onRenameFile: (file: FileType) => void;
+	// Item action handlers - support both modal (no args) and inline/direct (with args)
+	export let onRenameFile: ((file: FileType) => void) | ((file: FileType, newName: string) => void);
 	export let onDeleteFile: (file: FileType) => void;
 	export let onToggleFileStar: (file: FileType) => void;
 	export let onRestoreFile: (file: FileType) => void;
 	export let onPermanentDeleteFile: (file: FileType) => void;
 	export let onShareFile: (file: FileType) => void;
 	export let onVersionHistory: (file: FileType) => void;
-	export let onMoveFile: (file: FileType) => void;
+	export let onMoveFile: ((file: FileType) => void) | ((file: FileType, targetFolderId: string | null) => void);
 	export let onDownloadFile: (file: FileType) => void;
 	export let onReplaceFile: (file: FileType) => void;
 	
-	export let onRenameFolder: (folder: Folder) => void;
+	export let onRenameFolder: ((folder: Folder) => void) | ((folder: Folder, newName: string) => void);
 	export let onDeleteFolder: (folder: Folder) => void;
 	export let onToggleFolderStar: (folder: Folder) => void;
 	export let onRestoreFolder: (folder: Folder) => void;
 	export let onPermanentDeleteFolder: (folder: Folder) => void;
 	export let onShareFolder: (folder: Folder) => void;
-	export let onMoveFolder: (folder: Folder) => void;
+	export let onMoveFolder: ((folder: Folder) => void) | ((folder: Folder, targetFolderId: string | null) => void);
 
 	function handleFolderSelectFromTree(folderId: string | null, path: FolderNode[]) {
 		const folderPath = path.map(node => ({
@@ -68,21 +68,72 @@
 			name: node.name,
 			path: node.path,
 			parent_folder_id: node.parent_folder_id,
-			owner_id: node.owner_id,
+			owner_id: node.owner_id || '',
 			created_at: node.created_at,
 			updated_at: node.updated_at
 		}));
 		onFolderSelect(folderId, folderPath);
 	}
+
+	// Wrapper handlers for tree that accept FolderNode
+	function handleRenameFolderFromTree(folderNode: import('$lib/stores/folderTree').FolderNode, newName: string) {
+		// Find the matching folder in the current folders list or create a compatible object
+		const folder = folders.find(f => f.id === folderNode.id);
+		if (folder) {
+			(onRenameFolder as (folder: Folder, newName: string) => void)(folder, newName);
+		}
+	}
+
+	function handleDeleteFolderFromTree(folderNode: import('$lib/stores/folderTree').FolderNode) {
+		const folder = folders.find(f => f.id === folderNode.id);
+		if (folder) {
+			onDeleteFolder(folder);
+		}
+	}
+
+	function handleShareFolderFromTree(folderNode: import('$lib/stores/folderTree').FolderNode) {
+		const folder = folders.find(f => f.id === folderNode.id);
+		if (folder) {
+			onShareFolder(folder);
+		}
+	}
+
+	function handleMoveFolderFromTree(folderNode: import('$lib/stores/folderTree').FolderNode, targetFolderId: string | null) {
+		const folder = folders.find(f => f.id === folderNode.id);
+		if (folder) {
+			(onMoveFolder as (folder: Folder, targetFolderId: string | null) => void)(folder, targetFolderId);
+		}
+	}
+
+	function handleMoveFileToTree(fileId: string, targetFolderId: string | null) {
+		const file = files.find(f => f.id === fileId);
+		if (file) {
+			(onMoveFile as (file: FileType, targetFolderId: string | null) => void)(file, targetFolderId);
+		}
+	}
+
+	function handleMoveFolderToTree(folderId: string, targetFolderId: string | null) {
+		const folder = folders.find(f => f.id === folderId);
+		if (folder) {
+			(onMoveFolder as (folder: Folder, targetFolderId: string | null) => void)(folder, targetFolderId);
+		}
+	}
 </script>
 
 <div class="flex h-full min-h-0 bg-base-100">
-	<!-- Folder Tree Sidebar -->
+	<!-- Folder Tree Sidebar - Hidden on mobile, shown on xl screens -->
 	{#if showFolderTree}
 		<div class="hidden h-full w-64 flex-shrink-0 overflow-hidden border-r border-base-300/80 bg-base-100/70 xl:block">
 			<FolderTree 
 				selectedFolderId={currentFolderId}
 				onSelectFolder={handleFolderSelectFromTree}
+				onRenameFolder={handleRenameFolderFromTree}
+				onDeleteFolder={handleDeleteFolderFromTree}
+				onShareFolder={handleShareFolderFromTree}
+				onMoveFolder={handleMoveFolderFromTree}
+				onCreateSubfolder={(parentId) => onNewFolder()}
+				onMoveFile={handleMoveFileToTree}
+				onMoveFolderDirect={handleMoveFolderToTree}
 			/>
 		</div>
 	{/if}
