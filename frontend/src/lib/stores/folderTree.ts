@@ -91,6 +91,33 @@ function createFolderTreeStore() {
 			});
 		},
 
+		// Remove a folder from the tree (used after delete)
+		removeFolder: (folderId: string) => {
+			update(state => ({
+				...state,
+				rootFolders: removeFolderFromTree(state.rootFolders, folderId),
+				// Also remove from expanded and clear selection if it was selected
+				expandedIds: new Set([...state.expandedIds].filter(id => id !== folderId)),
+				selectedId: state.selectedId === folderId ? null : state.selectedId
+			}));
+		},
+
+		// Update a folder's name
+		updateFolderName: (folderId: string, newName: string) => {
+			update(state => ({
+				...state,
+				rootFolders: updateFolderNameInTree(state.rootFolders, folderId, newName)
+			}));
+		},
+
+		// Refresh the tree - clears all children to force re-fetch
+		refresh: () => {
+			update(state => ({
+				...state,
+				rootFolders: state.rootFolders.map(f => ({ ...f, children: undefined }))
+			}));
+		},
+
 		reset: () => {
 			set({
 				rootFolders: [],
@@ -100,6 +127,27 @@ function createFolderTreeStore() {
 			});
 		}
 	};
+}
+
+function removeFolderFromTree(folders: FolderNode[], folderId: string): FolderNode[] {
+	return folders.filter(folder => folder.id !== folderId).map(folder => {
+		if (folder.children) {
+			return { ...folder, children: removeFolderFromTree(folder.children, folderId) };
+		}
+		return folder;
+	});
+}
+
+function updateFolderNameInTree(folders: FolderNode[], folderId: string, newName: string): FolderNode[] {
+	return folders.map(folder => {
+		if (folder.id === folderId) {
+			return { ...folder, name: newName };
+		}
+		if (folder.children) {
+			return { ...folder, children: updateFolderNameInTree(folder.children, folderId, newName) };
+		}
+		return folder;
+	});
 }
 
 function updateFolderChildren(

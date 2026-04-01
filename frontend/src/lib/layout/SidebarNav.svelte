@@ -77,7 +77,7 @@
 	// === Navigation Items ===
 	const filesNav = [
 		{ href: '/files', icon: 'home', label: 'Home' },
-		{ href: '/files?folder=shared', icon: 'users', label: 'Shared' },
+		{ href: '/shared-with-me', icon: 'users', label: 'Shared' },
 	];
 
 	const libraryNav = [
@@ -97,7 +97,11 @@
 	function isNavItemActive(href: string): boolean {
 		const currentPath = $page.url.pathname + $page.url.search;
 		if (href === '/files') {
-			return currentPath === '/files' || currentPath === '/files?';
+			// Home is active only on plain /files without folder param
+			return currentPath === '/files' || currentPath === '/files?' || currentPath.startsWith('/files?filter=') || currentPath.startsWith('/files?sort=');
+		}
+		if (href === '/shared-with-me') {
+			return $page.url.pathname.startsWith('/shared-with-me');
 		}
 		return currentPath.startsWith(href);
 	}

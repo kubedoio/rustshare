@@ -28,8 +28,10 @@
 	import { selectionStore, selectionCount, hasSelection } from '$lib/stores/selection';
 	import { activityStore } from '$lib/stores/activity';
 	import { replicationStore, type ReplicationStatus } from '$lib/stores/replication';
+	import { folderTreeStore, type FolderNode } from '$lib/stores/folderTree';
 	import type { File, Folder } from '$lib/api/types';
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 
 	// Components
 	import FileExplorer from '$lib/files/FileExplorer.svelte';
@@ -60,7 +62,9 @@
 	let uploadTasks: UploadTask[] = [];
 	let selectionMode = false;
 	let currentFolderId: string | null = null;
-	let folderPath: Folder[] = [];
+
+	// Derive folderPath from folder tree store based on currentFolderId
+	$: folderPath = currentFolderId ? buildFolderPathFromTree($folderTreeStore.rootFolders, currentFolderId) : [];
 
 	// Modal states
 	let showRenameModal = false;
@@ -117,6 +121,14 @@
 		mutationFn: (name: string) => createFolder(name, currentFolderId),
 		onSuccess: (folder) => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
+			// Also invalidate parent folder contents to refresh tree
+			if (currentFolderId) {
+				folderTreeStore.setFolderChildren(currentFolderId, 
+					[...($folderTreeStore.rootFolders.find(f => f.id === currentFolderId)?.children || []), 
+					{ id: folder.id, name: folder.name, path: folder.path, parent_folder_id: folder.parent_folder_id, children: undefined }]
+				);
+			}
 			showCreateFolderModal = false;
 			showNotification('Folder created', 'success');
 			activityStore.addActivity('folder_created', folder.name);
@@ -140,9 +152,12 @@
 
 	const renameFolderMutation = createMutation({
 		mutationFn: ({ folderId, newName }: { folderId: string; newName: string }) => renameFolder(folderId, newName),
-		onSuccess: (_, { newName }) => {
+		onSuccess: (_, { folderId, newName }) => {
 			const oldName = renameTarget?.name || 'Folder';
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
+			// Update folder name in tree immediately
+			folderTreeStore.updateFolderName(folderId, newName);
 			showRenameModal = false;
 			renameTarget = null;
 			showNotification('Folder renamed', 'success');
@@ -164,9 +179,17 @@
 
 	const deleteFolderMutation = createMutation({
 		mutationFn: (folderId: string) => deleteFolder(folderId),
-		onSuccess: () => {
+		onSuccess: (_, folderId) => {
 			const folderName = deleteTarget?.name || 'Folder';
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
+			// Remove from folder tree store immediately
+			folderTreeStore.removeFolder(folderId);
+			// If we deleted the current folder or one in its path, go to root
+			if (deleteTarget && (currentFolderId === deleteTarget.id || folderPath.some(f => f.id === deleteTarget?.id))) {
+				currentFolderId = null;
+				goto('/files', { replaceState: true });
+			}
 			showDeleteModal = false;
 			deleteTarget = null;
 			showNotification('Folder moved to deleted', 'success');
@@ -188,9 +211,12 @@
 
 	const moveFolderMutation = createMutation({
 		mutationFn: ({ folderId, targetFolderId }: { folderId: string; targetFolderId: string | null }) => moveFolder(folderId, targetFolderId),
-		onSuccess: () => {
+		onSuccess: (_, { folderId }) => {
 			const folderName = moveTarget?.name || 'Folder';
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-root-contents'] });
+			// Remove folder from its old location in tree
+			folderTreeStore.removeFolder(folderId);
 			showMoveModal = false;
 			moveTarget = null;
 			showNotification('Folder moved', 'success');
@@ -258,10 +284,19 @@
 	$: urlSort = $page.url.searchParams.get('sort');
 	$: urlFolderId = $page.url.searchParams.get('folder');
 	
+	// Helper to check if a string looks like a valid UUID
+	function isValidUuid(value: string | null): value is string {
+		if (!value) return false;
+		// UUID v4 regex pattern
+		const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+		return uuidPattern.test(value);
+	}
+	
 	// Sync currentFolderId with URL folder param
-	$: if (urlFolderId && urlFolderId !== currentFolderId) {
+	// Only accept valid UUIDs, ignore special values like 'shared', 'starred', etc.
+	$: if (isValidUuid(urlFolderId) && urlFolderId !== currentFolderId) {
 		currentFolderId = urlFolderId;
-	} else if (!urlFolderId && currentFolderId && !$page.url.searchParams.has('filter') && !$page.url.searchParams.has('sort')) {
+	} else if ((!urlFolderId || !isValidUuid(urlFolderId)) && currentFolderId && !$page.url.searchParams.has('filter') && !$page.url.searchParams.has('sort')) {
 		// Only clear if we're on a plain /files page without filters
 		currentFolderId = null;
 	}
@@ -384,32 +419,61 @@
 		selectionStore.clear();
 	}
 
+	// Build folder path from tree structure
+	function buildFolderPathFromTree(folders: FolderNode[], targetId: string): Folder[] {
+		for (const folder of folders) {
+			if (folder.id === targetId) {
+				return [{
+					id: folder.id,
+					name: folder.name,
+					path: folder.path,
+					parent_folder_id: folder.parent_folder_id,
+					owner_id: '',
+					created_at: '',
+					updated_at: ''
+				}];
+			}
+			if (folder.children && folder.children.length > 0) {
+				const path = buildFolderPathFromTree(folder.children, targetId);
+				if (path.length > 0) {
+					return [{
+						id: folder.id,
+						name: folder.name,
+						path: folder.path,
+						parent_folder_id: folder.parent_folder_id,
+						owner_id: '',
+						created_at: '',
+						updated_at: ''
+					}, ...path];
+				}
+			}
+		}
+		return [];
+	}
+
 	// Handlers
-	function handleFolderSelect(folderId: string | null, path: Folder[]) {
+	function handleFolderSelect(folderId: string | null, path: FolderNode[]) {
 		currentFolderId = folderId;
-		folderPath = path;
+		if (folderId) {
+			goto(`/files?folder=${folderId}`, { replaceState: true });
+		} else {
+			goto('/files', { replaceState: true });
+		}
 	}
 
 	function handleFolderClick(folder: Folder) {
 		currentFolderId = folder.id;
-		folderPath = [...folderPath, folder];
+		goto(`/files?folder=${folder.id}`, { replaceState: true });
 	}
 
 	function handleBreadcrumbNavigate(event: CustomEvent<{ folderId: string | null }>) {
 		const targetId = event.detail.folderId;
 		if (targetId === null) {
-			// Navigate to root - update URL
-			goto('/files', { replaceState: true });
 			currentFolderId = null;
-			folderPath = [];
+			goto('/files', { replaceState: true });
 		} else {
-			const index = folderPath.findIndex(f => f.id === targetId);
-			if (index !== -1) {
-				currentFolderId = targetId;
-				folderPath = folderPath.slice(0, index + 1);
-				// Update URL to reflect current folder
-				goto(`/files?folder=${targetId}`, { replaceState: true });
-			}
+			currentFolderId = targetId;
+			goto(`/files?folder=${targetId}`, { replaceState: true });
 		}
 	}
 
