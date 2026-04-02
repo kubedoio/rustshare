@@ -115,10 +115,10 @@ Create `backend/crates/core/src/services/email_service.rs`:
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/admin/workflows` | List all workflows |
-| GET | `/api/v1/admin/workflows/:id` | Get single workflow by ID |
-| PUT | `/api/v1/admin/workflows/:id` | Update editable fields (subject, body, terms_enabled, terms_text, status) |
-| POST | `/api/v1/admin/workflows/:id/enable` | Set status to `active` after SMTP validation |
-| POST | `/api/v1/admin/workflows/:id/disable` | Set status to `draft` |
+| GET | `/api/v1/admin/workflows/{id}` | Get single workflow by ID |
+| PUT | `/api/v1/admin/workflows/{id}` | Update editable fields (subject, body, terms_enabled, terms_text, status) |
+| POST | `/api/v1/admin/workflows/{id}/enable` | Set status to `active` after SMTP validation |
+| POST | `/api/v1/admin/workflows/{id}/disable` | Set status to `draft` |
 
 **Enable validation rules:**
 - Workflow key must be `invite_email` (only supported trigger for now).
@@ -219,10 +219,10 @@ In `backend/server/src/main.rs`, add:
 ```rust
 // Admin workflows
 .route("/api/v1/admin/workflows", get(handlers::admin::workflows::list_workflows))
-.route("/api/v1/admin/workflows/:id", get(handlers::admin::workflows::get_workflow))
-.route("/api/v1/admin/workflows/:id", put(handlers::admin::workflows::update_workflow))
-.route("/api/v1/admin/workflows/:id/enable", post(handlers::admin::workflows::enable_workflow))
-.route("/api/v1/admin/workflows/:id/disable", post(handlers::admin::workflows::disable_workflow))
+.route("/api/v1/admin/workflows/{id}", get(handlers::admin::workflows::get_workflow))
+.route("/api/v1/admin/workflows/{id}", put(handlers::admin::workflows::update_workflow))
+.route("/api/v1/admin/workflows/{id}/enable", post(handlers::admin::workflows::enable_workflow))
+.route("/api/v1/admin/workflows/{id}/disable", post(handlers::admin::workflows::disable_workflow))
 
 // Public invites
 .route("/api/v1/invites", post(handlers::invites::create_invite))
