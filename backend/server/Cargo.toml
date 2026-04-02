@@ -78,6 +78,10 @@ path = "../tests/admin_webhooks_test.rs"
 name = "admin_audit_test"
 path = "../tests/admin_audit_test.rs"
 
+[[test]]
+name = "admin_workflows_test"
+path = "../tests/admin_workflows_test.rs"
+
 [dev-dependencies]
 tokio-tungstenite = "0.24"
 rustshare-crypto = { path = "../crates/crypto" }
