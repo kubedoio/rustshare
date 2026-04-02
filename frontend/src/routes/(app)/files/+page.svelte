@@ -531,11 +531,12 @@
 		editorTarget = null;
 	}
 
-	function handleEditorSaved() {
+	function handleEditorSaved(event?: any) {
+		const targetId = event?.detail?.file?.id || editorTarget?.id;
 		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-		if (editorTarget) {
-			queryClient.invalidateQueries({ queryKey: ['file', editorTarget.id] });
-			queryClient.invalidateQueries({ queryKey: ['file-versions', editorTarget.id] });
+		if (targetId) {
+			queryClient.removeQueries({ queryKey: ['file', targetId] });
+			queryClient.removeQueries({ queryKey: ['file-versions', targetId] });
 		}
 		showNotification('File saved successfully', 'success');
 		handleEditorClose();

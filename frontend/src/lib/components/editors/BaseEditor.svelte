@@ -137,23 +137,23 @@
 						<input
 							type="radio"
 							name="saveMode"
-							value="overwrite"
-							bind:group={saveMode}
-							class="radio radio-sm radio-primary"
-							disabled={isSaving}
-						/>
-						<span class="text-sm">Overwrite current</span>
-					</label>
-					<label class="flex items-center gap-2 cursor-pointer">
-						<input
-							type="radio"
-							name="saveMode"
 							value="new_version"
 							bind:group={saveMode}
 							class="radio radio-sm radio-primary"
 							disabled={isSaving}
 						/>
 						<span class="text-sm">Create new version</span>
+					</label>
+					<label class="flex items-center gap-2 cursor-pointer">
+						<input
+							type="radio"
+							name="saveMode"
+							value="overwrite"
+							bind:group={saveMode}
+							class="radio radio-sm radio-primary"
+							disabled={isSaving}
+						/>
+						<span class="text-sm">Overwrite current</span>
 					</label>
 				</div>
 
