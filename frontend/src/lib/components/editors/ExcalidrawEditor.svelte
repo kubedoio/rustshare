@@ -64,22 +64,18 @@
 		const React = await import('react');
 		const ReactDOM = await import('react-dom/client');
 
+		// Use a setter so React onChange callbacks can update Svelte's hasChanges reactively
+		const setHasChanges = (val: boolean) => { hasChanges = val; };
+
 		const App = () => {
 			return React.createElement(Excalidraw, {
 				initialData,
 				ref: (api: any) => {
 					excalidrawAPI = api;
 				},
-				onChange: (elements: any[], state: any) => {
-					// Track changes
-					if (excalidrawAPI) {
-						const sceneElements = excalidrawAPI.getSceneElements();
-						const newContent = JSON.stringify({
-							elements: sceneElements,
-							appState: state
-						});
-						hasChanges = newContent !== originalContent;
-					}
+				onChange: (_elements: any[], _state: any) => {
+					// Excalidraw only fires onChange on real user edits, never on initial mount
+					setHasChanges(true);
 				}
 			});
 		};
