@@ -30,6 +30,7 @@ impl EmailService {
     pub async fn send_invite_email(
         &self,
         sender_name: &str,
+        recipient_name: &str,
         recipient_email: &str,
         invite_link: &str,
         subject_template: &str,
@@ -42,7 +43,7 @@ impl EmailService {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
+        .map_err(|e| EmailError::SmtpSendFailed(format!("Database error: {}", e)))?;
 
         let config = row.ok_or(EmailError::SmtpNotConfigured)?;
         if !config.enabled {
@@ -64,12 +65,12 @@ impl EmailService {
 
         let subject = subject_template
             .replace("{{sender_name}}", sender_name)
-            .replace("{{recipient_name}}", recipient_email)
+            .replace("{{recipient_name}}", recipient_name)
             .replace("{{invite_link}}", invite_link);
 
         let body = body_template
             .replace("{{sender_name}}", sender_name)
-            .replace("{{recipient_name}}", recipient_email)
+            .replace("{{recipient_name}}", recipient_name)
             .replace("{{invite_link}}", invite_link);
 
         let email = Message::builder()
@@ -79,50 +80,38 @@ impl EmailService {
             .body(body)
             .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
 
-        let mut builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&host)
-            .port(port as u16);
-
-        if let Some(ref username) = config.username {
+        let creds = config.username.as_ref().map(|username| {
             let password = if let Some(ref enc) = config.password_enc {
                 decrypt_secret(enc, &self.secret_key)
-                    .map_err(|_| EmailError::DecryptFailed)?
+                    .map_err(|_| EmailError::DecryptFailed)
             } else {
-                String::new()
-            };
-            builder = builder.credentials(Credentials::new(username.clone(), password));
-        }
+                Ok(String::new())
+            }?;
+            Ok(Credentials::new(username.clone(), password))
+        }).transpose()?;
 
-        match config.tls_mode.as_deref() {
+        let builder = match config.tls_mode.as_deref() {
             Some("tls") => {
-                builder = AsyncSmtpTransport::<Tokio1Executor>::relay(&host)
+                let mut b = AsyncSmtpTransport::<Tokio1Executor>::relay(&host)
                     .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?
                     .port(port as u16);
-                if let Some(ref username) = config.username {
-                    let password = if let Some(ref enc) = config.password_enc {
-                        decrypt_secret(enc, &self.secret_key)
-                            .map_err(|_| EmailError::DecryptFailed)?
-                    } else {
-                        String::new()
-                    };
-                    builder = builder.credentials(Credentials::new(username.clone(), password));
-                }
+                if let Some(c) = creds { b = b.credentials(c); }
+                b
             }
             Some("starttls") => {
-                builder = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host)
+                let mut b = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host)
                     .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?
                     .port(port as u16);
-                if let Some(ref username) = config.username {
-                    let password = if let Some(ref enc) = config.password_enc {
-                        decrypt_secret(enc, &self.secret_key)
-                            .map_err(|_| EmailError::DecryptFailed)?
-                    } else {
-                        String::new()
-                    };
-                    builder = builder.credentials(Credentials::new(username.clone(), password));
-                }
+                if let Some(c) = creds { b = b.credentials(c); }
+                b
             }
-            _ => {}
-        }
+            _ => {
+                let mut b = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&host)
+                    .port(port as u16);
+                if let Some(c) = creds { b = b.credentials(c); }
+                b
+            }
+        };
 
         let transport = builder.build();
 
