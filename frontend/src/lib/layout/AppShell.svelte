@@ -59,27 +59,28 @@
 			<!-- Far Left Icon Rail -->
 			<LeftRail />
 
-			<!-- Secondary Sidebar (Folder Tree for files variant) -->
-			{#if sidebarVariant === 'files'}
-				<SidebarNav 
-					variant="files"
-					mobileOpen={mobileMenuOpen}
-					onClose={closeMobileMenu}
-					onCreateFolder={onCreateFolder}
-				/>
-			{/if}
-
-			<!-- Main Content Area -->
+			<!-- Main Layout Area (Topbar + Content Wrapper) -->
 			<div class="flex-1 flex flex-col min-w-0">
 				<Topbar
 					onMenuClick={toggleMobileMenu}
-					{showSearch}
-					{onSearchChange}
 				/>
 
-				<main class="flex-1 overflow-auto bg-base-100">
-					<slot />
-				</main>
+				<!-- Wrapper for Secondary Sidebar + Main Content -->
+				<div class="flex-1 flex min-h-0 min-w-0">
+					<!-- Secondary Sidebar (Folder Tree for files variant) -->
+					{#if sidebarVariant === 'files'}
+						<SidebarNav 
+							variant="files"
+							mobileOpen={mobileMenuOpen}
+							onClose={closeMobileMenu}
+							onCreateFolder={onCreateFolder}
+						/>
+					{/if}
+
+					<main class="flex-1 overflow-auto bg-base-100">
+						<slot />
+					</main>
+				</div>
 			</div>
 		</div>
 

@@ -41,6 +41,7 @@ function toAuthUser(profile: Awaited<ReturnType<typeof getUserProfile>>): User {
     display_name: profile.display_name,
     is_admin: profile.is_admin,
     avatar_path: profile.avatar_path,
+    storage_quota: profile.storage_quota,
   };
 }
 

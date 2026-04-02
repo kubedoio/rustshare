@@ -237,40 +237,58 @@
 
 	<!-- Footer -->
 	<div class="border-t border-base-300/50 p-4 bg-base-100 pb-6 w-full shrink-0">
-		<div class="flex items-center justify-between mb-2">
-			<div class="flex items-center gap-1.5 text-base-content/60">
-				<HardDrive size={14} />
-				<span class="text-[11px] font-bold uppercase tracking-wider">Storage</span>
+		<div class="flex items-center gap-3">
+			<!-- Circular Progress -->
+			<div class="relative flex h-10 w-10 shrink-0 items-center justify-center">
+				<svg class="h-full w-full -rotate-90 transform" viewBox="0 0 36 36">
+					<!-- Background circle -->
+					<circle 
+						cx="18" cy="18" r="15.915" 
+						fill="none" 
+						class="text-base-200" 
+						stroke="currentColor" 
+						stroke-width="3"
+					></circle>
+					<!-- Progress circle -->
+					{#if $currentUser?.storage_quota}
+						<circle 
+							cx="18" cy="18" r="15.915" 
+							fill="none" 
+							class="text-brand-500 transition-all duration-1000 ease-out" 
+							stroke="currentColor" 
+							stroke-width="3" 
+							stroke-dasharray="100, 100" 
+							stroke-dashoffset={100 - Math.min(100, (totalSizeUsed / $currentUser.storage_quota) * 100)} 
+							stroke-linecap="round"
+						></circle>
+					{/if}
+				</svg>
+				<!-- Glowing Green Center Dot -->
+				<div class="absolute inset-0 flex items-center justify-center">
+					<div class="h-2.5 w-2.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.8)] animate-pulse"></div>
+				</div>
 			</div>
-			<span class="text-xs font-semibold text-base-content/80">
-				{#if $allFilesQuery.isLoading}
-					--
-				{:else if $currentUser?.storage_quota}
-					{Math.round((totalSizeUsed / $currentUser.storage_quota) * 100)}%
-				{:else}
-					{formatFileSize(totalSizeUsed)}
-				{/if}
-			</span>
+
+			<!-- Storage Text -->
+			<div class="flex flex-col flex-1 min-w-0 justify-center">
+				<div class="flex items-center gap-2 mb-0.5">
+					<span class="text-[11px] font-bold uppercase tracking-wider text-base-content/80">Storage</span>
+					{#if $currentUser?.storage_quota}
+						<span class="text-[9px] font-bold text-brand-600 bg-brand-500/10 px-1.5 py-0.5 rounded-sm">
+							{Math.round((totalSizeUsed / $currentUser.storage_quota) * 100)}%
+						</span>
+					{/if}
+				</div>
+				<div class="text-[10px] text-base-content/50 font-medium truncate">
+					{#if $allFilesQuery.isLoading}
+						Calculating usage...
+					{:else if $currentUser?.storage_quota}
+						<span class="text-base-content/90 font-semibold">{formatFileSize(totalSizeUsed)}</span> / {formatFileSize($currentUser.storage_quota)}
+					{:else}
+						<span class="text-base-content/90 font-semibold">{formatFileSize(totalSizeUsed)}</span> used
+					{/if}
+				</div>
+			</div>
 		</div>
-		
-		{#if $currentUser?.storage_quota}
-			<div class="h-2 w-full bg-base-200/80 rounded-full overflow-hidden border border-base-300/50">
-				<div 
-					class="h-full bg-brand-500 rounded-full transition-all duration-1000 w-[var(--quota-percent,0%)]"
-					style:--quota-percent="{Math.min(100, (totalSizeUsed / $currentUser.storage_quota) * 100)}%"
-				></div>
-			</div>
-			<div class="mt-1.5 flex justify-between text-[10px] text-base-content/50 font-medium">
-				<span>{formatFileSize(totalSizeUsed)}</span>
-				<span>{formatFileSize($currentUser.storage_quota)}</span>
-			</div>
-		{:else}
-			<div class="h-1.5 w-full bg-base-200/80 rounded-full overflow-hidden border border-base-300/50">
-				<div class="h-full bg-brand-500/50 rounded-full w-1/3"></div>
-			</div>
-			<div class="mt-1 flex text-[10px] text-base-content/50 font-medium">
-				<span>Unlimited quota</span>
-			</div>
-		{/if}
 	</div>
 </aside>
