@@ -29,7 +29,7 @@
 	let selectedFile: File | null = $state(null);
 	let previewUrl: string | null = $state(null);
 	let avatarTimestamp = $state(Date.now());
-	let avatarUrl = $derived(profile?.avatar_path ? `${getAvatarUrl(profile.id)}?t=${avatarTimestamp}` : null);
+	let avatarUrl = $derived(profile && profile.avatar_path ? `${getAvatarUrl(profile.id)}?t=${avatarTimestamp}` : null);
 
 	// Messages
 	let successMessage = $state('');
@@ -79,7 +79,11 @@
 				display_name: displayName || undefined,
 				email_sharing_enabled: emailSharingEnabled
 			});
-			profile = updated;
+			// Preserve avatar_path if it's missing in the response but present in local state
+			profile = {
+				...updated,
+				avatar_path: updated.avatar_path ?? profile.avatar_path
+			};
 			showSuccessMessage('Profile updated successfully');
 			await authStore.refreshSession();
 		} catch (e: any) {
@@ -204,16 +208,17 @@
 
 					<div class="flex flex-col items-center gap-2 w-full max-w-xs">
 						<input
+							id="avatar-input"
 							type="file"
 							accept="image/*"
 							class="file-input file-input-bordered w-full"
-							on:change={handleFileSelect}
+							onchange={handleFileSelect}
 						/>
 
 						{#if selectedFile}
 							<button
 								class="btn btn-primary btn-sm w-full"
-								on:click={handleAvatarUpload}
+								onclick={handleAvatarUpload}
 								disabled={uploadingAvatar}
 							>
 								{#if uploadingAvatar}
@@ -226,7 +231,7 @@
 						{#if profile.avatar_path}
 							<button
 								class="btn btn-error btn-outline btn-sm w-full"
-								on:click={handleAvatarDelete}
+								onclick={handleAvatarDelete}
 								disabled={deletingAvatar}
 							>
 								{#if deletingAvatar}
@@ -244,10 +249,11 @@
 				<div class="space-y-4">
 					<!-- Username (read-only) -->
 					<div class="form-control">
-						<label class="label">
+						<label class="label" for="username">
 							<span class="label-text">Username</span>
 						</label>
 						<input
+							id="username"
 							type="text"
 							class="input input-bordered"
 							value={profile.username}
@@ -262,10 +268,11 @@
 
 					<!-- Email (read-only) -->
 					<div class="form-control">
-						<label class="label">
+						<label class="label" for="email">
 							<span class="label-text">Email</span>
 						</label>
 						<input
+							id="email"
 							type="email"
 							class="input input-bordered"
 							value={profile.email}
@@ -275,10 +282,11 @@
 
 					<!-- Name -->
 					<div class="form-control">
-						<label class="label">
+						<label class="label" for="first-name">
 							<span class="label-text">First Name</span>
 						</label>
 						<input
+							id="first-name"
 							type="text"
 							class="input input-bordered"
 							placeholder="Enter your first name"
@@ -289,10 +297,11 @@
 
 					<!-- Surname -->
 					<div class="form-control">
-						<label class="label">
+						<label class="label" for="last-name">
 							<span class="label-text">Last Name</span>
 						</label>
 						<input
+							id="last-name"
 							type="text"
 							class="input input-bordered"
 							placeholder="Enter your last name"
@@ -303,10 +312,11 @@
 
 					<!-- Display Name -->
 					<div class="form-control">
-						<label class="label">
+						<label class="label" for="display-name">
 							<span class="label-text">Display Name</span>
 						</label>
 						<input
+							id="display-name"
 							type="text"
 							class="input input-bordered"
 							placeholder="How you want to be called"
@@ -317,8 +327,9 @@
 
 					<!-- Email Sharing Toggle -->
 					<div class="form-control">
-						<label class="label cursor-pointer justify-start gap-4">
+						<label class="label cursor-pointer justify-start gap-4" for="email-sharing">
 							<input
+								id="email-sharing"
 								type="checkbox"
 								class="toggle toggle-primary"
 								bind:checked={emailSharingEnabled}
@@ -334,10 +345,11 @@
 
 					<!-- Member Since -->
 					<div class="form-control">
-						<label class="label">
+						<label class="label" for="member-since">
 							<span class="label-text">Member Since</span>
 						</label>
 						<input
+							id="member-since"
 							type="text"
 							class="input input-bordered"
 							value={formatDate(profile.created_at)}
@@ -349,7 +361,7 @@
 					<div class="pt-4">
 						<button
 							class="btn btn-primary w-full"
-							on:click={handleSave}
+							onclick={handleSave}
 							disabled={saving}
 						>
 							{#if saving}
