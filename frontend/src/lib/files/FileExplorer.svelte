@@ -62,6 +62,8 @@
 	export let onShareFolder: (folder: Folder) => void;
 	export let onMoveFolder: ((folder: Folder) => void) | ((folder: Folder, targetFolderId: string | null) => void);
 
+	export let onEditFile: (file: FileType) => void;
+
 	function handleFolderSelectFromTree(folderId: string | null, path: FolderNode[]) {
 		const folderPath = path.map(node => ({
 			id: node.id,
@@ -180,6 +182,7 @@
 			{onMoveFile}
 			{onDownloadFile}
 			{onReplaceFile}
+			{onEditFile}
 			{onRenameFolder}
 			{onDeleteFolder}
 			{onToggleFolderStar}

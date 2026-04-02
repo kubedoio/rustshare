@@ -6,7 +6,8 @@
 		type ReplicationStatus
 	} from '$lib/stores/replication';
 	import { selectionStore } from '$lib/stores/selection';
-import ShareIndicator from './ShareIndicator.svelte';
+	import { detectEditorType } from '$lib/utils/editor';
+	import ShareIndicator from './ShareIndicator.svelte';
 
 	export let folders: Folder[] = [];
 	export let files: File[] = [];
@@ -23,6 +24,7 @@ import ShareIndicator from './ShareIndicator.svelte';
 	export let onMoveFile: (file: File) => void = () => {};
 	export let onDownloadFile: (file: File) => void = () => {};
 	export let onReplaceFile: (file: File) => void = () => {};
+	export let onEditFile: (file: File) => void = () => {};
 	export let selectionMode = false;
 	export let replicationStatuses: Record<string, ReplicationStatus> = {};
 
@@ -246,6 +248,13 @@ import ShareIndicator from './ShareIndicator.svelte';
 										>Rename</button
 									>
 								</li>
+								{#if detectEditorType(file.name, file.mime_type) !== 'none'}
+									<li>
+										<button type="button" on:click|stopPropagation={() => onEditFile(file)}
+											>Edit</button
+										>
+									</li>
+								{/if}
 								<li>
 									<button type="button" on:click|stopPropagation={() => onDownloadFile(file)}
 										>Download</button

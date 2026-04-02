@@ -19,6 +19,7 @@
 	export let onMoveFile: (file: File) => void = () => {};
 	export let onDownloadFile: (file: File) => void = () => {};
 	export let onReplaceFile: (file: File) => void = () => {};
+	export let onEditFile: (file: File) => void = () => {};
 	export let selectionMode = false;
 	export let replicationStatuses: Record<string, ReplicationStatus> = {};
 
@@ -89,6 +90,7 @@
 				on:move={(e) => !e.detail.isFolder && onMoveFile(file)}
 				on:download={(e) => onDownloadFile(e.detail.item)}
 				on:replace={(e) => onReplaceFile(e.detail.item)}
+				onEditFile={onEditFile}
 			/>
 		{/each}
 	</div>
