@@ -504,10 +504,12 @@
 
 	function handleEditFile(event: CustomEvent<{ file: File }> | File) {
 		const file = event instanceof CustomEvent ? event.detail.file : event;
+		console.log('[handleEditFile] called with file:', file?.name, file?.mime_type);
 		editorTarget = file;
 		showFilePreviewModal = false;
 
 		const editorType = detectEditorType(file.name, file.mime_type);
+		console.log('[handleEditFile] editorType:', editorType);
 		switch (editorType) {
 			case 'markdown':
 				showMarkdownEditor = true;

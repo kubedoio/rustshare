@@ -133,7 +133,7 @@
 				);
 
 				if (isEditable) {
-					items.push({ id: 'edit', label: 'Edit', icon: Edit3, onClick: onEdit });
+					items.push({ id: 'edit', label: 'Edit', icon: Edit3, onClick: () => { console.log('[FileGridTile] context edit clicked, onEdit=', onEdit); onEdit(); } });
 				}
 
 				items.push(
@@ -186,6 +186,7 @@
 	}
 
 	function handleAction(action: () => void) {
+		console.log('[FileGridTile] handleAction calling action');
 		action();
 		showActions = false;
 	}

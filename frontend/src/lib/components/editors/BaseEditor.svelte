@@ -58,7 +58,7 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
-<dialog class="modal" class:modal-open={open}>
+<dialog class="modal" class:modal-open={open} {open}>
 	<div class="modal-box max-w-7xl flex h-[90vh] flex-col p-0">
 		<!-- Header -->
 		<div class="border-b border-base-300 px-6 py-4">

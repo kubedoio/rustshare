@@ -145,7 +145,7 @@
 				);
 
 				if (isEditable) {
-					items.push({ id: 'edit', label: 'Edit', icon: Edit3, shortcut: '⌘E', onClick: onEdit });
+					items.push({ id: 'edit', label: 'Edit', icon: Edit3, shortcut: '⌘E', onClick: () => { console.log('[FileListRow] context edit clicked, onEdit=', onEdit); onEdit(); } });
 				}
 
 				items.push(
@@ -212,6 +212,7 @@
 
 	function handleAction(e: Event, action: () => void) {
 		e.stopPropagation();
+		console.log('[FileListRow] handleAction calling action');
 		action();
 		showActions = false;
 	}

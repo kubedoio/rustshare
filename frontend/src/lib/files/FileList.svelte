@@ -177,7 +177,7 @@
 					onDownload={() => onDownloadFile(file)}
 					onVersionHistory={() => onVersionHistory(file)}
 					onReplace={() => onReplaceFile(file)}
-					onEdit={() => onEditFile(file)}
+					onEdit={() => { console.log('[FileList] onEdit triggered for', file.name); onEditFile(file); }}
 					onDragStart={() => handleDragStart({ id: file.id, isFolder: false })},
 					onDragEnd={handleDragEnd}
 				/>
