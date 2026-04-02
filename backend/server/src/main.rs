@@ -592,6 +592,7 @@ async fn main() -> Result<()> {
             "/api/v1/user/devices/{id}",
             delete(handlers::devices::revoke_device),
         )
+        .route("/api/v1/features", get(handlers::get_features))
         // File routes (Task 15-19)
         .route("/api/v1/files", get(handlers::list_files))
         .route("/api/v1/files/starred", get(handlers::list_starred_items))
@@ -1050,6 +1051,12 @@ async fn main() -> Result<()> {
         .route(
             "/api/v1/public/share/{token}/folder/upload",
             post(handlers::upload_shared_folder_file),
+        )
+        .route("/api/v1/invites", post(handlers::create_invite))
+        .route("/api/v1/invites/{token}", get(handlers::get_invite))
+        .route(
+            "/api/v1/invites/{token}/accept",
+            post(handlers::accept_invite),
         )
         // AI endpoints (TODO-001)
         .route("/api/v1/ai/search", post(handlers::semantic_search))
