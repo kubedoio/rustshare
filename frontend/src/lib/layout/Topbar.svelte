@@ -7,6 +7,9 @@
 	import { getUnreadNotificationCount } from '$lib/api/notifications';
 	import { listAllFiles } from '$lib/api/files';
 	import { getFolderTree, type FolderTree } from '$lib/api/folders';
+	import { getFeatures } from '$lib/api/features';
+	import { createInvite } from '$lib/api/invites';
+	import { onMount } from 'svelte';
 	import { 
 		Plus, 
 		UserPlus, 
@@ -34,40 +37,37 @@
 	let inviteEmail = '';
 	let inviteState: 'idle' | 'done' = 'idle';
 	let inviteLink = '';
+	let inviteEnabled = false;
+	let inviteLoading = false;
+	let inviteErrorMsg = '';
 
-	function getInviteWorkflow() {
-		try {
-			const stored = localStorage.getItem('rs_workflows');
-			const workflows = stored ? JSON.parse(stored) : [];
-			return workflows.find((w: any) => w.id === 'invite-email') ?? getDefaultInviteWorkflow();
-		} catch { return getDefaultInviteWorkflow(); }
-	}
+	onMount(async () => {
+		if ($currentUser) {
+			try {
+				const res = await getFeatures();
+				inviteEnabled = res.invite_enabled;
+			} catch {
+				inviteEnabled = false;
+			}
+		}
+	});
 
-	function getDefaultInviteWorkflow() {
-		return {
-			id: 'invite-email',
-			name: 'Invite Email',
-			type: 'invite',
-			subject: "You've been invited to RustShare",
-			body: "Hi {{recipient_name}},\n\n{{sender_name}} has invited you to join RustShare — a secure file sharing platform.\n\nAccept your invitation:\n\n{{invite_link}}\n\nThis invitation expires in 7 days.",
-			terms_enabled: true,
-			terms_text: 'By accepting this invitation, you agree to use RustShare responsibly and comply with our terms of service.',
-			status: 'active'
-		};
-	}
-
-	function generateInviteLink(email: string): string {
-		const senderId = $currentUser?.id ?? 'anon';
-		const senderName = $currentUser?.display_name ?? $currentUser?.email ?? 'Someone';
-		const payload = btoa(`${senderId}:${senderName}:${email}:${Date.now()}`);
-		const base = typeof window !== 'undefined' ? window.location.origin : '';
-		return `${base}/invite/${payload}`;
-	}
-
-	function handleSendInvite() {
+	async function handleSendInvite() {
 		if (!inviteEmail.trim()) return;
-		inviteLink = generateInviteLink(inviteEmail.trim());
-		inviteState = 'done';
+		inviteLoading = true;
+		inviteErrorMsg = '';
+		try {
+			const res = await createInvite({
+				recipient_email: inviteEmail.trim(),
+				origin: window.location.origin
+			});
+			inviteLink = res.invite_link;
+			inviteState = 'done';
+		} catch (err: any) {
+			inviteErrorMsg = err?.message || 'Failed to send invite';
+		} finally {
+			inviteLoading = false;
+		}
 	}
 
 	function resetInvite() {
@@ -307,11 +307,12 @@
 	<!-- Right Side: User, Theme, Invite -->
 	<div class="flex items-center gap-2 min-w-[240px] justify-end">
 		<!-- Invite Button + Popup -->
+		{#if inviteEnabled}
 		<div class="invite-container relative">
 			<button
 				type="button"
 				class="hidden items-center gap-2 rounded-xl border border-base-300/60 px-3 py-2 text-xs font-bold text-base-content/70 transition-all hover:bg-base-200 sm:flex"
-				on:click={() => { inviteOpen = !inviteOpen; if (inviteOpen) { inviteEmail = ''; inviteState = 'idle'; inviteLink = ''; } }}
+				on:click={() => { inviteOpen = !inviteOpen; if (inviteOpen) { inviteEmail = ''; inviteState = 'idle'; inviteLink = ''; inviteErrorMsg = ''; } }}
 			>
 				<UserPlus size={16} />
 				<span>Invite</span>
@@ -348,9 +349,14 @@
 							<button
 								type="button"
 								class="w-full rounded-xl bg-brand-500 px-4 py-2 text-sm font-bold text-white shadow-sm transition-all hover:bg-brand-600 active:scale-[0.98] disabled:opacity-50"
-								disabled={!inviteEmail.trim()}
+								disabled={!inviteEmail.trim() || inviteLoading}
 								on:click={handleSendInvite}
-							>Generate Invite Link</button>
+							>
+								{inviteLoading ? 'Sending...' : 'Generate Invite Link'}
+							</button>
+							{#if inviteErrorMsg}
+								<p class="text-xs text-red-500 mt-2">{inviteErrorMsg}</p>
+							{/if}
 						</div>
 					{:else}
 						<div class="space-y-3">
@@ -376,6 +382,7 @@
 
 		<div class="h-6 w-px bg-base-300/60 mx-1 hidden sm:block"></div>
 
+		{/if}
 		<a 
 			href="/notifications" 
 			class="relative flex items-center justify-center p-2 rounded-xl text-base-content/60 hover:bg-base-200 hover:text-base-content transition-colors"
