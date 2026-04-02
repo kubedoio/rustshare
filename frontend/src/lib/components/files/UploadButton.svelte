@@ -4,7 +4,8 @@
   export let disabled = false;
   export let multiple = true;
 
-  const dispatch = createEventDispatcher<{ filesSelected: globalThis.File[] }>();
+  type DispatchEvents = { filesSelected: globalThis.File[] }
+  const dispatch = createEventDispatcher<DispatchEvents>();
 
   let fileInput: HTMLInputElement;
 

@@ -12,7 +12,7 @@
 	const dispatch = createEventDispatcher<{
 		close: void;
 		saved: { file: File };
-	});
+	}>();
 
 	let content = '';
 	let originalContent = '';

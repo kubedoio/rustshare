@@ -18,7 +18,7 @@ import ShareIndicator from './ShareIndicator.svelte';
 	export let selected = false;
 	export let replicationStatus: ReplicationStatus | null = null;
 
-	const dispatch = createEventDispatcher<{
+	type DispatchEvents = {
 		rename: { item: File | Folder; isFolder: boolean };
 		delete: { item: File | Folder; isFolder: boolean };
 		share: { item: File | Folder; isFolder: boolean };
@@ -26,7 +26,8 @@ import ShareIndicator from './ShareIndicator.svelte';
 		move: { item: File | Folder; isFolder: boolean };
 		download: { item: File };
 		replace: { item: File };
-	}>();
+	}
+	const dispatch = createEventDispatcher<DispatchEvents>();
 
 	$: fileItem = isFolder ? undefined : (item as File);
 	$: displaySize = isFolder ? '-' : formatFileSize(fileItem?.size || 0);

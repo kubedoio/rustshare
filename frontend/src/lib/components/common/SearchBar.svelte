@@ -5,10 +5,11 @@
 	export let placeholder = 'Search files...';
 	export let disabled = false;
 
-	const dispatch = createEventDispatcher<{
+	type DispatchEvents = {
 		search: string;
 		clear: void;
-	}>();
+	}
+	const dispatch = createEventDispatcher<DispatchEvents>();
 
 	function handleInput(e: Event) {
 		const target = e.target as HTMLInputElement;

@@ -6,10 +6,11 @@
   export let file: File | null = null;
   export let open = false;
 
-  const dispatch = createEventDispatcher<{
+  type DispatchEvents = {
     close: void;
     success: void;
-  }>();
+  }
+  const dispatch = createEventDispatcher<DispatchEvents>();
 
   let selectedFile: globalThis.File | null = null;
   let uploading = false;

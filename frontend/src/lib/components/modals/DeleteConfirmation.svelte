@@ -6,10 +6,11 @@
   export let itemName = '';
   export let itemType: 'file' | 'folder' = 'folder';
 
-  const dispatch = createEventDispatcher<{
+  type DispatchEvents = {
     close: void;
     confirm: void;
-  }>();
+  }
+  const dispatch = createEventDispatcher<DispatchEvents>();
 
   function handleConfirm() {
     dispatch('confirm');

@@ -15,10 +15,11 @@
   let conflictError = false;
   let errorMessage = '';
 
-  const dispatch = createEventDispatcher<{
+  type DispatchEvents = {
     close: void;
     restored: { version: number };
-  }>();
+  }
+  const dispatch = createEventDispatcher<DispatchEvents>();
 
   // Reactive query for file details
   $: fileQuery = createQuery({

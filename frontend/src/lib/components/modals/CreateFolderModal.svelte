@@ -7,10 +7,11 @@
   let folderName = '';
   let error = '';
 
-  const dispatch = createEventDispatcher<{
+  type DispatchEvents = {
     close: void;
     confirm: { name: string };
-  }>();
+  }
+  const dispatch = createEventDispatcher<DispatchEvents>();
 
   function handleSubmit() {
     error = '';

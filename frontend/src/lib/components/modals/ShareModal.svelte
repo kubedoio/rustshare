@@ -33,10 +33,11 @@
 	export let resourceName: string;
 	export let resourceType: 'file' | 'folder' = 'file';
 
-	const dispatch = createEventDispatcher<{
+	type DispatchEvents = {
 		close: void;
 		notification: { message: string; type: 'success' | 'error' | 'info' };
-	}>();
+	}
+	const dispatch = createEventDispatcher<DispatchEvents>();
 
 	// Form state for new share
 	let permissions: 'View' | 'Edit' | 'Admin' = 'View';

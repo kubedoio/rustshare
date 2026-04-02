@@ -8,10 +8,11 @@
 	export let open = false;
 	export let file: File | null = null;
 
-	const dispatch = createEventDispatcher<{
+	type DispatchEvents = {
 		close: void;
 		edit: { file: File };
-	}>();
+	}
+	const dispatch = createEventDispatcher<DispatchEvents>();
 
 	let previewUrl: string | null = null;
 	let isLoading = false;

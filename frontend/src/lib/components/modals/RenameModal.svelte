@@ -9,10 +9,11 @@
   let newName = '';
   let error = '';
 
-  const dispatch = createEventDispatcher<{
+  type DispatchEvents = {
     close: void;
     confirm: { newName: string };
-  }>();
+  }
+  const dispatch = createEventDispatcher<DispatchEvents>();
 
   function handleSubmit() {
     error = '';

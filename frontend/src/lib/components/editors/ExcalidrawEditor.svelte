@@ -8,10 +8,11 @@
 	export let open = false;
 	export let file: File | null = null;
 
-	const dispatch = createEventDispatcher<{
+	type DispatchEvents = {
 		close: void;
 		saved: { file: File };
-	}>();
+	}
+	const dispatch = createEventDispatcher<DispatchEvents>();
 
 	let content = '';
 	let originalContent = '';
@@ -28,7 +29,7 @@
 		if (typeof window === 'undefined') return null;
 		
 		try {
-			const excalidrawModule = await import('excalidraw');
+			const excalidrawModule = await import('@excalidraw/excalidraw');
 			return excalidrawModule;
 		} catch (err) {
 			console.error('Failed to load Excalidraw:', err);

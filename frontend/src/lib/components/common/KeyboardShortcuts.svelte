@@ -4,9 +4,10 @@
 
   export let open = false;
 
-  const dispatch = createEventDispatcher<{
+  type DispatchEvents = {
     close: void;
-  }>();
+  }
+  const dispatch = createEventDispatcher<DispatchEvents>();
 
   interface ShortcutGroup {
     category: string;

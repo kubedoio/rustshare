@@ -50,7 +50,7 @@
     "@tanstack/svelte-query": "^5.59.20",
     "daisyui": "^5.5.19",
     "date-fns": "^4.1.0",
-    "excalidraw": "^0.17.6",
+    "@excalidraw/excalidraw": "^0.17.6",
     "html5-qrcode": "^2.3.8",
     "lucide-svelte": "^1.0.1",
     "monaco-editor": "^0.52.0",

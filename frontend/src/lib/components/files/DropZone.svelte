@@ -3,7 +3,8 @@
 
   export let disabled = false;
 
-  const dispatch = createEventDispatcher<{ filesDropped: globalThis.File[] }>();
+  type DispatchEvents = { filesDropped: globalThis.File[] }
+  const dispatch = createEventDispatcher<DispatchEvents>();
 
   let isDragging = false;
   let dragCounter = 0;

@@ -12,10 +12,11 @@
 	export let saveMode: 'overwrite' | 'new_version' = 'overwrite';
 	export let hasChanges = false;
 
-	const dispatch = createEventDispatcher<{
+	type EditorEvents = {
 		close: void;
 		save: { saveMode: 'overwrite' | 'new_version'; changeDescription?: string };
-	});
+	};
+	const dispatch = createEventDispatcher<EditorEvents>();
 
 	let changeDescription = '';
 	let showSaveOptions = false;

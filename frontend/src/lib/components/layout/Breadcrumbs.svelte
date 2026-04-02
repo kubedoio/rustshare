@@ -5,9 +5,10 @@
 
 	export let folderPath: Folder[] = [];
 
-	const dispatch = createEventDispatcher<{
+	type DispatchEvents = {
 		navigate: { folderId: string | null };
-	}>();
+	}
+	const dispatch = createEventDispatcher<DispatchEvents>();
 
 	function handleNavigate(folderId: string | null) {
 		dispatch('navigate', { folderId });

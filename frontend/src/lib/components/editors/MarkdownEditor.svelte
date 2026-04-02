@@ -11,7 +11,7 @@
 	const dispatch = createEventDispatcher<{
 		close: void;
 		saved: { file: File };
-	});
+	}>();
 
 	let content = '';
 	let originalContent = '';
@@ -282,7 +282,7 @@
 
 		<!-- Editor and Preview -->
 		<div class="flex-1 flex overflow-hidden">
-			<div bind:this={editorContainer} class="flex-1" class:w-full={!showPreview} class:w-1/2={showPreview} />
+			<div bind:this={editorContainer} class="flex-1 {showPreview ? 'w-1/2' : 'w-full'}" />
 			
 			{#if showPreview}
 				<div class="w-1/2 border-l border-base-300 overflow-auto p-4 bg-base-100">

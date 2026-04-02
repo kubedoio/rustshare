@@ -13,10 +13,11 @@
 	export let currentFolderId: string | null = null;
 	export let itemId: string | null = null;
 
-	const dispatch = createEventDispatcher<{
+	type DispatchEvents = {
 		close: void;
 		confirm: { targetFolderId: string | null };
-	}>();
+	}
+	const dispatch = createEventDispatcher<DispatchEvents>();
 
 	let selectedFolderId: string | null = null;
 	let error = '';

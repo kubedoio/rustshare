@@ -9,10 +9,11 @@
 	export let invalidFolderIds: Set<string> = new Set();
 	export let level = 0;
 
-	const dispatch = createEventDispatcher<{
+	type DispatchEvents = {
 		select: string;
 		toggle: FolderTree;
-	}>();
+	}
+	const dispatch = createEventDispatcher<DispatchEvents>();
 
 	$: isExpanded = expandedFolders.has(node.folder.id);
 	$: hasChildren = node.subfolders && node.subfolders.length > 0;
