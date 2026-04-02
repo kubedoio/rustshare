@@ -185,7 +185,7 @@ Logic:
 }
 ```
 
-#### GET `/api/v1/invites/:token`
+#### GET `/api/v1/invites/{token}`
 
 Logic:
 1. Look up token in `invite_tokens`.
@@ -204,7 +204,7 @@ Logic:
 }
 ```
 
-#### POST `/api/v1/invites/:token/accept`
+#### POST `/api/v1/invites/{token}/accept`
 
 Request body:
 ```json
@@ -290,11 +290,6 @@ export const acceptInvite = (token: string, data: AcceptInviteRequest) =>
 - Replace local `generateInviteLink` logic with `POST /api/v1/invites` call, passing `window.location.origin` as `origin`.
 - Show loading state during API call, then display the returned `invite_link`.
 - Handle email send failure with a user-friendly error message.
-- **If inactive:** do not render the invite button or its container at all.
-- **If active:** render the existing invite popup UI.
-- Replace local `generateInviteLink` logic with `POST /api/v1/invites` call.
-- Show loading state during API call, then display the returned `invite_link`.
-- Handle email send failure with a user-friendly error message.
 
 ### 5.4 `admin/workflows/+page.svelte`
 
@@ -307,9 +302,9 @@ export const acceptInvite = (token: string, data: AcceptInviteRequest) =>
 
 ### 5.5 `invite/[token]/+page.svelte`
 
-- On mount, call `GET /api/v1/invites/:token`.
+- On mount, call `GET /api/v1/invites/{token}`.
 - Replace local `DEFAULT_WORKFLOW` and `localStorage` lookup with the API response.
-- Form submission calls `POST /api/v1/invites/:token/accept`.
+- Form submission calls `POST /api/v1/invites/{token}/accept`.
 - On success, show existing success state and redirect to `/login` after 2.5s.
 - Error handling:
   - `410 Gone` → show invalid/expired token UI (already exists).
