@@ -6,11 +6,13 @@ pub mod auth;
 // TODO: Fix chat_integration compilation errors
 // mod chat_integration;
 pub mod device_auth;
+pub mod features;
 pub mod devices;
 mod extractors;
 mod files;
 mod folders;
 mod groups;
+pub mod invites;
 mod notifications;
 mod profile;
 mod public_shares;
