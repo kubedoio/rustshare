@@ -19,7 +19,7 @@
 	let isLoading = false;
 	let isSaving = false;
 	let error: string | null = null;
-	let saveMode: 'overwrite' | 'new_version' = 'overwrite';
+	let saveMode: 'overwrite' | 'new_version' = 'new_version';
 	let hasChanges = false;
 	let excalidrawContainer: HTMLDivElement;
 	let excalidrawAPI: any = null;

@@ -19,7 +19,7 @@
 	let isLoading = false;
 	let isSaving = false;
 	let error: string | null = null;
-	let saveMode: 'overwrite' | 'new_version' = 'overwrite';
+	let saveMode: 'overwrite' | 'new_version' = 'new_version';
 	let editorContainer: HTMLDivElement;
 	let monaco: typeof import('monaco-editor') | null = null;
 	let editor: import('monaco-editor').editor.IStandaloneCodeEditor | null = null;

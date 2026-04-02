@@ -57,6 +57,14 @@
 		return name?.charAt(0).toUpperCase() || '?';
 	}
 
+	function executeGlobalAction(action: string) {
+		newMenuOpen = false;
+		goto('/files');
+		setTimeout(() => {
+			window.dispatchEvent(new CustomEvent(action));
+		}, 100);
+	}
+
 	function handleClickOutside(event: MouseEvent) {
 		const target = event.target as HTMLElement;
 		if (!target.closest('.user-menu-container')) {
@@ -111,22 +119,22 @@
 
 			{#if newMenuOpen}
 				<div class="absolute left-0 mt-2 w-56 origin-top-left rounded-2xl border border-base-300 bg-base-100 p-1 shadow-xl ring-1 ring-black/5 animate-in fade-in zoom-in duration-100">
-					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors">
+					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors" on:click={() => executeGlobalAction('create-file-requested')}>
 						<File size={16} class="text-blue-500" /> File
 					</button>
-					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors">
+					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors" on:click={() => executeGlobalAction('create-folder-requested')}>
 						<Folder size={16} class="text-amber-500" /> Folder
 					</button>
-					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors border-t border-base-200 mt-1 pt-2.5">
+					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors border-t border-base-200 mt-1 pt-2.5" on:click={() => executeGlobalAction('create-document-requested')}>
 						<FileText size={16} class="text-emerald-500" /> Document
 					</button>
-					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors">
+					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors" on:click={() => executeGlobalAction('upload-requested')}>
 						<Upload size={16} class="text-indigo-500" /> Upload
 					</button>
-					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors border-t border-base-200 mt-1 pt-2.5">
+					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors border-t border-base-200 mt-1 pt-2.5" on:click={() => executeGlobalAction('create-file-requested')}>
 						<Edit3 size={16} class="text-rose-500" /> Edit
 					</button>
-					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors">
+					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors" on:click={() => executeGlobalAction('create-canvas-requested')}>
 						<PenTool size={16} class="text-cyan-500" /> Sign
 					</button>
 				</div>

@@ -923,16 +923,39 @@
 		$permanentlyDeleteFolderMutation.mutate(folder.id);
 	}
 
-	// Listen for create folder event from sidebar
+	// Listen for global '+' new actions
 	onMount(() => {
 		const handleCreateFolderEvent = () => {
-			if (canCreateFolder) {
-				showCreateFolderModal = true;
-			}
+			if (canCreateFolder) showCreateFolderModal = true;
 		};
+		const handleCreateDocumentEvent = () => {
+			editorTarget = null;
+			showMarkdownEditor = true;
+		};
+		const handleCreateFileEvent = () => {
+			editorTarget = null;
+			showTextEditor = true;
+		};
+		const handleCreateCanvasEvent = () => {
+			editorTarget = null;
+			showExcalidrawEditor = true;
+		};
+		const handleUploadEvent = () => {
+			if (canUpload) document.getElementById('upload-file-input')?.click();
+		};
+
 		window.addEventListener('create-folder-requested', handleCreateFolderEvent);
+		window.addEventListener('create-document-requested', handleCreateDocumentEvent);
+		window.addEventListener('create-file-requested', handleCreateFileEvent);
+		window.addEventListener('create-canvas-requested', handleCreateCanvasEvent);
+		window.addEventListener('upload-requested', handleUploadEvent);
+		
 		return () => {
 			window.removeEventListener('create-folder-requested', handleCreateFolderEvent);
+			window.removeEventListener('create-document-requested', handleCreateDocumentEvent);
+			window.removeEventListener('create-file-requested', handleCreateFileEvent);
+			window.removeEventListener('create-canvas-requested', handleCreateCanvasEvent);
+			window.removeEventListener('upload-requested', handleUploadEvent);
 		};
 	});
 

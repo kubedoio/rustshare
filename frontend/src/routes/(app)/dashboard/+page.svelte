@@ -287,7 +287,7 @@
         </div>
       </div>
       <div class="flex-1 p-4 overflow-y-auto">
-        <ActivityFeed maxItems={12} />
+        <ActivityFeed maxItems={12} showHeader={false} />
       </div>
     </section>
   </div>

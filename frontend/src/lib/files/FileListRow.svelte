@@ -5,8 +5,9 @@
 	import { detectEditorType, canEditFileSize } from '$lib/utils/editor';
 	import FilePreview from './FilePreview.svelte';
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
-	import ContextMenu from '$lib/components/common/ContextMenu.svelte';
-	import type { MenuItem } from '$lib/components/common/ContextMenu.svelte';
+	import MenuComponent from '$lib/components/common/ContextMenu.svelte';
+	// ContextMenu exports MenuItem inside the module, so we type it locally if needed, or import type { MenuItem } from ContextMenu if exported
+	type MenuItem = any;
 	import { replicationStateBadgeClass, formatReplicationStateLabel } from '$lib/stores/replication';
 	import { 
 		MoreVertical, 
@@ -55,6 +56,8 @@
 		onDragStart?: () => void;
 		onDragEnd?: () => void;
 		onDrop?: () => void;
+		onDragOver?: () => void;
+		onDragLeave?: () => void;
 	}
 
 	let {
@@ -137,8 +140,8 @@
 				const isEditable = !isFolder && 
 					'deleted_at' in item && 
 					!item.deleted_at && 
-					detectEditorType(item.name, item.mime_type) !== 'none' &&
-					canEditFileSize(item.size);
+					detectEditorType(item.name, fileItem?.mime_type || '') !== 'none' &&
+					canEditFileSize(fileItem?.size || 0);
 
 				items.push(
 					{ id: 'open', label: 'Open', icon: FileIcon, shortcut: 'Enter', onClick: () => onSelect() }
@@ -449,7 +452,7 @@
 			</button>
 
 			{#if showActions}
-				<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 				<div
 					bind:this={actionMenuRef}
 					class="fixed z-[70] w-44 rounded-xl border border-base-300/70 bg-base-100 py-1 shadow-xl shadow-black/20"
@@ -500,7 +503,7 @@
 							Share
 						</button>
 						{#if !isFolder}
-							{#if detectEditorType(item.name, item.mime_type) !== 'none' && canEditFileSize(item.size)}
+							{#if fileItem && detectEditorType(item.name, fileItem.mime_type) !== 'none' && canEditFileSize(fileItem.size)}
 								<button
 									type="button"
 									class="w-full flex items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
@@ -560,7 +563,7 @@
 </tr>
 
 <!-- Context Menu -->
-<ContextMenu
+<MenuComponent
 	items={menuItems}
 	x={contextMenuX}
 	y={contextMenuY}

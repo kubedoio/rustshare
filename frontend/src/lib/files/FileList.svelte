@@ -103,7 +103,7 @@
 		$selectionStore.selectedFolderIds.size + $selectionStore.selectedFileIds.size === folders.length + files.length;
 </script>
 
-<div class="relative rounded-xl border border-base-300 bg-base-100">
+<div class="relative overflow-x-auto rounded-xl border border-base-300 bg-base-100">
 	<table class="w-full">
 		<thead>
 			<tr class="border-b border-base-300 bg-base-200/50">
@@ -178,7 +178,7 @@
 					onVersionHistory={() => onVersionHistory(file)}
 					onReplace={() => onReplaceFile(file)}
 					onEdit={() => { console.log('[FileList] onEdit triggered for', file.name); onEditFile(file); }}
-					onDragStart={() => handleDragStart({ id: file.id, isFolder: false })},
+					onDragStart={() => handleDragStart({ id: file.id, isFolder: false })}
 					onDragEnd={handleDragEnd}
 				/>
 			{/each}
