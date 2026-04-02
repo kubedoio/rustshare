@@ -3,27 +3,16 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { browser } from '$app/environment';
-
-	interface InviteData {
-		senderId: string;
-		senderName: string;
-		recipientEmail: string;
-		timestamp: number;
-	}
-
-	interface Workflow {
-		id: string;
-		subject: string;
-		body: string;
-		terms_enabled: boolean;
-		terms_text: string;
-		status: string;
-	}
+	import { getInvite, acceptInvite, type InviteDetail } from '$lib/api/invites';
+	import type { User } from '$lib/api/types';
 
 	let token = $page.params.token;
-	let inviteData: InviteData | null = null;
-	let workflow: Workflow | null = null;
+	let workflow: InviteDetail | null = null;
 	let parseError = false;
+	let submitError = '';
+	let isSubmitting = false;
+	let submitted = false;
+	let createdUser: User | null = null;
 
 	// Form state
 	let displayName = '';
@@ -31,68 +20,17 @@
 	let password = '';
 	let confirmPassword = '';
 	let termsAccepted = false;
-	let isSubmitting = false;
-	let submitError = '';
-	let submitted = false;
 
 	// UI state
 	let currentStep: 'form' | 'terms' = 'form';
 
-	const DEFAULT_WORKFLOW: Workflow = {
-		id: 'invite-email',
-		subject: "You've been invited to RustShare",
-		body: '',
-		terms_enabled: true,
-		terms_text: `Terms of Service
-
-By accepting this invitation and creating an account, you agree to:
-
-1. Use RustShare only for lawful purposes
-2. Keep your credentials confidential and not share your account
-3. Not upload content that infringes intellectual property rights
-4. Not attempt to access other users' files or disrupt the service
-
-Privacy Policy
-
-We collect only the minimum data necessary to operate the service: your email address, display name, and usage metadata. We do not sell your data to third parties.`,
-		status: 'active'
-	};
-
-	onMount(() => {
+	onMount(async () => {
 		if (!browser) return;
-
-		// Decode invite token
 		try {
-			const decoded = atob(token);
-			const parts = decoded.split(':');
-			if (parts.length < 4) throw new Error('Invalid token');
-			inviteData = {
-				senderId: parts[0],
-				senderName: parts[1],
-				recipientEmail: parts[2],
-				timestamp: parseInt(parts[3])
-			};
-			email = inviteData.recipientEmail;
-
-			// Check expiry (7 days)
-			const now = Date.now();
-			const sevenDays = 7 * 24 * 60 * 60 * 1000;
-			if (now - inviteData.timestamp > sevenDays) {
-				parseError = true;
-				return;
-			}
+			workflow = await getInvite(token);
+			email = workflow.recipient_email;
 		} catch {
 			parseError = true;
-			return;
-		}
-
-		// Load workflow config
-		try {
-			const stored = localStorage.getItem('rs_workflows');
-			const workflows = stored ? JSON.parse(stored) : [];
-			workflow = workflows.find((w: Workflow) => w.id === 'invite-email') ?? DEFAULT_WORKFLOW;
-		} catch {
-			workflow = DEFAULT_WORKFLOW;
 		}
 	});
 
@@ -112,11 +50,25 @@ We collect only the minimum data necessary to operate the service: your email ad
 		if (err) { submitError = err; return; }
 
 		isSubmitting = true;
-		// Simulate a brief delay then redirect — wire to actual register API here
-		await new Promise(r => setTimeout(r, 800));
-		submitted = true;
-		isSubmitting = false;
-		setTimeout(() => goto('/login'), 2500);
+		try {
+			const user = await acceptInvite(token, {
+				display_name: displayName.trim(),
+				email: email.trim(),
+				password,
+				terms_accepted: termsAccepted
+			});
+			createdUser = user;
+			submitted = true;
+			setTimeout(() => goto('/login'), 2500);
+		} catch (err: any) {
+			if (err?.status === 409) {
+				submitError = 'This email already has an account. Please sign in instead.';
+			} else {
+				submitError = err?.message || 'Failed to create account. Please try again.';
+			}
+		} finally {
+			isSubmitting = false;
+		}
 	}
 </script>
 
@@ -163,7 +115,7 @@ We collect only the minimum data necessary to operate the service: your email ad
 				</div>
 			</div>
 
-		{:else if inviteData && workflow}
+		{:else if workflow}
 			<!-- Invite Form -->
 			<div class="rounded-3xl bg-white/5 border border-white/10 backdrop-blur-xl shadow-2xl overflow-hidden">
 				<!-- Header -->
@@ -176,10 +128,8 @@ We collect only the minimum data necessary to operate the service: your email ad
 						</div>
 						<span class="text-sm font-semibold text-white/60">RustShare</span>
 					</div>
-					<h1 class="text-2xl font-bold text-white leading-tight">You've been invited!</h1>
-					<p class="text-white/50 text-sm mt-1.5">
-						<span class="text-brand-400 font-semibold">{inviteData.senderName}</span> has invited you to join RustShare — a secure, fast file sharing platform.
-					</p>
+					<h1 class="text-2xl font-bold text-white leading-tight">{workflow.subject}</h1>
+					<p class="text-white/50 text-sm mt-1.5">{workflow.body}</p>
 				</div>
 
 				<!-- Form -->
@@ -273,7 +223,7 @@ We collect only the minimum data necessary to operate the service: your email ad
 						<!-- Terms Step -->
 						<div>
 							<div class="rounded-xl border border-white/10 bg-white/5 p-4 max-h-48 overflow-y-auto mb-3">
-								<pre class="text-xs text-white/60 whitespace-pre-wrap font-sans leading-relaxed">{workflow.terms_text}</pre>
+								<pre class="text-xs text-white/60 whitespace-pre-wrap font-sans leading-relaxed">{workflow.terms_text || ''}</pre>
 							</div>
 
 							<label class="flex items-start gap-3 cursor-pointer group">
