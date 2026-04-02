@@ -945,6 +945,13 @@ impl MetadataStore {
                 tenant_id
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (file_id, version_number) DO UPDATE SET
+                content_hash = EXCLUDED.content_hash,
+                storage_key = EXCLUDED.storage_key,
+                size = EXCLUDED.size,
+                replication_state = EXCLUDED.replication_state,
+                created_at = EXCLUDED.created_at,
+                change_description = EXCLUDED.change_description
             "#,
         )
         .bind(version.id)
