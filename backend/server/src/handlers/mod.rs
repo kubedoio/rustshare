@@ -26,7 +26,7 @@ mod users;
 
 pub use extractors::{AdminUser, AuthenticatedSession, AuthenticatedUser, ShareSessionAuth};
 pub use files::{
-    delete_file, download_file, download_file_content, get_file, get_file_thumbnail, get_file_versions, list_deleted_items,
+    delete_file, download_file, download_file_content, edit_file, get_file, get_file_thumbnail, get_file_versions, list_deleted_items,
     list_files, list_starred_items, move_file, permanently_delete_file, preview_file, rename_file,
     restore_file_from_trash, restore_file_version, toggle_file_star, update_file, upload_file,
 };
