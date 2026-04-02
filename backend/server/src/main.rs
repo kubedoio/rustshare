@@ -712,7 +712,7 @@ async fn main() -> Result<()> {
         )
         .route(
             "/api/v1/admin/workflows/{id}",
-            patch(handlers::admin::workflows::update_workflow),
+            put(handlers::admin::workflows::update_workflow),
         )
         .route(
             "/api/v1/admin/workflows/{id}/enable",
