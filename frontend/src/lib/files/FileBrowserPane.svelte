@@ -99,7 +99,7 @@
 		onMoveFile = () => {},
 		onDownloadFile = () => {},
 		onReplaceFile = () => {},
-		onEditFile = () => {},
+		onEditFile: _editFile = () => {},
 		onRenameFolder = () => {},
 		onDeleteFolder = () => {},
 		onToggleFolderStar = () => {},
@@ -196,7 +196,7 @@
 					onMoveFile={onMoveFile}
 					onDownloadFile={onDownloadFile}
 					onReplaceFile={onReplaceFile}
-					onEditFile={(f) => { console.log('[FileBrowserPane] onEditFile for', f.name); onEditFile(f); }}
+					onEditFile={(f) => { console.log('[FileBrowserPane] onEditFile for', f.name); _editFile(f); }}
 					onShareFile={onShareFile}
 					onVersionHistory={onVersionHistory}
 				/>
@@ -227,7 +227,7 @@
 					onMoveFile={onMoveFile}
 					onDownloadFile={onDownloadFile}
 					onReplaceFile={onReplaceFile}
-					onEditFile={(f) => { console.log('[FileBrowserPane] onEditFile for', f.name); onEditFile(f); }}
+					onEditFile={(f) => { console.log('[FileBrowserPane] onEditFile for', f.name); _editFile(f); }}
 					onShareFile={onShareFile}
 					onVersionHistory={onVersionHistory}
 				/>
