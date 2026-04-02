@@ -1,59 +1,21 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
-
-	interface Workflow {
-		id: string;
-		name: string;
-		type: 'invite' | 'onboarding' | 'terms';
-		subject: string;
-		body: string;
-		terms_enabled: boolean;
-		terms_text: string;
-		status: 'active' | 'draft';
-	}
-
-	const DEFAULT_INVITE_WORKFLOW: Workflow = {
-		id: 'invite-email',
-		name: 'Invite Email',
-		type: 'invite',
-		subject: "You've been invited to RustShare",
-		body: `Hi {{recipient_name}},
-
-{{sender_name}} has invited you to join RustShare — a secure file sharing platform.
-
-Click the link below to accept your invitation and create your account:
-
-{{invite_link}}
-
-This invitation expires in 7 days.
-
-Best regards,
-The RustShare Team`,
-		terms_enabled: true,
-		terms_text: `Terms of Service
-
-By accepting this invitation and creating an account, you agree to:
-
-1. Use RustShare only for lawful purposes
-2. Keep your credentials confidential and not share your account
-3. Not upload content that infringes intellectual property rights
-4. Not attempt to access other users' files or disrupt the service
-5. Accept that uploaded files may be stored on distributed object storage
-
-Privacy Policy
-
-We collect only the minimum data necessary to operate the service: your email address, display name, and usage metadata. We do not sell your data to third parties.
-
-By clicking "Accept & Create Account", you confirm that you have read, understood, and agree to these terms.`,
-		status: 'active'
-	};
+	import {
+		listWorkflows,
+		updateWorkflow,
+		enableWorkflow,
+		disableWorkflow,
+		type Workflow
+	} from '$lib/api/workflows';
 
 	let workflows: Workflow[] = [];
 	let selectedWorkflow: Workflow | null = null;
 	let editingWorkflow: Workflow | null = null;
 	let saveMessage = '';
 	let previewMode = false;
+	let loading = false;
+	let newModalOpen = false;
 
 	const TYPE_LABELS: Record<string, string> = {
 		invite: 'Invite',
@@ -66,29 +28,20 @@ By clicking "Accept & Create Account", you confirm that you have read, understoo
 		terms: 'text-amber-600 bg-amber-500/10'
 	};
 
-	onMount(() => {
+	onMount(async () => {
 		if (!browser) return;
+		loading = true;
 		try {
-			const stored = localStorage.getItem('rs_workflows');
-			if (stored) {
-				workflows = JSON.parse(stored);
-				if (!workflows.find(w => w.id === 'invite-email')) {
-					workflows = [DEFAULT_INVITE_WORKFLOW, ...workflows];
-					saveWorkflows();
-				}
-			} else {
-				workflows = [DEFAULT_INVITE_WORKFLOW];
-				saveWorkflows();
+			workflows = await listWorkflows();
+			if (workflows.length > 0 && !selectedWorkflow) {
+				selectWorkflow(workflows[0]);
 			}
-		} catch {
-			workflows = [DEFAULT_INVITE_WORKFLOW];
+		} catch (e) {
+			workflows = [];
+		} finally {
+			loading = false;
 		}
 	});
-
-	function saveWorkflows() {
-		if (!browser) return;
-		localStorage.setItem('rs_workflows', JSON.stringify(workflows));
-	}
 
 	function selectWorkflow(wf: Workflow) {
 		selectedWorkflow = wf;
@@ -97,17 +50,44 @@ By clicking "Accept & Create Account", you confirm that you have read, understoo
 		saveMessage = '';
 	}
 
-	function handleSave() {
+	async function handleSave() {
 		if (!editingWorkflow) return;
-		workflows = workflows.map(w => w.id === editingWorkflow!.id ? { ...editingWorkflow } : w);
-		selectedWorkflow = { ...editingWorkflow };
-		saveWorkflows();
-		saveMessage = 'Saved!';
+		try {
+			const updated = await updateWorkflow(editingWorkflow.id, {
+				subject: editingWorkflow.subject,
+				body: editingWorkflow.body,
+				terms_enabled: editingWorkflow.terms_enabled,
+				terms_text: editingWorkflow.terms_text
+			});
+			workflows = workflows.map(w => w.id === updated.id ? updated : w);
+			selectedWorkflow = updated;
+			editingWorkflow = { ...updated };
+			saveMessage = 'Saved!';
+		} catch {
+			saveMessage = 'Save failed';
+		}
 		setTimeout(() => saveMessage = '', 2500);
 	}
 
+	async function toggleStatus() {
+		if (!editingWorkflow) return;
+		try {
+			const target = editingWorkflow.status === 'active' ? 'draft' : 'active';
+			const updated = target === 'active'
+				? await enableWorkflow(editingWorkflow.id)
+				: await disableWorkflow(editingWorkflow.id);
+			workflows = workflows.map(w => w.id === updated.id ? updated : w);
+			selectedWorkflow = updated;
+			editingWorkflow = { ...updated };
+			saveMessage = updated.status === 'active' ? 'Enabled' : 'Disabled';
+		} catch (err: any) {
+			saveMessage = err?.message || 'Failed to change status';
+		}
+		setTimeout(() => saveMessage = '', 3000);
+	}
+
 	function getPreviewBody(wf: Workflow): string {
-		return wf.body
+		return (wf.body || '')
 			.replace(/{{recipient_name}}/g, 'Jane Doe')
 			.replace(/{{sender_name}}/g, 'You')
 			.replace(/{{invite_link}}/g, window.location.origin + '/invite/example-token-here');
@@ -142,8 +122,8 @@ By clicking "Accept & Create Account", you confirm that you have read, understoo
 						<p class="text-xs text-base-content/50 mt-0.5 truncate">{wf.subject}</p>
 					</div>
 					<div class="flex flex-col items-end gap-1 shrink-0">
-						<span class="text-[10px] font-bold px-1.5 py-0.5 rounded-md {TYPE_COLORS[wf.type] ?? 'text-base-content/60 bg-base-200'}">
-							{TYPE_LABELS[wf.type] ?? wf.type}
+						<span class="text-[10px] font-bold px-1.5 py-0.5 rounded-md {TYPE_COLORS[wf.trigger_type] ?? 'text-base-content/60 bg-base-200'}">
+							{TYPE_LABELS[wf.trigger_type] ?? wf.trigger_type}
 						</span>
 						<span class="text-[9px] font-semibold uppercase tracking-wider {wf.status === 'active' ? 'text-green-600' : 'text-base-content/40'}">
 							{wf.status}
@@ -153,8 +133,14 @@ By clicking "Accept & Create Account", you confirm that you have read, understoo
 			</button>
 		{/each}
 
-		<div class="mt-2 rounded-2xl border border-dashed border-base-300 p-3.5 text-center">
-			<p class="text-xs text-base-content/40">More workflow types coming soon</p>
+		<div class="mt-2 flex items-center justify-between">
+			<button
+				type="button"
+				class="text-xs font-bold px-3 py-1.5 rounded-xl bg-brand-500 text-white hover:bg-brand-600 transition-colors shadow-sm"
+				on:click={() => newModalOpen = true}
+			>
+				+ New
+			</button>
 		</div>
 	</div>
 
@@ -166,8 +152,8 @@ By clicking "Accept & Create Account", you confirm that you have read, understoo
 				<div class="flex items-center justify-between px-5 py-3.5 border-b border-base-300 bg-base-200/40">
 					<div class="flex items-center gap-3">
 						<h3 class="text-sm font-bold text-base-content">{editingWorkflow.name}</h3>
-						<span class="text-[10px] font-bold px-2 py-0.5 rounded-md {TYPE_COLORS[editingWorkflow.type] ?? ''}">
-							{TYPE_LABELS[editingWorkflow.type] ?? editingWorkflow.type}
+						<span class="text-[10px] font-bold px-2 py-0.5 rounded-md {TYPE_COLORS[editingWorkflow.trigger_type] ?? ''}">
+							{TYPE_LABELS[editingWorkflow.trigger_type] ?? editingWorkflow.trigger_type}
 						</span>
 					</div>
 					<div class="flex items-center gap-2">
@@ -200,13 +186,19 @@ By clicking "Accept & Create Account", you confirm that you have read, understoo
 								<p class="text-xs font-bold text-base-content">Workflow Status</p>
 								<p class="text-[10px] text-base-content/50 mt-0.5">Inactive workflows won't be used for invite generation</p>
 							</div>
-							<select
-								bind:value={editingWorkflow.status}
-								class="text-xs font-semibold rounded-lg border border-base-300 bg-base-100 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+							<button
+								type="button"
+								class="text-xs font-bold px-3 py-1.5 rounded-xl border transition-colors"
+								class:bg-green-500={editingWorkflow.status === 'active'}
+								class:text-white={editingWorkflow.status === 'active'}
+								class:border-green-500={editingWorkflow.status === 'active'}
+								class:bg-base-100={editingWorkflow.status !== 'active'}
+								class:text-base-content={editingWorkflow.status !== 'active'}
+								class:border-base-300={editingWorkflow.status !== 'active'}
+								on:click={toggleStatus}
 							>
-								<option value="active">Active</option>
-								<option value="draft">Draft</option>
-							</select>
+								{editingWorkflow.status === 'active' ? 'Active' : 'Draft'}
+							</button>
 						</div>
 
 						<!-- Email Subject -->
@@ -312,3 +304,28 @@ By clicking "Accept & Create Account", you confirm that you have read, understoo
 		{/if}
 	</div>
 </div>
+
+{#if newModalOpen}
+<div class="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm" on:click={() => newModalOpen = false}>
+	<div class="bg-base-100 rounded-2xl border border-base-300 shadow-xl p-6 w-80" on:click|stopPropagation>
+		<h3 class="text-sm font-bold text-base-content mb-2">New Workflow</h3>
+		<p class="text-xs text-base-content/60 mb-4">More workflow types coming soon.</p>
+		<div class="flex justify-end gap-2">
+			<button
+				type="button"
+				class="text-xs font-semibold px-3 py-1.5 rounded-xl border border-base-300 hover:bg-base-200 transition-colors"
+				on:click={() => newModalOpen = false}
+			>
+				Close
+			</button>
+			<button
+				type="button"
+				class="text-xs font-bold px-3 py-1.5 rounded-xl bg-brand-500 text-white opacity-50 cursor-not-allowed"
+				disabled
+			>
+				Create
+			</button>
+		</div>
+	</div>
+</div>
+{/if}
