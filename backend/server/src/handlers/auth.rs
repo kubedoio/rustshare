@@ -41,6 +41,8 @@ pub struct UserResponse {
     pub email: String,
     pub display_name: String,
     pub is_admin: bool,
+    pub avatar_path: Option<String>,
+    pub theme: String,
 }
 
 /// Login handler
@@ -132,6 +134,8 @@ pub async fn login(
                 email: user.email,
                 display_name: user.display_name,
                 is_admin: user.is_admin,
+                avatar_path: user.avatar_path,
+                theme: user.theme.to_string(),
             },
         }),
     )

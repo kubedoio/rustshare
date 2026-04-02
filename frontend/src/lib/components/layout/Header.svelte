@@ -15,8 +15,10 @@
 	const dispatch = createEventDispatcher();
 
 	// Cache buster for avatar - updates when user changes
+	let lastUserId = $currentUser?.id;
 	let avatarTimestamp = Date.now();
-	$: if ($currentUser?.avatar_path) {
+	$: if ($currentUser?.id !== lastUserId) {
+		lastUserId = $currentUser?.id;
 		avatarTimestamp = Date.now();
 	}
 

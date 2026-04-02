@@ -156,6 +156,7 @@ export async function uploadAvatar(file: File): Promise<{ avatar_path: string }>
 
 	const headers: Record<string, string> = {
 		'Content-Type': file.type,
+		'X-Rustshare-Csrf': '1'
 	};
 
 	if (token) {

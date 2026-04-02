@@ -9,6 +9,7 @@
 		getAvatarUrl,
 		type FullUserProfile
 	} from '$lib/api/users';
+	import { authStore } from '$lib/stores/auth';
 	import Toast from '$lib/components/common/Toast.svelte';
 
 	// State
@@ -80,6 +81,7 @@
 			});
 			profile = updated;
 			showSuccessMessage('Profile updated successfully');
+			await authStore.refreshSession();
 		} catch (e: any) {
 			showErrorMessage(e.message || 'Failed to update profile');
 		} finally {
@@ -130,6 +132,8 @@
 			avatarTimestamp = Date.now();
 			// Reload profile to get updated avatar_path
 			await loadProfile();
+			// Update global session to update header avatar
+			await authStore.refreshSession();
 		} catch (e: any) {
 			showErrorMessage(e.message || 'Failed to upload avatar');
 		} finally {
@@ -147,6 +151,7 @@
 			// Update timestamp to bust cache
 			avatarTimestamp = Date.now();
 			await loadProfile();
+			await authStore.refreshSession();
 		} catch (e: any) {
 			showErrorMessage(e.message || 'Failed to delete avatar');
 		} finally {
