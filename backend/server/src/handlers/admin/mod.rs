@@ -5,6 +5,7 @@ pub mod config;
 pub mod groups;
 pub mod users;
 pub mod webhooks;
+pub mod workflows;
 
 use sqlx::PgPool;
 use uuid::Uuid;

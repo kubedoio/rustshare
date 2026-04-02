@@ -701,6 +701,27 @@ async fn main() -> Result<()> {
             "/api/v1/admin/audit",
             get(handlers::admin::audit::list_audit_log),
         )
+        // Admin workflows (Task 4)
+        .route(
+            "/api/v1/admin/workflows",
+            get(handlers::admin::workflows::list_workflows),
+        )
+        .route(
+            "/api/v1/admin/workflows/{id}",
+            get(handlers::admin::workflows::get_workflow),
+        )
+        .route(
+            "/api/v1/admin/workflows/{id}",
+            patch(handlers::admin::workflows::update_workflow),
+        )
+        .route(
+            "/api/v1/admin/workflows/{id}/enable",
+            post(handlers::admin::workflows::enable_workflow),
+        )
+        .route(
+            "/api/v1/admin/workflows/{id}/disable",
+            post(handlers::admin::workflows::disable_workflow),
+        )
         // Admin group management (Task 1)
         .route(
             "/api/v1/admin/groups",
