@@ -82,6 +82,10 @@ path = "../tests/admin_audit_test.rs"
 name = "admin_workflows_test"
 path = "../tests/admin_workflows_test.rs"
 
+[[test]]
+name = "invites_test"
+path = "../tests/invites_test.rs"
+
 [dev-dependencies]
 tokio-tungstenite = "0.24"
 rustshare-crypto = { path = "../crates/crypto" }
