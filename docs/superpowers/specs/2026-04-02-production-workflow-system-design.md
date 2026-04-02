@@ -34,7 +34,8 @@
 ```sql
 CREATE TABLE workflows (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    key VARCHAR(50) NOT NULL UNIQUE,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    key VARCHAR(50) NOT NULL,
     name VARCHAR(100) NOT NULL,
     trigger_type VARCHAR(50) NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'draft' CHECK (status IN ('active', 'draft')),
@@ -44,9 +45,11 @@ CREATE TABLE workflows (
     terms_text TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_by UUID REFERENCES users(id) ON DELETE SET NULL
+    updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    UNIQUE (tenant_id, key)
 );
 
+CREATE INDEX idx_workflows_tenant ON workflows(tenant_id);
 CREATE INDEX idx_workflows_key ON workflows(key);
 ```
 
@@ -65,18 +68,21 @@ CREATE INDEX idx_workflows_key ON workflows(key);
 ```sql
 CREATE TABLE invite_tokens (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    token VARCHAR(64) NOT NULL UNIQUE,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    token VARCHAR(64) NOT NULL,
     sender_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     recipient_email VARCHAR(255) NOT NULL,
     workflow_id UUID NOT NULL REFERENCES workflows(id) ON DELETE RESTRICT,
     expires_at TIMESTAMPTZ NOT NULL,
     used_at TIMESTAMPTZ,
     revoked_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (tenant_id, token)
 );
 
 CREATE INDEX idx_invite_tokens_token ON invite_tokens(token);
 CREATE INDEX idx_invite_tokens_sender ON invite_tokens(sender_id, created_at);
+CREATE INDEX idx_invite_tokens_tenant ON invite_tokens(tenant_id);
 ```
 
 **Token generation:** 32 cryptographically random bytes from `rand::thread_rng()`, hex-encoded to 64 characters. No base64 client encoding.
@@ -89,10 +95,16 @@ CREATE INDEX idx_invite_tokens_sender ON invite_tokens(sender_id, created_at);
 
 ### 4.1 New Dependencies
 
-Add to `backend/server/Cargo.toml`:
+Add to `backend/crates/core/Cargo.toml` (since `EmailService` lives in `rustshare_core`):
 
 ```toml
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "pool"] }
+```
+
+Also add `lettre` to `backend/server/Cargo.toml` if the server crate constructs `EmailService` directly:
+
+```toml
+lettre = { workspace = true }
 ```
 
 ### 4.2 New Service: `rustshare_core::services::email_service`
@@ -133,17 +145,28 @@ Create `backend/crates/core/src/services/email_service.rs`:
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | POST | `/api/v1/invites` | Yes | Create invite token and send email |
-| GET | `/api/v1/invites/:token` | No | Validate token, return sender + workflow config |
-| POST | `/api/v1/invites/:token/accept` | No | Register user from invite |
+| GET | `/api/v1/invites/{token}` | No | Validate token, return sender + workflow config |
+| POST | `/api/v1/invites/{token}/accept` | No | Register user from invite |
+
+Additionally, add a lightweight public feature-flags endpoint:
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/v1/features` | Yes | Returns `{ "invite_enabled": boolean }` based on the active `invite_email` workflow for the current tenant |
 
 #### POST `/api/v1/invites`
 
 Request body:
 ```json
 {
-  "recipient_email": "colleague@company.com"
+  "recipient_email": "colleague@company.com",
+  "origin": "https://app.rustshare.io"
 }
 ```
+
+`origin` is the public frontend URL used to build the invite link. It should be the browser's `window.location.origin` on the client. If omitted, the backend may fall back to a configured base URL.
+
+**Invite link construction:** `invite_link = format!("{}/invite/{}", origin, token)`
 
 Logic:
 1. Authenticate caller.
@@ -226,8 +249,8 @@ In `backend/server/src/main.rs`, add:
 
 // Public invites
 .route("/api/v1/invites", post(handlers::invites::create_invite))
-.route("/api/v1/invites/:token", get(handlers::invites::get_invite))
-.route("/api/v1/invites/:token/accept", post(handlers::invites::accept_invite))
+.route("/api/v1/invites/{token}", get(handlers::invites::get_invite))
+.route("/api/v1/invites/{token}/accept", post(handlers::invites::accept_invite))
 ```
 
 ---
@@ -260,8 +283,13 @@ export const acceptInvite = (token: string, data: AcceptInviteRequest) =>
 
 ### 5.3 `Topbar.svelte`
 
-- On mount, fetch `GET /api/v1/admin/workflows` (or a lightweight public endpoint if one is added later). For now, call `/admin/workflows` when the user is authenticated.
-- Determine if `invite_email` workflow has `status === 'active'`.
+- On mount, fetch `GET /api/v1/features` (lightweight public endpoint).
+- Determine if `invite_enabled` is `true`.
+- **If inactive:** do not render the invite button or its container at all.
+- **If active:** render the existing invite popup UI.
+- Replace local `generateInviteLink` logic with `POST /api/v1/invites` call, passing `window.location.origin` as `origin`.
+- Show loading state during API call, then display the returned `invite_link`.
+- Handle email send failure with a user-friendly error message.
 - **If inactive:** do not render the invite button or its container at all.
 - **If active:** render the existing invite popup UI.
 - Replace local `generateInviteLink` logic with `POST /api/v1/invites` call.
@@ -345,8 +373,10 @@ No new automated unit tests are required. The existing Svelte component patterns
 
 ## 9. Migration Plan
 
-1. **Run migrations** adding `workflows` and `invite_tokens` tables.
-2. **Backfill:** The `workflows` migration pre-seeds the `invite_email` row with default template content.
+1. **Run migrations:**
+   - `backend/migrations/20260402000001_create_workflows.sql`
+   - `backend/migrations/20260402000002_create_invite_tokens.sql`
+2. **Backfill:** The `workflows` migration pre-seeds the `invite_email` row with default template content for the default tenant.
 3. **Frontend cutover:** Once the backend APIs are live, the frontend stops reading/writing `localStorage` key `rs_workflows`.
 4. **Cleanup:** After deployment is stable, remove any orphaned `rs_workflows` entries from users' browsers (not required, but harmless).
 
