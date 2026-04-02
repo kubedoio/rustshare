@@ -119,22 +119,6 @@
 	class:z-50={mobileOpen}
 	aria-label="Folder navigation"
 >
-	<!-- Header with Search -->
-	<div class="border-b border-base-300/50 p-3">
-		<div class="flex items-center gap-2">
-			<div class="flex-1 relative">
-				<Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-base-content/40" />
-				<input
-					type="text"
-					placeholder="Search files..."
-					class="w-full h-9 pl-9 pr-3 text-sm bg-base-200/50 border border-transparent rounded-lg
-						placeholder:text-base-content/40 focus:bg-base-100 focus:border-brand-500/30 focus:outline-none transition-all"
-					value={$fileBrowserUi.searchQuery}
-					oninput={(e) => fileBrowserUi.setSearchQuery(e.currentTarget.value)}
-				/>
-			</div>
-		</div>
-	</div>
 
 	<!-- Navigation Sections -->
 	<div class="flex-1 overflow-y-auto py-2">
