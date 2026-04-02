@@ -5,6 +5,8 @@
 	import { searchQuery as globalSearchQuery } from '$lib/stores/search';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { getUnreadNotificationCount } from '$lib/api/notifications';
+	import { listAllFiles } from '$lib/api/files';
+	import { getFolderTree, type FolderTree } from '$lib/api/folders';
 	import { 
 		Plus, 
 		UserPlus, 
@@ -36,6 +38,45 @@
 		refetchInterval: 30000
 	});
 
+	$: allFilesQuery = createQuery({
+		queryKey: ['all-files'],
+		queryFn: () => listAllFiles(),
+		enabled: !!$currentUser
+	});
+
+	$: folderTreeQuery = createQuery<FolderTree>({
+		queryKey: ['folder-tree'],
+		queryFn: () => getFolderTree(),
+		enabled: !!$currentUser
+	});
+
+	function flattenFolderTree(node: FolderTree | undefined): Array<{ id: string; name: string; path: string }> {
+		if (!node) return [];
+		const result = [];
+		if (node.folder) {
+			result.push({ id: node.folder.id, name: node.folder.name, path: node.folder.path });
+		}
+		if (node.subfolders) {
+			for (const sub of node.subfolders) {
+				result.push(...flattenFolderTree(sub));
+			}
+		}
+		return result;
+	}
+
+	$: searchResults = (() => {
+		const q = $globalSearchQuery.toLowerCase().trim();
+		if (!q) return { files: [], folders: [] };
+
+		const allFiles = $allFilesQuery.data || [];
+		const allFolders = flattenFolderTree($folderTreeQuery.data);
+
+		const files = allFiles.filter(f => f.name.toLowerCase().includes(q) && !f.deleted_at).slice(0, 10);
+		const folders = allFolders.filter(f => f.name.toLowerCase().includes(q)).slice(0, 5);
+
+		return { files, folders };
+	})();
+
 	function handleSearchInput(event: Event) {
 		const target = event.target as HTMLInputElement;
 		globalSearchQuery.set(target.value);
@@ -43,6 +84,21 @@
 
 	function clearSearch() {
 		globalSearchQuery.set('');
+	}
+
+	function navigateToSearchResult(type: 'file' | 'folder', id: string) {
+		clearSearch();
+		if (type === 'file') {
+			goto(`/files?preview=${id}`);
+		} else {
+			goto(`/files?folder=${id}`);
+		}
+	}
+
+	function handleSearchKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			clearSearch();
+		}
 	}
 
 	async function handleLogout() {
@@ -69,6 +125,9 @@
 		}
 		if (!target.closest('.new-menu-container')) {
 			newMenuOpen = false;
+		}
+		if (!target.closest('.global-search-container')) {
+			if ($globalSearchQuery) clearSearch();
 		}
 	}
 </script>
@@ -129,7 +188,7 @@
 
 	<!-- Center: Global Search -->
 	<div class="flex flex-1 justify-center px-4">
-		<div class="w-full max-w-xl">
+		<div class="w-full max-w-xl global-search-container">
 			<div class="group relative">
 				<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
 					<Search size={16} class="text-base-content/30 transition-colors group-focus-within:text-brand-500" />
@@ -140,6 +199,7 @@
 					class="w-full rounded-2xl border border-base-300/50 bg-base-200/50 px-10 py-2 text-sm text-base-content transition-all placeholder:text-base-content/30 focus:border-brand-500/50 focus:bg-base-100 focus:outline-none focus:ring-4 focus:ring-brand-500/10"
 					value={$globalSearchQuery}
 					on:input={handleSearchInput}
+					on:keydown={handleSearchKeydown}
 				/>
 				{#if $globalSearchQuery}
 					<button
@@ -149,6 +209,55 @@
 					>
 						<X size={16} />
 					</button>
+
+					<!-- Global Search Results Dropdown -->
+					<div class="absolute top-full left-0 right-0 mt-2 rounded-2xl border border-base-300 bg-base-100 p-2 shadow-2xl ring-1 ring-black/5 animate-in fade-in zoom-in duration-100 z-50 overflow-hidden">
+						{#if searchResults.folders.length === 0 && searchResults.files.length === 0}
+							<div class="text-center py-6">
+								<p class="text-sm font-medium text-base-content/60">No results found for "{$globalSearchQuery}"</p>
+							</div>
+						{:else}
+							{#if searchResults.folders.length > 0}
+								<div class="mb-1 px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-base-content/50">
+									Folders
+								</div>
+								{#each searchResults.folders as folder (folder.id)}
+									<button 
+										class="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-sm hover:bg-base-200 transition-colors"
+										on:click={() => navigateToSearchResult('folder', folder.id)}
+									>
+										<Folder size={16} class="text-amber-500 shrink-0" />
+										<div class="flex flex-col items-start truncate leading-tight">
+											<span class="font-medium text-base-content truncate">{folder.name}</span>
+											<span class="text-[10px] text-base-content/50 mt-0.5 truncate">{folder.path}</span>
+										</div>
+									</button>
+								{/each}
+							{/if}
+
+							{#if searchResults.folders.length > 0 && searchResults.files.length > 0}
+								<div class="h-px bg-base-200 w-full my-2"></div>
+							{/if}
+
+							{#if searchResults.files.length > 0}
+								<div class="mb-1 px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-base-content/50">
+									Files
+								</div>
+								{#each searchResults.files as file (file.id)}
+									<button 
+										class="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-sm hover:bg-base-200 transition-colors"
+										on:click={() => navigateToSearchResult('file', file.id)}
+									>
+										<FileText size={16} class="text-brand-500 shrink-0" />
+										<div class="flex flex-col items-start truncate leading-tight">
+											<span class="font-medium text-base-content truncate">{file.name}</span>
+											<span class="text-[10px] text-base-content/50 mt-0.5 truncate">{file.path}</span>
+										</div>
+									</button>
+								{/each}
+							{/if}
+						{/if}
+					</div>
 				{/if}
 			</div>
 		</div>
