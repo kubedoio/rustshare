@@ -30,6 +30,52 @@
 
 	let userMenuOpen = false;
 	let newMenuOpen = false;
+	let inviteOpen = false;
+	let inviteEmail = '';
+	let inviteState: 'idle' | 'done' = 'idle';
+	let inviteLink = '';
+
+	function getInviteWorkflow() {
+		try {
+			const stored = localStorage.getItem('rs_workflows');
+			const workflows = stored ? JSON.parse(stored) : [];
+			return workflows.find((w: any) => w.id === 'invite-email') ?? getDefaultInviteWorkflow();
+		} catch { return getDefaultInviteWorkflow(); }
+	}
+
+	function getDefaultInviteWorkflow() {
+		return {
+			id: 'invite-email',
+			name: 'Invite Email',
+			type: 'invite',
+			subject: "You've been invited to RustShare",
+			body: "Hi {{recipient_name}},\n\n{{sender_name}} has invited you to join RustShare — a secure file sharing platform.\n\nAccept your invitation:\n\n{{invite_link}}\n\nThis invitation expires in 7 days.",
+			terms_enabled: true,
+			terms_text: 'By accepting this invitation, you agree to use RustShare responsibly and comply with our terms of service.',
+			status: 'active'
+		};
+	}
+
+	function generateInviteLink(email: string): string {
+		const senderId = $currentUser?.id ?? 'anon';
+		const senderName = $currentUser?.display_name ?? $currentUser?.email ?? 'Someone';
+		const payload = btoa(`${senderId}:${senderName}:${email}:${Date.now()}`);
+		const base = typeof window !== 'undefined' ? window.location.origin : '';
+		return `${base}/invite/${payload}`;
+	}
+
+	function handleSendInvite() {
+		if (!inviteEmail.trim()) return;
+		inviteLink = generateInviteLink(inviteEmail.trim());
+		inviteState = 'done';
+	}
+
+	function resetInvite() {
+		inviteEmail = '';
+		inviteState = 'idle';
+		inviteLink = '';
+		inviteOpen = false;
+	}
 
 	$: unreadCountQuery = createQuery({
 		queryKey: ['notifications-unread-count'],
@@ -120,15 +166,10 @@
 
 	function handleClickOutside(event: MouseEvent) {
 		const target = event.target as HTMLElement;
-		if (!target.closest('.user-menu-container')) {
-			userMenuOpen = false;
-		}
-		if (!target.closest('.new-menu-container')) {
-			newMenuOpen = false;
-		}
-		if (!target.closest('.global-search-container')) {
-			if ($globalSearchQuery) clearSearch();
-		}
+		if (!target.closest('.user-menu-container')) userMenuOpen = false;
+		if (!target.closest('.new-menu-container')) newMenuOpen = false;
+		if (!target.closest('.invite-container')) { inviteOpen = false; }
+		if (!target.closest('.global-search-container')) { if ($globalSearchQuery) clearSearch(); }
 	}
 </script>
 
@@ -265,13 +306,73 @@
 
 	<!-- Right Side: User, Theme, Invite -->
 	<div class="flex items-center gap-2 min-w-[240px] justify-end">
-		<button
-			type="button"
-			class="hidden items-center gap-2 rounded-xl border border-base-300/60 px-3 py-2 text-xs font-bold text-base-content/70 transition-all hover:bg-base-200 sm:flex"
-		>
-			<UserPlus size={16} />
-			<span>Invite Members</span>
-		</button>
+		<!-- Invite Button + Popup -->
+		<div class="invite-container relative">
+			<button
+				type="button"
+				class="hidden items-center gap-2 rounded-xl border border-base-300/60 px-3 py-2 text-xs font-bold text-base-content/70 transition-all hover:bg-base-200 sm:flex"
+				on:click={() => { inviteOpen = !inviteOpen; if (inviteOpen) { inviteEmail = ''; inviteState = 'idle'; inviteLink = ''; } }}
+			>
+				<UserPlus size={16} />
+				<span>Invite</span>
+			</button>
+
+			{#if inviteOpen}
+				<div class="absolute right-0 mt-2 w-80 origin-top-right rounded-2xl border border-base-300 bg-base-100 p-4 shadow-2xl ring-1 ring-black/5 animate-in fade-in zoom-in duration-100 z-[200]">
+					<div class="flex items-center justify-between mb-3">
+						<div>
+							<h3 class="text-sm font-bold text-base-content">Send an Invitation</h3>
+							<p class="text-xs text-base-content/50 mt-0.5">Share a unique signup link</p>
+						</div>
+						<button type="button" class="p-1 rounded-lg hover:bg-base-200 text-base-content/40 hover:text-base-content" on:click={resetInvite}>
+							<X size={16} />
+						</button>
+					</div>
+
+					{#if inviteState === 'idle'}
+						<div class="space-y-3">
+							<div>
+								<label class="text-xs font-semibold text-base-content/70 mb-1 block" for="invite-email">Recipient email</label>
+								<input
+									id="invite-email"
+									type="email"
+									bind:value={inviteEmail}
+									placeholder="colleague@company.com"
+									class="w-full rounded-xl border border-base-300/60 bg-base-200/50 px-3 py-2 text-sm text-base-content placeholder:text-base-content/30 focus:border-brand-500/50 focus:bg-base-100 focus:outline-none focus:ring-2 focus:ring-brand-500/10"
+									on:keydown={(e) => e.key === 'Enter' && handleSendInvite()}
+								/>
+							</div>
+							<p class="text-[10px] text-base-content/40 leading-relaxed">
+								This will generate a unique invite link powered by the <a href="/admin/workflows" class="text-brand-500 hover:underline">Invite Email workflow</a>.
+							</p>
+							<button
+								type="button"
+								class="w-full rounded-xl bg-brand-500 px-4 py-2 text-sm font-bold text-white shadow-sm transition-all hover:bg-brand-600 active:scale-[0.98] disabled:opacity-50"
+								disabled={!inviteEmail.trim()}
+								on:click={handleSendInvite}
+							>Generate Invite Link</button>
+						</div>
+					{:else}
+						<div class="space-y-3">
+							<div class="flex items-center gap-2 rounded-xl bg-green-500/10 border border-green-500/20 px-3 py-2">
+								<div class="h-2 w-2 rounded-full bg-green-500 shrink-0"></div>
+								<p class="text-xs font-medium text-green-700 dark:text-green-400">Invite link ready for <span class="font-bold">{inviteEmail}</span></p>
+							</div>
+							<div class="rounded-xl border border-base-300/50 bg-base-200/50 p-2">
+								<p class="text-[10px] text-base-content/50 mb-1 font-semibold uppercase tracking-wider">Invite Link</p>
+								<p class="text-[11px] text-base-content/80 break-all font-mono leading-relaxed">{inviteLink}</p>
+							</div>
+							<button
+								type="button"
+								class="w-full rounded-xl bg-brand-500 px-4 py-2 text-sm font-bold text-white shadow-sm transition-all hover:bg-brand-600 active:scale-[0.98]"
+								on:click={() => navigator.clipboard.writeText(inviteLink)}
+							>Copy Link</button>
+							<button type="button" class="w-full text-xs text-base-content/50 hover:text-base-content" on:click={() => { inviteState = 'idle'; inviteEmail = ''; }}>Invite someone else</button>
+						</div>
+					{/if}
+				</div>
+			{/if}
+		</div>
 
 		<div class="h-6 w-px bg-base-300/60 mx-1 hidden sm:block"></div>
 

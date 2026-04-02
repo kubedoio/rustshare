@@ -7,6 +7,7 @@
 	const navItems = [
 		{ href: '/admin/users', label: 'Users', icon: 'users' },
 		{ href: '/admin/groups', label: 'Groups', icon: 'group' },
+		{ href: '/admin/workflows', label: 'Workflows', icon: 'workflow' },
 		{ href: '/admin/oidc', label: 'OIDC / SSO', icon: 'shield' },
 		{ href: '/admin/integrations', label: 'Integrations', icon: 'plug' },
 		{ href: '/admin/audit', label: 'Audit Log', icon: 'list' }
@@ -58,6 +59,10 @@
 							{:else if item.icon === 'plug'}
 								<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
 									<path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
+								</svg>
+							{:else if item.icon === 'workflow'}
+								<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
 								</svg>
 							{:else}
 								<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">

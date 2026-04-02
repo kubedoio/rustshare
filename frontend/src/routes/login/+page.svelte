@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { browser } from '$app/environment';
 	import { beginOidcLogin, getAuthConfig, type AuthConfig } from '$lib/api/auth';
 	import { authStore } from '$lib/stores/auth';
 
@@ -20,11 +21,11 @@
 
 	$: hasAnyLoginMethod = authConfig.oidc_enabled || authConfig.password_login_enabled;
 
+	$: if ($authStore.isAuthenticated && browser) {
+		goto('/dashboard');
+	}
+
 	onMount(async () => {
-		if ($authStore.isAuthenticated) {
-			goto('/dashboard');
-			return;
-		}
 		try {
 			authConfig = await getAuthConfig();
 			authConfigError = '';
