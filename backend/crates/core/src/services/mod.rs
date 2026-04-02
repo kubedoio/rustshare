@@ -1,5 +1,6 @@
 mod ai;
 mod ai_service;
+mod email_service;
 // TODO: Fix chat_integration compilation errors
 // mod chat_integration;
 mod errors;
@@ -24,6 +25,7 @@ mod user_share_service;
 
 pub use ai::{ContentIndex, ContentIndexer, EmbeddingGenerator, IndexedDocument, SimpleEmbeddingGenerator};
 pub use ai_service::{AiError, AiService, FileSummary, QuestionAnswer, SemanticSearchResult, SourceCitation};
+pub use email_service::{EmailError, EmailService};
 pub use errors::{FileError, FolderError};
 pub use file_service::{
     EventStoreOps as FileEventStoreOps, FileService, FileUploadActor,
