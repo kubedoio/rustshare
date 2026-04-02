@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import { previewFile, downloadFile } from '$lib/api/files';
+	import { previewFile, downloadFile, getFileContent } from '$lib/api/files';
 	import type { File } from '$lib/api/types';
 	import { formatFileSize } from '$lib/utils/format';
 	import { detectEditorType, canEditFileSize } from '$lib/utils/editor';
+	import { renderMarkdown } from '$lib/utils/markdown';
 
 	export let open = false;
 	export let file: File | null = null;
@@ -15,6 +16,7 @@
 	const dispatch = createEventDispatcher<DispatchEvents>();
 
 	let previewUrl: string | null = null;
+	let textContent: string | null = null;
 	let isLoading = false;
 	let error: string | null = null;
 
@@ -36,10 +38,23 @@
 		isLoading = true;
 		error = null;
 		previewUrl = null;
+		textContent = null;
 
 		try {
-			const response = await previewFile(file.id);
-			previewUrl = response.url;
+			// For text-based files, we fetch the content directly
+			if (isText(file.mime_type) || isMarkdown(file.name) || isExcalidraw(file.name) || isDrawio(file.name)) {
+				textContent = await getFileContent(file.id);
+				// Still get preview URL for download/misc
+				try {
+					const response = await previewFile(file.id);
+					previewUrl = response.url;
+				} catch (e) {
+					// Ignore if preview API fails for text files
+				}
+			} else {
+				const response = await previewFile(file.id);
+				previewUrl = response.url;
+			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load preview';
 		} finally {
@@ -49,6 +64,7 @@
 
 	function cleanup() {
 		previewUrl = null;
+		textContent = null;
 		error = null;
 		isLoading = false;
 	}
@@ -87,8 +103,31 @@
 		);
 	}
 
-	function canPreview(mimeType: string): boolean {
-		return isImage(mimeType) || isPdf(mimeType) || isVideo(mimeType) || isAudio(mimeType);
+	function isMarkdown(fileName: string): boolean {
+		return fileName.toLowerCase().endsWith('.md') || fileName.toLowerCase().endsWith('.mdx');
+	}
+
+	function isExcalidraw(fileName: string): boolean {
+		return fileName.toLowerCase().endsWith('.excalidraw') || fileName.toLowerCase().endsWith('.excalidraw.json');
+	}
+
+	function isDrawio(fileName: string): boolean {
+		return fileName.toLowerCase().endsWith('.drawio') || fileName.toLowerCase().endsWith('.dio');
+	}
+
+	function canPreview(file: File): boolean {
+		const mimeType = file.mime_type;
+		const name = file.name;
+		return (
+			isImage(mimeType) || 
+			isPdf(mimeType) || 
+			isVideo(mimeType) || 
+			isAudio(mimeType) || 
+			isText(mimeType) || 
+			isMarkdown(name) ||
+			isExcalidraw(name) ||
+			isDrawio(name)
+		);
 	}
 
 	async function handleDownload() {
@@ -160,21 +199,46 @@
 					<p class="text-error font-semibold mb-2">Preview failed</p>
 					<p class="text-sm text-base-content/60">{error}</p>
 				</div>
-			{:else if file && previewUrl}
-				{#if isImage(file.mime_type)}
+			{:else if file}
+				{#if isImage(file.mime_type) && previewUrl}
 					<img src={previewUrl} alt={file.name} class="max-h-full max-w-full object-contain" />
-				{:else if isPdf(file.mime_type)}
+				{:else if isPdf(file.mime_type) && previewUrl}
 					<iframe src={previewUrl} title={file.name} class="h-full w-full" frameborder="0"></iframe>
-				{:else if isVideo(file.mime_type)}
+				{:else if isVideo(file.mime_type) && previewUrl}
 					<video src={previewUrl} controls class="max-h-full max-w-full">
 						<track kind="captions" />
 						Your browser doesn't support video playback.
 					</video>
-				{:else if isAudio(file.mime_type)}
+				{:else if isAudio(file.mime_type) && previewUrl}
 					<div class="p-8">
 						<audio src={previewUrl} controls class="w-full">
 							Your browser doesn't support audio playback.
 						</audio>
+					</div>
+				{:else if isMarkdown(file.name) && textContent !== null}
+					<div class="w-full h-full p-8 overflow-auto bg-base-100">
+						<article class="prose max-w-none">
+							{@html renderMarkdown(textContent)}
+						</article>
+					</div>
+				{:else if isText(file.mime_type) && textContent !== null}
+					<div class="w-full h-full p-6 overflow-auto bg-base-100 font-mono text-sm whitespace-pre">
+						{textContent}
+					</div>
+				{:else if (isExcalidraw(file.name) || isDrawio(file.name)) && textContent !== null}
+					<div class="p-12 text-center flex flex-col items-center gap-4">
+						<div class="w-20 h-20 bg-primary/10 rounded-2xl flex items-center justify-center text-primary mb-2">
+							<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-10 h-10">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+							</svg>
+						</div>
+						<h4 class="text-xl font-bold">{isExcalidraw(file.name) ? 'Excalidraw' : 'Draw.io'} Diagram</h4>
+						<p class="text-base-content/60 max-w-md">
+							This file is a diagram that can be viewed and edited in the specialized editor.
+						</p>
+						<button class="btn btn-primary mt-4" on:click={handleEdit}>
+							Open in Editor
+						</button>
 					</div>
 				{:else}
 					<div class="p-8 text-center">
@@ -219,7 +283,7 @@
 					Edit
 				</button>
 			{/if}
-			{#if file && previewUrl && canPreview(file.mime_type)}
+			{#if file && (previewUrl || textContent !== null) && canPreview(file)}
 				<button class="btn btn-outline" on:click={handleDownload}>
 					<svg
 						xmlns="http://www.w3.org/2000/svg"
