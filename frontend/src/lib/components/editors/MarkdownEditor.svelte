@@ -95,10 +95,10 @@
 	}
 
 	async function initEditor() {
-		if (!editorContainer || !file) return;
+		if (!editorContainer || !file || editor) return;
 
 		monaco = await loadMonaco();
-		if (!monaco) return;
+		if (!monaco || !editorContainer) return;
 
 		editor = monaco.editor.create(editorContainer, {
 			...editorOptions,
@@ -113,6 +113,11 @@
 				hasChanges = content !== originalContent;
 			}
 		});
+
+		// Force layout after a small delay to ensure it fits the container
+		setTimeout(() => {
+			if (editor) editor.layout();
+		}, 100);
 	}
 
 	async function loadContent() {
@@ -195,8 +200,13 @@
 	}
 
 	$: if (open && file) {
-		loadContent();
-		setTimeout(() => initEditor(), 0);
+		// Await content loading before initializing the editor to prevent blank display
+		loadContent().then(() => {
+			if (!editor) {
+				// Small delay to ensure container is fully bound and visible
+				setTimeout(() => initEditor(), 50);
+			}
+		});
 	}
 
 	$: if (!open && editor) {

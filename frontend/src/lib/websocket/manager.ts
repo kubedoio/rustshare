@@ -89,24 +89,23 @@ function handleFileUploaded(event: WebSocketEvent): void {
 
   // Backend doesn't send file details in the event payload for generic events
   // We just have aggregate_id (file ID) and need to invalidate queries to refetch
-  const fileId = (event as any).aggregate_id;
-  console.log("[WebSocket Manager] File ID from aggregate_id:", fileId);
-
-  // Invalidate ALL folder contents queries to refetch
-  console.log("[WebSocket Manager] Invalidating all folder-contents queries");
+  // Invalidate BOTH folder contents and file workspace queries
   queryClient.invalidateQueries({ queryKey: ["folder-contents"] });
+  queryClient.invalidateQueries({ queryKey: ["file-workspace"] });
 
   if (!isOwnEvent(event)) {
-    toastStore.show(`New file was uploaded`, "info");
+    // Note: for FileUploaded, the backend payload may vary, often just containing the ID
+    toastStore.show(`A new file was uploaded`, "info");
   }
 }
 
 function handleFileModified(event: WebSocketEvent): void {
   const payload = event.payload || (event as any);
 
-  // Invalidate file details and folder contents
+  // Invalidate file details, folder contents and file workspace
   queryClient.invalidateQueries({ queryKey: ["file", payload.file_id] });
   queryClient.invalidateQueries({ queryKey: ["folder-contents"] });
+  queryClient.invalidateQueries({ queryKey: ["file-workspace"] });
 
   if (!isOwnEvent(event)) {
     toastStore.show(
@@ -119,9 +118,10 @@ function handleFileModified(event: WebSocketEvent): void {
 function handleFileRenamed(event: WebSocketEvent): void {
   const payload = event.payload || (event as any);
 
-  // Invalidate file details and folder contents
+  // Invalidate file details, folder contents and file workspace
   queryClient.invalidateQueries({ queryKey: ["file", payload.file_id] });
   queryClient.invalidateQueries({ queryKey: ["folder-contents"] });
+  queryClient.invalidateQueries({ queryKey: ["file-workspace"] });
 
   if (!isOwnEvent(event)) {
     toastStore.show(
@@ -142,10 +142,12 @@ function handleFileMoved(event: WebSocketEvent): void {
     queryKey: ["folder-contents", payload.new_folder_id],
   });
   queryClient.invalidateQueries({ queryKey: ["file", payload.file_id] });
+  queryClient.invalidateQueries({ queryKey: ["file-workspace"] });
 
   // Invalidate root folders if needed
   if (!payload.old_folder_id || !payload.new_folder_id) {
     queryClient.invalidateQueries({ queryKey: ["folder-contents", null] });
+    queryClient.invalidateQueries({ queryKey: ["file-workspace", "all", null] });
   }
 
   if (!isOwnEvent(event)) {
@@ -161,11 +163,13 @@ function handleFileDeleted(event: WebSocketEvent): void {
   queryClient.invalidateQueries({
     queryKey: ["folder-contents", payload.folder_id],
   });
+  queryClient.invalidateQueries({ queryKey: ["file-workspace"] });
   replicationStore.remove(payload.file_id);
 
   // Invalidate root if folder_id is null
   if (!payload.folder_id) {
     queryClient.invalidateQueries({ queryKey: ["folder-contents", null] });
+    queryClient.invalidateQueries({ queryKey: ["file-workspace", "all", null] });
   }
 
   if (!isOwnEvent(event)) {
@@ -181,9 +185,11 @@ function handleFileRestored(event: WebSocketEvent): void {
   queryClient.invalidateQueries({
     queryKey: ["folder-contents", payload.folder_id],
   });
+  queryClient.invalidateQueries({ queryKey: ["file-workspace"] });
 
   if (!payload.folder_id) {
     queryClient.invalidateQueries({ queryKey: ["folder-contents", null] });
+    queryClient.invalidateQueries({ queryKey: ["file-workspace", "all", null] });
   }
 
   if (!isOwnEvent(event)) {
@@ -195,27 +201,32 @@ function handleFileRestored(event: WebSocketEvent): void {
 function handleFolderCreated(event: WebSocketEvent): void {
   const payload = event.payload || (event as any);
 
-  // Invalidate parent folder contents and folder tree
+  // Invalidate parent folder contents, folder tree and file workspace
   queryClient.invalidateQueries({
     queryKey: ["folder-contents", payload.parent_folder_id],
   });
   queryClient.invalidateQueries({ queryKey: ["folders"] });
+  queryClient.invalidateQueries({ queryKey: ["file-workspace"] });
 
   if (!payload.parent_folder_id) {
     queryClient.invalidateQueries({ queryKey: ["folder-contents", null] });
+    queryClient.invalidateQueries({ queryKey: ["file-workspace", "all", null] });
   }
 
   if (!isOwnEvent(event)) {
-    toastStore.show(`Folder "${payload.folder_name}" was created`, "info");
+    // Backend uses 'name' for FolderCreatedPayload
+    const folderName = payload.name || payload.folder_name || "New folder";
+    toastStore.show(`Folder "${folderName}" was created`, "info");
   }
 }
 
 function handleFolderRenamed(event: WebSocketEvent): void {
   const payload = event.payload || (event as any);
 
-  // Invalidate folder tree and all folder contents
+  // Invalidate folder tree, all folder contents and file workspace
   queryClient.invalidateQueries({ queryKey: ["folders"] });
   queryClient.invalidateQueries({ queryKey: ["folder-contents"] });
+  queryClient.invalidateQueries({ queryKey: ["file-workspace"] });
 
   if (!isOwnEvent(event)) {
     toastStore.show(
@@ -236,31 +247,40 @@ function handleFolderMoved(event: WebSocketEvent): void {
     queryKey: ["folder-contents", payload.new_parent_id],
   });
   queryClient.invalidateQueries({ queryKey: ["folders"] });
+  queryClient.invalidateQueries({ queryKey: ["file-workspace"] });
 
   if (!payload.old_parent_id || !payload.new_parent_id) {
     queryClient.invalidateQueries({ queryKey: ["folder-contents", null] });
+    queryClient.invalidateQueries({ queryKey: ["file-workspace", "all", null] });
   }
 
   if (!isOwnEvent(event)) {
-    toastStore.show(`Folder "${payload.folder_name}" was moved`, "info");
+    // Backend uses 'name' for FolderMovedPayload? Wait, check... it uses name for Created/Deleted.
+    // For moved, it usually has folder_name or something.
+    const folderName = payload.name || payload.folder_name || "Folder";
+    toastStore.show(`Folder "${folderName}" was moved`, "info");
   }
 }
 
 function handleFolderDeleted(event: WebSocketEvent): void {
   const payload = event.payload || (event as any);
 
-  // Invalidate parent folder contents and folder tree
+  // Invalidate parent folder contents, folder tree and file workspace
   queryClient.invalidateQueries({
     queryKey: ["folder-contents", payload.parent_folder_id],
   });
   queryClient.invalidateQueries({ queryKey: ["folders"] });
+  queryClient.invalidateQueries({ queryKey: ["file-workspace"] });
 
   if (!payload.parent_folder_id) {
     queryClient.invalidateQueries({ queryKey: ["folder-contents", null] });
+    queryClient.invalidateQueries({ queryKey: ["file-workspace", "all", null] });
   }
 
   if (!isOwnEvent(event)) {
-    toastStore.show(`Folder "${payload.folder_name}" was deleted`, "info");
+    // Backend uses 'name' for FolderDeletedPayload
+    const folderName = payload.name || payload.folder_name || "Folder";
+    toastStore.show(`Folder "${folderName}" was deleted`, "info");
   }
 }
 

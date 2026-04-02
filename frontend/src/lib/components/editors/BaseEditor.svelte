@@ -118,13 +118,13 @@
 
 		<!-- Content Area -->
 		<div class="flex-1 overflow-hidden relative">
+			<slot />
+			
 			{#if isLoading}
-				<div class="absolute inset-0 flex flex-col items-center justify-center bg-base-100">
+				<div class="absolute inset-0 flex flex-col items-center justify-center bg-base-100/80 z-20">
 					<span class="loading loading-spinner loading-lg text-primary"></span>
 					<p class="text-sm text-base-content/60 mt-4">Loading file content...</p>
 				</div>
-			{:else}
-				<slot />
 			{/if}
 		</div>
 
