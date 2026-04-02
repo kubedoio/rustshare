@@ -29,6 +29,7 @@
 	export let onMoveFile: (file: FileType, targetFolderId: string | null) => void = () => {};
 	export let onDownloadFile: (file: FileType) => void = () => {};
 	export let onReplaceFile: (file: FileType) => void = () => {};
+	export let onEditFile: (file: FileType) => void = () => {};
 	export let selectionMode = false;
 	export let replicationStatuses: Record<string, ReplicationStatus> = {};
 
@@ -176,7 +177,8 @@
 					onDownload={() => onDownloadFile(file)}
 					onVersionHistory={() => onVersionHistory(file)}
 					onReplace={() => onReplaceFile(file)}
-					onDragStart={() => handleDragStart({ id: file.id, isFolder: false })}
+					onEdit={() => onEditFile(file)}
+					onDragStart={() => handleDragStart({ id: file.id, isFolder: false })},
 					onDragEnd={handleDragEnd}
 				/>
 			{/each}

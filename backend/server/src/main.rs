@@ -629,6 +629,7 @@ async fn main() -> Result<()> {
             "/api/v1/files/{id}/thumbnail",
             get(handlers::get_file_thumbnail),
         )
+        .route("/api/v1/files/{id}/edit", post(handlers::edit_file))
         // Upload session routes (TODO-004: Resumable uploads)
         // Upload endpoints disabled - TODO: Fix upload service type issues
         // .route("/api/v1/uploads/sessions", get(handlers::list_upload_sessions))

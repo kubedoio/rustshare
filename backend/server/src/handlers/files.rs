@@ -623,6 +623,87 @@ pub async fn get_file_thumbnail(
 }
 
 // ============================================================================
+// Task: File Edit with Content
+// ============================================================================
+
+/// Edit file content with save mode option.
+///
+/// POST /api/v1/files/{id}/edit
+///
+/// Request body: JSON with base64-encoded content and save mode
+/// {
+///   "content": "base64-encoded-content",
+///   "save_mode": "overwrite" | "new_version",
+///   "change_description": "optional description"
+/// }
+#[derive(Debug, Deserialize)]
+pub struct EditFileRequest {
+    /// Base64-encoded file content
+    pub content: String,
+    /// Save mode: "overwrite" or "new_version"
+    pub save_mode: String,
+    /// Optional change description for new versions
+    pub change_description: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EditFileResponse {
+    pub id: Uuid,
+    pub current_version: i32,
+    pub content_hash: String,
+    pub size: i64,
+    pub modified_at: String,
+    pub saved_as_new_version: bool,
+}
+
+pub async fn edit_file(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(file_id): Path<Uuid>,
+    Json(req): Json<EditFileRequest>,
+) -> Result<Json<EditFileResponse>, Response> {
+    // Validate save mode
+    if req.save_mode != "overwrite" && req.save_mode != "new_version" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new(
+                "Invalid save_mode. Must be 'overwrite' or 'new_version'",
+            )),
+        )
+            .into_response());
+    }
+
+    // Decode base64 content
+    let content = match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &req.content) {
+        Ok(bytes) => Bytes::from(bytes),
+        Err(e) => {
+            tracing::error!("Failed to decode base64 content: {}", e);
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse::new("Invalid base64 content")),
+            )
+                .into_response());
+        }
+    };
+
+    // Edit file
+    let file = state
+        .file_service
+        .edit_file(file_id, auth.user_id, content, &req.save_mode, req.change_description)
+        .await
+        .map_err(file_error_response)?;
+
+    Ok(Json(EditFileResponse {
+        id: file.id,
+        current_version: file.current_version,
+        content_hash: file.content_hash,
+        size: file.size,
+        modified_at: file.modified_at.to_rfc3339(),
+        saved_as_new_version: req.save_mode == "new_version",
+    }))
+}
+
+// ============================================================================
 // List All User Files (Simple View)
 // ============================================================================
 

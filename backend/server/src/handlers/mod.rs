@@ -112,6 +112,8 @@ pub fn file_error_response(err: FileError) -> Response {
         FileError::QuotaExceeded { .. } => (StatusCode::FORBIDDEN, err.to_string()),
         FileError::InvalidName(_) => (StatusCode::BAD_REQUEST, err.to_string()),
         FileError::VersionNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
+        FileError::NotEditable(_) => (StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
+        FileError::ContentTooLarge { .. } => (StatusCode::PAYLOAD_TOO_LARGE, err.to_string()),
         FileError::Database(_) | FileError::Storage(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Internal server error".to_string(),

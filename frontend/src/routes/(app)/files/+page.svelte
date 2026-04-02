@@ -50,6 +50,10 @@
 	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
 	import ReplaceFileModal from '$lib/components/modals/ReplaceFileModal.svelte';
 
+	// Editors
+	import { TextEditor, MarkdownEditor, ExcalidrawEditor } from '$lib/components/editors';
+	import { detectEditorType } from '$lib/utils/editor';
+
 	type UploadTask = {
 		id: string;
 		fileName: string;
@@ -78,6 +82,12 @@
 	let showReplaceFileModal = false;
 	let bulkMoveFileIds: string[] = [];
 	let bulkMoveLoading = false;
+
+	// Editor state
+	let showTextEditor = false;
+	let showMarkdownEditor = false;
+	let showExcalidrawEditor = false;
+	let editorTarget: File | null = null;
 
 	// Targets
 	let renameTarget: File | Folder | null = null;
@@ -490,6 +500,39 @@
 		if (workspaceMode === 'deleted') return;
 		previewTarget = file;
 		showFilePreviewModal = true;
+	}
+
+	function handleEditFile(event: CustomEvent<{ file: File }>) {
+		const file = event.detail.file;
+		editorTarget = file;
+		showFilePreviewModal = false;
+
+		const editorType = detectEditorType(file.name, file.mime_type);
+		switch (editorType) {
+			case 'markdown':
+				showMarkdownEditor = true;
+				break;
+			case 'excalidraw':
+				showExcalidrawEditor = true;
+				break;
+			case 'text':
+			default:
+				showTextEditor = true;
+				break;
+		}
+	}
+
+	function handleEditorClose() {
+		showTextEditor = false;
+		showMarkdownEditor = false;
+		showExcalidrawEditor = false;
+		editorTarget = null;
+	}
+
+	function handleEditorSaved() {
+		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+		showNotification('File saved successfully', 'success');
+		handleEditorClose();
 	}
 
 	function showNotification(message: string, type: 'success' | 'error' | 'info') {
@@ -991,6 +1034,7 @@
 		onMoveFile={handleMoveFileWithFallback}
 		onDownloadFile={handleDownloadFile}
 		onReplaceFile={handleReplaceFile}
+		onEditFile={handleEditFile}
 		onRenameFolder={handleRenameFolderInline}
 		onDeleteFolder={handleDeleteFolder}
 		onToggleFolderStar={handleToggleFolderStar}
@@ -1076,6 +1120,35 @@
 		open={showFilePreviewModal}
 		file={previewTarget}
 		on:close={() => { showFilePreviewModal = false; previewTarget = null; }}
+		on:edit={handleEditFile}
+	/>
+{/if}
+
+<!-- Editors -->
+{#if showTextEditor && editorTarget}
+	<TextEditor
+		open={showTextEditor}
+		file={editorTarget}
+		on:close={handleEditorClose}
+		on:saved={handleEditorSaved}
+	/>
+{/if}
+
+{#if showMarkdownEditor && editorTarget}
+	<MarkdownEditor
+		open={showMarkdownEditor}
+		file={editorTarget}
+		on:close={handleEditorClose}
+		on:saved={handleEditorSaved}
+	/>
+{/if}
+
+{#if showExcalidrawEditor && editorTarget}
+	<ExcalidrawEditor
+		open={showExcalidrawEditor}
+		file={editorTarget}
+		on:close={handleEditorClose}
+		on:saved={handleEditorSaved}
 	/>
 {/if}
 

@@ -48,6 +48,7 @@
 		onMoveFile?: ((file: FileType) => void) | ((file: FileType, targetFolderId: string | null) => void);
 		onDownloadFile?: (file: FileType) => void;
 		onReplaceFile?: (file: FileType) => void;
+		onEditFile?: (file: FileType) => void;
 		onRenameFolder?: ((folder: Folder) => void) | ((folder: Folder, newName: string) => void);
 		onDeleteFolder?: (folder: Folder) => void;
 		onToggleFolderStar?: (folder: Folder) => void;
@@ -98,6 +99,7 @@
 		onMoveFile = () => {},
 		onDownloadFile = () => {},
 		onReplaceFile = () => {},
+		onEditFile = () => {},
 		onRenameFolder = () => {},
 		onDeleteFolder = () => {},
 		onToggleFolderStar = () => {},
@@ -194,6 +196,7 @@
 					onMoveFile={onMoveFile}
 					onDownloadFile={onDownloadFile}
 					onReplaceFile={onReplaceFile}
+					onEditFile={onEditFile}
 					onShareFile={onShareFile}
 					onVersionHistory={onVersionHistory}
 				/>
@@ -224,6 +227,7 @@
 					onMoveFile={onMoveFile}
 					onDownloadFile={onDownloadFile}
 					onReplaceFile={onReplaceFile}
+					onEditFile={onEditFile}
 					onShareFile={onShareFile}
 					onVersionHistory={onVersionHistory}
 				/>

@@ -53,6 +53,14 @@ pub enum FileError {
     /// Storage operation failed.
     #[error("Storage error: {0}")]
     Storage(String),
+
+    /// File type is not editable.
+    #[error("File type not editable: {0}")]
+    NotEditable(String),
+
+    /// File content is too large for editing.
+    #[error("File too large for editing: {size} bytes exceeds limit of {limit} bytes")]
+    ContentTooLarge { size: i64, limit: i64 },
 }
 
 /// Errors that can occur during folder operations.

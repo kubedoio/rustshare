@@ -2,6 +2,7 @@
 	import type { File as FileType, Folder } from '$lib/api/types';
 	import type { ReplicationStatus } from '$lib/stores/replication';
 	import { formatFileSize, formatDate, getFileTypeLabel } from '$lib/utils/format';
+	import { detectEditorType, canEditFileSize } from '$lib/utils/editor';
 	import FilePreview from './FilePreview.svelte';
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
 	import ContextMenu from '$lib/components/common/ContextMenu.svelte';
@@ -10,6 +11,7 @@
 	import { 
 		MoreVertical, 
 		Edit, 
+		Edit3,
 		Trash2, 
 		Share2, 
 		Move, 
@@ -49,6 +51,7 @@
 		onDownload?: () => void;
 		onVersionHistory?: () => void;
 		onReplace?: () => void;
+		onEdit?: () => void;
 		onDragStart?: () => void;
 		onDragEnd?: () => void;
 		onDrop?: () => void;
@@ -76,6 +79,7 @@
 		onDownload = () => {},
 		onVersionHistory = () => {},
 		onReplace = () => {},
+		onEdit = () => {},
 		onDragStart = () => {},
 		onDragEnd = () => {},
 		onDrop = () => {}
@@ -129,8 +133,22 @@
 					{ id: 'sep1', label: '', separator: true, onClick: () => {} }
 				);
 			} else {
+				// Check if file is editable
+				const isEditable = !isFolder && 
+					'deleted_at' in item && 
+					!item.deleted_at && 
+					detectEditorType(item.name, item.mime_type) !== 'none' &&
+					canEditFileSize(item.size);
+
 				items.push(
-					{ id: 'open', label: 'Open', icon: FileIcon, shortcut: 'Enter', onClick: () => onSelect() },
+					{ id: 'open', label: 'Open', icon: FileIcon, shortcut: 'Enter', onClick: () => onSelect() }
+				);
+
+				if (isEditable) {
+					items.push({ id: 'edit', label: 'Edit', icon: Edit3, shortcut: '⌘E', onClick: onEdit });
+				}
+
+				items.push(
 					{ id: 'download', label: 'Download', icon: Download, shortcut: '⌘D', onClick: onDownload },
 					{ id: 'sep1', label: '', separator: true, onClick: () => {} }
 				);

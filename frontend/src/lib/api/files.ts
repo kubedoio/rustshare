@@ -129,3 +129,40 @@ export async function restoreFileVersion(
 
   return response;
 }
+
+export interface EditFileResponse {
+  id: string;
+  current_version: number;
+  content_hash: string;
+  size: number;
+  modified_at: string;
+  saved_as_new_version: boolean;
+}
+
+export async function editFile(
+  fileId: string,
+  content: string,
+  saveMode: "overwrite" | "new_version",
+  changeDescription?: string,
+): Promise<EditFileResponse> {
+  // Convert content to base64
+  const base64Content = btoa(unescape(encodeURIComponent(content)));
+
+  return apiClient.post<EditFileResponse>(`/files/${fileId}/edit`, {
+    content: base64Content,
+    save_mode: saveMode,
+    change_description: changeDescription,
+  });
+}
+
+export async function getFileContent(fileId: string): Promise<string> {
+  const response = await fetch(`/api/v1/files/${fileId}/content`, {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to get file content: ${response.statusText}`);
+  }
+
+  return response.text();
+}

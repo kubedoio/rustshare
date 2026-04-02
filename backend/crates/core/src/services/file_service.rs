@@ -883,6 +883,195 @@ where
         Ok(())
     }
 
+    /// Edit a file's content with option to overwrite or create new version.
+    ///
+    /// # Arguments
+    /// * `file_id` - The ID of the file to edit
+    /// * `user_id` - The ID of the user performing the edit
+    /// * `content` - The new file content as bytes
+    /// * `save_mode` - "overwrite" to update current version, "new_version" to create new version
+    /// * `change_description` - Optional description for the change (used when creating new version)
+    ///
+    /// # Returns
+    /// The updated File domain object.
+    ///
+    /// # Errors
+    /// - `FileError::NotFound` if the file doesn't exist
+    /// - `FileError::PermissionDenied` if the user doesn't own the file
+    /// - `FileError::NotEditable` if the file type is not supported for editing
+    /// - `FileError::ContentTooLarge` if the content exceeds the editable size limit
+    /// - `FileError::Storage` if the RustFS write fails
+    /// - `FileError::Database` if database operations fail
+    pub async fn edit_file(
+        &self,
+        file_id: uuid::Uuid,
+        user_id: UserId,
+        content: Bytes,
+        save_mode: &str,
+        change_description: Option<String>,
+    ) -> Result<File, FileError> {
+        // 1. Get file and verify ownership
+        let mut file = self.get_file(file_id, user_id).await?;
+
+        // 2. Validate file is editable based on mime type and extension
+        self.validate_file_editable(&file)?;
+
+        // 3. Validate content size (10MB limit for editing)
+        const MAX_EDITABLE_SIZE: i64 = 10 * 1024 * 1024; // 10MB
+        let content_size = content.len() as i64;
+        if content_size > MAX_EDITABLE_SIZE {
+            return Err(FileError::ContentTooLarge {
+                size: content_size,
+                limit: MAX_EDITABLE_SIZE,
+            });
+        }
+
+        // 4. Calculate new content hash
+        let old_content_hash = file.content_hash.clone();
+        let old_size = file.size;
+        let new_content_hash = self.calculate_sha256(&content);
+        let new_size = content.len() as i64;
+
+        // 5. Write to RustFS (skip if same content - deduplication)
+        let storage_key = format!("blobs/{}", new_content_hash);
+        let blob_exists = self
+            .object_store
+            .exists(&storage_key)
+            .await
+            .map_err(|e| FileError::Storage(e.to_string()))?;
+
+        if !blob_exists {
+            self.object_store
+                .put(&storage_key, content)
+                .await
+                .map_err(|e| FileError::Storage(e.to_string()))?;
+        }
+
+        // 6. Handle based on save mode
+        let old_version = file.current_version;
+        let saved_as_new_version: bool;
+
+        if save_mode == "new_version" {
+            // Create new version
+            file.current_version += 1;
+            saved_as_new_version = true;
+        } else {
+            // Overwrite mode - keep same version number
+            saved_as_new_version = false;
+        }
+
+        // Update file record
+        file.content_hash = new_content_hash.clone();
+        file.size = new_size;
+        file.modified_at = chrono::Utc::now();
+
+        self.metadata_store
+            .update_file(&file)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        // 7. Create FileVersion snapshot
+        let version = FileVersion::new(
+            file.id,
+            file.current_version,
+            new_content_hash.clone(),
+            new_size,
+            user_id,
+            Some(change_description.unwrap_or_else(|| {
+                if saved_as_new_version {
+                    format!("Edited (new version from {})", old_version)
+                } else {
+                    format!("Edited (overwrote version {})", old_version)
+                }
+            })),
+            file.tenant_id,
+        );
+
+        self.metadata_store
+            .create_file_version(&version)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        self.queue_replication_if_needed(file.id, user_id, &version)
+            .await?;
+
+        // 8. Emit FileModified event
+        let payload = FileModifiedPayload {
+            file_id: file.id,
+            old_version,
+            new_version: file.current_version,
+            old_content_hash,
+            new_content_hash,
+            old_size,
+            new_size,
+            storage_key,
+            modified_by: user_id,
+        };
+        let payload_json = serde_json::to_value(&payload)
+            .map_err(|e| FileError::Storage(format!("Failed to serialize payload: {}", e)))?;
+
+        let event = Event::new(
+            EventType::FileModified,
+            file.id,
+            AggregateType::File,
+            payload_json,
+            user_id,
+        );
+
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
+
+        // 9. Return updated file
+        Ok(file)
+    }
+
+    /// Validate that a file is editable based on its MIME type and extension.
+    fn validate_file_editable(&self, file: &File) -> Result<(), FileError> {
+        let name = file.name.to_lowercase();
+        let mime_type = file.mime_type.to_lowercase();
+
+        // Check for Excalidraw files
+        if name.ends_with(".excalidraw") || name.ends_with(".excalidraw.json") {
+            return Ok(());
+        }
+
+        // Check for markdown files
+        if name.ends_with(".md") || name.ends_with(".mdx") || mime_type == "text/markdown" {
+            return Ok(());
+        }
+
+        // Check for text files
+        if mime_type.starts_with("text/") {
+            return Ok(());
+        }
+
+        // Check for code files by extension
+        let editable_extensions = [
+            "txt", "js", "ts", "tsx", "jsx", "py", "rs", "go", "java", "cpp", "c", "h",
+            "hpp", "cs", "php", "rb", "swift", "kt", "scala", "r", "m", "mm",
+            "json", "yaml", "yml", "toml", "xml", "html", "htm", "css", "scss",
+            "sass", "less", "sql", "sh", "bash", "zsh", "fish", "ps1", "bat",
+            "cmd", "dockerfile", "makefile", "cmake", "gradle", "ini", "conf",
+            "cfg", "properties", "env", "gitignore", "gitattributes", "lock",
+            "log", "csv", "tsv", "svg", "vue", "svelte",
+        ];
+
+        if let Some(ext) = name.rsplit('.').next() {
+            if editable_extensions.contains(&ext) {
+                return Ok(());
+            }
+        }
+
+        // File type not supported for editing
+        Err(FileError::NotEditable(format!(
+            "Files with MIME type '{}' and extension '{}' are not editable",
+            file.mime_type,
+            name.rsplit('.').next().unwrap_or("unknown")
+        )))
+    }
+
     fn validate_file_name(&self, name: &str) -> Result<(), FileError> {
         if name.is_empty() {
             return Err(FileError::InvalidName(
