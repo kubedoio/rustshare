@@ -1,4 +1,3 @@
-use sqlx::Row;
 use uuid::Uuid;
 
 async fn test_pool() -> sqlx::PgPool {
@@ -31,23 +30,15 @@ async fn get_invite_workflow_id(pool: &sqlx::PgPool) -> Uuid {
         .expect("invite workflow exists")
 }
 
-async fn seed_smtp_config(pool: &sqlx::PgPool) {
-    sqlx::query(
-        "UPDATE smtp_config SET enabled = true, host = 'smtp.test.local', port = 587, from_address = 'test@rustshare.io' WHERE id = '00000000-0000-0000-0000-000000000002'"
-    )
-    .execute(pool)
-    .await
-    .expect("seed smtp config");
-}
-
 #[tokio::test]
 #[ignore]
 async fn test_invite_token_crud() {
     let pool = test_pool().await;
-    let sender_id = create_test_admin(&pool, &Uuid::new_v4().to_string()[..8]).await;
+    let suffix = Uuid::new_v4().to_string();
+    let sender_id = create_test_admin(&pool, &suffix).await;
     let wf_id = get_invite_workflow_id(&pool).await;
 
-    let token = "deadbeef";
+    let token = Uuid::new_v4().to_string().replace("-", "");
     let expires_at = chrono::Utc::now() + chrono::Duration::days(7);
 
     sqlx::query(
@@ -55,9 +46,9 @@ async fn test_invite_token_crud() {
          VALUES ($1, $2, $3, $4, $5, $6)"
     )
     .bind(Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap())
-    .bind(token)
+    .bind(&token)
     .bind(sender_id)
-    .bind("invited@test.local")
+    .bind(format!("invited_{}@test.local", suffix))
     .bind(wf_id)
     .bind(expires_at)
     .execute(&pool)
@@ -65,30 +56,35 @@ async fn test_invite_token_crud() {
     .expect("insert token");
 
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invite_tokens WHERE token = $1")
-        .bind(token)
+        .bind(&token)
         .fetch_one(&pool)
         .await
         .expect("count token");
     assert_eq!(count, 1);
+
+    // Cleanup
+    sqlx::query("DELETE FROM invite_tokens WHERE token = $1").bind(&token).execute(&pool).await.ok();
+    sqlx::query("DELETE FROM users WHERE id = $1").bind(sender_id).execute(&pool).await.ok();
 }
 
 #[tokio::test]
 #[ignore]
 async fn test_accept_invite_creates_user() {
     let pool = test_pool().await;
-    let sender_id = create_test_admin(&pool, "accept").await;
+    let suffix = Uuid::new_v4().to_string();
+    let sender_id = create_test_admin(&pool, &suffix).await;
     let wf_id = get_invite_workflow_id(&pool).await;
-    let token = "cafebabe";
-    let email = "accept_invite@test.local";
+    let token = Uuid::new_v4().to_string().replace("-", "");
+    let email = format!("accept_invite_{}@test.local", suffix);
 
     sqlx::query(
         "INSERT INTO invite_tokens (tenant_id, token, sender_id, recipient_email, workflow_id, expires_at)
          VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days')"
     )
     .bind(Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap())
-    .bind(token)
+    .bind(&token)
     .bind(sender_id)
-    .bind(email)
+    .bind(&email)
     .bind(wf_id)
     .execute(&pool)
     .await
@@ -100,8 +96,8 @@ async fn test_accept_invite_creates_user() {
          VALUES ($1, $2, $3, $4, $5, false, 10737418240)"
     )
     .bind(user_id)
-    .bind("accepted_user")
-    .bind(email)
+    .bind(format!("accepted_user_{}", suffix))
+    .bind(&email)
     .bind("$argon2id$v=19$m=4096,t=3,p=1$hash")
     .bind("Accepted User")
     .execute(&pool)
@@ -109,29 +105,35 @@ async fn test_accept_invite_creates_user() {
     .expect("create user");
 
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
-        .bind(email)
+        .bind(&email)
         .fetch_one(&pool)
         .await
         .expect("check user");
     assert!(exists);
+
+    // Cleanup
+    sqlx::query("DELETE FROM invite_tokens WHERE token = $1").bind(&token).execute(&pool).await.ok();
+    sqlx::query("DELETE FROM users WHERE email = $1").bind(&email).execute(&pool).await.ok();
+    sqlx::query("DELETE FROM users WHERE id = $1").bind(sender_id).execute(&pool).await.ok();
 }
 
 #[tokio::test]
 #[ignore]
 async fn test_invite_token_expired() {
     let pool = test_pool().await;
-    let sender_id = create_test_admin(&pool, "expired").await;
+    let suffix = Uuid::new_v4().to_string();
+    let sender_id = create_test_admin(&pool, &suffix).await;
     let wf_id = get_invite_workflow_id(&pool).await;
-    let token = "expiredtok";
+    let token = Uuid::new_v4().to_string().replace("-", "");
 
     sqlx::query(
         "INSERT INTO invite_tokens (tenant_id, token, sender_id, recipient_email, workflow_id, expires_at)
          VALUES ($1, $2, $3, $4, $5, NOW() - INTERVAL '1 day')"
     )
     .bind(Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap())
-    .bind(token)
+    .bind(&token)
     .bind(sender_id)
-    .bind("expired@test.local")
+    .bind(format!("expired_{}@test.local", suffix))
     .bind(wf_id)
     .execute(&pool)
     .await
@@ -140,11 +142,15 @@ async fn test_invite_token_expired() {
     let row = sqlx::query_as::<_, (Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)>(
         "SELECT used_at, revoked_at FROM invite_tokens WHERE token = $1"
     )
-    .bind(token)
+    .bind(&token)
     .fetch_one(&pool)
     .await
     .expect("fetch token");
 
     assert!(row.0.is_none());
     assert!(row.1.is_none());
+
+    // Cleanup
+    sqlx::query("DELETE FROM invite_tokens WHERE token = $1").bind(&token).execute(&pool).await.ok();
+    sqlx::query("DELETE FROM users WHERE id = $1").bind(sender_id).execute(&pool).await.ok();
 }

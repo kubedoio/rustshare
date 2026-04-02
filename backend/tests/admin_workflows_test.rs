@@ -53,6 +53,7 @@ async fn test_enable_workflow_requires_smtp() {
     let pool = test_pool().await;
     let wf_id = get_invite_workflow_id(&pool).await;
 
+    sqlx::query("UPDATE workflows SET status = 'draft' WHERE id = $1").bind(wf_id).execute(&pool).await.ok();
     sqlx::query("UPDATE smtp_config SET enabled = false, host = NULL, port = NULL, from_address = NULL WHERE id = '00000000-0000-0000-0000-000000000002'")
         .execute(&pool).await.ok();
 
