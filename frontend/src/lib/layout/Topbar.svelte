@@ -25,9 +25,6 @@
 	} from 'lucide-svelte';
 
 	export let onMenuClick: () => void = () => {};
-	export let onSidebarToggle: () => void = () => {};
-	export let sidebarCollapsed = false;
-	export let hideSidebarToggle = false;
 
 	let userMenuOpen = false;
 	let newMenuOpen = false;
@@ -92,19 +89,7 @@
 			<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
 		</button>
 
-		{#if !hideSidebarToggle}
-			<button
-				type="button"
-				class="hidden rounded-xl border border-transparent p-2 text-base-content/60 transition-colors hover:border-base-300/80 hover:bg-base-200/80 hover:text-base-content lg:flex"
-				on:click={onSidebarToggle}
-			>
-				{#if sidebarCollapsed}
-					<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-				{:else}
-					<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
-				{/if}
-			</button>
-		{/if}
+
 
 		<div class="new-menu-container relative">
 			<button
