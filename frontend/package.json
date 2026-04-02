@@ -46,11 +46,11 @@
     "vitest": "^2.1.0"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "^0.17.6",
     "@monaco-editor/react": "^4.6.0",
     "@tanstack/svelte-query": "^5.59.20",
-    "daisyui": "^5.5.19",
+    "daisyui": "^4.12.24",
     "date-fns": "^4.1.0",
-    "@excalidraw/excalidraw": "^0.17.6",
     "html5-qrcode": "^2.3.8",
     "lucide-svelte": "^1.0.1",
     "monaco-editor": "^0.52.0",

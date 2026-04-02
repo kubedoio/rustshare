@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import type { Folder } from '$lib/api/types';
-	import { Home, ChevronRight } from 'lucide-svelte';
+	import { HardDrive, ChevronRight } from 'lucide-svelte';
 
 	export let folderPath: Folder[] = [];
 
@@ -23,10 +23,10 @@
 				type="button"
 				class="flex items-center gap-1.5 px-2 py-1 text-sm font-medium text-base-content/70 hover:text-brand-600 hover:bg-brand-500/10 rounded-md transition-colors"
 				on:click={() => handleNavigate(null)}
-				aria-label="Home"
+				aria-label="Root"
 			>
-				<Home size={16} />
-				<span>Home</span>
+				<HardDrive size={16} />
+				<span>Root</span>
 			</button>
 		</li>
 
