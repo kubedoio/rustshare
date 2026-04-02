@@ -320,7 +320,7 @@
 		currentFolderId = null;
 	}
 	
-	$: workspaceMode = urlFilter === 'photos'
+	$: workspaceMode = (urlFilter === 'photos'
 		? 'photos'
 		: urlFilter === 'starred'
 			? 'starred'
@@ -328,7 +328,7 @@
 				? 'deleted'
 				: urlSort === 'recent'
 					? 'recent'
-					: 'all';
+					: 'all') as WorkspaceMode;
 
 	$: activeSortField = workspaceMode === 'recent' ? 'modified_at' : $fileSortState.field;
 	$: activeSortOrder = workspaceMode === 'recent' ? 'desc' : $fileSortState.order;
@@ -533,6 +533,10 @@
 
 	function handleEditorSaved() {
 		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+		if (editorTarget) {
+			queryClient.invalidateQueries({ queryKey: ['file', editorTarget.id] });
+			queryClient.invalidateQueries({ queryKey: ['file-versions', editorTarget.id] });
+		}
 		showNotification('File saved successfully', 'success');
 		handleEditorClose();
 	}

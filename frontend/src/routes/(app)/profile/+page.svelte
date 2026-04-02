@@ -13,7 +13,7 @@
 	import Toast from '$lib/components/common/Toast.svelte';
 
 	// State
-	let profile: FullUserProfile | null = $state(null);
+	let profile = $state<FullUserProfile | null>(null);
 	let loading = $state(true);
 	let saving = $state(false);
 	let uploadingAvatar = $state(false);
@@ -259,11 +259,11 @@
 							value={profile.username}
 							disabled
 						/>
-						<label class="label">
+						<div class="label">
 							<span class="label-text-alt text-base-content/60">
 								Username can only be changed once every 30 days
 							</span>
-						</label>
+						</div>
 					</div>
 
 					<!-- Email (read-only) -->

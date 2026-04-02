@@ -156,7 +156,7 @@
 
                 <div class="flex-1 min-w-0 space-y-2">
                   <div class="flex items-center gap-2 flex-wrap">
-                    <h3 class="font-semibold">{notification.title}</h3>
+                    <h3 class="font-semibold truncate max-w-[200px] sm:max-w-sm md:max-w-md lg:max-w-xl" title={notification.title}>{notification.title}</h3>
                     <span class={`badge badge-sm ${notificationBadgeClass(notification.notification_type)}`}>
                       {notificationLabel(notification.notification_type)}
                     </span>

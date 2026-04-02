@@ -15,10 +15,14 @@
 		Image,
 		Clock,
 		Search,
-		Plus
+		Plus,
+		HardDrive
 	} from 'lucide-svelte';
 	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
 	import SidebarFolderTree from '$lib/files/SidebarFolderTree.svelte';
+	import { currentUser } from '$lib/stores/auth';
+	import { listAllFiles } from '$lib/api/files';
+	import { formatFileSize } from '$lib/utils/format';
 
 	// Props
 	interface Props {
@@ -44,6 +48,16 @@
 			staleTime: 0
 		})
 	);
+
+	let allFilesQuery = $derived(
+		createQuery({
+			queryKey: ['all-files'],
+			queryFn: () => listAllFiles(),
+			enabled: !!$currentUser
+		})
+	);
+
+	let totalSizeUsed = $derived($allFilesQuery.data?.reduce((sum, file) => sum + file.size, 0) || 0);
 
 	function isFolderActive(folderId: string): boolean {
 		if (!browser) return false;
@@ -238,14 +252,41 @@
 	</div>
 
 	<!-- Footer -->
-	<div class="border-t border-base-300/50 p-3">
-		<div class="rounded-lg p-2.5 bg-base-200/50 border border-base-300/30">
-			<div class="flex items-center gap-2">
-				<div class="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></div>
-				<span class="text-[11px] font-medium text-base-content/60">
-					System Online
-				</span>
+	<div class="border-t border-base-300/50 p-4 bg-base-100 pb-6 w-full shrink-0">
+		<div class="flex items-center justify-between mb-2">
+			<div class="flex items-center gap-1.5 text-base-content/60">
+				<HardDrive size={14} />
+				<span class="text-[11px] font-bold uppercase tracking-wider">Storage</span>
 			</div>
+			<span class="text-xs font-semibold text-base-content/80">
+				{#if $allFilesQuery.isLoading}
+					--
+				{:else if $currentUser?.storage_quota}
+					{Math.round((totalSizeUsed / $currentUser.storage_quota) * 100)}%
+				{:else}
+					{formatFileSize(totalSizeUsed)}
+				{/if}
+			</span>
 		</div>
+		
+		{#if $currentUser?.storage_quota}
+			<div class="h-2 w-full bg-base-200/80 rounded-full overflow-hidden border border-base-300/50">
+				<div 
+					class="h-full bg-brand-500 rounded-full transition-all duration-1000 w-[var(--quota-percent,0%)]"
+					style:--quota-percent="{Math.min(100, (totalSizeUsed / $currentUser.storage_quota) * 100)}%"
+				></div>
+			</div>
+			<div class="mt-1.5 flex justify-between text-[10px] text-base-content/50 font-medium">
+				<span>{formatFileSize(totalSizeUsed)}</span>
+				<span>{formatFileSize($currentUser.storage_quota)}</span>
+			</div>
+		{:else}
+			<div class="h-1.5 w-full bg-base-200/80 rounded-full overflow-hidden border border-base-300/50">
+				<div class="h-full bg-brand-500/50 rounded-full w-1/3"></div>
+			</div>
+			<div class="mt-1 flex text-[10px] text-base-content/50 font-medium">
+				<span>Unlimited quota</span>
+			</div>
+		{/if}
 	</div>
 </aside>

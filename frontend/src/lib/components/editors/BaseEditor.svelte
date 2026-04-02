@@ -9,7 +9,7 @@
 	export let isLoading = false;
 	export let isSaving = false;
 	export let error: string | null = null;
-	export let saveMode: 'overwrite' | 'new_version' = 'overwrite';
+	export let saveMode: 'overwrite' | 'new_version' = 'new_version';
 	export let hasChanges = false;
 
 	type EditorEvents = {

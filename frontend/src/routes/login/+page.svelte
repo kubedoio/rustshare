@@ -21,6 +21,10 @@
 	$: hasAnyLoginMethod = authConfig.oidc_enabled || authConfig.password_login_enabled;
 
 	onMount(async () => {
+		if ($authStore.isAuthenticated) {
+			goto('/dashboard');
+			return;
+		}
 		try {
 			authConfig = await getAuthConfig();
 			authConfigError = '';
