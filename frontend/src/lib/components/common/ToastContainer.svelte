@@ -15,7 +15,7 @@
 </script>
 
 {#if toasts.length > 0}
-  <div class="toast toast-end toast-top z-50">
+  <div class="toast toast-end toast-top z-[100] mt-16">
     {#each toasts as toast (toast.id)}
       <div class="alert {toast.type === 'success' ? 'alert-success' : toast.type === 'error' ? 'alert-error' : 'alert-info'} shadow-lg">
         <div class="flex items-center justify-between gap-2 w-full">

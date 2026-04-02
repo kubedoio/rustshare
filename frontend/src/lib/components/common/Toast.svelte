@@ -27,7 +27,7 @@
 </script>
 
 {#if visible}
-  <div class="toast toast-end toast-top z-50">
+  <div class="toast toast-end toast-top z-[100] mt-16">
     <div class="alert {alertClass} shadow-lg">
       <span>{message}</span>
     </div>

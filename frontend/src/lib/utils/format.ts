@@ -161,3 +161,45 @@ export function getFileTypeLabel(mimeType: string, fileName: string): string {
 
 	return 'File';
 }
+
+/**
+ * Truncate a filename in the middle, preserving the start and the extension
+ * e.g., "verylongfilenametoupload.png" -> "very..load.png"
+ */
+export function truncateFilename(filename: string, maxLength: number = 20): string {
+	if (!filename || filename.length <= maxLength) return filename;
+
+	const parts = filename.split('.');
+	const hasExtension = parts.length > 1;
+	
+	if (!hasExtension) {
+		// No extension, just truncate the end
+		return filename.substring(0, maxLength - 2) + '..';
+	}
+
+	const extension = parts.pop()!;
+	const name = parts.join('.');
+	
+	// If the name is very short and the extension is extremely long, 
+	// just truncate the whole string
+	if (name.length <= 4) {
+		return filename.substring(0, maxLength - 2) + '..';
+	}
+
+	// Calculate how much space we have for the name
+	// Account for the ".." separator and the extension+dot
+	const charsForName = maxLength - 2 - (extension.length + 1);
+	
+	if (charsForName <= 4) {
+		// Not enough space for middle truncation, just do standard start truncation
+		return filename.substring(0, Math.max(3, maxLength - 2)) + '..';
+	}
+
+	const charsForStart = Math.ceil(charsForName / 2);
+	const charsForEnd = Math.floor(charsForName / 2);
+
+	const start = name.substring(0, charsForStart);
+	const end = name.substring(name.length - charsForEnd);
+
+	return `${start}..${end}.${extension}`;
+}

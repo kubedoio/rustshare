@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { createQuery, createMutation } from '@tanstack/svelte-query';
+	import { truncateFilename } from '$lib/utils/format';
 	import {
 		deleteFile,
 		downloadFile,
@@ -156,7 +157,7 @@
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			showRenameModal = false;
 			renameTarget = null;
-			showNotification('File renamed', 'success');
+			showNotification(`${truncateFilename(newName)} renamed`, 'success');
 			activityStore.addActivity('file_renamed', newName, oldName);
 		}
 	});
@@ -184,7 +185,7 @@
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			showDeleteModal = false;
 			deleteTarget = null;
-			showNotification('File moved to deleted', 'success');
+			showNotification(`${truncateFilename(fileName)} moved to deleted`, 'success');
 			activityStore.addActivity('file_deleted', fileName);
 		}
 	});
@@ -218,7 +219,7 @@
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			showMoveModal = false;
 			moveTarget = null;
-			showNotification('File moved', 'success');
+			showNotification(`${truncateFilename(fileName)} moved`, 'success');
 			activityStore.addActivity('file_moved', fileName);
 		}
 	});
@@ -268,10 +269,10 @@
 	});
 
 	const restoreFileMutation = createMutation({
-		mutationFn: (fileId: string) => restoreFileFromTrash(fileId),
-		onSuccess: () => {
+		mutationFn: ({ fileId, fileName }: { fileId: string; fileName: string }) => restoreFileFromTrash(fileId),
+		onSuccess: (_, { fileName }) => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			showNotification('File restored', 'success');
+			showNotification(`${truncateFilename(fileName)} restored`, 'success');
 		}
 	});
 
@@ -284,10 +285,10 @@
 	});
 
 	const permanentlyDeleteFileMutation = createMutation({
-		mutationFn: (fileId: string) => permanentlyDeleteFile(fileId),
-		onSuccess: () => {
+		mutationFn: ({ fileId, fileName }: { fileId: string; fileName: string }) => permanentlyDeleteFile(fileId),
+		onSuccess: (_, { fileName }) => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			showNotification('File deleted permanently', 'success');
+			showNotification(`${truncateFilename(fileName)} deleted permanently`, 'success');
 		}
 	});
 
@@ -538,7 +539,11 @@
 			queryClient.removeQueries({ queryKey: ['file', targetId] });
 			queryClient.removeQueries({ queryKey: ['file-versions', targetId] });
 		}
-		showNotification('File saved successfully', 'success');
+		if (editorTarget) {
+			showNotification(`${truncateFilename(editorTarget.name)} saved`, 'success');
+		} else {
+			showNotification('File saved', 'success');
+		}
 		handleEditorClose();
 	}
 
@@ -584,7 +589,13 @@
 		const errorCount = uploadTasks.filter(t => t.status === 'error').length;
 
 		if (errorCount === 0) {
-			showNotification(`Uploaded ${successCount} file(s)`, 'success');
+			if (successCount === 1) {
+				const uploadedFile = uploadTasks.find(t => t.status === 'success');
+				const filename = uploadedFile ? uploadedFile.fileName : '';
+				showNotification(`${truncateFilename(filename)} uploaded`, 'success');
+			} else {
+				showNotification(`${successCount} item(s) uploaded`, 'success');
+			}
 		} else if (successCount === 0) {
 			showNotification(`Failed to upload ${errorCount} file(s)`, 'error');
 		} else {
@@ -854,7 +865,7 @@
 				downloadUrl = `/storage/${path}`;
 			}
 			window.open(downloadUrl, '_blank');
-			showNotification('Download started', 'success');
+			showNotification(`${truncateFilename(file.name)} download started`, 'success');
 			activityStore.addActivity('file_downloaded', file.name);
 		} catch (error) {
 			showNotification(error instanceof Error ? error.message : 'Failed to download', 'error');
@@ -869,7 +880,7 @@
 	function handleReplaceSuccess() {
 		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 		const fileName = replaceFileTarget?.name || 'File';
-		showNotification(`${fileName} was modified`, 'success');
+		showNotification(`${truncateFilename(fileName)} was updated`, 'success');
 		if (replaceFileTarget) {
 			activityStore.addActivity('file_modified', replaceFileTarget.name);
 		}
@@ -883,7 +894,7 @@
 
 	function handleVersionRestored() {
 		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-		showNotification('File version restored', 'success');
+		showNotification('Version restored', 'success');
 	}
 
 	function handleToggleFileStar(file: File) {
@@ -895,7 +906,7 @@
 	}
 
 	function handleRestoreFile(file: File) {
-		$restoreFileMutation.mutate(file.id);
+		$restoreFileMutation.mutate({ fileId: file.id, fileName: file.name });
 	}
 
 	function handleRestoreFolder(folder: Folder) {
@@ -904,7 +915,7 @@
 
 	function handlePermanentDeleteFile(file: File) {
 		if (!confirm(`Permanently delete ${file.name}? This cannot be undone.`)) return;
-		$permanentlyDeleteFileMutation.mutate(file.id);
+		$permanentlyDeleteFileMutation.mutate({ fileId: file.id, fileName: file.name });
 	}
 
 	function handlePermanentDeleteFolder(folder: Folder) {
