@@ -502,8 +502,8 @@
 		showFilePreviewModal = true;
 	}
 
-	function handleEditFile(event: CustomEvent<{ file: File }>) {
-		const file = event.detail.file;
+	function handleEditFile(event: CustomEvent<{ file: File }> | File) {
+		const file = event instanceof CustomEvent ? event.detail.file : event;
 		editorTarget = file;
 		showFilePreviewModal = false;
 

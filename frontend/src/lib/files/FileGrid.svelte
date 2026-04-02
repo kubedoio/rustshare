@@ -176,7 +176,8 @@
 				onDownload={() => onDownloadFile(file)}
 				onVersionHistory={() => onVersionHistory(file)}
 				onReplace={() => onReplaceFile(file)}
-				onDragStart={() => handleDragStart({ id: file.id, isFolder: false })}
+				onEdit={() => onEditFile(file)}
+				onDragStart={() => handleDragStart({ id: file.id, isFolder: false })},
 				onDragEnd={handleDragEnd}
 			/>
 		{/each}

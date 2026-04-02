@@ -346,6 +346,16 @@
 							Share
 						</button>
 						{#if !isFolder}
+							{#if detectEditorType(item.name, item.mime_type) !== 'none' && canEditFileSize(item.size)}
+								<button
+									type="button"
+									class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
+									onclick={(e) => { e.stopPropagation(); handleAction(onEdit); }}
+								>
+									<Edit3 size={14} />
+									Edit
+								</button>
+							{/if}
 							<button
 								type="button"
 								class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
