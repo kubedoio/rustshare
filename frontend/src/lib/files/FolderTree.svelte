@@ -29,14 +29,14 @@
 
 	function isActive(folder: FolderTreeType): boolean {
 		const currentFolderId = $page.url.searchParams.get('folder');
-		const isRootNode = isRootFolder(folder);
 		
 		// If we're at the root of the file system (/files without folder param)
 		if (!currentFolderId) {
-			return isRootNode;
+			// Only highlight the actual top-level node in the sidebar tree
+			return depth === 0;
 		}
 		
-		// Otherwise, only the matching folder is active
+		// Otherwise, only the folder whose ID matches the URL param is active
 		return currentFolderId === folder.folder.id;
 	}
 
@@ -56,7 +56,7 @@
 
 	function navigateToFolder(folder: FolderTreeType) {
 		const folderId = folder.folder.id;
-		const isRoot = isRootFolder(folder);
+		const isRoot = depth === 0;
 		
 		fileBrowserUi.selectFolder(folderId);
 		
@@ -174,7 +174,7 @@
 	}
 
 	.folder-row.active {
-		background-color: color-mix(in srgb, var(--rs-brand, #c65a1e) 12%, transparent);
+		background-color: color-mix(in srgb, var(--rs-brand, #c65a1e) 8%, transparent);
 	}
 
 	.folder-row.active:hover {
