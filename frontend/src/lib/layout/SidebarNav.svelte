@@ -151,14 +151,16 @@
 		return [];
 	}
 
-	// Expand root by default on first load
-	let rootExpanded = false;
+	// Expand root by default if nothing else is expanded
 	$effect(() => {
-		if ($folderTreeQuery.data && !rootExpanded) {
+		if ($folderTreeQuery.data && $fileBrowserUi.expandedFolderIds.size === 0) {
 			fileBrowserUi.expandFolder($folderTreeQuery.data.folder.id);
-			rootExpanded = true;
 		}
 	});
+
+	function handleCollapseAll() {
+		fileBrowserUi.collapseAll();
+	}
 </script>
 
 <!-- Mobile overlay -->
@@ -233,15 +235,26 @@
 				<h3 class="text-[11px] font-semibold text-base-content/40 uppercase tracking-wider">
 					Folders
 				</h3>
-				<button
-					type="button"
-					class="p-1 rounded-md text-base-content/40 hover:text-brand-500 hover:bg-brand-500/10 transition-colors"
-					onclick={onCreateFolder}
-					aria-label="Create new folder"
-					title="New folder"
-				>
-					<Plus size={14} strokeWidth={2} />
-				</button>
+				<div class="flex items-center gap-1">
+					<button
+						type="button"
+						class="p-1 rounded-md text-base-content/40 hover:text-brand-500 hover:bg-brand-500/10 transition-colors"
+						onclick={handleCollapseAll}
+						aria-label="Collapse all folders"
+						title="Collapse all"
+					>
+						<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+					</button>
+					<button
+						type="button"
+						class="p-1 rounded-md text-base-content/40 hover:text-brand-500 hover:bg-brand-500/10 transition-colors"
+						onclick={onCreateFolder}
+						aria-label="Create new folder"
+						title="New folder"
+					>
+						<Plus size={14} strokeWidth={2} />
+					</button>
+				</div>
 			</div>
 			
 			{#if $folderTreeQuery?.isLoading}

@@ -174,6 +174,14 @@ function createFileBrowserUiStore() {
 			});
 		},
 		
+		collapseAll: () => {
+			update(state => {
+				const newState = { ...state, expandedFolderIds: new Set<string>() };
+				persist(newState);
+				return newState;
+			});
+		},
+		
 		reset: () => {
 			const defaultState = {
 				viewMode: 'list' as ViewMode,

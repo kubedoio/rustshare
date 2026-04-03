@@ -4,6 +4,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import type { FolderTree as FolderTreeType } from '$lib/api/folders';
+	import FolderTree from './FolderTree.svelte';
 
 	interface Props {
 		folders: FolderTreeType[];
@@ -84,50 +85,53 @@
 
 		<div class="tree-node">
 			<!-- Folder Row -->
-			<button
-				type="button"
+			<div
 				class="folder-row"
 				class:active
 				class:is-ancestor={isAncestorOfActive}
 				style="padding-left: {indentPx}px"
-				onclick={() => navigateToFolder(folder)}
-				aria-current={active ? 'page' : undefined}
 			>
 				<!-- Chevron (clickable for expand/collapse) -->
-				<span
+				<button
+					type="button"
 					class="chevron"
 					class:expanded
 					class:invisible={!hasChildrenValue}
 					onclick={(e) => toggleExpand(e, folderId)}
-					role="button"
-					tabindex="0"
 					aria-label={expanded ? 'Collapse folder' : 'Expand folder'}
-					onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleExpand(e as any, folderId); } }}
 				>
 					<ChevronRight size={14} />
-				</span>
+				</button>
 
-				<!-- Folder Icon -->
-				<span class="folder-icon-wrapper">
-					{#if active}
-						<FolderOpen size={16} class="folder-icon active" />
-					{:else if isAncestorOfActive}
-						<Folder size={16} class="folder-icon is-ancestor" />
-					{:else}
-						<Folder size={16} class="folder-icon" />
-					{/if}
-				</span>
+				<!-- Folder Content (clickable for navigation) -->
+				<button
+					type="button"
+					class="folder-content"
+					onclick={() => navigateToFolder(folder)}
+					aria-current={active ? 'page' : undefined}
+				>
+					<!-- Folder Icon -->
+					<span class="folder-icon-wrapper">
+						{#if active}
+							<FolderOpen size={16} class="folder-icon active" />
+						{:else if isAncestorOfActive}
+							<Folder size={16} class="folder-icon is-ancestor" />
+						{:else}
+							<Folder size={16} class="folder-icon" />
+						{/if}
+					</span>
 
-				<!-- Folder Name -->
-				<span class="folder-name" class:active class:is-ancestor={isAncestorOfActive}>
-					{folder.folder.name}
-				</span>
-			</button>
+					<!-- Folder Name -->
+					<span class="folder-name" class:active class:is-ancestor={isAncestorOfActive}>
+						{folder.folder.name}
+					</span>
+				</button>
+			</div>
 
 			<!-- Children -->
 			{#if expanded && hasChildrenValue}
 				<div class="children-container">
-					<svelte:self
+					<FolderTree
 						folders={folder.subfolders}
 						depth={depth + 1}
 						onFolderClick={onFolderClick}
@@ -153,37 +157,22 @@
 	.folder-row {
 		display: flex;
 		align-items: center;
-		gap: 4px;
-		padding: 5px 8px 5px 0;
 		margin: 1px 4px;
 		border-radius: 6px;
-		font-size: 13px;
-		color: hsl(var(--bc) / 0.85);
-		background: transparent;
-		border: none;
-		cursor: pointer;
-		text-align: left;
-		transition: background-color 0.12s ease, color 0.12s ease;
 		min-width: 0;
+		transition: background-color 0.12s ease;
 	}
 
 	.folder-row:hover {
 		background-color: hsl(var(--bc) / 0.05);
-		color: hsl(var(--bc));
 	}
 
 	.folder-row.active {
 		background-color: hsl(var(--p) / 0.12);
-		color: hsl(var(--p));
-		font-weight: 500;
 	}
 
 	.folder-row.active:hover {
 		background-color: hsl(var(--p) / 0.18);
-	}
-
-	.folder-row.is-ancestor {
-		color: hsl(var(--bc));
 	}
 
 	/* Chevron */
@@ -195,13 +184,17 @@
 		height: 28px;
 		flex-shrink: 0;
 		border-radius: 6px;
-		color: hsl(var(--bc) / 0.5);
-		transition: transform 0.15s ease, background-color 0.12s ease;
+		color: hsl(var(--bc) / 0.4);
+		transition: transform 0.15s ease, background-color 0.12s ease, color 0.12s ease;
 		cursor: pointer;
+		background: transparent;
+		border: none;
+		padding: 0;
 	}
 
 	.chevron:hover {
 		background-color: hsl(var(--bc) / 0.08);
+		color: hsl(var(--bc) / 0.7);
 	}
 
 	.chevron.expanded {
@@ -211,6 +204,33 @@
 	.chevron.invisible {
 		visibility: hidden;
 		pointer-events: none;
+	}
+
+	/* Folder Content (clickable for navigation) */
+	.folder-content {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 8px 6px 0;
+		font-size: 13px;
+		color: hsl(var(--bc) / 0.85);
+		background: transparent;
+		border: none;
+		cursor: pointer;
+		text-align: left;
+		transition: color 0.12s ease;
+		min-width: 0;
+	}
+
+	.folder-row.active .folder-content {
+		color: hsl(var(--p));
+		font-weight: 500;
+	}
+
+	.folder-row.is-ancestor .folder-content {
+		color: hsl(var(--bc));
+		font-weight: 500;
 	}
 
 	/* Folder Icon */
