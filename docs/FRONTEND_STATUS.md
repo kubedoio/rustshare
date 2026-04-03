@@ -48,6 +48,16 @@ The current frontend should be described as:
 - public file links
 - public folder links
 - upload-only public folder links
+- public note sharing with read-only access
+
+### Notes
+
+- dedicated note editor at `/notes/[id]`
+- lightweight textarea-based markdown editing with formatting toolbar
+- autosave with 1500ms debounce and save-state indicator
+- public/private visibility toggle
+- public note pages at `/p/note/[shareId]`
+- `.md` files open directly in the note editor from the file browser
 
 ### Public share UX
 
@@ -100,7 +110,7 @@ The current frontend should be described as:
 
 ## Documentation Note
 
-Older notes that mention token-based browser auth, placeholder notifications, or a missing shared-with-me flow are outdated. Use [STATUS.md](/Users/scolak/Projects/x/rustshare/STATUS.md) for overall project state and this document only for frontend-specific maturity.
+Older notes that mention token-based browser auth, placeholder notifications, or a missing shared-with-me flow are outdated. Use [docs/STATUS.md](docs/STATUS.md) for overall project state and this document only for frontend-specific maturity.
 
-For stable route and websocket expectations, use [API Contract Freeze](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-api-contract-freeze.md).
-For client implementation rules, use [Client Integration Checklist](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-client-integration-checklist.md).
+For stable route and websocket expectations, use [API Contract Freeze](docs/2026-03-21-api-contract-freeze.md).
+For client implementation rules, use [Client Integration Checklist](docs/2026-03-21-client-integration-checklist.md).

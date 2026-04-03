@@ -35,6 +35,7 @@ As of 2026-03-27, the implemented platform includes:
 - rate limiting for auth and public-share hot paths (Redis or memory)
 - backup, restore, verification, and post-restore smoke tooling
 - CoordinationStore abstraction for distributed locks and job claims
+- first-class notes with markdown editor, autosave, and public sharing
 
 ## What Is Solid
 
@@ -118,8 +119,8 @@ As of 2026-03-21:
 - unversioned file, folder, share, notification, and public-share aliases have been removed
 - remaining unversioned `/api/...` routes are limited to narrower compatibility or internal/operator surfaces
 
-Use [API Contract Freeze](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-api-contract-freeze.md) as the source of truth for new client work.
-Use [Compatibility Surface Inventory](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-compatibility-surface.md) to track what remains transitional and what should be removed later.
+Use [API Contract Freeze](docs/2026-03-21-api-contract-freeze.md) as the source of truth for new client work.
+Use [Compatibility Surface Inventory](docs/2026-03-21-compatibility-surface.md) to track what remains transitional and what should be removed later.
 
 ## Phase Status
 
@@ -132,6 +133,7 @@ Use [Compatibility Surface Inventory](/Users/scolak/Projects/x/rustshare/docs/20
 - Launch Gate: conditionally passed for the current password-login web-first pilot profile
 - Phase 7: active within the limits of the current gate decision
 - **Metadata Refactor**: implemented (2026-03-27), pending migration
+- **Notes MVP-1**: implemented (2026-04-03)
 
 ## Metadata V2 Implementation
 
@@ -198,6 +200,7 @@ Current Phase 7 progress:
 - Wave 1 complete: realtime compatibility aliases removed
 - Wave 2 complete: legacy auth aliases removed
 - Wave 3 complete: unversioned resource aliases removed
+- Wave 4 complete: legacy auth aliases removed
 - UI/UX: Settings page refactored with tabbed interface (Dropbox-style)
   - Tabs: General, Security, Notifications, Devices, Appearance, Sharing
   - Reusable settings components (SettingsTabs, SettingsSection, SettingsRow, ToggleRow)
@@ -240,19 +243,21 @@ Mobile is postponed as the next active delivery phase.
 
 Use these docs as the source of truth:
 
-- [Mobile Postponement Decision](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-mobile-postponement-decision.md)
-- [Phase 5 Launch Hardening Spec](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-5-launch-hardening-spec.md)
-- [Phase 6 Environment Sign-Off Spec](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-6-environment-signoff-spec.md)
-- [Launch Gate: Web-First Pilot](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-launch-gate-web-first-pilot.md)
-- [Phase 7 Post-Launch And Client Roadmap](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-7-post-launch-and-client-roadmap.md)
-- [Phase 6 Execution Report](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-6-execution-report.md)
-- [Web-First Pilot Gate Decision](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-web-first-pilot-gate-decision.md)
+- [Mobile Postponement Decision](docs/2026-03-21-mobile-postponement-decision.md)
+- [Phase 5 Launch Hardening Spec](docs/2026-03-21-phase-5-launch-hardening-spec.md)
+- [Phase 6 Environment Sign-Off Spec](docs/2026-03-21-phase-6-environment-signoff-spec.md)
+- [Launch Gate: Web-First Pilot](docs/2026-03-21-launch-gate-web-first-pilot.md)
+- [Phase 7 Post-Launch And Client Roadmap](docs/2026-03-21-phase-7-post-launch-and-client-roadmap.md)
+- [Phase 6 Execution Report](docs/2026-03-21-phase-6-execution-report.md)
+- [Web-First Pilot Gate Decision](docs/2026-03-21-web-first-pilot-gate-decision.md)
 
 ## Phase 7 Progress
 
-- compatibility cleanup wave 1 is complete
+- compatibility cleanup waves 1-4 are complete
 - realtime alias routes `/api/v1/ws` and `/api/sync` are removed
-- the next cleanup target is legacy auth aliases
+- legacy auth aliases are removed
+- unversioned resource aliases are removed
+- notes MVP-1 shipped with dedicated editor and public sharing
 
 ## Validation Snapshot
 

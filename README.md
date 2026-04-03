@@ -113,6 +113,7 @@ RustShare Phase 1 is intended to deliver a file platform people can actually use
 - internal shares
 - public links with clear capability modes
 - “shared with me”
+- markdown notes with editor, autosave, and public sharing
 - desktop-usable web UI
 - lightweight sync/client flows
 - device onboarding and pairing
@@ -186,6 +187,17 @@ This repository includes design and planning documents that define the target sh
 
 - `docs/adr/0001-ADR.md`  
   Original ADR.
+
+### Implementation and status docs
+
+- `docs/STATUS.md` — Current project state and completion estimates
+- `docs/FRONTEND_STATUS.md` — Frontend-specific maturity and capabilities
+- `docs/PRODUCTION_READINESS.md` — Launch hardening checklist and remaining risks
+- `docs/TESTING.md` — Deployment validation and manual browser testing guide
+- `docs/TODOS.md` — Open and deferred engineering decisions
+- `docs/DESIGN.md` — Design system tokens, typography, colors, and UX rules
+- `docs/SPEC.md` — Notes MVP-1 implementation specification
+- `docs/ARCHITECTURE_NOTES.md` — Notes MVP-1 key architectural decisions
 
 ---
 
