@@ -1,298 +1,234 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { createQuery } from '@tanstack/svelte-query';
-	import { Folder, Home, Loader2, Edit, Trash2, Share2, Move, Plus } from 'lucide-svelte';
-	import { getFolderContents } from '$lib/api/folders';
-	import { folderTreeStore, selectedFolder, type FolderNode } from '$lib/stores/folderTree';
-	import FolderTreeItem from './FolderTreeItem.svelte';
-	import ContextMenu from '$lib/components/common/ContextMenu.svelte';
-	import type { MenuItem } from '$lib/components/common/ContextMenu.svelte';
+	import { ChevronRight, Folder, FolderOpen } from 'lucide-svelte';
+	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
+	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
+	import type { FolderTree as FolderTreeType } from '$lib/api/folders';
 
-	export let selectedFolderId: string | null = null;
-	export let onSelectFolder: (folderId: string | null, folderPath: FolderNode[]) => void;
-	export let onRenameFolder: (folder: FolderNode, newName: string) => void = () => {};
-	export let onDeleteFolder: (folder: FolderNode) => void = () => {};
-	export let onShareFolder: (folder: FolderNode) => void = () => {};
-	export let onMoveFolder: (folder: FolderNode, targetFolderId: string | null) => void = () => {};
-	export let onCreateSubfolder: (parentFolderId: string) => void = () => {};
-	export let onMoveFile: (fileId: string, targetFolderId: string | null) => void = () => {};
-	export let onMoveFolderDirect: (folderId: string, targetFolderId: string | null) => void = () => {};
-
-	let folderPath: FolderNode[] = [];
-	let contextMenuVisible = false;
-	let contextMenuX = 0;
-	let contextMenuY = 0;
-	let contextFolder: FolderNode | null = null;
-
-	// Query for root folders
-	const rootFoldersQuery = createQuery({
-		queryKey: ['folder-root-contents'],
-		queryFn: () => getFolderContents(null)
-	});
-
-	$: if ($rootFoldersQuery.data?.folders) {
-		folderTreeStore.setRootFolders($rootFoldersQuery.data.folders);
+	interface Props {
+		folders: FolderTreeType[];
+		depth?: number;
+		onFolderClick?: (folderId: string) => void;
+		// Ancestor IDs of the currently selected folder (for emphasis)
+		ancestorIds?: Set<string>;
 	}
 
-	// Sync external selection
-	$: if (selectedFolderId !== undefined && selectedFolderId !== $folderTreeStore.selectedId) {
-		folderTreeStore.selectFolder(selectedFolderId);
+	let { 
+		folders,
+		depth = 0,
+		onFolderClick = () => {},
+		ancestorIds = new Set()
+	}: Props = $props();
+
+	const INDENT_SIZE = 18; // pixels per depth level
+
+	function isExpanded(folderId: string): boolean {
+		return $fileBrowserUi.expandedFolderIds.has(folderId);
 	}
 
-	async function handleSelect(folder: FolderNode) {
-		folderTreeStore.selectFolder(folder.id);
-		
-		// Build folder path
-		folderPath = buildFolderPath($folderTreeStore.rootFolders, folder.id);
-		onSelectFolder(folder.id, folderPath);
+	function isActive(folderId: string): boolean {
+		const currentFolderId = $page.url.searchParams.get('folder');
+		return currentFolderId === folderId;
 	}
 
-	async function handleToggleExpand(folder: FolderNode) {
-		const willExpand = !$folderTreeStore.expandedIds.has(folder.id);
-		folderTreeStore.toggleExpand(folder.id);
-
-		if (willExpand && !folder.children) {
-			folderTreeStore.setLoading(folder.id, true);
-			try {
-				const contents = await getFolderContents(folder.id);
-				folderTreeStore.setFolderChildren(folder.id, contents.folders);
-			} catch (error) {
-				console.error('Failed to load folder contents:', error);
-			} finally {
-				folderTreeStore.setLoading(folder.id, false);
-			}
-		}
+	function isAncestor(folderId: string): boolean {
+		return ancestorIds.has(folderId);
 	}
 
-	function handleSelectRoot() {
-		folderTreeStore.selectFolder(null);
-		folderPath = [];
-		onSelectFolder(null, []);
+	function toggleExpand(e: MouseEvent, folderId: string) {
+		e.stopPropagation();
+		fileBrowserUi.toggleFolderExpanded(folderId);
 	}
 
-	function buildFolderPath(folders: FolderNode[], targetId: string): FolderNode[] {
-		for (const folder of folders) {
-			if (folder.id === targetId) {
-				return [folder];
-			}
-			if (folder.children) {
-				const path = buildFolderPath(folder.children, targetId);
-				if (path.length > 0) {
-					return [folder, ...path];
-				}
-			}
-		}
-		return [];
+	function navigateToFolder(folderId: string) {
+		fileBrowserUi.selectFolder(folderId);
+		goto(`/files?folder=${folderId}`);
+		onFolderClick(folderId);
 	}
 
-	// Context menu
-	function handleContextMenu(e: MouseEvent, folder: FolderNode) {
-		e.preventDefault();
-		contextMenuX = e.clientX;
-		contextMenuY = e.clientY;
-		contextFolder = folder;
-		contextMenuVisible = true;
+	function hasChildren(folder: FolderTreeType): boolean {
+		return folder.subfolders && folder.subfolders.length > 0;
 	}
-
-	function handleRootContextMenu(e: MouseEvent) {
-		e.preventDefault();
-	}
-
-	$: contextMenuItems = contextFolder ? buildContextMenu(contextFolder) : [];
-
-	function buildContextMenu(folder: FolderNode): MenuItem[] {
-		return [
-			{ 
-				id: 'open', 
-				label: 'Open', 
-				icon: Folder,
-				onClick: () => handleSelect(folder)
-			},
-			{ id: 'sep1', label: '', separator: true, onClick: () => {} },
-			{ 
-				id: 'rename', 
-				label: 'Rename', 
-				icon: Edit,
-				onClick: () => startInlineRename(folder)
-			},
-			{ 
-				id: 'move', 
-				label: 'Move to...', 
-				icon: Move,
-				onClick: () => onMoveFolder(folder, null)
-			},
-			{ 
-				id: 'share', 
-				label: 'Share', 
-				icon: Share2,
-				onClick: () => onShareFolder(folder)
-			},
-			{ id: 'sep2', label: '', separator: true, onClick: () => {} },
-			{ 
-				id: 'create-subfolder', 
-				label: 'Create subfolder', 
-				icon: Plus,
-				onClick: () => onCreateSubfolder(folder.id)
-			},
-			{ id: 'sep3', label: '', separator: true, onClick: () => {} },
-			{ 
-				id: 'delete', 
-				label: 'Move to trash', 
-				icon: Trash2,
-				danger: true,
-				onClick: () => onDeleteFolder(folder)
-			}
-		];
-	}
-
-	// Inline rename state
-	let renamingFolderId: string | null = null;
-	let renameValue = '';
-	let renameInputRef: HTMLInputElement;
-
-	function startInlineRename(folder: FolderNode) {
-		renamingFolderId = folder.id;
-		renameValue = folder.name;
-		setTimeout(() => {
-			renameInputRef?.focus();
-			renameInputRef?.select();
-		}, 0);
-	}
-
-	function confirmRename(folder: FolderNode) {
-		if (renameValue.trim() && renameValue !== folder.name) {
-			onRenameFolder(folder, renameValue.trim());
-		}
-		renamingFolderId = null;
-	}
-
-	function cancelRename() {
-		renamingFolderId = null;
-		renameValue = '';
-	}
-
-	function handleRenameKeydown(e: KeyboardEvent, folder: FolderNode) {
-		if (e.key === 'Enter') {
-			confirmRename(folder);
-		} else if (e.key === 'Escape') {
-			cancelRename();
-		}
-	}
-
-	// Drag and drop state
-	let draggedOverFolderId: string | null = null;
-
-	function handleDragOver(folderId: string) {
-		draggedOverFolderId = folderId;
-	}
-
-	function handleDragLeave() {
-		draggedOverFolderId = null;
-	}
-
-	function handleDrop(targetFolder: FolderNode) {
-		// This will be called when something is dropped on a folder
-		// The actual drop handling is done via the onDrop event on the item
-		draggedOverFolderId = null;
-	}
-
-	function handleRootDrop(e: DragEvent) {
-		e.preventDefault();
-		const data = e.dataTransfer?.getData('application/json');
-		if (!data) return;
-		
-		try {
-			const { id, isFolder } = JSON.parse(data);
-			if (isFolder) {
-				onMoveFolderDirect(id, null);
-			} else {
-				onMoveFile(id, null);
-			}
-		} catch {
-			// Ignore invalid drop data
-		}
-		draggedOverFolderId = null;
-	}
-
-	// Select root on mount if no selection
-	onMount(() => {
-		if (!$folderTreeStore.selectedId && !selectedFolderId) {
-			handleSelectRoot();
-		}
-	});
 </script>
 
-<div class="h-full flex flex-col bg-base-100">
-	<!-- Header -->
-	<div class="px-3 py-3 border-b border-base-300 flex items-center justify-between">
-		<h2 class="text-xs font-semibold text-base-content/50 uppercase tracking-wider px-2">Folders</h2>
-	</div>
+<div class="folder-tree">
+	{#each folders as folder (folder.folder.id)}
+		{@const folderId = folder.folder.id}
+		{@const expanded = isExpanded(folderId)}
+		{@const active = isActive(folderId)}
+		{@const isAncestorOfActive = isAncestor(folderId)}
+		{@const hasChildrenValue = hasChildren(folder)}
+		{@const indentPx = depth * INDENT_SIZE}
 
-	<!-- Root Item -->
-	<button
-		type="button"
-		class="flex items-center gap-2 px-3 py-2 mx-2 mt-2 rounded-md text-sm transition-colors
-			{$folderTreeStore.selectedId === null 
-				? 'bg-brand-500/15 text-brand-600 font-medium' 
-				: 'text-base-content/70 hover:bg-base-200/50 hover:text-base-content'}
-			{draggedOverFolderId === 'root' ? 'ring-2 ring-brand-500/50 bg-brand-500/10' : ''}"
-		on:click={handleSelectRoot}
-		on:contextmenu={handleRootContextMenu}
-		on:dragover|preventDefault={() => handleDragOver('root')}
-		on:dragleave={handleDragLeave}
-		on:drop={handleRootDrop}
-	>
-		<Home size={18} class={$folderTreeStore.selectedId === null ? 'text-brand-500' : 'text-base-content/50'} />
-		<span>My Files</span>
-	</button>
+		<div class="tree-node">
+			<!-- Folder Row -->
+			<button
+				type="button"
+				class="folder-row"
+				class:active
+				class:ancestor={isAncestorOfActive}
+				style="padding-left: {indentPx}px"
+				onclick={() => navigateToFolder(folderId)}
+				aria-current={active ? 'page' : undefined}
+			>
+				<!-- Chevron (clickable for expand/collapse) -->
+				<span
+					class="chevron"
+					class:expanded
+					class:invisible={!hasChildrenValue}
+					onclick={(e) => toggleExpand(e, folderId)}
+					role="button"
+					tabindex="-1"
+					aria-label={expanded ? 'Collapse folder' : 'Expand folder'}
+				>
+					<ChevronRight size={14} />
+				</span>
 
-	<!-- Tree -->
-	<div class="flex-1 overflow-y-auto py-2" role="tree" aria-label="Folder tree">
-		{#if $rootFoldersQuery.isLoading}
-			<div class="px-4 py-4 flex items-center justify-center">
-				<Loader2 size={20} class="animate-spin text-base-content/30" />
-			</div>
-		{:else if $rootFoldersQuery.isError}
-			<div class="px-4 py-4 text-sm text-error">
-				Failed to load folders
-			</div>
-		{:else if $folderTreeStore.rootFolders.length === 0}
-			<div class="px-4 py-8 text-center">
-				<div class="w-12 h-12 rounded-xl bg-base-200 flex items-center justify-center mx-auto mb-3">
-					<Folder size={24} class="text-base-content/30" />
+				<!-- Folder Icon -->
+				<span class="folder-icon-wrapper">
+					{#if active}
+						<FolderOpen size={16} class="folder-icon active" />
+					{:else if isAncestorOfActive}
+						<Folder size={16} class="folder-icon ancestor" />
+					{:else}
+						<Folder size={16} class="folder-icon" />
+					{/if}
+				</span>
+
+				<!-- Folder Name -->
+				<span class="folder-name" class:active class:ancestor={isAncestorOfActive}>
+					{folder.folder.name}
+				</span>
+			</button>
+
+			<!-- Children -->
+			{#if expanded && hasChildrenValue}
+				<div class="children-container">
+					<FolderTree
+						folders={folder.subfolders}
+						depth={depth + 1}
+						onFolderClick={onFolderClick}
+						{ancestorIds}
+					/>
 				</div>
-				<p class="text-sm text-base-content/50">No folders yet</p>
-				<p class="text-xs text-base-content/40 mt-1">Create folders to organize your files</p>
-			</div>
-		{:else}
-			{#each $folderTreeStore.rootFolders as folder (folder.id)}
-				<FolderTreeItem
-					{folder}
-					level={0}
-					{renamingFolderId}
-					{renameValue}
-					{renameInputRef}
-					{draggedOverFolderId}
-					onSelect={handleSelect}
-					onToggleExpand={handleToggleExpand}
-					onContextMenu={handleContextMenu}
-					onRenameConfirm={confirmRename}
-					onRenameCancel={cancelRename}
-					onRenameKeydown={handleRenameKeydown}
-					onDragOver={handleDragOver}
-					onDragLeave={handleDragLeave}
-					onDrop={handleDrop}
-				/>
-			{/each}
-		{/if}
-	</div>
+			{/if}
+		</div>
+	{/each}
 </div>
 
-<!-- Context Menu -->
-<ContextMenu
-	items={contextMenuItems}
-	x={contextMenuX}
-	y={contextMenuY}
-	visible={contextMenuVisible}
-	onClose={() => { contextMenuVisible = false; contextFolder = null; }}
-/>
+<style>
+	.folder-tree {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.tree-node {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.folder-row {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 5px 8px 5px 0;
+		margin: 1px 4px;
+		border-radius: 6px;
+		font-size: 13px;
+		color: hsl(var(--bc) / 0.85);
+		background: transparent;
+		border: none;
+		cursor: pointer;
+		text-align: left;
+		transition: background-color 0.12s ease, color 0.12s ease;
+		min-width: 0;
+	}
+
+	.folder-row:hover {
+		background-color: hsl(var(--bc) / 0.05);
+		color: hsl(var(--bc));
+	}
+
+	.folder-row.active {
+		background-color: hsl(var(--p) / 0.12);
+		color: hsl(var(--p));
+		font-weight: 500;
+	}
+
+	.folder-row.active:hover {
+		background-color: hsl(var(--p) / 0.18);
+	}
+
+	.folder-row.ancestor {
+		color: hsl(var(--bc));
+	}
+
+	/* Chevron */
+	.chevron {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 18px;
+		height: 18px;
+		flex-shrink: 0;
+		border-radius: 4px;
+		color: hsl(var(--bc) / 0.5);
+		transition: transform 0.15s ease, background-color 0.12s ease;
+	}
+
+	.chevron:hover {
+		background-color: hsl(var(--bc) / 0.08);
+	}
+
+	.chevron.expanded {
+		transform: rotate(90deg);
+	}
+
+	.chevron.invisible {
+		visibility: hidden;
+		pointer-events: none;
+	}
+
+	/* Folder Icon */
+	.folder-icon-wrapper {
+		display: flex;
+		align-items: center;
+		flex-shrink: 0;
+	}
+
+	:global(.folder-icon) {
+		color: hsl(var(--bc) / 0.45);
+		transition: color 0.12s ease;
+	}
+
+	:global(.folder-icon.active) {
+		color: hsl(var(--p));
+	}
+
+	:global(.folder-icon.ancestor) {
+		color: hsl(var(--bc) / 0.7);
+	}
+
+	/* Folder Name */
+	.folder-name {
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		min-width: 0;
+	}
+
+	.folder-name.active {
+		font-weight: 500;
+	}
+
+	.folder-name.ancestor {
+		font-weight: 500;
+	}
+
+	/* Children container */
+	.children-container {
+		display: flex;
+		flex-direction: column;
+	}
+</style>

@@ -3,28 +3,21 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { createQuery } from '@tanstack/svelte-query';
-	import { getFolderTree, type FolderTree } from '$lib/api/folders';
-	import { onMount } from 'svelte';
+	import { getFolderTree, type FolderTree as FolderTreeType } from '$lib/api/folders';
 	import { 
-		ChevronRight, 
-		Folder, 
-		FolderOpen,
 		Home,
 		Users,
 		Star,
 		Image,
 		Clock,
-		Search,
 		Plus,
-		HardDrive
 	} from 'lucide-svelte';
 	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
-	import SidebarFolderTree from '$lib/files/SidebarFolderTree.svelte';
+	import FolderTree from '$lib/files/FolderTree.svelte';
 	import { currentUser } from '$lib/stores/auth';
 	import { listAllFiles } from '$lib/api/files';
 	import { formatFileSize } from '$lib/utils/format';
 
-	// Props
 	interface Props {
 		variant?: 'files' | 'admin' | 'default';
 		mobileOpen?: boolean;
@@ -38,9 +31,9 @@
 		onCreateFolder = () => {}
 	}: Props = $props();
 
-	// Folder Tree Query - refetch on window focus to keep live
+	// Folder Tree Query
 	let folderTreeQuery = $derived(
-		createQuery<FolderTree>({
+		createQuery<FolderTreeType>({
 			queryKey: ['folder-tree'],
 			queryFn: () => getFolderTree(),
 			enabled: variant === 'files',
@@ -59,16 +52,68 @@
 
 	let totalSizeUsed = $derived($allFilesQuery.data?.reduce((sum, file) => sum + file.size, 0) || 0);
 
-	function isFolderActive(folderId: string): boolean {
-		if (!browser) return false;
-		const params = new URLSearchParams(window.location.search);
-		return params.get('folder') === folderId;
+	// Get current folder ID from URL
+	let currentFolderId = $derived($page.url.searchParams.get('folder'));
+
+	// Compute ancestor IDs of current folder for tree emphasis
+	let ancestorIds = $derived(() => {
+		if (!currentFolderId || !$folderTreeQuery.data) return new Set<string>();
+		return findAncestorIds($folderTreeQuery.data, currentFolderId);
+	});
+
+	// Auto-expand current folder path when it changes
+	$effect(() => {
+		if (currentFolderId && $folderTreeQuery.data) {
+			expandPathToFolder($folderTreeQuery.data, currentFolderId);
+		}
+	});
+
+	function findAncestorIds(root: FolderTreeType, targetId: string): Set<string> {
+		const ancestors = new Set<string>();
+		
+		function findPath(node: FolderTreeType, target: string, path: string[]): boolean {
+			if (node.folder.id === target) {
+				path.forEach(id => ancestors.add(id));
+				return true;
+			}
+			if (node.subfolders) {
+				for (const child of node.subfolders) {
+					if (findPath(child, target, [...path, node.folder.id])) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+		
+		findPath(root, targetId, []);
+		return ancestors;
+	}
+
+	function expandPathToFolder(root: FolderTreeType, targetId: string): void {
+		function findAndExpand(node: FolderTreeType, target: string): boolean {
+			if (node.folder.id === target) {
+				return true;
+			}
+			if (node.subfolders) {
+				for (const child of node.subfolders) {
+					if (findAndExpand(child, target)) {
+						// Expand this node since target is in its children
+						fileBrowserUi.expandFolder(node.folder.id);
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+		
+		findAndExpand(root, targetId);
 	}
 
 	function isRootActive(): boolean {
 		if (!browser) return false;
-		const pathname = window.location.pathname;
-		const search = window.location.search;
+		const pathname = $page.url.pathname;
+		const search = $page.url.search;
 		return pathname === '/files' && (!search || !search.includes('folder='));
 	}
 
@@ -82,7 +127,6 @@
 		onClose();
 	}
 
-	// Navigation items
 	const libraryNav = [
 		{ href: '/files?filter=starred', icon: Star, label: 'Starred' },
 		{ href: '/files?filter=photos', icon: Image, label: 'Photos' },
@@ -94,9 +138,10 @@
 		return currentPath === href || currentPath.startsWith(href);
 	}
 
-	function getFolderTreeData(): FolderTree[] {
+	function getFolderTreeData(): FolderTreeType[] {
 		if ($folderTreeQuery.data) {
 			const root = { ...$folderTreeQuery.data };
+			// Rename root to "My Files" for display
 			if (root.folder.name === 'root' || !root.folder.parent_folder_id) {
 				root.folder = { ...root.folder, name: 'My Files' };
 			}
@@ -105,11 +150,11 @@
 		return [];
 	}
 
-	// Expand root by default
+	// Expand root by default on first load
 	let rootExpanded = false;
 	$effect(() => {
 		if ($folderTreeQuery.data && !rootExpanded) {
-			fileBrowserUi.toggleFolderExpanded($folderTreeQuery.data.folder.id);
+			fileBrowserUi.expandFolder($folderTreeQuery.data.folder.id);
 			rootExpanded = true;
 		}
 	});
@@ -131,7 +176,6 @@
 		{mobileOpen ? 'fixed z-50' : 'lg:static'}"
 	aria-label="Folder navigation"
 >
-
 	<!-- Navigation Sections -->
 	<div class="flex-1 overflow-y-auto py-2">
 		<!-- Quick Links -->
@@ -145,7 +189,7 @@
 				onclick={() => navigateToFolder(null)}
 			>
 				<Home size={18} strokeWidth={1.75} />
-				<span>Home</span>
+				<span>My Files</span>
 			</button>
 			<a
 				href="/shared-with-me"
@@ -224,15 +268,18 @@
 				</div>
 			{:else if getFolderTreeData().length > 0}
 				<nav class="space-y-0.5" aria-label="Folder tree">
-					<SidebarFolderTree 
+					<FolderTree 
 						folders={getFolderTreeData()}
 						onFolderClick={onClose}
+						ancestorIds={ancestorIds()}
 					/>
 				</nav>
 			{:else}
 				<div class="px-3 py-4 text-center">
 					<div class="w-10 h-10 rounded-xl bg-base-200/70 flex items-center justify-center mx-auto mb-2">
-						<Folder size={20} class="text-base-content/30" />
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-5 h-5 text-base-content/30">
+							<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+						</svg>
 					</div>
 					<p class="text-xs text-base-content/50">No folders yet</p>
 					<button
@@ -253,7 +300,6 @@
 			<!-- Circular Progress -->
 			<div class="relative flex h-10 w-10 shrink-0 items-center justify-center">
 				<svg class="h-full w-full -rotate-90 transform" viewBox="0 0 36 36">
-					<!-- Background circle -->
 					<circle 
 						cx="18" cy="18" r="15.915" 
 						fill="none" 
@@ -261,7 +307,6 @@
 						stroke="currentColor" 
 						stroke-width="3"
 					></circle>
-					<!-- Progress circle -->
 					{#if $currentUser?.storage_quota}
 						<circle 
 							cx="18" cy="18" r="15.915" 
@@ -275,7 +320,6 @@
 						></circle>
 					{/if}
 				</svg>
-				<!-- Glowing Green Center Dot -->
 				<div class="absolute inset-0 flex items-center justify-center">
 					<div class="h-2.5 w-2.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.8)] animate-pulse"></div>
 				</div>
