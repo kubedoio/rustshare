@@ -21,14 +21,14 @@ export function extractFolderPaths(items: DirectoryUploadItem[]): string[] {
 }
 
 export function sortFolderPaths(paths: string[]): string[] {
-  return [...paths].sort((a, b) => {
-    const depthA = a.split('/').length;
-    const depthB = b.split('/').length;
+  return [...paths].map((path, index) => ({ path, index })).sort((a, b) => {
+    const depthA = a.path.split('/').length;
+    const depthB = b.path.split('/').length;
     if (depthA !== depthB) {
       return depthA - depthB;
     }
-    return a.localeCompare(b);
-  });
+    return a.index - b.index;
+  }).map(({ path }) => path);
 }
 
 export async function collectFilesFromDataTransfer(
