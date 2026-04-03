@@ -69,9 +69,10 @@
 	let recentChanges: File[] = [];
 	let activityLoading = true;
 
-	$: storagePercentage = $currentUser?.storage_quota && $currentUser?.storage_used
-		? Math.round(($currentUser.storage_used / $currentUser.storage_quota) * 100)
-		: 0;
+	$: storagePercentage =
+		$currentUser?.storage_quota && Number.isFinite($currentUser?.storage_used) && $currentUser.storage_used >= 0
+			? Math.round(($currentUser.storage_used / $currentUser.storage_quota) * 100)
+			: 0;
 
 	onMount(async () => {
 		await Promise.all([
