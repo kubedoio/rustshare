@@ -94,16 +94,18 @@
 				aria-current={active ? 'page' : undefined}
 			>
 				<!-- Chevron (clickable for expand/collapse) -->
-				<button
-					type="button"
+				<span
 					class="chevron"
 					class:expanded
 					class:invisible={!hasChildrenValue}
 					onclick={(e) => toggleExpand(e, folderId)}
+					role="button"
+					tabindex="0"
 					aria-label={expanded ? 'Collapse folder' : 'Expand folder'}
+					onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleExpand(e as any, folderId); } }}
 				>
 					<ChevronRight size={14} />
-				</button>
+				</span>
 
 				<!-- Folder Icon -->
 				<span class="folder-icon-wrapper">
@@ -189,12 +191,13 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 18px;
-		height: 18px;
+		width: 28px;
+		height: 28px;
 		flex-shrink: 0;
-		border-radius: 4px;
+		border-radius: 6px;
 		color: hsl(var(--bc) / 0.5);
 		transition: transform 0.15s ease, background-color 0.12s ease;
+		cursor: pointer;
 	}
 
 	.chevron:hover {
