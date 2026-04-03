@@ -167,6 +167,7 @@ export interface NoteSummary {
 	parent_folder_id: string | null;
 	owner_id: string;
 	current_version: number;
+	size: number;
 	created_at: string;
 	modified_at: string;
 }

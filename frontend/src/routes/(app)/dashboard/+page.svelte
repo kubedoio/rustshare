@@ -50,7 +50,7 @@
     }
   });
 
-  $: noteFiles = $recentNotesQuery.data?.notes ?? [];
+  $: noteFiles = ($recentNotesQuery.data?.notes ?? []).slice(0, 8);
 
   $: sharedFiles = $sharedFilesQuery.data || [];
 
@@ -77,7 +77,7 @@
   }
 
   function getNoteExcerpt(note: typeof noteFiles[0]): string {
-    return note.metadata.excerpt || formatFileSize(0);
+    return note.metadata.excerpt?.trim() || '';
   }
 
   function isNotePublic(note: typeof noteFiles[0]): boolean {
@@ -254,7 +254,13 @@
               {/if}
             </div>
             <h3 class="note-card-title">{note.metadata.title || note.name}</h3>
-            <p class="note-card-meta">{getNoteExcerpt(note)} • {formatDate(note.modified_at)}</p>
+            <p class="note-card-meta">
+              {#if getNoteExcerpt(note)}
+                {getNoteExcerpt(note)} • {formatFileSize(note.size)} • {formatDate(note.modified_at)}
+              {:else}
+                {formatFileSize(note.size)} • {formatDate(note.modified_at)}
+              {/if}
+            </p>
           </button>
         {/each}
       </div>

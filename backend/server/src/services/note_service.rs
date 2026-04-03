@@ -103,6 +103,7 @@ pub struct NoteSummary {
     pub parent_folder_id: Option<Uuid>,
     pub owner_id: UserId,
     pub current_version: i32,
+    pub size: i64,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
 }
@@ -521,6 +522,7 @@ impl NoteService {
                 parent_folder_id: file.parent_folder_id,
                 owner_id: file.owner_id,
                 current_version: file.current_version,
+                size: file.size,
                 created_at: file.created_at,
                 modified_at: file.modified_at,
             });
