@@ -122,8 +122,9 @@
 
 	// Mutations
 	const uploadMutation = createMutation({
-		mutationFn: (file: globalThis.File) => uploadFile(currentFolderId, file),
-		onSuccess: (_, file) => {
+		mutationFn: ({ file, onProgress }: { file: globalThis.File; onProgress?: (progress: number) => void }) => 
+			uploadFile(currentFolderId, file, onProgress),
+		onSuccess: (_, { file }) => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			activityStore.addActivity('file_uploaded', file.name);
@@ -586,17 +587,33 @@
 			const taskIndex = uploadTasks.findIndex(t => t.id === newTasks[i].id);
 			if (taskIndex === -1) continue;
 
-			uploadTasks[taskIndex] = { ...uploadTasks[taskIndex], status: 'uploading', progress: 50 };
-			uploadTasks = [...uploadTasks];
-
 			try {
-				await $uploadMutation.mutateAsync(files[i]);
-				uploadTasks[taskIndex] = { ...uploadTasks[taskIndex], status: 'success', progress: 100 };
-				uploadTasks = [...uploadTasks];
+				await $uploadMutation.mutateAsync({ 
+					file: files[i], 
+					onProgress: (progress) => {
+						const currentTaskIndex = uploadTasks.findIndex(t => t.id === newTasks[i].id);
+						if (currentTaskIndex !== -1) {
+							uploadTasks[currentTaskIndex].status = 'uploading';
+							uploadTasks[currentTaskIndex].progress = progress;
+							uploadTasks = [...uploadTasks];
+						}
+					}
+				});
+				
+				const finalTaskIndex = uploadTasks.findIndex(t => t.id === newTasks[i].id);
+				if (finalTaskIndex !== -1) {
+					uploadTasks[finalTaskIndex].status = 'success';
+					uploadTasks[finalTaskIndex].progress = 100;
+					uploadTasks = [...uploadTasks];
+				}
 			} catch (error) {
 				const errorMessage = error instanceof Error ? error.message : 'Upload failed';
-				uploadTasks[taskIndex] = { ...uploadTasks[taskIndex], status: 'error', error: errorMessage };
-				uploadTasks = [...uploadTasks];
+				const errorTaskIndex = uploadTasks.findIndex(t => t.id === newTasks[i].id);
+				if (errorTaskIndex !== -1) {
+					uploadTasks[errorTaskIndex].status = 'error';
+					uploadTasks[errorTaskIndex].error = errorMessage;
+					uploadTasks = [...uploadTasks];
+				}
 			}
 		}
 
@@ -1054,7 +1071,6 @@
 	<FileExplorer
 		folders={sortedFolders}
 		files={sortedFiles}
-		{currentFolderId}
 		{folderPath}
 		title={workspaceTitle}
 		description={workspaceDescription}
@@ -1062,7 +1078,6 @@
 		emptyDescription={workspaceEmptyDescription}
 		emptyActionLabel={workspaceEmptyActionLabel}
 		{workspaceMode}
-		{showFolderTree}
 		{showBreadcrumbs}
 		{canCreateFolder}
 		{canUpload}
@@ -1072,7 +1087,6 @@
 		{replicationStatuses}
 		{selectionMode}
 		{isUploading}
-		onFolderSelect={handleFolderSelect}
 		onFolderClick={handleFolderClick}
 		onFileClick={handleFileClick}
 		onRefresh={() => $filesQuery.refetch()}

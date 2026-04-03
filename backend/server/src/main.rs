@@ -270,7 +270,7 @@ pub struct AppState {
     pub notification_service: Arc<NotificationService<NotificationRepository>>,
     pub user_share_service: Arc<AppUserShareService>,
     pub ai_service: Option<Arc<AppAiService>>,
-    // pub upload_service: Option<Arc<AppUploadService>>, // TODO: Fix upload service type issues
+    pub upload_service: Option<Arc<AppUploadService>>, 
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
     pub secret_key: SecretEncryptionKey,
     pub oidc_runtime_cache: OidcRuntimeCache,
@@ -428,7 +428,7 @@ async fn main() -> Result<()> {
         "uploads".to_string(),
     );
 
-    let _upload_service = Arc::new(AppUploadService::new(
+    let upload_service = Arc::new(AppUploadService::new(
         Arc::new(upload_session_repo),
         Arc::new(UploadObjectStoreAdapter::new(Arc::clone(&object_store))),
         Arc::new(UploadMetadataStoreAdapter::new(Arc::clone(&metadata_store))),
@@ -534,8 +534,7 @@ async fn main() -> Result<()> {
         notification_service,
         user_share_service,
         ai_service,
-        // upload_service: Some(upload_service),
-        // upload_service: None,
+        upload_service: Some(upload_service),
         rate_limit_config,
         secret_key,
         oidc_runtime_cache: OidcRuntimeCache::new(),
@@ -597,7 +596,14 @@ async fn main() -> Result<()> {
         .route("/api/v1/files", get(handlers::list_files))
         .route("/api/v1/files/starred", get(handlers::list_starred_items))
         .route("/api/v1/files/deleted", get(handlers::list_deleted_items))
-        .route("/api/v1/files/upload", post(handlers::upload_file))
+        .route("/api/v1/files/upload", post(handlers::upload_file).layer(DefaultBodyLimit::disable()))
+        // Resumable upload routes
+        .route("/api/v1/uploads/sessions", post(handlers::upload::create_upload_session))
+        .route("/api/v1/uploads/sessions", get(handlers::upload::list_upload_sessions))
+        .route("/api/v1/uploads/sessions/{id}", get(handlers::upload::get_upload_session_status))
+        .route("/api/v1/uploads/sessions/{id}", delete(handlers::upload::abort_upload_session))
+        .route("/api/v1/uploads/sessions/{id}/chunks/{index}", put(handlers::upload::upload_chunk))
+        .route("/api/v1/uploads/sessions/{id}/complete", post(handlers::upload::complete_upload))
         .route("/api/v1/files/{id}", get(handlers::get_file))
         .route("/api/v1/files/{id}", put(handlers::update_file))
         .route("/api/v1/files/{id}", delete(handlers::delete_file))
@@ -1073,9 +1079,9 @@ async fn main() -> Result<()> {
         .route("/api", any(api_not_found))
         .route("/api/{*path}", any(api_not_found))
         .with_state(state.clone())
-        // Increase body size limit for file uploads (500MB)
+        // Increase body size limit for file uploads (2GB)
         // This must be applied BEFORE other middleware layers
-        .layer(DefaultBodyLimit::max(500 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(2048 * 1024 * 1024))
         .layer(axum::middleware::from_fn(middleware::csrf_middleware))
         // Apply rate limiting middleware after state is set
         .layer(axum::middleware::from_fn_with_state(
