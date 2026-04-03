@@ -2,7 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import type { ComponentType } from 'svelte';
 
-	export interface MenuItem {
+	interface MenuItem {
 		id: string;
 		label: string;
 		icon?: ComponentType;

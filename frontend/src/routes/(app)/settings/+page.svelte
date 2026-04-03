@@ -293,7 +293,7 @@
 							<SettingsSection title="Storage" description="Your storage usage">
 								<div class="py-4">
 									<div class="flex items-center justify-between mb-2">
-										<span class="text-sm text-base-content/60">{formatFileSize($currentUser.storage_used)} of {formatFileSize($currentUser.storage_quota)} used</span>
+										<span class="text-sm text-base-content/60">{formatFileSize($currentUser.storage_used ?? 0)} of {formatFileSize($currentUser.storage_quota ?? 0)} used</span>
 										<span class="text-sm font-medium text-base-content">{storagePercentage}%</span>
 									</div>
 									<div class="h-2 bg-base-300 rounded-full overflow-hidden">

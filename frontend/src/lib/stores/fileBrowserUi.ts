@@ -90,7 +90,7 @@ function createFileBrowserUiStore() {
 		
 		toggleViewMode: () => {
 			update(state => {
-				const newState = { ...state, viewMode: state.viewMode === 'grid' ? 'list' : 'grid' };
+				const newState: FileBrowserUiState = { ...state, viewMode: state.viewMode === 'grid' ? 'list' : 'grid' };
 				persist(newState);
 				return newState;
 			});

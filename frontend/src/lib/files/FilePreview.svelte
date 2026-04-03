@@ -105,6 +105,6 @@
 			class="w-full h-full object-cover"
 		/>
 	{:else}
-		<FileTypeIcon {mimeType} {fileName} {size} />
+		<FileTypeIcon {mimeType} {fileName} size={size === "xs" ? "sm" : size === "xl" ? "lg" : size} />
 	{/if}
 </div>
