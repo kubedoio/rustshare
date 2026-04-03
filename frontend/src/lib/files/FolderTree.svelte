@@ -90,6 +90,10 @@
 				class:active
 				class:is-ancestor={isAncestorOfActive}
 				style="padding-left: {indentPx}px"
+				onclick={() => navigateToFolder(folder)}
+				role="button"
+				tabindex="0"
+				onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateToFolder(folder); } }}
 			>
 				<!-- Chevron (clickable for expand/collapse) -->
 				<button
@@ -103,29 +107,21 @@
 					<ChevronRight size={14} />
 				</button>
 
-				<!-- Folder Content (clickable for navigation) -->
-				<button
-					type="button"
-					class="folder-content"
-					onclick={() => navigateToFolder(folder)}
-					aria-current={active ? 'page' : undefined}
-				>
-					<!-- Folder Icon -->
-					<span class="folder-icon-wrapper">
-						{#if active}
-							<FolderOpen size={16} class="folder-icon active" />
-						{:else if isAncestorOfActive}
-							<Folder size={16} class="folder-icon is-ancestor" />
-						{:else}
-							<Folder size={16} class="folder-icon" />
-						{/if}
-					</span>
+				<!-- Folder Icon -->
+				<span class="folder-icon-wrapper">
+					{#if active}
+						<FolderOpen size={16} class="folder-icon active" />
+					{:else if isAncestorOfActive}
+						<Folder size={16} class="folder-icon is-ancestor" />
+					{:else}
+						<Folder size={16} class="folder-icon" />
+					{/if}
+				</span>
 
-					<!-- Folder Name -->
-					<span class="folder-name" class:active class:is-ancestor={isAncestorOfActive}>
-						{folder.folder.name}
-					</span>
-				</button>
+				<!-- Folder Name -->
+				<span class="folder-name" class:active class:is-ancestor={isAncestorOfActive}>
+					{folder.folder.name}
+				</span>
 			</div>
 
 			<!-- Children -->
@@ -157,10 +153,15 @@
 	.folder-row {
 		display: flex;
 		align-items: center;
+		position: relative;
+		z-index: 10;
+		padding: 5px 8px 5px 0;
 		margin: 1px 4px;
 		border-radius: 6px;
 		min-width: 0;
+		cursor: pointer;
 		transition: background-color 0.12s ease;
+		gap: 6px;
 	}
 
 	.folder-row:hover {
@@ -190,6 +191,8 @@
 		background: transparent;
 		border: none;
 		padding: 0;
+		position: relative;
+		z-index: 20;
 	}
 
 	.chevron:hover {
@@ -206,29 +209,44 @@
 		pointer-events: none;
 	}
 
-	/* Folder Content (clickable for navigation) */
-	.folder-content {
-		flex: 1;
+	/* Folder Icon */
+	.folder-icon-wrapper {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 6px 8px 6px 0;
-		font-size: 13px;
-		color: hsl(var(--bc) / 0.85);
-		background: transparent;
-		border: none;
-		cursor: pointer;
-		text-align: left;
-		transition: color 0.12s ease;
-		min-width: 0;
+		flex-shrink: 0;
 	}
 
-	.folder-row.active .folder-content {
+	:global(.folder-icon) {
+		color: hsl(var(--bc) / 0.45);
+		transition: color 0.12s ease;
+	}
+
+	:global(.folder-icon.active) {
+		color: hsl(var(--p));
+	}
+
+	:global(.folder-icon.is-ancestor) {
+		color: hsl(var(--bc) / 0.7);
+	}
+
+	/* Folder Name */
+	.folder-name {
+		flex: 1;
+		font-size: 13px;
+		color: hsl(var(--bc) / 0.85);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		min-width: 0;
+		transition: color 0.12s ease;
+	}
+
+	.folder-row.active .folder-name {
 		color: hsl(var(--p));
 		font-weight: 500;
 	}
 
-	.folder-row.is-ancestor .folder-content {
+	.folder-row.is-ancestor .folder-name {
 		color: hsl(var(--bc));
 		font-weight: 500;
 	}

@@ -174,13 +174,13 @@
 {/if}
 
 <aside
-	class="h-full flex-col border-r overflow-hidden transition-all duration-300 bg-base-100 border-base-300/50 w-64
+	class="h-full flex-col border-r overflow-hidden transition-all duration-300 bg-base-100 border-base-300/50 w-64 relative z-20
 		{mobileOpen ? 'flex translate-x-0' : 'hidden -translate-x-full lg:flex lg:translate-x-0'}
 		{mobileOpen ? 'fixed z-50' : 'lg:static'}"
 	aria-label="Folder navigation"
 >
 	<!-- Navigation Sections -->
-	<div class="flex-1 overflow-y-auto py-2">
+	<div class="flex-1 overflow-y-auto py-2 relative z-10">
 		<!-- Quick Links -->
 		<nav class="px-2 mb-2" aria-label="Quick links">
 			<button
