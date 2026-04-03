@@ -26,6 +26,7 @@
 		restoreFolderFromTrash,
 		setFolderStarred
 	} from '$lib/api/folders';
+	import { extractFolderPaths, sortFolderPaths } from '$lib/utils/directoryUpload';
 	import type { FolderTree as FolderTreeType } from '$lib/api/folders';
 	import { queryClient } from '$lib/query-client';
 	import { searchQuery } from '$lib/stores/search';
@@ -686,6 +687,133 @@
 		} else {
 			showNotification(`Uploaded ${successCount}, failed ${errorCount}`, 'info');
 		}
+	}
+
+	async function handleDirectoryUpload(files: globalThis.File[]) {
+		if (!canUpload || files.length === 0) return;
+
+		const items = files.map((file) => ({
+			file,
+			relativePath: (file as any).webkitRelativePath || file.name
+		}));
+
+		const folderPaths = extractFolderPaths(items);
+		const sortedPaths = sortFolderPaths(folderPaths);
+
+		const folderIdMap = new Map<string, string>();
+		const failedFolderPaths = new Set<string>();
+
+		for (const path of sortedPaths) {
+			const parentPath = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+			if (parentPath && failedFolderPaths.has(parentPath)) {
+				failedFolderPaths.add(path);
+				continue;
+			}
+
+			const folderName = path.slice(path.lastIndexOf('/') + 1);
+			const parentId = parentPath ? (folderIdMap.get(parentPath) ?? null) : currentFolderId;
+
+			try {
+				const contents = await getFolderContents(parentId);
+				const existing = contents.folders.find((f) => f.name === folderName);
+
+				if (existing) {
+					folderIdMap.set(path, existing.id);
+				} else {
+					const created = await createFolder(folderName, parentId);
+					folderIdMap.set(path, created.id);
+					folderTreeStore.addFolder(created, parentId);
+					if (parentId) {
+						folderTreeStore.setExpanded(parentId, true);
+					}
+				}
+			} catch (error) {
+				showNotification(`Failed to create folder "${path}"`, 'error');
+				failedFolderPaths.add(path);
+			}
+		}
+
+		const filesToUpload: { file: globalThis.File; parentFolderId: string | null }[] = [];
+		for (const file of files) {
+			const relativePath = (file as any).webkitRelativePath || file.name;
+			const lastSlash = relativePath.lastIndexOf('/');
+
+			if (lastSlash > 0) {
+				const folderPath = relativePath.slice(0, lastSlash);
+				if (failedFolderPaths.has(folderPath)) continue;
+				const parentId = folderIdMap.get(folderPath) ?? null;
+				filesToUpload.push({ file, parentFolderId: parentId });
+			} else {
+				filesToUpload.push({ file, parentFolderId: currentFolderId });
+			}
+		}
+
+		if (filesToUpload.length === 0) {
+			showNotification('No files could be uploaded', 'error');
+			return;
+		}
+
+		const newTasks: UploadTask[] = filesToUpload.map(({ file }) => ({
+			id: `${file.name}-${Date.now()}-${Math.random()}`,
+			fileName: file.name,
+			size: file.size,
+			status: 'pending' as const,
+			progress: 0
+		}));
+
+		uploadTasks = [...uploadTasks, ...newTasks];
+
+		for (let i = 0; i < filesToUpload.length; i++) {
+			const { file, parentFolderId } = filesToUpload[i];
+			const taskId = newTasks[i].id;
+			const taskIndex = uploadTasks.findIndex((t) => t.id === taskId);
+			if (taskIndex === -1) continue;
+
+			try {
+				await $uploadMutation.mutateAsync({
+					file,
+					folderId: parentFolderId,
+					onProgress: (progress) => {
+						const currentTaskIndex = uploadTasks.findIndex((t) => t.id === taskId);
+						if (currentTaskIndex !== -1) {
+							uploadTasks[currentTaskIndex].status = 'uploading';
+							uploadTasks[currentTaskIndex].progress = progress;
+							uploadTasks = [...uploadTasks];
+						}
+					}
+				});
+
+				const finalTaskIndex = uploadTasks.findIndex((t) => t.id === taskId);
+				if (finalTaskIndex !== -1) {
+					uploadTasks[finalTaskIndex].status = 'success';
+					uploadTasks[finalTaskIndex].progress = 100;
+					uploadTasks = [...uploadTasks];
+				}
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : 'Upload failed';
+				const errorTaskIndex = uploadTasks.findIndex((t) => t.id === taskId);
+				if (errorTaskIndex !== -1) {
+					uploadTasks[errorTaskIndex].status = 'error';
+					uploadTasks[errorTaskIndex].error = errorMessage;
+					uploadTasks = [...uploadTasks];
+				}
+			}
+		}
+
+		const successCount = newTasks.filter((t) => t.status === 'success').length;
+		const errorCount = newTasks.filter((t) => t.status === 'error').length;
+
+		if (errorCount === 0) {
+			showNotification(`${successCount} item(s) uploaded`, 'success');
+		} else if (successCount === 0) {
+			showNotification(`Failed to upload ${errorCount} file(s)`, 'error');
+		} else {
+			showNotification(`Uploaded ${successCount}, failed ${errorCount}`, 'info');
+		}
+
+		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+		queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
+		queryClient.invalidateQueries({ queryKey: ['all-files'] });
 	}
 
 	function handleCloseProgress() {
