@@ -82,19 +82,42 @@
 		return isDescendantOf(folder.parent_folder_id, potentialParentId);
 	}
 
-	function handleDropOnFolder(folder: Folder) {
-		if (!draggedItem) return;
+	function readDragPayload(e: DragEvent): { id: string; isFolder: boolean; parentFolderId: string | null } | null {
+		try {
+			const data = e.dataTransfer?.getData('application/json');
+			if (data) {
+				const parsed = JSON.parse(data);
+				if (parsed && typeof parsed.id === 'string') {
+					return { id: parsed.id, isFolder: !!parsed.isFolder, parentFolderId: parsed.parentFolderId || null };
+				}
+			}
+		} catch {
+			// ignore
+		}
+		return null;
+	}
+
+	function handleDropOnFolder(folder: Folder, e?: DragEvent) {
+		let payload = draggedItem;
+		if (!payload && e) {
+			payload = readDragPayload(e);
+		}
+		if (!payload) {
+			dragOverFolderId = null;
+			draggedItem = null;
+			return;
+		}
 		
 		// Can't drop onto itself
-		if (draggedItem.id === folder.id) {
+		if (payload.id === folder.id) {
 			dragOverFolderId = null;
 			draggedItem = null;
 			return;
 		}
 
 		// Can't drop a folder into itself or its children (would create cycle)
-		if (draggedItem.isFolder) {
-			if (isDescendantOf(folder.id, draggedItem.id)) {
+		if (payload.isFolder) {
+			if (isDescendantOf(folder.id, payload.id)) {
 				dragOverFolderId = null;
 				draggedItem = null;
 				return;
@@ -102,19 +125,19 @@
 		}
 
 		// Can't drop file/folder into its current parent (no-op)
-		if (draggedItem.parentFolderId === folder.id) {
+		if (payload.parentFolderId === folder.id) {
 			dragOverFolderId = null;
 			draggedItem = null;
 			return;
 		}
 
-		if (draggedItem.isFolder) {
-			const draggedFolder = folders.find(f => f.id === draggedItem?.id);
+		if (payload.isFolder) {
+			const draggedFolder = folders.find(f => f.id === payload?.id);
 			if (draggedFolder) {
 				onMoveFolder(draggedFolder, folder.id);
 			}
 		} else {
-			const draggedFile = files.find(f => f.id === draggedItem?.id);
+			const draggedFile = files.find(f => f.id === payload?.id);
 			if (draggedFile) {
 				onMoveFile(draggedFile, folder.id);
 			}
@@ -190,7 +213,7 @@
 					onMove={() => onMoveFolder(folder, null)}
 					onDragStart={() => handleDragStart({ id: folder.id, isFolder: true, parentFolderId: folder.parent_folder_id })}
 					onDragEnd={handleDragEnd}
-					onDrop={() => handleDropOnFolder(folder)}
+					onDrop={(e) => handleDropOnFolder(folder, e)}
 					onDragOver={() => handleDragOverFolder(folder.id)}
 					onDragLeave={handleDragLeaveFolder}
 				/>

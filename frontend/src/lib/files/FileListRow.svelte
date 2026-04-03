@@ -56,7 +56,7 @@
 		onEdit?: () => void;
 		onDragStart?: () => void;
 		onDragEnd?: () => void;
-		onDrop?: () => void;
+		onDrop?: (e: DragEvent) => void;
 		onDragOver?: () => void;
 		onDragLeave?: () => void;
 	}
@@ -330,7 +330,7 @@
 	function handleDrop(e: DragEvent) {
 		e.preventDefault();
 		if (isFolder && !isDragging && canDrop) {
-			onDrop();
+			onDrop?.(e);
 		}
 	}
 

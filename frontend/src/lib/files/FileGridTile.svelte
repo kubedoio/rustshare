@@ -53,7 +53,7 @@
 		onDragEnd?: () => void;
 		onDragOver?: () => void;
 		onDragLeave?: () => void;
-		onDrop?: () => void;
+		onDrop?: (e: DragEvent) => void;
 	}
 
 	let {
@@ -242,16 +242,21 @@
 		}
 	}
 
-	function handleDragLeave() {
+	function handleDragLeave(e: DragEvent) {
 		if (isFolder && !isDragging) {
-			onDragLeave?.();
+			const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+			const x = e.clientX;
+			const y = e.clientY;
+			if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) {
+				onDragLeave?.();
+			}
 		}
 	}
 
 	function handleDrop(e: DragEvent) {
 		e.preventDefault();
 		if (isFolder && !isDragging) {
-			onDrop();
+			onDrop?.(e);
 		}
 	}
 

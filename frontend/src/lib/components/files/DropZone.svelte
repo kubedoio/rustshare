@@ -9,16 +9,18 @@
   let isDragging = false;
   let dragCounter = 0;
 
+  function isFileDrag(event: DragEvent) {
+    return event.dataTransfer?.types?.includes('Files') ?? false;
+  }
+
   function handleDragEnter(event: DragEvent) {
-    event.preventDefault();
     dragCounter++;
-    if (event.dataTransfer?.types.includes('Files')) {
+    if (isFileDrag(event)) {
       isDragging = true;
     }
   }
 
   function handleDragLeave(event: DragEvent) {
-    event.preventDefault();
     dragCounter--;
     if (dragCounter === 0) {
       isDragging = false;
@@ -26,6 +28,7 @@
   }
 
   function handleDragOver(event: DragEvent) {
+    if (!isFileDrag(event)) return;
     event.preventDefault();
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = disabled ? 'none' : 'copy';
