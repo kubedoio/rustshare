@@ -104,7 +104,7 @@
 			<!-- Children -->
 			{#if expanded && hasChildrenValue}
 				<div class="children-container">
-					<FolderTree
+					<svelte:self
 						folders={folder.subfolders}
 						depth={depth + 1}
 						onFolderClick={onFolderClick}
