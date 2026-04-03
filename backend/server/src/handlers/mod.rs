@@ -13,6 +13,7 @@ mod files;
 mod folders;
 mod groups;
 pub mod invites;
+mod notes;
 mod notifications;
 mod profile;
 mod public_shares;
@@ -78,6 +79,10 @@ pub use groups::{
     list_file_group_shares, list_folder_group_shares,
 };
 pub use invites::{create_invite, get_invite, accept_invite};
+pub use notes::{
+    create_note, delete_note, get_note, get_public_note, list_notes, list_recent_notes,
+    move_note, rename_note, save_note, toggle_visibility,
+};
 pub use features::get_features;
 
 use axum::{

@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { createQuery } from '@tanstack/svelte-query';
+  import { createQuery, createMutation } from '@tanstack/svelte-query';
   import { listAllFiles } from '$lib/api/files';
+  import { listRecentNotes, createNote } from '$lib/api/notes';
   import { currentUser } from '$lib/stores/auth';
 
   import { formatFileSize, formatDate } from '$lib/utils/format';
@@ -15,7 +16,9 @@
     FileDigit,
     StickyNote,
     Lock,
-    Globe
+    Globe,
+    Loader2,
+    Activity
   } from 'lucide-svelte';
 
   // Specific query for all user files to get accurate totals
@@ -34,23 +37,20 @@
     }
   });
 
-  // Notes are files in the Notes folder or with specific note mime types/extensions
-  $: noteFiles = $allFilesQuery.data
-    ? [...$allFilesQuery.data]
-        .filter((f: File) => {
-          const name = f.name.toLowerCase();
-          const mime = f.mime_type.toLowerCase();
-          // Match markdown, text files, or files in Notes folder path
-          return mime.includes('text') || 
-                 mime.includes('markdown') ||
-                 name.endsWith('.md') ||
-                 name.endsWith('.txt') ||
-                 f.path.toLowerCase().includes('/notes/') ||
-                 f.path.toLowerCase() === 'notes';
-        })
-        .sort((a: File, b: File) => new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime())
-        .slice(0, 4)
-    : [];
+  // Recent notes from dedicated API
+  const recentNotesQuery = createQuery({
+    queryKey: ['recent-notes'],
+    queryFn: () => listRecentNotes()
+  });
+
+  const createNoteMutation = createMutation({
+    mutationFn: () => createNote({ title: 'Untitled Note', content: '' }),
+    onSuccess: (data) => {
+      window.location.href = `/notes/${data.id}`;
+    }
+  });
+
+  $: noteFiles = $recentNotesQuery.data?.notes ?? [];
 
   $: sharedFiles = $sharedFilesQuery.data || [];
 
@@ -68,18 +68,20 @@
     window.location.href = '/files';
   }
 
-  function handleNoteClick(file: File) {
-    window.location.href = `/files?preview=${file.id}&edit=true`;
+  function handleNoteClick(note: typeof noteFiles[0]) {
+    window.location.href = `/notes/${note.id}`;
   }
 
-  function getNoteExcerpt(file: File): string {
-    // For now, show file size as excerpt - in a real implementation
-    // you might fetch a text preview
-    return formatFileSize(file.size);
+  function handleCreateNote() {
+    $createNoteMutation.mutate();
   }
 
-  function isNoteShared(file: File): boolean {
-    return file.is_shared || false;
+  function getNoteExcerpt(note: typeof noteFiles[0]): string {
+    return note.metadata.excerpt || formatFileSize(0);
+  }
+
+  function isNotePublic(note: typeof noteFiles[0]): boolean {
+    return note.metadata.visibility === 'public';
   }
 </script>
 
@@ -195,10 +197,24 @@
         <StickyNote size={16} class="text-brand-500" />
         <h2 class="notes-panel-title">Notes</h2>
       </div>
-      <p class="notes-panel-subtitle">Recent notes from your Library</p>
+      <div class="notes-panel-actions">
+        <p class="notes-panel-subtitle">Recent notes from your Library</p>
+        <button 
+          class="btn btn-xs btn-primary"
+          on:click={handleCreateNote}
+          disabled={$createNoteMutation.isPending}
+        >
+          {#if $createNoteMutation.isPending}
+            <Loader2 size={12} class="animate-spin" />
+          {:else}
+            <Plus size={12} />
+          {/if}
+          <span>New Note</span>
+        </button>
+      </div>
     </div>
     
-    {#if $allFilesQuery.isLoading}
+    {#if $recentNotesQuery.isLoading}
       <div class="notes-loading">
         <div class="notes-loading-spinner"></div>
       </div>
@@ -206,7 +222,19 @@
       <div class="notes-empty">
         <StickyNote size={24} class="text-base-content/20" />
         <p class="notes-empty-text">No notes found</p>
-        <p class="notes-empty-hint">Create text or markdown files in your Library to see them here</p>
+        <p class="notes-empty-hint">Create a new note to get started</p>
+        <button 
+          class="btn btn-sm btn-primary mt-3"
+          on:click={handleCreateNote}
+          disabled={$createNoteMutation.isPending}
+        >
+          {#if $createNoteMutation.isPending}
+            <Loader2 size={14} class="animate-spin" />
+          {:else}
+            <Plus size={14} />
+          {/if}
+          <span>Create Note</span>
+        </button>
       </div>
     {:else}
       <div class="notes-grid">
@@ -219,13 +247,13 @@
               <div class="note-card-icon">
                 <FileText size={16} />
               </div>
-              {#if isNoteShared(note)}
+              {#if isNotePublic(note)}
                 <Globe size={12} class="text-brand-500" />
               {:else}
                 <Lock size={12} class="text-base-content/30" />
               {/if}
             </div>
-            <h3 class="note-card-title">{note.name}</h3>
+            <h3 class="note-card-title">{note.metadata.title || note.name}</h3>
             <p class="note-card-meta">{getNoteExcerpt(note)} • {formatDate(note.modified_at)}</p>
           </button>
         {/each}
@@ -613,6 +641,14 @@
   .notes-panel-subtitle {
     font-size: 12px;
     color: color-mix(in oklab, var(--base-content) 50%, transparent);
+  }
+
+  .notes-panel-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 0.25rem;
   }
 
   .notes-grid {

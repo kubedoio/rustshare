@@ -132,6 +132,45 @@ export interface FileVersion {
 	change_description?: string;
 }
 
+export interface NoteMetadata {
+	kind: 'note';
+	title: string;
+	visibility: 'private' | 'public';
+	public_share_id: string | null;
+	created_at: string;
+	updated_at: string;
+	excerpt: string;
+	mime_type: string;
+	extension: string;
+	pinned?: boolean;
+	icon?: string | null;
+}
+
+export interface Note {
+	id: string;
+	name: string;
+	path: string;
+	content: string;
+	metadata: NoteMetadata;
+	parent_folder_id: string | null;
+	owner_id: string;
+	current_version: number;
+	created_at: string;
+	modified_at: string;
+}
+
+export interface NoteSummary {
+	id: string;
+	name: string;
+	path: string;
+	metadata: NoteMetadata;
+	parent_folder_id: string | null;
+	owner_id: string;
+	current_version: number;
+	created_at: string;
+	modified_at: string;
+}
+
 export class ApiError extends Error {
 	constructor(
 		public status: number,

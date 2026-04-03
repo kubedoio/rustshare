@@ -40,6 +40,7 @@
 mod handlers;
 mod middleware;
 mod oidc;
+mod services;
 mod oidc_runtime;
 mod replication;
 mod replication_handlers;
@@ -276,6 +277,8 @@ pub struct AppState {
     pub oidc_runtime_cache: OidcRuntimeCache,
     pub poll_rate_limiter: Arc<Mutex<HashMap<String, Instant>>>,
     pub default_tenant_id: uuid::Uuid,
+    pub note_service: Arc<services::note_service::NoteService>,
+    pub public_base_url: String,
 }
 
 #[tokio::main]
@@ -347,6 +350,12 @@ async fn main() -> Result<()> {
         Arc::clone(&metadata_store),
         Arc::clone(&broadcaster),
         Arc::clone(&jwt_manager),
+    ));
+    let note_service = Arc::new(services::note_service::NoteService::new(
+        Arc::clone(&file_service),
+        Arc::clone(&folder_service),
+        Arc::clone(&metadata_store),
+        Arc::clone(&object_store),
     ));
     let thumbnail_service = Arc::new(ThumbnailService::new(
         db_pool.clone(),
@@ -518,6 +527,10 @@ async fn main() -> Result<()> {
         info!("Seeded initial OIDC config from environment bootstrap values");
     }
 
+    // Public base URL for share links
+    let public_base_url = std::env::var("RUSTSHARE_PUBLIC_URL")
+        .unwrap_or_else(|_| "http://localhost:5173".to_string());
+
     // Build application state
     let state = AppState {
         db_pool,
@@ -540,6 +553,8 @@ async fn main() -> Result<()> {
         oidc_runtime_cache: OidcRuntimeCache::new(),
         poll_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
         default_tenant_id,
+        note_service,
+        public_base_url,
     };
 
     // Build router.
@@ -637,6 +652,17 @@ async fn main() -> Result<()> {
             get(handlers::get_file_thumbnail),
         )
         .route("/api/v1/files/{id}/edit", post(handlers::edit_file))
+        // Note routes (MVP-1)
+        .route("/api/v1/notes", post(handlers::create_note))
+        .route("/api/v1/notes", get(handlers::list_notes))
+        .route("/api/v1/notes/recent", get(handlers::list_recent_notes))
+        .route("/api/v1/notes/{id}", get(handlers::get_note))
+        .route("/api/v1/notes/{id}", put(handlers::save_note))
+        .route("/api/v1/notes/{id}/rename", post(handlers::rename_note))
+        .route("/api/v1/notes/{id}/move", post(handlers::move_note))
+        .route("/api/v1/notes/{id}/visibility", post(handlers::toggle_visibility))
+        .route("/api/v1/notes/{id}", delete(handlers::delete_note))
+        .route("/api/v1/public/notes/{share_id}", get(handlers::get_public_note))
         // Upload session routes (TODO-004: Resumable uploads)
         // Upload endpoints disabled - TODO: Fix upload service type issues
         // .route("/api/v1/uploads/sessions", get(handlers::list_upload_sessions))

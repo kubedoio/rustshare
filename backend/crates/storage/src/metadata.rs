@@ -2176,6 +2176,46 @@ impl MetadataStore {
 
         Ok(())
     }
+
+    /// List all markdown files for a user across their entire library.
+    pub async fn list_all_markdown_files(&self, owner_id: Uuid, tenant_id: Uuid) -> Result<Vec<File>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id
+            FROM files
+            WHERE owner_id = $1
+              AND tenant_id = $2
+              AND deleted_at IS NULL
+              AND (mime_type = 'text/markdown' OR name ILIKE '%.md')
+            ORDER BY modified_at DESC
+            "#,
+        )
+        .bind(owner_id)
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut files = Vec::new();
+        for row in rows {
+            let file = File {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                size: row.try_get("size")?,
+                mime_type: row.try_get("mime_type")?,
+                content_hash: row.try_get("content_hash")?,
+                owner_id: row.try_get("owner_id")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                current_version: row.try_get("current_version")?,
+                created_at: row.try_get("created_at")?,
+                modified_at: row.try_get("modified_at")?,
+                tenant_id: row.try_get("tenant_id")?,
+            };
+            files.push(file);
+        }
+
+        Ok(files)
+    }
 }
 
 #[cfg(test)]
