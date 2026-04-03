@@ -19,12 +19,14 @@
 		createFolder,
 		deleteFolder,
 		getFolderContents,
+		getFolderTree,
 		moveFolder,
 		permanentlyDeleteFolder,
 		renameFolder,
 		restoreFolderFromTrash,
 		setFolderStarred
 	} from '$lib/api/folders';
+	import type { FolderTree as FolderTreeType } from '$lib/api/folders';
 	import { queryClient } from '$lib/query-client';
 	import { searchQuery } from '$lib/stores/search';
 	import { fileSortState } from '$lib/stores/fileSort';
@@ -70,8 +72,17 @@
 	let selectionMode = false;
 	let currentFolderId: string | null = null;
 
-	// Derive folderPath from folder tree store based on currentFolderId
-	$: folderPath = currentFolderId ? buildFolderPathFromTree($folderTreeStore.rootFolders, currentFolderId) : [];
+	// Query for folder tree (used for breadcrumb path)
+	$: folderTreeQuery = createQuery<FolderTreeType>({
+		queryKey: ['folder-tree'],
+		queryFn: () => getFolderTree(),
+		staleTime: 0
+	});
+
+	// Derive folderPath from the full API folder tree
+	$: folderPath = currentFolderId && $folderTreeQuery.data
+		? buildFolderPathFromApiTree($folderTreeQuery.data, currentFolderId).slice(1)
+		: [];
 
 	// Modal states
 	let showRenameModal = false;
@@ -462,7 +473,26 @@
 		selectionStore.clear();
 	}
 
-	// Build folder path from tree structure
+	// Build folder path from the recursive API folder tree
+	function buildFolderPathFromApiTree(root: FolderTreeType, targetId: string): Folder[] {
+		function search(node: FolderTreeType): Folder[] {
+			if (node.folder.id === targetId) {
+				return [node.folder];
+			}
+			if (node.subfolders) {
+				for (const child of node.subfolders) {
+					const path = search(child);
+					if (path.length > 0) {
+						return [node.folder, ...path];
+					}
+				}
+			}
+			return [];
+		}
+		return search(root);
+	}
+
+	// Legacy helper kept for compatibility with folderTreeStore mutations
 	function buildFolderPathFromTree(folders: FolderNode[], targetId: string): Folder[] {
 		for (const folder of folders) {
 			if (folder.id === targetId) {
@@ -983,6 +1013,9 @@
 			editorTarget = null;
 			showMarkdownEditor = true;
 		};
+		const handleCreateNoteEvent = () => {
+			$createNoteMutation.mutate();
+		};
 		const handleCreateFileEvent = () => {
 			editorTarget = null;
 			showTextEditor = true;
@@ -1000,6 +1033,7 @@
 		window.addEventListener('create-file-requested', handleCreateFileEvent);
 		window.addEventListener('create-canvas-requested', handleCreateCanvasEvent);
 		window.addEventListener('upload-requested', handleUploadEvent);
+		window.addEventListener('create-note-requested', handleCreateNoteEvent);
 		
 		return () => {
 			window.removeEventListener('create-folder-requested', handleCreateFolderEvent);
@@ -1007,6 +1041,7 @@
 			window.removeEventListener('create-file-requested', handleCreateFileEvent);
 			window.removeEventListener('create-canvas-requested', handleCreateCanvasEvent);
 			window.removeEventListener('upload-requested', handleUploadEvent);
+			window.removeEventListener('create-note-requested', handleCreateNoteEvent);
 		};
 	});
 
@@ -1081,23 +1116,6 @@
 		}
 	}}
 />
-
-{#if workspaceMode === 'all' && !selectionMode}
-	<div class="px-4 py-2 flex justify-end">
-		<button
-			class="btn btn-sm btn-primary gap-2"
-			on:click={() => $createNoteMutation.mutate()}
-			disabled={$createNoteMutation.isPending}
-		>
-			{#if $createNoteMutation.isPending}
-				<span class="loading loading-spinner loading-xs"></span>
-			{:else}
-				<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
-			{/if}
-			New Note
-		</button>
-	</div>
-{/if}
 
 <DropZone on:filesDropped={(e) => handleFilesSelected(e.detail)} disabled={!canUpload || isUploading}>
 	<FileExplorer

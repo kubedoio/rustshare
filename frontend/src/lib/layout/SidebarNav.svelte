@@ -56,10 +56,11 @@
 	let currentFolderId = $derived($page.url.searchParams.get('folder'));
 
 	// Compute ancestor IDs of current folder for tree emphasis
-	let ancestorIds = $derived(() => {
-		if (!currentFolderId || !$folderTreeQuery.data) return new Set<string>();
-		return findAncestorIds($folderTreeQuery.data, currentFolderId);
-	});
+	let ancestorIds = $derived(
+		!currentFolderId || !$folderTreeQuery.data
+			? new Set<string>()
+			: findAncestorIds($folderTreeQuery.data, currentFolderId)
+	);
 
 	// Auto-expand current folder path when it changes
 	$effect(() => {
@@ -271,7 +272,7 @@
 					<FolderTree 
 						folders={getFolderTreeData()}
 						onFolderClick={onClose}
-						ancestorIds={ancestorIds()}
+						{ancestorIds}
 					/>
 				</nav>
 			{:else}
