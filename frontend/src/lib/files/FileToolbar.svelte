@@ -74,7 +74,7 @@
 <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
 	<!-- Left: Title and description -->
 	<div class="min-w-0">
-		<h1 class="text-base font-bold text-base-content truncate">{title}</h1>
+		<h1 class="text-title-lg font-bold text-base-content truncate">{title}</h1>
 		{#if description}
 			<p class="text-[13px] text-base-content/50 mt-0.5 truncate">{description}</p>
 		{/if}
