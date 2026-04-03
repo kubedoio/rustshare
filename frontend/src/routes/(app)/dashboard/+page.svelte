@@ -155,7 +155,7 @@
       <div class="stat-box">
         <div class="stat-box-header">
           <span class="stat-box-label">Total Files</span>
-          <div class="stat-box-icon stat-box-icon-blue">
+          <div class="stat-box-icon stat-box-icon-info">
             <FileText size={14} />
           </div>
         </div>
@@ -165,7 +165,7 @@
       <div class="stat-box">
         <div class="stat-box-header">
           <span class="stat-box-label">Shared Items</span>
-          <div class="stat-box-icon stat-box-icon-purple">
+          <div class="stat-box-icon stat-box-icon-brand">
             <Share2 size={14} />
           </div>
         </div>
@@ -175,7 +175,7 @@
       <div class="stat-box">
         <div class="stat-box-header">
           <span class="stat-box-label">Quota Limit</span>
-          <div class="stat-box-icon stat-box-icon-rose">
+          <div class="stat-box-icon stat-box-icon-warning">
             <FileDigit size={14} />
           </div>
         </div>
@@ -369,7 +369,7 @@
   }
 
   .workspace-title {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Fraunces', Georgia, serif;
     font-size: 1.875rem;
     font-weight: 500;
     line-height: 1.2;
@@ -432,7 +432,7 @@
   }
 
   .storage-value {
-    font-family: 'Inter', monospace;
+    font-family: 'IBM Plex Mono', monospace;
     font-size: 12px;
     font-weight: 600;
     color: var(--base-content);
@@ -499,7 +499,7 @@
   }
 
   .action-button-value {
-    font-family: 'Inter', monospace;
+    font-family: 'IBM Plex Mono', monospace;
     font-size: 12px;
     font-weight: 700;
   }
@@ -565,38 +565,38 @@
     transition: all 0.2s;
   }
 
-  .stat-box:hover .stat-box-icon-blue {
-    background: #3b82f6;
+  .stat-box:hover .stat-box-icon-info {
+    background: #366d8c;
     color: white;
   }
 
-  .stat-box:hover .stat-box-icon-purple {
-    background: #a855f7;
+  .stat-box:hover .stat-box-icon-brand {
+    background: #c65a1e;
     color: white;
   }
 
-  .stat-box:hover .stat-box-icon-rose {
-    background: #f43f5e;
+  .stat-box:hover .stat-box-icon-warning {
+    background: #a56a12;
     color: white;
   }
 
-  .stat-box-icon-blue {
-    background: color-mix(in oklab, #3b82f6 10%, transparent);
-    color: #3b82f6;
+  .stat-box-icon-info {
+    background: color-mix(in oklab, #366d8c 10%, transparent);
+    color: #366d8c;
   }
 
-  .stat-box-icon-purple {
-    background: color-mix(in oklab, #a855f7 10%, transparent);
-    color: #a855f7;
+  .stat-box-icon-brand {
+    background: color-mix(in oklab, #c65a1e 10%, transparent);
+    color: #c65a1e;
   }
 
-  .stat-box-icon-rose {
-    background: color-mix(in oklab, #f43f5e 10%, transparent);
-    color: #f43f5e;
+  .stat-box-icon-warning {
+    background: color-mix(in oklab, #a56a12 10%, transparent);
+    color: #a56a12;
   }
 
   .stat-box-value {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Instrument Sans', system-ui, sans-serif;
     font-size: 1.25rem;
     font-weight: 600;
     line-height: 1.2;
@@ -863,11 +863,11 @@
   }
 
   :global(.font-display) {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Fraunces', Georgia, serif;
   }
 
   :global(.font-data) {
-    font-family: 'Inter', monospace;
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
   }
 
   :global(.text-brand-500) {
