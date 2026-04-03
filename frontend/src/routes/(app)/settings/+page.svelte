@@ -19,6 +19,7 @@
 	import { formatFileSize, formatDate } from '$lib/utils/format';
 	import { listAllFiles } from '$lib/api/files';
 	import type { File } from '$lib/api/types';
+	import { createQuery } from '@tanstack/svelte-query';
 	import { FileText, Folder, FileIcon, ImageIcon, VideoIcon, MusicIcon, Clock } from 'lucide-svelte';
 	
 	// Settings components
@@ -27,56 +28,66 @@
 	import SettingsRow from '$lib/settings/SettingsRow.svelte';
 
 	// State
-	let activeTab: TabId = 'general';
-	let showToast = false;
-	let toastMessage = '';
-	let toastType: 'success' | 'error' | 'info' = 'info';
+	let activeTab = $state<TabId>('general');
+	let showToast = $state(false);
+	let toastMessage = $state('');
+	let toastType = $state<'success' | 'error' | 'info'>('info');
 	
 	// Security state
-	let passwordForm = { current_password: '', new_password: '', confirm_password: '' };
-	let passwordFormError = '';
-	let passwordUpdating = false;
+	let passwordForm = $state({ current_password: '', new_password: '', confirm_password: '' });
+	let passwordFormError = $state('');
+	let passwordUpdating = $state(false);
 	
 	// Sessions state
-	let sessions: UserSession[] = [];
-	let sessionsLoading = true;
-	let revokingSessionId: string | null = null;
+	let sessions = $state<UserSession[]>([]);
+	let sessionsLoading = $state(true);
+	let revokingSessionId = $state<string | null>(null);
 	
 	// Devices state
-	let devices: UserDevice[] = [];
-	let devicesLoading = true;
-	let revokingDeviceId: string | null = null;
-	let userCodeInput = '';
-	let approvingDevice = false;
+	let devices = $state<UserDevice[]>([]);
+	let devicesLoading = $state(true);
+	let revokingDeviceId = $state<string | null>(null);
+	let userCodeInput = $state('');
+	let approvingDevice = $state(false);
 	
 	// Notifications state (placeholder for future API implementation)
-	let emailNotifications = true;
-	let fileShareNotifications = true;
-	let securityNotifications = true;
-	let marketingNotifications = false;
+	let emailNotifications = $state(true);
+	let fileShareNotifications = $state(true);
+	let securityNotifications = $state(true);
+	let marketingNotifications = $state(false);
 	
 	// Profile state (for email sharing toggle)
-	let profile: FullUserProfile | null = null;
-	let profileLoading = true;
+	let profile = $state<FullUserProfile | null>(null);
+	let profileLoading = $state(true);
 	
 	// Sharing defaults (placeholder for future API implementation)
-	let defaultLinkExpiration = '30';
-	let requirePasswordForLinks = false;
-	let allowPublicUploads = false;
-	let emailSharingEnabled = true;
+	let defaultLinkExpiration = $state('30');
+	let requirePasswordForLinks = $state(false);
+	let allowPublicUploads = $state(false);
+	let emailSharingEnabled = $state(true);
 
 	// Activity state
-	let recentChanges: File[] = [];
-	let activityLoading = true;
+	let recentChanges = $state<File[]>([]);
+	let activityLoading = $state(true);
 
-	$: storagePercentage = (() => {
+	// Usage data - Consistent with SidebarNav
+	let allFilesQuery = $derived(
+		createQuery({
+			queryKey: ['all-files'],
+			queryFn: () => listAllFiles(),
+			enabled: !!$currentUser
+		})
+	);
+
+	let totalSizeUsed = $derived($allFilesQuery.data?.reduce((sum, file) => sum + file.size, 0) || 0);
+
+	let storagePercentage = $derived((() => {
 		const quota = $currentUser?.storage_quota;
-		const used = $currentUser?.storage_used;
-		if (typeof quota === 'number' && typeof used === 'number' && used >= 0) {
-			return Math.round((used / quota) * 100);
+		if (typeof quota === 'number' && quota > 0) {
+			return Math.round((totalSizeUsed / quota) * 100);
 		}
 		return 0;
-	})();
+	})());
 
 	onMount(async () => {
 		await Promise.all([
@@ -298,7 +309,13 @@
 							<SettingsSection title="Storage" description="Your storage usage">
 								<div class="py-4">
 									<div class="flex items-center justify-between mb-2">
-										<span class="text-sm text-base-content/60">{formatFileSize($currentUser.storage_used ?? 0)} of {formatFileSize($currentUser.storage_quota ?? 0)} used</span>
+										<span class="text-sm text-base-content/60">
+											{#if $allFilesQuery.isLoading}
+												Calculating usage...
+											{:else}
+												{formatFileSize(totalSizeUsed)} of {formatFileSize($currentUser.storage_quota ?? 0)} used
+											{/if}
+										</span>
 										<span class="text-sm font-medium text-base-content">{storagePercentage}%</span>
 									</div>
 									<div class="h-2 bg-base-300 rounded-full overflow-hidden">

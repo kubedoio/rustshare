@@ -8,6 +8,7 @@ export interface UserProfile {
 	email: string;
 	is_admin: boolean;
 	storage_quota: number;
+	storage_used: number;
 	theme: Theme;
 	avatar_path?: string | null;
 	created_at: string;
@@ -117,6 +118,7 @@ export interface FullUserProfile {
 	email_sharing_enabled: boolean;
 	theme: Theme;
 	storage_quota: number;
+	storage_used: number;
 	created_at: string;
 	updated_at: string;
 }
