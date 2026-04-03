@@ -354,7 +354,7 @@
 		{selected ? 'bg-brand-500/5' : ''} 
 		{isDragging ? 'opacity-40' : ''} 
 		{isDropTarget ? (canDrop ? 'bg-brand-500/10 ring-1 ring-inset ring-brand-500/30' : 'bg-error/10 ring-1 ring-inset ring-error/30') : ''}
-		{draggable && !isRenaming ? 'cursor-grab active:cursor-grabbing' : ''}"
+		{!isRenaming ? 'cursor-grab active:cursor-grabbing' : ''}"
 	onclick={handleClick}
 	oncontextmenu={handleContextMenu}
 	draggable={!isRenaming}
