@@ -2,9 +2,6 @@
 target/
 **/target/
 
-# Superpowers
-.superpowers
-
 # Frontend
 frontend/node_modules/
 frontend/.svelte-kit/
@@ -45,4 +42,5 @@ launch-smoke-reports/
 # Workspace helpers
 .worktrees/
 .gstack/
+.superpowers
 .claude/
