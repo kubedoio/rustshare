@@ -2,7 +2,7 @@
   import { createQuery } from '@tanstack/svelte-query';
   import { listAllFiles } from '$lib/api/files';
   import { currentUser } from '$lib/stores/auth';
-  import ActivityFeed from '$lib/components/activity/ActivityFeed.svelte';
+
   import { formatFileSize, formatDate } from '$lib/utils/format';
   import type { File } from '$lib/api/types';
   import { 
@@ -11,8 +11,7 @@
     Users, 
     Plus, 
     ArrowRight, 
-    Share2, 
-    Activity,
+    Share2,
     FileDigit,
     StickyNote,
     Lock,
@@ -234,49 +233,31 @@
     {/if}
   </section>
 
-  <!-- Bottom Section: Shared Files and Activity -->
-  <div class="bottom-grid">
-    <div class="bottom-grid-main">
-      <!-- Shared Files Section -->
-      {#if sharedFiles.length > 0}
-        <section class="shared-panel">
-          <div class="shared-panel-header">
-            <div class="shared-panel-title-row">
-              <Users size={14} class="text-base-content/40" />
-              <h2 class="shared-panel-title">Shared With Me</h2>
-            </div>
-          </div>
-          <div class="shared-list">
-            {#each sharedFiles.slice(0, 5) as share}
-              <a href="/files?folder={share.resource_id}" class="shared-item">
-                <div class="shared-item-icon">
-                  <Share2 size={14} />
-                </div>
-                <div class="shared-item-content">
-                  <p class="shared-item-name">{share.resource_name}</p>
-                  <p class="shared-item-meta">Shared by <span>{share.shared_by_name}</span></p>
-                </div>
-                <span class="shared-item-type">{share.resource_type}</span>
-              </a>
-            {/each}
-          </div>
-        </section>
-      {/if}
-    </div>
-
-    <!-- Activity Section -->
-    <section class="activity-panel">
-      <div class="activity-panel-header">
-        <div class="activity-panel-title-row">
-          <Activity size={14} class="text-base-content/40" />
-          <h2 class="activity-panel-title">Live Activity</h2>
+  <!-- Shared With Me Section -->
+  {#if sharedFiles.length > 0}
+    <section class="shared-panel">
+      <div class="shared-panel-header">
+        <div class="shared-panel-title-row">
+          <Users size={14} class="text-base-content/40" />
+          <h2 class="shared-panel-title">Shared With Me</h2>
         </div>
       </div>
-      <div class="activity-panel-content">
-        <ActivityFeed maxItems={10} showHeader={false} />
+      <div class="shared-list">
+        {#each sharedFiles.slice(0, 5) as share}
+          <a href="/files?folder={share.resource_id}" class="shared-item">
+            <div class="shared-item-icon">
+              <Share2 size={14} />
+            </div>
+            <div class="shared-item-content">
+              <p class="shared-item-name">{share.resource_name}</p>
+              <p class="shared-item-meta">Shared by <span>{share.shared_by_name}</span></p>
+            </div>
+            <span class="shared-item-type">{share.resource_type}</span>
+          </a>
+        {/each}
       </div>
     </section>
-  </div>
+  {/if}
 </div>
 
 <style>
@@ -743,24 +724,6 @@
     color: color-mix(in oklab, var(--base-content) 40%, transparent);
   }
 
-  /* Bottom Grid */
-  .bottom-grid {
-    display: grid;
-    gap: 1rem;
-  }
-
-  @media (min-width: 1024px) {
-    .bottom-grid {
-      grid-template-columns: 1fr 320px;
-    }
-  }
-
-  .bottom-grid-main {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
   /* Shared Panel */
   .shared-panel {
     background: var(--base-100);
@@ -855,47 +818,6 @@
     text-transform: uppercase;
     letter-spacing: -0.025em;
     color: color-mix(in oklab, var(--base-content) 30%, transparent);
-  }
-
-  /* Activity Panel */
-  .activity-panel {
-    background: var(--base-100);
-    border: 1px solid color-mix(in oklab, var(--base-300) 50%, transparent);
-    border-radius: 1.5rem;
-    overflow: hidden;
-    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
-    display: flex;
-    flex-direction: column;
-    min-height: 320px;
-  }
-
-  .activity-panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.75rem 1rem;
-    background: color-mix(in oklab, var(--base-200) 20%, transparent);
-    border-bottom: 1px solid color-mix(in oklab, var(--base-300) 50%, transparent);
-  }
-
-  .activity-panel-title-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .activity-panel-title {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: color-mix(in oklab, var(--base-content) 60%, transparent);
-  }
-
-  .activity-panel-content {
-    flex: 1;
-    padding: 1rem;
-    overflow-y: auto;
   }
 
   :global(.font-display) {
