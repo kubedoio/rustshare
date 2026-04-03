@@ -94,17 +94,16 @@
 				aria-current={active ? 'page' : undefined}
 			>
 				<!-- Chevron (clickable for expand/collapse) -->
-				<span
+				<button
+					type="button"
 					class="chevron"
 					class:expanded
 					class:invisible={!hasChildrenValue}
 					onclick={(e) => toggleExpand(e, folderId)}
-					role="button"
-					tabindex="-1"
 					aria-label={expanded ? 'Collapse folder' : 'Expand folder'}
 				>
 					<ChevronRight size={14} />
-				</span>
+				</button>
 
 				<!-- Folder Icon -->
 				<span class="folder-icon-wrapper">
