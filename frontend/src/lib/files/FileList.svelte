@@ -34,7 +34,7 @@
 	export let replicationStatuses: Record<string, ReplicationStatus> = {};
 
 	// Drag and drop state
-	let draggedItem: { id: string; isFolder: boolean } | null = null;
+	let draggedItem: { id: string; isFolder: boolean; parentFolderId: string | null } | null = null;
 	let dragOverFolderId: string | null = null;
 
 	function handleFileToggle(file: FileType, event?: MouseEvent) {
@@ -54,7 +54,7 @@
 	}
 
 	// Drag handlers
-	function handleDragStart(item: { id: string; isFolder: boolean }) {
+	function handleDragStart(item: { id: string; isFolder: boolean; parentFolderId: string | null }) {
 		draggedItem = item;
 	}
 
@@ -73,11 +73,36 @@
 		dragOverFolderId = null;
 	}
 
+	// Check if target folder is a descendant of the dragged folder (would create cycle)
+	function isDescendantOf(folderId: string, potentialParentId: string): boolean {
+		const folder = folders.find(f => f.id === folderId);
+		if (!folder) return false;
+		if (folder.parent_folder_id === potentialParentId) return true;
+		if (!folder.parent_folder_id) return false;
+		return isDescendantOf(folder.parent_folder_id, potentialParentId);
+	}
+
 	function handleDropOnFolder(folder: Folder) {
 		if (!draggedItem) return;
 		
-		// Can't drop a folder into itself or its children
+		// Can't drop onto itself
 		if (draggedItem.id === folder.id) {
+			dragOverFolderId = null;
+			draggedItem = null;
+			return;
+		}
+
+		// Can't drop a folder into itself or its children (would create cycle)
+		if (draggedItem.isFolder) {
+			if (isDescendantOf(folder.id, draggedItem.id)) {
+				dragOverFolderId = null;
+				draggedItem = null;
+				return;
+			}
+		}
+
+		// Can't drop file/folder into its current parent (no-op)
+		if (draggedItem.parentFolderId === folder.id) {
 			dragOverFolderId = null;
 			draggedItem = null;
 			return;
@@ -97,6 +122,22 @@
 		
 		dragOverFolderId = null;
 		draggedItem = null;
+	}
+
+	// Helper to determine if a folder is a valid drop target
+	function isValidDropTarget(folder: Folder): boolean {
+		if (!draggedItem) return false;
+		
+		// Can't drop onto itself
+		if (draggedItem.id === folder.id) return false;
+		
+		// Can't drop a folder into itself or its children (would create cycle)
+		if (draggedItem.isFolder && isDescendantOf(folder.id, draggedItem.id)) return false;
+		
+		// Can't drop into current parent (no-op)
+		if (draggedItem.parentFolderId === folder.id) return false;
+		
+		return true;
 	}
 
 	$: allSelected = folders.length + files.length > 0 &&
@@ -136,6 +177,7 @@
 					selected={$selectionStore.selectedFolderIds.has(folder.id)}
 					isDragging={draggedItem?.id === folder.id}
 					isDropTarget={dragOverFolderId === folder.id}
+					canDrop={isValidDropTarget(folder)}
 					onSelect={(e) => handleFolderToggle(folder, e)}
 					onToggleSelect={() => handleFolderToggle(folder)}
 					onNavigate={() => onFolderClick(folder)}
@@ -146,7 +188,7 @@
 					onPermanentDelete={() => onPermanentDeleteFolder(folder)}
 					onShare={() => onShareFolder(folder)}
 					onMove={() => onMoveFolder(folder, null)}
-					onDragStart={() => handleDragStart({ id: folder.id, isFolder: true })}
+					onDragStart={() => handleDragStart({ id: folder.id, isFolder: true, parentFolderId: folder.parent_folder_id })}
 					onDragEnd={handleDragEnd}
 					onDrop={() => handleDropOnFolder(folder)}
 					onDragOver={() => handleDragOverFolder(folder.id)}
@@ -178,7 +220,7 @@
 					onVersionHistory={() => onVersionHistory(file)}
 					onReplace={() => onReplaceFile(file)}
 					onEdit={() => { console.log('[FileList] onEdit triggered for', file.name); onEditFile(file); }}
-					onDragStart={() => handleDragStart({ id: file.id, isFolder: false })}
+					onDragStart={() => handleDragStart({ id: file.id, isFolder: false, parentFolderId: file.parent_folder_id })}
 					onDragEnd={handleDragEnd}
 				/>
 			{/each}

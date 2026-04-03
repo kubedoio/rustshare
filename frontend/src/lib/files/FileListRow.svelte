@@ -39,6 +39,7 @@
 		replicationStatus?: ReplicationStatus | null;
 		isDragging?: boolean;
 		isDropTarget?: boolean;
+		canDrop?: boolean;
 		onSelect?: (e?: MouseEvent) => void;
 		onToggleSelect?: () => void;
 		onNavigate?: () => void;
@@ -69,6 +70,7 @@
 		replicationStatus = null,
 		isDragging = false,
 		isDropTarget = false,
+		canDrop = true,
 		onSelect = () => {},
 		onToggleSelect = () => {},
 		onNavigate = () => {},
@@ -85,7 +87,9 @@
 		onEdit = () => {},
 		onDragStart = () => {},
 		onDragEnd = () => {},
-		onDrop = () => {}
+		onDrop = () => {},
+		onDragOver = () => {},
+		onDragLeave = () => {}
 	}: Props = $props();
 
 	// Derived values
@@ -314,14 +318,31 @@
 	function handleDragOver(e: DragEvent) {
 		if (isFolder && !isDragging) {
 			e.preventDefault();
-			e.dataTransfer!.dropEffect = 'move';
+			// Only show move cursor if this is a valid drop target
+			e.dataTransfer!.dropEffect = canDrop ? 'move' : 'none';
+			// Notify parent that we're dragging over this folder
+			if (canDrop) {
+				onDragOver();
+			}
 		}
 	}
 
 	function handleDrop(e: DragEvent) {
 		e.preventDefault();
-		if (isFolder && !isDragging) {
+		if (isFolder && !isDragging && canDrop) {
 			onDrop();
+		}
+	}
+
+	function handleDragLeave(e: DragEvent) {
+		if (isFolder && !isDragging) {
+			// Only trigger leave if we're actually leaving the row (not entering a child)
+			const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+			const x = e.clientX;
+			const y = e.clientY;
+			if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) {
+				onDragLeave();
+			}
 		}
 	}
 </script>
@@ -329,19 +350,23 @@
 <svelte:window onclick={handleClickOutside} onresize={handleViewportChange} onscroll={handleViewportChange} />
 
 <tr 
-	class="group hover:bg-base-200/60 transition-colors
+	class="group hover:bg-base-200/60 transition-colors cursor-pointer
 		{selected ? 'bg-brand-500/5' : ''} 
 		{isDragging ? 'opacity-40' : ''} 
-		{isDropTarget ? 'bg-brand-500/10 ring-1 ring-inset ring-brand-500/30' : ''}"
+		{isDropTarget ? (canDrop ? 'bg-brand-500/10 ring-1 ring-inset ring-brand-500/30' : 'bg-error/10 ring-1 ring-inset ring-error/30') : ''}
+		{draggable && !isRenaming ? 'cursor-grab active:cursor-grabbing' : ''}"
 	onclick={handleClick}
 	oncontextmenu={handleContextMenu}
 	draggable={!isRenaming}
 	ondragstart={handleDragStart}
 	ondragend={onDragEnd}
 	ondragover={handleDragOver}
+	ondragleave={handleDragLeave}
 	ondrop={handleDrop}
 	role="row"
 	aria-selected={selected}
+	aria-grabbed={isDragging}
+	aria-dropeffect={isFolder && canDrop ? 'move' : 'none'}
 >
 	<!-- Checkbox -->
 	<td class="w-10 px-3 py-0.5">
