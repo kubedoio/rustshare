@@ -73,7 +73,7 @@
 	let currentFolderId: string | null = null;
 
 	// Query for folder tree (used for breadcrumb path)
-	$: folderTreeQuery = createQuery<FolderTreeType>({
+	const folderTreeQuery = createQuery<FolderTreeType>({
 		queryKey: ['folder-tree'],
 		queryFn: () => getFolderTree(),
 		staleTime: 0
@@ -1166,7 +1166,7 @@
 		onPermanentDeleteFolder={handlePermanentDeleteFolder}
 		onShareFolder={handleShareFolder}
 		onMoveFolder={handleMoveFolderWithFallback}
-		on:breadcrumbNavigate={handleBreadcrumbNavigate}
+		onbreadcrumbNavigate={handleBreadcrumbNavigate}
 	/>
 </DropZone>
 

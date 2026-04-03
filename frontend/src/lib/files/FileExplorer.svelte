@@ -60,6 +60,7 @@
 	export let onMoveFolder: ((folder: Folder) => void) | ((folder: Folder, targetFolderId: string | null) => void);
 
 	export let onEditFile: (file: FileType) => void;
+	export let onbreadcrumbNavigate: (event: CustomEvent<{ folderId: string | null }>) => void = () => {};
 
 
 </script>
@@ -117,6 +118,7 @@
 			{onPermanentDeleteFolder}
 			{onShareFolder}
 			{onMoveFolder}
+			{onbreadcrumbNavigate}
 		/>
 	</div>
 </div>
