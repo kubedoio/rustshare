@@ -26,9 +26,16 @@
 		return $fileBrowserUi.expandedFolderIds.has(folderId);
 	}
 
-	function isActive(folderId: string): boolean {
+	function isActive(folder: FolderTreeType): boolean {
 		const currentFolderId = $page.url.searchParams.get('folder');
-		return currentFolderId === folderId;
+		const isRoot = isRootFolder(folder);
+		
+		if (isRoot) {
+			// Root is active when no folder param (at /files) or when folder param matches root ID
+			return !currentFolderId || currentFolderId === folder.folder.id;
+		}
+		
+		return currentFolderId === folder.folder.id;
 	}
 
 	function isAncestor(folderId: string): boolean {
@@ -40,9 +47,24 @@
 		fileBrowserUi.toggleFolderExpanded(folderId);
 	}
 
-	function navigateToFolder(folderId: string) {
+	function isRootFolder(folder: FolderTreeType): boolean {
+		// Root folder has no parent
+		return !folder.folder.parent_folder_id;
+	}
+
+	function navigateToFolder(folder: FolderTreeType) {
+		const folderId = folder.folder.id;
+		const isRoot = isRootFolder(folder);
+		
 		fileBrowserUi.selectFolder(folderId);
-		goto(`/files?folder=${folderId}`);
+		
+		if (isRoot) {
+			// Navigate to home (no folder param) for root
+			goto('/files');
+		} else {
+			goto(`/files?folder=${folderId}`);
+		}
+		
 		onFolderClick(folderId);
 	}
 
@@ -55,7 +77,7 @@
 	{#each folders as folder (folder.folder.id)}
 		{@const folderId = folder.folder.id}
 		{@const expanded = isExpanded(folderId)}
-		{@const active = isActive(folderId)}
+		{@const active = isActive(folder)}
 		{@const isAncestorOfActive = isAncestor(folderId)}
 		{@const hasChildrenValue = hasChildren(folder)}
 		{@const indentPx = depth * INDENT_SIZE}
@@ -66,9 +88,9 @@
 				type="button"
 				class="folder-row"
 				class:active
-				class:ancestor={isAncestorOfActive}
+				class:is-ancestor={isAncestorOfActive}
 				style="padding-left: {indentPx}px"
-				onclick={() => navigateToFolder(folderId)}
+				onclick={() => navigateToFolder(folder)}
 				aria-current={active ? 'page' : undefined}
 			>
 				<!-- Chevron (clickable for expand/collapse) -->
@@ -89,14 +111,14 @@
 					{#if active}
 						<FolderOpen size={16} class="folder-icon active" />
 					{:else if isAncestorOfActive}
-						<Folder size={16} class="folder-icon ancestor" />
+						<Folder size={16} class="folder-icon is-ancestor" />
 					{:else}
 						<Folder size={16} class="folder-icon" />
 					{/if}
 				</span>
 
 				<!-- Folder Name -->
-				<span class="folder-name" class:active class:ancestor={isAncestorOfActive}>
+				<span class="folder-name" class:active class:is-ancestor={isAncestorOfActive}>
 					{folder.folder.name}
 				</span>
 			</button>
@@ -159,7 +181,7 @@
 		background-color: hsl(var(--p) / 0.18);
 	}
 
-	.folder-row.ancestor {
+	.folder-row.is-ancestor {
 		color: hsl(var(--bc));
 	}
 
@@ -205,7 +227,7 @@
 		color: hsl(var(--p));
 	}
 
-	:global(.folder-icon.ancestor) {
+	:global(.folder-icon.is-ancestor) {
 		color: hsl(var(--bc) / 0.7);
 	}
 
@@ -222,7 +244,7 @@
 		font-weight: 500;
 	}
 
-	.folder-name.ancestor {
+	.folder-name.is-ancestor {
 		font-weight: 500;
 	}
 
