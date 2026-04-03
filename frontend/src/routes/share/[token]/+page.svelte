@@ -17,6 +17,7 @@
 	import { queryClient } from '$lib/query-client';
 	import { toastStore } from '$lib/stores/toast';
 	import { formatFileSize, getMimeTypeIcon } from '$lib/utils/format';
+	import FileIcon from '$lib/components/icons/FileIcon.svelte';
 
 	type UploadQueueItem = {
 		id: string;
