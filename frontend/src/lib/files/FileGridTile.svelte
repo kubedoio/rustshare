@@ -8,23 +8,7 @@
 	import { replicationStateBadgeClass, formatReplicationStateLabel } from '$lib/stores/replication';
 	import { formatFileSize, formatDate } from '$lib/utils/format';
 	import { detectEditorType, canEditFileSize } from '$lib/utils/editor';
-	import { 
-		MoreVertical, 
-		Edit, 
-		Edit3,
-		Trash2, 
-		Share2, 
-		Move, 
-		Download, 
-		History, 
-		RefreshCw, 
-		RotateCcw, 
-		Star, 
-		FolderIcon, 
-		FileIcon, 
-		Check, 
-		X
-	} from 'lucide-svelte';
+	import { MoveVertical as MoreVertical, CreditCard as Edit, CreditCard as Edit3, Trash2, Share2, Move, Download, History, RefreshCw, RotateCcw, Star, Folder as FolderIcon, File as FileIcon, Check, X } from 'lucide-svelte';
 
 	// Props
 	interface Props {

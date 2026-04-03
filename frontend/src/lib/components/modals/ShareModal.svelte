@@ -26,7 +26,7 @@
 	import { queryClient } from '$lib/query-client';
 	import { formatDate } from '$lib/utils/format';
 	import { createEventDispatcher } from 'svelte';
-	import { Users, UserPlus, Link, Loader2, Trash2, X, Mail, User } from 'lucide-svelte';
+	import { Users, UserPlus, Link, Loader as Loader2, Trash2, X, Mail, User } from 'lucide-svelte';
 
 	export let open = false;
 	export let resourceId: string;

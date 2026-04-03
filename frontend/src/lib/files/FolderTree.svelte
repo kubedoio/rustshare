@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { createQuery } from '@tanstack/svelte-query';
-	import { Folder, Home, Loader2, Edit, Trash2, Share2, Move, Plus } from 'lucide-svelte';
+	import { Folder, Hop as Home, Loader as Loader2, CreditCard as Edit, Trash2, Share2, Move, Plus } from 'lucide-svelte';
 	import { getFolderContents } from '$lib/api/folders';
 	import { folderTreeStore, selectedFolder, type FolderNode } from '$lib/stores/folderTree';
 	import FolderTreeItem from './FolderTreeItem.svelte';
