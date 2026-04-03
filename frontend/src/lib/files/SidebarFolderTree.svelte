@@ -79,8 +79,8 @@
 					
 					{#if level > 0}
 						<!-- Horizontal branch line to this folder (T or L connector) -->
+						<!-- Positioning math: 6px = half of 12px chevron width for centering, 16px = chevron button width -->
 						{@const branchLeft = 6 + (level - 1) * 16}
-						{@const connectorWidth = 10}
 						<div 
 							class="absolute w-[10px] h-[1px] bg-base-content/10"
 							class:top-[14px]={!isLast}
