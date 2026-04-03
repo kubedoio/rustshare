@@ -243,7 +243,7 @@
 		on:drop={handleRootDrop}
 	>
 		<Home size={18} class={$folderTreeStore.selectedId === null ? 'text-brand-500' : 'text-base-content/50'} />
-		<span>Home</span>
+		<span>My Files</span>
 	</button>
 
 	<!-- Tree -->
