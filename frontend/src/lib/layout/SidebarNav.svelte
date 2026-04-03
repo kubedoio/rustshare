@@ -94,9 +94,25 @@
 		return currentPath === href || currentPath.startsWith(href);
 	}
 
-	function getSubfolders(): FolderTree[] {
-		return $folderTreeQuery?.data?.subfolders || [];
+	function getFolderTreeData(): FolderTree[] {
+		if ($folderTreeQuery.data) {
+			const root = { ...$folderTreeQuery.data };
+			if (root.folder.name === 'root' || !root.folder.parent_folder_id) {
+				root.folder = { ...root.folder, name: 'My Files' };
+			}
+			return [root];
+		}
+		return [];
 	}
+
+	// Expand root by default
+	let rootExpanded = false;
+	$effect(() => {
+		if ($folderTreeQuery.data && !rootExpanded) {
+			fileBrowserUi.toggleFolderExpanded($folderTreeQuery.data.folder.id);
+			rootExpanded = true;
+		}
+	});
 </script>
 
 <!-- Mobile overlay -->
@@ -210,10 +226,10 @@
 						Retry
 					</button>
 				</div>
-			{:else if getSubfolders().length > 0}
+			{:else if getFolderTreeData().length > 0}
 				<nav class="space-y-0.5" aria-label="Folder tree">
 					<SidebarFolderTree 
-						folders={getSubfolders()}
+						folders={getFolderTreeData()}
 						onFolderClick={onClose}
 					/>
 				</nav>

@@ -26,8 +26,6 @@
 		return $fileBrowserUi.expandedFolderIds.has(folderId);
 	}
 
-
-
 	function toggleFolder(e: Event, folderId: string) {
 		e.stopPropagation();
 		fileBrowserUi.toggleFolderExpanded(folderId);
@@ -44,60 +42,84 @@
 	}
 </script>
 
-{#each folders as folder (folder.folder.id)}
-	{@const folderId = folder.folder.id}
-	{@const isExpanded = isFolderExpanded(folderId)}
-	{@const isActive = $page.url.searchParams.get('folder') === folderId}
-	{@const hasChildrenValue = hasChildren(folder)}
-	<div class="folder-tree-node">
-		<!-- Folder Item -->
-		<div
-			class="group flex items-center gap-1 rounded-lg transition-all duration-200 cursor-pointer
-				{isActive 
-					? 'bg-brand-500/15 text-brand-700 font-semibold ring-1 ring-brand-500/25 shadow-sm' 
-					: 'text-base-content/80 hover:bg-base-200/60'}"
-			style="padding-left: {level * 10 + 6}px"
-		>
-			<!-- Expand/Collapse button -->
-			<button
-				type="button"
-				class="w-4 h-4 flex items-center justify-center rounded hover:bg-base-300/50 transition-colors shrink-0
-					{hasChildrenValue ? '' : 'invisible'}"
-				onclick={(e) => toggleFolder(e, folder.folder.id)}
-				aria-label={isExpanded ? 'Collapse folder' : 'Expand folder'}
-				tabindex="-1"
+<div class="folder-tree-container {level > 0 ? 'ml-3 border-l border-base-content/10' : ''}">
+	{#each folders as folder, i (folder.folder.id)}
+		{@const folderId = folder.folder.id}
+		{@const isExpanded = isFolderExpanded(folderId)}
+		{@const isActive = $page.url.searchParams.get('folder') === folderId}
+		{@const hasChildrenValue = hasChildren(folder)}
+		{@const isLast = i === folders.length - 1}
+
+		<div class="folder-tree-node relative">
+			<!-- Folder Item -->
+			<div
+				class="group flex items-center gap-1 transition-all duration-200 cursor-pointer py-0.5
+					{isActive 
+						? 'text-brand-700 font-semibold' 
+						: 'text-base-content/80 hover:text-base-content'}"
 			>
-				<ChevronRight 
-					size={12} 
-					class="transition-transform duration-200 {isExpanded ? 'rotate-90' : ''}" 
-				/>
-			</button>
-			
-			<!-- Folder link -->
-			<button
-				type="button"
-				class="flex-1 flex items-center gap-1.5 py-1 text-left min-w-0 text-[13px]"
-				onclick={() => navigateToFolder(folder.folder.id)}
-			>
-				{#if isActive}
-					<FolderOpen size={14} class="text-brand-500 shrink-0" />
-				{:else}
-					<Folder size={14} class="text-base-content/50 shrink-0" />
+				{#if level > 0}
+					<!-- Classic Tree Line (Horizontal) -->
+					<div class="absolute left-[-12px] top-[14px] w-3 h-[1px] bg-base-content/10"></div>
+					{#if isLast}
+						<!-- Cover the bottom of the line for last item -->
+						<div class="absolute left-[-13px] top-[15px] w-[1px] h-full bg-base-100"></div>
+					{/if}
 				{/if}
-				<span class="flex-1 truncate">{folder.folder.name}</span>
-			</button>
-		</div>
-		
-		<!-- Children - Recursive -->
-		{#if isExpanded && hasChildrenValue}
-			<div class="mt-0.5">
-				<SidebarFolderTree 
-					folders={folder.subfolders} 
-					level={level + 1}
-					{onFolderClick}
-					{getExpandedIds}
-				/>
+
+				<!-- Expand/Collapse button -->
+				<button
+					type="button"
+					class="w-4 h-4 flex items-center justify-center rounded hover:bg-base-200/60 transition-colors shrink-0 z-10 bg-base-100
+						{hasChildrenValue ? '' : 'invisible'}"
+					onclick={(e) => toggleFolder(e, folder.folder.id)}
+					aria-label={isExpanded ? 'Collapse folder' : 'Expand folder'}
+					tabindex="-1"
+				>
+					<ChevronRight 
+						size={12} 
+						class="transition-transform duration-200 {isExpanded ? 'rotate-90' : ''}" 
+					/>
+				</button>
+				
+				<!-- Folder link -->
+				<button
+					type="button"
+					class="flex-1 flex items-center gap-2 py-1 text-left min-w-0 text-[13px] rounded-md px-1.5 transition-colors
+						{isActive ? 'bg-brand-500/10' : 'hover:bg-base-200/40'}"
+					onclick={() => navigateToFolder(folder.folder.id)}
+				>
+					{#if isActive}
+						<FolderOpen size={14} class="text-brand-500 shrink-0" />
+					{:else}
+						<Folder size={14} class="text-base-content/40 shrink-0" />
+					{/if}
+					<span class="flex-1 truncate">{folder.folder.name}</span>
+				</button>
 			</div>
-		{/if}
-	</div>
-{/each}
+			
+			<!-- Children - Recursive -->
+			{#if isExpanded && hasChildrenValue}
+				<div class="mt-0">
+					<SidebarFolderTree 
+						folders={folder.subfolders} 
+						level={level + 1}
+						{onFolderClick}
+						{getExpandedIds}
+					/>
+				</div>
+			{/if}
+		</div>
+	{/each}
+</div>
+
+<style>
+	.folder-tree-container {
+		position: relative;
+	}
+
+	/* Last item vertical line cleanup */
+	.folder-tree-node:last-child > .mt-0 {
+		border-left: none;
+	}
+</style>
