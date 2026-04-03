@@ -87,8 +87,9 @@ export async function listNotes(limit?: number): Promise<NoteSummary[]> {
   return apiClient.get<NoteSummary[]>(`/notes${query}`);
 }
 
-export async function listRecentNotes(): Promise<RecentNotesResponse> {
-  return apiClient.get<RecentNotesResponse>('/notes/recent');
+export async function listRecentNotes(folderName?: string): Promise<RecentNotesResponse> {
+  const query = folderName ? `?folder_name=${encodeURIComponent(folderName)}` : '';
+  return apiClient.get<RecentNotesResponse>(`/notes/recent${query}`);
 }
 
 export async function toggleVisibility(noteId: string): Promise<VisibilityResponse> {

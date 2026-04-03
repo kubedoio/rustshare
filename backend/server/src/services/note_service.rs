@@ -477,6 +477,17 @@ impl NoteService {
 
     /// List all notes for a user.
     pub async fn list_notes(&self, user_id: UserId, tenant_id: Uuid, limit: Option<usize>) -> Result<Vec<NoteSummary>, NoteError> {
+        self.list_notes_filtered(user_id, tenant_id, None, limit).await
+    }
+
+    /// List notes for a user, optionally filtered to a specific folder path prefix.
+    pub async fn list_notes_filtered(
+        &self,
+        user_id: UserId,
+        tenant_id: Uuid,
+        path_prefix: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<NoteSummary>, NoteError> {
         // Find all markdown files owned by the user
         let files = self.metadata_store
             .list_all_markdown_files(user_id, tenant_id)
@@ -485,6 +496,12 @@ impl NoteService {
 
         let mut notes = Vec::new();
         for file in files {
+            if let Some(prefix) = path_prefix {
+                if !file.path.starts_with(prefix) {
+                    continue;
+                }
+            }
+
             let meta = match self.load_metadata(file.id).await {
                 Ok(Some(m)) => m,
                 _ => {

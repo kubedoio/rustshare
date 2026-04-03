@@ -37,10 +37,10 @@
     }
   });
 
-  // Recent notes from dedicated API
+  // Recent notes from dedicated API (only Notes folder)
   const recentNotesQuery = createQuery({
-    queryKey: ['recent-notes'],
-    queryFn: () => listRecentNotes()
+    queryKey: ['recent-notes', 'Notes'],
+    queryFn: () => listRecentNotes('Notes')
   });
 
   const createNoteMutation = createMutation({

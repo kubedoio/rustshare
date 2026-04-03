@@ -293,6 +293,11 @@ pub async fn list_notes(
 // Recent Notes (Dashboard)
 // ============================================================================
 
+#[derive(Debug, Deserialize)]
+pub struct RecentNotesQuery {
+    pub folder_name: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct RecentNotesResponse {
     pub notes: Vec<NoteSummary>,
@@ -301,12 +306,21 @@ pub struct RecentNotesResponse {
 pub async fn list_recent_notes(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
+    Query(query): Query<RecentNotesQuery>,
 ) -> Result<Json<RecentNotesResponse>, Response> {
-    let notes = state
-        .note_service
-        .list_notes(auth.user_id, auth.tenant_id, Some(8))
-        .await
-        .map_err(note_error_response)?;
+    let notes = if let Some(folder_name) = query.folder_name {
+        let prefix = format!("/{}/", folder_name);
+        state
+            .note_service
+            .list_notes_filtered(auth.user_id, auth.tenant_id, Some(&prefix), Some(8))
+            .await
+    } else {
+        state
+            .note_service
+            .list_notes(auth.user_id, auth.tenant_id, Some(8))
+            .await
+    }
+    .map_err(note_error_response)?;
 
     Ok(Json(RecentNotesResponse { notes }))
 }
