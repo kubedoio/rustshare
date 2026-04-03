@@ -694,7 +694,7 @@
 
 		const items = files.map((file) => ({
 			file,
-			relativePath: (file as any).webkitRelativePath || file.name
+			relativePath: (file as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath || file.name
 		}));
 
 		const folderPaths = extractFolderPaths(items);
@@ -735,7 +735,7 @@
 
 		const filesToUpload: { file: globalThis.File; parentFolderId: string | null }[] = [];
 		for (const file of files) {
-			const relativePath = (file as any).webkitRelativePath || file.name;
+			const relativePath = (file as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
 			const lastSlash = relativePath.lastIndexOf('/');
 
 			if (lastSlash > 0) {
@@ -1244,16 +1244,27 @@
 	type="file"
 	class="hidden"
 	multiple
+	webkitdirectory
 	on:change={(e) => {
 		const target = e.target as HTMLInputElement;
 		if (target.files && target.files.length > 0) {
-			handleFilesSelected(Array.from(target.files));
+			const files = Array.from(target.files);
+			const isDirectory = files.some((f) => (f as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath);
+			if (isDirectory) {
+				handleDirectoryUpload(files);
+			} else {
+				handleFilesSelected(files);
+			}
 			target.value = '';
 		}
 	}}
 />
 
-<DropZone on:filesDropped={(e) => handleFilesSelected(e.detail)} disabled={!canUpload || isUploading}>
+<DropZone
+	on:filesDropped={(e) => handleFilesSelected(e.detail)}
+	on:directoryDropped={(e) => handleDirectoryUpload(e.detail)}
+	disabled={!canUpload || isUploading}
+>
 	<FileExplorer
 		folders={sortedFolders}
 		files={sortedFiles}
