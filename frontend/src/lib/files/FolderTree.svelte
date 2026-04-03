@@ -1,9 +1,13 @@
 <script lang="ts">
-	import { ChevronRight, Folder, FolderOpen } from 'lucide-svelte';
+	import { ChevronRight, Folder, FolderOpen, Loader2 } from 'lucide-svelte';
 	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
+	import { folderTreeStore } from '$lib/stores/folderTree';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import type { FolderTree as FolderTreeType } from '$lib/api/folders';
+	import { createMutation } from '@tanstack/svelte-query';
+	import { queryClient } from '$lib/query-client';
+	import { moveFile } from '$lib/api/files';
+	import { moveFolder, type FolderTree as FolderTreeType } from '$lib/api/folders';
 	import FolderTree from './FolderTree.svelte';
 
 	interface Props {
@@ -73,6 +77,89 @@
 	function hasChildren(folder: FolderTreeType): boolean {
 		return folder.subfolders && folder.subfolders.length > 0;
 	}
+
+	// Drag & Drop State
+	let draggedOverFolderId = $state<string | null>(null);
+
+	// Mutations
+	const moveFileMutation = createMutation({
+		mutationFn: ({ fileId, targetFolderId }: { fileId: string; targetFolderId: string | null }) => 
+			moveFile(fileId, targetFolderId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+		}
+	});
+
+	const moveFolderMutation = createMutation({
+		mutationFn: ({ folderId, targetFolderId }: { folderId: string; targetFolderId: string | null }) => 
+			moveFolder(folderId, targetFolderId),
+		onSuccess: (_, { folderId, targetFolderId }) => {
+			// Optimistically update the store if possible
+			folderTreeStore.moveFolder(folderId, targetFolderId);
+			// Expand destination folder so moved folder is visible
+			if (targetFolderId) {
+				fileBrowserUi.expandFolder(targetFolderId);
+			}
+			// Refresh queries
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+		}
+	});
+
+	// D&D Handlers
+	function handleDragStart(e: DragEvent, folderToDrag: FolderTreeType) {
+		if (e.dataTransfer) {
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('application/json', JSON.stringify({
+				id: folderToDrag.folder.id,
+				isFolder: true,
+				name: folderToDrag.folder.name,
+				parentFolderId: folderToDrag.folder.parent_folder_id
+			}));
+		}
+	}
+
+	function handleDragOver(e: DragEvent, targetFolderId: string) {
+		e.preventDefault();
+		if (e.dataTransfer) {
+			e.dataTransfer.dropEffect = 'move';
+		}
+		draggedOverFolderId = targetFolderId;
+	}
+
+	function handleDragLeave() {
+		draggedOverFolderId = null;
+	}
+
+	async function handleDrop(e: DragEvent, targetFolderId: string) {
+		e.preventDefault();
+		draggedOverFolderId = null;
+
+		if (!e.dataTransfer) return;
+
+		try {
+			const data = JSON.parse(e.dataTransfer.getData('application/json'));
+			const { id: itemId, isFolder, parentFolderId: oldParentId } = data;
+
+			// Don't drop on self or current parent
+			if (itemId === targetFolderId || oldParentId === targetFolderId) return;
+
+			if (isFolder) {
+				await $moveFolderMutation.mutateAsync({ folderId: itemId, targetFolderId });
+			} else {
+				await $moveFileMutation.mutateAsync({ fileId: itemId, targetFolderId });
+			}
+		} catch (err) {
+			console.error('Failed to parse drag data or perform move:', err);
+		}
+	}
+
+	function isMoving(folderId: string): boolean {
+		return $moveFolderMutation.isPending && $moveFolderMutation.variables?.folderId === folderId;
+	}
 </script>
 
 <div class="folder-tree">
@@ -90,11 +177,18 @@
 				class="folder-row"
 				class:active
 				class:is-ancestor={isAncestorOfActive}
+				class:drag-over={draggedOverFolderId === folderId}
+				class:is-moving={isMoving(folderId)}
 				style="padding-left: {indentPx}px"
 				onclick={() => navigateToFolder(folder)}
 				role="button"
 				tabindex="0"
 				onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateToFolder(folder); } }}
+				draggable={true}
+				ondragstart={(e) => handleDragStart(e, folder)}
+				ondragover={(e) => handleDragOver(e, folderId)}
+				ondragleave={handleDragLeave}
+				ondrop={(e) => handleDrop(e, folderId)}
 			>
 				<!-- Chevron (clickable for expand/collapse) -->
 				<button
@@ -110,7 +204,9 @@
 
 				<!-- Folder Icon -->
 				<span class="folder-icon-wrapper">
-					{#if active || expanded}
+					{#if isMoving(folderId) || ($moveFileMutation.isPending && $moveFileMutation.variables?.targetFolderId === folderId)}
+						<Loader2 size={16} class="animate-spin text-brand-500" />
+					{:else if active || expanded}
 						<FolderOpen 
 							size={16} 
 							class="folder-icon {active ? 'active' : ''}" 
@@ -175,6 +271,16 @@
 
 	.folder-row.active {
 		background-color: color-mix(in srgb, var(--rs-brand, #c65a1e) 8%, transparent);
+	}
+
+	.folder-row.drag-over {
+		background-color: color-mix(in srgb, var(--rs-brand, #c65a1e) 15%, transparent);
+		box-shadow: inset 0 0 0 2px var(--rs-brand, #c65a1e);
+	}
+
+	.folder-row.is-moving {
+		opacity: 0.6;
+		pointer-events: none;
 	}
 
 	.folder-row.active:hover {
