@@ -254,6 +254,21 @@ RustShare succeeds when it becomes:
 
 ---
 
+## Deployment
+
+RustShare deploys via Docker Compose. The frontend is built into the backend image and served by Axum, with nginx as the reverse proxy.
+
+Quick start:
+
+```bash
+docker compose up -d
+./test-deployment.sh
+```
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full deployment guide, including environment variables, compose profiles, and the production checklist.
+
+---
+
 ## Current priority
 
 The current priority is not to add every possible feature.
