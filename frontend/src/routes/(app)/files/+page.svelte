@@ -142,7 +142,7 @@
 			file: globalThis.File;
 			folderId?: string | null;
 			onProgress?: (progress: number) => void;
-		}) => uploadFile(folderId ?? currentFolderId, file, onProgress),
+		}) => uploadFile(folderId === undefined ? currentFolderId : folderId, file, onProgress),
 		onSuccess: (_, { file }) => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['all-files'] });
