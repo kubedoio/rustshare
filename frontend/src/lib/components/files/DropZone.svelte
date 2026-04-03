@@ -36,11 +36,12 @@
   }
 
   function handleDrop(event: DragEvent) {
-    event.preventDefault();
     isDragging = false;
     dragCounter = 0;
 
-    if (disabled) return;
+    if (!isFileDrag(event) || disabled) return;
+
+    event.preventDefault();
 
     const files = event.dataTransfer?.files;
     if (files && files.length > 0) {

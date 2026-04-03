@@ -306,10 +306,11 @@
 	function handleDragStart(e: DragEvent) {
 		if (e.dataTransfer) {
 			e.dataTransfer.effectAllowed = 'move';
-			e.dataTransfer.setData('application/json', JSON.stringify({ 
-				id: item.id, 
+			e.dataTransfer.setData('application/json', JSON.stringify({
+				id: item.id,
 				isFolder,
-				name: item.name 
+				name: item.name,
+				parentFolderId: item.parent_folder_id
 			}));
 			onDragStart();
 		}
