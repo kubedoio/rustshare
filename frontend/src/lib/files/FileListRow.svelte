@@ -329,7 +329,7 @@
 <svelte:window onclick={handleClickOutside} onresize={handleViewportChange} onscroll={handleViewportChange} />
 
 <tr 
-	class="group hover:bg-base-200/60 transition-colors border-b border-base-300/30 last:border-b-0
+	class="group hover:bg-base-200/60 transition-colors
 		{selected ? 'bg-brand-500/5' : ''} 
 		{isDragging ? 'opacity-40' : ''} 
 		{isDropTarget ? 'bg-brand-500/10 ring-1 ring-inset ring-brand-500/30' : ''}"
@@ -344,7 +344,7 @@
 	aria-selected={selected}
 >
 	<!-- Checkbox -->
-	<td class="w-10 px-3 py-1.5">
+	<td class="w-10 px-3 py-0.5">
 		{#if selectionMode}
 			<input
 				type="checkbox"
@@ -357,14 +357,14 @@
 	</td>
 
 	<!-- Preview Icon -->
-	<td class="w-10 px-1 py-1.5">
+	<td class="w-10 px-1 py-0.5">
 		<div class="flex items-center justify-center">
 			<FilePreview {item} {isFolder} size="sm" showThumbnail={!isFolder && workspaceMode !== 'deleted'} />
 		</div>
 	</td>
 
 	<!-- Name -->
-	<td class="px-2 py-1.5 min-w-0 max-w-0">
+	<td class="px-2 py-0.5 min-w-0 max-w-0">
 		<div class="flex items-center gap-2 min-w-0">
 			{#if isRenaming}
 				<div class="flex items-center gap-1 flex-1 min-w-0">
@@ -413,25 +413,25 @@
 	</td>
 
 	<!-- Type -->
-	<td class="px-3 py-1.5 hidden md:table-cell w-28">
+	<td class="px-3 py-0.5 hidden md:table-cell w-28">
 		<span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-base-200/70 text-base-content/60 uppercase tracking-tight">
 			{fileTypeLabel}
 		</span>
 	</td>
 
 	<!-- Size -->
-	<td class="px-3 py-1.5 hidden sm:table-cell w-20">
+	<td class="px-3 py-0.5 hidden sm:table-cell w-20">
 		<span class="text-xs text-base-content/50 tabular-nums font-data">{displaySize}</span>
 	</td>
 
 	<!-- Modified -->
-	<td class="px-3 py-1.5 hidden lg:table-cell w-36">
+	<td class="px-3 py-0.5 hidden lg:table-cell w-36">
 		<span class="text-xs text-base-content/50 font-data">{displayDate}</span>
 	</td>
 
 	<!-- Replication Status (hidden on smaller screens) -->
 	{#if !isFolder && replicationStatus}
-		<td class="px-3 py-1.5 hidden xl:table-cell w-28">
+		<td class="px-3 py-0.5 hidden xl:table-cell w-28">
 			<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium {replicationStateBadgeClass(replicationStatus.replicationState)}">
 				{formatReplicationStateLabel(replicationStatus.replicationState)}
 			</span>
@@ -439,7 +439,7 @@
 	{/if}
 
 	<!-- Actions -->
-	<td class="w-12 px-3 py-1.5">
+	<td class="w-12 px-3 py-0.5">
 		<div class="relative">
 			<button
 				type="button"

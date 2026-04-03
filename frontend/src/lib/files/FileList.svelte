@@ -125,7 +125,7 @@
 				<th class="w-10 px-4 py-2"></th>
 			</tr>
 		</thead>
-		<tbody class="divide-y divide-base-300">
+		<tbody class="divide-y divide-base-300/40">
 			<!-- Folders -->
 			{#each folders as folder (folder.id)}
 				<FileListRow
