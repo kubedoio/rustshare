@@ -29,13 +29,14 @@
 
 	function isActive(folder: FolderTreeType): boolean {
 		const currentFolderId = $page.url.searchParams.get('folder');
-		const isRoot = isRootFolder(folder);
+		const isRootNode = isRootFolder(folder);
 		
-		if (isRoot) {
-			// Root is active when no folder param (at /files) or when folder param matches root ID
-			return !currentFolderId || currentFolderId === folder.folder.id;
+		// If we're at the root of the file system (/files without folder param)
+		if (!currentFolderId) {
+			return isRootNode;
 		}
 		
+		// Otherwise, only the matching folder is active
 		return currentFolderId === folder.folder.id;
 	}
 
@@ -109,12 +110,16 @@
 
 				<!-- Folder Icon -->
 				<span class="folder-icon-wrapper">
-					{#if active}
-						<FolderOpen size={16} class="folder-icon active" />
-					{:else if isAncestorOfActive}
-						<Folder size={16} class="folder-icon is-ancestor" />
+					{#if active || expanded}
+						<FolderOpen 
+							size={16} 
+							class="folder-icon {active ? 'active' : ''}" 
+						/>
 					{:else}
-						<Folder size={16} class="folder-icon" />
+						<Folder 
+							size={16} 
+							class="folder-icon {isAncestorOfActive ? 'is-ancestor' : ''}" 
+						/>
 					{/if}
 				</span>
 
@@ -169,11 +174,11 @@
 	}
 
 	.folder-row.active {
-		background-color: hsl(var(--p) / 0.12);
+		background-color: color-mix(in srgb, var(--rs-brand, #c65a1e) 12%, transparent);
 	}
 
 	.folder-row.active:hover {
-		background-color: hsl(var(--p) / 0.18);
+		background-color: color-mix(in srgb, var(--rs-brand, #c65a1e) 18%, transparent);
 	}
 
 	/* Chevron */
@@ -185,7 +190,7 @@
 		height: 28px;
 		flex-shrink: 0;
 		border-radius: 6px;
-		color: hsl(var(--bc) / 0.4);
+		color: color-mix(in srgb, var(--rs-text-muted, #6c665f) 40%, transparent);
 		transition: transform 0.15s ease, background-color 0.12s ease, color 0.12s ease;
 		cursor: pointer;
 		background: transparent;
@@ -196,8 +201,8 @@
 	}
 
 	.chevron:hover {
-		background-color: hsl(var(--bc) / 0.08);
-		color: hsl(var(--bc) / 0.7);
+		background-color: color-mix(in srgb, var(--rs-text-muted, #6c665f) 10%, transparent);
+		color: var(--rs-text, #151515);
 	}
 
 	.chevron.expanded {
@@ -217,23 +222,19 @@
 	}
 
 	:global(.folder-icon) {
-		color: hsl(var(--bc) / 0.45);
+		color: color-mix(in srgb, var(--rs-text-muted, #6c665f) 70%, transparent);
 		transition: color 0.12s ease;
 	}
 
 	:global(.folder-icon.active) {
-		color: hsl(var(--p));
-	}
-
-	:global(.folder-icon.is-ancestor) {
-		color: hsl(var(--bc) / 0.7);
+		color: var(--rs-brand, #c65a1e);
 	}
 
 	/* Folder Name */
 	.folder-name {
 		flex: 1;
-		font-size: 13px;
-		color: hsl(var(--bc) / 0.85);
+		font-size: 13.5px;
+		color: var(--rs-text-soft, #3e3a35);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -242,49 +243,12 @@
 	}
 
 	.folder-row.active .folder-name {
-		color: hsl(var(--p));
-		font-weight: 500;
+		color: var(--rs-brand, #c65a1e);
+		font-weight: 600;
 	}
 
 	.folder-row.is-ancestor .folder-name {
-		color: hsl(var(--bc));
-		font-weight: 500;
-	}
-
-	/* Folder Icon */
-	.folder-icon-wrapper {
-		display: flex;
-		align-items: center;
-		flex-shrink: 0;
-	}
-
-	:global(.folder-icon) {
-		color: hsl(var(--bc) / 0.45);
-		transition: color 0.12s ease;
-	}
-
-	:global(.folder-icon.active) {
-		color: hsl(var(--p));
-	}
-
-	:global(.folder-icon.is-ancestor) {
-		color: hsl(var(--bc) / 0.7);
-	}
-
-	/* Folder Name */
-	.folder-name {
-		flex: 1;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		min-width: 0;
-	}
-
-	.folder-name.active {
-		font-weight: 500;
-	}
-
-	.folder-name.is-ancestor {
+		color: var(--rs-text, #151515);
 		font-weight: 500;
 	}
 
