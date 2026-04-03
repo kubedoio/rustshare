@@ -5,19 +5,7 @@
 	import { createQuery } from '@tanstack/svelte-query';
 	import { getFolderTree, type FolderTree } from '$lib/api/folders';
 	import { onMount } from 'svelte';
-	import { 
-		ChevronRight, 
-		Folder, 
-		FolderOpen,
-		Home,
-		Users,
-		Star,
-		Image,
-		Clock,
-		Search,
-		Plus,
-		HardDrive
-	} from 'lucide-svelte';
+	import { ChevronRight, Folder, FolderOpen, Hop as Home, Users, Star, Image, Clock, Search, Plus, HardDrive } from 'lucide-svelte';
 	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
 	import SidebarFolderTree from '$lib/files/SidebarFolderTree.svelte';
 	import { currentUser } from '$lib/stores/auth';

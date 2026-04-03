@@ -3,7 +3,7 @@
 	import { createQuery } from '@tanstack/svelte-query';
 	import { getFolderTree } from '$lib/api/folders';
 	import type { FolderTree } from '$lib/api/folders';
-	import { Home, Loader2, AlertCircle } from 'lucide-svelte';
+	import { Hop as Home, Loader as Loader2, CircleAlert as AlertCircle } from 'lucide-svelte';
 	import MoveFolderTreeItem from './MoveFolderTreeItem.svelte';
 
 	export let open = false;

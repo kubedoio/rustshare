@@ -9,24 +9,7 @@
 	// ContextMenu exports MenuItem inside the module, so we type it locally if needed, or import type { MenuItem } from ContextMenu if exported
 	type MenuItem = any;
 	import { replicationStateBadgeClass, formatReplicationStateLabel } from '$lib/stores/replication';
-	import { 
-		MoreVertical, 
-		Edit, 
-		Edit3,
-		Trash2, 
-		Share2, 
-		Move, 
-		Download, 
-		History, 
-		RefreshCw, 
-		RotateCcw, 
-		Star, 
-		Check, 
-		X, 
-		FolderIcon, 
-		FileIcon,
-		ChevronRight
-	} from 'lucide-svelte';
+	import { MoveVertical as MoreVertical, CreditCard as Edit, CreditCard as Edit3, Trash2, Share2, Move, Download, History, RefreshCw, RotateCcw, Star, Check, X, Folder as FolderIcon, File as FileIcon, ChevronRight } from 'lucide-svelte';
 	import { tick } from 'svelte';
 
 	// Props

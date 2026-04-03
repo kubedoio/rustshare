@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Folder, ChevronRight, Loader2, Check, X } from 'lucide-svelte';
+	import { Folder, ChevronRight, Loader as Loader2, Check, X } from 'lucide-svelte';
 	import { folderTreeStore, type FolderNode } from '$lib/stores/folderTree';
 
 	export let folder: FolderNode;

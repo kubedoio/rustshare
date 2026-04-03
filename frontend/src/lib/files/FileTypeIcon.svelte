@@ -1,18 +1,5 @@
 <script lang="ts">
-	import { 
-		Folder, 
-		FileText, 
-		FileImage, 
-		FileVideo, 
-		FileAudio, 
-		FileCode, 
-		FileSpreadsheet, 
-		FileJson,
-		FileType,
-		File,
-		FileArchive,
-		FileTerminal
-	} from 'lucide-svelte';
+	import { Folder, FileText, FileImage, FileVideoCamera as FileVideo, File as FileAudio, FileCode, FileSpreadsheet, File as FileJson, FileType, File, FileArchive, FileTerminal } from 'lucide-svelte';
 
 	export let mimeType: string;
 	export let fileName: string;

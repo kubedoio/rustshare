@@ -10,24 +10,7 @@
 	import { getFeatures } from '$lib/api/features';
 	import { createInvite } from '$lib/api/invites';
 	import { onMount } from 'svelte';
-	import { 
-		Plus, 
-		UserPlus, 
-		Search, 
-		X, 
-		ChevronDown, 
-		File, 
-		Folder, 
-		FileText, 
-		Upload, 
-		Edit3, 
-		PenTool,
-		LogOut,
-		User,
-		Settings,
-		Shield,
-		Bell
-	} from 'lucide-svelte';
+	import { Plus, UserPlus, Search, X, ChevronDown, File, Folder, FileText, Upload, CreditCard as Edit3, PenTool, LogOut, User, Settings, Shield, Bell } from 'lucide-svelte';
 
 	export let onMenuClick: () => void = () => {};
 

@@ -6,21 +6,7 @@
   import ActivityFeed from '$lib/components/activity/ActivityFeed.svelte';
   import { formatFileSize, formatDate } from '$lib/utils/format';
   import type { File } from '$lib/api/types';
-  import { 
-    FileText, 
-    Folder, 
-    HardDrive, 
-    Users, 
-    Plus, 
-    ArrowRight, 
-    Clock, 
-    Share2, 
-    Activity,
-    FileIcon,
-    ImageIcon,
-    VideoIcon,
-    FileDigit
-  } from 'lucide-svelte';
+  import { FileText, Folder, HardDrive, Users, Plus, ArrowRight, Clock, Share2, Activity, File as FileIcon, Image as ImageIcon, Video as VideoIcon, FileDigit } from 'lucide-svelte';
 
   // Specific query for all user files to get accurate totals
   const allFilesQuery = createQuery({

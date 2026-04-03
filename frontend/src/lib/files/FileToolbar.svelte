@@ -1,20 +1,7 @@
 <script lang="ts">
 	import { fileBrowserUi, viewMode, sortField, sortOrder } from '$lib/stores/fileBrowserUi';
 	import { selectionCount, hasSelection, selectionStore } from '$lib/stores/selection';
-	import { 
-		ArrowUpDown, 
-		Grid3X3, 
-		List, 
-		FolderPlus, 
-		Upload, 
-		CheckSquare,
-		X,
-		Download,
-		Move,
-		Trash2,
-		ArrowUp,
-		ArrowDown
-	} from 'lucide-svelte';
+	import { ArrowUpDown, Grid3x2 as Grid3X3, List, FolderPlus, Upload, SquareCheck as CheckSquare, X, Download, Move, Trash2, ArrowUp, ArrowDown } from 'lucide-svelte';
 
 	// Props
 	interface Props {
