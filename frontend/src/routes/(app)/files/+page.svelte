@@ -125,6 +125,7 @@
 		mutationFn: (file: globalThis.File) => uploadFile(currentFolderId, file),
 		onSuccess: (_, file) => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			activityStore.addActivity('file_uploaded', file.name);
 		}
 	});
@@ -141,6 +142,7 @@
 			// Refresh queries
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			showCreateFolderModal = false;
 			showNotification('Folder created', 'success');
 			activityStore.addActivity('folder_created', folder.name);
@@ -155,6 +157,7 @@
 		onSuccess: (_, { newName }) => {
 			const oldName = renameTarget?.name || 'File';
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			showRenameModal = false;
 			renameTarget = null;
 			showNotification(`${truncateFilename(newName)} renamed`, 'success');
@@ -171,6 +174,7 @@
 			// Refresh queries
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			showRenameModal = false;
 			renameTarget = null;
 			showNotification('Folder renamed', 'success');
@@ -183,6 +187,7 @@
 		onSuccess: (_, fileId) => {
 			const fileName = deleteTarget?.name || 'File';
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			showDeleteModal = false;
 			deleteTarget = null;
 			showNotification(`${truncateFilename(fileName)} moved to deleted`, 'success');
@@ -199,6 +204,7 @@
 			// Refresh queries
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			// If we deleted the current folder or one in its path, go to root
 			if (deleteTarget && (currentFolderId === deleteTarget.id || folderPath.some(f => f.id === deleteTarget?.id))) {
 				currentFolderId = null;
@@ -217,6 +223,7 @@
 			const fileName = moveTarget?.name || 'File';
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			showMoveModal = false;
 			moveTarget = null;
 			showNotification(`${truncateFilename(fileName)} moved`, 'success');
@@ -237,6 +244,7 @@
 			// Refresh queries
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			showMoveModal = false;
 			moveTarget = null;
 			showNotification('Folder moved', 'success');
@@ -249,6 +257,7 @@
 			setFileStarred(fileId, starred),
 		onSuccess: (_, variables) => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			showNotification(
 				variables.starred ? 'File added to starred' : 'File removed from starred',
 				'success'
@@ -261,6 +270,7 @@
 			setFolderStarred(folderId, starred),
 		onSuccess: (_, variables) => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			showNotification(
 				variables.starred ? 'Folder added to starred' : 'Folder removed from starred',
 				'success'
@@ -272,6 +282,7 @@
 		mutationFn: ({ fileId, fileName }: { fileId: string; fileName: string }) => restoreFileFromTrash(fileId),
 		onSuccess: (_, { fileName }) => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			showNotification(`${truncateFilename(fileName)} restored`, 'success');
 		}
 	});
@@ -280,6 +291,7 @@
 		mutationFn: (folderId: string) => restoreFolderFromTrash(folderId),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			showNotification('Folder restored', 'success');
 		}
 	});
@@ -288,6 +300,7 @@
 		mutationFn: ({ fileId, fileName }: { fileId: string; fileName: string }) => permanentlyDeleteFile(fileId),
 		onSuccess: (_, { fileName }) => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			showNotification(`${truncateFilename(fileName)} deleted permanently`, 'success');
 		}
 	});
@@ -296,6 +309,7 @@
 		mutationFn: (folderId: string) => permanentlyDeleteFolder(folderId),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			showNotification('Folder deleted permanently', 'success');
 		}
 	});
@@ -535,6 +549,7 @@
 	function handleEditorSaved(event?: any) {
 		const targetId = event?.detail?.file?.id || editorTarget?.id;
 		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+		queryClient.invalidateQueries({ queryKey: ['all-files'] });
 		if (targetId) {
 			queryClient.removeQueries({ queryKey: ['file', targetId] });
 			queryClient.removeQueries({ queryKey: ['file-versions', targetId] });
@@ -705,6 +720,7 @@
 			selectionStore.clear();
 			selectionMode = false;
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			showNotification(`Deleted ${fileIds.length + folderIds.length} item(s)`, 'success');
 		} catch (error) {
 			showNotification('Failed to delete some items', 'error');
@@ -810,6 +826,7 @@
 				}
 
 				queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+				queryClient.invalidateQueries({ queryKey: ['all-files'] });
 				selectionStore.clear();
 				selectionMode = false;
 				showNotification(`Moved ${bulkMoveFileIds.length} selected file${bulkMoveFileIds.length === 1 ? '' : 's'}`, 'success');
@@ -879,6 +896,7 @@
 
 	function handleReplaceSuccess() {
 		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+		queryClient.invalidateQueries({ queryKey: ['all-files'] });
 		const fileName = replaceFileTarget?.name || 'File';
 		showNotification(`${truncateFilename(fileName)} was updated`, 'success');
 		if (replaceFileTarget) {
@@ -894,6 +912,7 @@
 
 	function handleVersionRestored() {
 		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+		queryClient.invalidateQueries({ queryKey: ['all-files'] });
 		showNotification('Version restored', 'success');
 	}
 

@@ -3,6 +3,8 @@
 	import { goto } from '$app/navigation';
 	import { ChevronRight, Folder, FolderOpen } from 'lucide-svelte';
 	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
+	import { page } from '$app/stores';
+	import SidebarFolderTree from './SidebarFolderTree.svelte';
 	import type { FolderTree } from '$lib/api/folders';
 
 	// Props
@@ -24,11 +26,7 @@
 		return $fileBrowserUi.expandedFolderIds.has(folderId);
 	}
 
-	function isFolderActive(folderId: string): boolean {
-		if (!browser) return false;
-		const params = new URLSearchParams(window.location.search);
-		return params.get('folder') === folderId;
-	}
+
 
 	function toggleFolder(e: Event, folderId: string) {
 		e.stopPropagation();
@@ -47,29 +45,30 @@
 </script>
 
 {#each folders as folder (folder.folder.id)}
-	{@const isExpanded = isFolderExpanded(folder.folder.id)}
-	{@const isActive = isFolderActive(folder.folder.id)}
+	{@const folderId = folder.folder.id}
+	{@const isExpanded = isFolderExpanded(folderId)}
+	{@const isActive = $page.url.searchParams.get('folder') === folderId}
 	{@const hasChildrenValue = hasChildren(folder)}
 	<div class="folder-tree-node">
 		<!-- Folder Item -->
 		<div
-			class="group flex items-center gap-1 rounded-lg transition-colors cursor-pointer
+			class="group flex items-center gap-1 rounded-lg transition-all duration-200 cursor-pointer
 				{isActive 
-					? 'bg-brand-500/10 text-brand-600' 
-					: 'text-base-content/80 hover:bg-base-200/50'}"
-			style="padding-left: {level * 12 + 8}px"
+					? 'bg-brand-500/15 text-brand-700 font-semibold ring-1 ring-brand-500/25 shadow-sm' 
+					: 'text-base-content/80 hover:bg-base-200/60'}"
+			style="padding-left: {level * 10 + 6}px"
 		>
 			<!-- Expand/Collapse button -->
 			<button
 				type="button"
-				class="w-5 h-5 flex items-center justify-center rounded hover:bg-base-300/50 transition-colors shrink-0
+				class="w-4 h-4 flex items-center justify-center rounded hover:bg-base-300/50 transition-colors shrink-0
 					{hasChildrenValue ? '' : 'invisible'}"
 				onclick={(e) => toggleFolder(e, folder.folder.id)}
 				aria-label={isExpanded ? 'Collapse folder' : 'Expand folder'}
 				tabindex="-1"
 			>
 				<ChevronRight 
-					size={14} 
+					size={12} 
 					class="transition-transform duration-200 {isExpanded ? 'rotate-90' : ''}" 
 				/>
 			</button>
@@ -77,13 +76,13 @@
 			<!-- Folder link -->
 			<button
 				type="button"
-				class="flex-1 flex items-center gap-2 py-1.5 text-left min-w-0 text-sm"
+				class="flex-1 flex items-center gap-1.5 py-1 text-left min-w-0 text-[13px]"
 				onclick={() => navigateToFolder(folder.folder.id)}
 			>
 				{#if isActive}
-					<FolderOpen size={16} class="text-brand-500 shrink-0" />
+					<FolderOpen size={14} class="text-brand-500 shrink-0" />
 				{:else}
-					<Folder size={16} class="text-base-content/50 shrink-0" />
+					<Folder size={14} class="text-base-content/50 shrink-0" />
 				{/if}
 				<span class="flex-1 truncate">{folder.folder.name}</span>
 			</button>
@@ -92,7 +91,7 @@
 		<!-- Children - Recursive -->
 		{#if isExpanded && hasChildrenValue}
 			<div class="mt-0.5">
-				<svelte:self 
+				<SidebarFolderTree 
 					folders={folder.subfolders} 
 					level={level + 1}
 					{onFolderClick}

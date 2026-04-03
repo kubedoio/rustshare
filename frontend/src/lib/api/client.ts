@@ -52,8 +52,8 @@ export class ApiClient {
 			throw new ApiError(response.status, errorMessage);
 		}
 
-		// Handle 204 No Content
-		if (response.status === 204) {
+		// Handle 204 No Content and 202 Accepted (empty bodies)
+		if (response.status === 204 || response.status === 202) {
 			return null as T;
 		}
 

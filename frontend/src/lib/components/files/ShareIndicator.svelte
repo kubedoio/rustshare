@@ -4,9 +4,10 @@
 	export let isShared: boolean = false;
 	export let shareCount: number = 0;
 	export let shareExpiresAt: string | null = null;
-	export let size: 'sm' | 'md' = 'sm';
+	export let size: 'xs' | 'sm' | 'md' = 'sm';
 
 	const sizeClasses = {
+		xs: 'w-1.5 h-1.5',
 		sm: 'w-2 h-2',
 		md: 'w-3 h-3'
 	};

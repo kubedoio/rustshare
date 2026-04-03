@@ -344,7 +344,7 @@
 	aria-selected={selected}
 >
 	<!-- Checkbox -->
-	<td class="w-10 px-3 py-2.5">
+	<td class="w-10 px-3 py-1.5">
 		{#if selectionMode}
 			<input
 				type="checkbox"
@@ -357,21 +357,21 @@
 	</td>
 
 	<!-- Preview Icon -->
-	<td class="w-12 px-1 py-2.5">
+	<td class="w-10 px-1 py-1.5">
 		<div class="flex items-center justify-center">
-			<FilePreview {item} {isFolder} size="md" showThumbnail={!isFolder && workspaceMode !== 'deleted'} />
+			<FilePreview {item} {isFolder} size="sm" showThumbnail={!isFolder && workspaceMode !== 'deleted'} />
 		</div>
 	</td>
 
 	<!-- Name -->
-	<td class="px-2 py-2.5 min-w-0 max-w-0">
+	<td class="px-2 py-1.5 min-w-0 max-w-0">
 		<div class="flex items-center gap-2 min-w-0">
 			{#if isRenaming}
 				<div class="flex items-center gap-1 flex-1 min-w-0">
 					<input
 						bind:this={renameInputRef}
 						type="text"
-						class="flex-1 min-w-0 px-2 py-1 text-sm bg-base-100 border border-brand-500 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+						class="flex-1 min-w-0 px-2 py-0.5 text-xs bg-base-100 border border-brand-500 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500/20"
 						value={renameValue}
 						oninput={(e) => renameValue = e.currentTarget.value}
 						onkeydown={handleRenameKeydown}
@@ -382,16 +382,16 @@
 			{:else if isFolder && workspaceMode === 'all'}
 				<button
 					type="button"
-					class="font-medium text-base-content truncate hover:text-brand-500 transition-colors text-left min-w-0 flex items-center gap-1 group/link"
+					class="text-[13px] font-medium text-base-content truncate hover:text-brand-500 transition-colors text-left min-w-0 flex items-center gap-1 group/link"
 					onclick={handleNavigate}
 					ondblclick={(e) => { e.stopPropagation(); startRename(); }}
 				>
 					<span class="truncate">{item.name}</span>
-					<ChevronRight size={14} class="opacity-0 group-hover/link:opacity-100 transition-opacity text-base-content/40" />
+					<ChevronRight size={12} class="opacity-0 group-hover/link:opacity-100 transition-opacity text-base-content/40" />
 				</button>
 			{:else}
 				<span 
-					class="font-medium text-base-content truncate min-w-0 block"
+					class="text-[13px] font-medium text-base-content truncate min-w-0 block"
 					ondblclick={(e) => { e.stopPropagation(); startRename(); }}
 				>
 					{item.name}
@@ -413,42 +413,42 @@
 	</td>
 
 	<!-- Type -->
-	<td class="px-3 py-2.5 hidden md:table-cell w-32">
-		<span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-base-200/70 text-base-content/60">
+	<td class="px-3 py-1.5 hidden md:table-cell w-28">
+		<span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-base-200/70 text-base-content/60 uppercase tracking-tight">
 			{fileTypeLabel}
 		</span>
 	</td>
 
 	<!-- Size -->
-	<td class="px-3 py-2.5 hidden sm:table-cell w-24">
-		<span class="text-sm text-base-content/50 tabular-nums">{displaySize}</span>
+	<td class="px-3 py-1.5 hidden sm:table-cell w-20">
+		<span class="text-xs text-base-content/50 tabular-nums font-data">{displaySize}</span>
 	</td>
 
 	<!-- Modified -->
-	<td class="px-3 py-2.5 hidden lg:table-cell w-36">
-		<span class="text-sm text-base-content/50">{displayDate}</span>
+	<td class="px-3 py-1.5 hidden lg:table-cell w-36">
+		<span class="text-xs text-base-content/50 font-data">{displayDate}</span>
 	</td>
 
 	<!-- Replication Status (hidden on smaller screens) -->
 	{#if !isFolder && replicationStatus}
-		<td class="px-3 py-2.5 hidden xl:table-cell w-28">
-			<span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium {replicationStateBadgeClass(replicationStatus.replicationState)}">
+		<td class="px-3 py-1.5 hidden xl:table-cell w-28">
+			<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium {replicationStateBadgeClass(replicationStatus.replicationState)}">
 				{formatReplicationStateLabel(replicationStatus.replicationState)}
 			</span>
 		</td>
 	{/if}
 
 	<!-- Actions -->
-	<td class="w-12 px-3 py-2.5">
+	<td class="w-12 px-3 py-1.5">
 		<div class="relative">
 			<button
 				type="button"
 				bind:this={actionButtonRef}
-				class="rounded-lg p-1.5 text-base-content/40 transition-all hover:bg-base-200 hover:text-base-content opacity-0 group-hover:opacity-100 focus:opacity-100"
+				class="rounded-lg p-1 text-base-content/40 transition-all hover:bg-base-200 hover:text-base-content opacity-0 group-hover:opacity-100 focus:opacity-100"
 				onclick={toggleActions}
 				aria-label="Actions"
 			>
-				<MoreVertical size={16} />
+				<MoreVertical size={14} />
 			</button>
 
 			{#if showActions}

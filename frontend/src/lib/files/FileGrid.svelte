@@ -126,7 +126,7 @@
 	</div>
 {:else}
 	<!-- Responsive grid: 1 col mobile, 2 cols sm, auto-fill on larger -->
-	<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-3 sm:gap-4">
+	<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-2 sm:gap-3">
 		<!-- Folders -->
 		{#each folders as folder (folder.id)}
 			<FileGridTile
@@ -177,7 +177,7 @@
 				onVersionHistory={() => onVersionHistory(file)}
 				onReplace={() => onReplaceFile(file)}
 				onEdit={() => { console.log('[FileGrid] onEdit triggered for', file.name); onEditFile(file); }}
-				onDragStart={() => handleDragStart({ id: file.id, isFolder: false })},
+				onDragStart={() => handleDragStart({ id: file.id, isFolder: false })}
 				onDragEnd={handleDragEnd}
 			/>
 		{/each}

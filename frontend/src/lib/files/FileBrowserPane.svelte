@@ -113,7 +113,7 @@
 
 <div class="flex h-full min-h-0 flex-col bg-base-100">
 	<!-- Toolbar -->
-	<div class="border-b border-base-300/50 px-4 py-3 md:px-5 lg:px-6">
+	<div class="border-b border-base-300/50 px-3 py-2 md:px-4 lg:px-5">
 		<FileToolbar
 			{title}
 			{description}
@@ -135,13 +135,13 @@
 
 	<!-- Breadcrumbs -->
 	{#if showBreadcrumbs}
-		<div class="border-b border-base-300/50 bg-base-200/30 px-4 py-2 md:px-5 lg:px-6">
+		<div class="border-b border-base-300/50 bg-base-200/30 px-3 py-1.5 md:px-4 lg:px-5">
 			<Breadcrumbs {folderPath} on:navigate={onbreadcrumbNavigate} />
 		</div>
 	{/if}
 
 	<!-- Content -->
-	<div class="flex-1 overflow-auto px-4 py-4 md:px-5 lg:px-6">
+	<div class="flex-1 overflow-auto px-3 py-3 md:px-4 lg:px-5">
 		{#if isLoading}
 			<div class="flex items-center justify-center h-64">
 				<div class="flex items-center gap-3 text-base-content/50">
