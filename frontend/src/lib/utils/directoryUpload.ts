@@ -21,7 +21,14 @@ export function extractFolderPaths(items: DirectoryUploadItem[]): string[] {
 }
 
 export function sortFolderPaths(paths: string[]): string[] {
-  return [...paths].sort((a, b) => a.split('/').length - b.split('/').length);
+  return [...paths].sort((a, b) => {
+    const depthA = a.split('/').length;
+    const depthB = b.split('/').length;
+    if (depthA !== depthB) {
+      return depthA - depthB;
+    }
+    return a.localeCompare(b);
+  });
 }
 
 export async function collectFilesFromDataTransfer(
@@ -29,23 +36,48 @@ export async function collectFilesFromDataTransfer(
 ): Promise<DirectoryUploadItem[]> {
   const result: DirectoryUploadItem[] = [];
 
+  const readAllEntries = (reader: any): Promise<any[]> => {
+    return new Promise((resolve, reject) => {
+      const entries: any[] = [];
+      const readBatch = () => {
+        reader.readEntries(
+          (batch: any[]) => {
+            if (batch.length === 0) {
+              resolve(entries);
+            } else {
+              entries.push(...batch);
+              readBatch();
+            }
+          },
+          reject
+        );
+      };
+      readBatch();
+    });
+  };
+
   const readEntry = (entry: any, path: string): Promise<void> => {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       if (entry.isFile) {
-        entry.file((file: globalThis.File) => {
-          const relativePath = path ? `${path}/${file.name}` : file.name;
-          (file as any).webkitRelativePath = relativePath;
-          result.push({ file, relativePath });
-          resolve();
-        });
+        entry.file(
+          (file: globalThis.File) => {
+            const relativePath = path ? `${path}/${file.name}` : file.name;
+            (file as any).webkitRelativePath = relativePath;
+            result.push({ file, relativePath });
+            resolve();
+          },
+          reject
+        );
       } else if (entry.isDirectory) {
         const reader = entry.createReader();
-        reader.readEntries(async (entries: any[]) => {
-          for (const child of entries) {
-            await readEntry(child, path ? `${path}/${entry.name}` : entry.name);
-          }
-          resolve();
-        });
+        readAllEntries(reader)
+          .then(async (entries) => {
+            for (const child of entries) {
+              await readEntry(child, path ? `${path}/${entry.name}` : entry.name);
+            }
+            resolve();
+          })
+          .catch(reject);
       } else {
         resolve();
       }
