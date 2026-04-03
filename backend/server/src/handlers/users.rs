@@ -9,7 +9,8 @@ use axum::{
 use rustshare_auth::PasswordHasher;
 use rustshare_core::domain::Theme;
 use serde::{Deserialize, Serialize};
-use tracing::{error, warn};
+// tracing::{error, warn} are used as tracing::error! and tracing::warn! in the code
+
 
 use crate::handlers::{AuthenticatedSession, AuthenticatedUser, ErrorResponse};
 use crate::AppState;

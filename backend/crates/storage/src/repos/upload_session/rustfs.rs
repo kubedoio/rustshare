@@ -7,7 +7,8 @@ use rustshare_core::services::{
     UploadError,
 };
 use std::sync::Arc;
-use tracing::debug;
+// tracing::debug is used as tracing::debug! in the code
+
 use uuid::Uuid;
 
 use crate::metadata_v2::{
