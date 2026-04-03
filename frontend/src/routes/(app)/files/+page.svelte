@@ -134,8 +134,15 @@
 
 	// Mutations
 	const uploadMutation = createMutation({
-		mutationFn: ({ file, onProgress }: { file: globalThis.File; onProgress?: (progress: number) => void }) => 
-			uploadFile(currentFolderId, file, onProgress),
+		mutationFn: ({
+			file,
+			folderId,
+			onProgress
+		}: {
+			file: globalThis.File;
+			folderId?: string | null;
+			onProgress?: (progress: number) => void;
+		}) => uploadFile(folderId ?? currentFolderId, file, onProgress),
 		onSuccess: (_, { file }) => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['all-files'] });
@@ -633,8 +640,9 @@
 			if (taskIndex === -1) continue;
 
 			try {
-				await $uploadMutation.mutateAsync({ 
-					file: files[i], 
+				await $uploadMutation.mutateAsync({
+					file: files[i],
+					folderId: currentFolderId,
 					onProgress: (progress) => {
 						const currentTaskIndex = uploadTasks.findIndex(t => t.id === newTasks[i].id);
 						if (currentTaskIndex !== -1) {
