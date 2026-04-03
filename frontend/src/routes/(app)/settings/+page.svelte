@@ -16,7 +16,10 @@
 	} from '$lib/api/users';
 	import { themeStore, type Theme } from '$lib/stores/theme';
 	import Toast from '$lib/components/common/Toast.svelte';
-	import { formatFileSize } from '$lib/utils/format';
+	import { formatFileSize, formatDate } from '$lib/utils/format';
+	import { listAllFiles } from '$lib/api/files';
+	import type { File } from '$lib/api/types';
+	import { FileText, Folder, FileIcon, ImageIcon, VideoIcon, MusicIcon, Clock } from 'lucide-svelte';
 	
 	// Settings components
 	import SettingsTabs, { type TabId } from '$lib/settings/SettingsTabs.svelte';
@@ -62,6 +65,10 @@
 	let allowPublicUploads = false;
 	let emailSharingEnabled = true;
 
+	// Activity state
+	let recentChanges: File[] = [];
+	let activityLoading = true;
+
 	$: storagePercentage = $currentUser?.storage_quota && $currentUser?.storage_used
 		? Math.round(($currentUser.storage_used / $currentUser.storage_quota) * 100)
 		: 0;
@@ -70,9 +77,37 @@
 		await Promise.all([
 			loadProfile(),
 			refreshSessions(),
-			refreshDevices()
+			refreshDevices(),
+			loadActivity()
 		]);
 	});
+
+	async function loadActivity() {
+		activityLoading = true;
+		try {
+			const files = await listAllFiles();
+			// Get last 3 modified items
+			recentChanges = [...files]
+				.sort((a, b) => new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime())
+				.slice(0, 3);
+		} catch (error) {
+			console.error('Failed to load activity:', error);
+		} finally {
+			activityLoading = false;
+		}
+	}
+
+	function getFileIcon(mimeType: string) {
+		if (mimeType.startsWith('image/')) return ImageIcon;
+		if (mimeType.startsWith('video/')) return VideoIcon;
+		if (mimeType.startsWith('audio/')) return MusicIcon;
+		if (mimeType.includes('folder')) return Folder;
+		return FileText;
+	}
+
+	function navigateToFile(file: File) {
+		window.location.href = `/files?preview=${file.id}`;
+	}
 
 	async function loadProfile() {
 		profileLoading = true;
@@ -482,7 +517,7 @@
 											</button>
 										</div>
 									{/each}
-								</div>
+									</div>
 							{/if}
 						</SettingsSection>
 					</div>
@@ -616,6 +651,58 @@
 								</div>
 							{/if}
 						</SettingsSection>
+					</div>
+				</div>
+			</div>
+
+		{:else if activeTab === 'activity'}
+			<!-- Activity Tab -->
+			<div class="bg-base-200 rounded-xl border border-base-300 overflow-hidden">
+				<div class="p-6">
+					<SettingsSection title="Recent Changes" description="Last 3 modified items in your workspace">
+						{#if activityLoading}
+							<div class="py-8 text-center">
+								<div class="inline-block w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
+							</div>
+						{:else if recentChanges.length === 0}
+							<div class="py-8 text-center">
+								<Clock size={32} class="mx-auto mb-3 text-base-content/20" />
+								<p class="text-sm text-base-content/60">No recent changes found</p>
+							</div>
+						{:else}
+							<div class="py-2">
+								{#each recentChanges as file, index}
+									<button
+										on:click={() => navigateToFile(file)}
+										class="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-base-100 transition-colors text-left"
+									>
+										<div class="flex h-9 w-9 items-center justify-center rounded-lg bg-base-100 border border-base-300 flex-shrink-0">
+											<svelte:component this={getFileIcon(file.mime_type)} size={16} class="text-brand-500" />
+										</div>
+										<div class="flex-1 min-w-0">
+											<p class="text-sm font-medium text-base-content truncate">{file.name}</p>
+											<p class="text-xs text-base-content/50 flex items-center gap-1">
+												<Folder size={10} />
+												<span class="truncate">{file.path || 'Root'}</span>
+											</p>
+										</div>
+										<div class="text-right flex-shrink-0">
+											<p class="text-xs text-base-content/60">{formatDate(file.modified_at)}</p>
+											<p class="text-[10px] text-base-content/40 uppercase tracking-wider">{formatFileSize(file.size)}</p>
+										</div>
+									</button>
+									{#if index < recentChanges.length - 1}
+										<div class="h-px bg-base-300/50 mx-3"></div>
+									{/if}
+								{/each}
+							</div>
+						{/if}
+					</SettingsSection>
+
+					<div class="border-t border-base-300 pt-6 mt-6">
+						<p class="text-xs text-base-content/50 text-center">
+							This shows a lightweight audit snapshot. For detailed file history, visit your <a href="/files" class="text-brand-500 hover:underline">Library</a>.
+						</p>
 					</div>
 				</div>
 			</div>

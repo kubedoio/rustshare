@@ -1,7 +1,9 @@
-<script lang="ts">
-	import { User, Shield, Bell, Smartphone, Palette, Share2, LogOut } from 'lucide-svelte';
+<script lang="ts" context="module">
+	export type TabId = 'general' | 'security' | 'notifications' | 'devices' | 'appearance' | 'sharing' | 'activity';
+</script>
 
-	export type TabId = 'general' | 'security' | 'notifications' | 'devices' | 'appearance' | 'sharing';
+<script lang="ts">
+	import { User, Shield, Bell, Smartphone, Palette, Share2, Activity } from 'lucide-svelte';
 
 	export let activeTab: TabId = 'general';
 	export let onTabChange: (tab: TabId) => void;
@@ -19,6 +21,7 @@
 		{ id: 'devices', label: 'Devices', icon: Smartphone },
 		{ id: 'appearance', label: 'Appearance', icon: Palette },
 		{ id: 'sharing', label: 'Sharing', icon: Share2 },
+		{ id: 'activity', label: 'Activity', icon: Activity },
 	];
 
 	function handleTabClick(tabId: TabId) {
