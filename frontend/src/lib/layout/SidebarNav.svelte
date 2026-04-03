@@ -126,13 +126,9 @@
 {/if}
 
 <aside
-	class="flex h-full flex-col border-r overflow-hidden transition-all duration-300 lg:translate-x-0
-		bg-base-100 border-base-300/50
-		{mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-		w-64"
-	class:fixed={mobileOpen}
-	class:lg:static={true}
-	class:z-50={mobileOpen}
+	class="h-full flex-col border-r overflow-hidden transition-all duration-300 bg-base-100 border-base-300/50 w-64
+		{mobileOpen ? 'flex translate-x-0' : 'hidden -translate-x-full lg:flex lg:translate-x-0'}
+		{mobileOpen ? 'fixed z-50' : 'lg:static'}"
 	aria-label="Folder navigation"
 >
 
