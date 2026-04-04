@@ -256,7 +256,7 @@ pub async fn create_file_group_share(
     Json(req): Json<CreateFileGroupShareRequest>,
 ) -> Result<(StatusCode, Json<GroupShareResponse>), (StatusCode, Json<serde_json::Value>)> {
     use rustshare_core::domain::SharePermissions;
-    use rustshare_core::services::ShareResource;
+    use rustshare_core::services::Resource;
     use rustshare_core::services::ShareError;
 
     // Parse permission
@@ -275,7 +275,7 @@ pub async fn create_file_group_share(
     // Create group share via service
     let share = state.share_service
         .create_group_share(
-            ShareResource::File(file_id),
+            Resource::File(file_id),
             req.group_id,
             permission,
             auth.user_id,
@@ -352,7 +352,7 @@ pub async fn create_folder_group_share(
     Json(req): Json<CreateFolderGroupShareRequest>,
 ) -> Result<(StatusCode, Json<GroupShareResponse>), (StatusCode, Json<serde_json::Value>)> {
     use rustshare_core::domain::SharePermissions;
-    use rustshare_core::services::ShareResource;
+    use rustshare_core::services::Resource;
     use rustshare_core::services::ShareError;
 
     // Parse permission
@@ -371,7 +371,7 @@ pub async fn create_folder_group_share(
     // Create group share via service
     let share = state.share_service
         .create_group_share(
-            ShareResource::Folder(folder_id),
+            Resource::Folder(folder_id),
             req.group_id,
             permission,
             auth.user_id,

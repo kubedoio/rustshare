@@ -15,14 +15,8 @@ use uuid::Uuid;
 
 use rustshare_crypto::PasswordHasher;
 
-use crate::domain::{File, FileId, Folder, FolderId, Share, SharePermissions, UserId};
-
-/// Resource type for share operations
-#[derive(Debug, Clone, Copy)]
-pub enum Resource {
-    File(FileId),
-    Folder(FolderId),
-}
+use crate::domain::{File, Folder, Share, SharePermissions, UserId};
+use crate::services::permission_resolver::Resource;
 use crate::events::{
     AggregateType, Event, EventBroadcaster, EventType, ShareCreatedPayload, ShareRevokedPayload,
     ShareUpdatedPayload,

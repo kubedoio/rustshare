@@ -67,7 +67,7 @@ pub use scim_v2_service::{
 pub use share_errors::ShareError;
 pub use share_service::{
     EventStoreOps as ShareEventStoreOps, JwtOps, MetadataStoreOps as ShareMetadataStoreOps,
-    Resource as ShareResource, ShareNotificationRepo, ShareService,
+    ShareNotificationRepo, ShareService,
 };
 // pub use sync_service::{
 //     ConflictInfo, ConflictResolution, DeviceSyncInfo, SyncError, SyncService, SyncServiceOps,
