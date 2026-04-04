@@ -1810,7 +1810,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
             WHERE share_token = $1
             "#,
@@ -1829,7 +1829,7 @@ impl MetadataStore {
                 folder_id: row.try_get("folder_id")?,
                 share_token: row.try_get("share_token")?,
                 recipient_user_id: row.try_get("recipient_user_id")?,
-                recipient_group_id: None, // Group shares not yet in database schema
+                recipient_group_id: row.try_get("recipient_group_id")?,
                 created_by: row.try_get("created_by")?,
                 permissions,
                 password_hash: row.try_get("password_hash")?,
@@ -1851,7 +1851,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
             WHERE id = $1
             "#,
@@ -1870,7 +1870,7 @@ impl MetadataStore {
                 folder_id: row.try_get("folder_id")?,
                 share_token: row.try_get("share_token")?,
                 recipient_user_id: row.try_get("recipient_user_id")?,
-                recipient_group_id: None, // Group shares not yet in database schema
+                recipient_group_id: row.try_get("recipient_group_id")?,
                 created_by: row.try_get("created_by")?,
                 permissions,
                 password_hash: row.try_get("password_hash")?,
@@ -1892,7 +1892,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
             WHERE file_id = $1 AND revoked_at IS NULL
             ORDER BY created_at DESC
@@ -1913,7 +1913,7 @@ impl MetadataStore {
                 folder_id: row.try_get("folder_id")?,
                 share_token: row.try_get("share_token")?,
                 recipient_user_id: row.try_get("recipient_user_id")?,
-                recipient_group_id: None, // Group shares not yet in database schema
+                recipient_group_id: row.try_get("recipient_group_id")?,
                 created_by: row.try_get("created_by")?,
                 permissions,
                 password_hash: row.try_get("password_hash")?,
@@ -1934,7 +1934,7 @@ impl MetadataStore {
     pub async fn get_folder_shares(&self, folder_id: Uuid) -> Result<Vec<Share>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
             WHERE folder_id = $1 AND revoked_at IS NULL
             ORDER BY created_at DESC
@@ -1955,7 +1955,7 @@ impl MetadataStore {
                 folder_id: row.try_get("folder_id")?,
                 share_token: row.try_get("share_token")?,
                 recipient_user_id: row.try_get("recipient_user_id")?,
-                recipient_group_id: None, // Group shares not yet in database schema
+                recipient_group_id: row.try_get("recipient_group_id")?,
                 created_by: row.try_get("created_by")?,
                 permissions,
                 password_hash: row.try_get("password_hash")?,

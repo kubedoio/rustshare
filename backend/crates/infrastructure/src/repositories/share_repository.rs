@@ -63,7 +63,7 @@ impl ShareRepository {
         let result = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
-                   expires_at, upload_only, access_count, recipient_user_id, created_by,
+                   expires_at, upload_only, access_count, recipient_user_id, recipient_group_id, created_by,
                    created_at, revoked_at, tenant_id
             FROM shares
             WHERE recipient_user_id = $1
@@ -92,7 +92,7 @@ impl ShareRepository {
         let rows = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
-                   expires_at, upload_only, access_count, recipient_user_id, created_by,
+                   expires_at, upload_only, access_count, recipient_user_id, recipient_group_id, created_by,
                    created_at, revoked_at, tenant_id
             FROM shares
             WHERE recipient_user_id = $1
@@ -119,7 +119,7 @@ impl ShareRepository {
         let rows = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
-                   expires_at, upload_only, access_count, recipient_user_id, created_by,
+                   expires_at, upload_only, access_count, recipient_user_id, recipient_group_id, created_by,
                    created_at, revoked_at, tenant_id
             FROM shares
             WHERE recipient_user_id IS NOT NULL
@@ -154,11 +154,11 @@ impl ShareRepository {
             INSERT INTO shares (
                 id, file_id, folder_id, share_token, permissions,
                 password_hash, expires_at, upload_only, access_count,
-                recipient_user_id, created_by, created_at, revoked_at, tenant_id
+                recipient_user_id, recipient_group_id, created_by, created_at, revoked_at, tenant_id
             )
-            VALUES ($1, $2, $3, NULL, $4, NULL, NULL, FALSE, 0, $5, $6, $7, NULL, '00000000-0000-0000-0000-000000000000')
+            VALUES ($1, $2, $3, NULL, $4, NULL, NULL, FALSE, 0, $5, NULL, $6, $7, NULL, '00000000-0000-0000-0000-000000000000')
             RETURNING id, file_id, folder_id, share_token, permissions, password_hash,
-                      expires_at, upload_only, access_count, recipient_user_id, created_by,
+                      expires_at, upload_only, access_count, recipient_user_id, recipient_group_id, created_by,
                       created_at, revoked_at, tenant_id
             "#,
         )
@@ -187,7 +187,7 @@ impl ShareRepository {
             SET permissions = $2
             WHERE id = $1
             RETURNING id, file_id, folder_id, share_token, permissions, password_hash,
-                      expires_at, upload_only, access_count, recipient_user_id, created_by,
+                      expires_at, upload_only, access_count, recipient_user_id, recipient_group_id, created_by,
                       created_at, revoked_at, tenant_id
             "#,
         )
@@ -224,7 +224,7 @@ impl ShareRepository {
         let result = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
-                   expires_at, upload_only, access_count, recipient_user_id, created_by,
+                   expires_at, upload_only, access_count, recipient_user_id, recipient_group_id, created_by,
                    created_at, revoked_at, tenant_id
             FROM shares
             WHERE id = $1
