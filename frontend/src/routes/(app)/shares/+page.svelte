@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { createMutation, createQuery } from '@tanstack/svelte-query';
 	import type { Share, ShareAccessLogEntry } from '$lib/api/types';
+	import { getShareType, getShareTypeLabel } from '$lib/api/types';
 	import { getShareAccessLog, listAllUserShares, revokeShare } from '$lib/api/shares';
 	import Toast from '$lib/components/common/Toast.svelte';
 	import { queryClient } from '$lib/query-client';
@@ -52,12 +53,14 @@
 		}, 3000);
 	}
 
-	function getShareUrl(token: string): string {
+	function getShareUrl(token: string | null): string | null {
+		if (!token) return null;
 		return `${window.location.origin}/share/${token}`;
 	}
 
-	function copyShareLink(token: string) {
-		navigator.clipboard.writeText(getShareUrl(token));
+	function copyShareLink(token: string | null) {
+		if (!token) return;
+		navigator.clipboard.writeText(getShareUrl(token)!);
 		displayToast('Share link copied to clipboard', 'success');
 	}
 
@@ -303,6 +306,7 @@
 				<div class="space-y-4">
 					{#each $sharesQuery.data as share}
 						{@const shareUrl = getShareUrl(share.share_token)}
+						{@const shareType = getShareType(share)}
 						<div
 							class="rounded-[1.75rem] border border-base-300/70 bg-base-100 p-5 shadow-sm transition-colors hover:border-brand-500/15"
 						>
