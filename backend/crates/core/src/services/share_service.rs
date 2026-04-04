@@ -1031,15 +1031,69 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     }
 
     /// Check if user has specific permission on resource
+    /// 
+    /// This method checks if the user is the owner or has a direct share
+    /// with the required permission level.
     async fn check_resource_permission(
         &self,
-        _user_id: UserId,
-        _resource: Resource,
-        _required: SharePermissions,
+        user_id: UserId,
+        resource: Resource,
+        required: SharePermissions,
     ) -> Result<bool, ShareError> {
-        // This would integrate with PermissionResolver
-        // For now, return false - in full implementation this checks shares
-        Ok(false)
+        match resource {
+            Resource::File(file_id) => {
+                // Check if user owns the file
+                if let Some(file) = self.metadata_store
+                    .find_file_by_id(file_id)
+                    .await
+                    .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                {
+                    if file.owner_id == user_id {
+                        return Ok(true); // Owner has all permissions
+                    }
+                }
+                
+                // Check for direct user share with sufficient permission
+                let shares = self.metadata_store
+                    .get_file_shares(file_id)
+                    .await
+                    .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+                
+                let has_direct_share = shares.iter().any(|share| {
+                    share.recipient_user_id == Some(user_id)
+                        && share.revoked_at.is_none()
+                        && share.permissions >= required
+                });
+                
+                Ok(has_direct_share)
+            }
+            Resource::Folder(folder_id) => {
+                // Check if user owns the folder
+                if let Some(folder) = self.metadata_store
+                    .find_folder_by_id(folder_id)
+                    .await
+                    .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                {
+                    if folder.owner_id == user_id {
+                        return Ok(true); // Owner has all permissions
+                    }
+                }
+                
+                // Check for direct user share with sufficient permission
+                let shares = self.metadata_store
+                    .get_folder_shares(folder_id)
+                    .await
+                    .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+                
+                let has_direct_share = shares.iter().any(|share| {
+                    share.recipient_user_id == Some(user_id)
+                        && share.revoked_at.is_none()
+                        && share.permissions >= required
+                });
+                
+                Ok(has_direct_share)
+            }
+        }
     }
 
     /// Send first-access notification for group share if needed.
