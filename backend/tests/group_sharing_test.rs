@@ -210,3 +210,91 @@ async fn test_compat_layer_group_membership_sql() {
         .await
         .ok();
 }
+
+/// Test that compat layer can find users by ID
+#[tokio::test]
+async fn test_compat_layer_find_user_by_id() {
+    let pool = test_pool().await;
+    
+    // Create a unique identifier for this test run
+    let test_id = Uuid::new_v4();
+    
+    // Create test tenant
+    let tenant_id = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO tenants (id, name) VALUES ($1, $2) RETURNING id"
+    )
+    .bind(Uuid::new_v4())
+    .bind(format!("Test Tenant {}", test_id))
+    .fetch_one(&pool)
+    .await
+    .expect("Failed to create tenant");
+    
+    // Create test user
+    let user_id = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO users (id, username, email, password_hash, display_name, tenant_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id"
+    )
+    .bind(Uuid::new_v4())
+    .bind(format!("user{}", test_id))
+    .bind(format!("test{}@example.com", test_id))
+    .bind("hash")
+    .bind(format!("Test User {}", test_id))
+    .bind(tenant_id)
+    .fetch_one(&pool)
+    .await
+    .expect("Failed to create user");
+
+    // Create the compat layer - we need a MetadataRepository, but for this test
+    // we can just use the pool directly with a manual query to verify the SQL works
+    // The compat layer needs a repo, so we'll test the SQL directly
+    
+    // Test finding the user directly via SQL (same query as compat layer)
+    let found_user: Option<rustshare_core::domain::User> = sqlx::query_as(
+        r#"
+        SELECT 
+            id, username, email, password_hash, display_name, is_admin, 
+            storage_quota, theme, created_at, updated_at, disabled_at, 
+            name, surname, avatar_path, email_sharing_enabled, tenant_id
+        FROM users 
+        WHERE id = $1 AND disabled_at IS NULL
+        "#,
+    )
+    .bind(user_id)
+    .fetch_optional(&pool)
+    .await
+    .expect("Failed to query user");
+    
+    assert!(found_user.is_some(), "Should find the user by ID");
+    let user = found_user.unwrap();
+    assert_eq!(user.id, user_id);
+    assert_eq!(user.email, format!("test{}@example.com", test_id));
+    
+    // Test non-existent user
+    let not_found: Option<rustshare_core::domain::User> = sqlx::query_as(
+        r#"
+        SELECT 
+            id, username, email, password_hash, display_name, is_admin, 
+            storage_quota, theme, created_at, updated_at, disabled_at, 
+            name, surname, avatar_path, email_sharing_enabled, tenant_id
+        FROM users 
+        WHERE id = $1 AND disabled_at IS NULL
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .fetch_optional(&pool)
+    .await
+    .expect("Failed to query non-existent user");
+    
+    assert!(not_found.is_none(), "Should not find a non-existent user");
+
+    // Cleanup
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM tenants WHERE id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+}

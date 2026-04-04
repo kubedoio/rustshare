@@ -228,10 +228,22 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
 /// Compatibility layer for share operations
 #[allow(async_fn_in_trait)]
 impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
-    async fn find_user_by_id(&self, _id: uuid::Uuid) -> anyhow::Result<Option<rustshare_core::domain::User>> {
-        // TODO: Implement user lookup in the compat layer
-        // For now, return None as this is primarily used for notification purposes
-        Ok(None)
+    async fn find_user_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<rustshare_core::domain::User>> {
+        let row = sqlx::query_as::<_, rustshare_core::domain::User>(
+            r#"
+            SELECT 
+                id, username, email, password_hash, display_name, is_admin, 
+                storage_quota, theme, created_at, updated_at, disabled_at, 
+                name, surname, avatar_path, email_sharing_enabled, tenant_id
+            FROM users 
+            WHERE id = $1 AND disabled_at IS NULL
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row)
     }
 
     async fn find_file_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<File>> {
