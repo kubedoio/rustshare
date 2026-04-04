@@ -1514,6 +1514,7 @@ mod tests {
         let (service, event_store, metadata_store) = setup_share_service();
 
         let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
 
         // Create and add a file
         let file = File::new(
@@ -1524,13 +1525,14 @@ mod tests {
             "application/pdf".to_string(),
             None,
             owner_id,
+            tenant_id,
         );
         let file_id = file.id;
         metadata_store.add_file(file.clone());
 
         // Create share
         let share = service
-            .create_share(file_id, owner_id, SharePermissions::View, None, None)
+            .create_share(file_id, owner_id, SharePermissions::View, None, None, tenant_id)
             .await
             .unwrap();
 
@@ -1561,6 +1563,7 @@ mod tests {
 
         let owner_id = Uuid::new_v4();
         let other_user = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
 
         // Create file owned by owner_id
         let file = File::new(
@@ -1571,13 +1574,14 @@ mod tests {
             "application/pdf".to_string(),
             None,
             owner_id,
+            tenant_id,
         );
         let file_id = file.id;
         metadata_store.add_file(file);
 
         // Try to create share as different user
         let result = service
-            .create_share(file_id, other_user, SharePermissions::View, None, None)
+            .create_share(file_id, other_user, SharePermissions::View, None, None, tenant_id)
             .await;
 
         assert!(matches!(result, Err(ShareError::PermissionDenied { .. })));
@@ -1588,6 +1592,7 @@ mod tests {
         let (service, _, metadata_store) = setup_share_service();
 
         let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
 
         // Create and add a file
         let file = File::new(
@@ -1598,13 +1603,14 @@ mod tests {
             "application/pdf".to_string(),
             None,
             owner_id,
+            tenant_id,
         );
         let file_id = file.id;
         metadata_store.add_file(file.clone());
 
         // Create share without password
         let share = service
-            .create_share(file_id, owner_id, SharePermissions::View, None, None)
+            .create_share(file_id, owner_id, SharePermissions::View, None, None, tenant_id)
             .await
             .unwrap();
 
@@ -1636,6 +1642,7 @@ mod tests {
         let (service, _, metadata_store) = setup_share_service();
 
         let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
 
         // Create and add a file
         let file = File::new(
@@ -1646,6 +1653,7 @@ mod tests {
             "application/pdf".to_string(),
             None,
             owner_id,
+            tenant_id,
         );
         let file_id = file.id;
         metadata_store.add_file(file.clone());
@@ -1658,6 +1666,7 @@ mod tests {
                 SharePermissions::View,
                 Some("password123".to_string()),
                 None,
+                tenant_id,
             )
             .await
             .unwrap();
@@ -1690,6 +1699,7 @@ mod tests {
         let (service, event_store, metadata_store) = setup_share_service();
 
         let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
 
         // Create and add a file
         let file = File::new(
@@ -1700,13 +1710,14 @@ mod tests {
             "application/pdf".to_string(),
             None,
             owner_id,
+            tenant_id,
         );
         let file_id = file.id;
         metadata_store.add_file(file.clone());
 
         // Create share
         let share = service
-            .create_share(file_id, owner_id, SharePermissions::View, None, None)
+            .create_share(file_id, owner_id, SharePermissions::View, None, None, tenant_id)
             .await
             .unwrap();
 
@@ -1743,6 +1754,7 @@ mod tests {
         let owner_id = Uuid::new_v4();
 
         // Create and add a file
+        let tenant_id = Uuid::new_v4();
         let file = File::new(
             "document.pdf".to_string(),
             "/documents/document.pdf".to_string(),
@@ -1751,13 +1763,14 @@ mod tests {
             "application/pdf".to_string(),
             None,
             owner_id,
+            tenant_id,
         );
         let file_id = file.id;
         metadata_store.add_file(file.clone());
 
         // Create share without password
         let share = service
-            .create_share(file_id, owner_id, SharePermissions::View, None, None)
+            .create_share(file_id, owner_id, SharePermissions::View, None, None, tenant_id)
             .await
             .unwrap();
 
@@ -1803,6 +1816,7 @@ mod tests {
         let owner_id = Uuid::new_v4();
 
         // Create and add a file
+        let tenant_id = Uuid::new_v4();
         let file = File::new(
             "document.pdf".to_string(),
             "/documents/document.pdf".to_string(),
@@ -1811,13 +1825,14 @@ mod tests {
             "application/pdf".to_string(),
             None,
             owner_id,
+            tenant_id,
         );
         let file_id = file.id;
         metadata_store.add_file(file.clone());
 
         // Create share
         let share = service
-            .create_share(file_id, owner_id, SharePermissions::View, None, None)
+            .create_share(file_id, owner_id, SharePermissions::View, None, None, tenant_id)
             .await
             .unwrap();
 
@@ -1855,6 +1870,7 @@ mod tests {
         let owner_id = Uuid::new_v4();
 
         // Create and add a file
+        let tenant_id = Uuid::new_v4();
         let file = File::new(
             "document.pdf".to_string(),
             "/documents/document.pdf".to_string(),
@@ -1863,13 +1879,14 @@ mod tests {
             "application/pdf".to_string(),
             None,
             owner_id,
+            tenant_id,
         );
         let file_id = file.id;
         metadata_store.add_file(file.clone());
 
         // Create share
         let share = service
-            .create_share(file_id, owner_id, SharePermissions::View, None, None)
+            .create_share(file_id, owner_id, SharePermissions::View, None, None, tenant_id)
             .await
             .unwrap();
 
@@ -1890,6 +1907,7 @@ mod tests {
         let (service, _, metadata_store) = setup_share_service();
 
         let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
 
         // Create and add a file
         let file = File::new(
@@ -1900,6 +1918,7 @@ mod tests {
             "application/pdf".to_string(),
             None,
             owner_id,
+            tenant_id,
         );
         let file_id = file.id;
         metadata_store.add_file(file.clone());
@@ -1913,6 +1932,7 @@ mod tests {
                 SharePermissions::View,
                 None,
                 Some(expired_time),
+                tenant_id,
             )
             .await
             .unwrap();

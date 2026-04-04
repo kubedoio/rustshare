@@ -590,7 +590,7 @@ mod tests {
         }
 
         async fn find_folder_by_id(&self, id: Uuid) -> anyhow::Result<Option<crate::domain::Folder>> {
-            Ok(Some(crate::domain::Folder::new_root(id)))
+            Ok(Some(crate::domain::Folder::new_root(id, Uuid::new_v4())))
         }
 
         async fn get_user_group_ids(&self, _user_id: UserId) -> anyhow::Result<Vec<Uuid>> {

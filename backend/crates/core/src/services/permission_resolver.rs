@@ -995,6 +995,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1029,6 +1030,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1073,7 +1075,7 @@ mod tests {
         let user_id = Uuid::new_v4();
 
         // Create folder hierarchy: root -> parent -> child
-        let root_folder = Folder::new_root(owner_id);
+        let root_folder = Folder::new_root(owner_id, Uuid::new_v4());
         let root_id = root_folder.id;
         ops.add_folder(root_folder);
 
@@ -1082,6 +1084,7 @@ mod tests {
             "/parent".to_string(),
             root_id,
             owner_id,
+            Uuid::new_v4(),
         );
         let parent_id = parent_folder.id;
         ops.add_folder(parent_folder);
@@ -1091,6 +1094,7 @@ mod tests {
             "/parent/child".to_string(),
             parent_id,
             owner_id,
+            Uuid::new_v4(),
         );
         let child_id = child_folder.id;
         ops.add_folder(child_folder);
@@ -1104,6 +1108,7 @@ mod tests {
             "text/plain".to_string(),
             Some(child_id),
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1158,6 +1163,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1204,6 +1210,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1261,6 +1268,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1278,7 +1286,7 @@ mod tests {
 
         let owner_id = Uuid::new_v4();
 
-        let folder = Folder::new_root(owner_id);
+        let folder = Folder::new_root(owner_id, Uuid::new_v4());
         let folder_id = folder.id;
         ops.add_folder(folder);
 
@@ -1305,7 +1313,7 @@ mod tests {
         let user_id = Uuid::new_v4();
 
         // Create folder hierarchy: root -> parent
-        let root_folder = Folder::new_root(owner_id);
+        let root_folder = Folder::new_root(owner_id, Uuid::new_v4());
         let root_id = root_folder.id;
         ops.add_folder(root_folder);
 
@@ -1314,6 +1322,7 @@ mod tests {
             "/parent".to_string(),
             root_id,
             owner_id,
+            Uuid::new_v4(),
         );
         let parent_id = parent_folder.id;
         ops.add_folder(parent_folder);
@@ -1327,6 +1336,7 @@ mod tests {
             "text/plain".to_string(),
             Some(parent_id),
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1404,6 +1414,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1461,6 +1472,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1511,6 +1523,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1588,6 +1601,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1659,7 +1673,7 @@ mod tests {
         ops.add_user_to_group(user_id, group_id);
 
         // Create folder hierarchy: root -> parent -> child
-        let root_folder = Folder::new_root(owner_id);
+        let root_folder = Folder::new_root(owner_id, Uuid::new_v4());
         let root_id = root_folder.id;
         ops.add_folder(root_folder);
 
@@ -1668,6 +1682,7 @@ mod tests {
             "/parent".to_string(),
             root_id,
             owner_id,
+            Uuid::new_v4(),
         );
         let parent_id = parent_folder.id;
         ops.add_folder(parent_folder);
@@ -1677,6 +1692,7 @@ mod tests {
             "/parent/child".to_string(),
             parent_id,
             owner_id,
+            Uuid::new_v4(),
         );
         let child_id = child_folder.id;
         ops.add_folder(child_folder);
@@ -1690,6 +1706,7 @@ mod tests {
             "text/plain".to_string(),
             Some(child_id),
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1748,6 +1765,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1791,7 +1809,7 @@ mod tests {
         ops.add_user_to_group(user_id, group_id);
 
         // Create folder hierarchy: root -> parent
-        let root_folder = Folder::new_root(owner_id);
+        let root_folder = Folder::new_root(owner_id, Uuid::new_v4());
         let root_id = root_folder.id;
         ops.add_folder(root_folder);
 
@@ -1800,6 +1818,7 @@ mod tests {
             "/parent".to_string(),
             root_id,
             owner_id,
+            Uuid::new_v4(),
         );
         let parent_id = parent_folder.id;
         ops.add_folder(parent_folder);
@@ -1813,6 +1832,7 @@ mod tests {
             "text/plain".to_string(),
             Some(parent_id),
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
