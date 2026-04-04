@@ -2001,6 +2001,7 @@ impl MetadataStore {
             LEFT JOIN folders fo ON fo.id = s.folder_id
             WHERE s.created_by = $1
               AND s.recipient_user_id IS NULL
+              AND s.recipient_group_id IS NULL
               AND s.revoked_at IS NULL
             ORDER BY s.created_at DESC
             "#,
@@ -2757,6 +2758,106 @@ mod tests {
             .unwrap();
 
         // Cleanup user
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(owner.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn test_get_public_shares_excludes_group_shares() {
+        let (store, pool) = setup_metadata_store().await;
+        
+        // Create test user and group
+        let user_id = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        
+        // Create user
+        let owner = User::new(
+            format!("testowner_{}", user_id),
+            "Test Owner".to_string(),
+            "hash123".to_string(),
+            format!("testowner_{}@example.com", user_id),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        store.create_user(&owner).await.unwrap();
+        
+        // Create file
+        let file = File::new(
+            "test-document.pdf".to_string(),
+            "/Documents/test-document.pdf".to_string(),
+            "content_hash".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            None,
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&file).await.unwrap();
+        
+        // Create public share
+        let public_share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file.id),
+            folder_id: None,
+            share_token: Some("public_token".to_string()),
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: None,
+            created_by: owner.id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id,
+        };
+        store.create_share(&public_share).await.unwrap();
+        
+        // Create group share (same file)
+        let group_share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file.id),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::Edit,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: Some(group_id),
+            created_by: owner.id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id,
+        };
+        store.create_share(&group_share).await.unwrap();
+        
+        // Query public shares
+        let public_shares = store.get_user_public_shares(owner.id).await.unwrap();
+        
+        // Should only return 1 (the public share), not 2
+        assert_eq!(public_shares.len(), 1);
+        assert_eq!(public_shares[0].share.id, public_share.id);
+
+        // Cleanup
+        sqlx::query("DELETE FROM shares WHERE file_id = $1")
+            .bind(file.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM files WHERE id = $1")
+            .bind(file.id)
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("DELETE FROM users WHERE id = $1")
             .bind(owner.id)
             .execute(&pool)
