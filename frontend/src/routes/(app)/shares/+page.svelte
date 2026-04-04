@@ -343,7 +343,9 @@
 														Password
 													</span>
 												{/if}
-ttttttttttt<span class="rounded-full border border-info/20 bg-info/10 px-2.5 py-1 text-info">ntttttttttttt{getShareTypeLabel(share)}nttttttttttt</span>
+											<span class="rounded-full border border-info/20 bg-info/10 px-2.5 py-1 text-info">
+												{getShareTypeLabel(share)}
+											</span>
 											</div>
 										</div>
 									</div>
