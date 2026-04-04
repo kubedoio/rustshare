@@ -468,6 +468,7 @@ fn share_to_document(share: &Share) -> ShareDocument {
         permissions,
         token_hash: share.share_token.as_ref().map(|t| format!("{:x}", md5::compute(t))),
         recipient_user_id: share.recipient_user_id,
+        recipient_group_id: None, // TODO: Update when group shares are implemented in domain model
         password_hash: share.password_hash.clone(),
         expires_at: share.expires_at,
         upload_only: share.upload_only,

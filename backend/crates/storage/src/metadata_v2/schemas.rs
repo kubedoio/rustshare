@@ -417,6 +417,8 @@ pub struct ShareDocument {
     pub token_hash: Option<String>,
     /// Recipient user ID for user shares (None for public)
     pub recipient_user_id: Option<Uuid>,
+    /// Recipient group ID for group shares (None for public/user)
+    pub recipient_group_id: Option<Uuid>,
     /// Password hash for protected shares
     pub password_hash: Option<String>,
     /// Expiration time
@@ -459,6 +461,7 @@ impl ShareDocument {
             permissions,
             token_hash: Some(token_hash),
             recipient_user_id: None,
+            recipient_group_id: None,
             password_hash,
             expires_at,
             upload_only: false,
@@ -490,6 +493,7 @@ impl ShareDocument {
             permissions,
             token_hash: None,
             recipient_user_id: Some(recipient_user_id),
+            recipient_group_id: None,
             password_hash: None,
             expires_at: None,
             upload_only: false,
