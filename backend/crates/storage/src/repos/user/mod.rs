@@ -1,7 +1,7 @@
 //! User repository for zero-PostgreSQL user management
 
 use async_trait::async_trait;
-use rustshare_core::domain::User;
+use rustshare_core::domain::{RecipientVisibility, User};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -74,6 +74,13 @@ pub trait GroupRepo: Send + Sync {
     
     /// Get all groups a user is a member of
     async fn get_user_groups(&self, user_id: Uuid) -> Result<Vec<Uuid>, UserRepositoryError>;
+}
+
+/// Tenant configuration repository trait
+#[async_trait]
+pub trait TenantConfigRepo: Send + Sync {
+    /// Get recipient visibility setting for tenant
+    async fn get_recipient_visibility(&self, tenant_id: Uuid) -> Result<RecipientVisibility, UserRepositoryError>;
 }
 
 /// Converts between domain User and UserDocument

@@ -463,6 +463,21 @@ impl GroupRepo for RustFsUserRepository {
     }
 }
 
+#[async_trait]
+impl TenantConfigRepo for RustFsUserRepository {
+    async fn get_recipient_visibility(&self, tenant_id: Uuid) -> Result<RecipientVisibility, UserRepositoryError> {
+        use crate::metadata_v2::schemas::TenantConfigDocument;
+        
+        let path = self.path_builder.tenant_config_path(tenant_id);
+        
+        match self.doc_store.get::<TenantConfigDocument>(&path).await {
+            Ok(Some((config, _))) => Ok(config.recipient_visibility),
+            Ok(None) => Ok(RecipientVisibility::default()), // AdminOnly is default
+            Err(e) => Err(UserRepositoryError::Storage(e.to_string())),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

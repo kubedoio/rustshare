@@ -1518,3 +1518,44 @@ pub fn tokenize_search_query(query: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .collect()
 }
+
+// ============================================================================
+// Tenant Config Document
+// ============================================================================
+
+/// Tenant configuration document
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TenantConfigDocument {
+    /// Schema version
+    pub schema_version: u32,
+    /// Tenant ID
+    pub tenant_id: Uuid,
+    /// Recipient visibility setting
+    pub recipient_visibility: RecipientVisibility,
+    /// Document version for optimistic concurrency
+    pub version: u64,
+    /// Last updated
+    pub updated_at: DateTime<Utc>,
+}
+
+use rustshare_core::domain::RecipientVisibility;
+
+impl TenantConfigDocument {
+    /// Create a new tenant config document with default settings
+    pub fn new(tenant_id: Uuid) -> Self {
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            tenant_id,
+            recipient_visibility: RecipientVisibility::default(),
+            version: 1,
+            updated_at: Utc::now(),
+        }
+    }
+
+    /// Update recipient visibility
+    pub fn set_recipient_visibility(&mut self, visibility: RecipientVisibility) {
+        self.recipient_visibility = visibility;
+        self.version += 1;
+        self.updated_at = Utc::now();
+    }
+}

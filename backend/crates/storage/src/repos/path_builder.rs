@@ -186,6 +186,14 @@ impl PathBuilder {
         )
     }
 
+    /// Path for tenant config document
+    pub fn tenant_config_path(&self, tenant_id: Uuid) -> String {
+        format!(
+            "{}/{}/config/tenants/{}.json",
+            self.base_prefix, self.namespace, tenant_id
+        )
+    }
+
     /// Simple hash for index keys
     fn hash_string(s: &str) -> String {
         use sha2::{Digest, Sha256};
