@@ -1,8 +1,17 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use uuid::Uuid;
 
 use super::{FileId, FolderId, ShareId, UserId};
+
+/// Error type for share type determination failures.
+#[derive(Debug, Clone, PartialEq, Error)]
+pub enum ShareTypeError {
+    /// Invalid share configuration: exactly one of share_token, recipient_user_id, or recipient_group_id must be set.
+    #[error("Invalid share configuration: exactly one of share_token, recipient_user_id, or recipient_group_id must be set")]
+    InvalidShareConfiguration,
+}
 
 /// Permission level for a share link.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
@@ -51,10 +60,9 @@ impl Ord for SharePermissions {
 /// Type of share (determined by which fields are set)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ShareType {
-    Public,  // share_token is Some
-    User,    // recipient_user_id is Some
-    Group,   // recipient_group_id is Some
-    Invalid, // none of the above (should not happen)
+    Public, // share_token is Some
+    User,   // recipient_user_id is Some
+    Group,  // recipient_group_id is Some
 }
 
 /// A share link that allows access to a file or folder.
@@ -189,16 +197,19 @@ impl Share {
         self.password_hash.is_some()
     }
 
-    /// Determine the type of share based on populated fields
-    pub fn share_type(&self) -> ShareType {
-        if self.share_token.is_some() {
-            ShareType::Public
-        } else if self.recipient_user_id.is_some() {
-            ShareType::User
-        } else if self.recipient_group_id.is_some() {
-            ShareType::Group
-        } else {
-            ShareType::Invalid
+    /// Determine the type of share based on populated fields.
+    ///
+    /// Returns an error if none of share_token, recipient_user_id, or recipient_group_id is set.
+    pub fn share_type(&self) -> Result<ShareType, ShareTypeError> {
+        match (
+            self.share_token.is_some(),
+            self.recipient_user_id.is_some(),
+            self.recipient_group_id.is_some(),
+        ) {
+            (true, false, false) => Ok(ShareType::Public),
+            (false, true, false) => Ok(ShareType::User),
+            (false, false, true) => Ok(ShareType::Group),
+            _ => Err(ShareTypeError::InvalidShareConfiguration),
         }
     }
 }
@@ -455,7 +466,7 @@ mod tests {
             revoked_at: None,
             tenant_id: Uuid::new_v4(),
         };
-        assert_eq!(share.share_type(), ShareType::Public);
+        assert_eq!(share.share_type(), Ok(ShareType::Public));
     }
 
     #[test]
@@ -477,7 +488,7 @@ mod tests {
             revoked_at: None,
             tenant_id: Uuid::new_v4(),
         };
-        assert_eq!(share.share_type(), ShareType::User);
+        assert_eq!(share.share_type(), Ok(ShareType::User));
     }
 
     #[test]
@@ -499,7 +510,7 @@ mod tests {
             revoked_at: None,
             tenant_id: Uuid::new_v4(),
         };
-        assert_eq!(share.share_type(), ShareType::Group);
+        assert_eq!(share.share_type(), Ok(ShareType::Group));
     }
 
     #[test]
@@ -521,12 +532,15 @@ mod tests {
             revoked_at: None,
             tenant_id: Uuid::new_v4(),
         };
-        assert_eq!(share.share_type(), ShareType::Invalid);
+        assert!(matches!(
+            share.share_type(),
+            Err(ShareTypeError::InvalidShareConfiguration)
+        ));
     }
 
     #[test]
-    fn test_share_type_priority() {
-        // If multiple fields are set, share_token takes priority (Public)
+    fn test_share_type_multiple_fields_error() {
+        // If multiple fields are set, it's an error (ambiguous configuration)
         let share = Share {
             id: Uuid::new_v4(),
             file_id: Some(Uuid::new_v4()),
@@ -544,7 +558,10 @@ mod tests {
             revoked_at: None,
             tenant_id: Uuid::new_v4(),
         };
-        // Public takes priority over User
-        assert_eq!(share.share_type(), ShareType::Public);
+        // Multiple fields set is an error
+        assert!(matches!(
+            share.share_type(),
+            Err(ShareTypeError::InvalidShareConfiguration)
+        ));
     }
 }
