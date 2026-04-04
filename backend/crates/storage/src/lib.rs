@@ -174,6 +174,15 @@ impl FolderMetadataStoreOps for MetadataStore {
 }
 
 impl ShareMetadataStoreOps for MetadataStore {
+    async fn find_user_by_id(
+        &self,
+        _id: uuid::Uuid,
+    ) -> Result<Option<rustshare_core::domain::User>> {
+        // TODO: Implement user lookup
+        // For now, return None as this is primarily used for notification purposes
+        Ok(None)
+    }
+
     async fn find_file_by_id(
         &self,
         id: uuid::Uuid,
@@ -274,5 +283,17 @@ impl CoreObjectStoreOps for ObjectStore {
 
     async fn delete(&self, key: &str) -> Result<()> {
         self.delete(key).await
+    }
+}
+
+// ShareNotificationRepoImpl implements the core ShareNotificationRepo trait
+#[async_trait::async_trait]
+impl rustshare_core::services::ShareNotificationRepo for repos::ShareNotificationRepoImpl {
+    async fn was_notified(&self, user_id: rustshare_core::domain::UserId, share_id: uuid::Uuid) -> Result<bool, sqlx::Error> {
+        self.was_notified(user_id, share_id).await
+    }
+
+    async fn record_notification(&self, user_id: rustshare_core::domain::UserId, share_id: uuid::Uuid) -> Result<(), sqlx::Error> {
+        self.record_notification(user_id, share_id).await
     }
 }

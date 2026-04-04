@@ -168,6 +168,11 @@ pub fn share_error_response(err: ShareError) -> Response {
         ShareError::ShareAlreadyExists(_) => (StatusCode::CONFLICT, err.to_string()),
         ShareError::CannotRemoveOwner => (StatusCode::FORBIDDEN, err.to_string()),
         ShareError::InvalidState(_) => (StatusCode::CONFLICT, err.to_string()),
+        ShareError::GroupNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
+        ShareError::NotGroupMember(_) => (StatusCode::FORBIDDEN, err.to_string()),
+        ShareError::GroupShareAlreadyExists => (StatusCode::CONFLICT, err.to_string()),
+        ShareError::InvalidRecipientVisibility(_) => (StatusCode::BAD_REQUEST, err.to_string()),
+        ShareError::CrossTenantSharingNotAllowed => (StatusCode::FORBIDDEN, err.to_string()),
         ShareError::Database(_) | ShareError::PasswordHash(_) | ShareError::Jwt(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Internal server error".to_string(),

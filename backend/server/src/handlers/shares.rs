@@ -348,6 +348,21 @@ pub async fn revoke_share(
             rustshare_core::services::ShareError::InvalidState(_) => {
                 (StatusCode::CONFLICT, error.to_string())
             }
+            rustshare_core::services::ShareError::GroupNotFound(_) => {
+                (StatusCode::NOT_FOUND, error.to_string())
+            }
+            rustshare_core::services::ShareError::NotGroupMember(_) => {
+                (StatusCode::FORBIDDEN, error.to_string())
+            }
+            rustshare_core::services::ShareError::GroupShareAlreadyExists => {
+                (StatusCode::CONFLICT, error.to_string())
+            }
+            rustshare_core::services::ShareError::InvalidRecipientVisibility(_) => {
+                (StatusCode::BAD_REQUEST, error.to_string())
+            }
+            rustshare_core::services::ShareError::CrossTenantSharingNotAllowed => {
+                (StatusCode::FORBIDDEN, error.to_string())
+            }
             rustshare_core::services::ShareError::Database(_)
             | rustshare_core::services::ShareError::PasswordHash(_)
             | rustshare_core::services::ShareError::Jwt(_) => (

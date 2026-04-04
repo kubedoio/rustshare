@@ -70,6 +70,9 @@ pub trait MetadataStoreOps: Send + Sync {
     /// Find a folder by ID.
     async fn find_folder_by_id(&self, id: uuid::Uuid) -> Result<Option<Folder>>;
 
+    /// Find a user by ID.
+    async fn find_user_by_id(&self, id: uuid::Uuid) -> Result<Option<crate::domain::User>>;
+
     /// Create a share in the metadata store.
     async fn create_share(&self, share: &Share) -> Result<()>;
 
@@ -111,30 +114,45 @@ pub trait MetadataStoreOps: Send + Sync {
     async fn update_share(&self, share: &Share) -> Result<()>;
 }
 
+/// Trait for share notification tracking operations needed by ShareService.
+///
+/// This trait abstracts notification tracking to allow for testing without database dependencies.
+#[async_trait::async_trait]
+pub trait ShareNotificationRepo: Send + Sync {
+    /// Check if user was already notified for this share.
+    async fn was_notified(&self, user_id: UserId, share_id: uuid::Uuid) -> Result<bool, sqlx::Error>;
+
+    /// Record that notification was sent.
+    async fn record_notification(&self, user_id: UserId, share_id: uuid::Uuid) -> Result<(), sqlx::Error>;
+}
+
 /// ShareService handles share link creation and management.
 ///
-/// Generic over EventStore and MetadataStore implementations to support
-/// different backends and testing with mock implementations.
-pub struct ShareService<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> {
+/// Generic over EventStore, MetadataStore, and ShareNotificationRepo implementations
+/// to support different backends and testing with mock implementations.
+pub struct ShareService<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo> {
     event_store: Arc<E>,
     metadata_store: Arc<M>,
     broadcaster: Arc<EventBroadcaster>,
     jwt_manager: Arc<J>,
+    notification_repo: Arc<N>,
 }
 
-impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
+impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo> ShareService<E, M, J, N> {
     /// Create a new ShareService instance.
     pub fn new(
         event_store: Arc<E>,
         metadata_store: Arc<M>,
         broadcaster: Arc<EventBroadcaster>,
         jwt_manager: Arc<J>,
+        notification_repo: Arc<N>,
     ) -> Self {
         Self {
             event_store,
             metadata_store,
             broadcaster,
             jwt_manager,
+            notification_repo,
         }
     }
 
@@ -1023,6 +1041,135 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         // For now, return false - in full implementation this checks shares
         Ok(false)
     }
+
+    /// Send first-access notification for group share if needed.
+    ///
+    /// This implements "lazy notifications" - instead of notifying all group members
+    /// when a share is created, we only notify them when they first access the resource.
+    /// This prevents spam for large groups and inactive members.
+    ///
+    /// # Arguments
+    /// * `user_id` - The user who accessed the share
+    /// * `share` - The share being accessed
+    ///
+    /// # Returns
+    /// Ok(()) if notification was sent or not needed, Err otherwise.
+    pub async fn send_first_access_notification_if_needed(
+        &self,
+        user_id: UserId,
+        share: &Share,
+    ) -> Result<(), ShareError> {
+        // Only for group shares (recipient_group_id is set)
+        if share.recipient_group_id.is_none() {
+            return Ok(());
+        }
+
+        // Don't notify the creator of the share
+        if share.created_by == user_id {
+            return Ok(());
+        }
+
+        // Check if already notified
+        let was_notified = self
+            .notification_repo
+            .was_notified(user_id, share.id)
+            .await
+            .map_err(ShareError::Database)?;
+
+        if was_notified {
+            return Ok(());
+        }
+
+        // Get resource info (file or folder name)
+        let (resource_name, resource_type) = if let Some(file_id) = share.file_id {
+            let file = self
+                .metadata_store
+                .find_file_by_id(file_id)
+                .await
+                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .ok_or(ShareError::FileNotFound(file_id))?;
+            (file.name, "file")
+        } else if let Some(folder_id) = share.folder_id {
+            let folder = self
+                .metadata_store
+                .find_folder_by_id(folder_id)
+                .await
+                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .ok_or(ShareError::NotFoundById(folder_id))?;
+            (folder.name, "folder")
+        } else {
+            return Err(ShareError::InvalidState("Share has no resource".to_string()));
+        };
+
+        // Get sharer info
+        let sharer = self
+            .metadata_store
+            .find_user_by_id(share.created_by)
+            .await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .ok_or_else(|| ShareError::RecipientNotFound("Sharer not found".to_string()))?;
+
+        // Create notification
+        use crate::domain::{NotificationType, ResourceType};
+        use crate::services::CreateNotification;
+
+        let notification = CreateNotification {
+            user_id,
+            notification_type: NotificationType::ShareReceived,
+            title: format!("New {} shared with your group", resource_type),
+            message: format!("{} shared '{}' with your group", sharer.email, resource_name),
+            resource_id: share.resource_id().unwrap_or(share.id),
+            resource_type: if share.file_id.is_some() {
+                ResourceType::File
+            } else {
+                ResourceType::Folder
+            },
+            action_url: Some(format!(
+                "/shared-with-me/{}/{}",
+                resource_type,
+                share.resource_id().unwrap_or(share.id)
+            )),
+            tenant_id: share.tenant_id,
+        };
+
+        // Emit NotificationCreated event via event store
+        use crate::events::{AggregateType, Event, EventType};
+        use crate::events::NotificationCreatedPayload;
+
+        let payload = NotificationCreatedPayload {
+            notification_id: uuid::Uuid::new_v4(),
+            user_id,
+            title: notification.title.clone(),
+            message: notification.message.clone(),
+            notification_type: format!("{:?}", notification.notification_type),
+            resource_id: notification.resource_id,
+            resource_type: format!("{:?}", notification.resource_type),
+            action_url: notification.action_url.clone(),
+            timestamp: Utc::now(),
+        };
+
+        let event = Event::new(
+            EventType::NotificationCreated,
+            share.id,
+            AggregateType::Share,
+            serde_json::to_value(&payload)
+                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?,
+            share.created_by,
+        );
+
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+
+        // Record notification sent to prevent duplicates
+        self.notification_repo
+            .record_notification(user_id, share.id)
+            .await
+            .map_err(ShareError::Database)?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1054,6 +1201,7 @@ mod tests {
         files: Mutex<Vec<File>>,
         folders: Mutex<Vec<Folder>>,
         shares: Mutex<Vec<Share>>,
+        users: Mutex<Vec<crate::domain::User>>,
     }
 
     impl MockMetadataStore {
@@ -1062,6 +1210,7 @@ mod tests {
                 files: Mutex::new(Vec::new()),
                 folders: Mutex::new(Vec::new()),
                 shares: Mutex::new(Vec::new()),
+                users: Mutex::new(Vec::new()),
             }
         }
 
@@ -1072,6 +1221,10 @@ mod tests {
         #[allow(dead_code)]
         fn add_folder(&self, folder: Folder) {
             self.folders.lock().unwrap().push(folder);
+        }
+
+        fn add_user(&self, user: crate::domain::User) {
+            self.users.lock().unwrap().push(user);
         }
     }
 
@@ -1093,6 +1246,16 @@ mod tests {
                 .unwrap()
                 .iter()
                 .find(|folder| folder.id == id)
+                .cloned())
+        }
+
+        async fn find_user_by_id(&self, id: Uuid) -> Result<Option<crate::domain::User>> {
+            Ok(self
+                .users
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|u| u.id == id)
                 .cloned())
         }
 
@@ -1226,8 +1389,21 @@ mod tests {
         }
     }
 
+    struct MockNotificationRepo;
+
+    #[async_trait::async_trait]
+    impl ShareNotificationRepo for MockNotificationRepo {
+        async fn was_notified(&self, _user_id: UserId, _share_id: uuid::Uuid) -> Result<bool, sqlx::Error> {
+            Ok(false)
+        }
+
+        async fn record_notification(&self, _user_id: UserId, _share_id: uuid::Uuid) -> Result<(), sqlx::Error> {
+            Ok(())
+        }
+    }
+
     fn setup_share_service() -> (
-        ShareService<MockEventStore, MockMetadataStore, MockJwtManager>,
+        ShareService<MockEventStore, MockMetadataStore, MockJwtManager, MockNotificationRepo>,
         Arc<MockEventStore>,
         Arc<MockMetadataStore>,
     ) {
@@ -1235,12 +1411,14 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let broadcaster = Arc::new(EventBroadcaster::new(100));
         let jwt_manager = Arc::new(MockJwtManager);
+        let notification_repo = Arc::new(MockNotificationRepo);
 
         let service = ShareService::new(
             event_store.clone(),
             metadata_store.clone(),
             broadcaster,
             jwt_manager,
+            notification_repo,
         );
 
         (service, event_store, metadata_store)
@@ -1252,7 +1430,7 @@ mod tests {
 
         for _ in 0..1000 {
             let token =
-                ShareService::<MockEventStore, MockMetadataStore, MockJwtManager>::generate_token();
+                ShareService::<MockEventStore, MockMetadataStore, MockJwtManager, MockNotificationRepo>::generate_token();
 
             // Verify token length is 32
             assert_eq!(token.len(), 32, "Token length should be 32");

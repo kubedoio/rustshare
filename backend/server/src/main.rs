@@ -74,7 +74,7 @@ use rustshare_infrastructure::repositories::{
     FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
     ShareRepository, UserRepository,
 };
-use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
+use rustshare_storage::{EventStore, MetadataStore, ObjectStore, repos::ShareNotificationRepoImpl};
 use serde::Serialize;
 use sqlx::PgPool;
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
@@ -265,7 +265,7 @@ pub struct AppState {
     pub broadcaster: Arc<EventBroadcaster>,
     pub file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore>>,
     pub folder_service: Arc<FolderService<EventStore, MetadataStore>>,
-    pub share_service: Arc<ShareService<EventStore, MetadataStore, JwtManager>>,
+    pub share_service: Arc<ShareService<EventStore, MetadataStore, JwtManager, ShareNotificationRepoImpl>>,
     pub thumbnail_service: Arc<ThumbnailService<ObjectStore>>,
     pub permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
     pub notification_service: Arc<NotificationService<NotificationRepository>>,
@@ -345,11 +345,13 @@ async fn main() -> Result<()> {
         Arc::clone(&metadata_store),
         Arc::clone(&broadcaster),
     ));
+    let share_notification_repo = Arc::new(ShareNotificationRepoImpl::new(db_pool.clone()));
     let share_service = Arc::new(ShareService::new(
         Arc::clone(&event_store),
         Arc::clone(&metadata_store),
         Arc::clone(&broadcaster),
         Arc::clone(&jwt_manager),
+        Arc::clone(&share_notification_repo),
     ));
     let note_service = Arc::new(services::note_service::NoteService::new(
         Arc::clone(&file_service),
