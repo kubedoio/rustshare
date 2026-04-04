@@ -571,7 +571,7 @@ pub async fn list_file_group_shares(
               AND revoked_at IS NULL
             UNION
             SELECT 1 FROM shares s
-            JOIN user_group_members ugm ON ugm.group_id = s.recipient_group_id
+            JOIN group_members ugm ON ugm.group_id = s.recipient_group_id
             WHERE s.file_id = $1
               AND ugm.user_id = $2
               AND s.permissions = 'Admin'
@@ -657,7 +657,7 @@ pub async fn list_folder_group_shares(
               AND revoked_at IS NULL
             UNION
             SELECT 1 FROM shares s
-            JOIN user_group_members ugm ON ugm.group_id = s.recipient_group_id
+            JOIN group_members ugm ON ugm.group_id = s.recipient_group_id
             WHERE s.folder_id = $1
               AND ugm.user_id = $2
               AND s.permissions = 'Admin'

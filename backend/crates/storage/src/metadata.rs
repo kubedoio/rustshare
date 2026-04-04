@@ -2225,7 +2225,7 @@ impl MetadataStore {
         let exists = sqlx::query_scalar::<_, bool>(
             r#"
             SELECT EXISTS(
-                SELECT 1 FROM user_group_members
+                SELECT 1 FROM group_members
                 WHERE group_id = $1 AND user_id = $2
             )
             "#,
