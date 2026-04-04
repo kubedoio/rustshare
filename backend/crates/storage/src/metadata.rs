@@ -2043,6 +2043,76 @@ impl MetadataStore {
         Ok(shares)
     }
 
+    /// Get all active shares created by a specific user (public, user, and group shares).
+    pub async fn get_user_all_shares(&self, user_id: Uuid) -> Result<Vec<OwnedPublicShare>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                s.id,
+                s.file_id,
+                s.folder_id,
+                s.share_token,
+                s.recipient_user_id,
+                s.recipient_group_id,
+                s.created_by,
+                s.permissions,
+                s.password_hash,
+                s.expires_at,
+                s.upload_only,
+                s.access_count,
+                s.created_at,
+                s.revoked_at,
+                s.tenant_id,
+                COALESCE(s.file_id, s.folder_id) AS resource_id,
+                CASE
+                    WHEN s.file_id IS NOT NULL THEN 'file'
+                    ELSE 'folder'
+                END AS resource_type,
+                COALESCE(f.name, fo.name) AS resource_name
+            FROM shares s
+            LEFT JOIN files f ON f.id = s.file_id
+            LEFT JOIN folders fo ON fo.id = s.folder_id
+            WHERE s.created_by = $1
+              AND s.revoked_at IS NULL
+            ORDER BY s.created_at DESC
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut shares = Vec::with_capacity(rows.len());
+        for row in rows {
+            let permissions_str: String = row.try_get("permissions")?;
+            let permissions = Self::permission_from_db_value(&permissions_str);
+
+            shares.push(OwnedPublicShare {
+                share: Share {
+                    id: row.try_get("id")?,
+                    file_id: row.try_get("file_id")?,
+                    folder_id: row.try_get("folder_id")?,
+                    share_token: row.try_get("share_token")?,
+                    recipient_user_id: row.try_get("recipient_user_id")?,
+                    recipient_group_id: row.try_get("recipient_group_id")?,
+                    created_by: row.try_get("created_by")?,
+                    permissions,
+                    password_hash: row.try_get("password_hash")?,
+                    expires_at: row.try_get("expires_at")?,
+                    upload_only: row.try_get("upload_only")?,
+                    access_count: row.try_get("access_count")?,
+                    created_at: row.try_get("created_at")?,
+                    revoked_at: row.try_get("revoked_at")?,
+                    tenant_id: row.try_get("tenant_id")?,
+                },
+                resource_id: row.try_get("resource_id")?,
+                resource_type: row.try_get("resource_type")?,
+                resource_name: row.try_get("resource_name")?,
+            });
+        }
+
+        Ok(shares)
+    }
+
     /// Get access-log entries for a public share owned by a specific user.
     pub async fn get_public_share_access_log(
         &self,
