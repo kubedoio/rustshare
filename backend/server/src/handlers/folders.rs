@@ -328,13 +328,12 @@ async fn build_folder_tree_with_shares(
 ) -> Result<FolderTreeWithShares, Response> {
     use sqlx::Row;
 
-    // Get folder with share info
+    // Get folder with share info (ancestor_ids is stored in folder_documents, not folders table)
     let folder_row = sqlx::query(
         r#"
         SELECT 
             f.id, f.name, f.path, f.parent_folder_id, f.owner_id, 
             f.created_at, f.updated_at, f.tenant_id,
-            f.ancestor_ids,
             EXISTS (
                 SELECT 1 FROM shares 
                 WHERE folder_id = f.id 
@@ -377,7 +376,7 @@ async fn build_folder_tree_with_shares(
         created_at: folder_row.try_get("created_at").map_err(|_| internal_error_response())?,
         updated_at: folder_row.try_get("updated_at").map_err(|_| internal_error_response())?,
         tenant_id: folder_row.try_get("tenant_id").map_err(|_| internal_error_response())?,
-        ancestor_ids: folder_row.try_get("ancestor_ids").ok(),
+        ancestor_ids: None, // Not stored in folders table, would need to fetch from folder_documents
         is_shared: folder_row.try_get("is_shared").map_err(|_| internal_error_response())?,
         share_count: folder_row.try_get("share_count").map_err(|_| internal_error_response())?,
         share_expires_at: folder_row.try_get("share_expires_at").ok(),
