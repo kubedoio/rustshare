@@ -94,6 +94,8 @@
 		},
 		onSuccess: (response) => {
 			queryClient.invalidateQueries({ queryKey: ['public-shares', resourceType, resourceId] });
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			dispatch('notification', {
 				message: 'Share link created successfully',
 				type: 'success'
@@ -129,6 +131,8 @@
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['share-recipients', resourceType, resourceId] });
 			queryClient.invalidateQueries({ queryKey: ['received-shares'] });
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			dispatch('notification', {
 				message: `Shared with ${recipientEmail.trim()}`,
 				type: 'success'
@@ -182,6 +186,8 @@
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['public-shares', resourceType, resourceId] });
 			queryClient.invalidateQueries({ queryKey: ['group-shares', resourceType, resourceId] });
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			dispatch('notification', {
 				message: 'Access revoked successfully',
 				type: 'success'
@@ -204,6 +210,8 @@
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['share-recipients', resourceType, resourceId] });
 			queryClient.invalidateQueries({ queryKey: ['received-shares'] });
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			dispatch('notification', {
 				message: 'Permission updated',
 				type: 'success'
@@ -224,6 +232,8 @@
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['share-recipients', resourceType, resourceId] });
 			queryClient.invalidateQueries({ queryKey: ['received-shares'] });
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			dispatch('notification', {
 				message: 'Access removed successfully',
 				type: 'success'
