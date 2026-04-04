@@ -72,6 +72,7 @@ pub trait ShareOps: Send + Sync {
 pub trait UserOps: Send + Sync {
     async fn find_by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error>;
     async fn get_by_id(&self, user_id: UserId) -> Result<Option<User>, sqlx::Error>;
+    async fn get_tenant_id_for_user(&self, user_id: UserId) -> Result<Option<uuid::Uuid>, sqlx::Error>;
 }
 
 /// Trait for file repository operations needed by UserShareService.
@@ -243,6 +244,13 @@ where
             });
         }
 
+        // Get creator's tenant ID
+        let creator_tenant_id = self
+            .user_repo
+            .get_tenant_id_for_user(created_by)
+            .await
+            .map_err(ShareError::Database)?;
+
         // Find recipient user by email
         let recipient_email_lower = recipient_email.trim().to_lowercase();
         let recipient = self
@@ -251,6 +259,11 @@ where
             .await
             .map_err(ShareError::Database)?
             .ok_or_else(|| ShareError::RecipientNotFound(recipient_email.to_string()))?;
+
+        // Verify recipient is in the same tenant as the creator
+        if Some(recipient.tenant_id) != creator_tenant_id {
+            return Err(ShareError::RecipientNotFound(recipient_email.to_string()));
+        }
 
         // Verify not sharing with self
         if recipient.id == created_by {
@@ -353,6 +366,13 @@ where
             });
         }
 
+        // Get creator's tenant ID
+        let creator_tenant_id = self
+            .user_repo
+            .get_tenant_id_for_user(created_by)
+            .await
+            .map_err(ShareError::Database)?;
+
         // Find recipient user by email
         let recipient_email_lower = recipient_email.trim().to_lowercase();
         let recipient = self
@@ -361,6 +381,11 @@ where
             .await
             .map_err(ShareError::Database)?
             .ok_or_else(|| ShareError::RecipientNotFound(recipient_email.to_string()))?;
+
+        // Verify recipient is in the same tenant as the creator
+        if Some(recipient.tenant_id) != creator_tenant_id {
+            return Err(ShareError::RecipientNotFound(recipient_email.to_string()));
+        }
 
         // Verify not sharing with self
         if recipient.id == created_by {
@@ -472,16 +497,24 @@ where
         };
 
         // Check if requesting user has Admin permission
-        let permission = self
-            .permission_resolver
-            .resolve_permission(requesting_user, resource)
-            .await
-            .map_err(|e| ShareError::Database(sqlx::Error::Protocol(e.to_string())))?;
+        // Owners implicitly have Admin permission via ownership check in permission_resolver
+        let permission = match self.permission_resolver.resolve_permission(requesting_user, resource).await {
+            Ok(Some(perm)) => perm,
+            Ok(None) => {
+                return Err(ShareError::InsufficientPermission {
+                    required: SharePermissions::Admin,
+                    actual: SharePermissions::View,
+                });
+            }
+            Err(e) => {
+                return Err(ShareError::Database(sqlx::Error::Protocol(e.to_string())));
+            }
+        };
 
-        if permission != Some(SharePermissions::Admin) {
+        if permission != SharePermissions::Admin {
             return Err(ShareError::InsufficientPermission {
                 required: SharePermissions::Admin,
-                actual: permission.unwrap_or(SharePermissions::View),
+                actual: permission,
             });
         }
 

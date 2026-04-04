@@ -1,5 +1,6 @@
 use rustshare_core::domain::{Theme, User, UserId};
 use sqlx::{PgPool, Row};
+use uuid::Uuid;
 
 /// Repository for user database operations.
 pub struct UserRepository {
@@ -91,6 +92,22 @@ impl UserRepository {
     }
 }
 
+    /// Get tenant ID for a user
+    pub async fn get_tenant_id_for_user(&self, user_id: UserId) -> Result<Option<uuid::Uuid>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"SELECT tenant_id FROM users WHERE id = $1"#
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        
+        match row {
+            Some(r) => Ok(r.try_get("tenant_id")?),
+            None => Ok(None),
+        }
+    }
+}
+
 // Implement UserOps trait for UserRepository
 impl rustshare_core::services::UserOps for UserRepository {
     async fn find_by_email(
@@ -105,5 +122,12 @@ impl rustshare_core::services::UserOps for UserRepository {
         user_id: rustshare_core::domain::UserId,
     ) -> Result<Option<rustshare_core::domain::User>, sqlx::Error> {
         self.get_by_id(user_id).await
+    }
+
+    async fn get_tenant_id_for_user(
+        &self,
+        user_id: rustshare_core::domain::UserId,
+    ) -> Result<Option<uuid::Uuid>, sqlx::Error> {
+        self.get_tenant_id_for_user(user_id).await
     }
 }
