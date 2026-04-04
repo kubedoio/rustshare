@@ -343,6 +343,7 @@
 														Password
 													</span>
 												{/if}
+ttttttttttt<span class="rounded-full border border-info/20 bg-info/10 px-2.5 py-1 text-info">ntttttttttttt{getShareTypeLabel(share)}nttttttttttt</span>
 											</div>
 										</div>
 									</div>
@@ -377,14 +378,7 @@
 									</div>
 								</div>
 
-								<div class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-3">
-									<p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/45">
-										Share URL
-									</p>
-									<p class="mt-2 truncate font-mono text-xs text-base-content/70">
-										{shareUrl}
-									</p>
-								</div>
+tttttttttt{#if shareUrl}nttttttttttt<div class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-3">ntttttttttttt<p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/45">ntttttttttttttShare URLntttttttttttt</p>ntttttttttttt<p class="mt-2 truncate font-mono text-xs text-base-content/70">nttttttttttttt{shareUrl}ntttttttttttt</p>nttttttttttt</div>ntttttttttt{:else}nttttttttttt<div class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-3">ntttttttttttt<p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/45">ntttttttttttttShare Typentttttttttttt</p>ntttttttttttt<p class="mt-2 truncate font-mono text-xs text-base-content/70">nttttttttttttt{shareType === 'group' ? 'Shared with group members' : 'Direct user share'}ntttttttttttt</p>nttttttttttt</div>ntttttttttt{/if}
 
 								<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
 									<div class="rounded-2xl border border-base-300/70 bg-base-100 px-4 py-3">

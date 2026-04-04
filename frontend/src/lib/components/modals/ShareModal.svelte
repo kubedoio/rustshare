@@ -563,7 +563,7 @@
 												</button>
 											</div>
 
-ttttttttttttt{/if}
+											{/if}
 											<!-- Share details -->
 											<div class="text-sm text-base-content/70 space-y-1">
 												<div class="gap-4 flex flex-wrap">
