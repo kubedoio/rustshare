@@ -401,6 +401,68 @@ impl UserRepository for RustFsUserRepository {
     }
 }
 
+/// User's group membership list
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct UserGroupsList {
+    group_ids: Vec<Uuid>,
+    version: u64,
+}
+
+/// Group's member list
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct GroupMembersList {
+    user_ids: Vec<Uuid>,
+    version: u64,
+}
+
+#[async_trait]
+impl GroupRepo for RustFsUserRepository {
+    async fn is_member(&self, user_id: Uuid, group_id: Uuid) -> Result<bool, UserRepositoryError> {
+        let user_groups_path = self.path_builder.user_groups_path(user_id);
+        
+        // Get user's groups list
+        let user_groups: UserGroupsList = self
+            .doc_store
+            .get(&user_groups_path)
+            .await
+            .map_err(|e| UserRepositoryError::Storage(e.to_string()))?
+            .map(|(l, _)| l)
+            .unwrap_or_default();
+        
+        Ok(user_groups.group_ids.contains(&group_id))
+    }
+    
+    async fn get_members(&self, group_id: Uuid) -> Result<Vec<Uuid>, UserRepositoryError> {
+        let group_members_path = self.path_builder.group_members_path(group_id);
+        
+        // Get group's member list
+        let members: GroupMembersList = self
+            .doc_store
+            .get(&group_members_path)
+            .await
+            .map_err(|e| UserRepositoryError::Storage(e.to_string()))?
+            .map(|(l, _)| l)
+            .unwrap_or_default();
+        
+        Ok(members.user_ids)
+    }
+    
+    async fn get_user_groups(&self, user_id: Uuid) -> Result<Vec<Uuid>, UserRepositoryError> {
+        let user_groups_path = self.path_builder.user_groups_path(user_id);
+        
+        // Get user's groups list
+        let user_groups: UserGroupsList = self
+            .doc_store
+            .get(&user_groups_path)
+            .await
+            .map_err(|e| UserRepositoryError::Storage(e.to_string()))?
+            .map(|(l, _)| l)
+            .unwrap_or_default();
+        
+        Ok(user_groups.group_ids)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

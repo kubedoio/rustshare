@@ -63,6 +63,19 @@ pub trait UserRepository: Send + Sync {
     async fn count_users(&self) -> Result<usize, UserRepositoryError>;
 }
 
+/// Group repository trait for group membership operations
+#[async_trait]
+pub trait GroupRepo: Send + Sync {
+    /// Check if user is a member of a group
+    async fn is_member(&self, user_id: Uuid, group_id: Uuid) -> Result<bool, UserRepositoryError>;
+    
+    /// Get all members of a group
+    async fn get_members(&self, group_id: Uuid) -> Result<Vec<Uuid>, UserRepositoryError>;
+    
+    /// Get all groups a user is a member of
+    async fn get_user_groups(&self, user_id: Uuid) -> Result<Vec<Uuid>, UserRepositoryError>;
+}
+
 /// Converts between domain User and UserDocument
 pub mod conversions {
     use super::*;
