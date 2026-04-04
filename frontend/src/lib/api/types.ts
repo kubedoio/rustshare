@@ -54,7 +54,7 @@ export interface Share {
 	resource_id: string;
 	resource_type: 'file' | 'folder';
 	resource_name?: string;
-	share_token: string;
+	share_token: string | null;  // null for user/group shares
 	permissions: 'View' | 'Edit' | 'Admin';
 	upload_only: boolean;
 	password_protected: boolean;
@@ -65,6 +65,33 @@ export interface Share {
 	// Share type indicators
 	recipient_user_id?: string | null;
 	recipient_group_id?: string | null;
+}
+
+// Helper type for share classification
+export type ShareType = 'public' | 'user' | 'group';
+
+/**
+ * Get the type of share based on recipient fields
+ */
+export function getShareType(share: Share): ShareType {
+	if (share.recipient_group_id) return 'group';
+	if (share.recipient_user_id) return 'user';
+	return 'public';
+}
+
+/**
+ * Get a human-readable label for the share type
+ */
+export function getShareTypeLabel(share: Share): string {
+	const type = getShareType(share);
+	switch (type) {
+		case 'group':
+			return 'Group Share';
+		case 'user':
+			return 'Shared with User';
+		case 'public':
+			return 'Public Link';
+	}
 }
 
 export interface ShareAccessLogEntry {
