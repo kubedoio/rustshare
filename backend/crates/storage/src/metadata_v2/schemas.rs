@@ -448,12 +448,14 @@ impl ShareDocument {
         resource_type: String,
         resource_id: Uuid,
         permissions: SharePermission,
-        token_hash: String,
+        share_token: String,        // Original token
         password_hash: Option<String>,
         expires_at: Option<DateTime<Utc>>,
         created_by: Uuid,
         tenant_id: Uuid,
     ) -> Self {
+        // Compute hash from the original token for lookups
+        let token_hash = format!("{:x}", md5::compute(&share_token));
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
             id,
@@ -462,7 +464,7 @@ impl ShareDocument {
             scope: ShareScope::Public,
             permissions,
             token_hash: Some(token_hash),
-            share_token: None,
+            share_token: Some(share_token),
             recipient_user_id: None,
             recipient_group_id: None,
             password_hash,
