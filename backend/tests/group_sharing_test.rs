@@ -103,3 +103,110 @@ async fn test_update_group_share_permission() {
     
     assert!(true);
 }
+
+/// Test SQL-based group membership check (the underlying query used by compat layer)
+#[tokio::test]
+async fn test_compat_layer_group_membership_sql() {
+    let pool = test_pool().await;
+    
+    // Create a unique identifier for this test run
+    let test_id = Uuid::new_v4();
+    
+    // Create test tenant
+    let tenant_id = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO tenants (id, name) VALUES ($1, $2) RETURNING id"
+    )
+    .bind(Uuid::new_v4())
+    .bind(format!("Test Tenant {}", test_id))
+    .fetch_one(&pool)
+    .await
+    .expect("Failed to create tenant");
+    
+    // Create test user
+    let user_id = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO users (id, email, password_hash, tenant_id) VALUES ($1, $2, $3, $4) RETURNING id"
+    )
+    .bind(Uuid::new_v4())
+    .bind(format!("test{}@example.com", test_id))
+    .bind("hash")
+    .bind(tenant_id)
+    .fetch_one(&pool)
+    .await
+    .expect("Failed to create user");
+    
+    // Create test group
+    let group_id = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO user_groups (id, name, tenant_id, created_by) VALUES ($1, $2, $3, $4) RETURNING id"
+    )
+    .bind(Uuid::new_v4())
+    .bind(format!("Test Group {}", test_id))
+    .bind(tenant_id)
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .expect("Failed to create group");
+    
+    // Test the SQL query used by compat layer - before adding to group should return false
+    let is_member: bool = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM group_members
+            WHERE group_id = $1 AND user_id = $2
+        )
+        "#,
+    )
+    .bind(group_id)
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .expect("Failed to check membership");
+    
+    assert!(!is_member, "User should not be a member before being added");
+    
+    // Add user to group
+    sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)")
+        .bind(group_id)
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .expect("Failed to add user to group");
+    
+    // Test the SQL query again - after adding to group should return true
+    let is_member: bool = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM group_members
+            WHERE group_id = $1 AND user_id = $2
+        )
+        "#,
+    )
+    .bind(group_id)
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .expect("Failed to check membership");
+    
+    assert!(is_member, "User should be a member after being added");
+    
+    // Cleanup
+    sqlx::query("DELETE FROM group_members WHERE group_id = $1")
+        .bind(group_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM user_groups WHERE id = $1")
+        .bind(group_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM tenants WHERE id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+}

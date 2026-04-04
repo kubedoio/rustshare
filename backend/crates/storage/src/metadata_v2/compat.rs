@@ -318,12 +318,21 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         self.repo.shares().update(&doc).await.map_err(|e| e.into())
     }
 
-    async fn is_user_in_group(&self, _user_id: uuid::Uuid, _group_id: uuid::Uuid) -> anyhow::Result<bool> {
-        // TODO: Implement group membership check in compat layer
-        // The compat layer doesn't currently have access to user group membership data
-        // For now, return false - this means group shares won't work for permission checks
-        // in the compat layer. The main MetadataStore has the proper SQL implementation.
-        Ok(false)
+    async fn is_user_in_group(&self, user_id: uuid::Uuid, group_id: uuid::Uuid) -> anyhow::Result<bool> {
+        let exists = sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM group_members
+                WHERE group_id = $1 AND user_id = $2
+            )
+            "#,
+        )
+        .bind(group_id)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(exists)
     }
 }
 
