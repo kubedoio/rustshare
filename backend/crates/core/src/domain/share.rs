@@ -435,4 +435,116 @@ mod tests {
         let perms = vec![SharePermissions::View, SharePermissions::Edit];
         assert_eq!(SharePermissions::max(&perms), SharePermissions::Edit);
     }
+
+    #[test]
+    fn test_share_type_public() {
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(Uuid::new_v4()),
+            folder_id: None,
+            share_token: Some("token123".to_string()),
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: None,
+            created_by: Uuid::new_v4(),
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        assert_eq!(share.share_type(), ShareType::Public);
+    }
+
+    #[test]
+    fn test_share_type_user() {
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(Uuid::new_v4()),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::Edit,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(Uuid::new_v4()),
+            recipient_group_id: None,
+            created_by: Uuid::new_v4(),
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        assert_eq!(share.share_type(), ShareType::User);
+    }
+
+    #[test]
+    fn test_share_type_group() {
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: None,
+            folder_id: Some(Uuid::new_v4()),
+            share_token: None,
+            permissions: SharePermissions::Admin,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: Some(Uuid::new_v4()),
+            created_by: Uuid::new_v4(),
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        assert_eq!(share.share_type(), ShareType::Group);
+    }
+
+    #[test]
+    fn test_share_type_invalid() {
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(Uuid::new_v4()),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: None,
+            created_by: Uuid::new_v4(),
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        assert_eq!(share.share_type(), ShareType::Invalid);
+    }
+
+    #[test]
+    fn test_share_type_priority() {
+        // If multiple fields are set, share_token takes priority (Public)
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(Uuid::new_v4()),
+            folder_id: None,
+            share_token: Some("token123".to_string()),
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(Uuid::new_v4()), // Also set
+            recipient_group_id: None,
+            created_by: Uuid::new_v4(),
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        // Public takes priority over User
+        assert_eq!(share.share_type(), ShareType::Public);
+    }
 }
