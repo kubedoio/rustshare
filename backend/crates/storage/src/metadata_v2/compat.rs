@@ -509,7 +509,7 @@ fn share_from_document(doc: &ShareDocument) -> Share {
         upload_only: doc.upload_only,
         access_count: doc.access_count,
         recipient_user_id: doc.recipient_user_id,
-        recipient_group_id: None, // Group shares not yet supported in ShareDocument schema
+        recipient_group_id: doc.recipient_group_id,
         created_by: doc.created_by,
         tenant_id: doc.tenant_id,
         created_at: doc.created_at,
