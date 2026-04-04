@@ -2217,6 +2217,24 @@ impl MetadataStore {
 
         Ok(files)
     }
+
+    /// Check if a user is a member of a group.
+    pub async fn is_user_in_group(&self, user_id: Uuid, group_id: Uuid) -> Result<bool> {
+        let exists = sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM user_group_members
+                WHERE group_id = $1 AND user_id = $2
+            )
+            "#,
+        )
+        .bind(group_id)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(exists)
+    }
 }
 
 #[cfg(test)]

@@ -261,6 +261,14 @@ impl ShareMetadataStoreOps for MetadataStore {
     async fn update_share(&self, share: &rustshare_core::domain::Share) -> Result<()> {
         self.update_share(share).await
     }
+
+    async fn is_user_in_group(
+        &self,
+        user_id: rustshare_core::domain::UserId,
+        group_id: uuid::Uuid,
+    ) -> Result<bool> {
+        self.is_user_in_group(user_id, group_id).await
+    }
 }
 
 // ObjectStore implements ObjectStoreOps trait

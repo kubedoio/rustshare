@@ -112,6 +112,9 @@ pub trait MetadataStoreOps: Send + Sync {
 
     /// Update a share.
     async fn update_share(&self, share: &Share) -> Result<()>;
+
+    /// Check if a user is a member of a group.
+    async fn is_user_in_group(&self, user_id: UserId, group_id: uuid::Uuid) -> Result<bool>;
 }
 
 /// Trait for share notification tracking operations needed by ShareService.
@@ -804,9 +807,13 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
         // Non-admins must be group members
         if !has_admin {
-            // This check would need access to group repo - for now, we'll need to add that dependency
-            // For this implementation, we'll skip this check or add a TODO
-            // TODO: Add group repo dependency to verify membership
+            let is_member = self.metadata_store
+                .is_user_in_group(created_by, group_id)
+                .await
+                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            if !is_member {
+                return Err(ShareError::NotGroupMember(group_id));
+            }
         }
 
         // Check for existing group share
@@ -1059,13 +1066,33 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                     .await
                     .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
                 
+                // Check direct user shares
                 let has_direct_share = shares.iter().any(|share| {
                     share.recipient_user_id == Some(user_id)
                         && share.revoked_at.is_none()
                         && share.permissions >= required
                 });
                 
-                Ok(has_direct_share)
+                if has_direct_share {
+                    return Ok(true);
+                }
+                
+                // Check group shares - user must be member of group with sufficient permission
+                for share in &shares {
+                    if share.recipient_group_id.is_some() 
+                        && share.revoked_at.is_none()
+                        && share.permissions >= required {
+                        let is_member = self.metadata_store
+                            .is_user_in_group(user_id, share.recipient_group_id.unwrap())
+                            .await
+                            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+                        if is_member {
+                            return Ok(true);
+                        }
+                    }
+                }
+                
+                Ok(false)
             }
             Resource::Folder(folder_id) => {
                 // Check if user owns the folder
@@ -1085,13 +1112,33 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                     .await
                     .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
                 
+                // Check direct user shares
                 let has_direct_share = shares.iter().any(|share| {
                     share.recipient_user_id == Some(user_id)
                         && share.revoked_at.is_none()
                         && share.permissions >= required
                 });
                 
-                Ok(has_direct_share)
+                if has_direct_share {
+                    return Ok(true);
+                }
+                
+                // Check group shares - user must be member of group with sufficient permission
+                for share in &shares {
+                    if share.recipient_group_id.is_some() 
+                        && share.revoked_at.is_none()
+                        && share.permissions >= required {
+                        let is_member = self.metadata_store
+                            .is_user_in_group(user_id, share.recipient_group_id.unwrap())
+                            .await
+                            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+                        if is_member {
+                            return Ok(true);
+                        }
+                    }
+                }
+                
+                Ok(false)
             }
         }
     }
@@ -1432,6 +1479,12 @@ mod tests {
             } else {
                 Err(anyhow::anyhow!("Share not found"))
             }
+        }
+
+        async fn is_user_in_group(&self, _user_id: UserId, _group_id: Uuid) -> Result<bool> {
+            // Mock implementation - in tests, users are not group members by default
+            // Tests can override this by using a custom mock if needed
+            Ok(false)
         }
     }
 
