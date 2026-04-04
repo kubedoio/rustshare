@@ -91,6 +91,10 @@ path = "../tests/invites_test.rs"
 name = "notes_test"
 path = "../tests/notes_test.rs"
 
+[[test]]
+name = "group_sharing_test"
+path = "../tests/group_sharing_test.rs"
+
 [dev-dependencies]
 tokio-tungstenite = "0.24"
 rustshare-crypto = { path = "../crates/crypto" }
