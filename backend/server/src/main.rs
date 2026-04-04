@@ -37,7 +37,6 @@
 //! - Ensure target group health checks are configured
 //!
 
-mod error_mapping;
 mod handlers;
 mod middleware;
 mod oidc;
