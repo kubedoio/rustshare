@@ -415,6 +415,8 @@ pub struct ShareDocument {
     pub permissions: SharePermission,
     /// Token hash for public shares (None for user shares)
     pub token_hash: Option<String>,
+    /// Original share token (stored for round-trip compatibility)
+    pub share_token: Option<String>,
     /// Recipient user ID for user shares (None for public)
     pub recipient_user_id: Option<Uuid>,
     /// Recipient group ID for group shares (None for public/user)
@@ -460,6 +462,7 @@ impl ShareDocument {
             scope: ShareScope::Public,
             permissions,
             token_hash: Some(token_hash),
+            share_token: None,
             recipient_user_id: None,
             recipient_group_id: None,
             password_hash,
@@ -492,6 +495,7 @@ impl ShareDocument {
             scope: ShareScope::User,
             permissions,
             token_hash: None,
+            share_token: None,
             recipient_user_id: Some(recipient_user_id),
             recipient_group_id: None,
             password_hash: None,

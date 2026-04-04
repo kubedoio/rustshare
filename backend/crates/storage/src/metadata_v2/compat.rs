@@ -491,6 +491,7 @@ fn share_to_document(share: &Share) -> ShareDocument {
         scope,
         permissions,
         token_hash: share.share_token.as_ref().map(|t| format!("{:x}", md5::compute(t))),
+        share_token: share.share_token.clone(), // Store original token
         recipient_user_id: share.recipient_user_id,
         recipient_group_id: share.recipient_group_id,
         password_hash: share.password_hash.clone(),
@@ -524,7 +525,7 @@ fn share_from_document(doc: &ShareDocument) -> Share {
         id: doc.id,
         file_id,
         folder_id,
-        share_token: doc.token_hash.clone(), // Note: this is the hash, not the original token
+        share_token: doc.share_token.clone(), // Use original token
         permissions,
         password_hash: doc.password_hash.clone(),
         expires_at: doc.expires_at,
