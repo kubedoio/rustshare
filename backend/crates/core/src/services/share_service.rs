@@ -864,6 +864,154 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps> ShareService<E, M, J> {
         Ok(share)
     }
 
+    /// Revoke a group share
+    /// 
+    /// # Arguments
+    /// * `share_id` - ID of the share to revoke
+    /// * `requesting_user` - User attempting to revoke
+    /// 
+    /// # Errors
+    /// * NotFoundById - if share doesn't exist
+    /// * InvalidState - if not a group share
+    /// * InsufficientPermission - if user doesn't have admin on resource
+    pub async fn revoke_group_share(
+        &self,
+        share_id: uuid::Uuid,
+        requesting_user: UserId,
+    ) -> Result<(), ShareError> {
+        // Get the share
+        let share = self.metadata_store
+            .get_share_by_id(share_id)
+            .await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .ok_or(ShareError::NotFoundById(share_id))?;
+        
+        // Verify it's a group share
+        if share.recipient_group_id.is_none() {
+            return Err(ShareError::InvalidState("Not a group share".to_string()));
+        }
+        
+        // Determine resource for permission check
+        let resource = if let Some(file_id) = share.file_id {
+            Resource::File(file_id)
+        } else if let Some(folder_id) = share.folder_id {
+            Resource::Folder(folder_id)
+        } else {
+            return Err(ShareError::InvalidState("Share has no resource".to_string()));
+        };
+        
+        // Check admin permission
+        let has_admin = self.check_resource_permission(requesting_user, resource, SharePermissions::Admin).await?;
+        if !has_admin && share.created_by != requesting_user {
+            return Err(ShareError::InsufficientPermission {
+                required: SharePermissions::Admin,
+                actual: SharePermissions::View,
+            });
+        }
+        
+        // Revoke the share
+        self.metadata_store.revoke_share(share_id).await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+        
+        // Emit event
+        let payload = ShareRevokedPayload {
+            share_id,
+            file_id: share.resource_id().unwrap_or(share_id),
+            revoked_by: requesting_user,
+        };
+        
+        let event = Event::new(
+            EventType::ShareRevoked,
+            share_id,
+            AggregateType::Share,
+            serde_json::to_value(&payload)
+                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?,
+            requesting_user,
+        );
+        
+        self.event_store.append(&event, &self.broadcaster).await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+        
+        Ok(())
+    }
+
+    /// Update group share permission
+    /// 
+    /// # Arguments
+    /// * `share_id` - ID of the share to update
+    /// * `new_permission` - New permission level
+    /// * `requesting_user` - User attempting to update
+    /// 
+    /// # Errors
+    /// * NotFoundById - if share doesn't exist
+    /// * InvalidState - if not a group share
+    /// * InsufficientPermission - if user doesn't have admin on resource
+    pub async fn update_group_share_permission(
+        &self,
+        share_id: uuid::Uuid,
+        new_permission: SharePermissions,
+        requesting_user: UserId,
+    ) -> Result<Share, ShareError> {
+        // Get the share
+        let mut share = self.metadata_store
+            .get_share_by_id(share_id)
+            .await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .ok_or(ShareError::NotFoundById(share_id))?;
+        
+        // Verify it's a group share
+        if share.recipient_group_id.is_none() {
+            return Err(ShareError::InvalidState("Not a group share".to_string()));
+        }
+        
+        // Determine resource for permission check
+        let resource = if let Some(file_id) = share.file_id {
+            Resource::File(file_id)
+        } else if let Some(folder_id) = share.folder_id {
+            Resource::Folder(folder_id)
+        } else {
+            return Err(ShareError::InvalidState("Share has no resource".to_string()));
+        };
+        
+        // Check admin permission
+        let has_admin = self.check_resource_permission(requesting_user, resource, SharePermissions::Admin).await?;
+        if !has_admin && share.created_by != requesting_user {
+            return Err(ShareError::InsufficientPermission {
+                required: SharePermissions::Admin,
+                actual: SharePermissions::View,
+            });
+        }
+        
+        // Update permission
+        share.permissions = new_permission;
+        self.metadata_store.update_share(&share).await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+        
+        // Emit event
+        let payload = ShareUpdatedPayload {
+            share_id,
+            file_id: share.resource_id().unwrap_or(share_id),
+            password_changed: false,
+            expires_at_changed: false,
+            new_expires_at: None,
+            updated_by: requesting_user,
+        };
+        
+        let event = Event::new(
+            EventType::ShareUpdated,
+            share_id,
+            AggregateType::Share,
+            serde_json::to_value(&payload)
+                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?,
+            requesting_user,
+        );
+        
+        self.event_store.append(&event, &self.broadcaster).await
+            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+        
+        Ok(share)
+    }
+
     /// Check if user has specific permission on resource
     async fn check_resource_permission(
         &self,
