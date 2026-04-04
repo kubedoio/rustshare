@@ -1,3 +1,14 @@
+//! DEPRECATED: Use ShareService instead
+//! 
+//! This module is being phased out in favor of the unified ShareService.
+//! New code should use ShareService for all share operations.
+//! 
+//! Migration guide:
+//! - `user_share_service.create_file_share(file_id, email, perm, user)` 
+//!   → `share_service.create_user_share(Resource::File(file_id), email, perm, user)`
+//! - `user_share_service.create_folder_share(folder_id, email, perm, user)`
+//!   → `share_service.create_user_share(Resource::Folder(folder_id), email, perm, user)`
+
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::{error, warn};
@@ -75,6 +86,8 @@ pub trait FolderOps: Send + Sync {
     async fn get_by_id(&self, folder_id: FolderId) -> Result<Option<Folder>, sqlx::Error>;
 }
 
+/// DEPRECATED: Use ShareService instead
+#[deprecated(since = "0.2.0", note = "Use ShareService instead. See module documentation for migration guide.")]
 pub struct UserShareService<SR, UR, FR, DR, P, N, E>
 where
     SR: ShareOps,
@@ -138,6 +151,8 @@ where
         format!("/shared-with-me/{resource_path}/{resource_id}")
     }
 
+    /// DEPRECATED: Use ShareService::new instead
+    #[deprecated(since = "0.2.0", note = "Use ShareService::new instead")]
     pub fn new(deps: UserShareServiceDeps<SR, UR, FR, DR, P, N, E>) -> Self {
         Self {
             share_repo: deps.share_repo,
@@ -202,6 +217,8 @@ where
         }
     }
 
+    /// DEPRECATED: Use ShareService::create_user_share with Resource::File instead
+    #[deprecated(since = "0.2.0", note = "Use ShareService::create_user_share with Resource::File instead")]
     /// Create a share for a file with a specific user.
     pub async fn create_file_share(
         &self,
@@ -310,6 +327,8 @@ where
         Ok(share)
     }
 
+    /// DEPRECATED: Use ShareService::create_user_share with Resource::Folder instead
+    #[deprecated(since = "0.2.0", note = "Use ShareService::create_user_share with Resource::Folder instead")]
     /// Create a share for a folder with a specific user.
     pub async fn create_folder_share(
         &self,
@@ -418,6 +437,8 @@ where
         Ok(share)
     }
 
+    /// DEPRECATED: Use ShareService::list_received_shares instead
+    #[deprecated(since = "0.2.0", note = "Use ShareService::list_received_shares instead")]
     /// List shares received by a user.
     pub async fn list_received_shares(
         &self,
@@ -432,6 +453,8 @@ where
         Ok(shares)
     }
 
+    /// DEPRECATED: Use ShareService::list_recipients instead
+    #[deprecated(since = "0.2.0", note = "Use ShareService::list_recipients instead")]
     /// List recipients of a shared resource (Admin permission required).
     pub async fn list_recipients(
         &self,
@@ -494,6 +517,8 @@ where
         Ok(recipients)
     }
 
+    /// DEPRECATED: Use ShareService::update_recipient_permission instead
+    #[deprecated(since = "0.2.0", note = "Use ShareService::update_recipient_permission instead")]
     /// Update recipient permission (Admin permission required).
     pub async fn update_recipient_permission(
         &self,
@@ -598,6 +623,8 @@ where
         Ok(updated_share)
     }
 
+    /// DEPRECATED: Use ShareService::remove_recipient instead
+    #[deprecated(since = "0.2.0", note = "Use ShareService::remove_recipient instead")]
     /// Remove a recipient from a share (Admin permission required).
     pub async fn remove_recipient(
         &self,
