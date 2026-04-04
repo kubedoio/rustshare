@@ -62,6 +62,9 @@ export interface Share {
 	expires_at: string | null;
 	created_at: string;
 	created_by?: string;
+	// Share type indicators
+	recipient_user_id?: string | null;
+	recipient_group_id?: string | null;
 }
 
 export interface ShareAccessLogEntry {
