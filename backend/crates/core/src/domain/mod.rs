@@ -7,6 +7,7 @@ mod oidc_login_state;
 mod replication;
 mod response_types;
 mod share;
+mod tenant_config;
 mod thumbnail;
 mod user;
 mod user_session;
@@ -23,6 +24,7 @@ pub use replication::{
 };
 pub use response_types::{FolderContents, FolderTree};
 pub use share::{Share, SharePermissions, ShareRecipient};
+pub use tenant_config::RecipientVisibility;
 pub use thumbnail::{
     FileThumbnail, ThumbnailCategory, ThumbnailSize, 
     SUPPORTED_DIAGRAM_EXTENSIONS, SUPPORTED_IMAGE_TYPES, SUPPORTED_PDF_TYPES, SUPPORTED_VIDEO_TYPES,
