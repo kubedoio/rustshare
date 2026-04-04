@@ -48,6 +48,15 @@ impl Ord for SharePermissions {
     }
 }
 
+/// Type of share (determined by which fields are set)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShareType {
+    Public,  // share_token is Some
+    User,    // recipient_user_id is Some
+    Group,   // recipient_group_id is Some
+    Invalid, // none of the above (should not happen)
+}
+
 /// A share link that allows access to a file or folder.
 ///
 /// Supports both public shares (anonymous access via token), user shares
@@ -178,6 +187,19 @@ impl Share {
     /// Checks if the share link is password-protected (public shares only).
     pub fn is_password_protected(&self) -> bool {
         self.password_hash.is_some()
+    }
+
+    /// Determine the type of share based on populated fields
+    pub fn share_type(&self) -> ShareType {
+        if self.share_token.is_some() {
+            ShareType::Public
+        } else if self.recipient_user_id.is_some() {
+            ShareType::User
+        } else if self.recipient_group_id.is_some() {
+            ShareType::Group
+        } else {
+            ShareType::Invalid
+        }
     }
 }
 
