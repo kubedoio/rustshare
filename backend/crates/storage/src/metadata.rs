@@ -1781,8 +1781,8 @@ impl MetadataStore {
     pub async fn create_share(&self, share: &Share) -> Result<()> {
         sqlx::query(
             r#"
-            INSERT INTO shares (id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, tenant_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            INSERT INTO shares (id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
         )
         .bind(share.id)
@@ -1790,6 +1790,7 @@ impl MetadataStore {
         .bind(share.folder_id)
         .bind(&share.share_token)
         .bind(share.recipient_user_id)
+        .bind(share.recipient_group_id)
         .bind(share.created_by)
         .bind(Self::permission_to_db_value(share.permissions))
         .bind(&share.password_hash)
