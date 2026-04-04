@@ -105,23 +105,23 @@
 
 <div class="mx-auto max-w-6xl space-y-8 p-4 lg:p-8">
 	<!-- Hero Header -->
-	<header class="relative overflow-hidden rounded-[2.5rem] border border-base-300/70 bg-gradient-to-br from-base-100 via-base-100 to-base-200/80 shadow-panel p-8 lg:p-12">
+	<header class="relative overflow-hidden rounded-[1.5rem] border border-base-300/70 bg-gradient-to-br from-base-100 via-base-100 to-base-200/80 shadow-panel p-6 lg:p-8">
 		<div class="relative z-10 max-w-2xl">
-			<div class="rs-kicker mb-6 inline-flex items-center gap-2 rounded-full bg-brand-500/10 px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-brand-600 border border-brand-500/20">
+			<div class="rs-kicker mb-4 inline-flex items-center gap-2 rounded-full bg-brand-500/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-brand-600 border border-brand-500/20">
 				<Users class="h-3.5 w-3.5" />
 				Collaboration Hub
 			</div>
-			<h1 class="font-display text-4xl leading-[1.1] tracking-tight text-base-content lg:text-6xl">
+			<h1 class="font-display text-2xl leading-[1.2] tracking-tight text-base-content lg:text-3xl">
 				Manage access with <span class="text-brand-500">absolute</span> clarity
 			</h1>
-			<p class="mt-6 text-base leading-relaxed text-base-content/60 lg:text-lg">
+			<p class="mt-4 text-sm leading-relaxed text-base-content/60 lg:text-base">
 				Whether it's files shared with you or links you've sent out, track every permission and revoke access in a single click.
 			</p>
 		</div>
 
 		<!-- Decorative elements -->
-		<div class="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-brand-500/5 blur-3xl"></div>
-		<div class="absolute -bottom-20 left-1/2 h-96 w-96 rounded-full bg-brand-500/5 blur-3xl"></div>
+		<div class="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-brand-500/5 blur-3xl"></div>
+		<div class="absolute -bottom-10 left-1/2 h-48 w-48 rounded-full bg-brand-500/5 blur-3xl"></div>
 	</header>
 
 	<!-- Main Content Section -->
@@ -172,28 +172,28 @@
 					<span class="loading loading-spinner loading-lg text-brand-500"></span>
 				</div>
 			{:else if filteredReceived.length === 0}
-				<div class="flex flex-col items-center justify-center rounded-[2.5rem] border border-dashed border-base-300 bg-base-100/50 py-20 text-center">
-					<div class="mb-6 rounded-3xl bg-brand-500/5 p-6 text-brand-500">
-						<Users class="h-12 w-12 opacity-50" />
+				<div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-base-300 bg-base-100/50 py-16 text-center">
+					<div class="mb-4 rounded-2xl bg-brand-500/5 p-4 text-brand-500">
+						<Users class="h-8 w-8 opacity-50" />
 					</div>
-					<h3 class="font-display text-2xl text-base-content">Nothing shared with you yet</h3>
-					<p class="mt-2 max-w-xs text-base-content/50">Items shared directly with you by other users will appear here.</p>
+					<h3 class="font-display text-lg text-base-content">Nothing shared with you yet</h3>
+					<p class="mt-2 max-w-xs text-sm text-base-content/50">Items shared directly with you by other users will appear here.</p>
 				</div>
 			{:else}
 				<div class="grid gap-4">
 					{#each filteredReceived as share}
-						<div class="group relative rounded-[2rem] border border-base-300/70 bg-base-100 p-5 transition-all duration-300 hover:border-brand-500/20 hover:shadow-panel hover:shadow-brand-500/5">
-							<div class="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
-								<div class="flex items-center gap-5">
-									<div class="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-base-200/50 text-brand-500 transition-colors group-hover:bg-brand-500/10">
+						<div class="group relative rounded-xl border border-base-300/70 bg-base-100 p-4 transition-all duration-300 hover:border-brand-500/20 hover:shadow-panel hover:shadow-brand-500/5">
+							<div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+								<div class="flex items-center gap-4">
+									<div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-base-200/50 text-brand-500 transition-colors group-hover:bg-brand-500/10">
 										{#if share.resource_type === 'folder'}
-											<FolderOpen class="h-7 w-7" />
+											<FolderOpen class="h-5 w-5" />
 										{:else}
-											<FileText class="h-7 w-7" />
+											<FileText class="h-5 w-5" />
 										{/if}
 									</div>
 									<div class="min-w-0">
-										<h3 class="truncate font-display text-xl font-semibold text-base-content group-hover:text-brand-600 transition-colors">
+										<h3 class="truncate font-display text-base font-semibold text-base-content group-hover:text-brand-600 transition-colors">
 											{share.resource_name}
 										</h3>
 										<div class="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-base-content/50">
@@ -213,10 +213,10 @@
 								</div>
 								<div class="flex shrink-0 items-center gap-3">
 									<button 
-										class="flex h-11 items-center gap-2 rounded-xl bg-brand-500 px-6 text-sm font-bold text-white shadow-lg shadow-brand-500/20 transition-all hover:bg-brand-600 hover:translate-y-[-1px] active:translate-y-[1px]"
+										class="flex h-9 items-center gap-2 rounded-lg bg-brand-500 px-4 text-sm font-semibold text-white shadow-md shadow-brand-500/20 transition-all hover:bg-brand-600"
 										on:click={() => openSharedResource(share.resource_type, share.resource_id)}
 									>
-										Open Resource
+										Open
 										<ArrowRight class="h-4 w-4" />
 									</button>
 								</div>
@@ -232,35 +232,35 @@
 					<span class="loading loading-spinner loading-lg text-brand-500"></span>
 				</div>
 			{:else if filteredCreated.length === 0}
-				<div class="flex flex-col items-center justify-center rounded-[2.5rem] border border-dashed border-base-300 bg-base-100/50 py-20 text-center">
-					<div class="mb-6 rounded-3xl bg-brand-500/5 p-6 text-brand-500">
-						<Link2 class="h-12 w-12 opacity-50" />
+				<div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-base-300 bg-base-100/50 py-16 text-center">
+					<div class="mb-4 rounded-2xl bg-brand-500/5 p-4 text-brand-500">
+						<Link2 class="h-8 w-8 opacity-50" />
 					</div>
-					<h3 class="font-display text-2xl text-base-content">No active shares found</h3>
-					<p class="mt-2 max-w-xs text-base-content/50">Share your files or folders to see them listed and managed here.</p>
+					<h3 class="font-display text-lg text-base-content">No active shares found</h3>
+					<p class="mt-2 max-w-xs text-sm text-base-content/50">Share your files or folders to see them listed and managed here.</p>
 					<button 
-						class="mt-6 flex items-center gap-2 rounded-xl bg-brand-500 px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-brand-500/20 hover:bg-brand-600 transition-all"
+						class="mt-4 flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-brand-500/20 hover:bg-brand-600 transition-all"
 						on:click={() => goto('/files')}
 					>
-						Browse My Files
+						Browse Files
 					</button>
 				</div>
 			{:else}
 				<div class="grid gap-4">
 					{#each filteredCreated as share}
-						<div class="group relative rounded-[2rem] border border-base-300/70 bg-base-100 p-5 transition-all duration-300 hover:border-brand-500/20 hover:shadow-panel hover:shadow-brand-500/5">
-							<div class="flex flex-col gap-6 lg:flex-row lg:items-center">
-								<div class="flex flex-1 items-center gap-5">
-									<div class="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-base-200/50 text-brand-500 transition-colors group-hover:bg-brand-500/10">
+						<div class="group relative rounded-xl border border-base-300/70 bg-base-100 p-4 transition-all duration-300 hover:border-brand-500/20 hover:shadow-panel hover:shadow-brand-500/5">
+							<div class="flex flex-col gap-4 lg:flex-row lg:items-center">
+								<div class="flex flex-1 items-center gap-4">
+									<div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-base-200/50 text-brand-500 transition-colors group-hover:bg-brand-500/10">
 										{#if share.resource_type === 'folder'}
-											<FolderOpen class="h-7 w-7" />
+											<FolderOpen class="h-5 w-5" />
 										{:else}
-											<FileText class="h-7 w-7" />
+											<FileText class="h-5 w-5" />
 										{/if}
 									</div>
 									<div class="min-w-0 flex-1">
 										<div class="flex items-center gap-3">
-											<h3 class="truncate font-display text-xl font-semibold text-base-content group-hover:text-brand-600 transition-colors">
+											<h3 class="truncate font-display text-base font-semibold text-base-content group-hover:text-brand-600 transition-colors">
 												{share.resource_name}
 											</h3>
 											{#if isExpired(share.expires_at)}
