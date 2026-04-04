@@ -1048,6 +1048,14 @@ async fn main() -> Result<()> {
             "/api/v1/folders/{id}/share/groups",
             get(handlers::list_folder_group_shares),
         )
+        .route(
+            "/api/v1/shares/{id}/group",
+            delete(handlers::revoke_group_share),
+        )
+        .route(
+            "/api/v1/shares/{id}/group/permission",
+            put(handlers::update_group_share_permission),
+        )
         .route("/api/v1/notifications", get(handlers::list_notifications))
         .route(
             "/api/v1/notifications/unread-count",

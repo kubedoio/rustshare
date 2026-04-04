@@ -76,7 +76,7 @@ pub use users::{
 };
 pub use groups::{
     list_my_groups, get_my_group, create_file_group_share, create_folder_group_share,
-    list_file_group_shares, list_folder_group_shares,
+    list_file_group_shares, list_folder_group_shares, revoke_group_share, update_group_share_permission,
 };
 pub use invites::{create_invite, get_invite, accept_invite};
 pub use notes::{
