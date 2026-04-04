@@ -235,12 +235,14 @@ pub struct OwnedShareResponse {
     pub resource_id: uuid::Uuid,
     pub resource_type: String,
     pub resource_name: String,
-    pub share_token: String,
+    pub share_token: Option<String>,
     pub permissions: SharePermissions,
     pub password_protected: bool,
     pub access_count: i32,
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub recipient_user_id: Option<uuid::Uuid>,
+    pub recipient_group_id: Option<uuid::Uuid>,
 }
 
 #[derive(Deserialize)]
@@ -267,7 +269,7 @@ pub async fn list_user_shares(
 ) -> Result<Json<Vec<OwnedShareResponse>>, (StatusCode, String)> {
     let shares = state
         .metadata_store
-        .get_user_public_shares(user_id)
+        .get_user_all_shares(user_id)
         .await
         .map_err(|error| {
             (
@@ -278,22 +280,23 @@ pub async fn list_user_shares(
 
     let response = shares
         .into_iter()
-        .filter_map(|entry| {
+        .map(|entry| {
             let share = entry.share;
-            let share_token = share.share_token?;
 
-            Some(OwnedShareResponse {
+            OwnedShareResponse {
                 id: share.id,
                 resource_id: entry.resource_id,
                 resource_type: entry.resource_type,
                 resource_name: entry.resource_name,
-                share_token,
+                share_token: share.share_token,
                 permissions: share.permissions,
                 password_protected: share.password_hash.is_some(),
                 access_count: share.access_count,
                 expires_at: share.expires_at,
                 created_at: share.created_at,
-            })
+                recipient_user_id: share.recipient_user_id,
+                recipient_group_id: share.recipient_group_id,
+            }
         })
         .collect();
 
