@@ -95,7 +95,7 @@ impl ShareRepository {
                    expires_at, upload_only, access_count, recipient_user_id, recipient_group_id, created_by,
                    created_at, revoked_at, tenant_id
             FROM shares
-            WHERE recipient_user_id = $1
+            WHERE (recipient_user_id = $1 OR recipient_group_id IN (SELECT group_id FROM group_members WHERE user_id = $1))
               AND revoked_at IS NULL
             ORDER BY created_at DESC
             LIMIT $2 OFFSET $3
@@ -145,6 +145,7 @@ impl ShareRepository {
         recipient_user_id: UserId,
         permissions: SharePermissions,
         created_by: UserId,
+        tenant_id: Uuid,
     ) -> Result<Share, sqlx::Error> {
         let id = Uuid::new_v4();
         let created_at = Utc::now();
@@ -156,7 +157,7 @@ impl ShareRepository {
                 password_hash, expires_at, upload_only, access_count,
                 recipient_user_id, recipient_group_id, created_by, created_at, revoked_at, tenant_id
             )
-            VALUES ($1, $2, $3, NULL, $4, NULL, NULL, FALSE, 0, $5, NULL, $6, $7, NULL, '00000000-0000-0000-0000-000000000000')
+            VALUES ($1, $2, $3, NULL, $4, NULL, NULL, FALSE, 0, $5, NULL, $6, $7, NULL, $8)
             RETURNING id, file_id, folder_id, share_token, permissions, password_hash,
                       expires_at, upload_only, access_count, recipient_user_id, recipient_group_id, created_by,
                       created_at, revoked_at, tenant_id
@@ -169,6 +170,7 @@ impl ShareRepository {
         .bind(recipient_user_id)
         .bind(created_by)
         .bind(created_at)
+        .bind(tenant_id)
         .fetch_one(&self.pool)
         .await?;
 
@@ -267,6 +269,7 @@ impl rustshare_core::services::ShareOps for ShareRepository {
         recipient_user_id: rustshare_core::domain::UserId,
         permissions: rustshare_core::domain::SharePermissions,
         created_by: rustshare_core::domain::UserId,
+        tenant_id: Uuid,
     ) -> Result<rustshare_core::domain::Share, sqlx::Error> {
         self.create_user_share(
             file_id,
@@ -274,6 +277,7 @@ impl rustshare_core::services::ShareOps for ShareRepository {
             recipient_user_id,
             permissions,
             created_by,
+            tenant_id,
         )
         .await
     }

@@ -41,6 +41,7 @@ pub trait ShareOps: Send + Sync {
         recipient_user_id: UserId,
         permissions: SharePermissions,
         created_by: UserId,
+        tenant_id: uuid::Uuid,
     ) -> Result<Share, sqlx::Error>;
 
     async fn update_share_permission(
@@ -299,7 +300,14 @@ where
         // Create new share
         let share = self
             .share_repo
-            .create_user_share(Some(file_id), None, recipient.id, permission, created_by)
+            .create_user_share(
+                Some(file_id),
+                None,
+                recipient.id,
+                permission,
+                created_by,
+                creator_tenant_id.unwrap_or_else(|| uuid::Uuid::nil()),
+            )
             .await
             .map_err(|error| {
                 error!(
@@ -421,7 +429,14 @@ where
         // Create new share
         let share = self
             .share_repo
-            .create_user_share(None, Some(folder_id), recipient.id, permission, created_by)
+            .create_user_share(
+                None,
+                Some(folder_id),
+                recipient.id,
+                permission,
+                created_by,
+                creator_tenant_id.unwrap_or_else(|| uuid::Uuid::nil()),
+            )
             .await
             .map_err(|error| {
                 error!(
