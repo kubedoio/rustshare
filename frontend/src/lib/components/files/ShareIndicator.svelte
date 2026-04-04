@@ -57,12 +57,10 @@
 </script>
 
 {#if isShared}
-	<div class="tooltip tooltip-bottom" data-tip={getTooltipText()}>
-		<div class="relative inline-flex items-center justify-center">
-			<!-- Pulsing animation ring -->
-			<span class="absolute inline-flex h-full w-full animate-ping rounded-full opacity-20 {getDotColor()}"></span>
-			<!-- Solid dot -->
-			<span class="relative inline-flex rounded-full {sizeClasses[size]} {getDotColor()}"></span>
-		</div>
-	</div>
+	<span 
+		class="inline-flex items-center px-1 py-0 rounded text-[10px] font-medium bg-success/10 text-success border border-success/20 tracking-tight"
+		title={getTooltipText()}
+	>
+		[shared]
+	</span>
 {/if}
