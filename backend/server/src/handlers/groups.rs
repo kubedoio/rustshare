@@ -257,7 +257,6 @@ pub async fn create_file_group_share(
 ) -> Result<(StatusCode, Json<GroupShareResponse>), (StatusCode, Json<serde_json::Value>)> {
     use rustshare_core::domain::SharePermissions;
     use rustshare_core::services::Resource;
-    use rustshare_core::services::ShareError;
 
     // Parse permission
     let permission = match req.permission.as_str() {
@@ -284,44 +283,7 @@ pub async fn create_file_group_share(
         .await
         .map_err(|e| {
             tracing::error!("Failed to create group share: {}", e);
-            match e {
-                ShareError::FileNotFound(_) => (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({ "error": "File not found" })),
-                ),
-                ShareError::FileNotFound(_) => (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({ "error": "File not found" })),
-                ),
-                ShareError::FolderNotFound(_) => (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({ "error": "Folder not found" })),
-                ),
-                ShareError::GroupNotFound(_) => (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({ "error": "Group not found" })),
-                ),
-                ShareError::CrossTenantSharingNotAllowed => (
-                    StatusCode::FORBIDDEN,
-                    Json(serde_json::json!({ "error": "Cross-tenant sharing not allowed" })),
-                ),
-                ShareError::NotGroupMember(_) => (
-                    StatusCode::FORBIDDEN,
-                    Json(serde_json::json!({ "error": "You must be a group member to share" })),
-                ),
-                ShareError::GroupShareAlreadyExists => (
-                    StatusCode::CONFLICT,
-                    Json(serde_json::json!({ "error": "Group already has access" })),
-                ),
-                ShareError::InsufficientPermission { .. } => (
-                    StatusCode::FORBIDDEN,
-                    Json(serde_json::json!({ "error": "Admin permission required" })),
-                ),
-                _ => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": "Failed to create share" })),
-                ),
-            }
+            crate::error_mapping::share_error_to_response(e)
         })?;
 
     // Get group name for response
@@ -357,7 +319,6 @@ pub async fn create_folder_group_share(
 ) -> Result<(StatusCode, Json<GroupShareResponse>), (StatusCode, Json<serde_json::Value>)> {
     use rustshare_core::domain::SharePermissions;
     use rustshare_core::services::Resource;
-    use rustshare_core::services::ShareError;
 
     // Parse permission
     let permission = match req.permission.as_str() {
@@ -384,36 +345,7 @@ pub async fn create_folder_group_share(
         .await
         .map_err(|e| {
             tracing::error!("Failed to create group share: {}", e);
-            match e {
-                ShareError::FolderNotFound(_) => (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({ "error": "Folder not found" })),
-                ),
-                ShareError::GroupNotFound(_) => (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({ "error": "Group not found" })),
-                ),
-                ShareError::CrossTenantSharingNotAllowed => (
-                    StatusCode::FORBIDDEN,
-                    Json(serde_json::json!({ "error": "Cross-tenant sharing not allowed" })),
-                ),
-                ShareError::NotGroupMember(_) => (
-                    StatusCode::FORBIDDEN,
-                    Json(serde_json::json!({ "error": "You must be a group member to share" })),
-                ),
-                ShareError::GroupShareAlreadyExists => (
-                    StatusCode::CONFLICT,
-                    Json(serde_json::json!({ "error": "Group already has access" })),
-                ),
-                ShareError::InsufficientPermission { .. } => (
-                    StatusCode::FORBIDDEN,
-                    Json(serde_json::json!({ "error": "Admin permission required" })),
-                ),
-                _ => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": "Failed to create share" })),
-                ),
-            }
+            crate::error_mapping::share_error_to_response(e)
         })?;
 
     // Get group name for response
@@ -446,31 +378,12 @@ pub async fn revoke_group_share(
     auth: AuthenticatedUser,
     Path(share_id): Path<Uuid>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    use rustshare_core::services::ShareError;
-
     state.share_service
         .revoke_group_share(share_id, auth.user_id)
         .await
         .map_err(|e| {
             tracing::error!("Failed to revoke group share: {}", e);
-            match e {
-                ShareError::ShareNotFound(_) => (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({ "error": "Share not found" })),
-                ),
-                ShareError::InvalidState(_) => (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({ "error": "Not a group share" })),
-                ),
-                ShareError::InsufficientPermission { .. } => (
-                    StatusCode::FORBIDDEN,
-                    Json(serde_json::json!({ "error": "Admin permission required" })),
-                ),
-                _ => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": "Failed to revoke share" })),
-                ),
-            }
+            crate::error_mapping::share_error_to_response(e)
         })?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -486,7 +399,6 @@ pub async fn update_group_share_permission(
     Json(req): Json<UpdateGroupShareRequest>,
 ) -> Result<Json<GroupShareResponse>, (StatusCode, Json<serde_json::Value>)> {
     use rustshare_core::domain::SharePermissions;
-    use rustshare_core::services::ShareError;
 
     let permission = match req.permission.as_str() {
         "View" => SharePermissions::View,
@@ -505,24 +417,7 @@ pub async fn update_group_share_permission(
         .await
         .map_err(|e| {
             tracing::error!("Failed to update group share: {}", e);
-            match e {
-                ShareError::ShareNotFound(_) => (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({ "error": "Share not found" })),
-                ),
-                ShareError::InvalidState(_) => (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({ "error": "Not a group share" })),
-                ),
-                ShareError::InsufficientPermission { .. } => (
-                    StatusCode::FORBIDDEN,
-                    Json(serde_json::json!({ "error": "Admin permission required" })),
-                ),
-                _ => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": "Failed to update share" })),
-                ),
-            }
+            crate::error_mapping::share_error_to_response(e)
         })?;
 
     // Get group name
