@@ -310,16 +310,19 @@ pub async fn revoke_share(
         .revoke_share(share_id, user_id)
         .await
         .map_err(|error| match error {
-            rustshare_core::services::ShareError::NotFound => {
+            rustshare_core::services::ShareError::ShareNotFound(_) => {
                 (StatusCode::NOT_FOUND, error.to_string())
             }
-            rustshare_core::services::ShareError::NotFoundById(_) => {
+            rustshare_core::services::ShareError::ShareNotFoundByToken(_) => {
                 (StatusCode::NOT_FOUND, error.to_string())
             }
             rustshare_core::services::ShareError::PermissionDenied { .. } => {
                 (StatusCode::FORBIDDEN, error.to_string())
             }
             rustshare_core::services::ShareError::FileNotFound(_) => {
+                (StatusCode::NOT_FOUND, error.to_string())
+            }
+            rustshare_core::services::ShareError::FolderNotFound(_) => {
                 (StatusCode::NOT_FOUND, error.to_string())
             }
             rustshare_core::services::ShareError::Revoked => (StatusCode::GONE, error.to_string()),
@@ -424,7 +427,8 @@ mod tests {
     #[test]
     fn test_share_error_response_mappings() {
         // Test that error mappings are correct
-        let response = share_error_response(ShareError::NotFound);
+        let share_id = Uuid::new_v4();
+        let response = share_error_response(ShareError::ShareNotFound(share_id));
         // Response is created - just verify it compiles
         drop(response);
 

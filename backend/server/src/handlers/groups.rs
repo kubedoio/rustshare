@@ -289,9 +289,13 @@ pub async fn create_file_group_share(
                     StatusCode::NOT_FOUND,
                     Json(serde_json::json!({ "error": "File not found" })),
                 ),
-                ShareError::NotFoundById(_) => (
+                ShareError::FileNotFound(_) => (
                     StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({ "error": "Resource not found" })),
+                    Json(serde_json::json!({ "error": "File not found" })),
+                ),
+                ShareError::FolderNotFound(_) => (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({ "error": "Folder not found" })),
                 ),
                 ShareError::GroupNotFound(_) => (
                     StatusCode::NOT_FOUND,
@@ -381,7 +385,7 @@ pub async fn create_folder_group_share(
         .map_err(|e| {
             tracing::error!("Failed to create group share: {}", e);
             match e {
-                ShareError::NotFoundById(_) => (
+                ShareError::FolderNotFound(_) => (
                     StatusCode::NOT_FOUND,
                     Json(serde_json::json!({ "error": "Folder not found" })),
                 ),
@@ -450,7 +454,7 @@ pub async fn revoke_group_share(
         .map_err(|e| {
             tracing::error!("Failed to revoke group share: {}", e);
             match e {
-                ShareError::NotFoundById(_) => (
+                ShareError::ShareNotFound(_) => (
                     StatusCode::NOT_FOUND,
                     Json(serde_json::json!({ "error": "Share not found" })),
                 ),
@@ -502,7 +506,7 @@ pub async fn update_group_share_permission(
         .map_err(|e| {
             tracing::error!("Failed to update group share: {}", e);
             match e {
-                ShareError::NotFoundById(_) => (
+                ShareError::ShareNotFound(_) => (
                     StatusCode::NOT_FOUND,
                     Json(serde_json::json!({ "error": "Share not found" })),
                 ),

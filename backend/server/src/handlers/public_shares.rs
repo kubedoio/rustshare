@@ -280,7 +280,7 @@ pub async fn download_shared_file(
                 .into_response()
         })?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::NotFound)
+            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(token.clone()))
         })?;
 
     // Verify JWT share_id matches the share we're accessing
@@ -389,7 +389,7 @@ pub async fn get_shared_folder_contents(
                 .into_response()
         })?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::NotFound)
+            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(token.clone()))
         })?;
 
     ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
@@ -456,7 +456,7 @@ pub async fn download_shared_folder_file(
                 .into_response()
         })?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::NotFound)
+            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(token.clone()))
         })?;
 
     ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
@@ -589,7 +589,7 @@ pub async fn upload_shared_folder_file(
                 .into_response()
         })?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::NotFound)
+            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(token.clone()))
         })?;
 
     ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
@@ -625,7 +625,7 @@ pub async fn upload_shared_folder_file(
                 .into_response()
         })?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::NotFoundById(
+            super::share_error_response(rustshare_core::services::ShareError::FolderNotFound(
                 root_folder_id,
             ))
         })?;

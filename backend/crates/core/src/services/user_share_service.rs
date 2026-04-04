@@ -343,7 +343,7 @@ where
             .get_by_id(folder_id)
             .await
             .map_err(ShareError::Database)?
-            .ok_or_else(|| ShareError::NotFoundById(folder_id))?;
+            .ok_or_else(|| ShareError::FolderNotFound(folder_id))?;
 
         // Verify creator owns the folder
         if folder.owner_id != created_by {
@@ -468,7 +468,7 @@ where
         } else if let Some(foid) = folder_id {
             Resource::Folder(foid)
         } else {
-            return Err(ShareError::NotFound);
+            return Err(ShareError::InvalidState("Share has neither file_id nor folder_id".to_string()));
         };
 
         // Check if requesting user has Admin permission
@@ -532,7 +532,7 @@ where
             .get_by_id(share_id)
             .await
             .map_err(ShareError::Database)?
-            .ok_or(ShareError::NotFoundById(share_id))?;
+            .ok_or(ShareError::ShareNotFound(share_id))?;
 
         // Determine resource for permission check
         let resource = if let Some(fid) = share.file_id {
@@ -540,7 +540,7 @@ where
         } else if let Some(foid) = share.folder_id {
             Resource::Folder(foid)
         } else {
-            return Err(ShareError::NotFound);
+            return Err(ShareError::InvalidState("Share has neither file_id nor folder_id".to_string()));
         };
 
         // Check if requesting user has Admin permission
@@ -637,7 +637,7 @@ where
             .get_by_id(share_id)
             .await
             .map_err(ShareError::Database)?
-            .ok_or(ShareError::NotFoundById(share_id))?;
+            .ok_or(ShareError::ShareNotFound(share_id))?;
 
         // Determine resource for permission check
         let resource = if let Some(fid) = share.file_id {
@@ -645,7 +645,7 @@ where
         } else if let Some(foid) = share.folder_id {
             Resource::Folder(foid)
         } else {
-            return Err(ShareError::NotFound);
+            return Err(ShareError::InvalidState("Share has neither file_id nor folder_id".to_string()));
         };
 
         // Check if requesting user has Admin permission

@@ -154,10 +154,11 @@ pub fn folder_error_response(err: FolderError) -> Response {
 /// Map ShareError to HTTP response.
 pub fn share_error_response(err: ShareError) -> Response {
     let (status, message) = match err {
-        ShareError::NotFound => (StatusCode::NOT_FOUND, err.to_string()),
-        ShareError::NotFoundById(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        ShareError::PermissionDenied { .. } => (StatusCode::FORBIDDEN, err.to_string()),
+        ShareError::ShareNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
+        ShareError::ShareNotFoundByToken(_) => (StatusCode::NOT_FOUND, err.to_string()),
         ShareError::FileNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
+        ShareError::FolderNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
+        ShareError::PermissionDenied { .. } => (StatusCode::FORBIDDEN, err.to_string()),
         ShareError::Revoked => (StatusCode::GONE, err.to_string()),
         ShareError::Expired => (StatusCode::GONE, err.to_string()),
         ShareError::PasswordRequired => (StatusCode::UNAUTHORIZED, err.to_string()),

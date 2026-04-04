@@ -280,7 +280,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .find_folder_by_id(folder_id)
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-            .ok_or(ShareError::NotFoundById(folder_id))?;
+            .ok_or(ShareError::FolderNotFound(folder_id))?;
 
         if folder.owner_id != user_id {
             return Err(ShareError::PermissionDenied {
@@ -361,7 +361,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .get_share_by_token(share_token)
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-            .ok_or(ShareError::NotFound)?;
+            .ok_or_else(|| ShareError::ShareNotFoundByToken(share_token.to_string()))?;
 
         // Check if revoked
         if share.revoked_at.is_some() {
@@ -440,7 +440,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .get_share_by_id(share_id)
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-            .ok_or(ShareError::NotFoundById(share_id))?;
+            .ok_or(ShareError::ShareNotFound(share_id))?;
 
         let owner_id = if let Some(file_id) = share.file_id {
             let file = self
@@ -456,7 +456,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .find_folder_by_id(folder_id)
                 .await
                 .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-                .ok_or(ShareError::NotFoundById(folder_id))?;
+                .ok_or(ShareError::FolderNotFound(folder_id))?;
             folder.owner_id
         } else {
             return Err(ShareError::Database(sqlx::Error::PoolClosed));
@@ -520,7 +520,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .get_share_by_id(share_id)
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-            .ok_or(ShareError::NotFoundById(share_id))?;
+            .ok_or(ShareError::ShareNotFound(share_id))?;
 
         let owner_id = if let Some(file_id) = share.file_id {
             let file = self
@@ -536,7 +536,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .find_folder_by_id(folder_id)
                 .await
                 .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-                .ok_or(ShareError::NotFoundById(folder_id))?;
+                .ok_or(ShareError::FolderNotFound(folder_id))?;
             folder.owner_id
         } else {
             return Err(ShareError::Database(sqlx::Error::PoolClosed));
@@ -640,7 +640,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .find_folder_by_id(folder_id)
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-            .ok_or(ShareError::NotFoundById(folder_id))?;
+            .ok_or(ShareError::FolderNotFound(folder_id))?;
 
         if folder.owner_id != user_id {
             return Err(ShareError::PermissionDenied {
@@ -671,7 +671,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .get_share_by_token(share_token)
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-            .ok_or(ShareError::NotFound)?;
+            .ok_or_else(|| ShareError::ShareNotFoundByToken(share_token.to_string()))?;
 
         // Check if revoked
         if share.revoked_at.is_some() {
@@ -700,7 +700,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .find_folder_by_id(folder_id)
                 .await
                 .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-                .ok_or(ShareError::NotFoundById(folder_id))?;
+                .ok_or(ShareError::FolderNotFound(folder_id))?;
 
             Ok((share, None, Some(folder)))
         } else {
@@ -727,7 +727,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         let target_folder = descendants
             .into_iter()
             .find(|folder| folder.id == target_folder_id)
-            .ok_or(ShareError::NotFoundById(target_folder_id))?;
+            .ok_or(ShareError::FolderNotFound(target_folder_id))?;
 
         let folders = self
             .metadata_store
@@ -780,7 +780,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                     .find_folder_by_id(*folder_id)
                     .await
                     .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-                    .ok_or(ShareError::NotFoundById(*folder_id))?;
+                    .ok_or(ShareError::FolderNotFound(*folder_id))?;
                 (folder.owner_id, folder.tenant_id)
             }
         };
@@ -903,7 +903,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .get_share_by_id(share_id)
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-            .ok_or(ShareError::NotFoundById(share_id))?;
+            .ok_or(ShareError::ShareNotFound(share_id))?;
         
         // Verify it's a group share
         if share.recipient_group_id.is_none() {
@@ -976,7 +976,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .get_share_by_id(share_id)
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-            .ok_or(ShareError::NotFoundById(share_id))?;
+            .ok_or(ShareError::ShareNotFound(share_id))?;
         
         // Verify it's a group share
         if share.recipient_group_id.is_none() {
@@ -1190,7 +1190,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .find_folder_by_id(folder_id)
                 .await
                 .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
-                .ok_or(ShareError::NotFoundById(folder_id))?;
+                .ok_or(ShareError::FolderNotFound(folder_id))?;
             (folder.name, "folder")
         } else {
             return Err(ShareError::InvalidState("Share has no resource".to_string()));
@@ -1907,7 +1907,7 @@ mod tests {
         let result = service.get_public_share_info(share_token).await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ShareError::NotFound));
+        assert!(matches!(result.unwrap_err(), ShareError::ShareNotFoundByToken(_)));
     }
 
     #[tokio::test]
