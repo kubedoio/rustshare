@@ -23,9 +23,14 @@ export interface FolderTree {
     owner_id: string;
     created_at: string;
     updated_at: string;
+    tenant_id: string;
+    ancestor_ids: string[] | null;
+    // Share info
+    is_shared: boolean;
+    share_count: number;
+    share_expires_at: string | null;
   };
   subfolders: FolderTree[];
-  files: any[];
 }
 
 export async function createFolder(name: string, parentFolderId: string | null): Promise<Folder> {

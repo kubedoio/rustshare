@@ -8,6 +8,7 @@
 	import { queryClient } from '$lib/query-client';
 	import { moveFile } from '$lib/api/files';
 	import { moveFolder, type FolderTree as FolderTreeType } from '$lib/api/folders';
+	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
 	import FolderTree from './FolderTree.svelte';
 
 	interface Props {
@@ -223,6 +224,16 @@
 				<span class="folder-name" class:active class:is-ancestor={isAncestorOfActive}>
 					{folder.folder.name}
 				</span>
+
+				<!-- Share Indicator -->
+				{#if folder.folder.is_shared}
+					<ShareIndicator 
+						isShared={folder.folder.is_shared}
+						shareCount={folder.folder.share_count}
+						shareExpiresAt={folder.folder.share_expires_at}
+						size="xs"
+					/>
+				{/if}
 			</div>
 
 			<!-- Children -->

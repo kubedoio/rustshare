@@ -18,12 +18,38 @@ pub struct MetadataStore {
     pool: PgPool,
 }
 
+impl MetadataStore {
+    /// Get access to the underlying database pool
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct OwnedPublicShare {
     pub share: Share,
     pub resource_id: Uuid,
     pub resource_type: String,
     pub resource_name: String,
+}
+
+/// Folder with share information
+#[derive(Debug, Clone)]
+pub struct FolderWithShares {
+    pub id: Uuid,
+    pub name: String,
+    pub path: String,
+    pub parent_folder_id: Option<Uuid>,
+    pub owner_id: Uuid,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub tenant_id: Uuid,
+    pub starred_at: Option<DateTime<Utc>>,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub ancestor_ids: Option<Vec<Uuid>>,
+    pub is_shared: bool,
+    pub share_count: i64,
+    pub share_expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1557,6 +1583,74 @@ impl MetadataStore {
                 updated_at: row.try_get("updated_at")?,
                 tenant_id: row.try_get("tenant_id")?,
                 ancestor_ids: None, // Will be populated from folder_documents if available
+            };
+            folders.push(folder);
+        }
+
+        Ok(folders)
+    }
+
+    /// List folders with share counts
+    ///
+    /// Returns folders owned by the specified user with share information.
+    pub async fn list_folders_with_shares(
+        &self,
+        parent_id: Option<Uuid>,
+        owner_id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<Vec<FolderWithShares>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT 
+                f.id, f.name, f.path, f.parent_folder_id, f.owner_id, 
+                f.created_at, f.updated_at, f.tenant_id,
+                f.starred_at, f.deleted_at,
+                EXISTS (
+                    SELECT 1 FROM shares 
+                    WHERE folder_id = f.id 
+                    AND revoked_at IS NULL
+                ) as is_shared,
+                (
+                    SELECT COUNT(*) FROM shares
+                    WHERE folder_id = f.id
+                    AND revoked_at IS NULL
+                ) as share_count,
+                (
+                    SELECT MIN(expires_at) FROM shares
+                    WHERE folder_id = f.id
+                    AND revoked_at IS NULL
+                ) as share_expires_at
+            FROM folders f
+            WHERE f.owner_id = $1
+              AND f.tenant_id = $2
+              AND f.deleted_at IS NULL
+              AND (f.parent_folder_id = $3 OR ($3 IS NULL AND f.parent_folder_id IS NULL))
+            ORDER BY f.name ASC
+            "#,
+        )
+        .bind(owner_id)
+        .bind(tenant_id)
+        .bind(parent_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut folders = Vec::new();
+        for row in rows {
+            let folder = FolderWithShares {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                owner_id: row.try_get("owner_id")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+                tenant_id: row.try_get("tenant_id")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
+                ancestor_ids: None,
+                is_shared: row.try_get("is_shared")?,
+                share_count: row.try_get("share_count")?,
+                share_expires_at: row.try_get("share_expires_at")?,
             };
             folders.push(folder);
         }

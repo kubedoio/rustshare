@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Upload } from 'lucide-svelte';
 	import { formatDate } from '$lib/utils/format';
 
 	export let isShared: boolean = false;
@@ -7,9 +8,9 @@
 	export let size: 'xs' | 'sm' | 'md' = 'sm';
 
 	const sizeClasses = {
-		xs: 'w-1.5 h-1.5',
-		sm: 'w-2 h-2',
-		md: 'w-3 h-3'
+		xs: 'w-3 h-3',
+		sm: 'w-3.5 h-3.5',
+		md: 'w-4 h-4'
 	};
 
 	function getTooltipText(): string {
@@ -37,9 +38,9 @@
 		return text;
 	}
 
-	function getDotColor(): string {
+	function getIconColor(): string {
 		if (!shareExpiresAt) {
-			return 'bg-success'; // Green for non-expiring shares
+			return 'text-success'; // Green for non-expiring shares
 		}
 		
 		const expiryDate = new Date(shareExpiresAt);
@@ -47,20 +48,20 @@
 		const daysUntilExpiry = (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
 		
 		if (expiryDate < now) {
-			return 'bg-error'; // Red for expired
+			return 'text-error'; // Red for expired
 		} else if (daysUntilExpiry <= 7) {
-			return 'bg-warning'; // Yellow/Orange for expiring soon (within 7 days)
+			return 'text-warning'; // Yellow/Orange for expiring soon (within 7 days)
 		} else {
-			return 'bg-success'; // Green for healthy shares
+			return 'text-success'; // Green for healthy shares
 		}
 	}
 </script>
 
 {#if isShared}
 	<span 
-		class="inline-flex items-center px-1 py-0 rounded text-[10px] font-medium bg-success/10 text-success border border-success/20 tracking-tight"
+		class="inline-flex items-center justify-center {sizeClasses[size]} {getIconColor()}"
 		title={getTooltipText()}
 	>
-		[shared]
+		<Upload size={size === 'xs' ? 12 : size === 'sm' ? 14 : 16} />
 	</span>
 {/if}
