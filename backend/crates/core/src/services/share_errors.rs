@@ -75,6 +75,26 @@ pub enum ShareError {
     /// Share is in an invalid state (invariant violated).
     #[error("Share in invalid state: {0}")]
     InvalidState(String),
+
+    /// Cross-tenant sharing attempted
+    #[error("Cross-tenant sharing is not allowed")]
+    CrossTenantSharingNotAllowed,
+
+    /// Group not found
+    #[error("Group {0} not found")]
+    GroupNotFound(Uuid),
+
+    /// User not member of group
+    #[error("User is not a member of group {0}")]
+    NotGroupMember(Uuid),
+
+    /// Group share already exists
+    #[error("Group already has access to this resource")]
+    GroupShareAlreadyExists,
+
+    /// Recipient visibility config invalid
+    #[error("Invalid recipient visibility: {0}")]
+    InvalidRecipientVisibility(String),
 }
 
 #[cfg(test)]
