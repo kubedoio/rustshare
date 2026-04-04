@@ -1981,6 +1981,7 @@ impl MetadataStore {
                 s.folder_id,
                 s.share_token,
                 s.recipient_user_id,
+                s.recipient_group_id,
                 s.created_by,
                 s.permissions,
                 s.password_hash,
@@ -2022,7 +2023,7 @@ impl MetadataStore {
                     folder_id: row.try_get("folder_id")?,
                     share_token: row.try_get("share_token")?,
                     recipient_user_id: row.try_get("recipient_user_id")?,
-                    recipient_group_id: None, // Group shares not yet in database schema
+                    recipient_group_id: row.try_get("recipient_group_id")?,
                     created_by: row.try_get("created_by")?,
                     permissions,
                     password_hash: row.try_get("password_hash")?,
