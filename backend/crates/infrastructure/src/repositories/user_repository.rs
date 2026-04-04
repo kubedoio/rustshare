@@ -90,10 +90,9 @@ impl UserRepository {
 
         Ok(())
     }
-}
 
     /// Get tenant ID for a user
-    pub async fn get_tenant_id_for_user(&self, user_id: UserId) -> Result<Option<uuid::Uuid>, sqlx::Error> {
+    pub async fn get_tenant_id_for_user(&self, user_id: UserId) -> Result<Option<Uuid>, sqlx::Error> {
         let row = sqlx::query(
             r#"SELECT tenant_id FROM users WHERE id = $1"#
         )
