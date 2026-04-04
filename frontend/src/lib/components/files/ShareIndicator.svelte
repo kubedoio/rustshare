@@ -1,16 +1,23 @@
 <script lang="ts">
-	import { Upload } from 'lucide-svelte';
+	import { Link2 } from 'lucide-svelte';
 	import { formatDate } from '$lib/utils/format';
 
 	export let isShared: boolean = false;
 	export let shareCount: number = 0;
 	export let shareExpiresAt: string | null = null;
 	export let size: 'xs' | 'sm' | 'md' = 'sm';
+	export let showText: boolean = true; // Whether to show expiration text
 
 	const sizeClasses = {
-		xs: 'w-3 h-3',
-		sm: 'w-3.5 h-3.5',
-		md: 'w-4 h-4'
+		xs: 'text-[10px] gap-0.5',
+		sm: 'text-xs gap-1',
+		md: 'text-sm gap-1.5'
+	};
+
+	const iconSizes = {
+		xs: 10,
+		sm: 12,
+		md: 14
 	};
 
 	function getTooltipText(): string {
@@ -38,9 +45,9 @@
 		return text;
 	}
 
-	function getIconColor(): string {
+	function getStatusColor(): string {
 		if (!shareExpiresAt) {
-			return 'text-success'; // Green for non-expiring shares
+			return 'text-success/70'; // Muted green for non-expiring shares
 		}
 		
 		const expiryDate = new Date(shareExpiresAt);
@@ -48,20 +55,38 @@
 		const daysUntilExpiry = (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
 		
 		if (expiryDate < now) {
-			return 'text-error'; // Red for expired
+			return 'text-error/70'; // Muted red for expired
 		} else if (daysUntilExpiry <= 7) {
-			return 'text-warning'; // Yellow/Orange for expiring soon (within 7 days)
+			return 'text-warning/70'; // Muted yellow/orange for expiring soon
 		} else {
-			return 'text-success'; // Green for healthy shares
+			return 'text-success/70'; // Muted green for healthy shares
 		}
+	}
+
+	function formatExpiryShort(dateStr: string): string {
+		const date = new Date(dateStr);
+		const now = new Date();
+		const isExpired = date < now;
+		
+		// Format: "Oct 24" or "Expired"
+		if (isExpired) {
+			return 'Expired';
+		}
+		
+		const month = date.toLocaleDateString('en-US', { month: 'short' });
+		const day = date.getDate();
+		return `Exp. ${month} ${day}`;
 	}
 </script>
 
 {#if isShared}
 	<span 
-		class="inline-flex items-center justify-center {sizeClasses[size]} {getIconColor()}"
+		class="inline-flex items-center {sizeClasses[size]} {getStatusColor()} whitespace-nowrap"
 		title={getTooltipText()}
 	>
-		<Upload size={size === 'xs' ? 12 : size === 'sm' ? 14 : 16} />
+		<Link2 size={iconSizes[size]} class="flex-shrink-0" />
+		{#if showText && shareExpiresAt}
+			<span class="font-medium">{formatExpiryShort(shareExpiresAt)}</span>
+		{/if}
 	</span>
 {/if}
