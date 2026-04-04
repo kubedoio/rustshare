@@ -477,19 +477,13 @@ fn share_to_document(share: &Share) -> ShareDocument {
         ShareScope::Public
     };
 
-    let permissions = match share.permissions {
-        rustshare_core::domain::SharePermissions::View => SharePermission::View,
-        rustshare_core::domain::SharePermissions::Edit => SharePermission::Edit,
-        rustshare_core::domain::SharePermissions::Admin => SharePermission::Admin,
-    };
-
     ShareDocument {
         schema_version: CURRENT_SCHEMA_VERSION,
         id: share.id,
         resource_type,
         resource_id,
         scope,
-        permissions,
+        permissions: share.permissions,
         token_hash: share.share_token.as_ref().map(|t| format!("{:x}", md5::compute(t))),
         share_token: share.share_token.clone(), // Store original token
         recipient_user_id: share.recipient_user_id,
@@ -507,18 +501,10 @@ fn share_to_document(share: &Share) -> ShareDocument {
 }
 
 fn share_from_document(doc: &ShareDocument) -> Share {
-    use rustshare_core::domain::SharePermissions;
-
     let (file_id, folder_id) = match doc.resource_type.as_str() {
         "file" => (Some(doc.resource_id), None),
         "folder" => (None, Some(doc.resource_id)),
         _ => (None, None),
-    };
-
-    let permissions = match doc.permissions {
-        SharePermission::View => SharePermissions::View,
-        SharePermission::Edit => SharePermissions::Edit,
-        SharePermission::Admin => SharePermissions::Admin,
     };
 
     Share {
@@ -526,7 +512,7 @@ fn share_from_document(doc: &ShareDocument) -> Share {
         file_id,
         folder_id,
         share_token: doc.share_token.clone(), // Use original token
-        permissions,
+        permissions: doc.permissions,
         password_hash: doc.password_hash.clone(),
         expires_at: doc.expires_at,
         upload_only: doc.upload_only,

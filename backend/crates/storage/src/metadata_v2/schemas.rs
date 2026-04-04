@@ -5,6 +5,7 @@
 //! When writing, always use the current version.
 
 use chrono::{DateTime, Utc};
+use rustshare_core::domain::SharePermissions;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tracing::warn;
 use uuid::Uuid;
@@ -358,31 +359,6 @@ impl FileVersionDocument {
 // Share Document
 // ============================================================================
 
-/// Share permission levels
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SharePermission {
-    View,
-    Edit,
-    Admin,
-}
-
-impl SharePermission {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::View => "view",
-            Self::Edit => "edit",
-            Self::Admin => "admin",
-        }
-    }
-}
-
-impl Default for SharePermission {
-    fn default() -> Self {
-        Self::View
-    }
-}
-
 /// Share scope (public link vs user share)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -412,7 +388,7 @@ pub struct ShareDocument {
     /// Share scope
     pub scope: ShareScope,
     /// Permission level
-    pub permissions: SharePermission,
+    pub permissions: SharePermissions,
     /// Token hash for public shares (None for user shares)
     pub token_hash: Option<String>,
     /// Original share token (stored for round-trip compatibility)
@@ -447,7 +423,7 @@ impl ShareDocument {
         id: Uuid,
         resource_type: String,
         resource_id: Uuid,
-        permissions: SharePermission,
+        permissions: SharePermissions,
         share_token: String,        // Original token
         password_hash: Option<String>,
         expires_at: Option<DateTime<Utc>>,
@@ -484,7 +460,7 @@ impl ShareDocument {
         id: Uuid,
         resource_type: String,
         resource_id: Uuid,
-        permissions: SharePermission,
+        permissions: SharePermissions,
         recipient_user_id: Uuid,
         created_by: Uuid,
         tenant_id: Uuid,
@@ -900,7 +876,7 @@ pub struct ShareEntry {
     /// Resource name
     pub resource_name: String,
     /// Permissions
-    pub permissions: SharePermission,
+    pub permissions: SharePermissions,
     /// Shared by
     pub shared_by: Uuid,
     /// Shared at
