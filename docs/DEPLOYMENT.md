@@ -263,3 +263,29 @@ curl http://localhost:9000
 ```
 
 Check the RustFS console at http://localhost:9001 (credentials: `rustfsadmin` / `rustfsadmin`).
+
+---
+
+## Migration Checksum Fix
+
+If migration `20260404000002_add_tenant_sharing_config.sql` fails with a checksum mismatch error:
+
+```
+error: migration 20260404000002 was previously applied but has been modified
+```
+
+This can happen if the migration file was modified after being applied to the database.
+
+### Solution
+
+Run the following SQL on the database before deploying:
+
+```sql
+DELETE FROM _sqlx_migrations WHERE version = '20260404000002';
+```
+
+Then restart the backend. The migration will be re-applied with the new checksum.
+
+### Note
+
+This is safe because the migration only adds a table and columns - re-running it on an already-migrated database will be a no-op (the table/columns already exist).
