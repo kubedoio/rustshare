@@ -16,11 +16,12 @@ use crate::repos::*;
 #[derive(Clone)]
 pub struct MetadataStoreCompat {
     repo: Arc<dyn MetadataRepository>,
+    pool: sqlx::PgPool,
 }
 
 impl MetadataStoreCompat {
-    pub fn new(repo: Arc<dyn MetadataRepository>) -> Self {
-        Self { repo }
+    pub fn new(repo: Arc<dyn MetadataRepository>, pool: sqlx::PgPool) -> Self {
+        Self { repo, pool }
     }
 }
 
