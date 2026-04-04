@@ -348,14 +348,16 @@
 									</div>
 
 									<div class="flex flex-wrap gap-2">
-										<button
-											type="button"
-											class="inline-flex items-center gap-2 rounded-xl border border-base-300 bg-base-100 px-3 py-2 font-data text-sm font-semibold text-base-content/75 transition-colors hover:border-brand-500/20 hover:text-base-content"
-											on:click={() => copyShareLink(share.share_token)}
-										>
-											<Copy class="h-4 w-4" />
-											Copy link
-										</button>
+										{#if share.share_token}
+											<button
+												type="button"
+												class="inline-flex items-center gap-2 rounded-xl border border-base-300 bg-base-100 px-3 py-2 font-data text-sm font-semibold text-base-content/75 transition-colors hover:border-brand-500/20 hover:text-base-content"
+												on:click={() => copyShareLink(share.share_token)}
+											>
+												<Copy class="h-4 w-4" />
+												Copy link
+											</button>
+										{/if}
 										<button
 											type="button"
 											class="inline-flex items-center gap-2 rounded-xl border border-base-300 bg-base-100 px-3 py-2 font-data text-sm font-semibold text-base-content/75 transition-colors hover:border-brand-500/20 hover:text-base-content"

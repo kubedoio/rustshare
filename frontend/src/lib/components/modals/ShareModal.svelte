@@ -366,7 +366,8 @@
 		dispatch('close');
 	}
 
-	function getShareUrl(token: string): string {
+	function getShareUrl(token: string | null): string | null {
+		if (!token) return null;
 		const baseUrl = window.location.origin;
 		return `${baseUrl}/share/${token}`;
 	}
@@ -530,6 +531,7 @@
 								<div class="card-body p-4">
 									<div class="gap-4 flex items-start justify-between">
 										<div class="min-w-0 flex-1">
+												{#if share.share_token}
 											<!-- Share URL -->
 											<div class="gap-2 mb-2 flex items-center">
 												<input
@@ -541,7 +543,7 @@
 												<button
 													type="button"
 													class="btn btn-sm btn-ghost"
-													on:click={() => handleCopyLink(getShareUrl(share.share_token))}
+													on:click={() => handleCopyLink(getShareUrl(share.share_token)!)}
 													title="Copy to clipboard"
 												>
 													<svg
@@ -561,6 +563,7 @@
 												</button>
 											</div>
 
+ttttttttttttt{/if}
 											<!-- Share details -->
 											<div class="text-sm text-base-content/70 space-y-1">
 												<div class="gap-4 flex flex-wrap">
