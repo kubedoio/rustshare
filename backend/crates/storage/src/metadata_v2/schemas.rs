@@ -389,6 +389,7 @@ impl Default for SharePermission {
 pub enum ShareScope {
     Public,
     User,
+    Group,
 }
 
 impl Default for ShareScope {
