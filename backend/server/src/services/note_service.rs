@@ -136,18 +136,20 @@ impl From<rustshare_core::services::FileError> for NoteError {
     }
 }
 
+use rustshare_infrastructure::repositories::PermissionResolverRepository;
+
 /// Service for managing notes as files with sidecar metadata.
 pub struct NoteService {
-    file_service: Arc<FileService<rustshare_storage::EventStore, MetadataStore, ObjectStore>>,
-    folder_service: Arc<FolderService<rustshare_storage::EventStore, MetadataStore>>,
+    file_service: Arc<FileService<rustshare_storage::EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>>,
+    folder_service: Arc<FolderService<rustshare_storage::EventStore, MetadataStore, PermissionResolverRepository>>,
     metadata_store: Arc<MetadataStore>,
     object_store: Arc<ObjectStore>,
 }
 
 impl NoteService {
     pub fn new(
-        file_service: Arc<FileService<rustshare_storage::EventStore, MetadataStore, ObjectStore>>,
-        folder_service: Arc<FolderService<rustshare_storage::EventStore, MetadataStore>>,
+        file_service: Arc<FileService<rustshare_storage::EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>>,
+        folder_service: Arc<FolderService<rustshare_storage::EventStore, MetadataStore, PermissionResolverRepository>>,
         metadata_store: Arc<MetadataStore>,
         object_store: Arc<ObjectStore>,
     ) -> Self {

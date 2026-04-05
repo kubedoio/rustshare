@@ -12,12 +12,13 @@ use anyhow::Result;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::domain::{File, Folder, FolderContents, FolderId, FolderTree, UserId};
+use crate::domain::{File, Folder, FolderContents, FolderId, FolderTree, UserId, SharePermissions};
 use crate::events::{
     AggregateType, Event, EventBroadcaster, EventType, FolderCreatedPayload, FolderDeletedPayload,
     FolderMovedPayload, FolderRenamedPayload,
 };
 use crate::services::FolderError;
+use crate::services::{PermissionResolver, PermissionResolverOps, Resource};
 
 /// Trait for event store operations needed by FolderService.
 ///
@@ -61,34 +62,36 @@ pub trait MetadataStoreOps: Send + Sync {
 }
 
 /// FolderService manages folder operations with event sourcing.
-///
-/// Generic over EventStore (E) and MetadataStore (M) implementations
-/// to support both production and test environments.
-pub struct FolderService<E, M>
+pub struct FolderService<E, M, P>
 where
     E: EventStoreOps,
     M: MetadataStoreOps,
+    P: PermissionResolverOps,
 {
     event_store: Arc<E>,
     metadata_store: Arc<M>,
     broadcaster: Arc<EventBroadcaster>,
+    permission_resolver: Arc<PermissionResolver<P>>,
 }
 
-impl<E, M> FolderService<E, M>
+impl<E, M, P> FolderService<E, M, P>
 where
     E: EventStoreOps,
     M: MetadataStoreOps,
+    P: PermissionResolverOps,
 {
     /// Create a new FolderService instance.
     pub fn new(
         event_store: Arc<E>,
         metadata_store: Arc<M>,
         broadcaster: Arc<EventBroadcaster>,
+        permission_resolver: Arc<PermissionResolver<P>>,
     ) -> Self {
         Self {
             event_store,
             metadata_store,
             broadcaster,
+            permission_resolver,
         }
     }
 
@@ -116,8 +119,13 @@ where
                 .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
 
-            // Verify ownership
-            if parent.owner_id != owner_id {
+            // Verify permissions: user must own the folder or have Edit permission
+            let has_permission = self.permission_resolver
+                .check_folder_permission(owner_id, parent_id, SharePermissions::Edit)
+                .await
+                .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+            if !has_permission {
                 return Err(FolderError::PermissionDenied {
                     folder_id: parent_id,
                     user_id: owner_id,
@@ -191,17 +199,23 @@ where
         folder_id: FolderId,
         user_id: UserId,
     ) -> Result<Folder, FolderError> {
+        // 1. Check permissions first using the resolver
+        let has_permission = self.permission_resolver
+            .check_folder_permission(user_id, folder_id, SharePermissions::View)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        if !has_permission {
+            return Err(FolderError::PermissionDenied { folder_id, user_id });
+        }
+
+        // 2. Find folder by ID
         let folder = self
             .metadata_store
             .find_folder_by_id(folder_id)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?
             .ok_or(FolderError::NotFound(folder_id))?;
-
-        // Verify ownership
-        if folder.owner_id != user_id {
-            return Err(FolderError::PermissionDenied { folder_id, user_id });
-        }
 
         Ok(folder)
     }
@@ -218,17 +232,17 @@ where
         // Verify folder exists and user has access
         let folder = self.get_folder(folder_id, user_id).await?;
 
-        // Get files in this folder
+        // Get files in this folder (filter by folder owner, not current user)
         let files = self
             .metadata_store
-            .list_files(Some(folder.id), user_id, folder.tenant_id)
+            .list_files(Some(folder.id), folder.owner_id, folder.tenant_id)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
-        // Get subfolders in this folder
+        // Get subfolders in this folder (filter by folder owner, not current user)
         let folders = self
             .metadata_store
-            .list_folders(Some(folder.id), user_id, folder.tenant_id)
+            .list_folders(Some(folder.id), folder.owner_id, folder.tenant_id)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
@@ -295,8 +309,18 @@ where
         // Validate new name
         self.validate_folder_name(&new_name)?;
 
-        // Get and verify folder ownership
+        // Get and verify access
         let mut folder = self.get_folder(folder_id, user_id).await?;
+
+        // Verify Edit permission
+        let has_edit_permission = self.permission_resolver
+            .check_folder_permission(user_id, folder_id, SharePermissions::Edit)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        if !has_edit_permission {
+            return Err(FolderError::PermissionDenied { folder_id, user_id });
+        }
 
         // Check if name is actually changing
         if folder.name == new_name {
@@ -375,8 +399,18 @@ where
         new_parent_id: Option<FolderId>,
         user_id: UserId,
     ) -> Result<Folder, FolderError> {
-        // Get and verify folder ownership
+        // Get and verify access
         let mut folder = self.get_folder(folder_id, user_id).await?;
+
+        // Verify Edit permission
+        let has_edit_permission = self.permission_resolver
+            .check_folder_permission(user_id, folder_id, SharePermissions::Edit)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        if !has_edit_permission {
+            return Err(FolderError::PermissionDenied { folder_id, user_id });
+        }
 
         // Check if parent is actually changing
         if folder.parent_folder_id == new_parent_id {
@@ -485,8 +519,18 @@ where
         folder_id: FolderId,
         user_id: UserId,
     ) -> Result<(), FolderError> {
-        // Get and verify folder ownership
+        // Get and verify access
         let folder = self.get_folder(folder_id, user_id).await?;
+
+        // Verify Admin permission for deletion
+        let has_admin_permission = self.permission_resolver
+            .check_folder_permission(user_id, folder_id, SharePermissions::Admin)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        if !has_admin_permission {
+            return Err(FolderError::PermissionDenied { folder_id, user_id });
+        }
 
         // Check if it's the system root folder (nil UUID) - only protect system folders
         // User-created root folders should be deletable even if named "Root"
@@ -1699,14 +1743,68 @@ mod tests {
         assert_eq!(updated_work.ancestor_ids, Some(Vec::new()));
     }
 
+    struct MockPermissionOps;
+
+    impl PermissionResolverOps for MockPermissionOps {
+        async fn find_user_share(
+            &self,
+            _file_id: Option<FileId>,
+            _folder_id: Option<FolderId>,
+            _recipient_user_id: UserId,
+        ) -> Result<Option<Share>> {
+            Ok(None)
+        }
+
+        async fn find_group_shares(
+            &self,
+            _file_id: Option<FileId>,
+            _folder_id: Option<FolderId>,
+            _group_ids: &[Uuid],
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_user_shares_for_folders(
+            &self,
+            _folder_ids: &[Uuid],
+            _recipient_user_id: UserId,
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_group_shares_for_folders(
+            &self,
+            _folder_ids: &[Uuid],
+            _group_ids: &[Uuid],
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_file_by_id(&self, _id: FileId) -> Result<Option<File>> {
+            Ok(None)
+        }
+
+        async fn find_folder_by_id(&self, _id: FolderId) -> Result<Option<Folder>> {
+            Ok(None)
+        }
+
+        async fn get_user_group_ids(&self, _user_id: UserId) -> Result<Vec<Uuid>> {
+            Ok(Vec::new())
+        }
+    }
+
     #[tokio::test]
     async fn test_move_folder_circular_with_ancestor_ids() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
+        let permission_ops = Arc::new(MockPermissionOps);
+        let permission_resolver = Arc::new(PermissionResolver::new(permission_ops));
+
         let service = FolderService::new(
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            permission_resolver,
         );
 
         let owner_id = Uuid::new_v4();
@@ -1741,10 +1839,14 @@ mod tests {
     async fn test_deep_nesting_ancestor_ids() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
+        let permission_ops = Arc::new(MockPermissionOps);
+        let permission_resolver = Arc::new(PermissionResolver::new(permission_ops));
+
         let service = FolderService::new(
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            permission_resolver,
         );
 
         let owner_id = Uuid::new_v4();

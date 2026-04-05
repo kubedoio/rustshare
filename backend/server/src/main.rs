@@ -265,8 +265,8 @@ pub struct AppState {
     pub object_store: Arc<ObjectStore>,
     pub jwt_manager: Arc<JwtManager>,
     pub broadcaster: Arc<EventBroadcaster>,
-    pub file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore>>,
-    pub folder_service: Arc<FolderService<EventStore, MetadataStore>>,
+    pub file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>>,
+    pub folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
     pub share_service: Arc<ShareService<EventStore, MetadataStore, JwtManager, ShareNotificationRepoImpl>>,
     pub thumbnail_service: Arc<ThumbnailService<ObjectStore>>,
     pub permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
@@ -335,17 +335,31 @@ async fn main() -> Result<()> {
 
     info!("EventBroadcaster initialized with capacity {}", capacity);
 
+    // Initialize repositories for new services
+    let notification_repository = NotificationRepository::new(db_pool.clone());
+    let share_repository = Arc::new(ShareRepository::new(db_pool.clone()));
+    let user_repository = Arc::new(UserRepository::new(db_pool.clone()));
+    let file_repository = Arc::new(FileRepository::new(db_pool.clone()));
+    let folder_repository = Arc::new(FolderRepository::new(db_pool.clone()));
+
+    // Initialize permission resolver
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(db_pool.clone()),
+    )));
+
     // Initialize services
     let file_service = Arc::new(FileService::new(
         Arc::clone(&event_store),
         Arc::clone(&metadata_store),
         Arc::clone(&object_store),
         Arc::clone(&broadcaster),
+        Arc::clone(&permission_resolver),
     ));
     let folder_service = Arc::new(FolderService::new(
         Arc::clone(&event_store),
         Arc::clone(&metadata_store),
         Arc::clone(&broadcaster),
+        Arc::clone(&permission_resolver),
     ));
     let share_notification_repo = Arc::new(ShareNotificationRepoImpl::new(db_pool.clone()));
     let share_service = Arc::new(ShareService::new(
@@ -365,18 +379,6 @@ async fn main() -> Result<()> {
         db_pool.clone(),
         Arc::clone(&object_store),
     ));
-
-    // Initialize repositories for new services
-    let notification_repository = NotificationRepository::new(db_pool.clone());
-    let share_repository = Arc::new(ShareRepository::new(db_pool.clone()));
-    let user_repository = Arc::new(UserRepository::new(db_pool.clone()));
-    let file_repository = Arc::new(FileRepository::new(db_pool.clone()));
-    let folder_repository = Arc::new(FolderRepository::new(db_pool.clone()));
-
-    // Initialize permission resolver
-    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
-        PermissionResolverRepository::new(db_pool.clone()),
-    )));
 
     // Initialize notification service
     let notification_service = Arc::new(NotificationService::new(notification_repository));

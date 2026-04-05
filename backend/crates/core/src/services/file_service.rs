@@ -20,7 +20,7 @@ use crate::events::{
     FileMovedPayload, FileRenamedPayload, FileRestoredPayload, FileUploadedPayload,
     ReplicationStateChangedPayload,
 };
-use crate::services::FileError;
+// Removed redundant Use FileError
 
 #[derive(Debug, Clone, Default)]
 pub struct FileUploadActor {
@@ -136,24 +136,31 @@ pub trait ObjectStoreOps: Send + Sync {
     async fn delete(&self, key: &str) -> Result<()>;
 }
 
+use crate::services::{PermissionResolver, PermissionResolverOps, Resource};
+use crate::domain::{SharePermissions};
+use crate::services::errors::FileError;
+
 /// File service for handling file operations.
-pub struct FileService<E, M, O>
+pub struct FileService<E, M, O, P>
 where
     E: EventStoreOps,
     M: MetadataStoreOps,
     O: ObjectStoreOps,
+    P: PermissionResolverOps,
 {
     event_store: Arc<E>,
     metadata_store: Arc<M>,
     object_store: Arc<O>,
     broadcaster: Arc<EventBroadcaster>,
+    permission_resolver: Arc<PermissionResolver<P>>,
 }
 
-impl<E, M, O> FileService<E, M, O>
+impl<E, M, O, P> FileService<E, M, O, P>
 where
     E: EventStoreOps,
     M: MetadataStoreOps,
     O: ObjectStoreOps,
+    P: PermissionResolverOps,
 {
     /// Create a new FileService with the given stores.
     pub fn new(
@@ -161,12 +168,14 @@ where
         metadata_store: Arc<M>,
         object_store: Arc<O>,
         broadcaster: Arc<EventBroadcaster>,
+        permission_resolver: Arc<PermissionResolver<P>>,
     ) -> Self {
         Self {
             event_store,
             metadata_store,
             object_store,
             broadcaster,
+            permission_resolver,
         }
     }
 
@@ -234,10 +243,15 @@ where
                 .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
                 .ok_or(FileError::ParentFolderNotFound(folder_id))?;
 
-            // Verify the user owns this folder
-            if folder.owner_id != owner_id {
+            // Verify permissions: user must own the folder or have Edit permission
+            let has_permission = self.permission_resolver
+                .check_folder_permission(owner_id, folder_id, SharePermissions::Edit)
+                .await
+                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+            if !has_permission {
                 return Err(FileError::PermissionDenied {
-                    file_id: uuid::Uuid::nil(), // No file yet
+                    file_id: uuid::Uuid::nil(),
                     user_id: owner_id,
                 });
             }
@@ -352,31 +366,36 @@ where
         Ok(file)
     }
 
-    /// Get a file by ID, verifying ownership.
+    /// Get a file by ID, verifying access permissions.
     ///
     /// # Arguments
     /// * `file_id` - The ID of the file to retrieve
     /// * `user_id` - The ID of the user requesting the file
     ///
     /// # Returns
-    /// The File domain object if found and owned by the user.
+    /// The File domain object if found and the user has at least View permission.
     ///
     /// # Errors
     /// - `FileError::NotFound` if the file doesn't exist
-    /// - `FileError::PermissionDenied` if the user doesn't own the file
+    /// - `FileError::PermissionDenied` if the user doesn't have access
     pub async fn get_file(&self, file_id: uuid::Uuid, user_id: UserId) -> Result<File, FileError> {
-        // Find file by ID
+        // 1. Check permissions first using the resolver
+        let has_permission = self.permission_resolver
+            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        if !has_permission {
+            return Err(FileError::PermissionDenied { file_id, user_id });
+        }
+
+        // 2. Find file by ID
         let file = self
             .metadata_store
             .find_file_by_id(file_id)
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
             .ok_or(FileError::NotFound(file_id))?;
-
-        // Verify ownership
-        if file.owner_id != user_id {
-            return Err(FileError::PermissionDenied { file_id, user_id });
-        }
 
         Ok(file)
     }
@@ -437,8 +456,18 @@ where
         expected_version: i32,
         content: Bytes,
     ) -> Result<File, FileError> {
-        // 1. Get current file and verify ownership
+        // 1. Get current file and verify access
         let mut file = self.get_file(file_id, user_id).await?;
+
+        // 1b. Verify Edit permission
+        let has_edit_permission = self.permission_resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        if !has_edit_permission {
+            return Err(FileError::PermissionDenied { file_id, user_id });
+        }
 
         // 2. Check optimistic lock (current_version == expected_version)
         if file.current_version != expected_version {
@@ -593,9 +622,19 @@ where
         version_number: i32,
         user_id: UserId,
     ) -> Result<File, FileError> {
-        // 1. Get file and verify ownership
+        // 1. Get file and verify access
         let mut file = self.get_file(file_id, user_id).await?;
         let old_version = file.current_version;
+
+        // 1b. Verify Edit permission
+        let has_edit_permission = self.permission_resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        if !has_edit_permission {
+            return Err(FileError::PermissionDenied { file_id, user_id });
+        }
 
         // 2. Find the old version
         let old_file_version = self
@@ -697,8 +736,18 @@ where
         target_folder_id: Option<FolderId>,
         user_id: UserId,
     ) -> Result<File, FileError> {
-        // 1. Get file and verify ownership
+        // 1. Get file and verify access
         let mut file = self.get_file(file_id, user_id).await?;
+
+        // 1b. Verify Edit permission
+        let has_edit_permission = self.permission_resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        if !has_edit_permission {
+            return Err(FileError::PermissionDenied { file_id, user_id });
+        }
 
         // 2. If target folder is specified, verify it exists
         let new_path = if let Some(folder_id) = target_folder_id {
@@ -767,7 +816,19 @@ where
     ) -> Result<File, FileError> {
         self.validate_file_name(&new_name)?;
 
+        // 1. Get file and verify access
         let mut file = self.get_file(file_id, user_id).await?;
+
+        // 1b. Verify Edit permission
+        let has_edit_permission = self.permission_resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        if !has_edit_permission {
+            return Err(FileError::PermissionDenied { file_id, user_id });
+        }
+
         if file.name == new_name {
             return Ok(file);
         }
@@ -843,8 +904,18 @@ where
     /// - `FileError::PermissionDenied` if the user doesn't own the file
     /// - `FileError::Database` if database operations fail
     pub async fn delete_file(&self, file_id: uuid::Uuid, user_id: UserId) -> Result<(), FileError> {
-        // 1. Get file and verify ownership
+        // 1. Get file and verify access
         let file = self.get_file(file_id, user_id).await?;
+
+        // 1b. Verify Admin permission for deletion
+        let has_admin_permission = self.permission_resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        if !has_admin_permission {
+            return Err(FileError::PermissionDenied { file_id, user_id });
+        }
 
         // 2. Create FileDeleted event
         let payload = FileDeletedPayload {
@@ -910,8 +981,18 @@ where
         save_mode: &str,
         change_description: Option<String>,
     ) -> Result<File, FileError> {
-        // 1. Get file and verify ownership
+        // 1. Get file and verify access
         let mut file = self.get_file(file_id, user_id).await?;
+
+        // 1b. Verify Edit permission
+        let has_edit_permission = self.permission_resolver
+            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        if !has_edit_permission {
+            return Err(FileError::PermissionDenied { file_id, user_id });
+        }
 
         // 2. Validate file is editable based on mime type and extension
         self.validate_file_editable(&file)?;
@@ -1384,8 +1465,58 @@ mod tests {
         }
     }
 
+    struct MockPermissionOps;
+
+    impl PermissionResolverOps for MockPermissionOps {
+        async fn find_user_share(
+            &self,
+            _file_id: Option<FileId>,
+            _folder_id: Option<FolderId>,
+            _recipient_user_id: UserId,
+        ) -> Result<Option<Share>> {
+            Ok(None)
+        }
+
+        async fn find_group_shares(
+            &self,
+            _file_id: Option<FileId>,
+            _folder_id: Option<FolderId>,
+            _group_ids: &[Uuid],
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_user_shares_for_folders(
+            &self,
+            _folder_ids: &[Uuid],
+            _recipient_user_id: UserId,
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_group_shares_for_folders(
+            &self,
+            _folder_ids: &[Uuid],
+            _group_ids: &[Uuid],
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_file_by_id(&self, _id: FileId) -> Result<Option<File>> {
+            Ok(None)
+        }
+
+        async fn find_folder_by_id(&self, _id: FolderId) -> Result<Option<Folder>> {
+            Ok(None)
+        }
+
+        async fn get_user_group_ids(&self, _user_id: UserId) -> Result<Vec<Uuid>> {
+            Ok(Vec::new())
+        }
+    }
+
     fn setup_file_service() -> (
-        FileService<MockEventStore, MockMetadataStore, MockObjectStore>,
+        FileService<MockEventStore, MockMetadataStore, MockObjectStore, MockPermissionOps>,
         Arc<MockEventStore>,
         Arc<MockMetadataStore>,
         Arc<MockObjectStore>,
@@ -1394,12 +1525,15 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let object_store = Arc::new(MockObjectStore::new());
         let broadcaster = Arc::new(EventBroadcaster::new(100));
+        let permission_ops = Arc::new(MockPermissionOps);
+        let permission_resolver = Arc::new(PermissionResolver::new(permission_ops));
 
         let service = FileService::new(
             event_store.clone(),
             metadata_store.clone(),
             object_store.clone(),
             broadcaster,
+            permission_resolver,
         );
 
         (service, event_store, metadata_store, object_store)
