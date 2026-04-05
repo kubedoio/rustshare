@@ -34,6 +34,7 @@ pub enum WatchEvent {
 pub struct FsWatcher {
     watcher: RecommendedWatcher,
     watch_roots: Arc<RwLock<HashMap<PathBuf, Uuid>>>,
+    #[allow(dead_code)]
     event_tx: Sender<WatchEvent>,
     event_rx: Receiver<WatchEvent>,
 }
@@ -217,12 +218,15 @@ impl Drop for FsWatcher {
 /// Groups rapid successive events to reduce noise
 pub struct DebouncedFsWatcher {
     watcher: FsWatcher,
+    #[allow(dead_code)]
     debounce_tx: Sender<DebouncedEvent>,
+    #[allow(dead_code)]
     debounce_rx: Receiver<DebouncedEvent>,
 }
 
 /// Debounced event
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct DebouncedEvent {
     path: PathBuf,
     folder_id: Uuid,

@@ -193,8 +193,8 @@
 					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors" on:click={() => executeGlobalAction('create-folder-requested')}>
 						<Folder size={16} class="text-amber-500" /> Folder
 					</button>
-					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors border-t border-base-200 mt-1 pt-2.5" on:click={() => executeGlobalAction('create-document-requested')}>
-						<FileText size={16} class="text-emerald-500" /> Document
+					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors border-t border-base-200 mt-1 pt-2.5" on:click={() => executeGlobalAction('create-note-requested')}>
+						<FileText size={16} class="text-emerald-500" /> New Note
 					</button>
 					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors" on:click={() => executeGlobalAction('upload-requested')}>
 						<Upload size={16} class="text-indigo-500" /> Upload

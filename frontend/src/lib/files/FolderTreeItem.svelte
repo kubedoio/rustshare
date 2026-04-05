@@ -67,7 +67,7 @@
 
 <div class="select-none">
 	<div
-		class="group flex items-center gap-1.5 px-2 py-1.5 mx-1 rounded-md text-sm transition-all cursor-pointer
+		class="group flex items-center gap-1.5 px-2 py-1 mx-1 rounded-md text-[13px] transition-all cursor-pointer
 			{isSelected 
 				? 'bg-brand-500/15 text-brand-600 font-medium' 
 				: 'text-base-content/70 hover:bg-base-200/50 hover:text-base-content'}
@@ -99,10 +99,10 @@
 			tabindex="-1"
 		>
 			{#if isLoading}
-				<Loader2 size={14} class="animate-spin text-base-content/40" />
+				<Loader2 size={12} class="animate-spin text-base-content/40" />
 			{:else}
 				<ChevronRight 
-					size={14} 
+					size={12} 
 					class="text-base-content/40 transition-transform {isExpanded ? 'rotate-90' : ''}" 
 				/>
 			{/if}
@@ -110,7 +110,7 @@
 
 		<!-- Folder Icon -->
 		<Folder 
-			size={18} 
+			size={16} 
 			class="shrink-0 {isSelected ? 'text-brand-500' : 'text-base-content/50'}"
 		/>
 
@@ -120,7 +120,7 @@
 				<input
 					bind:this={renameInputRef}
 					type="text"
-					class="flex-1 min-w-0 px-1.5 py-0.5 text-sm bg-base-100 border border-brand-500 rounded focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+					class="flex-1 min-w-0 px-1.5 py-0.5 text-xs bg-base-100 border border-brand-500 rounded focus:outline-none focus:ring-2 focus:ring-brand-500/20"
 					value={renameValue}
 					on:input={(e) => renameValue = e.currentTarget.value}
 					on:keydown={(e) => onRenameKeydown(e, folder)}

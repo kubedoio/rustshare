@@ -61,9 +61,9 @@
 <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
 	<!-- Left: Title and description -->
 	<div class="min-w-0">
-		<h1 class="text-lg font-semibold text-base-content truncate">{title}</h1>
+		<h1 class="text-title-lg font-bold text-base-content truncate">{title}</h1>
 		{#if description}
-			<p class="text-sm text-base-content/50 mt-0.5 truncate">{description}</p>
+			<p class="text-[13px] text-base-content/50 mt-0.5 truncate">{description}</p>
 		{/if}
 	</div>
 
@@ -71,64 +71,64 @@
 	<div class="flex flex-wrap items-center gap-2">
 		{#if selectionMode}
 			<!-- Selection mode toolbar -->
-			<div class="flex items-center gap-2 rounded-lg border border-base-300/60 bg-base-100 px-3 py-2 shadow-sm">
+			<div class="flex items-center gap-1.5 rounded-lg border border-base-300/60 bg-base-100 px-2.5 py-1.5 shadow-sm">
 				<div class="flex items-center gap-2 mr-1">
 					<span class="text-sm font-medium text-base-content">{$selectionCount} selected</span>
 				</div>
 				<div class="w-px h-4 bg-base-300"></div>
 				<button
 					type="button"
-					class="p-1.5 rounded-md text-base-content/60 hover:bg-base-200 hover:text-base-content transition-colors"
+					class="p-1 rounded-md text-base-content/60 hover:bg-base-200 hover:text-base-content transition-colors"
 					onclick={onSelectAll}
 					aria-label="Select all"
 					title="Select all"
 				>
-					<CheckSquare size={16} />
+					<CheckSquare size={14} />
 				</button>
 				<button
 					type="button"
-					class="p-1.5 rounded-md text-base-content/60 hover:bg-base-200 hover:text-base-content transition-colors"
+					class="p-1 rounded-md text-base-content/60 hover:bg-base-200 hover:text-base-content transition-colors"
 					onclick={onDeselectAll}
 					aria-label="Deselect all"
 					title="Deselect all"
 				>
-					<X size={16} />
+					<X size={14} />
 				</button>
 				<div class="w-px h-4 bg-base-300"></div>
 				<button
 					type="button"
-					class="p-1.5 rounded-md text-base-content/60 hover:bg-base-200 hover:text-base-content transition-colors disabled:opacity-30"
+					class="p-1 rounded-md text-base-content/60 hover:bg-base-200 hover:text-base-content transition-colors disabled:opacity-30"
 					onclick={onBulkDownload}
 					disabled={selectedFileCount === 0}
 					aria-label="Download selected"
 					title="Download selected"
 				>
-					<Download size={16} />
+					<Download size={14} />
 				</button>
 				<button
 					type="button"
-					class="p-1.5 rounded-md text-base-content/60 hover:bg-base-200 hover:text-base-content transition-colors disabled:opacity-30"
+					class="p-1 rounded-md text-base-content/60 hover:bg-base-200 hover:text-base-content transition-colors disabled:opacity-30"
 					onclick={onBulkMove}
 					disabled={selectedFileCount === 0 || selectedFolderCount > 0}
 					aria-label="Move selected"
 					title="Move selected"
 				>
-					<Move size={16} />
+					<Move size={14} />
 				</button>
 				<button
 					type="button"
-					class="p-1.5 rounded-md text-error hover:bg-error/10 transition-colors disabled:opacity-30"
+					class="p-1 rounded-md text-error hover:bg-error/10 transition-colors disabled:opacity-30"
 					onclick={onBulkDelete}
 					disabled={!$hasSelection}
 					aria-label="Delete selected"
 					title="Delete selected"
 				>
-					<Trash2 size={16} />
+					<Trash2 size={14} />
 				</button>
 				<div class="w-px h-4 bg-base-300"></div>
 				<button
 					type="button"
-					class="text-sm font-medium text-base-content/60 hover:text-base-content transition-colors px-1"
+					class="text-xs font-medium text-base-content/60 hover:text-base-content transition-colors px-1"
 					onclick={onToggleSelection}
 				>
 					Done
@@ -139,7 +139,7 @@
 			<div class="relative">
 				<button
 					type="button"
-					class="flex items-center gap-2 rounded-lg border border-base-300/60 bg-base-100 px-3 py-2 text-sm font-medium text-base-content/70 transition-colors hover:border-brand-500/30 hover:text-base-content"
+					class="flex items-center gap-2 rounded-lg border border-base-300/60 bg-base-100 px-2.5 py-1.5 text-sm font-medium text-base-content/70 transition-colors hover:border-brand-500/30 hover:text-base-content"
 					onclick={() => sortMenuOpen = !sortMenuOpen}
 					aria-expanded={sortMenuOpen}
 					aria-haspopup="listbox"
@@ -187,23 +187,23 @@
 			<div class="flex items-center rounded-lg border border-base-300/60 bg-base-100 p-1">
 				<button
 					type="button"
-					class="p-1.5 rounded-md transition-all
+					class="p-1 rounded-md transition-all
 						{$viewMode === 'grid' ? 'bg-brand-500/10 text-brand-600' : 'text-base-content/50 hover:text-base-content hover:bg-base-200/60'}"
 					onclick={() => fileBrowserUi.setViewMode('grid')}
 					aria-label="Grid view"
 					title="Grid view"
 				>
-					<Grid3X3 size={18} />
+					<Grid3X3 size={16} />
 				</button>
 				<button
 					type="button"
-					class="p-1.5 rounded-md transition-all
+					class="p-1 rounded-md transition-all
 						{$viewMode === 'list' ? 'bg-brand-500/10 text-brand-600' : 'text-base-content/50 hover:text-base-content hover:bg-base-200/60'}"
 					onclick={() => fileBrowserUi.setViewMode('list')}
 					aria-label="List view"
 					title="List view"
 				>
-					<List size={18} />
+					<List size={16} />
 				</button>
 			</div>
 
@@ -213,11 +213,11 @@
 			{#if canCreateFolder}
 				<button
 					type="button"
-					class="flex items-center gap-2 rounded-lg border border-base-300/60 bg-base-100 px-3 py-2 text-sm font-medium text-base-content/80 transition-colors hover:border-brand-500/30 hover:text-base-content disabled:opacity-50"
+					class="flex items-center gap-2 rounded-lg border border-base-300/60 bg-base-100 px-2.5 py-1.5 text-sm font-medium text-base-content/80 transition-colors hover:border-brand-500/30 hover:text-base-content disabled:opacity-50"
 					onclick={onNewFolder}
 					disabled={isUploading}
 				>
-					<FolderPlus size={16} />
+					<FolderPlus size={14} />
 					<span class="hidden sm:inline">New folder</span>
 				</button>
 			{/if}
@@ -226,7 +226,7 @@
 			{#if canUpload}
 				<button
 					type="button"
-					class="flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-brand-500/20 transition-colors hover:bg-brand-600 disabled:opacity-50"
+					class="flex items-center gap-2 rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm shadow-brand-500/20 transition-colors hover:bg-brand-600 disabled:opacity-50"
 					onclick={onUpload}
 					disabled={isUploading}
 				>
@@ -239,12 +239,12 @@
 			{#if allowSelectionMode}
 				<button
 					type="button"
-					class="rounded-lg border border-base-300/60 bg-base-100 p-2 text-base-content/60 transition-colors hover:border-brand-500/30 hover:text-base-content"
+					class="rounded-lg border border-base-300/60 bg-base-100 p-1.5 text-base-content/60 transition-colors hover:border-brand-500/30 hover:text-base-content"
 					onclick={onToggleSelection}
 					aria-label="Select multiple"
 					title="Select multiple"
 				>
-					<CheckSquare size={18} />
+					<CheckSquare size={16} />
 				</button>
 			{/if}
 		{/if}

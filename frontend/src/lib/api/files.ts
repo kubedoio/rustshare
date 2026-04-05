@@ -14,10 +14,24 @@ export async function getDeletedContents(): Promise<FolderContents> {
   return apiClient.get<FolderContents>("/files/deleted");
 }
 
+export type UploadProgressCallback = (progress: number) => void;
+
+/**
+ * Uploads a file to the server.
+ * Uses resumable chunked upload for files larger than 5MB to bypass proxy limits
+ * and improve reliability.
+ */
 export async function uploadFile(
   folderId: string | null,
   file: globalThis.File,
+  onProgress?: UploadProgressCallback
 ): Promise<File> {
+  // Use chunked upload for files > 10MB to bypass most proxy/Cloudflare limits (usually 100MB, but let's be safe)
+  // Actually, let's use it for > 5MB to ensure we test it properly.
+  if (file.size > 5 * 1024 * 1024) {
+    return uploadFileChunked(folderId, file, onProgress);
+  }
+
   const formData = new FormData();
   formData.append("file", file);
   formData.append("name", file.name);
@@ -27,7 +41,81 @@ export async function uploadFile(
     formData.append("parent_folder_id", folderId);
   }
 
-  return apiClient.post<File>("/files/upload", formData);
+  // standard upload
+  if (onProgress) onProgress(10);
+  const result = await apiClient.post<File>("/files/upload", formData);
+  if (onProgress) onProgress(100);
+  return result;
+}
+
+/**
+ * Internal helper for resumable chunked uploads
+ */
+async function uploadFileChunked(
+  folderId: string | null,
+  file: globalThis.File,
+  onProgress?: UploadProgressCallback
+): Promise<File> {
+  const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+  // 1. Create upload session
+  const session = await apiClient.post<{
+    session_id: string;
+    total_chunks: number;
+    chunk_size: number;
+  }>("/uploads/sessions", {
+    folder_id: folderId,
+    file_name: file.name,
+    mime_type: file.type || "application/octet-stream",
+    total_size: file.size,
+    chunk_size: CHUNK_SIZE
+  });
+
+  const sessionId = session.session_id;
+  const baseUrl = (apiClient as any).baseURL;
+
+  // 2. Upload chunks
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * CHUNK_SIZE;
+    const end = Math.min(start + CHUNK_SIZE, file.size);
+    const chunk = file.slice(start, end);
+
+    // We use raw fetch here because apiClient.post expects object/FormData
+    // and we want to send the raw binary chunk.
+    const response = await fetch(
+      `${baseUrl}/uploads/sessions/${sessionId}/chunks/${i}`,
+      {
+        method: "PUT",
+        body: chunk,
+        credentials: "include",
+        headers: {
+          "X-Rustshare-Csrf": "1"
+        }
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: "Unknown error" }));
+      throw new Error(`Failed to upload chunk ${i}: ${error.error || response.statusText}`);
+    }
+
+    if (onProgress) {
+      const progress = Math.round(((i + 1) / totalChunks) * 90); // 0-90% for chunks, last 10% for complete
+      onProgress(progress);
+    }
+  }
+
+  // 3. Complete upload
+  if (onProgress) onProgress(95);
+  const result = await apiClient.post<{ file_id: string; file_name: string }>(
+    `/uploads/sessions/${sessionId}/complete`,
+    {}
+  );
+
+  // 4. Return the created file (we need to fetch it to match the expected return type)
+  if (onProgress) onProgress(100);
+  return getFile(result.file_id);
 }
 
 export async function getFile(fileId: string): Promise<File> {

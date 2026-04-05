@@ -244,6 +244,7 @@ pub async fn accept_invite(
 }
 
 #[derive(sqlx::FromRow)]
+#[allow(dead_code)]
 struct WorkflowRow {
     id: Uuid,
     subject: Option<String>,
@@ -271,6 +272,7 @@ struct InviteTokenRow {
 }
 
 #[derive(sqlx::FromRow)]
+#[allow(dead_code)]
 struct InviteAcceptRow {
     token_id: Uuid,
     recipient_email: String,

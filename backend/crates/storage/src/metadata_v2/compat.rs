@@ -8,7 +8,6 @@ use rustshare_core::domain::{
     File, FileVersion, Folder, ReplicationJob, ReplicationState, Share,
 };
 use std::sync::Arc;
-use tracing::debug;
 
 use crate::repos::*;
 
@@ -16,11 +15,12 @@ use crate::repos::*;
 #[derive(Clone)]
 pub struct MetadataStoreCompat {
     repo: Arc<dyn MetadataRepository>,
+    pool: sqlx::PgPool,
 }
 
 impl MetadataStoreCompat {
-    pub fn new(repo: Arc<dyn MetadataRepository>) -> Self {
-        Self { repo }
+    pub fn new(repo: Arc<dyn MetadataRepository>, pool: sqlx::PgPool) -> Self {
+        Self { repo, pool }
     }
 }
 
@@ -227,6 +227,24 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
 /// Compatibility layer for share operations
 #[allow(async_fn_in_trait)]
 impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
+    async fn find_user_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<rustshare_core::domain::User>> {
+        let row = sqlx::query_as::<_, rustshare_core::domain::User>(
+            r#"
+            SELECT 
+                id, username, email, password_hash, display_name, is_admin, 
+                storage_quota, theme, created_at, updated_at, disabled_at, 
+                name, surname, avatar_path, email_sharing_enabled, tenant_id
+            FROM users 
+            WHERE id = $1 AND disabled_at IS NULL
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row)
+    }
+
     async fn find_file_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<File>> {
         match self.repo.files().get(id).await? {
             Some(doc) => Ok(Some(file_from_document(&doc))),
@@ -309,6 +327,23 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
     async fn update_share(&self, share: &Share) -> anyhow::Result<()> {
         let doc = share_to_document(share);
         self.repo.shares().update(&doc).await.map_err(|e| e.into())
+    }
+
+    async fn is_user_in_group(&self, user_id: uuid::Uuid, group_id: uuid::Uuid) -> anyhow::Result<bool> {
+        let exists = sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM group_members
+                WHERE group_id = $1 AND user_id = $2
+            )
+            "#,
+        )
+        .bind(group_id)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(exists)
     }
 }
 
@@ -433,16 +468,12 @@ fn share_to_document(share: &Share) -> ShareDocument {
         ("unknown".to_string(), uuid::Uuid::nil())
     };
 
-    let scope = if share.recipient_user_id.is_some() {
+    let scope = if share.recipient_group_id.is_some() {
+        ShareScope::Group
+    } else if share.recipient_user_id.is_some() {
         ShareScope::User
     } else {
         ShareScope::Public
-    };
-
-    let permissions = match share.permissions {
-        rustshare_core::domain::SharePermissions::View => SharePermission::View,
-        rustshare_core::domain::SharePermissions::Edit => SharePermission::Edit,
-        rustshare_core::domain::SharePermissions::Admin => SharePermission::Admin,
     };
 
     ShareDocument {
@@ -451,9 +482,11 @@ fn share_to_document(share: &Share) -> ShareDocument {
         resource_type,
         resource_id,
         scope,
-        permissions,
+        permissions: share.permissions,
         token_hash: share.share_token.as_ref().map(|t| format!("{:x}", md5::compute(t))),
+        share_token: share.share_token.clone(), // Store original token
         recipient_user_id: share.recipient_user_id,
+        recipient_group_id: share.recipient_group_id,
         password_hash: share.password_hash.clone(),
         expires_at: share.expires_at,
         upload_only: share.upload_only,
@@ -467,32 +500,24 @@ fn share_to_document(share: &Share) -> ShareDocument {
 }
 
 fn share_from_document(doc: &ShareDocument) -> Share {
-    use rustshare_core::domain::SharePermissions;
-
     let (file_id, folder_id) = match doc.resource_type.as_str() {
         "file" => (Some(doc.resource_id), None),
         "folder" => (None, Some(doc.resource_id)),
         _ => (None, None),
     };
 
-    let permissions = match doc.permissions {
-        SharePermission::View => SharePermissions::View,
-        SharePermission::Edit => SharePermissions::Edit,
-        SharePermission::Admin => SharePermissions::Admin,
-    };
-
     Share {
         id: doc.id,
         file_id,
         folder_id,
-        share_token: doc.token_hash.clone(), // Note: this is the hash, not the original token
-        permissions,
+        share_token: doc.share_token.clone(), // Use original token
+        permissions: doc.permissions,
         password_hash: doc.password_hash.clone(),
         expires_at: doc.expires_at,
         upload_only: doc.upload_only,
         access_count: doc.access_count,
         recipient_user_id: doc.recipient_user_id,
-        recipient_group_id: None, // Group shares not yet supported in ShareDocument schema
+        recipient_group_id: doc.recipient_group_id,
         created_by: doc.created_by,
         tenant_id: doc.tenant_id,
         created_at: doc.created_at,

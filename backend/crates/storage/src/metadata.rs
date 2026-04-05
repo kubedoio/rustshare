@@ -18,12 +18,38 @@ pub struct MetadataStore {
     pool: PgPool,
 }
 
+impl MetadataStore {
+    /// Get access to the underlying database pool
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct OwnedPublicShare {
     pub share: Share,
     pub resource_id: Uuid,
     pub resource_type: String,
     pub resource_name: String,
+}
+
+/// Folder with share information
+#[derive(Debug, Clone)]
+pub struct FolderWithShares {
+    pub id: Uuid,
+    pub name: String,
+    pub path: String,
+    pub parent_folder_id: Option<Uuid>,
+    pub owner_id: Uuid,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub tenant_id: Uuid,
+    pub starred_at: Option<DateTime<Utc>>,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub ancestor_ids: Option<Vec<Uuid>>,
+    pub is_shared: bool,
+    pub share_count: i64,
+    pub share_expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1564,6 +1590,74 @@ impl MetadataStore {
         Ok(folders)
     }
 
+    /// List folders with share counts
+    ///
+    /// Returns folders owned by the specified user with share information.
+    pub async fn list_folders_with_shares(
+        &self,
+        parent_id: Option<Uuid>,
+        owner_id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<Vec<FolderWithShares>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT 
+                f.id, f.name, f.path, f.parent_folder_id, f.owner_id, 
+                f.created_at, f.updated_at, f.tenant_id,
+                f.starred_at, f.deleted_at,
+                EXISTS (
+                    SELECT 1 FROM shares 
+                    WHERE folder_id = f.id 
+                    AND revoked_at IS NULL
+                ) as is_shared,
+                (
+                    SELECT COUNT(*) FROM shares
+                    WHERE folder_id = f.id
+                    AND revoked_at IS NULL
+                ) as share_count,
+                (
+                    SELECT MIN(expires_at) FROM shares
+                    WHERE folder_id = f.id
+                    AND revoked_at IS NULL
+                ) as share_expires_at
+            FROM folders f
+            WHERE f.owner_id = $1
+              AND f.tenant_id = $2
+              AND f.deleted_at IS NULL
+              AND (f.parent_folder_id = $3 OR ($3 IS NULL AND f.parent_folder_id IS NULL))
+            ORDER BY f.name ASC
+            "#,
+        )
+        .bind(owner_id)
+        .bind(tenant_id)
+        .bind(parent_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut folders = Vec::new();
+        for row in rows {
+            let folder = FolderWithShares {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                owner_id: row.try_get("owner_id")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+                tenant_id: row.try_get("tenant_id")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
+                ancestor_ids: None,
+                is_shared: row.try_get("is_shared")?,
+                share_count: row.try_get("share_count")?,
+                share_expires_at: row.try_get("share_expires_at")?,
+            };
+            folders.push(folder);
+        }
+
+        Ok(folders)
+    }
+
     pub async fn set_folder_starred(&self, id: Uuid, owner_id: Uuid, starred: bool) -> Result<bool> {
         let result = sqlx::query(
             r#"
@@ -1781,8 +1875,8 @@ impl MetadataStore {
     pub async fn create_share(&self, share: &Share) -> Result<()> {
         sqlx::query(
             r#"
-            INSERT INTO shares (id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, tenant_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            INSERT INTO shares (id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
         )
         .bind(share.id)
@@ -1790,6 +1884,7 @@ impl MetadataStore {
         .bind(share.folder_id)
         .bind(&share.share_token)
         .bind(share.recipient_user_id)
+        .bind(share.recipient_group_id)
         .bind(share.created_by)
         .bind(Self::permission_to_db_value(share.permissions))
         .bind(&share.password_hash)
@@ -1809,7 +1904,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
             WHERE share_token = $1
             "#,
@@ -1828,7 +1923,7 @@ impl MetadataStore {
                 folder_id: row.try_get("folder_id")?,
                 share_token: row.try_get("share_token")?,
                 recipient_user_id: row.try_get("recipient_user_id")?,
-                recipient_group_id: None, // Group shares not yet in database schema
+                recipient_group_id: row.try_get("recipient_group_id")?,
                 created_by: row.try_get("created_by")?,
                 permissions,
                 password_hash: row.try_get("password_hash")?,
@@ -1850,7 +1945,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
             WHERE id = $1
             "#,
@@ -1869,7 +1964,7 @@ impl MetadataStore {
                 folder_id: row.try_get("folder_id")?,
                 share_token: row.try_get("share_token")?,
                 recipient_user_id: row.try_get("recipient_user_id")?,
-                recipient_group_id: None, // Group shares not yet in database schema
+                recipient_group_id: row.try_get("recipient_group_id")?,
                 created_by: row.try_get("created_by")?,
                 permissions,
                 password_hash: row.try_get("password_hash")?,
@@ -1891,7 +1986,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
             WHERE file_id = $1 AND revoked_at IS NULL
             ORDER BY created_at DESC
@@ -1912,7 +2007,7 @@ impl MetadataStore {
                 folder_id: row.try_get("folder_id")?,
                 share_token: row.try_get("share_token")?,
                 recipient_user_id: row.try_get("recipient_user_id")?,
-                recipient_group_id: None, // Group shares not yet in database schema
+                recipient_group_id: row.try_get("recipient_group_id")?,
                 created_by: row.try_get("created_by")?,
                 permissions,
                 password_hash: row.try_get("password_hash")?,
@@ -1933,7 +2028,7 @@ impl MetadataStore {
     pub async fn get_folder_shares(&self, folder_id: Uuid) -> Result<Vec<Share>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
             WHERE folder_id = $1 AND revoked_at IS NULL
             ORDER BY created_at DESC
@@ -1954,7 +2049,7 @@ impl MetadataStore {
                 folder_id: row.try_get("folder_id")?,
                 share_token: row.try_get("share_token")?,
                 recipient_user_id: row.try_get("recipient_user_id")?,
-                recipient_group_id: None, // Group shares not yet in database schema
+                recipient_group_id: row.try_get("recipient_group_id")?,
                 created_by: row.try_get("created_by")?,
                 permissions,
                 password_hash: row.try_get("password_hash")?,
@@ -1980,6 +2075,7 @@ impl MetadataStore {
                 s.folder_id,
                 s.share_token,
                 s.recipient_user_id,
+                s.recipient_group_id,
                 s.created_by,
                 s.permissions,
                 s.password_hash,
@@ -2000,6 +2096,7 @@ impl MetadataStore {
             LEFT JOIN folders fo ON fo.id = s.folder_id
             WHERE s.created_by = $1
               AND s.recipient_user_id IS NULL
+              AND s.recipient_group_id IS NULL
               AND s.revoked_at IS NULL
             ORDER BY s.created_at DESC
             "#,
@@ -2020,7 +2117,77 @@ impl MetadataStore {
                     folder_id: row.try_get("folder_id")?,
                     share_token: row.try_get("share_token")?,
                     recipient_user_id: row.try_get("recipient_user_id")?,
-                    recipient_group_id: None, // Group shares not yet in database schema
+                    recipient_group_id: row.try_get("recipient_group_id")?,
+                    created_by: row.try_get("created_by")?,
+                    permissions,
+                    password_hash: row.try_get("password_hash")?,
+                    expires_at: row.try_get("expires_at")?,
+                    upload_only: row.try_get("upload_only")?,
+                    access_count: row.try_get("access_count")?,
+                    created_at: row.try_get("created_at")?,
+                    revoked_at: row.try_get("revoked_at")?,
+                    tenant_id: row.try_get("tenant_id")?,
+                },
+                resource_id: row.try_get("resource_id")?,
+                resource_type: row.try_get("resource_type")?,
+                resource_name: row.try_get("resource_name")?,
+            });
+        }
+
+        Ok(shares)
+    }
+
+    /// Get all active shares created by a specific user (public, user, and group shares).
+    pub async fn get_user_all_shares(&self, user_id: Uuid) -> Result<Vec<OwnedPublicShare>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                s.id,
+                s.file_id,
+                s.folder_id,
+                s.share_token,
+                s.recipient_user_id,
+                s.recipient_group_id,
+                s.created_by,
+                s.permissions,
+                s.password_hash,
+                s.expires_at,
+                s.upload_only,
+                s.access_count,
+                s.created_at,
+                s.revoked_at,
+                s.tenant_id,
+                COALESCE(s.file_id, s.folder_id) AS resource_id,
+                CASE
+                    WHEN s.file_id IS NOT NULL THEN 'file'
+                    ELSE 'folder'
+                END AS resource_type,
+                COALESCE(f.name, fo.name) AS resource_name
+            FROM shares s
+            LEFT JOIN files f ON f.id = s.file_id
+            LEFT JOIN folders fo ON fo.id = s.folder_id
+            WHERE s.created_by = $1
+              AND s.revoked_at IS NULL
+            ORDER BY s.created_at DESC
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut shares = Vec::with_capacity(rows.len());
+        for row in rows {
+            let permissions_str: String = row.try_get("permissions")?;
+            let permissions = Self::permission_from_db_value(&permissions_str);
+
+            shares.push(OwnedPublicShare {
+                share: Share {
+                    id: row.try_get("id")?,
+                    file_id: row.try_get("file_id")?,
+                    folder_id: row.try_get("folder_id")?,
+                    share_token: row.try_get("share_token")?,
+                    recipient_user_id: row.try_get("recipient_user_id")?,
+                    recipient_group_id: row.try_get("recipient_group_id")?,
                     created_by: row.try_get("created_by")?,
                     permissions,
                     password_hash: row.try_get("password_hash")?,
@@ -2175,6 +2342,64 @@ impl MetadataStore {
         .await?;
 
         Ok(())
+    }
+
+    /// List all markdown files for a user across their entire library.
+    pub async fn list_all_markdown_files(&self, owner_id: Uuid, tenant_id: Uuid) -> Result<Vec<File>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id
+            FROM files
+            WHERE owner_id = $1
+              AND tenant_id = $2
+              AND deleted_at IS NULL
+              AND (mime_type = 'text/markdown' OR name ILIKE '%.md')
+            ORDER BY modified_at DESC
+            "#,
+        )
+        .bind(owner_id)
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut files = Vec::new();
+        for row in rows {
+            let file = File {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                size: row.try_get("size")?,
+                mime_type: row.try_get("mime_type")?,
+                content_hash: row.try_get("content_hash")?,
+                owner_id: row.try_get("owner_id")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                current_version: row.try_get("current_version")?,
+                created_at: row.try_get("created_at")?,
+                modified_at: row.try_get("modified_at")?,
+                tenant_id: row.try_get("tenant_id")?,
+            };
+            files.push(file);
+        }
+
+        Ok(files)
+    }
+
+    /// Check if a user is a member of a group.
+    pub async fn is_user_in_group(&self, user_id: Uuid, group_id: Uuid) -> Result<bool> {
+        let exists = sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM group_members
+                WHERE group_id = $1 AND user_id = $2
+            )
+            "#,
+        )
+        .bind(group_id)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(exists)
     }
 }
 
@@ -2698,6 +2923,106 @@ mod tests {
             .unwrap();
 
         // Cleanup user
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(owner.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn test_get_public_shares_excludes_group_shares() {
+        let (store, pool) = setup_metadata_store().await;
+        
+        // Create test user and group
+        let user_id = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        
+        // Create user
+        let owner = User::new(
+            format!("testowner_{}", user_id),
+            "Test Owner".to_string(),
+            "hash123".to_string(),
+            format!("testowner_{}@example.com", user_id),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        store.create_user(&owner).await.unwrap();
+        
+        // Create file
+        let file = File::new(
+            "test-document.pdf".to_string(),
+            "/Documents/test-document.pdf".to_string(),
+            "content_hash".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            None,
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&file).await.unwrap();
+        
+        // Create public share
+        let public_share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file.id),
+            folder_id: None,
+            share_token: Some("public_token".to_string()),
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: None,
+            created_by: owner.id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id,
+        };
+        store.create_share(&public_share).await.unwrap();
+        
+        // Create group share (same file)
+        let group_share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file.id),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::Edit,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: Some(group_id),
+            created_by: owner.id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id,
+        };
+        store.create_share(&group_share).await.unwrap();
+        
+        // Query public shares
+        let public_shares = store.get_user_public_shares(owner.id).await.unwrap();
+        
+        // Should only return 1 (the public share), not 2
+        assert_eq!(public_shares.len(), 1);
+        assert_eq!(public_shares[0].share.id, public_share.id);
+
+        // Cleanup
+        sqlx::query("DELETE FROM shares WHERE file_id = $1")
+            .bind(file.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM files WHERE id = $1")
+            .bind(file.id)
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("DELETE FROM users WHERE id = $1")
             .bind(owner.id)
             .execute(&pool)

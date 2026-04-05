@@ -12,13 +12,39 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
-use crate::domain::{File, FileId, Folder, FolderId, Share, SharePermissions, UserId};
+use crate::domain::{File, FileId, Folder, FolderId, Share, ShareId, SharePermissions, UserId};
 
 /// Resource type for permission checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Resource {
     File(FileId),
     Folder(FolderId),
+}
+
+/// Indicates how permission was granted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionSource {
+    /// User owns the resource.
+    Owner,
+    /// Direct user-to-user share.
+    DirectShare,
+    /// Access via group membership.
+    GroupShare,
+    /// Inherited from parent folder.
+    Inherited,
+    /// No permission.
+    None,
+}
+
+/// Result of permission resolution with source information.
+#[derive(Debug, Clone, Copy)]
+pub struct PermissionResult {
+    /// The permission level granted (if any).
+    pub permission: Option<SharePermissions>,
+    /// How the permission was granted.
+    pub source: PermissionSource,
+    /// The share that granted access (if applicable).
+    pub share_id: Option<ShareId>,
 }
 
 /// Cache key for permission lookups.
@@ -452,6 +478,359 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
             }
         }
     }
+
+    /// Resolve permission with detailed source information.
+    ///
+    /// This method returns not just the permission level, but also how it was granted,
+    /// which is needed for triggering first-access notifications for group shares.
+    pub async fn resolve_permission_with_source(
+        &self,
+        user_id: UserId,
+        resource: Resource,
+    ) -> Result<PermissionResult> {
+        match resource {
+            Resource::File(file_id) => {
+                self.resolve_file_permission_with_source(user_id, file_id).await
+            }
+            Resource::Folder(folder_id) => {
+                self.resolve_folder_permission_with_source(user_id, folder_id).await
+            }
+        }
+    }
+
+    /// Resolve file permission with source information.
+    async fn resolve_file_permission_with_source(
+        &self,
+        user_id: UserId,
+        file_id: FileId,
+    ) -> Result<PermissionResult> {
+        // Check cache first (but we don't cache source info, so this is a simplified check)
+        let cache_key = CacheKey::File(user_id, file_id);
+        let cached = { self.cache.lock().unwrap().get(&cache_key).copied() };
+        if let Some(perm) = cached {
+            return Ok(PermissionResult {
+                permission: perm,
+                source: PermissionSource::DirectShare, // We don't cache source, assume direct
+                share_id: None,
+            });
+        }
+
+        // Get file metadata
+        let file = self
+            .ops
+            .find_file_by_id(file_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("File not found"))?;
+
+        // 1. Check ownership
+        if file.owner_id == user_id {
+            return Ok(PermissionResult {
+                permission: Some(SharePermissions::Admin),
+                source: PermissionSource::Owner,
+                share_id: None,
+            });
+        }
+
+        // 2. Check direct share on file
+        if let Some(share) = self
+            .ops
+            .find_user_share(Some(file_id), None, user_id)
+            .await?
+        {
+            if share.revoked_at.is_none() {
+                let share_id = share.id;
+                let perm = share.permissions;
+                self.cache.lock().unwrap().insert(cache_key, Some(perm));
+                return Ok(PermissionResult {
+                    permission: Some(perm),
+                    source: PermissionSource::DirectShare,
+                    share_id: Some(share_id),
+                });
+            }
+        }
+
+        // 3. Check group shares on file
+        let user_groups = self.ops.get_user_group_ids(user_id).await?;
+        if !user_groups.is_empty() {
+            let group_shares = self
+                .ops
+                .find_group_shares(Some(file_id), None, &user_groups)
+                .await?;
+
+            // Find the first non-revoked group share
+            if let Some(share) = group_shares.iter().find(|s| s.revoked_at.is_none()) {
+                let share_id = share.id;
+                let perm = share.permissions;
+                self.cache.lock().unwrap().insert(cache_key, Some(perm));
+                return Ok(PermissionResult {
+                    permission: Some(perm),
+                    source: PermissionSource::GroupShare,
+                    share_id: Some(share_id),
+                });
+            }
+        }
+
+        // 4. Walk up folder ancestry for inherited permissions
+        if let Some(parent_folder_id) = file.parent_folder_id {
+            if let Some((inherited_perm, share_id, inherited_source)) = self
+                .resolve_folder_ancestry_with_source(user_id, parent_folder_id, &user_groups)
+                .await?
+            {
+                self.cache.lock().unwrap().insert(cache_key, Some(inherited_perm));
+                return Ok(PermissionResult {
+                    permission: Some(inherited_perm),
+                    source: inherited_source,
+                    share_id,
+                });
+            }
+        }
+
+        // No permission found
+        self.cache.lock().unwrap().insert(cache_key, None);
+        Ok(PermissionResult {
+            permission: None,
+            source: PermissionSource::None,
+            share_id: None,
+        })
+    }
+
+    /// Resolve folder permission with source information.
+    async fn resolve_folder_permission_with_source(
+        &self,
+        user_id: UserId,
+        folder_id: FolderId,
+    ) -> Result<PermissionResult> {
+        // Check cache first
+        let cache_key = CacheKey::Folder(user_id, folder_id);
+        let cached = { self.cache.lock().unwrap().get(&cache_key).copied() };
+        if let Some(perm) = cached {
+            return Ok(PermissionResult {
+                permission: perm,
+                source: PermissionSource::DirectShare, // We don't cache source, assume direct
+                share_id: None,
+            });
+        }
+
+        // Get folder metadata
+        let folder = self
+            .ops
+            .find_folder_by_id(folder_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Folder not found"))?;
+
+        // 1. Check ownership
+        if folder.owner_id == user_id {
+            return Ok(PermissionResult {
+                permission: Some(SharePermissions::Admin),
+                source: PermissionSource::Owner,
+                share_id: None,
+            });
+        }
+
+        // 2. Check direct share on folder
+        if let Some(share) = self
+            .ops
+            .find_user_share(None, Some(folder_id), user_id)
+            .await?
+        {
+            if share.revoked_at.is_none() {
+                let share_id = share.id;
+                let perm = share.permissions;
+                self.cache.lock().unwrap().insert(cache_key, Some(perm));
+                return Ok(PermissionResult {
+                    permission: Some(perm),
+                    source: PermissionSource::DirectShare,
+                    share_id: Some(share_id),
+                });
+            }
+        }
+
+        // 3. Check group shares on folder
+        let user_groups = self.ops.get_user_group_ids(user_id).await?;
+        if !user_groups.is_empty() {
+            let group_shares = self
+                .ops
+                .find_group_shares(None, Some(folder_id), &user_groups)
+                .await?;
+
+            // Find the first non-revoked group share
+            if let Some(share) = group_shares.iter().find(|s| s.revoked_at.is_none()) {
+                let share_id = share.id;
+                let perm = share.permissions;
+                self.cache.lock().unwrap().insert(cache_key, Some(perm));
+                return Ok(PermissionResult {
+                    permission: Some(perm),
+                    source: PermissionSource::GroupShare,
+                    share_id: Some(share_id),
+                });
+            }
+        }
+
+        // 4. Walk up parent folder ancestry for inherited permissions
+        if let Some(parent_folder_id) = folder.parent_folder_id {
+            if let Some((inherited_perm, share_id, inherited_source)) = self
+                .resolve_folder_ancestry_with_source(user_id, parent_folder_id, &user_groups)
+                .await?
+            {
+                self.cache.lock().unwrap().insert(cache_key, Some(inherited_perm));
+                return Ok(PermissionResult {
+                    permission: Some(inherited_perm),
+                    source: inherited_source,
+                    share_id,
+                });
+            }
+        }
+
+        // No permission found
+        self.cache.lock().unwrap().insert(cache_key, None);
+        Ok(PermissionResult {
+            permission: None,
+            source: PermissionSource::None,
+            share_id: None,
+        })
+    }
+
+    /// Walk up folder ancestry to find inherited permissions with source info.
+    ///
+    /// Returns the highest permission found along with the share_id and source type.
+    async fn resolve_folder_ancestry_with_source(
+        &self,
+        user_id: UserId,
+        folder_id: FolderId,
+        user_groups: &[Uuid],
+    ) -> Result<Option<(SharePermissions, Option<ShareId>, PermissionSource)>> {
+        // Step 1: Fetch the starting folder to get its ancestor_ids
+        let folder = self
+            .ops
+            .find_folder_by_id(folder_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Folder not found in ancestry"))?;
+
+        // Build the list of folder IDs to check: current folder + all ancestors
+        let mut folder_ids_to_check = vec![folder_id];
+
+        // Add ancestor_ids from the folder document if available
+        if let Some(ref ancestor_ids) = folder.ancestor_ids {
+            folder_ids_to_check.extend(ancestor_ids.iter().copied());
+        } else {
+            // Fallback: Walk up the tree using parent_folder_id
+            let mut current_id = folder.parent_folder_id;
+            let mut depth = 0;
+            const MAX_DEPTH: usize = 50;
+
+            while let Some(parent_id) = current_id {
+                if depth >= MAX_DEPTH {
+                    return Err(anyhow::anyhow!("Max folder depth exceeded ({} levels)", MAX_DEPTH));
+                }
+                folder_ids_to_check.push(parent_id);
+
+                // Fetch parent to continue walking
+                if let Some(parent) = self.ops.find_folder_by_id(parent_id).await? {
+                    current_id = parent.parent_folder_id;
+                } else {
+                    break;
+                }
+                depth += 1;
+            }
+        }
+
+        // Step 2: Check cache for any folders we already know about
+        let mut user_shares_found: Vec<(FolderId, SharePermissions, ShareId)> = Vec::new();
+        let mut group_shares_found: Vec<(FolderId, SharePermissions, ShareId)> = Vec::new();
+        let mut uncached_folder_ids: Vec<FolderId> = Vec::new();
+
+        for &fid in &folder_ids_to_check {
+            let cache_key = CacheKey::Folder(user_id, fid);
+            let cached = { self.cache.lock().unwrap().get(&cache_key).copied() };
+            match cached {
+                Some(Some(perm)) => {
+                    // We have a cached permission but don't know the source.
+                    // For now, treat it as inherited without a specific share_id.
+                    // A full implementation would require caching the source info too.
+                    user_shares_found.push((fid, perm, fid)); // Use folder_id as placeholder
+                }
+                Some(None) => {} // Cached as no permission, continue
+                None => uncached_folder_ids.push(fid),
+            }
+        }
+
+        // Step 3: Batch fetch shares for all uncached folders
+        if !uncached_folder_ids.is_empty() {
+            // Fetch user shares for all folders at once
+            let user_shares = self
+                .ops
+                .find_user_shares_for_folders(&uncached_folder_ids, user_id)
+                .await?;
+
+            // Fetch group shares for all folders at once (if user has groups)
+            let group_shares = if !user_groups.is_empty() {
+                self.ops
+                    .find_group_shares_for_folders(&uncached_folder_ids, user_groups)
+                    .await?
+            } else {
+                Vec::new()
+            };
+
+            // Process results and update cache
+            for folder_id in uncached_folder_ids {
+                // Find highest user share for this folder
+                let user_share = user_shares
+                    .iter()
+                    .find(|s| s.folder_id == Some(folder_id) && s.revoked_at.is_none());
+
+                // Find highest group share for this folder
+                let group_share = group_shares
+                    .iter()
+                    .filter(|s| s.folder_id == Some(folder_id) && s.revoked_at.is_none())
+                    .max_by_key(|s| s.permissions);
+
+                // Determine which share provides higher permission
+                let found = match (user_share, group_share) {
+                    (Some(u), Some(g)) => {
+                        if u.permissions >= g.permissions {
+                            Some((u.permissions, u.id, PermissionSource::Inherited))
+                        } else {
+                            Some((g.permissions, g.id, PermissionSource::Inherited))
+                        }
+                    }
+                    (Some(u), None) => Some((u.permissions, u.id, PermissionSource::Inherited)),
+                    (None, Some(g)) => Some((g.permissions, g.id, PermissionSource::Inherited)),
+                    (None, None) => None,
+                };
+
+                // Update cache
+                let cache_key = CacheKey::Folder(user_id, folder_id);
+                self.cache
+                    .lock()
+                    .unwrap()
+                    .insert(cache_key, found.map(|(p, _, _)| p));
+
+                if let Some((perm, share_id, _source)) = found {
+                    // Track for determining the highest permission
+                    if user_share.is_some() && group_share.is_none() {
+                        user_shares_found.push((folder_id, perm, share_id));
+                    } else {
+                        group_shares_found.push((folder_id, perm, share_id));
+                    }
+                }
+            }
+        }
+
+        // Step 4: Find the highest permission among all shares found
+        // Check closer folders first (they take precedence)
+        for &folder_id in &folder_ids_to_check {
+            // Check user shares first (direct shares take precedence over group shares)
+            if let Some((_, perm, share_id)) = user_shares_found.iter().find(|(fid, _, _)| *fid == folder_id) {
+                return Ok(Some((*perm, Some(*share_id), PermissionSource::Inherited)));
+            }
+            // Then check group shares
+            if let Some((_, perm, share_id)) = group_shares_found.iter().find(|(fid, _, _)| *fid == folder_id) {
+                return Ok(Some((*perm, Some(*share_id), PermissionSource::Inherited)));
+            }
+        }
+
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
@@ -616,6 +995,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -650,6 +1030,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -694,7 +1075,7 @@ mod tests {
         let user_id = Uuid::new_v4();
 
         // Create folder hierarchy: root -> parent -> child
-        let root_folder = Folder::new_root(owner_id);
+        let root_folder = Folder::new_root(owner_id, Uuid::new_v4());
         let root_id = root_folder.id;
         ops.add_folder(root_folder);
 
@@ -703,6 +1084,7 @@ mod tests {
             "/parent".to_string(),
             root_id,
             owner_id,
+            Uuid::new_v4(),
         );
         let parent_id = parent_folder.id;
         ops.add_folder(parent_folder);
@@ -712,6 +1094,7 @@ mod tests {
             "/parent/child".to_string(),
             parent_id,
             owner_id,
+            Uuid::new_v4(),
         );
         let child_id = child_folder.id;
         ops.add_folder(child_folder);
@@ -725,6 +1108,7 @@ mod tests {
             "text/plain".to_string(),
             Some(child_id),
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -779,6 +1163,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -825,6 +1210,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -882,6 +1268,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -899,7 +1286,7 @@ mod tests {
 
         let owner_id = Uuid::new_v4();
 
-        let folder = Folder::new_root(owner_id);
+        let folder = Folder::new_root(owner_id, Uuid::new_v4());
         let folder_id = folder.id;
         ops.add_folder(folder);
 
@@ -926,7 +1313,7 @@ mod tests {
         let user_id = Uuid::new_v4();
 
         // Create folder hierarchy: root -> parent
-        let root_folder = Folder::new_root(owner_id);
+        let root_folder = Folder::new_root(owner_id, Uuid::new_v4());
         let root_id = root_folder.id;
         ops.add_folder(root_folder);
 
@@ -935,6 +1322,7 @@ mod tests {
             "/parent".to_string(),
             root_id,
             owner_id,
+            Uuid::new_v4(),
         );
         let parent_id = parent_folder.id;
         ops.add_folder(parent_folder);
@@ -948,6 +1336,7 @@ mod tests {
             "text/plain".to_string(),
             Some(parent_id),
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1025,6 +1414,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1082,6 +1472,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1132,6 +1523,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1209,6 +1601,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1280,7 +1673,7 @@ mod tests {
         ops.add_user_to_group(user_id, group_id);
 
         // Create folder hierarchy: root -> parent -> child
-        let root_folder = Folder::new_root(owner_id);
+        let root_folder = Folder::new_root(owner_id, Uuid::new_v4());
         let root_id = root_folder.id;
         ops.add_folder(root_folder);
 
@@ -1289,6 +1682,7 @@ mod tests {
             "/parent".to_string(),
             root_id,
             owner_id,
+            Uuid::new_v4(),
         );
         let parent_id = parent_folder.id;
         ops.add_folder(parent_folder);
@@ -1298,6 +1692,7 @@ mod tests {
             "/parent/child".to_string(),
             parent_id,
             owner_id,
+            Uuid::new_v4(),
         );
         let child_id = child_folder.id;
         ops.add_folder(child_folder);
@@ -1311,6 +1706,7 @@ mod tests {
             "text/plain".to_string(),
             Some(child_id),
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1369,6 +1765,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);
@@ -1412,7 +1809,7 @@ mod tests {
         ops.add_user_to_group(user_id, group_id);
 
         // Create folder hierarchy: root -> parent
-        let root_folder = Folder::new_root(owner_id);
+        let root_folder = Folder::new_root(owner_id, Uuid::new_v4());
         let root_id = root_folder.id;
         ops.add_folder(root_folder);
 
@@ -1421,6 +1818,7 @@ mod tests {
             "/parent".to_string(),
             root_id,
             owner_id,
+            Uuid::new_v4(),
         );
         let parent_id = parent_folder.id;
         ops.add_folder(parent_folder);
@@ -1434,6 +1832,7 @@ mod tests {
             "text/plain".to_string(),
             Some(parent_id),
             owner_id,
+            Uuid::new_v4(),
         );
         let file_id = file.id;
         ops.add_file(file);

@@ -23,9 +23,14 @@ export interface FolderTree {
     owner_id: string;
     created_at: string;
     updated_at: string;
+    tenant_id: string;
+    ancestor_ids: string[] | null;
+    // Share info
+    is_shared: boolean;
+    share_count: number;
+    share_expires_at: string | null;
   };
   subfolders: FolderTree[];
-  files: any[];
 }
 
 export async function createFolder(name: string, parentFolderId: string | null): Promise<Folder> {
@@ -45,6 +50,14 @@ export async function getFolderContents(folderId: string | null): Promise<Folder
     return apiClient.get<FolderContents>('/folders/root/contents');
   }
   return apiClient.get<FolderContents>(`/folders/${folderId}/contents`);
+}
+
+/**
+ * Get contents of a shared folder (bypasses ownership check)
+ * Use this when accessing folders shared with the current user
+ */
+export async function getSharedFolderContents(folderId: string): Promise<FolderContents> {
+  return apiClient.get<FolderContents>(`/shares/folders/${folderId}/contents`);
 }
 
 export async function getFolderTree(): Promise<FolderTree> {

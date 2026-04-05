@@ -1,14 +1,23 @@
 <script lang="ts">
+	import { Link2 } from 'lucide-svelte';
 	import { formatDate } from '$lib/utils/format';
 
 	export let isShared: boolean = false;
 	export let shareCount: number = 0;
 	export let shareExpiresAt: string | null = null;
-	export let size: 'sm' | 'md' = 'sm';
+	export let size: 'xs' | 'sm' | 'md' = 'sm';
+	export let showText: boolean = true; // Whether to show expiration text
 
 	const sizeClasses = {
-		sm: 'w-2 h-2',
-		md: 'w-3 h-3'
+		xs: 'text-[10px] gap-0.5',
+		sm: 'text-xs gap-1',
+		md: 'text-sm gap-1.5'
+	};
+
+	const iconSizes = {
+		xs: 10,
+		sm: 12,
+		md: 14
 	};
 
 	function getTooltipText(): string {
@@ -36,9 +45,9 @@
 		return text;
 	}
 
-	function getDotColor(): string {
+	function getStatusColor(): string {
 		if (!shareExpiresAt) {
-			return 'bg-success'; // Green for non-expiring shares
+			return 'text-success/70'; // Muted green for non-expiring shares
 		}
 		
 		const expiryDate = new Date(shareExpiresAt);
@@ -46,22 +55,38 @@
 		const daysUntilExpiry = (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
 		
 		if (expiryDate < now) {
-			return 'bg-error'; // Red for expired
+			return 'text-error/70'; // Muted red for expired
 		} else if (daysUntilExpiry <= 7) {
-			return 'bg-warning'; // Yellow/Orange for expiring soon (within 7 days)
+			return 'text-warning/70'; // Muted yellow/orange for expiring soon
 		} else {
-			return 'bg-success'; // Green for healthy shares
+			return 'text-success/70'; // Muted green for healthy shares
 		}
+	}
+
+	function formatExpiryShort(dateStr: string): string {
+		const date = new Date(dateStr);
+		const now = new Date();
+		const isExpired = date < now;
+		
+		// Format: "Oct 24" or "Expired"
+		if (isExpired) {
+			return 'Expired';
+		}
+		
+		const month = date.toLocaleDateString('en-US', { month: 'short' });
+		const day = date.getDate();
+		return `Exp. ${month} ${day}`;
 	}
 </script>
 
 {#if isShared}
-	<div class="tooltip tooltip-bottom" data-tip={getTooltipText()}>
-		<div class="relative inline-flex items-center justify-center">
-			<!-- Pulsing animation ring -->
-			<span class="absolute inline-flex h-full w-full animate-ping rounded-full opacity-20 {getDotColor()}"></span>
-			<!-- Solid dot -->
-			<span class="relative inline-flex rounded-full {sizeClasses[size]} {getDotColor()}"></span>
-		</div>
-	</div>
+	<span 
+		class="inline-flex items-center {sizeClasses[size]} {getStatusColor()} whitespace-nowrap"
+		title={getTooltipText()}
+	>
+		<Link2 size={iconSizes[size]} class="flex-shrink-0" />
+		{#if showText && shareExpiresAt}
+			<span class="font-medium">{formatExpiryShort(shareExpiresAt)}</span>
+		{/if}
+	</span>
 {/if}

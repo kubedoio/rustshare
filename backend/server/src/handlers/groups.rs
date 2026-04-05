@@ -60,6 +60,12 @@ pub struct CreateFolderGroupShareRequest {
     pub permission: String, // "View", "Edit", or "Admin"
 }
 
+/// Request to update a group share permission.
+#[derive(Debug, Deserialize)]
+pub struct UpdateGroupShareRequest {
+    pub permission: String,
+}
+
 /// Response for a created group share.
 #[derive(Debug, Serialize)]
 pub struct GroupShareResponse {
@@ -91,11 +97,6 @@ struct MemberRow {
     username: String,
     email: String,
     added_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(sqlx::FromRow)]
-struct GroupNameRow {
-    name: String,
 }
 
 // ============================================================================
@@ -250,6 +251,7 @@ pub async fn create_file_group_share(
     Json(req): Json<CreateFileGroupShareRequest>,
 ) -> Result<(StatusCode, Json<GroupShareResponse>), (StatusCode, Json<serde_json::Value>)> {
     use rustshare_core::domain::SharePermissions;
+    use rustshare_core::services::Resource;
 
     // Parse permission
     let permission = match req.permission.as_str() {
@@ -264,139 +266,66 @@ pub async fn create_file_group_share(
         }
     };
 
-    // Verify user is a member of the group
-    let is_member = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2)",
+    // Create group share via service
+    let result = state.share_service
+        .create_group_share(
+            Resource::File(file_id),
+            req.group_id,
+            permission,
+            auth.user_id,
+            auth.tenant_id,
+        )
+        .await;
+
+    let share = match result {
+        Ok(share) => share,
+        Err(rustshare_core::services::ShareError::FileNotFound(_)) => {
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "File not found" }))));
+        }
+        Err(rustshare_core::services::ShareError::FolderNotFound(_)) => {
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Folder not found" }))));
+        }
+        Err(rustshare_core::services::ShareError::GroupNotFound(_)) => {
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Group not found" }))));
+        }
+        Err(rustshare_core::services::ShareError::NotGroupMember(_)) => {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "You must be a group member to share" }))));
+        }
+        Err(rustshare_core::services::ShareError::CrossTenantSharingNotAllowed) => {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Cross-tenant sharing not allowed" }))));
+        }
+        Err(rustshare_core::services::ShareError::PermissionDenied { .. }) => {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Permission denied" }))));
+        }
+        Err(rustshare_core::services::ShareError::GroupShareAlreadyExists) => {
+            return Err((StatusCode::CONFLICT, Json(serde_json::json!({ "error": "Group already has access" }))));
+        }
+        Err(rustshare_core::services::ShareError::InsufficientPermission { .. }) => {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Admin permission required" }))));
+        }
+        Err(e) => {
+            tracing::error!("Failed to create group share: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to process share operation" }))));
+        }
+    };
+
+    // Get group name for response
+    let group_name = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM user_groups WHERE id = $1"
     )
     .bind(req.group_id)
-    .bind(auth.user_id)
     .fetch_one(&state.db_pool)
     .await
-    .map_err(|e| {
-        tracing::error!("Failed to check group membership: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "Failed to verify group access" })),
-        )
-    })?;
-
-    if !is_member {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "You are not a member of this group" })),
-        ));
-    }
-
-    // Get group name
-    let group_name = sqlx::query_as::<_, GroupNameRow>(
-        "SELECT name FROM user_groups WHERE id = $1",
-    )
-    .bind(req.group_id)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to get group name: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "Failed to load group" })),
-        )
-    })?
-    .ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "Group not found" })),
-        )
-    })?;
-
-    // Check if share already exists
-    let existing_share = sqlx::query_as::<_, (Uuid,)>(
-        r#"
-        SELECT id FROM shares
-        WHERE file_id = $1
-          AND recipient_group_id = $2
-          AND revoked_at IS NULL
-        LIMIT 1
-        "#,
-    )
-    .bind(file_id)
-    .bind(req.group_id)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to check existing share: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "Failed to check existing share" })),
-        )
-    })?;
-
-    let share_id;
-    let created_at;
-
-    if let Some((existing_id,)) = existing_share {
-        // Update existing share permission
-        share_id = existing_id;
-        let now = chrono::Utc::now();
-        sqlx::query(
-            r#"
-            UPDATE shares
-            SET permissions = $1, updated_at = $2
-            WHERE id = $3
-            "#,
-        )
-        .bind(format!("{:?}", permission))
-        .bind(now)
-        .bind(share_id)
-        .execute(&state.db_pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to update share: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": "Failed to update share" })),
-            )
-        })?;
-        created_at = now;
-    } else {
-        // Create new share
-        share_id = Uuid::new_v4();
-        created_at = chrono::Utc::now();
-        sqlx::query(
-            r#"
-            INSERT INTO shares (
-                id, file_id, recipient_group_id, permissions,
-                created_by, created_at, upload_only, access_count, tenant_id
-            )
-            SELECT $1, $2, $3, $4, $5, $6, false, 0, f.tenant_id
-            FROM files f
-            WHERE f.id = $2
-            "#,
-        )
-        .bind(share_id)
-        .bind(file_id)
-        .bind(req.group_id)
-        .bind(format!("{:?}", permission))
-        .bind(auth.user_id)
-        .bind(created_at)
-        .execute(&state.db_pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to create share: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": "Failed to create share" })),
-            )
-        })?;
-    }
+    .unwrap_or_else(|_| "Unknown".to_string());
 
     let response = GroupShareResponse {
-        share_id: share_id.to_string(),
+        share_id: share.id.to_string(),
         resource_id: file_id.to_string(),
         resource_type: "file".to_string(),
         group_id: req.group_id.to_string(),
-        group_name: group_name.name,
+        group_name,
         permission: format!("{:?}", permission),
-        created_at: created_at.to_rfc3339(),
+        created_at: share.created_at.to_rfc3339(),
     };
 
     Ok((StatusCode::CREATED, Json(response)))
@@ -412,6 +341,7 @@ pub async fn create_folder_group_share(
     Json(req): Json<CreateFolderGroupShareRequest>,
 ) -> Result<(StatusCode, Json<GroupShareResponse>), (StatusCode, Json<serde_json::Value>)> {
     use rustshare_core::domain::SharePermissions;
+    use rustshare_core::services::Resource;
 
     // Parse permission
     let permission = match req.permission.as_str() {
@@ -426,142 +356,168 @@ pub async fn create_folder_group_share(
         }
     };
 
-    // Verify user is a member of the group
-    let is_member = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2)",
+    // Create group share via service
+    let result = state.share_service
+        .create_group_share(
+            Resource::Folder(folder_id),
+            req.group_id,
+            permission,
+            auth.user_id,
+            auth.tenant_id,
+        )
+        .await;
+
+    let share = match result {
+        Ok(share) => share,
+        Err(rustshare_core::services::ShareError::FileNotFound(_)) => {
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "File not found" }))));
+        }
+        Err(rustshare_core::services::ShareError::FolderNotFound(_)) => {
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Folder not found" }))));
+        }
+        Err(rustshare_core::services::ShareError::GroupNotFound(_)) => {
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Group not found" }))));
+        }
+        Err(rustshare_core::services::ShareError::NotGroupMember(_)) => {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "You must be a group member to share" }))));
+        }
+        Err(rustshare_core::services::ShareError::CrossTenantSharingNotAllowed) => {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Cross-tenant sharing not allowed" }))));
+        }
+        Err(rustshare_core::services::ShareError::PermissionDenied { .. }) => {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Permission denied" }))));
+        }
+        Err(rustshare_core::services::ShareError::GroupShareAlreadyExists) => {
+            return Err((StatusCode::CONFLICT, Json(serde_json::json!({ "error": "Group already has access" }))));
+        }
+        Err(rustshare_core::services::ShareError::InsufficientPermission { .. }) => {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Admin permission required" }))));
+        }
+        Err(e) => {
+            tracing::error!("Failed to create group share: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to process share operation" }))));
+        }
+    };
+
+    // Get group name for response
+    let group_name = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM user_groups WHERE id = $1"
     )
     .bind(req.group_id)
-    .bind(auth.user_id)
     .fetch_one(&state.db_pool)
     .await
-    .map_err(|e| {
-        tracing::error!("Failed to check group membership: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "Failed to verify group access" })),
-        )
-    })?;
-
-    if !is_member {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "You are not a member of this group" })),
-        ));
-    }
-
-    // Get group name
-    let group_name = sqlx::query_as::<_, GroupNameRow>(
-        "SELECT name FROM user_groups WHERE id = $1",
-    )
-    .bind(req.group_id)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to get group name: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "Failed to load group" })),
-        )
-    })?
-    .ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "Group not found" })),
-        )
-    })?;
-
-    // Check if share already exists
-    let existing_share = sqlx::query_as::<_, (Uuid,)>(
-        r#"
-        SELECT id FROM shares
-        WHERE folder_id = $1
-          AND recipient_group_id = $2
-          AND revoked_at IS NULL
-        LIMIT 1
-        "#,
-    )
-    .bind(folder_id)
-    .bind(req.group_id)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to check existing share: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "Failed to check existing share" })),
-        )
-    })?;
-
-    let share_id;
-    let created_at;
-
-    if let Some((existing_id,)) = existing_share {
-        // Update existing share permission
-        share_id = existing_id;
-        let now = chrono::Utc::now();
-        sqlx::query(
-            r#"
-            UPDATE shares
-            SET permissions = $1, updated_at = $2
-            WHERE id = $3
-            "#,
-        )
-        .bind(format!("{:?}", permission))
-        .bind(now)
-        .bind(share_id)
-        .execute(&state.db_pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to update share: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": "Failed to update share" })),
-            )
-        })?;
-        created_at = now;
-    } else {
-        // Create new share
-        share_id = Uuid::new_v4();
-        created_at = chrono::Utc::now();
-        sqlx::query(
-            r#"
-            INSERT INTO shares (
-                id, folder_id, recipient_group_id, permissions,
-                created_by, created_at, upload_only, access_count, tenant_id
-            )
-            SELECT $1, $2, $3, $4, $5, $6, false, 0, f.tenant_id
-            FROM folders f
-            WHERE f.id = $2
-            "#,
-        )
-        .bind(share_id)
-        .bind(folder_id)
-        .bind(req.group_id)
-        .bind(format!("{:?}", permission))
-        .bind(auth.user_id)
-        .bind(created_at)
-        .execute(&state.db_pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to create share: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": "Failed to create share" })),
-            )
-        })?;
-    }
+    .unwrap_or_else(|_| "Unknown".to_string());
 
     let response = GroupShareResponse {
-        share_id: share_id.to_string(),
+        share_id: share.id.to_string(),
         resource_id: folder_id.to_string(),
         resource_type: "folder".to_string(),
         group_id: req.group_id.to_string(),
-        group_name: group_name.name,
+        group_name,
         permission: format!("{:?}", permission),
-        created_at: created_at.to_rfc3339(),
+        created_at: share.created_at.to_rfc3339(),
     };
 
     Ok((StatusCode::CREATED, Json(response)))
+}
+
+/// DELETE /api/v1/shares/:id/group
+///
+/// Revoke a group share.
+pub async fn revoke_group_share(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(share_id): Path<Uuid>,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    let result = state.share_service
+        .revoke_group_share(share_id, auth.user_id)
+        .await;
+
+    match result {
+        Ok(_) => (),
+        Err(rustshare_core::services::ShareError::ShareNotFound(_)) => {
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Share not found" }))));
+        }
+        Err(rustshare_core::services::ShareError::PermissionDenied { .. }) => {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Permission denied" }))));
+        }
+        Err(e) => {
+            tracing::error!("Failed to revoke group share: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to process share operation" }))));
+        }
+    };
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// PUT /api/v1/shares/:id/group/permission
+///
+/// Update a group share's permission.
+pub async fn update_group_share_permission(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(share_id): Path<Uuid>,
+    Json(req): Json<UpdateGroupShareRequest>,
+) -> Result<Json<GroupShareResponse>, (StatusCode, Json<serde_json::Value>)> {
+    use rustshare_core::domain::SharePermissions;
+
+    let permission = match req.permission.as_str() {
+        "View" => SharePermissions::View,
+        "Edit" => SharePermissions::Edit,
+        "Admin" => SharePermissions::Admin,
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Invalid permission" })),
+            ));
+        }
+    };
+
+    let result = state.share_service
+        .update_group_share_permission(share_id, permission, auth.user_id)
+        .await;
+
+    let share = match result {
+        Ok(share) => share,
+        Err(rustshare_core::services::ShareError::ShareNotFound(_)) => {
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Share not found" }))));
+        }
+        Err(rustshare_core::services::ShareError::PermissionDenied { .. }) => {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Permission denied" }))));
+        }
+        Err(e) => {
+            tracing::error!("Failed to update group share: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to process share operation" }))));
+        }
+    };
+
+    // Get group name
+    let group_name = if let Some(group_id) = share.recipient_group_id {
+        sqlx::query_scalar::<_, String>(
+            "SELECT name FROM user_groups WHERE id = $1"
+        )
+        .bind(group_id)
+        .fetch_one(&state.db_pool)
+        .await
+        .unwrap_or_else(|_| "Unknown".to_string())
+    } else {
+        "Unknown".to_string()
+    };
+
+    let resource_id = share.file_id.or(share.folder_id).unwrap_or_default();
+    let resource_type = if share.file_id.is_some() { "file" } else { "folder" };
+
+    let response = GroupShareResponse {
+        share_id: share.id.to_string(),
+        resource_id: resource_id.to_string(),
+        resource_type: resource_type.to_string(),
+        group_id: share.recipient_group_id.unwrap_or_default().to_string(),
+        group_name,
+        permission: format!("{:?}", share.permissions),
+        created_at: share.created_at.to_rfc3339(),
+    };
+
+    Ok(Json(response))
 }
 
 /// GET /api/v1/files/:id/share/groups
@@ -583,6 +539,13 @@ pub async fn list_file_group_shares(
               AND recipient_user_id = $2
               AND permissions = 'Admin'
               AND revoked_at IS NULL
+            UNION
+            SELECT 1 FROM shares s
+            JOIN group_members ugm ON ugm.group_id = s.recipient_group_id
+            WHERE s.file_id = $1
+              AND ugm.user_id = $2
+              AND s.permissions = 'Admin'
+              AND s.revoked_at IS NULL
         )
         "#,
     )
@@ -662,6 +625,13 @@ pub async fn list_folder_group_shares(
               AND recipient_user_id = $2
               AND permissions = 'Admin'
               AND revoked_at IS NULL
+            UNION
+            SELECT 1 FROM shares s
+            JOIN group_members ugm ON ugm.group_id = s.recipient_group_id
+            WHERE s.folder_id = $1
+              AND ugm.user_id = $2
+              AND s.permissions = 'Admin'
+              AND s.revoked_at IS NULL
         )
         "#,
     )

@@ -65,9 +65,10 @@ pub enum ChatIntegrationError {
 impl From<ShareError> for ChatIntegrationError {
     fn from(err: ShareError) -> Self {
         match err {
-            ShareError::NotFound => ChatIntegrationError::ShareNotFound,
-            ShareError::NotFoundById(_) => ChatIntegrationError::ShareNotFound,
+            ShareError::ShareNotFound(_) => ChatIntegrationError::ShareNotFound,
+            ShareError::ShareNotFoundByToken(_) => ChatIntegrationError::ShareNotFound,
             ShareError::FileNotFound(_) => ChatIntegrationError::FileNotFound,
+            ShareError::FolderNotFound(_) => ChatIntegrationError::ShareNotFound,
             ShareError::PermissionDenied { .. } => ChatIntegrationError::PermissionDenied,
             ShareError::Revoked => ChatIntegrationError::ShareNotFound,
             ShareError::Expired => ChatIntegrationError::ShareNotFound,

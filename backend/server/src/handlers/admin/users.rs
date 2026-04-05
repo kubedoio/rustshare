@@ -555,7 +555,7 @@ pub async fn delete_admin_user(
         }
     });
 
-    Ok(StatusCode::ACCEPTED)
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---------------------------------------------------------------------------

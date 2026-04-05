@@ -6,6 +6,7 @@
 
 	export let folders: Folder[] = [];
 	export let files: FileType[] = [];
+	export let isSharedRoot: boolean = false;
 	export let emptyTitle = 'No files yet';
 	export let emptyDescription = 'Upload your first file to get started';
 	export let emptyActionLabel: string | null = 'Upload files';
@@ -34,7 +35,7 @@
 	export let replicationStatuses: Record<string, ReplicationStatus> = {};
 
 	// Drag and drop state
-	let draggedItem: { id: string; isFolder: boolean } | null = null;
+	let draggedItem: { id: string; isFolder: boolean; parentFolderId: string | null } | null = null;
 	let dragOverFolderId: string | null = null;
 
 	function handleFileToggle(file: FileType, event?: MouseEvent) {
@@ -54,7 +55,7 @@
 	}
 
 	// Drag handlers
-	function handleDragStart(item: { id: string; isFolder: boolean }) {
+	function handleDragStart(item: { id: string; isFolder: boolean; parentFolderId: string | null }) {
 		draggedItem = item;
 	}
 
@@ -73,23 +74,71 @@
 		dragOverFolderId = null;
 	}
 
-	function handleDropOnFolder(folder: Folder) {
-		if (!draggedItem) return;
+	// Check if target folder is a descendant of the dragged folder (would create cycle)
+	function isDescendantOf(folderId: string, potentialParentId: string): boolean {
+		const folder = folders.find(f => f.id === folderId);
+		if (!folder) return false;
+		if (folder.parent_folder_id === potentialParentId) return true;
+		if (!folder.parent_folder_id) return false;
+		return isDescendantOf(folder.parent_folder_id, potentialParentId);
+	}
+
+	function readDragPayload(e: DragEvent): { id: string; isFolder: boolean; parentFolderId: string | null } | null {
+		try {
+			const data = e.dataTransfer?.getData('application/json');
+			if (data) {
+				const parsed = JSON.parse(data);
+				if (parsed && typeof parsed.id === 'string') {
+					return { id: parsed.id, isFolder: !!parsed.isFolder, parentFolderId: parsed.parentFolderId || null };
+				}
+			}
+		} catch {
+			// ignore
+		}
+		return null;
+	}
+
+	function handleDropOnFolder(folder: Folder, e?: DragEvent) {
+		let payload = draggedItem;
+		if (!payload && e) {
+			payload = readDragPayload(e);
+		}
+		if (!payload) {
+			dragOverFolderId = null;
+			draggedItem = null;
+			return;
+		}
 		
-		// Can't drop a folder into itself or its children
-		if (draggedItem.id === folder.id) {
+		// Can't drop onto itself
+		if (payload.id === folder.id) {
 			dragOverFolderId = null;
 			draggedItem = null;
 			return;
 		}
 
-		if (draggedItem.isFolder) {
-			const draggedFolder = folders.find(f => f.id === draggedItem?.id);
+		// Can't drop a folder into itself or its children (would create cycle)
+		if (payload.isFolder) {
+			if (isDescendantOf(folder.id, payload.id)) {
+				dragOverFolderId = null;
+				draggedItem = null;
+				return;
+			}
+		}
+
+		// Can't drop file/folder into its current parent (no-op)
+		if (payload.parentFolderId === folder.id) {
+			dragOverFolderId = null;
+			draggedItem = null;
+			return;
+		}
+
+		if (payload.isFolder) {
+			const draggedFolder = folders.find(f => f.id === payload?.id);
 			if (draggedFolder) {
 				onMoveFolder(draggedFolder, folder.id);
 			}
 		} else {
-			const draggedFile = files.find(f => f.id === draggedItem?.id);
+			const draggedFile = files.find(f => f.id === payload?.id);
 			if (draggedFile) {
 				onMoveFile(draggedFile, folder.id);
 			}
@@ -97,6 +146,22 @@
 		
 		dragOverFolderId = null;
 		draggedItem = null;
+	}
+
+	// Helper to determine if a folder is a valid drop target
+	function isValidDropTarget(folder: Folder): boolean {
+		if (!draggedItem) return false;
+		
+		// Can't drop onto itself
+		if (draggedItem.id === folder.id) return false;
+		
+		// Can't drop a folder into itself or its children (would create cycle)
+		if (draggedItem.isFolder && isDescendantOf(folder.id, draggedItem.id)) return false;
+		
+		// Can't drop into current parent (no-op)
+		if (draggedItem.parentFolderId === folder.id) return false;
+		
+		return true;
 	}
 
 	$: allSelected = folders.length + files.length > 0 &&
@@ -107,7 +172,7 @@
 	<table class="w-full">
 		<thead>
 			<tr class="border-b border-base-300 bg-base-200/50">
-				<th class="w-10 px-4 py-3 text-left">
+				<th class="w-10 px-4 py-2 text-left">
 					{#if selectionMode}
 						<input
 							type="checkbox"
@@ -117,25 +182,27 @@
 						/>
 					{/if}
 				</th>
-				<th class="w-12 px-2 py-3 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider">Preview</th>
-				<th class="px-4 py-3 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider">Name</th>
-				<th class="px-4 py-3 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider hidden md:table-cell">Type</th>
-				<th class="px-4 py-3 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider hidden sm:table-cell">Size</th>
-				<th class="px-4 py-3 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider hidden lg:table-cell">Modified</th>
-				<th class="w-10 px-4 py-3"></th>
+				<th class="w-12 px-2 py-2 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider">Preview</th>
+				<th class="px-4 py-2 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider">Name</th>
+				<th class="px-4 py-2 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider hidden md:table-cell">Type</th>
+				<th class="px-4 py-2 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider hidden sm:table-cell">Size</th>
+				<th class="px-4 py-2 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider hidden lg:table-cell">Modified</th>
+				<th class="w-10 px-4 py-2"></th>
 			</tr>
 		</thead>
-		<tbody class="divide-y divide-base-300">
+		<tbody class="divide-y divide-base-300/40">
 			<!-- Folders -->
 			{#each folders as folder (folder.id)}
 				<FileListRow
 					item={folder}
 					isFolder={true}
+					{isSharedRoot}
 					{workspaceMode}
 					{selectionMode}
 					selected={$selectionStore.selectedFolderIds.has(folder.id)}
 					isDragging={draggedItem?.id === folder.id}
 					isDropTarget={dragOverFolderId === folder.id}
+					canDrop={isValidDropTarget(folder)}
 					onSelect={(e) => handleFolderToggle(folder, e)}
 					onToggleSelect={() => handleFolderToggle(folder)}
 					onNavigate={() => onFolderClick(folder)}
@@ -146,9 +213,9 @@
 					onPermanentDelete={() => onPermanentDeleteFolder(folder)}
 					onShare={() => onShareFolder(folder)}
 					onMove={() => onMoveFolder(folder, null)}
-					onDragStart={() => handleDragStart({ id: folder.id, isFolder: true })}
+					onDragStart={() => handleDragStart({ id: folder.id, isFolder: true, parentFolderId: folder.parent_folder_id })}
 					onDragEnd={handleDragEnd}
-					onDrop={() => handleDropOnFolder(folder)}
+					onDrop={(e) => handleDropOnFolder(folder, e)}
 					onDragOver={() => handleDragOverFolder(folder.id)}
 					onDragLeave={handleDragLeaveFolder}
 				/>
@@ -178,7 +245,7 @@
 					onVersionHistory={() => onVersionHistory(file)}
 					onReplace={() => onReplaceFile(file)}
 					onEdit={() => { console.log('[FileList] onEdit triggered for', file.name); onEditFile(file); }}
-					onDragStart={() => handleDragStart({ id: file.id, isFolder: false })}
+					onDragStart={() => handleDragStart({ id: file.id, isFolder: false, parentFolderId: file.parent_folder_id })}
 					onDragEnd={handleDragEnd}
 				/>
 			{/each}

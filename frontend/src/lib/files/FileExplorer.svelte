@@ -1,21 +1,19 @@
 <script lang="ts">
 	import type { File as FileType, Folder } from '$lib/api/types';
 	import type { ReplicationStatus } from '$lib/stores/replication';
-	import type { FolderNode } from '$lib/stores/folderTree';
-	import FolderTree from './FolderTree.svelte';
+
 	import FileBrowserPane from './FileBrowserPane.svelte';
 
 	export let folders: Folder[] = [];
 	export let files: FileType[] = [];
-	export let currentFolderId: string | null = null;
 	export let folderPath: Folder[] = [];
+	export let rootLabel: string = 'My Files';
 	export let title = 'All files';
 	export let description = '';
 	export let emptyTitle = 'No files yet';
 	export let emptyDescription = 'Upload your first file to get started';
 	export let emptyActionLabel: string | null = 'Upload files';
 	export let workspaceMode: 'all' | 'photos' | 'recent' | 'starred' | 'deleted' = 'all';
-	export let showFolderTree = true;
 	export let showBreadcrumbs = true;
 	export let canCreateFolder = true;
 	export let canUpload = true;
@@ -25,9 +23,10 @@
 	export let replicationStatuses: Record<string, ReplicationStatus> = {};
 	export let selectionMode: boolean = false;
 	export let isUploading: boolean = false;
+	export let isSharedRoot: boolean = false;
 
 	// Event handlers
-	export let onFolderSelect: (folderId: string | null, path: Folder[]) => void;
+
 	export let onFolderClick: (folder: Folder) => void;
 	export let onFileClick: (file: FileType) => void;
 	export let onRefresh: () => void;
@@ -63,82 +62,13 @@
 	export let onMoveFolder: ((folder: Folder) => void) | ((folder: Folder, targetFolderId: string | null) => void);
 
 	export let onEditFile: (file: FileType) => void;
+	export let onbreadcrumbNavigate: (event: CustomEvent<{ folderId: string | null }>) => void = () => {};
 
-	function handleFolderSelectFromTree(folderId: string | null, path: FolderNode[]) {
-		const folderPath = path.map(node => ({
-			id: node.id,
-			name: node.name,
-			path: node.path,
-			parent_folder_id: node.parent_folder_id,
-			owner_id: node.owner_id || '',
-			created_at: node.created_at,
-			updated_at: node.updated_at
-		}));
-		onFolderSelect(folderId, folderPath);
-	}
 
-	// Wrapper handlers for tree that accept FolderNode
-	function handleRenameFolderFromTree(folderNode: import('$lib/stores/folderTree').FolderNode, newName: string) {
-		// Find the matching folder in the current folders list or create a compatible object
-		const folder = folders.find(f => f.id === folderNode.id);
-		if (folder) {
-			(onRenameFolder as (folder: Folder, newName: string) => void)(folder, newName);
-		}
-	}
-
-	function handleDeleteFolderFromTree(folderNode: import('$lib/stores/folderTree').FolderNode) {
-		const folder = folders.find(f => f.id === folderNode.id);
-		if (folder) {
-			onDeleteFolder(folder);
-		}
-	}
-
-	function handleShareFolderFromTree(folderNode: import('$lib/stores/folderTree').FolderNode) {
-		const folder = folders.find(f => f.id === folderNode.id);
-		if (folder) {
-			onShareFolder(folder);
-		}
-	}
-
-	function handleMoveFolderFromTree(folderNode: import('$lib/stores/folderTree').FolderNode, targetFolderId: string | null) {
-		const folder = folders.find(f => f.id === folderNode.id);
-		if (folder) {
-			(onMoveFolder as (folder: Folder, targetFolderId: string | null) => void)(folder, targetFolderId);
-		}
-	}
-
-	function handleMoveFileToTree(fileId: string, targetFolderId: string | null) {
-		const file = files.find(f => f.id === fileId);
-		if (file) {
-			(onMoveFile as (file: FileType, targetFolderId: string | null) => void)(file, targetFolderId);
-		}
-	}
-
-	function handleMoveFolderToTree(folderId: string, targetFolderId: string | null) {
-		const folder = folders.find(f => f.id === folderId);
-		if (folder) {
-			(onMoveFolder as (folder: Folder, targetFolderId: string | null) => void)(folder, targetFolderId);
-		}
-	}
 </script>
 
 <div class="flex h-full min-h-0 bg-base-100">
-	<!-- Folder Tree Sidebar - Hidden on mobile, shown on xl screens -->
-	{#if showFolderTree}
-		<div class="hidden h-full w-64 flex-shrink-0 overflow-hidden border-r border-base-300/80 bg-base-100/70 xl:block">
-			<FolderTree 
-				selectedFolderId={currentFolderId}
-				onSelectFolder={handleFolderSelectFromTree}
-				onRenameFolder={handleRenameFolderFromTree}
-				onDeleteFolder={handleDeleteFolderFromTree}
-				onShareFolder={handleShareFolderFromTree}
-				onMoveFolder={handleMoveFolderFromTree}
-				onCreateSubfolder={(parentId) => onNewFolder()}
-				onMoveFile={handleMoveFileToTree}
-				onMoveFolderDirect={handleMoveFolderToTree}
-			/>
-		</div>
-	{/if}
+
 
 	<!-- File Browser Pane -->
 	<div class="flex-1 flex min-h-0 min-w-0 flex-col overflow-hidden">
@@ -146,6 +76,7 @@
 			{folders}
 			{files}
 			{folderPath}
+			{rootLabel}
 			{title}
 			{description}
 			{emptyTitle}
@@ -161,6 +92,7 @@
 			{replicationStatuses}
 			{selectionMode}
 			{isUploading}
+			{isSharedRoot}
 			{onRefresh}
 			{onNewFolder}
 			{onUpload}
@@ -190,6 +122,7 @@
 			{onPermanentDeleteFolder}
 			{onShareFolder}
 			{onMoveFolder}
+			{onbreadcrumbNavigate}
 		/>
 	</div>
 </div>

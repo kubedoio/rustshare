@@ -3,8 +3,8 @@
 	import type { ReplicationStatus } from '$lib/stores/replication';
 	import FilePreview from './FilePreview.svelte';
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
-	import ContextMenu from '$lib/components/common/ContextMenu.svelte';
-	import type { MenuItem } from '$lib/components/common/ContextMenu.svelte';
+	import MenuComponent from '$lib/components/common/ContextMenu.svelte';
+	type MenuItem = any;
 	import { replicationStateBadgeClass, formatReplicationStateLabel } from '$lib/stores/replication';
 	import { formatFileSize, formatDate } from '$lib/utils/format';
 	import { detectEditorType, canEditFileSize } from '$lib/utils/editor';
@@ -15,13 +15,14 @@
 		item: FileType | Folder;
 		isFolder: boolean;
 		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+		isSharedRoot?: boolean;
 		selected?: boolean;
 		selectionMode?: boolean;
 		replicationStatus?: ReplicationStatus | null;
 		isDragging?: boolean;
 		isDropTarget?: boolean;
 		onSelect?: (e?: MouseEvent) => void;
-		onToggle?: () => void;
+		onToggle?: (e?: MouseEvent) => void;
 		onRename?: (newName: string) => void;
 		onDelete?: () => void;
 		onToggleStar?: () => void;
@@ -35,13 +36,16 @@
 		onEdit?: () => void;
 		onDragStart?: () => void;
 		onDragEnd?: () => void;
-		onDrop?: () => void;
+		onDragOver?: () => void;
+		onDragLeave?: () => void;
+		onDrop?: (e: DragEvent) => void;
 	}
 
 	let {
 		item,
 		isFolder,
 		workspaceMode = 'all',
+		isSharedRoot = false,
 		selected = false,
 		selectionMode = false,
 		replicationStatus = null,
@@ -62,6 +66,8 @@
 		onEdit = () => {},
 		onDragStart = () => {},
 		onDragEnd = () => {},
+		onDragOver = () => {},
+		onDragLeave = () => {},
 		onDrop = () => {}
 	}: Props = $props();
 
@@ -107,10 +113,10 @@
 			} else {
 				// Check if file is editable
 				const isEditable = !isFolder && 
-					'deleted_at' in item && 
-					!item.deleted_at && 
-					detectEditorType(item.name, item.mime_type) !== 'none' &&
-					canEditFileSize(item.size);
+					fileItem && 'deleted_at' in fileItem && 
+					!fileItem.deleted_at && 
+					detectEditorType(fileItem.name, fileItem.mime_type) !== 'none' &&
+					canEditFileSize(fileItem.size);
 
 				items.push(
 					{ id: 'open', label: 'Open', icon: FileIcon, shortcut: 'Enter', onClick: () => onSelect() }
@@ -152,7 +158,7 @@
 	function handleClick(e: MouseEvent) {
 		if (isRenaming) return;
 		if (selectionMode) {
-			onToggle();
+			onToggle?.(e);
 			return;
 		}
 		if (workspaceMode === 'deleted') return;
@@ -209,7 +215,11 @@
 	function handleDragStart(e: DragEvent) {
 		if (e.dataTransfer) {
 			e.dataTransfer.effectAllowed = 'move';
-			e.dataTransfer.setData('application/json', JSON.stringify({ id: item.id, isFolder }));
+			e.dataTransfer.setData('application/json', JSON.stringify({
+				id: item.id,
+				isFolder,
+				parentFolderId: item.parent_folder_id
+			}));
 			onDragStart();
 		}
 	}
@@ -218,13 +228,25 @@
 		if (isFolder && !isDragging) {
 			e.preventDefault();
 			e.dataTransfer!.dropEffect = 'move';
+			onDragOver?.();
+		}
+	}
+
+	function handleDragLeave(e: DragEvent) {
+		if (isFolder && !isDragging) {
+			const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+			const x = e.clientX;
+			const y = e.clientY;
+			if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) {
+				onDragLeave?.();
+			}
 		}
 	}
 
 	function handleDrop(e: DragEvent) {
 		e.preventDefault();
 		if (isFolder && !isDragging) {
-			onDrop();
+			onDrop?.(e);
 		}
 	}
 
@@ -255,6 +277,7 @@
 	ondragstart={handleDragStart}
 	ondragend={onDragEnd}
 	ondragover={handleDragOver}
+	ondragleave={handleDragLeave}
 	ondrop={handleDrop}
 >
 	<!-- Checkbox (selection mode) -->
@@ -265,7 +288,7 @@
 				class="w-4 h-4 rounded border-base-300 text-brand-500 focus:ring-brand-500 bg-base-100 cursor-pointer"
 				checked={selected}
 				onclick={(e) => e.stopPropagation()}
-				onchange={onToggle}
+				onchange={() => onToggle?.()}
 			/>
 		</div>
 	{/if}
@@ -331,7 +354,7 @@
 							Share
 						</button>
 						{#if !isFolder}
-							{#if detectEditorType(item.name, item.mime_type) !== 'none' && canEditFileSize(item.size)}
+							{#if fileItem && detectEditorType(fileItem.name, fileItem.mime_type) !== 'none' && canEditFileSize(fileItem.size)}
 								<button
 									type="button"
 									class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
@@ -382,20 +405,20 @@
 	{/if}
 
 	<!-- Preview Area -->
-	<div class="aspect-square bg-base-200/50 flex items-center justify-center p-4 border-b border-base-300/30">
+	<div class="aspect-square bg-base-200/50 flex items-center justify-center p-3 border-b border-base-300/30">
 		<div class="w-full h-full flex items-center justify-center">
-			<FilePreview {item} {isFolder} size="xl" showThumbnail={!isFolder && workspaceMode !== 'deleted'} />
+			<FilePreview {item} {isFolder} {isSharedRoot} size="lg" showThumbnail={!isFolder && workspaceMode !== 'deleted'} />
 		</div>
 	</div>
 
 	<!-- Info Area -->
-	<div class="p-3 min-w-0">
+	<div class="p-2 min-w-0">
 		{#if isRenaming}
 			<div class="flex items-center gap-1">
 				<input
 					bind:this={renameInputRef}
 					type="text"
-					class="flex-1 min-w-0 px-2 py-1 text-sm bg-base-100 border border-brand-500 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+					class="flex-1 min-w-0 px-1.5 py-0.5 text-xs bg-base-100 border border-brand-500 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500/20"
 					value={renameValue}
 					oninput={(e) => renameValue = e.currentTarget.value}
 					onkeydown={handleRenameKeydown}
@@ -419,7 +442,7 @@
 		{:else}
 			<div class="flex items-start gap-1.5 min-w-0">
 				<p 
-					class="flex-1 truncate text-sm font-medium leading-5 text-base-content" 
+					class="flex-1 truncate text-xs font-medium leading-4 text-base-content" 
 					title={item.name}
 					ondblclick={(e) => { e.stopPropagation(); startRename(); }}
 				>
@@ -427,20 +450,20 @@
 				</p>
 			</div>
 			
-			<div class="flex items-center gap-2 mt-1.5">
+			<div class="flex items-center gap-1.5 mt-1">
 				{#if item.is_shared}
 					<ShareIndicator
 						isShared={item.is_shared}
 						shareCount={item.share_count || 0}
 						shareExpiresAt={item.share_expires_at || null}
-						size="sm"
+						size="xs"
 					/>
 				{/if}
 				{#if isStarred}
-					<Star size={12} class="text-brand-500 fill-brand-500" />
+					<Star size={10} class="text-brand-500 fill-brand-500" />
 				{/if}
 				
-				<span class="text-xs text-base-content/50 truncate">
+				<span class="text-[10px] text-base-content/50 truncate font-medium font-data">
 					{#if isFolder}
 						Folder
 					{:else}
@@ -453,7 +476,7 @@
 </div>
 
 <!-- Context Menu -->
-<ContextMenu
+<MenuComponent
 	items={menuItems}
 	x={contextMenuX}
 	y={contextMenuY}

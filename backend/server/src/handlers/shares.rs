@@ -235,12 +235,14 @@ pub struct OwnedShareResponse {
     pub resource_id: uuid::Uuid,
     pub resource_type: String,
     pub resource_name: String,
-    pub share_token: String,
+    pub share_token: Option<String>,
     pub permissions: SharePermissions,
     pub password_protected: bool,
     pub access_count: i32,
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub recipient_user_id: Option<uuid::Uuid>,
+    pub recipient_group_id: Option<uuid::Uuid>,
 }
 
 #[derive(Deserialize)]
@@ -267,7 +269,7 @@ pub async fn list_user_shares(
 ) -> Result<Json<Vec<OwnedShareResponse>>, (StatusCode, String)> {
     let shares = state
         .metadata_store
-        .get_user_public_shares(user_id)
+        .get_user_all_shares(user_id)
         .await
         .map_err(|error| {
             (
@@ -278,22 +280,23 @@ pub async fn list_user_shares(
 
     let response = shares
         .into_iter()
-        .filter_map(|entry| {
+        .map(|entry| {
             let share = entry.share;
-            let share_token = share.share_token?;
 
-            Some(OwnedShareResponse {
+            OwnedShareResponse {
                 id: share.id,
                 resource_id: entry.resource_id,
                 resource_type: entry.resource_type,
                 resource_name: entry.resource_name,
-                share_token,
+                share_token: share.share_token,
                 permissions: share.permissions,
                 password_protected: share.password_hash.is_some(),
                 access_count: share.access_count,
                 expires_at: share.expires_at,
                 created_at: share.created_at,
-            })
+                recipient_user_id: share.recipient_user_id,
+                recipient_group_id: share.recipient_group_id,
+            }
         })
         .collect();
 
@@ -310,16 +313,19 @@ pub async fn revoke_share(
         .revoke_share(share_id, user_id)
         .await
         .map_err(|error| match error {
-            rustshare_core::services::ShareError::NotFound => {
+            rustshare_core::services::ShareError::ShareNotFound(_) => {
                 (StatusCode::NOT_FOUND, error.to_string())
             }
-            rustshare_core::services::ShareError::NotFoundById(_) => {
+            rustshare_core::services::ShareError::ShareNotFoundByToken(_) => {
                 (StatusCode::NOT_FOUND, error.to_string())
             }
             rustshare_core::services::ShareError::PermissionDenied { .. } => {
                 (StatusCode::FORBIDDEN, error.to_string())
             }
             rustshare_core::services::ShareError::FileNotFound(_) => {
+                (StatusCode::NOT_FOUND, error.to_string())
+            }
+            rustshare_core::services::ShareError::FolderNotFound(_) => {
                 (StatusCode::NOT_FOUND, error.to_string())
             }
             rustshare_core::services::ShareError::Revoked => (StatusCode::GONE, error.to_string()),
@@ -347,6 +353,21 @@ pub async fn revoke_share(
             }
             rustshare_core::services::ShareError::InvalidState(_) => {
                 (StatusCode::CONFLICT, error.to_string())
+            }
+            rustshare_core::services::ShareError::GroupNotFound(_) => {
+                (StatusCode::NOT_FOUND, error.to_string())
+            }
+            rustshare_core::services::ShareError::NotGroupMember(_) => {
+                (StatusCode::FORBIDDEN, error.to_string())
+            }
+            rustshare_core::services::ShareError::GroupShareAlreadyExists => {
+                (StatusCode::CONFLICT, error.to_string())
+            }
+            rustshare_core::services::ShareError::InvalidRecipientVisibility(_) => {
+                (StatusCode::BAD_REQUEST, error.to_string())
+            }
+            rustshare_core::services::ShareError::CrossTenantSharingNotAllowed => {
+                (StatusCode::FORBIDDEN, error.to_string())
             }
             rustshare_core::services::ShareError::Database(_)
             | rustshare_core::services::ShareError::PasswordHash(_)
@@ -409,7 +430,8 @@ mod tests {
     #[test]
     fn test_share_error_response_mappings() {
         // Test that error mappings are correct
-        let response = share_error_response(ShareError::NotFound);
+        let share_id = Uuid::new_v4();
+        let response = share_error_response(ShareError::ShareNotFound(share_id));
         // Response is created - just verify it compiles
         drop(response);
 

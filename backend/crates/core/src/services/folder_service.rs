@@ -771,7 +771,7 @@ mod tests {
 
         let owner_id = Uuid::new_v4();
         let folder = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -800,13 +800,13 @@ mod tests {
 
         // Create parent folder
         let parent = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
         // Create subfolder
         let subfolder = service
-            .create_folder("Work".to_string(), Some(parent.id), owner_id)
+            .create_folder("Work".to_string(), Some(parent.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -827,7 +827,7 @@ mod tests {
         );
 
         let owner_id = Uuid::new_v4();
-        let result = service.create_folder("".to_string(), None, owner_id).await;
+        let result = service.create_folder("".to_string(), None, owner_id, Uuid::new_v4()).await;
 
         assert!(matches!(result, Err(FolderError::InvalidName(_))));
     }
@@ -844,7 +844,7 @@ mod tests {
 
         let owner_id = Uuid::new_v4();
         let result = service
-            .create_folder("Work/Projects".to_string(), None, owner_id)
+            .create_folder("Work/Projects".to_string(), None, owner_id, Uuid::new_v4())
             .await;
 
         assert!(matches!(result, Err(FolderError::InvalidName(_))));
@@ -863,7 +863,7 @@ mod tests {
         let owner_id = Uuid::new_v4();
         let non_existent_parent_id = Uuid::new_v4();
         let result = service
-            .create_folder("Work".to_string(), Some(non_existent_parent_id), owner_id)
+            .create_folder("Work".to_string(), Some(non_existent_parent_id), owner_id, Uuid::new_v4())
             .await;
 
         assert!(matches!(result, Err(FolderError::ParentFolderNotFound(_))));
@@ -884,13 +884,13 @@ mod tests {
 
         // Create parent folder as owner
         let parent = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
         // Try to create subfolder as different user
         let result = service
-            .create_folder("Work".to_string(), Some(parent.id), other_user_id)
+            .create_folder("Work".to_string(), Some(parent.id), other_user_id, Uuid::new_v4())
             .await;
 
         assert!(matches!(result, Err(FolderError::PermissionDenied { .. })));
@@ -908,7 +908,7 @@ mod tests {
 
         let owner_id = Uuid::new_v4();
         let created = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -949,7 +949,7 @@ mod tests {
         let owner_id = Uuid::new_v4();
         let other_user_id = Uuid::new_v4();
         let created = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -970,7 +970,7 @@ mod tests {
 
         let owner_id = Uuid::new_v4();
         let folder = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -994,17 +994,17 @@ mod tests {
 
         // Create parent folder
         let parent = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
         // Create subfolders
         let _subfolder1 = service
-            .create_folder("Work".to_string(), Some(parent.id), owner_id)
+            .create_folder("Work".to_string(), Some(parent.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let _subfolder2 = service
-            .create_folder("Personal".to_string(), Some(parent.id), owner_id)
+            .create_folder("Personal".to_string(), Some(parent.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1030,7 +1030,7 @@ mod tests {
         let owner_id = Uuid::new_v4();
         let other_user_id = Uuid::new_v4();
         let folder = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1051,7 +1051,7 @@ mod tests {
 
         let owner_id = Uuid::new_v4();
         let folder = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1081,19 +1081,19 @@ mod tests {
         //     Projects/
         //   Personal/
         let root = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let work = service
-            .create_folder("Work".to_string(), Some(root.id), owner_id)
+            .create_folder("Work".to_string(), Some(root.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let _projects = service
-            .create_folder("Projects".to_string(), Some(work.id), owner_id)
+            .create_folder("Projects".to_string(), Some(work.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let _personal = service
-            .create_folder("Personal".to_string(), Some(root.id), owner_id)
+            .create_folder("Personal".to_string(), Some(root.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1133,7 +1133,7 @@ mod tests {
         let owner_id = Uuid::new_v4();
         let other_user_id = Uuid::new_v4();
         let folder = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1154,7 +1154,7 @@ mod tests {
 
         let owner_id = Uuid::new_v4();
         let folder = service
-            .create_folder("OldName".to_string(), None, owner_id)
+            .create_folder("OldName".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1188,15 +1188,15 @@ mod tests {
 
         // Create hierarchy: Documents/Work/Projects
         let docs = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let work = service
-            .create_folder("Work".to_string(), Some(docs.id), owner_id)
+            .create_folder("Work".to_string(), Some(docs.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let projects = service
-            .create_folder("Projects".to_string(), Some(work.id), owner_id)
+            .create_folder("Projects".to_string(), Some(work.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1226,7 +1226,7 @@ mod tests {
 
         let owner_id = Uuid::new_v4();
         let folder = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1249,7 +1249,7 @@ mod tests {
 
         let owner_id = Uuid::new_v4();
         let folder = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1283,11 +1283,11 @@ mod tests {
 
         // Create folders at root level
         let docs = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let projects = service
-            .create_folder("Projects".to_string(), None, owner_id)
+            .create_folder("Projects".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1321,11 +1321,11 @@ mod tests {
 
         // Create hierarchy: Documents/Work
         let docs = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let work = service
-            .create_folder("Work".to_string(), Some(docs.id), owner_id)
+            .create_folder("Work".to_string(), Some(docs.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1349,15 +1349,15 @@ mod tests {
 
         // Create hierarchy: Documents, Work/Projects
         let docs = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let work = service
-            .create_folder("Work".to_string(), None, owner_id)
+            .create_folder("Work".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let projects = service
-            .create_folder("Projects".to_string(), Some(work.id), owner_id)
+            .create_folder("Projects".to_string(), Some(work.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1388,11 +1388,11 @@ mod tests {
         let owner_id = Uuid::new_v4();
 
         let docs = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let work = service
-            .create_folder("Work".to_string(), Some(docs.id), owner_id)
+            .create_folder("Work".to_string(), Some(docs.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1424,7 +1424,7 @@ mod tests {
 
         let owner_id = Uuid::new_v4();
         let folder = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1455,15 +1455,15 @@ mod tests {
 
         // Create hierarchy: Documents/Work/Projects
         let docs = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let work = service
-            .create_folder("Work".to_string(), Some(docs.id), owner_id)
+            .create_folder("Work".to_string(), Some(docs.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let projects = service
-            .create_folder("Projects".to_string(), Some(work.id), owner_id)
+            .create_folder("Projects".to_string(), Some(work.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1506,7 +1506,7 @@ mod tests {
         let owner_id = Uuid::new_v4();
         let other_user_id = Uuid::new_v4();
         let folder = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1533,7 +1533,7 @@ mod tests {
 
         // Create root-level folder
         let folder = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1563,15 +1563,15 @@ mod tests {
 
         // Create hierarchy: Documents/Work/Projects
         let docs = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let work = service
-            .create_folder("Work".to_string(), Some(docs.id), owner_id)
+            .create_folder("Work".to_string(), Some(docs.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let projects = service
-            .create_folder("Projects".to_string(), Some(work.id), owner_id)
+            .create_folder("Projects".to_string(), Some(work.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1619,15 +1619,15 @@ mod tests {
         // Work/        Archive/
         //   Projects/
         let work = service
-            .create_folder("Work".to_string(), None, owner_id)
+            .create_folder("Work".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let projects = service
-            .create_folder("Projects".to_string(), Some(work.id), owner_id)
+            .create_folder("Projects".to_string(), Some(work.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let archive = service
-            .create_folder("Archive".to_string(), None, owner_id)
+            .create_folder("Archive".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1674,11 +1674,11 @@ mod tests {
 
         // Create hierarchy: Documents/Work
         let docs = service
-            .create_folder("Documents".to_string(), None, owner_id)
+            .create_folder("Documents".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let work = service
-            .create_folder("Work".to_string(), Some(docs.id), owner_id)
+            .create_folder("Work".to_string(), Some(docs.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1713,15 +1713,15 @@ mod tests {
 
         // Create hierarchy with proper ancestor_ids: A/B/C
         let folder_a = service
-            .create_folder("A".to_string(), None, owner_id)
+            .create_folder("A".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let folder_b = service
-            .create_folder("B".to_string(), Some(folder_a.id), owner_id)
+            .create_folder("B".to_string(), Some(folder_a.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let folder_c = service
-            .create_folder("C".to_string(), Some(folder_b.id), owner_id)
+            .create_folder("C".to_string(), Some(folder_b.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
 
@@ -1751,23 +1751,23 @@ mod tests {
 
         // Create deeply nested hierarchy: A/B/C/D/E
         let folder_a = service
-            .create_folder("A".to_string(), None, owner_id)
+            .create_folder("A".to_string(), None, owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let folder_b = service
-            .create_folder("B".to_string(), Some(folder_a.id), owner_id)
+            .create_folder("B".to_string(), Some(folder_a.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let folder_c = service
-            .create_folder("C".to_string(), Some(folder_b.id), owner_id)
+            .create_folder("C".to_string(), Some(folder_b.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let folder_d = service
-            .create_folder("D".to_string(), Some(folder_c.id), owner_id)
+            .create_folder("D".to_string(), Some(folder_c.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
         let folder_e = service
-            .create_folder("E".to_string(), Some(folder_d.id), owner_id)
+            .create_folder("E".to_string(), Some(folder_d.id), owner_id, Uuid::new_v4())
             .await
             .unwrap();
 

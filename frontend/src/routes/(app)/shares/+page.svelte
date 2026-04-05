@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { createMutation, createQuery } from '@tanstack/svelte-query';
 	import type { Share, ShareAccessLogEntry } from '$lib/api/types';
+	import { getShareType, getShareTypeLabel } from '$lib/api/types';
 	import { getShareAccessLog, listAllUserShares, revokeShare } from '$lib/api/shares';
 	import Toast from '$lib/components/common/Toast.svelte';
 	import { queryClient } from '$lib/query-client';
@@ -52,12 +53,14 @@
 		}, 3000);
 	}
 
-	function getShareUrl(token: string): string {
+	function getShareUrl(token: string | null): string | null {
+		if (!token) return null;
 		return `${window.location.origin}/share/${token}`;
 	}
 
-	function copyShareLink(token: string) {
-		navigator.clipboard.writeText(getShareUrl(token));
+	function copyShareLink(token: string | null) {
+		if (!token) return;
+		navigator.clipboard.writeText(getShareUrl(token)!);
 		displayToast('Share link copied to clipboard', 'success');
 	}
 
@@ -303,6 +306,7 @@
 				<div class="space-y-4">
 					{#each $sharesQuery.data as share}
 						{@const shareUrl = getShareUrl(share.share_token)}
+						{@const shareType = getShareType(share)}
 						<div
 							class="rounded-[1.75rem] border border-base-300/70 bg-base-100 p-5 shadow-sm transition-colors hover:border-brand-500/15"
 						>
@@ -339,19 +343,24 @@
 														Password
 													</span>
 												{/if}
+											<span class="rounded-full border border-info/20 bg-info/10 px-2.5 py-1 text-info">
+												{getShareTypeLabel(share)}
+											</span>
 											</div>
 										</div>
 									</div>
 
 									<div class="flex flex-wrap gap-2">
-										<button
-											type="button"
-											class="inline-flex items-center gap-2 rounded-xl border border-base-300 bg-base-100 px-3 py-2 font-data text-sm font-semibold text-base-content/75 transition-colors hover:border-brand-500/20 hover:text-base-content"
-											on:click={() => copyShareLink(share.share_token)}
-										>
-											<Copy class="h-4 w-4" />
-											Copy link
-										</button>
+										{#if share.share_token}
+											<button
+												type="button"
+												class="inline-flex items-center gap-2 rounded-xl border border-base-300 bg-base-100 px-3 py-2 font-data text-sm font-semibold text-base-content/75 transition-colors hover:border-brand-500/20 hover:text-base-content"
+												on:click={() => copyShareLink(share.share_token)}
+											>
+												<Copy class="h-4 w-4" />
+												Copy link
+											</button>
+										{/if}
 										<button
 											type="button"
 											class="inline-flex items-center gap-2 rounded-xl border border-base-300 bg-base-100 px-3 py-2 font-data text-sm font-semibold text-base-content/75 transition-colors hover:border-brand-500/20 hover:text-base-content"
@@ -371,14 +380,7 @@
 									</div>
 								</div>
 
-								<div class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-3">
-									<p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/45">
-										Share URL
-									</p>
-									<p class="mt-2 truncate font-mono text-xs text-base-content/70">
-										{shareUrl}
-									</p>
-								</div>
+tttttttttt{#if shareUrl}nttttttttttt<div class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-3">ntttttttttttt<p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/45">ntttttttttttttShare URLntttttttttttt</p>ntttttttttttt<p class="mt-2 truncate font-mono text-xs text-base-content/70">nttttttttttttt{shareUrl}ntttttttttttt</p>nttttttttttt</div>ntttttttttt{:else}nttttttttttt<div class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-3">ntttttttttttt<p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/45">ntttttttttttttShare Typentttttttttttt</p>ntttttttttttt<p class="mt-2 truncate font-mono text-xs text-base-content/70">nttttttttttttt{shareType === 'group' ? 'Shared with group members' : 'Direct user share'}ntttttttttttt</p>nttttttttttt</div>ntttttttttt{/if}
 
 								<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
 									<div class="rounded-2xl border border-base-300/70 bg-base-100 px-4 py-3">

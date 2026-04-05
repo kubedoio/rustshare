@@ -220,6 +220,6 @@ test('user.disabled action is recorded in the audit log', async ({ page }) => {
 	await page.locator('#audit-type').selectOption('admin_action');
 
 	await expect(
-		page.locator('text=user.disabled', { exact: false }).first()
+		page.getByText('user.disabled', { exact: false }).first()
 	).toBeVisible({ timeout: 8_000 });
 });

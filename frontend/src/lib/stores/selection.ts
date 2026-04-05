@@ -94,7 +94,9 @@ function createSelectionStore() {
     selectAll: (files: File[], folders: Folder[]) => {
       update(state => ({
         selectedFileIds: new Set(files.map(f => f.id)),
-        selectedFolderIds: new Set(folders.map(f => f.id))
+        selectedFolderIds: new Set(folders.map(f => f.id)),
+        anchorFileId: null,
+        anchorFolderId: null
       }));
     },
 

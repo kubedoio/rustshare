@@ -3,6 +3,9 @@
 //! This module implements endpoints for sharing files and folders with specific users,
 //! managing share permissions, and listing shared resources.
 
+// Allow deprecated UserShareService usage during migration period
+#![allow(deprecated)]
+
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -16,6 +19,10 @@ use rustshare_core::domain::SharePermissions;
 
 use super::{share_error_response, AuthenticatedUser};
 use crate::AppState;
+
+// Re-export folder/file with shares types from folders handler
+use super::folders::{FolderWithShares, FolderContentsWithShares};
+use super::files::FileWithShares;
 
 // ============================================================================
 // Request/Response DTOs
@@ -388,6 +395,141 @@ pub async fn remove_recipient(
         .map_err(share_error_response)?;
 
     Ok((StatusCode::NO_CONTENT, ()).into_response())
+}
+
+// ============================================================================
+// 8. GET /api/shares/folders/{id}/contents - Get shared folder contents
+// ============================================================================
+
+/// Get contents of a shared folder (for authenticated user shares).
+///
+/// GET /api/shares/folders/{id}/contents
+///
+/// Returns the contents (subfolders and files) of a folder that has been shared
+/// with the authenticated user via user-to-user sharing (not public links).
+pub async fn get_user_shared_folder_contents(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(folder_id): Path<Uuid>,
+) -> Result<Json<FolderContentsWithShares>, Response> {
+    use axum::{http::StatusCode, response::IntoResponse};
+
+    // First, verify the user has access to this folder via a share
+    let has_access = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM share_user_access sua
+            JOIN shares s ON sua.share_id = s.id
+            WHERE s.folder_id = $1
+            AND sua.user_id = $2
+            AND s.revoked_at IS NULL
+        )
+        "#,
+    )
+    .bind(folder_id)
+    .bind(auth.user_id)
+    .fetch_one(&state.db_pool)
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(super::ErrorResponse::new("Internal server error")),
+        )
+            .into_response()
+    })?;
+
+    if !has_access {
+        return Err(
+            (
+                StatusCode::FORBIDDEN,
+                Json(super::ErrorResponse::new(
+                    "You don't have access to this shared folder",
+                )),
+            )
+                .into_response(),
+        );
+    }
+
+    // Get folders in this parent with share info
+    // Note: We don't filter by tenant_id since shared folders may belong to different tenants
+    let folders = sqlx::query_as::<_, FolderWithShares>(
+        r#"
+        SELECT
+            f.id, f.name, f.path, f.parent_folder_id, f.owner_id,
+            f.created_at, f.updated_at, f.starred_at, f.deleted_at,
+            EXISTS(
+                SELECT 1 FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+            ) as is_shared,
+            (
+                SELECT COUNT(*) FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+            ) as share_count,
+            (
+                SELECT MIN(expires_at) FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+                AND expires_at IS NOT NULL
+            ) as share_expires_at
+        FROM folders f
+        WHERE f.parent_folder_id = $1 AND f.deleted_at IS NULL
+        ORDER BY f.name
+        "#,
+    )
+    .bind(folder_id)
+    .fetch_all(&state.db_pool)
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(super::ErrorResponse::new("Internal server error")),
+        )
+            .into_response()
+    })?;
+
+    // Get files in this parent with share info
+    // Note: We don't filter by tenant_id since shared files may belong to different tenants
+    let files = sqlx::query_as::<_, FileWithShares>(
+        r#"
+        SELECT
+            f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
+            f.parent_folder_id, f.owner_id, f.current_version,
+            f.created_at, f.modified_at, f.starred_at, f.deleted_at,
+            EXISTS(
+                SELECT 1 FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+            ) as is_shared,
+            (
+                SELECT COUNT(*) FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+            ) as share_count,
+            (
+                SELECT MIN(expires_at) FROM shares
+                WHERE file_id = f.id
+                AND revoked_at IS NULL
+                AND expires_at IS NOT NULL
+            ) as share_expires_at
+        FROM files f
+        WHERE f.parent_folder_id = $1 AND f.deleted_at IS NULL
+        ORDER BY f.name
+        "#,
+    )
+    .bind(folder_id)
+    .fetch_all(&state.db_pool)
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(super::ErrorResponse::new("Internal server error")),
+        )
+            .into_response()
+    })?;
+
+    Ok(Json(FolderContentsWithShares { folders, files }))
 }
 
 // ============================================================================

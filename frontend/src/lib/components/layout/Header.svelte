@@ -18,10 +18,12 @@
 	let lastUserId = $currentUser?.id;
 	let lastAvatarPath = $currentUser?.avatar_path;
 	let avatarTimestamp = Date.now();
+	let avatarError = false;
 	$: if ($currentUser?.id !== lastUserId || $currentUser?.avatar_path !== lastAvatarPath) {
 		lastUserId = $currentUser?.id;
 		lastAvatarPath = $currentUser?.avatar_path;
 		avatarTimestamp = Date.now();
+		avatarError = false;
 	}
 
 	function handleSearchInput(event: Event) {
@@ -219,8 +221,8 @@
 			<div class="dropdown dropdown-end">
 				<button type="button" class="btn btn-ghost btn-circle avatar">
 					<div class="w-8 lg:w-10 rounded-full bg-primary text-primary-content flex items-center justify-center overflow-hidden">
-						{#if $currentUser.avatar_path}
-							<img src={`${getAvatarUrl($currentUser.id)}?t=${avatarTimestamp}`} alt="Avatar" class="w-full h-full object-cover" />
+						{#if $currentUser.avatar_path && !avatarError}
+							<img src={`${getAvatarUrl($currentUser.id)}?t=${avatarTimestamp}`} alt="Avatar" class="w-full h-full object-cover" on:error={() => avatarError = true} />
 						{:else}
 							<span class="text-lg lg:text-xl font-semibold">{$currentUser.display_name[0].toUpperCase()}</span>
 						{/if}

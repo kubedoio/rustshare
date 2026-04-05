@@ -1,8 +1,17 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use uuid::Uuid;
 
 use super::{FileId, FolderId, ShareId, UserId};
+
+/// Error type for share type determination failures.
+#[derive(Debug, Clone, PartialEq, Error)]
+pub enum ShareTypeError {
+    /// Invalid share configuration: exactly one of share_token, recipient_user_id, or recipient_group_id must be set.
+    #[error("Invalid share configuration: exactly one of share_token, recipient_user_id, or recipient_group_id must be set")]
+    InvalidShareConfiguration,
+}
 
 /// Permission level for a share link.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
@@ -46,6 +55,14 @@ impl Ord for SharePermissions {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.level().cmp(&other.level())
     }
+}
+
+/// Type of share (determined by which fields are set)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShareType {
+    Public, // share_token is Some
+    User,   // recipient_user_id is Some
+    Group,  // recipient_group_id is Some
 }
 
 /// A share link that allows access to a file or folder.
@@ -178,6 +195,22 @@ impl Share {
     /// Checks if the share link is password-protected (public shares only).
     pub fn is_password_protected(&self) -> bool {
         self.password_hash.is_some()
+    }
+
+    /// Determine the type of share based on populated fields.
+    ///
+    /// Returns an error if none of share_token, recipient_user_id, or recipient_group_id is set.
+    pub fn share_type(&self) -> Result<ShareType, ShareTypeError> {
+        match (
+            self.share_token.is_some(),
+            self.recipient_user_id.is_some(),
+            self.recipient_group_id.is_some(),
+        ) {
+            (true, false, false) => Ok(ShareType::Public),
+            (false, true, false) => Ok(ShareType::User),
+            (false, false, true) => Ok(ShareType::Group),
+            _ => Err(ShareTypeError::InvalidShareConfiguration),
+        }
     }
 }
 
@@ -412,5 +445,123 @@ mod tests {
 
         let perms = vec![SharePermissions::View, SharePermissions::Edit];
         assert_eq!(SharePermissions::max(&perms), SharePermissions::Edit);
+    }
+
+    #[test]
+    fn test_share_type_public() {
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(Uuid::new_v4()),
+            folder_id: None,
+            share_token: Some("token123".to_string()),
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: None,
+            created_by: Uuid::new_v4(),
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        assert_eq!(share.share_type(), Ok(ShareType::Public));
+    }
+
+    #[test]
+    fn test_share_type_user() {
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(Uuid::new_v4()),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::Edit,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(Uuid::new_v4()),
+            recipient_group_id: None,
+            created_by: Uuid::new_v4(),
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        assert_eq!(share.share_type(), Ok(ShareType::User));
+    }
+
+    #[test]
+    fn test_share_type_group() {
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: None,
+            folder_id: Some(Uuid::new_v4()),
+            share_token: None,
+            permissions: SharePermissions::Admin,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: Some(Uuid::new_v4()),
+            created_by: Uuid::new_v4(),
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        assert_eq!(share.share_type(), Ok(ShareType::Group));
+    }
+
+    #[test]
+    fn test_share_type_invalid() {
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(Uuid::new_v4()),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: None,
+            created_by: Uuid::new_v4(),
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        assert!(matches!(
+            share.share_type(),
+            Err(ShareTypeError::InvalidShareConfiguration)
+        ));
+    }
+
+    #[test]
+    fn test_share_type_multiple_fields_error() {
+        // If multiple fields are set, it's an error (ambiguous configuration)
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(Uuid::new_v4()),
+            folder_id: None,
+            share_token: Some("token123".to_string()),
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(Uuid::new_v4()), // Also set
+            recipient_group_id: None,
+            created_by: Uuid::new_v4(),
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        // Multiple fields set is an error
+        assert!(matches!(
+            share.share_type(),
+            Err(ShareTypeError::InvalidShareConfiguration)
+        ));
     }
 }

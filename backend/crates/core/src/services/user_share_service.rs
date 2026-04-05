@@ -1,3 +1,15 @@
+//! DEPRECATED: Use ShareService instead
+#![allow(deprecated)]
+//! 
+//! This module is being phased out in favor of the unified ShareService.
+//! New code should use ShareService for all share operations.
+//! 
+//! Migration guide:
+//! - `user_share_service.create_file_share(file_id, email, perm, user)` 
+//!   → `share_service.create_user_share(Resource::File(file_id), email, perm, user)`
+//! - `user_share_service.create_folder_share(folder_id, email, perm, user)`
+//!   → `share_service.create_user_share(Resource::Folder(folder_id), email, perm, user)`
+
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::{error, warn};
@@ -30,6 +42,7 @@ pub trait ShareOps: Send + Sync {
         recipient_user_id: UserId,
         permissions: SharePermissions,
         created_by: UserId,
+        tenant_id: uuid::Uuid,
     ) -> Result<Share, sqlx::Error>;
 
     async fn update_share_permission(
@@ -61,6 +74,7 @@ pub trait ShareOps: Send + Sync {
 pub trait UserOps: Send + Sync {
     async fn find_by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error>;
     async fn get_by_id(&self, user_id: UserId) -> Result<Option<User>, sqlx::Error>;
+    async fn get_tenant_id_for_user(&self, user_id: UserId) -> Result<Option<uuid::Uuid>, sqlx::Error>;
 }
 
 /// Trait for file repository operations needed by UserShareService.
@@ -75,6 +89,9 @@ pub trait FolderOps: Send + Sync {
     async fn get_by_id(&self, folder_id: FolderId) -> Result<Option<Folder>, sqlx::Error>;
 }
 
+/// DEPRECATED: Use ShareService instead
+#[deprecated(since = "0.2.0", note = "Use ShareService instead. See module documentation for migration guide.")]
+#[allow(deprecated)]
 pub struct UserShareService<SR, UR, FR, DR, P, N, E>
 where
     SR: ShareOps,
@@ -115,6 +132,7 @@ where
     pub broadcaster: Arc<EventBroadcaster>,
 }
 
+#[allow(deprecated)]
 impl<SR, UR, FR, DR, P, N, E> UserShareService<SR, UR, FR, DR, P, N, E>
 where
     SR: ShareOps,
@@ -138,6 +156,8 @@ where
         format!("/shared-with-me/{resource_path}/{resource_id}")
     }
 
+    /// DEPRECATED: Use ShareService::new instead
+    #[deprecated(since = "0.2.0", note = "Use ShareService::new instead")]
     pub fn new(deps: UserShareServiceDeps<SR, UR, FR, DR, P, N, E>) -> Self {
         Self {
             share_repo: deps.share_repo,
@@ -202,6 +222,8 @@ where
         }
     }
 
+    /// DEPRECATED: Use ShareService::create_user_share with Resource::File instead
+    #[deprecated(since = "0.2.0", note = "Use ShareService::create_user_share with Resource::File instead")]
     /// Create a share for a file with a specific user.
     pub async fn create_file_share(
         &self,
@@ -226,6 +248,13 @@ where
             });
         }
 
+        // Get creator's tenant ID
+        let creator_tenant_id = self
+            .user_repo
+            .get_tenant_id_for_user(created_by)
+            .await
+            .map_err(ShareError::Database)?;
+
         // Find recipient user by email
         let recipient_email_lower = recipient_email.trim().to_lowercase();
         let recipient = self
@@ -234,6 +263,11 @@ where
             .await
             .map_err(ShareError::Database)?
             .ok_or_else(|| ShareError::RecipientNotFound(recipient_email.to_string()))?;
+
+        // Verify recipient is in the same tenant as the creator
+        if Some(recipient.tenant_id) != creator_tenant_id {
+            return Err(ShareError::RecipientNotFound(recipient_email.to_string()));
+        }
 
         // Verify not sharing with self
         if recipient.id == created_by {
@@ -269,7 +303,14 @@ where
         // Create new share
         let share = self
             .share_repo
-            .create_user_share(Some(file_id), None, recipient.id, permission, created_by)
+            .create_user_share(
+                Some(file_id),
+                None,
+                recipient.id,
+                permission,
+                created_by,
+                creator_tenant_id.unwrap_or_else(|| uuid::Uuid::nil()),
+            )
             .await
             .map_err(|error| {
                 error!(
@@ -310,6 +351,8 @@ where
         Ok(share)
     }
 
+    /// DEPRECATED: Use ShareService::create_user_share with Resource::Folder instead
+    #[deprecated(since = "0.2.0", note = "Use ShareService::create_user_share with Resource::Folder instead")]
     /// Create a share for a folder with a specific user.
     pub async fn create_folder_share(
         &self,
@@ -324,7 +367,7 @@ where
             .get_by_id(folder_id)
             .await
             .map_err(ShareError::Database)?
-            .ok_or_else(|| ShareError::NotFoundById(folder_id))?;
+            .ok_or_else(|| ShareError::FolderNotFound(folder_id))?;
 
         // Verify creator owns the folder
         if folder.owner_id != created_by {
@@ -334,6 +377,13 @@ where
             });
         }
 
+        // Get creator's tenant ID
+        let creator_tenant_id = self
+            .user_repo
+            .get_tenant_id_for_user(created_by)
+            .await
+            .map_err(ShareError::Database)?;
+
         // Find recipient user by email
         let recipient_email_lower = recipient_email.trim().to_lowercase();
         let recipient = self
@@ -342,6 +392,11 @@ where
             .await
             .map_err(ShareError::Database)?
             .ok_or_else(|| ShareError::RecipientNotFound(recipient_email.to_string()))?;
+
+        // Verify recipient is in the same tenant as the creator
+        if Some(recipient.tenant_id) != creator_tenant_id {
+            return Err(ShareError::RecipientNotFound(recipient_email.to_string()));
+        }
 
         // Verify not sharing with self
         if recipient.id == created_by {
@@ -377,7 +432,14 @@ where
         // Create new share
         let share = self
             .share_repo
-            .create_user_share(None, Some(folder_id), recipient.id, permission, created_by)
+            .create_user_share(
+                None,
+                Some(folder_id),
+                recipient.id,
+                permission,
+                created_by,
+                creator_tenant_id.unwrap_or_else(|| uuid::Uuid::nil()),
+            )
             .await
             .map_err(|error| {
                 error!(
@@ -418,6 +480,8 @@ where
         Ok(share)
     }
 
+    /// DEPRECATED: Use ShareService::list_received_shares instead
+    #[deprecated(since = "0.2.0", note = "Use ShareService::list_received_shares instead")]
     /// List shares received by a user.
     pub async fn list_received_shares(
         &self,
@@ -432,6 +496,8 @@ where
         Ok(shares)
     }
 
+    /// DEPRECATED: Use ShareService::list_recipients instead
+    #[deprecated(since = "0.2.0", note = "Use ShareService::list_recipients instead")]
     /// List recipients of a shared resource (Admin permission required).
     pub async fn list_recipients(
         &self,
@@ -445,20 +511,28 @@ where
         } else if let Some(foid) = folder_id {
             Resource::Folder(foid)
         } else {
-            return Err(ShareError::NotFound);
+            return Err(ShareError::InvalidState("Share has neither file_id nor folder_id".to_string()));
         };
 
         // Check if requesting user has Admin permission
-        let permission = self
-            .permission_resolver
-            .resolve_permission(requesting_user, resource)
-            .await
-            .map_err(|e| ShareError::Database(sqlx::Error::Protocol(e.to_string())))?;
+        // Owners implicitly have Admin permission via ownership check in permission_resolver
+        let permission = match self.permission_resolver.resolve_permission(requesting_user, resource).await {
+            Ok(Some(perm)) => perm,
+            Ok(None) => {
+                return Err(ShareError::InsufficientPermission {
+                    required: SharePermissions::Admin,
+                    actual: SharePermissions::View,
+                });
+            }
+            Err(e) => {
+                return Err(ShareError::Database(sqlx::Error::Protocol(e.to_string())));
+            }
+        };
 
-        if permission != Some(SharePermissions::Admin) {
+        if permission != SharePermissions::Admin {
             return Err(ShareError::InsufficientPermission {
                 required: SharePermissions::Admin,
-                actual: permission.unwrap_or(SharePermissions::View),
+                actual: permission,
             });
         }
 
@@ -494,6 +568,8 @@ where
         Ok(recipients)
     }
 
+    /// DEPRECATED: Use ShareService::update_recipient_permission instead
+    #[deprecated(since = "0.2.0", note = "Use ShareService::update_recipient_permission instead")]
     /// Update recipient permission (Admin permission required).
     pub async fn update_recipient_permission(
         &self,
@@ -507,7 +583,7 @@ where
             .get_by_id(share_id)
             .await
             .map_err(ShareError::Database)?
-            .ok_or(ShareError::NotFoundById(share_id))?;
+            .ok_or(ShareError::ShareNotFound(share_id))?;
 
         // Determine resource for permission check
         let resource = if let Some(fid) = share.file_id {
@@ -515,7 +591,7 @@ where
         } else if let Some(foid) = share.folder_id {
             Resource::Folder(foid)
         } else {
-            return Err(ShareError::NotFound);
+            return Err(ShareError::InvalidState("Share has neither file_id nor folder_id".to_string()));
         };
 
         // Check if requesting user has Admin permission
@@ -598,6 +674,8 @@ where
         Ok(updated_share)
     }
 
+    /// DEPRECATED: Use ShareService::remove_recipient instead
+    #[deprecated(since = "0.2.0", note = "Use ShareService::remove_recipient instead")]
     /// Remove a recipient from a share (Admin permission required).
     pub async fn remove_recipient(
         &self,
@@ -610,7 +688,7 @@ where
             .get_by_id(share_id)
             .await
             .map_err(ShareError::Database)?
-            .ok_or(ShareError::NotFoundById(share_id))?;
+            .ok_or(ShareError::ShareNotFound(share_id))?;
 
         // Determine resource for permission check
         let resource = if let Some(fid) = share.file_id {
@@ -618,7 +696,7 @@ where
         } else if let Some(foid) = share.folder_id {
             Resource::Folder(foid)
         } else {
-            return Err(ShareError::NotFound);
+            return Err(ShareError::InvalidState("Share has neither file_id nor folder_id".to_string()));
         };
 
         // Check if requesting user has Admin permission

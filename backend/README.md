@@ -25,8 +25,8 @@ The backend is the only production runtime server. It is responsible for:
 - Stable client routes live under `/api/v1/...`
 - Stable realtime endpoint is `GET /api/ws`
 - Unversioned `/api/...` aliases and legacy auth aliases are compatibility-only
-- New backend/client work must follow [API Contract Freeze](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-api-contract-freeze.md)
-- Client implementations should also follow [Client Integration Checklist](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-client-integration-checklist.md)
+- New backend/client work must follow [API Contract Freeze](../docs/2026-03-21-api-contract-freeze.md)
+- Client implementations should also follow [Client Integration Checklist](../docs/2026-03-21-client-integration-checklist.md)
 
 ## Stable Client Entry Points
 
@@ -68,6 +68,19 @@ The backend is the only production runtime server. It is responsible for:
 - `POST /api/v1/folders/:id/rename`
 - `DELETE /api/v1/folders/:id`
 
+### Notes
+
+- `GET /api/v1/notes`
+- `GET /api/v1/notes/recent`
+- `POST /api/v1/notes`
+- `GET /api/v1/notes/:id`
+- `PUT /api/v1/notes/:id`
+- `POST /api/v1/notes/:id/rename`
+- `POST /api/v1/notes/:id/move`
+- `DELETE /api/v1/notes/:id`
+- `POST /api/v1/notes/:id/visibility`
+- `GET /api/v1/public/notes/:share_id`
+
 ### Shares and Notifications
 
 - `GET /api/v1/shares`
@@ -104,7 +117,7 @@ WebSocket auth may use:
 - `Authorization: Bearer <token>`
 - `?token=<token>` query parameter for browser-compatible token clients
 
-Stable event families are documented in [API Contract Freeze](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-api-contract-freeze.md).
+Stable event families are documented in [API Contract Freeze](../docs/2026-03-21-api-contract-freeze.md).
 
 ## Internal / Operator Routes
 
@@ -136,4 +149,4 @@ cargo clippy
 cargo check
 ```
 
-See [TESTING.md](/Users/scolak/Projects/x/rustshare/backend/TESTING.md) for broader validation guidance.
+See [backend/TESTING.md](TESTING.md) for broader validation guidance.

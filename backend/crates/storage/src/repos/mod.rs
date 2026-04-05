@@ -17,6 +17,7 @@ pub mod path_builder;
 pub mod search;
 pub mod sync;
 pub mod upload_session;
+pub mod share_notification;
 
 pub use traits::*;
 pub use rustfs_repos::*;
@@ -24,6 +25,7 @@ pub use dual_write::*;
 pub use path_builder::PathBuilder;
 pub use search::{RustFsSearchIndexRepository, SearchIndexRepository};
 pub use upload_session::RustFsUploadSessionRepository;
+pub use share_notification::{ShareNotificationRepo, ShareNotificationRepoImpl};
 pub use user::{RustFsUserRepository, UserRepository, UserRepositoryError};
 pub use notification::{
     NotificationProjector, NotificationQuery, NotificationRepository,

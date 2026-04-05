@@ -90,7 +90,7 @@ function createFileBrowserUiStore() {
 		
 		toggleViewMode: () => {
 			update(state => {
-				const newState = { ...state, viewMode: state.viewMode === 'grid' ? 'list' : 'grid' };
+				const newState: FileBrowserUiState = { ...state, viewMode: state.viewMode === 'grid' ? 'list' : 'grid' };
 				persist(newState);
 				return newState;
 			});
@@ -169,6 +169,14 @@ function createFileBrowserUiStore() {
 		clearSearch: () => {
 			update(state => {
 				const newState = { ...state, searchQuery: '' };
+				persist(newState);
+				return newState;
+			});
+		},
+		
+		collapseAll: () => {
+			update(state => {
+				const newState = { ...state, expandedFolderIds: new Set<string>() };
 				persist(newState);
 				return newState;
 			});

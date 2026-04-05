@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { downloadFile, getFile } from '$lib/api/files';
-	import { getFolder, getFolderContents } from '$lib/api/folders';
+	import { getFolder, getSharedFolderContents } from '$lib/api/folders';
 	import { listReceivedShares } from '$lib/api/shares';
 	import type { File, Folder, ReceivedShare } from '$lib/api/types';
 	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
@@ -58,7 +58,7 @@
 
 	$: folderContentsQuery = createQuery({
 		queryKey: ['shared-folder-contents', currentFolderId],
-		queryFn: () => getFolderContents(currentFolderId),
+		queryFn: () => getSharedFolderContents(currentFolderId!),
 		enabled: resourceType === 'folder' && !!shareEntry && !!currentFolderId
 	});
 

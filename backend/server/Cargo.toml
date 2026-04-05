@@ -46,6 +46,7 @@ url = "2.5"
 urlencoding = "2.1"
 base64 = { workspace = true }
 rand = { workspace = true }
+thiserror = { workspace = true }
 image = { version = "0.24", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
 mime_guess = "2.0"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "pool"] }
@@ -85,6 +86,18 @@ path = "../tests/admin_workflows_test.rs"
 [[test]]
 name = "invites_test"
 path = "../tests/invites_test.rs"
+
+[[test]]
+name = "notes_test"
+path = "../tests/notes_test.rs"
+
+[[test]]
+name = "group_sharing_test"
+path = "../tests/group_sharing_test.rs"
+
+[[test]]
+name = "compat_layer_integration_test"
+path = "../tests/compat_layer_integration_test.rs"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"

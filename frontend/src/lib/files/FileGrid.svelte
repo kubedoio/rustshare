@@ -32,9 +32,10 @@
 	export let onEditFile: (file: FileType) => void = () => {};
 	export let selectionMode = false;
 	export let replicationStatuses: Record<string, ReplicationStatus> = {};
+	export let isSharedRoot = false;
 
 	// Drag and drop state
-	let draggedItem: { id: string; isFolder: boolean } | null = null;
+	let draggedItem: { id: string; isFolder: boolean; parentFolderId: string | null } | null = null;
 	let dragOverFolderId: string | null = null;
 
 	function handleFileToggle(file: FileType, event?: MouseEvent) {
@@ -50,7 +51,7 @@
 	}
 
 	// Drag handlers
-	function handleDragStart(item: { id: string; isFolder: boolean }) {
+	function handleDragStart(item: { id: string; isFolder: boolean; parentFolderId: string | null }) {
 		draggedItem = item;
 	}
 
@@ -69,23 +70,71 @@
 		dragOverFolderId = null;
 	}
 
-	function handleDropOnFolder(folder: Folder) {
-		if (!draggedItem) return;
+	// Check if target folder is a descendant of the dragged folder (would create cycle)
+	function isDescendantOf(folderId: string, potentialParentId: string): boolean {
+		const folder = folders.find(f => f.id === folderId);
+		if (!folder) return false;
+		if (folder.parent_folder_id === potentialParentId) return true;
+		if (!folder.parent_folder_id) return false;
+		return isDescendantOf(folder.parent_folder_id, potentialParentId);
+	}
+
+	function readDragPayload(e: DragEvent): { id: string; isFolder: boolean; parentFolderId: string | null } | null {
+		try {
+			const data = e.dataTransfer?.getData('application/json');
+			if (data) {
+				const parsed = JSON.parse(data);
+				if (parsed && typeof parsed.id === 'string') {
+					return { id: parsed.id, isFolder: !!parsed.isFolder, parentFolderId: parsed.parentFolderId || null };
+				}
+			}
+		} catch {
+			// ignore
+		}
+		return null;
+	}
+
+	function handleDropOnFolder(folder: Folder, e?: DragEvent) {
+		let payload = draggedItem;
+		if (!payload && e) {
+			payload = readDragPayload(e);
+		}
+		if (!payload) {
+			dragOverFolderId = null;
+			draggedItem = null;
+			return;
+		}
 		
-		// Can't drop a folder into itself or its children
-		if (draggedItem.id === folder.id) {
+		// Can't drop onto itself
+		if (payload.id === folder.id) {
 			dragOverFolderId = null;
 			draggedItem = null;
 			return;
 		}
 
-		if (draggedItem.isFolder) {
-			const draggedFolder = folders.find(f => f.id === draggedItem?.id);
+		// Can't drop a folder into itself or its children (would create cycle)
+		if (payload.isFolder) {
+			if (isDescendantOf(folder.id, payload.id)) {
+				dragOverFolderId = null;
+				draggedItem = null;
+				return;
+			}
+		}
+
+		// Can't drop file/folder into its current parent (no-op)
+		if (payload.parentFolderId === folder.id) {
+			dragOverFolderId = null;
+			draggedItem = null;
+			return;
+		}
+
+		if (payload.isFolder) {
+			const draggedFolder = folders.find(f => f.id === payload?.id);
 			if (draggedFolder) {
 				onMoveFolder(draggedFolder, folder.id);
 			}
 		} else {
-			const draggedFile = files.find(f => f.id === draggedItem?.id);
+			const draggedFile = files.find(f => f.id === payload?.id);
 			if (draggedFile) {
 				onMoveFile(draggedFile, folder.id);
 			}
@@ -126,12 +175,13 @@
 	</div>
 {:else}
 	<!-- Responsive grid: 1 col mobile, 2 cols sm, auto-fill on larger -->
-	<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-3 sm:gap-4">
+	<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-2 sm:gap-3">
 		<!-- Folders -->
 		{#each folders as folder (folder.id)}
 			<FileGridTile
 				item={folder}
 				isFolder={true}
+				{isSharedRoot}
 				{workspaceMode}
 				selected={selectionMode && $selectionStore.selectedFolderIds.has(folder.id)}
 				{selectionMode}
@@ -146,9 +196,9 @@
 				onPermanentDelete={() => onPermanentDeleteFolder(folder)}
 				onShare={() => onShareFolder(folder)}
 				onMove={() => onMoveFolder(folder, null)}
-				onDragStart={() => handleDragStart({ id: folder.id, isFolder: true })}
+				onDragStart={() => handleDragStart({ id: folder.id, isFolder: true, parentFolderId: folder.parent_folder_id })}
 				onDragEnd={handleDragEnd}
-				onDrop={() => handleDropOnFolder(folder)}
+				onDrop={(e) => handleDropOnFolder(folder, e)}
 				onDragOver={() => handleDragOverFolder(folder.id)}
 				onDragLeave={handleDragLeaveFolder}
 			/>
@@ -159,6 +209,7 @@
 			<FileGridTile
 				item={file}
 				isFolder={false}
+				{isSharedRoot}
 				{workspaceMode}
 				selected={selectionMode && $selectionStore.selectedFileIds.has(file.id)}
 				{selectionMode}
@@ -177,7 +228,7 @@
 				onVersionHistory={() => onVersionHistory(file)}
 				onReplace={() => onReplaceFile(file)}
 				onEdit={() => { console.log('[FileGrid] onEdit triggered for', file.name); onEditFile(file); }}
-				onDragStart={() => handleDragStart({ id: file.id, isFolder: false })},
+				onDragStart={() => handleDragStart({ id: file.id, isFolder: false, parentFolderId: file.parent_folder_id })}
 				onDragEnd={handleDragEnd}
 			/>
 		{/each}

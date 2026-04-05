@@ -1,4 +1,20 @@
 <script lang="ts">
+	/**
+	 * ==============================================================================
+	 * UNIFIED FILES PAGE
+	 * ==============================================================================
+	 * 
+	 * Refactored file explorer supporting both "My Files" and "Shared" roots.
+	 * 
+	 * URL Patterns:
+	 * - /files                    → My Files root
+	 * - /files?root=shared        → Shared root
+	 * - /files?folder=<id>        → Specific folder (in my-files root)
+	 * - /files?filter=starred     → Starred collection
+	 * - /files?filter=recent      → Recent collection
+	 * - /files?filter=photos      → Photos collection
+	 */
+
 	import { onMount } from 'svelte';
 	import { createQuery, createMutation } from '@tanstack/svelte-query';
 	import { truncateFilename } from '$lib/utils/format';
@@ -12,28 +28,40 @@
 		renameFile,
 		restoreFileFromTrash,
 		setFileStarred,
-		uploadFile
+		uploadFile,
+		listAllFiles
 	} from '$lib/api/files';
+	import { createNote } from '$lib/api/notes';
 	import {
 		createFolder,
 		deleteFolder,
 		getFolderContents,
+		getFolderTree,
+		getSharedFolderContents,
 		moveFolder,
 		permanentlyDeleteFolder,
 		renameFolder,
 		restoreFolderFromTrash,
-		setFolderStarred
+		setFolderStarred,
+		type FolderTree as FolderTreeType
 	} from '$lib/api/folders';
+	import { listReceivedShares } from '$lib/api/shares';
+	import type { ReceivedShare } from '$lib/api/types';
+	import { extractFolderPaths, sortFolderPaths } from '$lib/utils/directoryUpload';
 	import { queryClient } from '$lib/query-client';
 	import { searchQuery } from '$lib/stores/search';
 	import { fileSortState } from '$lib/stores/fileSort';
 	import { selectionStore, selectionCount, hasSelection } from '$lib/stores/selection';
 	import { activityStore } from '$lib/stores/activity';
 	import { replicationStore, type ReplicationStatus } from '$lib/stores/replication';
-	import { folderTreeStore, type FolderNode } from '$lib/stores/folderTree';
+	import { folderTreeStore } from '$lib/stores/folderTree';
 	import type { File, Folder } from '$lib/api/types';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+
+	// Explorer types
+	import type { ExplorerRoot, CollectionView } from '$lib/explorer';
+	import { ROOT_CONFIG } from '$lib/explorer';
 
 	// Components
 	import FileExplorer from '$lib/files/FileExplorer.svelte';
@@ -55,6 +83,10 @@
 	import { TextEditor, MarkdownEditor, ExcalidrawEditor } from '$lib/components/editors';
 	import { detectEditorType } from '$lib/utils/editor';
 
+	// ============================================================================
+	// STATE
+	// ============================================================================
+
 	type UploadTask = {
 		id: string;
 		fileName: string;
@@ -65,12 +97,10 @@
 		previewUrl?: string;
 	};
 
+	type WorkspaceMode = 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+
 	let uploadTasks: UploadTask[] = [];
 	let selectionMode = false;
-	let currentFolderId: string | null = null;
-
-	// Derive folderPath from folder tree store based on currentFolderId
-	$: folderPath = currentFolderId ? buildFolderPathFromTree($folderTreeStore.rootFolders, currentFolderId) : [];
 
 	// Modal states
 	let showRenameModal = false;
@@ -103,224 +133,29 @@
 	let previewTarget: File | null = null;
 	let replaceFileTarget: File | null = null;
 
-	type WorkspaceMode = 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
-
 	// Toast
 	let showToast = false;
 	let toastMessage = '';
 	let toastType: 'success' | 'error' | 'info' = 'info';
 
-	// Query for the active workspace view
-	$: filesQuery = createQuery({
-		queryKey: ['file-workspace', workspaceMode, currentFolderId],
-		queryFn: () => {
-			if (workspaceMode === 'starred') return getStarredContents();
-			if (workspaceMode === 'deleted') return getDeletedContents();
-			return getFolderContents(currentFolderId);
-		}
-	});
+	// ============================================================================
+	// EXPLORER STATE DERIVATIONS
+	// ============================================================================
 
-	// Mutations
-	const uploadMutation = createMutation({
-		mutationFn: (file: globalThis.File) => uploadFile(currentFolderId, file),
-		onSuccess: (_, file) => {
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			activityStore.addActivity('file_uploaded', file.name);
-		}
-	});
-
-	const createFolderMutation = createMutation({
-		mutationFn: (name: string) => createFolder(name, currentFolderId),
-		onSuccess: (folder) => {
-			// Immediately update UI - add folder to tree
-			folderTreeStore.addFolder(folder, currentFolderId);
-			// Expand parent folder so new folder is visible
-			if (currentFolderId) {
-				folderTreeStore.setExpanded(currentFolderId, true);
-			}
-			// Refresh queries
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
-			showCreateFolderModal = false;
-			showNotification('Folder created', 'success');
-			activityStore.addActivity('folder_created', folder.name);
-		},
-		onError: (error) => {
-			showNotification(error instanceof Error ? error.message : 'Failed to create folder', 'error');
-		}
-	});
-
-	const renameFileMutation = createMutation({
-		mutationFn: ({ fileId, newName }: { fileId: string; newName: string }) => renameFile(fileId, newName),
-		onSuccess: (_, { newName }) => {
-			const oldName = renameTarget?.name || 'File';
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			showRenameModal = false;
-			renameTarget = null;
-			showNotification(`${truncateFilename(newName)} renamed`, 'success');
-			activityStore.addActivity('file_renamed', newName, oldName);
-		}
-	});
-
-	const renameFolderMutation = createMutation({
-		mutationFn: ({ folderId, newName }: { folderId: string; newName: string }) => renameFolder(folderId, newName),
-		onSuccess: (_, { folderId, newName }) => {
-			const oldName = renameTarget?.name || 'Folder';
-			// Immediately update UI
-			folderTreeStore.updateFolderName(folderId, newName);
-			// Refresh queries
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
-			showRenameModal = false;
-			renameTarget = null;
-			showNotification('Folder renamed', 'success');
-			activityStore.addActivity('folder_renamed', newName, oldName);
-		}
-	});
-
-	const deleteFileMutation = createMutation({
-		mutationFn: (fileId: string) => deleteFile(fileId),
-		onSuccess: (_, fileId) => {
-			const fileName = deleteTarget?.name || 'File';
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			showDeleteModal = false;
-			deleteTarget = null;
-			showNotification(`${truncateFilename(fileName)} moved to deleted`, 'success');
-			activityStore.addActivity('file_deleted', fileName);
-		}
-	});
-
-	const deleteFolderMutation = createMutation({
-		mutationFn: (folderId: string) => deleteFolder(folderId),
-		onSuccess: (_, folderId) => {
-			const folderName = deleteTarget?.name || 'Folder';
-			// Immediately update UI
-			folderTreeStore.removeFolder(folderId);
-			// Refresh queries
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
-			// If we deleted the current folder or one in its path, go to root
-			if (deleteTarget && (currentFolderId === deleteTarget.id || folderPath.some(f => f.id === deleteTarget?.id))) {
-				currentFolderId = null;
-				goto('/files', { replaceState: true });
-			}
-			showDeleteModal = false;
-			deleteTarget = null;
-			showNotification('Folder moved to deleted', 'success');
-			activityStore.addActivity('folder_deleted', folderName);
-		}
-	});
-
-	const moveFileMutation = createMutation({
-		mutationFn: ({ fileId, targetFolderId }: { fileId: string; targetFolderId: string | null }) => moveFile(fileId, targetFolderId),
-		onSuccess: () => {
-			const fileName = moveTarget?.name || 'File';
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
-			showMoveModal = false;
-			moveTarget = null;
-			showNotification(`${truncateFilename(fileName)} moved`, 'success');
-			activityStore.addActivity('file_moved', fileName);
-		}
-	});
-
-	const moveFolderMutation = createMutation({
-		mutationFn: ({ folderId, targetFolderId }: { folderId: string; targetFolderId: string | null }) => moveFolder(folderId, targetFolderId),
-		onSuccess: (_, { folderId, targetFolderId }) => {
-			const folderName = moveTarget?.name || 'Folder';
-			// Immediately update UI - move folder in tree
-			folderTreeStore.moveFolder(folderId, targetFolderId);
-			// Expand destination folder so moved folder is visible
-			if (targetFolderId) {
-				folderTreeStore.setExpanded(targetFolderId, true);
-			}
-			// Refresh queries
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
-			showMoveModal = false;
-			moveTarget = null;
-			showNotification('Folder moved', 'success');
-			activityStore.addActivity('folder_moved', folderName);
-		}
-	});
-
-	const fileStarMutation = createMutation({
-		mutationFn: ({ fileId, starred }: { fileId: string; starred: boolean }) =>
-			setFileStarred(fileId, starred),
-		onSuccess: (_, variables) => {
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			showNotification(
-				variables.starred ? 'File added to starred' : 'File removed from starred',
-				'success'
-			);
-		}
-	});
-
-	const folderStarMutation = createMutation({
-		mutationFn: ({ folderId, starred }: { folderId: string; starred: boolean }) =>
-			setFolderStarred(folderId, starred),
-		onSuccess: (_, variables) => {
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			showNotification(
-				variables.starred ? 'Folder added to starred' : 'Folder removed from starred',
-				'success'
-			);
-		}
-	});
-
-	const restoreFileMutation = createMutation({
-		mutationFn: ({ fileId, fileName }: { fileId: string; fileName: string }) => restoreFileFromTrash(fileId),
-		onSuccess: (_, { fileName }) => {
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			showNotification(`${truncateFilename(fileName)} restored`, 'success');
-		}
-	});
-
-	const restoreFolderMutation = createMutation({
-		mutationFn: (folderId: string) => restoreFolderFromTrash(folderId),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			showNotification('Folder restored', 'success');
-		}
-	});
-
-	const permanentlyDeleteFileMutation = createMutation({
-		mutationFn: ({ fileId, fileName }: { fileId: string; fileName: string }) => permanentlyDeleteFile(fileId),
-		onSuccess: (_, { fileName }) => {
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			showNotification(`${truncateFilename(fileName)} deleted permanently`, 'success');
-		}
-	});
-
-	const permanentlyDeleteFolderMutation = createMutation({
-		mutationFn: (folderId: string) => permanentlyDeleteFolder(folderId),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			showNotification('Folder deleted permanently', 'success');
-		}
-	});
-
+	// URL parameters
+	$: urlFolderId = $page.url.searchParams.get('folder');
 	$: urlFilter = $page.url.searchParams.get('filter');
 	$: urlSort = $page.url.searchParams.get('sort');
-	$: urlFolderId = $page.url.searchParams.get('folder');
-	
+	$: urlRoot = $page.url.searchParams.get('root') as ExplorerRoot | null;
+
 	// Helper to check if a string looks like a valid UUID
 	function isValidUuid(value: string | null): value is string {
 		if (!value) return false;
-		// UUID v4 regex pattern
 		const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 		return uuidPattern.test(value);
 	}
-	
-	// Sync currentFolderId with URL folder param
-	// Only accept valid UUIDs, ignore special values like 'shared', 'starred', etc.
-	$: if (isValidUuid(urlFolderId) && urlFolderId !== currentFolderId) {
-		currentFolderId = urlFolderId;
-	} else if ((!urlFolderId || !isValidUuid(urlFolderId)) && currentFolderId && !$page.url.searchParams.has('filter') && !$page.url.searchParams.has('sort')) {
-		// Only clear if we're on a plain /files page without filters
-		currentFolderId = null;
-	}
-	
+
+	// Current workspace mode
 	$: workspaceMode = (urlFilter === 'photos'
 		? 'photos'
 		: urlFilter === 'starred'
@@ -330,6 +165,244 @@
 				: urlSort === 'recent'
 					? 'recent'
 					: 'all') as WorkspaceMode;
+
+	// Active root (my-files or shared)
+	$: activeRoot = (urlRoot === 'shared' ? 'shared' : 'my-files') as ExplorerRoot;
+
+	// Is in collection mode?
+	$: isCollectionMode = workspaceMode === 'starred' || workspaceMode === 'recent' || workspaceMode === 'photos';
+
+	// Is shared root view?
+	$: isSharedRoot = activeRoot === 'shared' && !currentFolderId;
+
+	// Current folder ID (null at root)
+	$: currentFolderId = isCollectionMode 
+		? null 
+		: (isValidUuid(urlFolderId) ? urlFolderId : null);
+
+	// ============================================================================
+	// QUERIES
+	// ============================================================================
+
+	// Query for folder tree (used for breadcrumb path in my-files)
+	const folderTreeQuery = createQuery<FolderTreeType>({
+		queryKey: ['folder-tree'],
+		queryFn: () => getFolderTree(),
+		staleTime: 0
+	});
+
+	// Query for received shares (for building shared folder tree)
+	const receivedSharesQuery = createQuery<ReceivedShare[]>({
+		queryKey: ['received-shares'],
+		queryFn: () => listReceivedShares(),
+		enabled: true
+	});
+
+	// Query for the active workspace view
+	$: filesQuery = createQuery({
+		queryKey: ['file-workspace', workspaceMode, currentFolderId, activeRoot],
+		queryFn: async () => {
+			if (workspaceMode === 'starred') return getStarredContents();
+			if (workspaceMode === 'deleted') return getDeletedContents();
+			
+			// For shared root
+			if (activeRoot === 'shared') {
+				if (currentFolderId) {
+					// Inside a specific shared folder
+					return getSharedFolderContents(currentFolderId);
+				} else {
+					// At shared root - show list of received shares
+					const shares = await listReceivedShares();
+					// Transform shares into FolderContents format
+					return {
+						folders: shares.filter(s => s.resource_type === 'folder').map(s => ({
+							id: s.resource_id,
+							name: s.resource_name,
+							path: s.resource_path,
+							parent_folder_id: null,
+							owner_id: s.shared_by,
+							created_at: s.created_at,
+							updated_at: s.created_at,
+							is_shared: true,
+							share_count: 1
+						})),
+						files: shares.filter(s => s.resource_type === 'file').map(s => ({
+							id: s.resource_id,
+							name: s.resource_name,
+							path: s.resource_path,
+							content_hash: '',
+							size: 0,
+							mime_type: 'application/octet-stream',
+							parent_folder_id: null,
+							owner_id: s.shared_by,
+							current_version: 1,
+							created_at: s.created_at,
+							modified_at: s.created_at,
+							is_shared: true,
+							share_count: 1
+						}))
+					};
+				}
+			}
+			
+			// Default my-files behavior
+			return getFolderContents(currentFolderId);
+		}
+	});
+
+	// All files query (for storage stats)
+	const allFilesQuery = createQuery({
+		queryKey: ['all-files'],
+		queryFn: () => listAllFiles()
+	});
+
+	// ============================================================================
+	// BREADCRUMB & PATH DERIVATION
+	// ============================================================================
+
+	// Derive folderPath from the full API folder tree (for my-files)
+	$: myFilesFolderPath = currentFolderId && $folderTreeQuery.data && activeRoot === 'my-files'
+		? buildFolderPathFromApiTree($folderTreeQuery.data, currentFolderId).slice(1)
+		: [];
+
+	// Build breadcrumb based on current state
+	// Returns Folder-compatible objects for FileExplorer component
+	$: breadcrumbPath = buildBreadcrumb();
+
+	function buildBreadcrumb(): Folder[] {
+		// In collection mode, return empty (no breadcrumb)
+		if (isCollectionMode) {
+			return [];
+		}
+
+		if (activeRoot === 'my-files') {
+			// Return my-files path (already Folder objects)
+			return myFilesFolderPath;
+		} else if (activeRoot === 'shared' && currentFolderId) {
+			// For shared folders, build path from received shares
+			const path = buildSharedFolderPath(currentFolderId, $receivedSharesQuery.data || []);
+			return path.map(segment => ({
+				id: segment.id,
+				name: segment.name,
+				path: `/shared/${segment.name}`,
+				parent_folder_id: null,
+				owner_id: 'shared',
+				created_at: '',
+				updated_at: ''
+			}));
+		}
+
+		return [];
+	}
+
+	function buildSharedFolderPath(
+		folderId: string, 
+		shares: ReceivedShare[]
+	): Array<{ name: string; id: string }> {
+		// Find the share that contains this folder
+		const share = shares.find(s => s.resource_id === folderId || s.resource_path?.includes(folderId));
+		if (!share) return [];
+		
+		// For now, return simple path based on share info
+		// This could be enhanced with proper shared folder tree API
+		return [{ name: share.resource_name, id: share.resource_id }];
+	}
+
+	function buildFolderPathFromApiTree(root: FolderTreeType, targetId: string): Folder[] {
+		function search(node: FolderTreeType): Folder[] {
+			if (node.folder.id === targetId) {
+				return [node.folder];
+			}
+			if (node.subfolders) {
+				for (const child of node.subfolders) {
+					const path = search(child);
+					if (path.length > 0) {
+						return [node.folder, ...path];
+					}
+				}
+			}
+			return [];
+		}
+		return search(root);
+	}
+
+	// ============================================================================
+	// TITLE DERIVATION (Contextual Header)
+	// ============================================================================
+
+	$: workspaceTitle = isCollectionMode
+		? (workspaceMode === 'photos'
+			? 'Photos'
+			: workspaceMode === 'recent'
+				? 'Recent'
+				: workspaceMode === 'starred'
+					? 'Starred'
+					: 'Deleted')
+		: activeRoot === 'shared'
+			? (currentFolderId ? breadcrumbPath[breadcrumbPath.length - 1]?.name : 'Shared')
+			: (currentFolderId ? breadcrumbPath[breadcrumbPath.length - 1]?.name : 'My Files');
+
+	$: workspaceDescription = isCollectionMode
+		? (workspaceMode === 'photos'
+			? 'Image files in the current workspace, without the folder noise.'
+			: workspaceMode === 'recent'
+				? 'The latest changes in this workspace, sorted by most recent first.'
+				: workspaceMode === 'starred'
+					? 'Pinned folders and files that need fast access without digging through the tree.'
+					: 'Recently deleted items live here until you restore them or remove them permanently.')
+		: activeRoot === 'shared'
+			? (currentFolderId 
+				? 'Shared folder contents.' 
+				: 'Folders shared with you by other users.')
+			: (currentFolderId 
+				? 'Folder contents.' 
+				: 'Folders and files, tuned for quick scanning instead of dashboard theater.');
+
+	$: workspaceEmptyTitle = isCollectionMode
+		? (workspaceMode === 'photos'
+			? 'No photos in this view'
+			: workspaceMode === 'recent'
+				? 'No recent file activity'
+				: workspaceMode === 'starred'
+					? 'Nothing is starred yet'
+					: 'Deleted items will show up here')
+		: activeRoot === 'shared'
+			? 'No shared folders'
+			: 'No files yet';
+
+	$: workspaceEmptyDescription = isCollectionMode
+		? (workspaceMode === 'photos'
+			? 'Upload an image into this folder and it will show up here.'
+			: workspaceMode === 'recent'
+				? 'Modify or upload a file and it will show up here.'
+				: workspaceMode === 'starred'
+					? 'Star a folder or file from its action menu and it will show up here.'
+					: 'Deleting a folder or file moves it here instead of removing it immediately.')
+		: activeRoot === 'shared'
+			? 'Items shared with you will appear here.'
+			: 'Upload your first file or create a folder to get started.';
+
+	$: workspaceEmptyActionLabel = (!isCollectionMode && activeRoot === 'my-files')
+		? 'Upload files'
+		: null;
+
+	// ============================================================================
+	// UI STATE DERIVATIONS
+	// ============================================================================
+
+	$: showFolderTree = !isCollectionMode;
+	$: showBreadcrumbs = !isCollectionMode;
+	$: canCreateFolder = !isCollectionMode && activeRoot === 'my-files'; // Only in my-files
+	$: canUpload = !isCollectionMode && activeRoot === 'my-files'; // Only in my-files for now
+	$: allowSelectionMode = workspaceMode !== 'deleted';
+	$: if (!allowSelectionMode && selectionMode) {
+		selectionMode = false;
+		selectionStore.clear();
+	}
+
+	// ============================================================================
+	// SORTING & FILTERING
+	// ============================================================================
 
 	$: activeSortField = workspaceMode === 'recent' ? 'modified_at' : $fileSortState.field;
 	$: activeSortOrder = workspaceMode === 'recent' ? 'desc' : $fileSortState.order;
@@ -355,7 +428,7 @@
 			return activeSortOrder === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
 		}
 		if (activeSortField === 'modified_at') {
-			return activeSortOrder === 'asc' 
+			return activeSortOrder === 'asc'
 				? new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
 				: new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
 		}
@@ -380,141 +453,263 @@
 		return 0;
 	});
 
-	$: workspaceTitle =
-		workspaceMode === 'photos'
-			? 'Photos'
-			: workspaceMode === 'recent'
-				? 'Recent'
-				: workspaceMode === 'starred'
-					? 'Starred'
-					: workspaceMode === 'deleted'
-						? 'Deleted'
-						: 'All files';
+	// ============================================================================
+	// MUTATIONS
+	// ============================================================================
 
-	$: workspaceDescription =
-		workspaceMode === 'photos'
-			? 'Image files in the current workspace, without the folder noise.'
-			: workspaceMode === 'recent'
-				? 'The latest changes in this workspace, sorted by most recent first.'
-				: workspaceMode === 'starred'
-					? 'Pinned folders and files that need fast access without digging through the tree.'
-					: workspaceMode === 'deleted'
-						? 'Recently deleted items live here until you restore them or remove them permanently.'
-						: 'Folders and files, tuned for quick scanning instead of dashboard theater.';
-
-	$: workspaceEmptyTitle =
-		workspaceMode === 'photos'
-			? 'No photos in this view'
-			: workspaceMode === 'recent'
-				? 'No recent file activity'
-				: workspaceMode === 'starred'
-					? 'Nothing is starred yet'
-					: workspaceMode === 'deleted'
-						? 'Deleted items will show up here'
-						: 'No files yet';
-
-	$: workspaceEmptyDescription =
-		workspaceMode === 'photos'
-			? 'Upload an image into this folder and it will show up here.'
-			: workspaceMode === 'recent'
-				? 'Modify or upload a file and it will show up here.'
-				: workspaceMode === 'starred'
-					? 'Star a folder or file from its action menu and it will show up here.'
-					: workspaceMode === 'deleted'
-						? 'Deleting a folder or file moves it here instead of removing it immediately.'
-						: 'Upload your first file or create a folder to get started.';
-
-	$: workspaceEmptyActionLabel =
-		workspaceMode === 'all' || workspaceMode === 'photos' || workspaceMode === 'recent'
-			? 'Upload files'
-			: null;
-
-	$: showFolderTree = workspaceMode === 'all';
-	$: showBreadcrumbs = workspaceMode === 'all';
-	$: canCreateFolder = workspaceMode === 'all';
-	$: canUpload = workspaceMode === 'all' || workspaceMode === 'photos' || workspaceMode === 'recent';
-	$: allowSelectionMode = workspaceMode !== 'deleted';
-	$: if (!allowSelectionMode && selectionMode) {
-		selectionMode = false;
-		selectionStore.clear();
-	}
-
-	// Build folder path from tree structure
-	function buildFolderPathFromTree(folders: FolderNode[], targetId: string): Folder[] {
-		for (const folder of folders) {
-			if (folder.id === targetId) {
-				return [{
-					id: folder.id,
-					name: folder.name,
-					path: folder.path,
-					parent_folder_id: folder.parent_folder_id,
-					owner_id: '',
-					created_at: '',
-					updated_at: ''
-				}];
-			}
-			if (folder.children && folder.children.length > 0) {
-				const path = buildFolderPathFromTree(folder.children, targetId);
-				if (path.length > 0) {
-					return [{
-						id: folder.id,
-						name: folder.name,
-						path: folder.path,
-						parent_folder_id: folder.parent_folder_id,
-						owner_id: '',
-						created_at: '',
-						updated_at: ''
-					}, ...path];
-				}
-			}
+	const uploadMutation = createMutation({
+		mutationFn: ({
+			file,
+			folderId,
+			onProgress
+		}: {
+			file: globalThis.File;
+			folderId?: string | null;
+			onProgress?: (progress: number) => void;
+		}) => uploadFile(folderId === undefined ? currentFolderId : folderId, file, onProgress),
+		onSuccess: (_, { file }) => {
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+			activityStore.addActivity('file_uploaded', file.name);
 		}
-		return [];
-	}
+	});
 
-	// Handlers
-	function handleFolderSelect(folderId: string | null, path: FolderNode[]) {
-		currentFolderId = folderId;
-		if (folderId) {
-			goto(`/files?folder=${folderId}`, { replaceState: true });
-		} else {
-			goto('/files', { replaceState: true });
+	const createNoteMutation = createMutation({
+		mutationFn: () => createNote({ title: 'Untitled Note', content: '', parent_folder_id: currentFolderId }),
+		onSuccess: (data) => {
+			goto(`/notes/${data.id}`);
 		}
-	}
+	});
+
+	const createFolderMutation = createMutation({
+		mutationFn: (name: string) => createFolder(name, currentFolderId),
+		onSuccess: (folder) => {
+			folderTreeStore.addFolder(folder, currentFolderId);
+			if (currentFolderId) {
+				folderTreeStore.setExpanded(currentFolderId, true);
+			}
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+			showCreateFolderModal = false;
+			showNotification('Folder created', 'success');
+			activityStore.addActivity('folder_created', folder.name);
+		},
+		onError: (error) => {
+			showNotification(error instanceof Error ? error.message : 'Failed to create folder', 'error');
+		}
+	});
+
+	const renameFileMutation = createMutation({
+		mutationFn: ({ fileId, newName }: { fileId: string; newName: string }) => renameFile(fileId, newName),
+		onSuccess: (_, { newName }) => {
+			const oldName = renameTarget?.name || 'File';
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+			showRenameModal = false;
+			renameTarget = null;
+			showNotification(`${truncateFilename(newName)} renamed`, 'success');
+			activityStore.addActivity('file_renamed', newName, oldName);
+		}
+	});
+
+	const renameFolderMutation = createMutation({
+		mutationFn: ({ folderId, newName }: { folderId: string; newName: string }) => renameFolder(folderId, newName),
+		onSuccess: (_, { folderId, newName }) => {
+			const oldName = renameTarget?.name || 'Folder';
+			folderTreeStore.updateFolderName(folderId, newName);
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+			showRenameModal = false;
+			renameTarget = null;
+			showNotification('Folder renamed', 'success');
+			activityStore.addActivity('folder_renamed', newName, oldName);
+		}
+	});
+
+	const deleteFileMutation = createMutation({
+		mutationFn: (fileId: string) => deleteFile(fileId),
+		onSuccess: (_, fileId) => {
+			const fileName = deleteTarget?.name || 'File';
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+			showDeleteModal = false;
+			deleteTarget = null;
+			showNotification(`${truncateFilename(fileName)} moved to deleted`, 'success');
+			activityStore.addActivity('file_deleted', fileName);
+		}
+	});
+
+	const deleteFolderMutation = createMutation({
+		mutationFn: (folderId: string) => deleteFolder(folderId),
+		onSuccess: (_, folderId) => {
+			const folderName = deleteTarget?.name || 'Folder';
+			folderTreeStore.removeFolder(folderId);
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+			if (deleteTarget && (currentFolderId === deleteTarget.id || breadcrumbPath.some(f => f.id === deleteTarget?.id))) {
+				goto('/files', { replaceState: true });
+			}
+			showDeleteModal = false;
+			deleteTarget = null;
+			showNotification('Folder moved to deleted', 'success');
+			activityStore.addActivity('folder_deleted', folderName);
+		}
+	});
+
+	const moveFileMutation = createMutation({
+		mutationFn: ({ fileId, targetFolderId }: { fileId: string; targetFolderId: string | null }) => moveFile(fileId, targetFolderId),
+		onSuccess: () => {
+			const fileName = moveTarget?.name || 'File';
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+			showMoveModal = false;
+			moveTarget = null;
+			showNotification(`${truncateFilename(fileName)} moved`, 'success');
+			activityStore.addActivity('file_moved', fileName);
+		}
+	});
+
+	const moveFolderMutation = createMutation({
+		mutationFn: ({ folderId, targetFolderId }: { folderId: string; targetFolderId: string | null }) => moveFolder(folderId, targetFolderId),
+		onSuccess: (_, { folderId, targetFolderId }) => {
+			const folderName = moveTarget?.name || 'Folder';
+			folderTreeStore.moveFolder(folderId, targetFolderId);
+			if (targetFolderId) {
+				folderTreeStore.setExpanded(targetFolderId, true);
+			}
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+			showMoveModal = false;
+			moveTarget = null;
+			showNotification('Folder moved', 'success');
+			activityStore.addActivity('folder_moved', folderName);
+		}
+	});
+
+	const fileStarMutation = createMutation({
+		mutationFn: ({ fileId, starred }: { fileId: string; starred: boolean }) =>
+			setFileStarred(fileId, starred),
+		onSuccess: (_, variables) => {
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+			showNotification(
+				variables.starred ? 'File added to starred' : 'File removed from starred',
+				'success'
+			);
+		}
+	});
+
+	const folderStarMutation = createMutation({
+		mutationFn: ({ folderId, starred }: { folderId: string; starred: boolean }) =>
+			setFolderStarred(folderId, starred),
+		onSuccess: (_, variables) => {
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+			showNotification(
+				variables.starred ? 'Folder added to starred' : 'Folder removed from starred',
+				'success'
+			);
+		}
+	});
+
+	const restoreFileMutation = createMutation({
+		mutationFn: ({ fileId, fileName }: { fileId: string; fileName: string }) => restoreFileFromTrash(fileId),
+		onSuccess: (_, { fileName }) => {
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+			showNotification(`${truncateFilename(fileName)} restored`, 'success');
+		}
+	});
+
+	const restoreFolderMutation = createMutation({
+		mutationFn: (folderId: string) => restoreFolderFromTrash(folderId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+			showNotification('Folder restored', 'success');
+		}
+	});
+
+	const permanentlyDeleteFileMutation = createMutation({
+		mutationFn: ({ fileId, fileName }: { fileId: string; fileName: string }) => permanentlyDeleteFile(fileId),
+		onSuccess: (_, { fileName }) => {
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+			showNotification(`${truncateFilename(fileName)} deleted permanently`, 'success');
+		}
+	});
+
+	const permanentlyDeleteFolderMutation = createMutation({
+		mutationFn: (folderId: string) => permanentlyDeleteFolder(folderId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+			showNotification('Folder deleted permanently', 'success');
+		}
+	});
+
+	// ============================================================================
+	// NAVIGATION HANDLERS
+	// ============================================================================
 
 	function handleFolderClick(folder: Folder) {
-		currentFolderId = folder.id;
-		goto(`/files?folder=${folder.id}`, { replaceState: true });
+		if (activeRoot === 'shared') {
+			// For shared folders, use the shared root navigation
+			goto(`/files?folder=${folder.id}&root=shared`, { replaceState: true });
+		} else {
+			// Default my-files navigation
+			goto(`/files?folder=${folder.id}`, { replaceState: true });
+		}
 	}
 
 	function handleBreadcrumbNavigate(event: CustomEvent<{ folderId: string | null }>) {
 		const targetId = event.detail.folderId;
 		if (targetId === null) {
-			currentFolderId = null;
-			goto('/files', { replaceState: true });
+			// Navigate to root of current root
+			if (activeRoot === 'shared') {
+				goto('/files?root=shared', { replaceState: true });
+			} else {
+				goto('/files', { replaceState: true });
+			}
 		} else {
-			currentFolderId = targetId;
-			goto(`/files?folder=${targetId}`, { replaceState: true });
+			if (activeRoot === 'shared') {
+				goto(`/files?folder=${targetId}&root=shared`, { replaceState: true });
+			} else {
+				goto(`/files?folder=${targetId}`, { replaceState: true });
+			}
 		}
 	}
 
 	function handleFileClick(file: File) {
 		if (workspaceMode === 'deleted') return;
+		if (detectEditorType(file.name, file.mime_type) === 'markdown') {
+			goto(`/notes/${file.id}`);
+			return;
+		}
 		previewTarget = file;
 		showFilePreviewModal = true;
 	}
 
+	// ============================================================================
+	// OTHER HANDLERS (unchanged from original)
+	// ============================================================================
+
 	function handleEditFile(event: CustomEvent<{ file: File }> | File) {
 		const file = event instanceof CustomEvent ? event.detail.file : event;
-		console.log('[handleEditFile] called with file:', file?.name, file?.mime_type);
+		if (detectEditorType(file.name, file.mime_type) === 'markdown') {
+			goto(`/notes/${file.id}`);
+			return;
+		}
 		editorTarget = file;
 		showFilePreviewModal = false;
 
 		const editorType = detectEditorType(file.name, file.mime_type);
-		console.log('[handleEditFile] editorType:', editorType);
 		switch (editorType) {
-			case 'markdown':
-				showMarkdownEditor = true;
-				break;
 			case 'excalidraw':
 				showExcalidrawEditor = true;
 				break;
@@ -535,6 +730,7 @@
 	function handleEditorSaved(event?: any) {
 		const targetId = event?.detail?.file?.id || editorTarget?.id;
 		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+		queryClient.invalidateQueries({ queryKey: ['all-files'] });
 		if (targetId) {
 			queryClient.removeQueries({ queryKey: ['file', targetId] });
 			queryClient.removeQueries({ queryKey: ['file-versions', targetId] });
@@ -571,17 +767,34 @@
 			const taskIndex = uploadTasks.findIndex(t => t.id === newTasks[i].id);
 			if (taskIndex === -1) continue;
 
-			uploadTasks[taskIndex] = { ...uploadTasks[taskIndex], status: 'uploading', progress: 50 };
-			uploadTasks = [...uploadTasks];
-
 			try {
-				await $uploadMutation.mutateAsync(files[i]);
-				uploadTasks[taskIndex] = { ...uploadTasks[taskIndex], status: 'success', progress: 100 };
-				uploadTasks = [...uploadTasks];
+				await $uploadMutation.mutateAsync({
+					file: files[i],
+					folderId: currentFolderId,
+					onProgress: (progress) => {
+						const currentTaskIndex = uploadTasks.findIndex(t => t.id === newTasks[i].id);
+						if (currentTaskIndex !== -1) {
+							uploadTasks[currentTaskIndex].status = 'uploading';
+							uploadTasks[currentTaskIndex].progress = progress;
+							uploadTasks = [...uploadTasks];
+						}
+					}
+				});
+				
+				const finalTaskIndex = uploadTasks.findIndex(t => t.id === newTasks[i].id);
+				if (finalTaskIndex !== -1) {
+					uploadTasks[finalTaskIndex].status = 'success';
+					uploadTasks[finalTaskIndex].progress = 100;
+					uploadTasks = [...uploadTasks];
+				}
 			} catch (error) {
 				const errorMessage = error instanceof Error ? error.message : 'Upload failed';
-				uploadTasks[taskIndex] = { ...uploadTasks[taskIndex], status: 'error', error: errorMessage };
-				uploadTasks = [...uploadTasks];
+				const errorTaskIndex = uploadTasks.findIndex(t => t.id === newTasks[i].id);
+				if (errorTaskIndex !== -1) {
+					uploadTasks[errorTaskIndex].status = 'error';
+					uploadTasks[errorTaskIndex].error = errorMessage;
+					uploadTasks = [...uploadTasks];
+				}
 			}
 		}
 
@@ -601,6 +814,133 @@
 		} else {
 			showNotification(`Uploaded ${successCount}, failed ${errorCount}`, 'info');
 		}
+	}
+
+	async function handleDirectoryUpload(files: globalThis.File[]) {
+		if (!canUpload || files.length === 0) return;
+
+		const items = files.map((file) => ({
+			file,
+			relativePath: (file as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath || file.name
+		}));
+
+		const folderPaths = extractFolderPaths(items);
+		const sortedPaths = sortFolderPaths(folderPaths);
+
+		const folderIdMap = new Map<string, string>();
+		const failedFolderPaths = new Set<string>();
+
+		for (const path of sortedPaths) {
+			const parentPath = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+			if (parentPath && failedFolderPaths.has(parentPath)) {
+				failedFolderPaths.add(path);
+				continue;
+			}
+
+			const folderName = path.slice(path.lastIndexOf('/') + 1);
+			const parentId = parentPath ? (folderIdMap.get(parentPath) ?? null) : currentFolderId;
+
+			try {
+				const contents = await getFolderContents(parentId);
+				const existing = contents.folders.find((f) => f.name === folderName);
+
+				if (existing) {
+					folderIdMap.set(path, existing.id);
+				} else {
+					const created = await createFolder(folderName, parentId);
+					folderIdMap.set(path, created.id);
+					folderTreeStore.addFolder(created, parentId);
+					if (parentId) {
+						folderTreeStore.setExpanded(parentId, true);
+					}
+				}
+			} catch (error) {
+				showNotification(`Failed to create folder "${path}"`, 'error');
+				failedFolderPaths.add(path);
+			}
+		}
+
+		const filesToUpload: { file: globalThis.File; parentFolderId: string | null }[] = [];
+		for (const file of files) {
+			const relativePath = (file as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+			const lastSlash = relativePath.lastIndexOf('/');
+
+			if (lastSlash > 0) {
+				const folderPath = relativePath.slice(0, lastSlash);
+				if (failedFolderPaths.has(folderPath)) continue;
+				const parentId = folderIdMap.get(folderPath) ?? null;
+				filesToUpload.push({ file, parentFolderId: parentId });
+			} else {
+				filesToUpload.push({ file, parentFolderId: currentFolderId });
+			}
+		}
+
+		if (filesToUpload.length === 0) {
+			showNotification('No files could be uploaded', 'error');
+			return;
+		}
+
+		const newTasks: UploadTask[] = filesToUpload.map(({ file }) => ({
+			id: `${file.name}-${Date.now()}-${Math.random()}`,
+			fileName: file.name,
+			size: file.size,
+			status: 'pending' as const,
+			progress: 0
+		}));
+
+		uploadTasks = [...uploadTasks, ...newTasks];
+
+		for (let i = 0; i < filesToUpload.length; i++) {
+			const { file, parentFolderId } = filesToUpload[i];
+			const taskId = newTasks[i].id;
+			const taskIndex = uploadTasks.findIndex((t) => t.id === taskId);
+			if (taskIndex === -1) continue;
+
+			try {
+				await $uploadMutation.mutateAsync({
+					file,
+					folderId: parentFolderId,
+					onProgress: (progress) => {
+						const currentTaskIndex = uploadTasks.findIndex((t) => t.id === taskId);
+						if (currentTaskIndex !== -1) {
+							uploadTasks[currentTaskIndex].status = 'uploading';
+							uploadTasks[currentTaskIndex].progress = progress;
+							uploadTasks = [...uploadTasks];
+						}
+					}
+				});
+
+				const finalTaskIndex = uploadTasks.findIndex((t) => t.id === taskId);
+				if (finalTaskIndex !== -1) {
+					uploadTasks[finalTaskIndex].status = 'success';
+					uploadTasks[finalTaskIndex].progress = 100;
+					uploadTasks = [...uploadTasks];
+				}
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : 'Upload failed';
+				const errorTaskIndex = uploadTasks.findIndex((t) => t.id === taskId);
+				if (errorTaskIndex !== -1) {
+					uploadTasks[errorTaskIndex].status = 'error';
+					uploadTasks[errorTaskIndex].error = errorMessage;
+					uploadTasks = [...uploadTasks];
+				}
+			}
+		}
+
+		const successCount = newTasks.filter((t) => t.status === 'success').length;
+		const errorCount = newTasks.filter((t) => t.status === 'error').length;
+
+		if (errorCount === 0) {
+			showNotification(`${successCount} item(s) uploaded`, 'success');
+		} else if (successCount === 0) {
+			showNotification(`Failed to upload ${errorCount} file(s)`, 'error');
+		} else {
+			showNotification(`Uploaded ${successCount}, failed ${errorCount}`, 'info');
+		}
+
+		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+		queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
+		queryClient.invalidateQueries({ queryKey: ['all-files'] });
 	}
 
 	function handleCloseProgress() {
@@ -705,13 +1045,14 @@
 			selectionStore.clear();
 			selectionMode = false;
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			showNotification(`Deleted ${fileIds.length + folderIds.length} item(s)`, 'success');
 		} catch (error) {
 			showNotification('Failed to delete some items', 'error');
 		}
 	}
 
-	// Rename handlers - support both modal and inline
+	// Rename handlers
 	function handleRenameFile(file: File) {
 		renameTarget = file;
 		renameType = 'file';
@@ -763,7 +1104,7 @@
 		}
 	}
 
-	// Move handlers - support both modal and direct
+	// Move handlers
 	function handleMoveFile(file: File) {
 		moveTarget = file;
 		moveType = 'file';
@@ -778,24 +1119,20 @@
 
 	function handleMoveFileWithFallback(file: File, targetFolderId: string | null) {
 		if (targetFolderId === null) {
-			// Open modal for user to select destination
 			moveTarget = file;
 			moveType = 'file';
 			showMoveModal = true;
 		} else {
-			// Direct move (e.g., from drag-and-drop)
 			$moveFileMutation.mutate({ fileId: file.id, targetFolderId });
 		}
 	}
 
 	function handleMoveFolderWithFallback(folder: Folder, targetFolderId: string | null) {
 		if (targetFolderId === null) {
-			// Open modal for user to select destination
 			moveTarget = folder;
 			moveType = 'folder';
 			showMoveModal = true;
 		} else {
-			// Direct move (e.g., from drag-and-drop)
 			$moveFolderMutation.mutate({ folderId: folder.id, targetFolderId });
 		}
 	}
@@ -810,6 +1147,7 @@
 				}
 
 				queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+				queryClient.invalidateQueries({ queryKey: ['all-files'] });
 				selectionStore.clear();
 				selectionMode = false;
 				showNotification(`Moved ${bulkMoveFileIds.length} selected file${bulkMoveFileIds.length === 1 ? '' : 's'}`, 'success');
@@ -879,6 +1217,7 @@
 
 	function handleReplaceSuccess() {
 		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+		queryClient.invalidateQueries({ queryKey: ['all-files'] });
 		const fileName = replaceFileTarget?.name || 'File';
 		showNotification(`${truncateFilename(fileName)} was updated`, 'success');
 		if (replaceFileTarget) {
@@ -894,6 +1233,7 @@
 
 	function handleVersionRestored() {
 		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+		queryClient.invalidateQueries({ queryKey: ['all-files'] });
 		showNotification('Version restored', 'success');
 	}
 
@@ -923,7 +1263,7 @@
 		$permanentlyDeleteFolderMutation.mutate(folder.id);
 	}
 
-	// Listen for global '+' new actions
+	// Keyboard shortcuts and event listeners
 	onMount(() => {
 		const handleCreateFolderEvent = () => {
 			if (canCreateFolder) showCreateFolderModal = true;
@@ -931,6 +1271,9 @@
 		const handleCreateDocumentEvent = () => {
 			editorTarget = null;
 			showMarkdownEditor = true;
+		};
+		const handleCreateNoteEvent = () => {
+			$createNoteMutation.mutate();
 		};
 		const handleCreateFileEvent = () => {
 			editorTarget = null;
@@ -949,6 +1292,7 @@
 		window.addEventListener('create-file-requested', handleCreateFileEvent);
 		window.addEventListener('create-canvas-requested', handleCreateCanvasEvent);
 		window.addEventListener('upload-requested', handleUploadEvent);
+		window.addEventListener('create-note-requested', handleCreateNoteEvent);
 		
 		return () => {
 			window.removeEventListener('create-folder-requested', handleCreateFolderEvent);
@@ -956,10 +1300,10 @@
 			window.removeEventListener('create-file-requested', handleCreateFileEvent);
 			window.removeEventListener('create-canvas-requested', handleCreateCanvasEvent);
 			window.removeEventListener('upload-requested', handleUploadEvent);
+			window.removeEventListener('create-note-requested', handleCreateNoteEvent);
 		};
 	});
 
-	// Keyboard shortcuts
 	function handleKeyDown(event: KeyboardEvent) {
 		if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
 
@@ -1011,7 +1355,7 @@
 </script>
 
 <svelte:head>
-	<title>Files - RustShare</title>
+	<title>{workspaceTitle} - RustShare</title>
 </svelte:head>
 
 <svelte:window on:keydown={handleKeyDown} />
@@ -1025,25 +1369,34 @@
 	on:change={(e) => {
 		const target = e.target as HTMLInputElement;
 		if (target.files && target.files.length > 0) {
-			handleFilesSelected(Array.from(target.files));
+			const files = Array.from(target.files);
+			const isDirectory = files.some((f) => (f as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath);
+			if (isDirectory) {
+				handleDirectoryUpload(files);
+			} else {
+				handleFilesSelected(files);
+			}
 			target.value = '';
 		}
 	}}
 />
 
-<DropZone on:filesDropped={(e) => handleFilesSelected(e.detail)} disabled={!canUpload || isUploading}>
+<DropZone
+	on:filesDropped={(e) => handleFilesSelected(e.detail)}
+	on:directoryDropped={(e) => handleDirectoryUpload(e.detail)}
+	disabled={!canUpload || isUploading}
+>
 	<FileExplorer
 		folders={sortedFolders}
 		files={sortedFiles}
-		{currentFolderId}
-		{folderPath}
+		folderPath={breadcrumbPath}
+		rootLabel={activeRoot === 'shared' ? 'Shared' : 'My Files'}
 		title={workspaceTitle}
 		description={workspaceDescription}
 		emptyTitle={workspaceEmptyTitle}
 		emptyDescription={workspaceEmptyDescription}
 		emptyActionLabel={workspaceEmptyActionLabel}
 		{workspaceMode}
-		{showFolderTree}
 		{showBreadcrumbs}
 		{canCreateFolder}
 		{canUpload}
@@ -1053,7 +1406,7 @@
 		{replicationStatuses}
 		{selectionMode}
 		{isUploading}
-		onFolderSelect={handleFolderSelect}
+		{isSharedRoot}
 		onFolderClick={handleFolderClick}
 		onFileClick={handleFileClick}
 		onRefresh={() => $filesQuery.refetch()}
@@ -1083,7 +1436,7 @@
 		onPermanentDeleteFolder={handlePermanentDeleteFolder}
 		onShareFolder={handleShareFolder}
 		onMoveFolder={handleMoveFolderWithFallback}
-		on:breadcrumbNavigate={handleBreadcrumbNavigate}
+		onbreadcrumbNavigate={handleBreadcrumbNavigate}
 	/>
 </DropZone>
 

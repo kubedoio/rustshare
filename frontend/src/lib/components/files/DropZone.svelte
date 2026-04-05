@@ -1,24 +1,39 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import { collectFilesFromDataTransfer } from '$lib/utils/directoryUpload';
 
   export let disabled = false;
 
-  type DispatchEvents = { filesDropped: globalThis.File[] }
+  type DispatchEvents = {
+    filesDropped: globalThis.File[];
+    directoryDropped: globalThis.File[];
+  };
   const dispatch = createEventDispatcher<DispatchEvents>();
 
   let isDragging = false;
   let dragCounter = 0;
 
+  function isFileDrag(event: DragEvent) {
+    return event.dataTransfer?.types?.includes('Files') ?? false;
+  }
+
+  function containsDirectories(event: DragEvent): boolean {
+    if (!event.dataTransfer?.items) return false;
+    for (let i = 0; i < event.dataTransfer.items.length; i++) {
+      const entry = (event.dataTransfer.items[i] as any).webkitGetAsEntry?.();
+      if (entry?.isDirectory) return true;
+    }
+    return false;
+  }
+
   function handleDragEnter(event: DragEvent) {
-    event.preventDefault();
     dragCounter++;
-    if (event.dataTransfer?.types.includes('Files')) {
+    if (isFileDrag(event)) {
       isDragging = true;
     }
   }
 
   function handleDragLeave(event: DragEvent) {
-    event.preventDefault();
     dragCounter--;
     if (dragCounter === 0) {
       isDragging = false;
@@ -26,18 +41,28 @@
   }
 
   function handleDragOver(event: DragEvent) {
+    if (!isFileDrag(event)) return;
     event.preventDefault();
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = disabled ? 'none' : 'copy';
     }
   }
 
-  function handleDrop(event: DragEvent) {
-    event.preventDefault();
+  async function handleDrop(event: DragEvent) {
     isDragging = false;
     dragCounter = 0;
 
-    if (disabled) return;
+    if (!isFileDrag(event) || disabled) return;
+    event.preventDefault();
+
+    if (containsDirectories(event) && event.dataTransfer?.items) {
+      const items = await collectFilesFromDataTransfer(event.dataTransfer.items);
+      if (items.length > 0) {
+        const files = items.map((i) => i.file);
+        dispatch('directoryDropped', files);
+      }
+      return;
+    }
 
     const files = event.dataTransfer?.files;
     if (files && files.length > 0) {

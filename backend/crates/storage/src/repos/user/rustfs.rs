@@ -8,7 +8,6 @@ use crate::metadata_v2::{
 use crate::repos::PathBuilder;
 use async_trait::async_trait;
 use std::sync::Arc;
-use tracing::debug;
 use uuid::Uuid;
 
 /// RustFS-backed user repository
@@ -398,6 +397,83 @@ impl UserRepository for RustFsUserRepository {
             .unwrap_or_default();
         
         Ok(list.user_ids.len())
+    }
+}
+
+/// User's group membership list
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct UserGroupsList {
+    group_ids: Vec<Uuid>,
+    version: u64,
+}
+
+/// Group's member list
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct GroupMembersList {
+    user_ids: Vec<Uuid>,
+    version: u64,
+}
+
+#[async_trait]
+impl GroupRepo for RustFsUserRepository {
+    async fn is_member(&self, user_id: Uuid, group_id: Uuid) -> Result<bool, UserRepositoryError> {
+        let user_groups_path = self.path_builder.user_groups_path(user_id);
+        
+        // Get user's groups list
+        let user_groups: UserGroupsList = self
+            .doc_store
+            .get(&user_groups_path)
+            .await
+            .map_err(|e| UserRepositoryError::Storage(e.to_string()))?
+            .map(|(l, _)| l)
+            .unwrap_or_default();
+        
+        Ok(user_groups.group_ids.contains(&group_id))
+    }
+    
+    async fn get_members(&self, group_id: Uuid) -> Result<Vec<Uuid>, UserRepositoryError> {
+        let group_members_path = self.path_builder.group_members_path(group_id);
+        
+        // Get group's member list
+        let members: GroupMembersList = self
+            .doc_store
+            .get(&group_members_path)
+            .await
+            .map_err(|e| UserRepositoryError::Storage(e.to_string()))?
+            .map(|(l, _)| l)
+            .unwrap_or_default();
+        
+        Ok(members.user_ids)
+    }
+    
+    async fn get_user_groups(&self, user_id: Uuid) -> Result<Vec<Uuid>, UserRepositoryError> {
+        let user_groups_path = self.path_builder.user_groups_path(user_id);
+        
+        // Get user's groups list
+        let user_groups: UserGroupsList = self
+            .doc_store
+            .get(&user_groups_path)
+            .await
+            .map_err(|e| UserRepositoryError::Storage(e.to_string()))?
+            .map(|(l, _)| l)
+            .unwrap_or_default();
+        
+        Ok(user_groups.group_ids)
+    }
+}
+
+#[async_trait]
+impl TenantConfigRepo for RustFsUserRepository {
+    async fn get_recipient_visibility(&self, tenant_id: Uuid) -> Result<RecipientVisibility, UserRepositoryError> {
+        use crate::metadata_v2::schemas::TenantConfigDocument;
+        
+        let path = self.path_builder.tenant_config_path(tenant_id);
+        
+        match self.doc_store.get::<TenantConfigDocument>(&path).await {
+            Ok(Some((config, _))) => Ok(config.recipient_visibility),
+            Ok(None) => Ok(RecipientVisibility::default()), // AdminOnly is default
+            Err(e) => Err(UserRepositoryError::Storage(e.to_string())),
+        }
     }
 }
 

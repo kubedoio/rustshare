@@ -5,17 +5,21 @@ use uuid::Uuid;
 /// Errors that can occur during share operations.
 #[derive(Debug, Error)]
 pub enum ShareError {
-    /// Share was not found.
-    #[error("Share not found")]
-    NotFound,
-
     /// Share with the given ID was not found.
     #[error("Share {0} not found")]
-    NotFoundById(Uuid),
+    ShareNotFound(Uuid),
+
+    /// Share with the given token was not found.
+    #[error("Share with token {0} not found")]
+    ShareNotFoundByToken(String),
 
     /// File with the given ID was not found.
     #[error("File {0} not found")]
     FileNotFound(Uuid),
+
+    /// Folder with the given ID was not found.
+    #[error("Folder {0} not found")]
+    FolderNotFound(Uuid),
 
     /// User lacks permission to manage shares for this file.
     #[error("User {user_id} does not have permission to manage shares for file {file_id}")]
@@ -75,6 +79,26 @@ pub enum ShareError {
     /// Share is in an invalid state (invariant violated).
     #[error("Share in invalid state: {0}")]
     InvalidState(String),
+
+    /// Cross-tenant sharing attempted
+    #[error("Cross-tenant sharing is not allowed")]
+    CrossTenantSharingNotAllowed,
+
+    /// Group not found
+    #[error("Group {0} not found")]
+    GroupNotFound(Uuid),
+
+    /// User not member of group
+    #[error("User is not a member of group {0}")]
+    NotGroupMember(Uuid),
+
+    /// Group share already exists
+    #[error("Group already has access to this resource")]
+    GroupShareAlreadyExists,
+
+    /// Recipient visibility config invalid
+    #[error("Invalid recipient visibility: {0}")]
+    InvalidRecipientVisibility(String),
 }
 
 #[cfg(test)]
@@ -82,15 +106,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_share_error_not_found() {
-        let err = ShareError::NotFound;
-        assert_eq!(err.to_string(), "Share not found");
-    }
-
-    #[test]
-    fn test_share_error_not_found_by_id() {
+    fn test_share_error_share_not_found() {
         let id = Uuid::new_v4();
-        let err = ShareError::NotFoundById(id);
+        let err = ShareError::ShareNotFound(id);
         assert_eq!(err.to_string(), format!("Share {} not found", id));
     }
 

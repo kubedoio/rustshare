@@ -13,10 +13,11 @@ mod files;
 mod folders;
 mod groups;
 pub mod invites;
+mod notes;
 mod notifications;
 mod profile;
 mod public_shares;
-// mod upload;
+pub mod upload;
 pub mod scim;
 pub mod scim_v2;
 // TODO: Fix search_service compilation errors
@@ -50,14 +51,10 @@ pub use shares::{
     list_public_file_shares, list_public_folder_shares, list_user_shares, revoke_share,
 };
 pub use sync::{sync_handler, get_sync_cursor, get_sync_delta};
-// pub use upload::{
-//     abort_upload_session, complete_upload, create_upload_session, get_upload_session_status,
-//     list_upload_sessions, upload_chunk, upload_error_response,
-//     CompleteUploadResponseBody, CreateUploadSessionResponse, UploadChunkResponse, UploadSessionStatusResponse,
-// };
+
 pub use user_shares::{
-    create_file_share, create_folder_share, list_file_recipients, list_folder_recipients,
-    list_received_shares, remove_recipient, update_recipient_permission,
+    create_file_share, create_folder_share, get_user_shared_folder_contents, list_file_recipients,
+    list_folder_recipients, list_received_shares, remove_recipient, update_recipient_permission,
 };
 pub use ai::{ask_question, semantic_search, summarize_file};
 pub use auth::{ensure_optional_seed_user, login, logout};
@@ -75,9 +72,13 @@ pub use users::{
 };
 pub use groups::{
     list_my_groups, get_my_group, create_file_group_share, create_folder_group_share,
-    list_file_group_shares, list_folder_group_shares,
+    list_file_group_shares, list_folder_group_shares, revoke_group_share, update_group_share_permission,
 };
 pub use invites::{create_invite, get_invite, accept_invite};
+pub use notes::{
+    create_note, delete_note, get_note, get_public_note, list_notes, list_recent_notes,
+    move_note, rename_note, save_note, toggle_visibility,
+};
 pub use features::get_features;
 
 use axum::{
@@ -149,10 +150,11 @@ pub fn folder_error_response(err: FolderError) -> Response {
 /// Map ShareError to HTTP response.
 pub fn share_error_response(err: ShareError) -> Response {
     let (status, message) = match err {
-        ShareError::NotFound => (StatusCode::NOT_FOUND, err.to_string()),
-        ShareError::NotFoundById(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        ShareError::PermissionDenied { .. } => (StatusCode::FORBIDDEN, err.to_string()),
+        ShareError::ShareNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
+        ShareError::ShareNotFoundByToken(_) => (StatusCode::NOT_FOUND, err.to_string()),
         ShareError::FileNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
+        ShareError::FolderNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
+        ShareError::PermissionDenied { .. } => (StatusCode::FORBIDDEN, err.to_string()),
         ShareError::Revoked => (StatusCode::GONE, err.to_string()),
         ShareError::Expired => (StatusCode::GONE, err.to_string()),
         ShareError::PasswordRequired => (StatusCode::UNAUTHORIZED, err.to_string()),
@@ -163,6 +165,11 @@ pub fn share_error_response(err: ShareError) -> Response {
         ShareError::ShareAlreadyExists(_) => (StatusCode::CONFLICT, err.to_string()),
         ShareError::CannotRemoveOwner => (StatusCode::FORBIDDEN, err.to_string()),
         ShareError::InvalidState(_) => (StatusCode::CONFLICT, err.to_string()),
+        ShareError::GroupNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
+        ShareError::NotGroupMember(_) => (StatusCode::FORBIDDEN, err.to_string()),
+        ShareError::GroupShareAlreadyExists => (StatusCode::CONFLICT, err.to_string()),
+        ShareError::InvalidRecipientVisibility(_) => (StatusCode::BAD_REQUEST, err.to_string()),
+        ShareError::CrossTenantSharingNotAllowed => (StatusCode::FORBIDDEN, err.to_string()),
         ShareError::Database(_) | ShareError::PasswordHash(_) | ShareError::Jwt(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Internal server error".to_string(),

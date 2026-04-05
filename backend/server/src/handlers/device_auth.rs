@@ -17,7 +17,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::time::{Duration, Instant};
-use tracing::debug;
+
 
 use crate::handlers::AuthenticatedUser;
 use crate::oidc_runtime::load_oidc_runtime_settings;

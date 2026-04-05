@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use bytes::Bytes;
-use tracing::{info, warn};
+
 
 /// Object storage abstraction for RustFS/S3
 pub struct ObjectStore {

@@ -9,7 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use rustshare_core::domain::{Folder, FolderTree};
+use rustshare_core::domain::Folder;
 
 use super::{folder_error_response, AuthenticatedUser};
 use crate::AppState;
@@ -43,6 +43,30 @@ pub struct FolderWithShares {
 pub struct FolderContentsWithShares {
     pub folders: Vec<FolderWithShares>,
     pub files: Vec<crate::handlers::files::FileWithShares>,
+}
+
+/// Folder tree node with share information for sidebar
+#[derive(Debug, Serialize)]
+pub struct FolderTreeNode {
+    pub id: Uuid,
+    pub name: String,
+    pub path: String,
+    pub parent_folder_id: Option<Uuid>,
+    pub owner_id: Uuid,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub tenant_id: Uuid,
+    pub ancestor_ids: Option<Vec<Uuid>>,
+    pub is_shared: bool,
+    pub share_count: i64,
+    pub share_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Folder tree response with share indicators
+#[derive(Debug, Serialize)]
+pub struct FolderTreeWithShares {
+    pub folder: FolderTreeNode,
+    pub subfolders: Vec<FolderTreeWithShares>,
 }
 
 // ============================================================================
@@ -295,7 +319,107 @@ pub async fn get_root_contents(
     Ok(Json(FolderContentsWithShares { folders, files }))
 }
 
-/// Get full folder tree (recursive).
+/// Build folder tree with share information recursively
+async fn build_folder_tree_with_shares(
+    state: &AppState,
+    folder_id: Uuid,
+    user_id: Uuid,
+    tenant_id: Uuid,
+) -> Result<FolderTreeWithShares, Response> {
+    use sqlx::Row;
+
+    // Get folder with share info (ancestor_ids is stored in folder_documents, not folders table)
+    let folder_row = sqlx::query(
+        r#"
+        SELECT 
+            f.id, f.name, f.path, f.parent_folder_id, f.owner_id, 
+            f.created_at, f.updated_at, f.tenant_id,
+            EXISTS (
+                SELECT 1 FROM shares 
+                WHERE folder_id = f.id 
+                AND revoked_at IS NULL
+            ) as is_shared,
+            (
+                SELECT COUNT(*) FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+            ) as share_count,
+            (
+                SELECT MIN(expires_at) FROM shares
+                WHERE folder_id = f.id
+                AND revoked_at IS NULL
+            ) as share_expires_at
+        FROM folders f
+        WHERE f.id = $1 AND f.owner_id = $2 AND f.tenant_id = $3 AND f.deleted_at IS NULL
+        "#,
+    )
+    .bind(folder_id)
+    .bind(user_id)
+    .bind(tenant_id)
+    .fetch_one(state.metadata_store.pool())
+    .await
+    .map_err(|_| {
+        use axum::{http::StatusCode, response::IntoResponse, Json};
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(super::ErrorResponse::new("Internal server error")),
+        )
+            .into_response()
+    })?;
+
+    let folder_node = FolderTreeNode {
+        id: folder_row.try_get("id").map_err(|_| internal_error_response())?,
+        name: folder_row.try_get("name").map_err(|_| internal_error_response())?,
+        path: folder_row.try_get("path").map_err(|_| internal_error_response())?,
+        parent_folder_id: folder_row.try_get("parent_folder_id").map_err(|_| internal_error_response())?,
+        owner_id: folder_row.try_get("owner_id").map_err(|_| internal_error_response())?,
+        created_at: folder_row.try_get("created_at").map_err(|_| internal_error_response())?,
+        updated_at: folder_row.try_get("updated_at").map_err(|_| internal_error_response())?,
+        tenant_id: folder_row.try_get("tenant_id").map_err(|_| internal_error_response())?,
+        ancestor_ids: None, // Not stored in folders table, would need to fetch from folder_documents
+        is_shared: folder_row.try_get("is_shared").map_err(|_| internal_error_response())?,
+        share_count: folder_row.try_get("share_count").map_err(|_| internal_error_response())?,
+        share_expires_at: folder_row.try_get("share_expires_at").ok(),
+    };
+
+    // Get child folders
+    let child_rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
+        r#"
+        SELECT id FROM folders 
+        WHERE parent_folder_id = $1 AND owner_id = $2 AND tenant_id = $3 AND deleted_at IS NULL
+        ORDER BY name ASC
+        "#,
+    )
+    .bind(folder_id)
+    .bind(user_id)
+    .bind(tenant_id)
+    .fetch_all(state.metadata_store.pool())
+    .await
+    .map_err(|_| internal_error_response())?;
+
+    let mut subfolders = Vec::new();
+    for row in child_rows {
+        let child_id: Uuid = row.try_get("id").map_err(|_| internal_error_response())?;
+        let subtree = Box::pin(build_folder_tree_with_shares(state, child_id, user_id, tenant_id)).await?;
+        subfolders.push(subtree);
+    }
+
+    Ok(FolderTreeWithShares {
+        folder: folder_node,
+        subfolders,
+    })
+}
+
+fn internal_error_response() -> Response {
+    use axum::{http::StatusCode, response::IntoResponse, Json};
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(super::ErrorResponse::new("Internal server error")),
+    )
+        .into_response()
+}
+
+/// Get full folder tree (recursive) with share information.
 ///
 /// GET /api/folders/tree
 ///
@@ -303,34 +427,23 @@ pub async fn get_root_contents(
 pub async fn get_folder_tree(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-) -> Result<Json<FolderTree>, Response> {
+) -> Result<Json<FolderTreeWithShares>, Response> {
     // Find all user's root-level folders (folders with no parent)
     let root_folders = state
         .metadata_store
-        .list_folders(None, auth.user_id, auth.tenant_id)
+        .list_folders_with_shares(None, auth.user_id, auth.tenant_id)
         .await
-        .map_err(|_| {
-            use axum::{http::StatusCode, response::IntoResponse, Json};
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new("Internal server error")),
-            )
-                .into_response()
-        })?;
+        .map_err(|_| internal_error_response())?;
 
     // Build subtrees for each root folder
-    let mut subtrees = Vec::new();
+    let mut subfolders = Vec::new();
     for folder in root_folders {
-        let subtree = state
-            .folder_service
-            .get_tree(folder.id, auth.user_id)
-            .await
-            .map_err(folder_error_response)?;
-        subtrees.push(subtree);
+        let subtree = build_folder_tree_with_shares(&state, folder.id, auth.user_id, auth.tenant_id).await?;
+        subfolders.push(subtree);
     }
 
     // Create a virtual root folder to contain all root-level folders
-    let virtual_root = Folder {
+    let virtual_root = FolderTreeNode {
         id: Uuid::nil(), // Use nil UUID for virtual root
         name: "Root".to_string(),
         path: "/".to_string(),
@@ -339,24 +452,16 @@ pub async fn get_folder_tree(
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         tenant_id: auth.tenant_id,
-        ancestor_ids: Some(Vec::new()), // Virtual root has no ancestors
+        ancestor_ids: Some(Vec::new()),
+        is_shared: false,
+        share_count: 0,
+        share_expires_at: None,
     };
 
-    // Get files at root level (files with no parent folder)
-    let root_files = state
-        .metadata_store
-        .list_files(None, auth.user_id, auth.tenant_id)
-        .await
-        .map_err(|_| {
-            use axum::{http::StatusCode, response::IntoResponse, Json};
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new("Internal server error")),
-            )
-                .into_response()
-        })?;
-
-    let tree = FolderTree::with_contents(virtual_root, root_files, subtrees);
+    let tree = FolderTreeWithShares {
+        folder: virtual_root,
+        subfolders,
+    };
     Ok(Json(tree))
 }
 

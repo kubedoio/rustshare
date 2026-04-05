@@ -68,6 +68,7 @@ pub fn encrypt_secret(plaintext: &str, key: &SecretEncryptionKey) -> Result<Stri
 }
 
 /// Decrypt a base64-encoded ciphertext produced by [`encrypt_secret`].
+#[allow(deprecated)]
 pub fn decrypt_secret(encoded: &str, key: &SecretEncryptionKey) -> Result<String, EncryptionError> {
     let combined = STANDARD.decode(encoded).map_err(|_| EncryptionError::DecodeError)?;
     if combined.len() < 28 {  // 12-byte nonce + 16-byte GCM tag minimum

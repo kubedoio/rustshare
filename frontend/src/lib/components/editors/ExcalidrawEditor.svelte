@@ -22,7 +22,7 @@
 	let saveMode: 'overwrite' | 'new_version' = 'new_version';
 	let hasChanges = false;
 	let excalidrawContainer: HTMLDivElement;
-	let excalidrawAPI: any = null;
+	let excalidrawInstance: any = null;
 
 	// Load Excalidraw dynamically
 	async function loadExcalidraw() {
@@ -70,10 +70,10 @@
 		const App = () => {
 			return React.createElement(Excalidraw, {
 				initialData,
-				ref: (api: any) => {
-					excalidrawAPI = api;
+				excalidrawAPI: (api: any) => {
+					excalidrawInstance = api;
 				},
-				onChange: (_elements: any[], _state: any) => {
+				onChange: (_elements: readonly any[], _state: any) => {
 					// Excalidraw only fires onChange on real user edits, never on initial mount
 					setHasChanges(true);
 				}
@@ -109,7 +109,7 @@
 		if (!file) return;
 
 		// Get current content from Excalidraw
-		if (!excalidrawAPI) {
+		if (!excalidrawInstance) {
 			error = 'Excalidraw is not initialized';
 			return;
 		}
@@ -118,8 +118,8 @@
 		error = null;
 
 		try {
-			const elements = excalidrawAPI.getSceneElements();
-			const appState = excalidrawAPI.getAppState();
+			const elements = excalidrawInstance.getSceneElements();
+			const appState = excalidrawInstance.getAppState();
 			
 			const exportData = {
 				type: 'excalidraw',
@@ -172,7 +172,7 @@
 		if (excalidrawContainer) {
 			excalidrawContainer.innerHTML = '';
 		}
-		excalidrawAPI = null;
+		excalidrawInstance = null;
 	}
 
 	onDestroy(() => {
@@ -194,7 +194,7 @@
 	on:close={handleClose}
 	on:save={handleSave}
 >
-	<div bind:this={excalidrawContainer} class="w-full h-full bg-white" />
+	<div bind:this={excalidrawContainer} class="w-full h-full bg-white"></div>
 </BaseEditor>
 
 <style>

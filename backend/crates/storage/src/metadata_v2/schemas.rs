@@ -5,8 +5,8 @@
 //! When writing, always use the current version.
 
 use chrono::{DateTime, Utc};
+use rustshare_core::domain::SharePermissions;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use tracing::warn;
 use uuid::Uuid;
 
 // ============================================================================
@@ -358,37 +358,13 @@ impl FileVersionDocument {
 // Share Document
 // ============================================================================
 
-/// Share permission levels
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SharePermission {
-    View,
-    Edit,
-    Admin,
-}
-
-impl SharePermission {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::View => "view",
-            Self::Edit => "edit",
-            Self::Admin => "admin",
-        }
-    }
-}
-
-impl Default for SharePermission {
-    fn default() -> Self {
-        Self::View
-    }
-}
-
 /// Share scope (public link vs user share)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ShareScope {
     Public,
     User,
+    Group,
 }
 
 impl Default for ShareScope {
@@ -411,11 +387,15 @@ pub struct ShareDocument {
     /// Share scope
     pub scope: ShareScope,
     /// Permission level
-    pub permissions: SharePermission,
+    pub permissions: SharePermissions,
     /// Token hash for public shares (None for user shares)
     pub token_hash: Option<String>,
+    /// Original share token (stored for round-trip compatibility)
+    pub share_token: Option<String>,
     /// Recipient user ID for user shares (None for public)
     pub recipient_user_id: Option<Uuid>,
+    /// Recipient group ID for group shares (None for public/user)
+    pub recipient_group_id: Option<Uuid>,
     /// Password hash for protected shares
     pub password_hash: Option<String>,
     /// Expiration time
@@ -442,13 +422,15 @@ impl ShareDocument {
         id: Uuid,
         resource_type: String,
         resource_id: Uuid,
-        permissions: SharePermission,
-        token_hash: String,
+        permissions: SharePermissions,
+        share_token: String,        // Original token
         password_hash: Option<String>,
         expires_at: Option<DateTime<Utc>>,
         created_by: Uuid,
         tenant_id: Uuid,
     ) -> Self {
+        // Compute hash from the original token for lookups
+        let token_hash = format!("{:x}", md5::compute(&share_token));
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
             id,
@@ -457,7 +439,9 @@ impl ShareDocument {
             scope: ShareScope::Public,
             permissions,
             token_hash: Some(token_hash),
+            share_token: Some(share_token),
             recipient_user_id: None,
+            recipient_group_id: None,
             password_hash,
             expires_at,
             upload_only: false,
@@ -475,7 +459,7 @@ impl ShareDocument {
         id: Uuid,
         resource_type: String,
         resource_id: Uuid,
-        permissions: SharePermission,
+        permissions: SharePermissions,
         recipient_user_id: Uuid,
         created_by: Uuid,
         tenant_id: Uuid,
@@ -488,7 +472,9 @@ impl ShareDocument {
             scope: ShareScope::User,
             permissions,
             token_hash: None,
+            share_token: None,
             recipient_user_id: Some(recipient_user_id),
+            recipient_group_id: None,
             password_hash: None,
             expires_at: None,
             upload_only: false,
@@ -889,7 +875,7 @@ pub struct ShareEntry {
     /// Resource name
     pub resource_name: String,
     /// Permissions
-    pub permissions: SharePermission,
+    pub permissions: SharePermissions,
     /// Shared by
     pub shared_by: Uuid,
     /// Shared at
@@ -1517,4 +1503,45 @@ pub fn tokenize_search_query(query: &str) -> Vec<String> {
         .map(|s| s.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+// ============================================================================
+// Tenant Config Document
+// ============================================================================
+
+/// Tenant configuration document
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TenantConfigDocument {
+    /// Schema version
+    pub schema_version: u32,
+    /// Tenant ID
+    pub tenant_id: Uuid,
+    /// Recipient visibility setting
+    pub recipient_visibility: RecipientVisibility,
+    /// Document version for optimistic concurrency
+    pub version: u64,
+    /// Last updated
+    pub updated_at: DateTime<Utc>,
+}
+
+use rustshare_core::domain::RecipientVisibility;
+
+impl TenantConfigDocument {
+    /// Create a new tenant config document with default settings
+    pub fn new(tenant_id: Uuid) -> Self {
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            tenant_id,
+            recipient_visibility: RecipientVisibility::default(),
+            version: 1,
+            updated_at: Utc::now(),
+        }
+    }
+
+    /// Update recipient visibility
+    pub fn set_recipient_visibility(&mut self, visibility: RecipientVisibility) {
+        self.recipient_visibility = visibility;
+        self.version += 1;
+        self.updated_at = Utc::now();
+    }
 }

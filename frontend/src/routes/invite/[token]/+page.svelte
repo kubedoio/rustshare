@@ -6,7 +6,7 @@
 	import { getInvite, acceptInvite, type InviteDetail } from '$lib/api/invites';
 	import type { User } from '$lib/api/types';
 
-	let token = $page.params.token;
+	let token = $page.params.token ?? '';
 	let workflow: InviteDetail | null = null;
 	let parseError = false;
 	let submitError = '';

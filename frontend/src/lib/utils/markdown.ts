@@ -27,9 +27,15 @@ export function renderMarkdown(markdown: string): string {
 			// Blockquotes
 			.replace(/^&gt; (.*$)/gim, '<blockquote class="border-l-4 border-primary pl-4 my-2 italic">$1</blockquote>')
 			// Links
-			.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="text-primary hover:underline" target="_blank">$1</a>')
+			.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text: string, url: string) => {
+				const safeUrl = url.replace(/^javascript:/i, '#');
+				return `<a href="${safeUrl}" class="text-primary hover:underline" target="_blank">${text}</a>`;
+			})
 			// Images
-			.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" class="max-w-full rounded-lg my-2" />')
+			.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt: string, url: string) => {
+				const safeUrl = url.replace(/^javascript:/i, '#');
+				return `<img src="${safeUrl}" alt="${alt}" class="max-w-full rounded-lg my-2" />`;
+			})
 			// Unordered lists
 			.replace(/^\s*- (.*$)/gim, '<li class="ml-4">$1</li>')
 			.replace(/(<li.*<\/li>\n)+/g, '<ul class="list-disc my-2">$&</ul>')

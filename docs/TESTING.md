@@ -86,8 +86,8 @@ Press F12 and check Console tab:
 **Fix:**
 ```bash
 # Check frontend/src/routes/+page.svelte has redirect logic
-docker-compose build frontend
-docker-compose up -d --force-recreate frontend
+docker compose build --no-cache backend
+docker compose up -d --force-recreate backend
 ```
 
 ### Issue: HTTP 500 on /files page
@@ -96,8 +96,8 @@ docker-compose up -d --force-recreate frontend
 ```bash
 # Check (app)/+layout.svelte uses browser check
 # Ensure: if (browser && !$isAuthenticated) { goto('/login'); }
-docker-compose build frontend
-docker-compose up -d --force-recreate frontend
+docker compose build --no-cache backend
+docker compose up -d --force-recreate backend
 ```
 
 ### Issue: Login API returns "Failed to fetch"
@@ -111,8 +111,8 @@ docker exec rustshare-frontend-1 grep -r "backend:8080\|localhost:8080" /app/bui
 **Fix:**
 ```bash
 # Rebuild with correct VITE_API_URL
-docker-compose build --no-cache frontend
-docker-compose up -d --force-recreate frontend
+docker compose build --no-cache backend
+docker compose up -d --force-recreate backend
 ```
 
 ### Issue: Nginx returns 404 for /api requests
@@ -126,7 +126,7 @@ curl -I http://localhost/api/v1/auth/login
 **Fix:**
 ```bash
 # Check docker/nginx.conf has proxy_pass to backend
-docker-compose restart nginx
+docker compose restart nginx
 ```
 
 ## Pre-Deployment Checklist
@@ -148,22 +148,22 @@ Before deploying or committing changes:
 
 1. **Backend changes:**
 ```bash
-docker-compose build backend
-docker-compose up -d --force-recreate backend
+docker compose build backend
+docker compose up -d --force-recreate backend
 ./test-deployment.sh
 ```
 
 2. **Frontend changes:**
 ```bash
-docker-compose build --no-cache frontend
-docker-compose up -d --force-recreate frontend
+docker compose build --no-cache backend
+docker compose up -d --force-recreate backend
 ./test-deployment.sh
 ```
 
 3. **Docker/Config changes:**
 ```bash
-docker-compose down
-docker-compose up -d --build
+docker compose down
+docker compose up -d --build
 ./test-deployment.sh
 ```
 
@@ -175,7 +175,7 @@ Add to your CI pipeline:
 # Example GitHub Actions
 - name: Test Deployment
   run: |
-    docker-compose up -d
+    docker compose up -d
     ./test-deployment.sh
 ```
 
@@ -184,10 +184,7 @@ Add to your CI pipeline:
 Check logs for errors:
 
 ```bash
-# Frontend logs
-docker logs rustshare-frontend-1 --tail 100 | grep -i error
-
-# Backend logs
+# Backend logs (serves both API and frontend SPA)
 docker logs rustshare-backend-1 --tail 100 | grep -i error
 
 # Nginx logs
@@ -206,9 +203,9 @@ Current test coverage:
 - ✅ JWT authentication
 - ✅ Nginx routing
 - ✅ API URL configuration
-- ⚠️  File upload (manual test required)
-- ⚠️  WebSocket real-time sync (when implemented)
-- ⚠️  Share links (when implemented)
+- ✅ File upload
+- ✅ Share links
+- ⚠️  WebSocket real-time sync (manual verification)
 
 ## Troubleshooting
 
@@ -227,15 +224,14 @@ Browser-specific issues:
 
 ### All tests fail
 Complete deployment issue:
-1. Check: `docker-compose ps`
-2. Check: `docker-compose logs`
-3. Try: `docker-compose down && docker-compose up -d --build`
+1. Check: `docker compose ps`
+2. Check: `docker compose logs`
+3. Try: `docker compose down && docker compose up -d --build`
 
 ## Future Enhancements
 
 Planned test additions:
-- [ ] File upload/download tests
-- [ ] Share link creation/access tests
+- [ ] Note editor and public note sharing tests
 - [ ] WebSocket connection tests
 - [ ] Performance benchmarks
 - [ ] Security scanning
@@ -244,6 +240,6 @@ Planned test additions:
 ## Support
 
 If issues persist:
-1. Check logs: `docker-compose logs`
+1. Check logs: `docker compose logs`
 2. Review this guide's Common Issues section
 3. Run: `./test-deployment.sh` for detailed diagnostics

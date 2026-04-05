@@ -3,16 +3,18 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { createQuery } from '@tanstack/svelte-query';
-	import { getFolderTree, type FolderTree } from '$lib/api/folders';
+	import { getFolderTree, type FolderTree as FolderTreeType } from '$lib/api/folders';
+	import { listReceivedShares } from '$lib/api/shares';
+	import type { ReceivedShare } from '$lib/api/types';
 	import { onMount } from 'svelte';
-	import { ChevronRight, Folder, FolderOpen, Hop as Home, Users, Star, Image, Clock, Search, Plus, HardDrive } from 'lucide-svelte';
+	import { ChevronRight, Folder, FolderOpen, Hop as Home, Users, Star, Image, Search, Plus, HardDrive } from 'lucide-svelte';
 	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
-	import SidebarFolderTree from '$lib/files/SidebarFolderTree.svelte';
+	import FolderTree from '$lib/files/FolderTree.svelte';
 	import { currentUser } from '$lib/stores/auth';
 	import { listAllFiles } from '$lib/api/files';
 	import { formatFileSize } from '$lib/utils/format';
+	import { explorerStore, ROOT_CONFIG, type ExplorerRoot } from '$lib/explorer';
 
-	// Props
 	interface Props {
 		variant?: 'files' | 'admin' | 'default';
 		mobileOpen?: boolean;
@@ -26,14 +28,26 @@
 		onCreateFolder = () => {}
 	}: Props = $props();
 
-	// Folder Tree Query - refetch on window focus to keep live
+	// ============================================================================
+	// QUERIES
+	// ============================================================================
+
 	let folderTreeQuery = $derived(
-		createQuery<FolderTree>({
+		createQuery<FolderTreeType>({
 			queryKey: ['folder-tree'],
 			queryFn: () => getFolderTree(),
 			enabled: variant === 'files',
 			refetchOnWindowFocus: true,
 			staleTime: 0
+		})
+	);
+
+	// Query for received shares (for Shared tree)
+	let receivedSharesQuery = $derived(
+		createQuery<ReceivedShare[]>({
+			queryKey: ['received-shares'],
+			queryFn: () => listReceivedShares(),
+			enabled: variant === 'files'
 		})
 	);
 
@@ -47,44 +61,205 @@
 
 	let totalSizeUsed = $derived($allFilesQuery.data?.reduce((sum, file) => sum + file.size, 0) || 0);
 
-	function isFolderActive(folderId: string): boolean {
-		if (!browser) return false;
-		const params = new URLSearchParams(window.location.search);
-		return params.get('folder') === folderId;
+	// ============================================================================
+	// URL / STATE DERIVATIONS
+	// ============================================================================
+
+	// Get current URL parameters
+	let currentFolderId = $derived($page.url.searchParams.get('folder'));
+	let currentRoot = $derived(($page.url.searchParams.get('root') as ExplorerRoot) || 'my-files');
+	let currentFilter = $derived($page.url.searchParams.get('filter'));
+
+	// Compute ancestor IDs of current folder for tree emphasis (my-files only)
+	let ancestorIds = $derived(
+		!currentFolderId || !$folderTreeQuery.data || currentRoot !== 'my-files'
+			? new Set<string>()
+			: findAncestorIds($folderTreeQuery.data, currentFolderId)
+	);
+
+	// ============================================================================
+	// NAVIGATION STATE HELPERS
+	// ============================================================================
+
+	function findAncestorIds(root: FolderTreeType, targetId: string): Set<string> {
+		const ancestors = new Set<string>();
+		
+		function findPath(node: FolderTreeType, target: string, path: string[]): boolean {
+			if (node.folder.id === target) {
+				path.forEach(id => ancestors.add(id));
+				return true;
+			}
+			if (node.subfolders) {
+				for (const child of node.subfolders) {
+					if (findPath(child, target, [...path, node.folder.id])) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+		
+		findPath(root, targetId, []);
+		return ancestors;
 	}
 
-	function isRootActive(): boolean {
-		if (!browser) return false;
-		const pathname = window.location.pathname;
-		const search = window.location.search;
-		return pathname === '/files' && (!search || !search.includes('folder='));
+	function expandPathToFolder(root: FolderTreeType, targetId: string): void {
+		function findAndExpand(node: FolderTreeType, target: string): boolean {
+			if (node.folder.id === target) {
+				return true;
+			}
+			if (node.subfolders) {
+				for (const child of node.subfolders) {
+					if (findAndExpand(child, target)) {
+						fileBrowserUi.expandFolder(node.folder.id);
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+		
+		findAndExpand(root, targetId);
 	}
 
-	function navigateToFolder(folderId: string | null) {
-		fileBrowserUi.selectFolder(folderId);
-		if (folderId) {
-			goto(`/files?folder=${folderId}`);
+	// Auto-expand current folder path when it changes
+	$effect(() => {
+		if (currentFolderId && $folderTreeQuery.data && currentRoot === 'my-files') {
+			expandPathToFolder($folderTreeQuery.data, currentFolderId);
+		}
+	});
+
+	// ============================================================================
+	// NAVIGATION HELPERS
+	// ============================================================================
+
+	function isRootActive(root: ExplorerRoot): boolean {
+		if (!browser) return false;
+		if (currentFilter) return false; // Collections are not root
+		
+		if (root === 'my-files') {
+			return currentRoot === 'my-files' && !currentFolderId;
 		} else {
-			goto('/files');
+			return currentRoot === 'shared' && !currentFolderId;
+		}
+	}
+
+	function isCollectionActive(collection: string): boolean {
+		return currentFilter === collection;
+	}
+
+	function navigateToRoot(root: ExplorerRoot) {
+		explorerStore.activateRoot(root);
+		onClose();
+	}
+
+	function navigateToCollection(collection: string) {
+		goto(`/files?filter=${collection}`);
+		onClose();
+	}
+
+	function navigateToFolder(folderId: string | null, root: ExplorerRoot = 'my-files') {
+		if (folderId) {
+			if (root === 'shared') {
+				goto(`/files?folder=${folderId}&root=shared`);
+			} else {
+				goto(`/files?folder=${folderId}`);
+			}
+		} else {
+			if (root === 'shared') {
+				goto('/files?root=shared');
+			} else {
+				goto('/files');
+			}
 		}
 		onClose();
 	}
 
-	// Navigation items
-	const libraryNav = [
-		{ href: '/files?filter=starred', icon: Star, label: 'Starred' },
-		{ href: '/files?filter=photos', icon: Image, label: 'Photos' },
-		{ href: '/files?sort=recent', icon: Clock, label: 'Recent' },
-	];
+	// ============================================================================
+	// TREE DATA
+	// ============================================================================
 
-	function isLibraryActive(href: string): boolean {
-		const currentPath = $page.url.pathname + $page.url.search;
-		return currentPath === href || currentPath.startsWith(href);
+	function getMyFilesTreeData(): FolderTreeType[] {
+		if ($folderTreeQuery.data) {
+			const root = { ...$folderTreeQuery.data };
+			// Rename root to "My Files" for display
+			if (root.folder.name === 'root' || !root.folder.parent_folder_id) {
+				root.folder = { ...root.folder, name: ROOT_CONFIG['my-files'].label };
+			}
+			return [root];
+		}
+		return [];
 	}
 
-	function getSubfolders(): FolderTree[] {
-		return $folderTreeQuery?.data?.subfolders || [];
+	function getSharedTreeData(): FolderTreeType | null {
+		if (!$receivedSharesQuery.data || $receivedSharesQuery.data.length === 0) {
+			return null;
+		}
+
+		// Build shared folder tree from received shares
+		// Only include folder-type shares
+		const folderShares = $receivedSharesQuery.data.filter(
+			share => share.resource_type === 'folder'
+		);
+
+		if (folderShares.length === 0) {
+			return null;
+		}
+
+		// Create virtual root for shared folders
+		const sharedRoot: FolderTreeType = {
+			folder: {
+				id: 'shared-root',
+				name: ROOT_CONFIG['shared'].label,
+				path: '/shared',
+				parent_folder_id: null,
+				owner_id: 'shared',
+				created_at: '',
+				updated_at: '',
+				tenant_id: '',
+				ancestor_ids: null,
+				is_shared: true,
+				share_count: folderShares.length,
+				share_expires_at: null
+			},
+			subfolders: folderShares.map(share => ({
+				folder: {
+					id: share.resource_id,
+					name: share.resource_name,
+					path: share.resource_path,
+					parent_folder_id: 'shared-root',
+					owner_id: share.shared_by,
+					created_at: share.created_at,
+					updated_at: share.created_at,
+					tenant_id: '',
+					ancestor_ids: ['shared-root'],
+					is_shared: true,
+					share_count: 1,
+					share_expires_at: null
+				},
+				subfolders: [] // Lazy load children
+			}))
+		};
+
+		return sharedRoot;
 	}
+
+	// Expand root by default if nothing else is expanded
+	$effect(() => {
+		if ($folderTreeQuery.data && $fileBrowserUi.expandedFolderIds.size === 0) {
+			fileBrowserUi.expandFolder($folderTreeQuery.data.folder.id);
+		}
+	});
+
+	function handleCollapseAll() {
+		fileBrowserUi.collapseAll();
+	}
+
+	// ============================================================================
+	// SHARED ICON SVG
+	// ============================================================================
+
+	const sharedIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><circle cx="10" cy="13" r="2"></circle><path d="M14 19v-1a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v1"></path><circle cx="16" cy="13" r="2"></circle><path d="M18 19v-1a2 2 0 0 0-1.18-1.82"></path></svg>`;
 </script>
 
 <!-- Mobile overlay -->
@@ -98,84 +273,121 @@
 {/if}
 
 <aside
-	class="flex h-full flex-col border-r overflow-hidden transition-all duration-300 lg:translate-x-0
-		bg-base-100 border-base-300/50
-		{mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-		w-64"
-	class:fixed={mobileOpen}
-	class:lg:static={true}
-	class:z-50={mobileOpen}
+	class="h-full flex-col border-r overflow-hidden transition-all duration-300 bg-base-100 border-base-300/50 w-64 relative z-20
+		{mobileOpen ? 'flex translate-x-0' : 'hidden -translate-x-full lg:flex lg:translate-x-0'}
+		{mobileOpen ? 'fixed z-50' : 'lg:static'}"
 	aria-label="Folder navigation"
 >
-
 	<!-- Navigation Sections -->
-	<div class="flex-1 overflow-y-auto py-2">
-		<!-- Quick Links -->
+	<div class="flex-1 overflow-y-auto py-2 relative z-10">
+		<!-- 
+			PRIMARY NAVIGATION GROUP
+			Only My Files is in the primary group per SPEC section 1.1
+			Shared has been moved to Library
+		-->
 		<nav class="px-2 mb-2" aria-label="Quick links">
 			<button
 				type="button"
 				class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
-					{isRootActive() 
+					{isRootActive('my-files') 
 						? 'bg-brand-500/10 text-brand-600 font-medium' 
 						: 'text-base-content/70 hover:bg-base-200/60'}"
-				onclick={() => navigateToFolder(null)}
+				onclick={() => navigateToRoot('my-files')}
 			>
 				<Home size={18} strokeWidth={1.75} />
-				<span>Home</span>
+				<span>{ROOT_CONFIG['my-files'].label}</span>
 			</button>
-			<a
-				href="/shared-with-me"
-				class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
-					{$page.url.pathname.startsWith('/shared-with-me')
-						? 'bg-brand-500/10 text-brand-600 font-medium'
-						: 'text-base-content/70 hover:bg-base-200/60'}"
-				onclick={onClose}
-			>
-				<Users size={18} strokeWidth={1.75} />
-				<span>Shared</span>
-			</a>
 		</nav>
 
-		<!-- Library Section -->
+		<!-- 
+			LIBRARY NAVIGATION GROUP
+			Per SPEC section 1.1:
+			- Shared (now in Library, not Primary)
+			- Starred
+			- Photos  
+		-->
 		<div class="px-2 mb-4">
 			<h3 class="px-3 text-[11px] font-semibold text-base-content/40 uppercase tracking-wider mb-1">
 				Library
 			</h3>
 			<nav class="space-y-0.5" aria-label="Library">
-				{#each libraryNav as item}
-					<a
-						href={item.href}
-						class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
-							{isLibraryActive(item.href)
-								? 'bg-brand-500/10 text-brand-600 font-medium'
-								: 'text-base-content/70 hover:bg-base-200/60'}"
-						onclick={onClose}
-					>
-						<item.icon size={18} strokeWidth={1.75} />
-						<span>{item.label}</span>
-					</a>
-				{/each}
+				<!-- Shared - Now in Library per SPEC -->
+				<button
+					type="button"
+					class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+						{isRootActive('shared')
+							? 'bg-brand-500/10 text-brand-600 font-medium'
+							: 'text-base-content/70 hover:bg-base-200/60'}"
+					onclick={() => navigateToRoot('shared')}
+				>
+					<span class="text-base-content/70">
+						{@html sharedIconSvg}
+					</span>
+					<span>{ROOT_CONFIG['shared'].label}</span>
+				</button>
+
+				<!-- Starred -->
+				<button
+					type="button"
+					class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+						{isCollectionActive('starred')
+							? 'bg-brand-500/10 text-brand-600 font-medium'
+							: 'text-base-content/70 hover:bg-base-200/60'}"
+					onclick={() => navigateToCollection('starred')}
+				>
+					<Star size={18} strokeWidth={1.75} />
+					<span>Starred</span>
+				</button>
+
+				<!-- Photos -->
+				<button
+					type="button"
+					class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+						{isCollectionActive('photos')
+							? 'bg-brand-500/10 text-brand-600 font-medium'
+							: 'text-base-content/70 hover:bg-base-200/60'}"
+					onclick={() => navigateToCollection('photos')}
+				>
+					<Image size={18} strokeWidth={1.75} />
+					<span>Photos</span>
+				</button>
 			</nav>
 		</div>
 
-		<!-- Folders Section -->
+		<!-- 
+			FOLDERS NAVIGATION GROUP
+			Per SPEC section 1.1:
+			- My Files (tree root)
+			- Shared (tree root)
+		-->
 		<div class="px-2">
 			<div class="flex items-center justify-between px-3 mb-1">
 				<h3 class="text-[11px] font-semibold text-base-content/40 uppercase tracking-wider">
 					Folders
 				</h3>
-				<button
-					type="button"
-					class="p-1 rounded-md text-base-content/40 hover:text-brand-500 hover:bg-brand-500/10 transition-colors"
-					onclick={onCreateFolder}
-					aria-label="Create new folder"
-					title="New folder"
-				>
-					<Plus size={14} strokeWidth={2} />
-				</button>
+				<div class="flex items-center gap-1">
+					<button
+						type="button"
+						class="p-1 rounded-md text-base-content/40 hover:text-brand-500 hover:bg-brand-500/10 transition-colors"
+						onclick={handleCollapseAll}
+						aria-label="Collapse all folders"
+						title="Collapse all"
+					>
+						<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+					</button>
+					<button
+						type="button"
+						class="p-1 rounded-md text-base-content/40 hover:text-brand-500 hover:bg-brand-500/10 transition-colors"
+						onclick={onCreateFolder}
+						aria-label="Create new folder"
+						title="New folder"
+					>
+						<Plus size={14} strokeWidth={2} />
+					</button>
+				</div>
 			</div>
 			
-			{#if $folderTreeQuery?.isLoading}
+			{#if $folderTreeQuery?.isLoading || $receivedSharesQuery?.isLoading}
 				<div class="px-3 py-4">
 					<div class="flex items-center gap-2 text-sm text-base-content/50">
 						<div class="w-4 h-4 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin"></div>
@@ -198,27 +410,59 @@
 						Retry
 					</button>
 				</div>
-			{:else if getSubfolders().length > 0}
-				<nav class="space-y-0.5" aria-label="Folder tree">
-					<SidebarFolderTree 
-						folders={getSubfolders()}
-						onFolderClick={onClose}
-					/>
-				</nav>
 			{:else}
-				<div class="px-3 py-4 text-center">
-					<div class="w-10 h-10 rounded-xl bg-base-200/70 flex items-center justify-center mx-auto mb-2">
-						<Folder size={20} class="text-base-content/30" />
-					</div>
-					<p class="text-xs text-base-content/50">No folders yet</p>
-					<button
-						type="button"
-						class="mt-2 text-xs text-brand-500 hover:text-brand-600 font-medium"
-						onclick={onCreateFolder}
-					>
-						Create your first folder
-					</button>
-				</div>
+				<nav class="space-y-0.5" aria-label="Folder tree">
+					<!-- My Files Tree -->
+					{#if getMyFilesTreeData().length > 0}
+						<div class="mb-1">
+							<FolderTree 
+								folders={getMyFilesTreeData()}
+								onFolderClick={(folderId) => navigateToFolder(folderId, 'my-files')}
+								{ancestorIds}
+								rootType="my-files"
+								isActive={currentRoot === 'my-files'}
+							/>
+						</div>
+					{/if}
+
+					<!-- Shared Tree -->
+					{#if getSharedTreeData()}
+						<div class="mt-2 pt-2 border-t border-base-300/30">
+							<FolderTree 
+								folders={[getSharedTreeData()!]}
+								onFolderClick={(folderId) => {
+									if (folderId === 'shared-root') {
+										navigateToRoot('shared');
+									} else {
+										navigateToFolder(folderId, 'shared');
+									}
+								}}
+								ancestorIds={new Set()}
+								rootType="shared"
+								isActive={currentRoot === 'shared'}
+								sharedIcon={sharedIconSvg}
+							/>
+						</div>
+					{:else}
+						<!-- Empty shared state -->
+						<div class="mt-2 pt-2 border-t border-base-300/30 px-3 py-2">
+							<button
+								type="button"
+								class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+									{isRootActive('shared')
+										? 'bg-brand-500/10 text-brand-600 font-medium'
+										: 'text-base-content/50 hover:bg-base-200/60'}"
+								onclick={() => navigateToRoot('shared')}
+							>
+								<span class="text-base-content/50">
+									{@html sharedIconSvg}
+								</span>
+								<span>Shared</span>
+							</button>
+							<p class="px-3 text-xs text-base-content/40 mt-1">No shared folders</p>
+						</div>
+					{/if}
+				</nav>
 			{/if}
 		</div>
 	</div>
@@ -229,7 +473,6 @@
 			<!-- Circular Progress -->
 			<div class="relative flex h-10 w-10 shrink-0 items-center justify-center">
 				<svg class="h-full w-full -rotate-90 transform" viewBox="0 0 36 36">
-					<!-- Background circle -->
 					<circle 
 						cx="18" cy="18" r="15.915" 
 						fill="none" 
@@ -237,7 +480,6 @@
 						stroke="currentColor" 
 						stroke-width="3"
 					></circle>
-					<!-- Progress circle -->
 					{#if $currentUser?.storage_quota}
 						<circle 
 							cx="18" cy="18" r="15.915" 
@@ -251,7 +493,6 @@
 						></circle>
 					{/if}
 				</svg>
-				<!-- Glowing Green Center Dot -->
 				<div class="absolute inset-0 flex items-center justify-center">
 					<div class="h-2.5 w-2.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.8)] animate-pulse"></div>
 				</div>

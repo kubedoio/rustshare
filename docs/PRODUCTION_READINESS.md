@@ -45,6 +45,7 @@ Current confidence by area:
 - [x] Shared-with-me views
 - [x] Notification inbox and unread badge
 - [x] Realtime user-visible events over WebSocket
+- [x] First-class markdown notes with editor, autosave, and public sharing
 
 ## Storage and Replication Checklist
 
@@ -93,14 +94,14 @@ Current confidence by area:
 
 Reference planning docs:
 
-- [OIDC Production Validation Checklist](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-oidc-production-validation-checklist.md)
-- [Alerting And Incident Thresholds](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-alerting-and-incident-thresholds.md)
-- [Post-Restore Expected Outcomes](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-post-restore-expected-outcomes.md)
-- [Compatibility Removal Plan](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-compatibility-removal-plan.md)
-- [Phase 6 Environment Sign-Off Spec](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-6-environment-signoff-spec.md)
-- [Launch Gate: Web-First Pilot](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-launch-gate-web-first-pilot.md)
-- [Phase 6 Execution Report](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-phase-6-execution-report.md)
-- [Web-First Pilot Gate Decision](/Users/scolak/Projects/x/rustshare/docs/2026-03-21-web-first-pilot-gate-decision.md)
+- [OIDC Production Validation Checklist](docs/2026-03-21-oidc-production-validation-checklist.md)
+- [Alerting And Incident Thresholds](docs/2026-03-21-alerting-and-incident-thresholds.md)
+- [Post-Restore Expected Outcomes](docs/2026-03-21-post-restore-expected-outcomes.md)
+- [Compatibility Removal Plan](docs/2026-03-21-compatibility-removal-plan.md)
+- [Phase 6 Environment Sign-Off Spec](docs/2026-03-21-phase-6-environment-signoff-spec.md)
+- [Launch Gate: Web-First Pilot](docs/2026-03-21-launch-gate-web-first-pilot.md)
+- [Phase 6 Execution Report](docs/2026-03-21-phase-6-execution-report.md)
+- [Web-First Pilot Gate Decision](docs/2026-03-21-web-first-pilot-gate-decision.md)
 
 ## Deployment Checklist
 
@@ -116,15 +117,15 @@ Reference planning docs:
 ### Recommended validations
 
 ```bash
-cd /Users/scolak/Projects/x/rustshare/backend
+cd backend
 cargo check --workspace
 cargo test --workspace
 
-cd /Users/scolak/Projects/x/rustshare/frontend
+cd frontend
 npm run check
 npm test
 
-cd /Users/scolak/Projects/x/rustshare
+cd ..
 docker compose config
 ```
 

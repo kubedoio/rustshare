@@ -1,4 +1,5 @@
 export function formatFileSize(bytes: number): string {
+	if (!Number.isFinite(bytes) || bytes < 0) return '0 Bytes';
 	if (bytes === 0) return '0 Bytes';
 	if (bytes < 1024) return `${bytes} Bytes`;
 	const k = 1024;

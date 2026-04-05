@@ -46,9 +46,11 @@ pub struct UploadResult {
 /// Upload session
 #[derive(Debug)]
 struct UploadSession {
+    #[allow(dead_code)]
     file_id: uuid::Uuid,
     upload_url: Option<String>,
     bytes_uploaded: u64,
+    #[allow(dead_code)]
     total_bytes: u64,
     chunk_size: usize,
 }
@@ -165,8 +167,8 @@ impl ResumableUpload {
     /// Get existing file ID or create new upload
     async fn get_or_create_file_id(
         &self,
-        local_path: &Path,
-        parent_folder_id: Option<uuid::Uuid>,
+        _local_path: &Path,
+        _parent_folder_id: Option<uuid::Uuid>,
         file_name: &str,
     ) -> Result<uuid::Uuid> {
         // Check for existing upload progress
@@ -320,6 +322,7 @@ pub async fn upload_simple(
 }
 
 // Extension trait to access base_url from ApiClient
+#[allow(dead_code)]
 trait ApiClientExt {
     fn base_url(&self) -> &str;
 }

@@ -15,7 +15,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use tracing::{error, info, Level};
+use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use rustshare_desktop::api::auth::{interactive_pairing, DeviceAuth};
@@ -320,7 +320,7 @@ async fn cmd_sync_add(
     }
 
     // Add to sync
-    let mut engine_config = rustshare_desktop::sync::engine::SyncEngineConfig::from(config);
+    let engine_config = rustshare_desktop::sync::engine::SyncEngineConfig::from(config);
     let api_client = rustshare_desktop::api::ApiClient::with_token(
         config,
         auth.load_token()?.unwrap().token,
@@ -542,7 +542,7 @@ async fn cmd_force_sync(config: &Config) -> Result<()> {
 }
 
 /// Show/edit configuration
-fn cmd_config(config: &Config, edit: bool) -> Result<()> {
+fn cmd_config(_config: &Config, edit: bool) -> Result<()> {
     let config_path = Config::config_path()?;
     
     if edit {

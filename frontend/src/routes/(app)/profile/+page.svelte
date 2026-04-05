@@ -30,6 +30,14 @@
 	let previewUrl: string | null = $state(null);
 	let avatarTimestamp = $state(Date.now());
 	let avatarUrl = $derived(profile && profile.avatar_path ? `${getAvatarUrl(profile.id)}?t=${avatarTimestamp}` : null);
+	let avatarError = $state(false);
+	
+	// Reset avatar error when URL changes
+	$effect(() => {
+		if (avatarUrl) {
+			avatarError = false;
+		}
+	});
 
 	// Messages
 	let successMessage = $state('');
@@ -196,8 +204,8 @@
 						<div class="w-24 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2">
 							{#if previewUrl}
 								<img src={previewUrl} alt="Avatar preview" />
-							{:else if avatarUrl}
-								<img src={avatarUrl} alt="Avatar" />
+							{:else if avatarUrl && !avatarError}
+								<img src={avatarUrl} alt="Avatar" onerror={() => avatarError = true} />
 							{:else}
 								<div class="bg-neutral text-neutral-content w-full h-full flex items-center justify-center text-2xl font-bold">
 									{getInitials()}
