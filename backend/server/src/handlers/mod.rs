@@ -57,8 +57,8 @@ pub use upload::{
     CompleteUploadResponse, CreateUploadSessionResponse, UploadChunkResponse, UploadSessionStatusResponse,
 };
 pub use user_shares::{
-    create_file_share, create_folder_share, list_file_recipients, list_folder_recipients,
-    list_received_shares, remove_recipient, update_recipient_permission,
+    create_file_share, create_folder_share, get_user_shared_folder_contents, list_file_recipients,
+    list_folder_recipients, list_received_shares, remove_recipient, update_recipient_permission,
 };
 pub use ai::{ask_question, semantic_search, summarize_file};
 pub use auth::{ensure_optional_seed_user, login, logout};

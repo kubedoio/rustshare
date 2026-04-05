@@ -1029,6 +1029,10 @@ async fn main() -> Result<()> {
             "/api/v1/shares/{id}/recipient",
             delete(handlers::remove_recipient),
         )
+        .route(
+            "/api/v1/shares/folders/{id}/contents",
+            get(handlers::get_user_shared_folder_contents),
+        )
         // Group sharing routes
         .route("/api/v1/groups/my", get(handlers::list_my_groups))
         .route("/api/v1/groups/my/{id}", get(handlers::get_my_group))

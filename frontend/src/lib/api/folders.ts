@@ -52,6 +52,14 @@ export async function getFolderContents(folderId: string | null): Promise<Folder
   return apiClient.get<FolderContents>(`/folders/${folderId}/contents`);
 }
 
+/**
+ * Get contents of a shared folder (bypasses ownership check)
+ * Use this when accessing folders shared with the current user
+ */
+export async function getSharedFolderContents(folderId: string): Promise<FolderContents> {
+  return apiClient.get<FolderContents>(`/shares/folders/${folderId}/contents`);
+}
+
 export async function getFolderTree(): Promise<FolderTree> {
   return apiClient.get<FolderTree>('/folders/tree');
 }
