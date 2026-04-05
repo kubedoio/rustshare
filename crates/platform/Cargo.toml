@@ -1,0 +1,12 @@
+[package]
+name = "platform"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+keyring = { workspace = true }
+directories = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+cfg-if = "1.0"
+uuid = { workspace = true }

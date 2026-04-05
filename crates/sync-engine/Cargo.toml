@@ -1,0 +1,36 @@
+[package]
+name = "sync-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sync-domain = { path = "../sync-domain" }
+sync-protocol = { path = "../sync-protocol" }
+client-state = { path = "../client-state" }
+file-ops = { path = "../file-ops" }
+platform = { path = "../platform" }
+
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+notify = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+futures = { workspace = true }
+futures-util = { workspace = true }
+url = { workspace = true }
+tokio-tungstenite = { workspace = true }
+chrono = { workspace = true }
+glob = { workspace = true }
+uuid = { workspace = true }
+pathdiff = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+
+[dev-dependencies]
+test-support = { path = "../test-support" }
+mockall = { workspace = true }
+tempfile = { workspace = true }
