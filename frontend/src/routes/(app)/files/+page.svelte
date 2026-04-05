@@ -1,4 +1,20 @@
 <script lang="ts">
+	/**
+	 * ==============================================================================
+	 * UNIFIED FILES PAGE
+	 * ==============================================================================
+	 * 
+	 * Refactored file explorer supporting both "My Files" and "Shared" roots.
+	 * 
+	 * URL Patterns:
+	 * - /files                    → My Files root
+	 * - /files?root=shared        → Shared root
+	 * - /files?folder=<id>        → Specific folder (in my-files root)
+	 * - /files?filter=starred     → Starred collection
+	 * - /files?filter=recent      → Recent collection
+	 * - /files?filter=photos      → Photos collection
+	 */
+
 	import { onMount } from 'svelte';
 	import { createQuery, createMutation } from '@tanstack/svelte-query';
 	import { truncateFilename } from '$lib/utils/format';
@@ -12,7 +28,8 @@
 		renameFile,
 		restoreFileFromTrash,
 		setFileStarred,
-		uploadFile
+		uploadFile,
+		listAllFiles
 	} from '$lib/api/files';
 	import { createNote } from '$lib/api/notes';
 	import {
@@ -20,24 +37,31 @@
 		deleteFolder,
 		getFolderContents,
 		getFolderTree,
+		getSharedFolderContents,
 		moveFolder,
 		permanentlyDeleteFolder,
 		renameFolder,
 		restoreFolderFromTrash,
-		setFolderStarred
+		setFolderStarred,
+		type FolderTree as FolderTreeType
 	} from '$lib/api/folders';
+	import { listReceivedShares } from '$lib/api/shares';
+	import type { ReceivedShare } from '$lib/api/types';
 	import { extractFolderPaths, sortFolderPaths } from '$lib/utils/directoryUpload';
-	import type { FolderTree as FolderTreeType } from '$lib/api/folders';
 	import { queryClient } from '$lib/query-client';
 	import { searchQuery } from '$lib/stores/search';
 	import { fileSortState } from '$lib/stores/fileSort';
 	import { selectionStore, selectionCount, hasSelection } from '$lib/stores/selection';
 	import { activityStore } from '$lib/stores/activity';
 	import { replicationStore, type ReplicationStatus } from '$lib/stores/replication';
-	import { folderTreeStore, type FolderNode } from '$lib/stores/folderTree';
+	import { folderTreeStore } from '$lib/stores/folderTree';
 	import type { File, Folder } from '$lib/api/types';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+
+	// Explorer types
+	import type { ExplorerRoot, CollectionView } from '$lib/explorer';
+	import { ROOT_CONFIG } from '$lib/explorer';
 
 	// Components
 	import FileExplorer from '$lib/files/FileExplorer.svelte';
@@ -59,6 +83,10 @@
 	import { TextEditor, MarkdownEditor, ExcalidrawEditor } from '$lib/components/editors';
 	import { detectEditorType } from '$lib/utils/editor';
 
+	// ============================================================================
+	// STATE
+	// ============================================================================
+
 	type UploadTask = {
 		id: string;
 		fileName: string;
@@ -69,21 +97,10 @@
 		previewUrl?: string;
 	};
 
+	type WorkspaceMode = 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+
 	let uploadTasks: UploadTask[] = [];
 	let selectionMode = false;
-	let currentFolderId: string | null = null;
-
-	// Query for folder tree (used for breadcrumb path)
-	const folderTreeQuery = createQuery<FolderTreeType>({
-		queryKey: ['folder-tree'],
-		queryFn: () => getFolderTree(),
-		staleTime: 0
-	});
-
-	// Derive folderPath from the full API folder tree
-	$: folderPath = currentFolderId && $folderTreeQuery.data
-		? buildFolderPathFromApiTree($folderTreeQuery.data, currentFolderId).slice(1)
-		: [];
 
 	// Modal states
 	let showRenameModal = false;
@@ -116,24 +133,292 @@
 	let previewTarget: File | null = null;
 	let replaceFileTarget: File | null = null;
 
-	type WorkspaceMode = 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
-
 	// Toast
 	let showToast = false;
 	let toastMessage = '';
 	let toastType: 'success' | 'error' | 'info' = 'info';
 
+	// ============================================================================
+	// EXPLORER STATE DERIVATIONS
+	// ============================================================================
+
+	// URL parameters
+	$: urlFolderId = $page.url.searchParams.get('folder');
+	$: urlFilter = $page.url.searchParams.get('filter');
+	$: urlSort = $page.url.searchParams.get('sort');
+	$: urlRoot = $page.url.searchParams.get('root') as ExplorerRoot | null;
+
+	// Helper to check if a string looks like a valid UUID
+	function isValidUuid(value: string | null): value is string {
+		if (!value) return false;
+		const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+		return uuidPattern.test(value);
+	}
+
+	// Current workspace mode
+	$: workspaceMode = (urlFilter === 'photos'
+		? 'photos'
+		: urlFilter === 'starred'
+			? 'starred'
+			: urlFilter === 'deleted'
+				? 'deleted'
+				: urlSort === 'recent'
+					? 'recent'
+					: 'all') as WorkspaceMode;
+
+	// Active root (my-files or shared)
+	$: activeRoot = (urlRoot === 'shared' ? 'shared' : 'my-files') as ExplorerRoot;
+
+	// Is in collection mode?
+	$: isCollectionMode = workspaceMode === 'starred' || workspaceMode === 'recent' || workspaceMode === 'photos';
+
+	// Current folder ID (null at root)
+	$: currentFolderId = isCollectionMode 
+		? null 
+		: (isValidUuid(urlFolderId) ? urlFolderId : null);
+
+	// ============================================================================
+	// QUERIES
+	// ============================================================================
+
+	// Query for folder tree (used for breadcrumb path in my-files)
+	const folderTreeQuery = createQuery<FolderTreeType>({
+		queryKey: ['folder-tree'],
+		queryFn: () => getFolderTree(),
+		staleTime: 0
+	});
+
+	// Query for received shares (for building shared folder tree)
+	const receivedSharesQuery = createQuery<ReceivedShare[]>({
+		queryKey: ['received-shares'],
+		queryFn: () => listReceivedShares(),
+		enabled: true
+	});
+
 	// Query for the active workspace view
 	$: filesQuery = createQuery({
-		queryKey: ['file-workspace', workspaceMode, currentFolderId],
+		queryKey: ['file-workspace', workspaceMode, currentFolderId, activeRoot],
 		queryFn: () => {
 			if (workspaceMode === 'starred') return getStarredContents();
 			if (workspaceMode === 'deleted') return getDeletedContents();
+			
+			// For shared root, use shared folder contents API
+			if (activeRoot === 'shared' && currentFolderId) {
+				return getSharedFolderContents(currentFolderId);
+			}
+			
+			// Default my-files behavior
 			return getFolderContents(currentFolderId);
 		}
 	});
 
-	// Mutations
+	// All files query (for storage stats)
+	const allFilesQuery = createQuery({
+		queryKey: ['all-files'],
+		queryFn: () => listAllFiles()
+	});
+
+	// ============================================================================
+	// BREADCRUMB & PATH DERIVATION
+	// ============================================================================
+
+	// Derive folderPath from the full API folder tree (for my-files)
+	$: myFilesFolderPath = currentFolderId && $folderTreeQuery.data && activeRoot === 'my-files'
+		? buildFolderPathFromApiTree($folderTreeQuery.data, currentFolderId).slice(1)
+		: [];
+
+	// Build breadcrumb based on current state
+	// Returns Folder-compatible objects for FileExplorer component
+	$: breadcrumbPath = buildBreadcrumb();
+
+	function buildBreadcrumb(): Folder[] {
+		// In collection mode, return empty (no breadcrumb)
+		if (isCollectionMode) {
+			return [];
+		}
+
+		if (activeRoot === 'my-files') {
+			// Return my-files path (already Folder objects)
+			return myFilesFolderPath;
+		} else if (activeRoot === 'shared' && currentFolderId) {
+			// For shared folders, build path from received shares
+			const path = buildSharedFolderPath(currentFolderId, $receivedSharesQuery.data || []);
+			return path.map(segment => ({
+				id: segment.id,
+				name: segment.name,
+				path: `/shared/${segment.name}`,
+				parent_folder_id: null,
+				owner_id: 'shared',
+				created_at: '',
+				updated_at: ''
+			}));
+		}
+
+		return [];
+	}
+
+	function buildSharedFolderPath(
+		folderId: string, 
+		shares: ReceivedShare[]
+	): Array<{ name: string; id: string }> {
+		// Find the share that contains this folder
+		const share = shares.find(s => s.resource_id === folderId || s.resource_path?.includes(folderId));
+		if (!share) return [];
+		
+		// For now, return simple path based on share info
+		// This could be enhanced with proper shared folder tree API
+		return [{ name: share.resource_name, id: share.resource_id }];
+	}
+
+	function buildFolderPathFromApiTree(root: FolderTreeType, targetId: string): Folder[] {
+		function search(node: FolderTreeType): Folder[] {
+			if (node.folder.id === targetId) {
+				return [node.folder];
+			}
+			if (node.subfolders) {
+				for (const child of node.subfolders) {
+					const path = search(child);
+					if (path.length > 0) {
+						return [node.folder, ...path];
+					}
+				}
+			}
+			return [];
+		}
+		return search(root);
+	}
+
+	// ============================================================================
+	// TITLE DERIVATION (Contextual Header)
+	// ============================================================================
+
+	$: workspaceTitle = isCollectionMode
+		? (workspaceMode === 'photos'
+			? 'Photos'
+			: workspaceMode === 'recent'
+				? 'Recent'
+				: workspaceMode === 'starred'
+					? 'Starred'
+					: 'Deleted')
+		: activeRoot === 'shared'
+			? (currentFolderId ? breadcrumbPath[breadcrumbPath.length - 1]?.name : 'Shared')
+			: (currentFolderId ? breadcrumbPath[breadcrumbPath.length - 1]?.name : 'My Files');
+
+	$: workspaceDescription = isCollectionMode
+		? (workspaceMode === 'photos'
+			? 'Image files in the current workspace, without the folder noise.'
+			: workspaceMode === 'recent'
+				? 'The latest changes in this workspace, sorted by most recent first.'
+				: workspaceMode === 'starred'
+					? 'Pinned folders and files that need fast access without digging through the tree.'
+					: 'Recently deleted items live here until you restore them or remove them permanently.')
+		: activeRoot === 'shared'
+			? (currentFolderId 
+				? 'Shared folder contents.' 
+				: 'Folders shared with you by other users.')
+			: (currentFolderId 
+				? 'Folder contents.' 
+				: 'Folders and files, tuned for quick scanning instead of dashboard theater.');
+
+	$: workspaceEmptyTitle = isCollectionMode
+		? (workspaceMode === 'photos'
+			? 'No photos in this view'
+			: workspaceMode === 'recent'
+				? 'No recent file activity'
+				: workspaceMode === 'starred'
+					? 'Nothing is starred yet'
+					: 'Deleted items will show up here')
+		: activeRoot === 'shared'
+			? 'No shared folders'
+			: 'No files yet';
+
+	$: workspaceEmptyDescription = isCollectionMode
+		? (workspaceMode === 'photos'
+			? 'Upload an image into this folder and it will show up here.'
+			: workspaceMode === 'recent'
+				? 'Modify or upload a file and it will show up here.'
+				: workspaceMode === 'starred'
+					? 'Star a folder or file from its action menu and it will show up here.'
+					: 'Deleting a folder or file moves it here instead of removing it immediately.')
+		: activeRoot === 'shared'
+			? 'Items shared with you will appear here.'
+			: 'Upload your first file or create a folder to get started.';
+
+	$: workspaceEmptyActionLabel = (!isCollectionMode && activeRoot === 'my-files')
+		? 'Upload files'
+		: null;
+
+	// ============================================================================
+	// UI STATE DERIVATIONS
+	// ============================================================================
+
+	$: showFolderTree = !isCollectionMode;
+	$: showBreadcrumbs = !isCollectionMode;
+	$: canCreateFolder = !isCollectionMode && activeRoot === 'my-files'; // Only in my-files
+	$: canUpload = !isCollectionMode && activeRoot === 'my-files'; // Only in my-files for now
+	$: allowSelectionMode = workspaceMode !== 'deleted';
+	$: if (!allowSelectionMode && selectionMode) {
+		selectionMode = false;
+		selectionStore.clear();
+	}
+
+	// ============================================================================
+	// SORTING & FILTERING
+	// ============================================================================
+
+	$: activeSortField = workspaceMode === 'recent' ? 'modified_at' : $fileSortState.field;
+	$: activeSortOrder = workspaceMode === 'recent' ? 'desc' : $fileSortState.order;
+	$: searchTerm = $searchQuery.trim().toLowerCase();
+
+	function matchesSearch(name: string) {
+		return searchTerm.length === 0 || name.toLowerCase().includes(searchTerm);
+	}
+
+	$: baseFolders = ($filesQuery.data?.folders || []).filter((folder) => matchesSearch(folder.name));
+	$: baseFiles = ($filesQuery.data?.files || []).filter((file) => matchesSearch(file.name));
+
+	$: filteredFolders =
+		workspaceMode === 'all' || workspaceMode === 'starred' || workspaceMode === 'deleted'
+			? baseFolders
+			: [];
+	$: filteredFiles = workspaceMode === 'photos'
+		? baseFiles.filter((file) => file.mime_type.startsWith('image/'))
+		: baseFiles;
+
+	$: sortedFolders = [...filteredFolders].sort((a, b) => {
+		if (activeSortField === 'name') {
+			return activeSortOrder === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
+		}
+		if (activeSortField === 'modified_at') {
+			return activeSortOrder === 'asc'
+				? new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
+				: new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+		}
+		return 0;
+	});
+
+	$: sortedFiles = [...filteredFiles].sort((a, b) => {
+		if (activeSortField === 'name') {
+			return activeSortOrder === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
+		}
+		if (activeSortField === 'modified_at') {
+			return activeSortOrder === 'asc'
+				? new Date(a.modified_at).getTime() - new Date(b.modified_at).getTime()
+				: new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime();
+		}
+		if (activeSortField === 'size') {
+			return activeSortOrder === 'asc' ? a.size - b.size : b.size - a.size;
+		}
+		if (activeSortField === 'mime_type') {
+			return activeSortOrder === 'asc' ? a.mime_type.localeCompare(b.mime_type) : b.mime_type.localeCompare(a.mime_type);
+		}
+		return 0;
+	});
+
+	// ============================================================================
+	// MUTATIONS
+	// ============================================================================
+
 	const uploadMutation = createMutation({
 		mutationFn: ({
 			file,
@@ -161,13 +446,10 @@
 	const createFolderMutation = createMutation({
 		mutationFn: (name: string) => createFolder(name, currentFolderId),
 		onSuccess: (folder) => {
-			// Immediately update UI - add folder to tree
 			folderTreeStore.addFolder(folder, currentFolderId);
-			// Expand parent folder so new folder is visible
 			if (currentFolderId) {
 				folderTreeStore.setExpanded(currentFolderId, true);
 			}
-			// Refresh queries
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			queryClient.invalidateQueries({ queryKey: ['all-files'] });
@@ -197,9 +479,7 @@
 		mutationFn: ({ folderId, newName }: { folderId: string; newName: string }) => renameFolder(folderId, newName),
 		onSuccess: (_, { folderId, newName }) => {
 			const oldName = renameTarget?.name || 'Folder';
-			// Immediately update UI
 			folderTreeStore.updateFolderName(folderId, newName);
-			// Refresh queries
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			queryClient.invalidateQueries({ queryKey: ['all-files'] });
@@ -227,15 +507,11 @@
 		mutationFn: (folderId: string) => deleteFolder(folderId),
 		onSuccess: (_, folderId) => {
 			const folderName = deleteTarget?.name || 'Folder';
-			// Immediately update UI
 			folderTreeStore.removeFolder(folderId);
-			// Refresh queries
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			queryClient.invalidateQueries({ queryKey: ['all-files'] });
-			// If we deleted the current folder or one in its path, go to root
-			if (deleteTarget && (currentFolderId === deleteTarget.id || folderPath.some(f => f.id === deleteTarget?.id))) {
-				currentFolderId = null;
+			if (deleteTarget && (currentFolderId === deleteTarget.id || breadcrumbPath.some(f => f.id === deleteTarget?.id))) {
 				goto('/files', { replaceState: true });
 			}
 			showDeleteModal = false;
@@ -263,13 +539,10 @@
 		mutationFn: ({ folderId, targetFolderId }: { folderId: string; targetFolderId: string | null }) => moveFolder(folderId, targetFolderId),
 		onSuccess: (_, { folderId, targetFolderId }) => {
 			const folderName = moveTarget?.name || 'Folder';
-			// Immediately update UI - move folder in tree
 			folderTreeStore.moveFolder(folderId, targetFolderId);
-			// Expand destination folder so moved folder is visible
 			if (targetFolderId) {
 				folderTreeStore.setExpanded(targetFolderId, true);
 			}
-			// Refresh queries
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			queryClient.invalidateQueries({ queryKey: ['all-files'] });
@@ -342,225 +615,40 @@
 		}
 	});
 
-	$: urlFilter = $page.url.searchParams.get('filter');
-	$: urlSort = $page.url.searchParams.get('sort');
-	$: urlFolderId = $page.url.searchParams.get('folder');
-	
-	// Helper to check if a string looks like a valid UUID
-	function isValidUuid(value: string | null): value is string {
-		if (!value) return false;
-		// UUID v4 regex pattern
-		const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-		return uuidPattern.test(value);
-	}
-	
-	// Sync currentFolderId with URL folder param
-	// Only accept valid UUIDs, ignore special values like 'shared', 'starred', etc.
-	$: if (isValidUuid(urlFolderId) && urlFolderId !== currentFolderId) {
-		currentFolderId = urlFolderId;
-	} else if ((!urlFolderId || !isValidUuid(urlFolderId)) && currentFolderId && !$page.url.searchParams.has('filter') && !$page.url.searchParams.has('sort')) {
-		// Only clear if we're on a plain /files page without filters
-		currentFolderId = null;
-	}
-	
-	$: workspaceMode = (urlFilter === 'photos'
-		? 'photos'
-		: urlFilter === 'starred'
-			? 'starred'
-			: urlFilter === 'deleted'
-				? 'deleted'
-				: urlSort === 'recent'
-					? 'recent'
-					: 'all') as WorkspaceMode;
-
-	$: activeSortField = workspaceMode === 'recent' ? 'modified_at' : $fileSortState.field;
-	$: activeSortOrder = workspaceMode === 'recent' ? 'desc' : $fileSortState.order;
-	$: searchTerm = $searchQuery.trim().toLowerCase();
-
-	function matchesSearch(name: string) {
-		return searchTerm.length === 0 || name.toLowerCase().includes(searchTerm);
-	}
-
-	$: baseFolders = ($filesQuery.data?.folders || []).filter((folder) => matchesSearch(folder.name));
-	$: baseFiles = ($filesQuery.data?.files || []).filter((file) => matchesSearch(file.name));
-
-	$: filteredFolders =
-		workspaceMode === 'all' || workspaceMode === 'starred' || workspaceMode === 'deleted'
-			? baseFolders
-			: [];
-	$: filteredFiles = workspaceMode === 'photos'
-		? baseFiles.filter((file) => file.mime_type.startsWith('image/'))
-		: baseFiles;
-
-	$: sortedFolders = [...filteredFolders].sort((a, b) => {
-		if (activeSortField === 'name') {
-			return activeSortOrder === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
-		}
-		if (activeSortField === 'modified_at') {
-			return activeSortOrder === 'asc' 
-				? new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
-				: new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-		}
-		return 0;
-	});
-
-	$: sortedFiles = [...filteredFiles].sort((a, b) => {
-		if (activeSortField === 'name') {
-			return activeSortOrder === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
-		}
-		if (activeSortField === 'modified_at') {
-			return activeSortOrder === 'asc'
-				? new Date(a.modified_at).getTime() - new Date(b.modified_at).getTime()
-				: new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime();
-		}
-		if (activeSortField === 'size') {
-			return activeSortOrder === 'asc' ? a.size - b.size : b.size - a.size;
-		}
-		if (activeSortField === 'mime_type') {
-			return activeSortOrder === 'asc' ? a.mime_type.localeCompare(b.mime_type) : b.mime_type.localeCompare(a.mime_type);
-		}
-		return 0;
-	});
-
-	$: workspaceTitle =
-		workspaceMode === 'photos'
-			? 'Photos'
-			: workspaceMode === 'recent'
-				? 'Recent'
-				: workspaceMode === 'starred'
-					? 'Starred'
-					: workspaceMode === 'deleted'
-						? 'Deleted'
-						: 'All files';
-
-	$: workspaceDescription =
-		workspaceMode === 'photos'
-			? 'Image files in the current workspace, without the folder noise.'
-			: workspaceMode === 'recent'
-				? 'The latest changes in this workspace, sorted by most recent first.'
-				: workspaceMode === 'starred'
-					? 'Pinned folders and files that need fast access without digging through the tree.'
-					: workspaceMode === 'deleted'
-						? 'Recently deleted items live here until you restore them or remove them permanently.'
-						: 'Folders and files, tuned for quick scanning instead of dashboard theater.';
-
-	$: workspaceEmptyTitle =
-		workspaceMode === 'photos'
-			? 'No photos in this view'
-			: workspaceMode === 'recent'
-				? 'No recent file activity'
-				: workspaceMode === 'starred'
-					? 'Nothing is starred yet'
-					: workspaceMode === 'deleted'
-						? 'Deleted items will show up here'
-						: 'No files yet';
-
-	$: workspaceEmptyDescription =
-		workspaceMode === 'photos'
-			? 'Upload an image into this folder and it will show up here.'
-			: workspaceMode === 'recent'
-				? 'Modify or upload a file and it will show up here.'
-				: workspaceMode === 'starred'
-					? 'Star a folder or file from its action menu and it will show up here.'
-					: workspaceMode === 'deleted'
-						? 'Deleting a folder or file moves it here instead of removing it immediately.'
-						: 'Upload your first file or create a folder to get started.';
-
-	$: workspaceEmptyActionLabel =
-		workspaceMode === 'all' || workspaceMode === 'photos' || workspaceMode === 'recent'
-			? 'Upload files'
-			: null;
-
-	$: showFolderTree = workspaceMode === 'all';
-	$: showBreadcrumbs = workspaceMode === 'all';
-	$: canCreateFolder = workspaceMode === 'all';
-	$: canUpload = workspaceMode === 'all' || workspaceMode === 'photos' || workspaceMode === 'recent';
-	$: allowSelectionMode = workspaceMode !== 'deleted';
-	$: if (!allowSelectionMode && selectionMode) {
-		selectionMode = false;
-		selectionStore.clear();
-	}
-
-	// Build folder path from the recursive API folder tree
-	function buildFolderPathFromApiTree(root: FolderTreeType, targetId: string): Folder[] {
-		function search(node: FolderTreeType): Folder[] {
-			if (node.folder.id === targetId) {
-				return [node.folder];
-			}
-			if (node.subfolders) {
-				for (const child of node.subfolders) {
-					const path = search(child);
-					if (path.length > 0) {
-						return [node.folder, ...path];
-					}
-				}
-			}
-			return [];
-		}
-		return search(root);
-	}
-
-	// Legacy helper kept for compatibility with folderTreeStore mutations
-	function buildFolderPathFromTree(folders: FolderNode[], targetId: string): Folder[] {
-		for (const folder of folders) {
-			if (folder.id === targetId) {
-				return [{
-					id: folder.id,
-					name: folder.name,
-					path: folder.path,
-					parent_folder_id: folder.parent_folder_id,
-					owner_id: '',
-					created_at: '',
-					updated_at: ''
-				}];
-			}
-			if (folder.children && folder.children.length > 0) {
-				const path = buildFolderPathFromTree(folder.children, targetId);
-				if (path.length > 0) {
-					return [{
-						id: folder.id,
-						name: folder.name,
-						path: folder.path,
-						parent_folder_id: folder.parent_folder_id,
-						owner_id: '',
-						created_at: '',
-						updated_at: ''
-					}, ...path];
-				}
-			}
-		}
-		return [];
-	}
-
-	// Handlers
-	function handleFolderSelect(folderId: string | null, path: FolderNode[]) {
-		currentFolderId = folderId;
-		if (folderId) {
-			goto(`/files?folder=${folderId}`, { replaceState: true });
-		} else {
-			goto('/files', { replaceState: true });
-		}
-	}
+	// ============================================================================
+	// NAVIGATION HANDLERS
+	// ============================================================================
 
 	function handleFolderClick(folder: Folder) {
-		currentFolderId = folder.id;
-		goto(`/files?folder=${folder.id}`, { replaceState: true });
+		if (activeRoot === 'shared') {
+			// For shared folders, use the shared root navigation
+			goto(`/files?folder=${folder.id}&root=shared`, { replaceState: true });
+		} else {
+			// Default my-files navigation
+			goto(`/files?folder=${folder.id}`, { replaceState: true });
+		}
 	}
 
 	function handleBreadcrumbNavigate(event: CustomEvent<{ folderId: string | null }>) {
 		const targetId = event.detail.folderId;
 		if (targetId === null) {
-			currentFolderId = null;
-			goto('/files', { replaceState: true });
+			// Navigate to root of current root
+			if (activeRoot === 'shared') {
+				goto('/files?root=shared', { replaceState: true });
+			} else {
+				goto('/files', { replaceState: true });
+			}
 		} else {
-			currentFolderId = targetId;
-			goto(`/files?folder=${targetId}`, { replaceState: true });
+			if (activeRoot === 'shared') {
+				goto(`/files?folder=${targetId}&root=shared`, { replaceState: true });
+			} else {
+				goto(`/files?folder=${targetId}`, { replaceState: true });
+			}
 		}
 	}
 
 	function handleFileClick(file: File) {
 		if (workspaceMode === 'deleted') return;
-		// Open markdown files in the dedicated note editor
 		if (detectEditorType(file.name, file.mime_type) === 'markdown') {
 			goto(`/notes/${file.id}`);
 			return;
@@ -569,10 +657,12 @@
 		showFilePreviewModal = true;
 	}
 
+	// ============================================================================
+	// OTHER HANDLERS (unchanged from original)
+	// ============================================================================
+
 	function handleEditFile(event: CustomEvent<{ file: File }> | File) {
 		const file = event instanceof CustomEvent ? event.detail.file : event;
-		console.log('[handleEditFile] called with file:', file?.name, file?.mime_type);
-		// Navigate markdown files to note editor
 		if (detectEditorType(file.name, file.mime_type) === 'markdown') {
 			goto(`/notes/${file.id}`);
 			return;
@@ -581,7 +671,6 @@
 		showFilePreviewModal = false;
 
 		const editorType = detectEditorType(file.name, file.mime_type);
-		console.log('[handleEditFile] editorType:', editorType);
 		switch (editorType) {
 			case 'excalidraw':
 				showExcalidrawEditor = true;
@@ -925,7 +1014,7 @@
 		}
 	}
 
-	// Rename handlers - support both modal and inline
+	// Rename handlers
 	function handleRenameFile(file: File) {
 		renameTarget = file;
 		renameType = 'file';
@@ -977,7 +1066,7 @@
 		}
 	}
 
-	// Move handlers - support both modal and direct
+	// Move handlers
 	function handleMoveFile(file: File) {
 		moveTarget = file;
 		moveType = 'file';
@@ -992,24 +1081,20 @@
 
 	function handleMoveFileWithFallback(file: File, targetFolderId: string | null) {
 		if (targetFolderId === null) {
-			// Open modal for user to select destination
 			moveTarget = file;
 			moveType = 'file';
 			showMoveModal = true;
 		} else {
-			// Direct move (e.g., from drag-and-drop)
 			$moveFileMutation.mutate({ fileId: file.id, targetFolderId });
 		}
 	}
 
 	function handleMoveFolderWithFallback(folder: Folder, targetFolderId: string | null) {
 		if (targetFolderId === null) {
-			// Open modal for user to select destination
 			moveTarget = folder;
 			moveType = 'folder';
 			showMoveModal = true;
 		} else {
-			// Direct move (e.g., from drag-and-drop)
 			$moveFolderMutation.mutate({ folderId: folder.id, targetFolderId });
 		}
 	}
@@ -1140,7 +1225,7 @@
 		$permanentlyDeleteFolderMutation.mutate(folder.id);
 	}
 
-	// Listen for global '+' new actions
+	// Keyboard shortcuts and event listeners
 	onMount(() => {
 		const handleCreateFolderEvent = () => {
 			if (canCreateFolder) showCreateFolderModal = true;
@@ -1181,7 +1266,6 @@
 		};
 	});
 
-	// Keyboard shortcuts
 	function handleKeyDown(event: KeyboardEvent) {
 		if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
 
@@ -1233,7 +1317,7 @@
 </script>
 
 <svelte:head>
-	<title>Files - RustShare</title>
+	<title>{workspaceTitle} - RustShare</title>
 </svelte:head>
 
 <svelte:window on:keydown={handleKeyDown} />
@@ -1268,7 +1352,8 @@
 	<FileExplorer
 		folders={sortedFolders}
 		files={sortedFiles}
-		{folderPath}
+		folderPath={breadcrumbPath}
+		rootLabel={activeRoot === 'shared' ? 'Shared' : 'My Files'}
 		title={workspaceTitle}
 		description={workspaceDescription}
 		emptyTitle={workspaceEmptyTitle}

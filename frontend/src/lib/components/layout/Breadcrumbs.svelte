@@ -4,6 +4,7 @@
 	import { Home, ChevronRight } from 'lucide-svelte';
 
 	export let folderPath: Folder[] = [];
+	export let rootLabel: string = 'My Files';
 
 	type DispatchEvents = {
 		navigate: { folderId: string | null };
@@ -26,7 +27,7 @@
 				aria-label="My Files"
 			>
 				<Home size={14} />
-				<span>My Files</span>
+				<span>{rootLabel}</span>
 			</button>
 		</li>
 

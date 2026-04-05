@@ -7,6 +7,7 @@
 	export let folders: Folder[] = [];
 	export let files: FileType[] = [];
 	export let folderPath: Folder[] = [];
+	export let rootLabel: string = 'My Files';
 	export let title = 'All files';
 	export let description = '';
 	export let emptyTitle = 'No files yet';
@@ -74,6 +75,7 @@
 			{folders}
 			{files}
 			{folderPath}
+			{rootLabel}
 			{title}
 			{description}
 			{emptyTitle}

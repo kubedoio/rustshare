@@ -1,15 +1,29 @@
 <script lang="ts">
+	/**
+	 * ==============================================================================
+	 * FOLDER TREE COMPONENT
+	 * ==============================================================================
+	 * 
+	 * Refactored to support dual-root structure (My Files + Shared).
+	 * 
+	 * Per SPEC:
+	 * - My Files and Shared must have identical interaction behavior
+	 * - Tree renderer must be shared, not duplicated
+	 * - Shared root must use the provided SVG icon
+	 * - Selected state reflects store state
+	 */
+
 	import { ChevronRight, Folder, FolderOpen, Loader2 } from 'lucide-svelte';
 	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
 	import { folderTreeStore } from '$lib/stores/folderTree';
 	import { page } from '$app/stores';
-	import { goto } from '$app/navigation';
 	import { createMutation } from '@tanstack/svelte-query';
 	import { queryClient } from '$lib/query-client';
 	import { moveFile } from '$lib/api/files';
 	import { moveFolder, type FolderTree as FolderTreeType } from '$lib/api/folders';
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
 	import FolderTree from './FolderTree.svelte';
+	import type { ExplorerRoot } from '$lib/explorer';
 
 	interface Props {
 		folders: FolderTreeType[];
@@ -17,23 +31,43 @@
 		onFolderClick?: (folderId: string) => void;
 		// Ancestor IDs of the currently selected folder (for emphasis)
 		ancestorIds?: Set<string>;
+		// Root type for this tree section
+		rootType?: ExplorerRoot;
+		// Whether this tree section is currently active
+		isActive?: boolean;
+		// Custom icon SVG for the root (used for Shared)
+		sharedIcon?: string;
 	}
 
 	let { 
 		folders,
 		depth = 0,
 		onFolderClick = () => {},
-		ancestorIds = new Set()
+		ancestorIds = new Set(),
+		rootType = 'my-files',
+		isActive = true,
+		sharedIcon = ''
 	}: Props = $props();
 
 	const INDENT_SIZE = 18; // pixels per depth level
+
+	// ============================================================================
+	// STATE CHECKS
+	// ============================================================================
 
 	function isExpanded(folderId: string): boolean {
 		return $fileBrowserUi.expandedFolderIds.has(folderId);
 	}
 
-	function isActive(folder: FolderTreeType): boolean {
+	function isActiveFolder(folder: FolderTreeType): boolean {
+		// If this tree section is not active, no folder is active
+		if (!isActive) return false;
+		
 		const currentFolderId = $page.url.searchParams.get('folder');
+		const currentRoot = $page.url.searchParams.get('root') as ExplorerRoot || 'my-files';
+		
+		// Only match if we're in the same root
+		if (currentRoot !== rootType) return false;
 		
 		// If we're at the root of the file system (/files without folder param)
 		if (!currentFolderId) {
@@ -46,17 +80,22 @@
 	}
 
 	function isAncestor(folderId: string): boolean {
+		// Only show ancestor highlight if this tree section is active
+		if (!isActive) return false;
 		return ancestorIds.has(folderId);
 	}
+
+	function hasChildren(folder: FolderTreeType): boolean {
+		return folder.subfolders && folder.subfolders.length > 0;
+	}
+
+	// ============================================================================
+	// EVENT HANDLERS
+	// ============================================================================
 
 	function toggleExpand(e: MouseEvent, folderId: string) {
 		e.stopPropagation();
 		fileBrowserUi.toggleFolderExpanded(folderId);
-	}
-
-	function isRootFolder(folder: FolderTreeType): boolean {
-		// Root folder has no parent
-		return !folder.folder.parent_folder_id;
 	}
 
 	function navigateToFolder(folder: FolderTreeType) {
@@ -64,25 +103,15 @@
 		const isRoot = depth === 0;
 		
 		fileBrowserUi.selectFolder(folderId);
-		
-		if (isRoot) {
-			// Navigate to home (no folder param) for root
-			goto('/files');
-		} else {
-			goto(`/files?folder=${folderId}`);
-		}
-		
 		onFolderClick(folderId);
 	}
 
-	function hasChildren(folder: FolderTreeType): boolean {
-		return folder.subfolders && folder.subfolders.length > 0;
-	}
+	// ============================================================================
+	// DRAG & DROP STATE
+	// ============================================================================
 
-	// Drag & Drop State
 	let draggedOverFolderId = $state<string | null>(null);
 
-	// Mutations
 	const moveFileMutation = createMutation({
 		mutationFn: ({ fileId, targetFolderId }: { fileId: string; targetFolderId: string | null }) => 
 			moveFile(fileId, targetFolderId),
@@ -97,20 +126,16 @@
 		mutationFn: ({ folderId, targetFolderId }: { folderId: string; targetFolderId: string | null }) => 
 			moveFolder(folderId, targetFolderId),
 		onSuccess: (_, { folderId, targetFolderId }) => {
-			// Optimistically update the store if possible
 			folderTreeStore.moveFolder(folderId, targetFolderId);
-			// Expand destination folder so moved folder is visible
 			if (targetFolderId) {
 				fileBrowserUi.expandFolder(targetFolderId);
 			}
-			// Refresh queries
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 		}
 	});
 
-	// D&D Handlers
 	function handleDragStart(e: DragEvent, folderToDrag: FolderTreeType) {
 		if (e.dataTransfer) {
 			e.dataTransfer.effectAllowed = 'move';
@@ -161,16 +186,30 @@
 	function isMoving(folderId: string): boolean {
 		return $moveFolderMutation.isPending && $moveFolderMutation.variables?.folderId === folderId;
 	}
+
+	// ============================================================================
+	// ICON RENDERING
+	// ============================================================================
+
+	function isRootNode(folder: FolderTreeType): boolean {
+		return depth === 0;
+	}
+
+	function shouldUseSharedIcon(folder: FolderTreeType): boolean {
+		return isRootNode(folder) && rootType === 'shared' && !!sharedIcon;
+	}
 </script>
 
 <div class="folder-tree">
 	{#each folders as folder (folder.folder.id)}
 		{@const folderId = folder.folder.id}
 		{@const expanded = isExpanded(folderId)}
-		{@const active = isActive(folder)}
+		{@const active = isActiveFolder(folder)}
 		{@const isAncestorOfActive = isAncestor(folderId)}
 		{@const hasChildrenValue = hasChildren(folder)}
 		{@const indentPx = depth * INDENT_SIZE}
+		{@const useSharedIcon = shouldUseSharedIcon(folder)}
+		{@const isRoot = isRootNode(folder)}
 
 		<div class="tree-node">
 			<!-- Folder Row -->
@@ -180,6 +219,7 @@
 				class:is-ancestor={isAncestorOfActive}
 				class:drag-over={draggedOverFolderId === folderId}
 				class:is-moving={isMoving(folderId)}
+				class:root-node={isRoot}
 				style="padding-left: {indentPx}px"
 				onclick={() => navigateToFolder(folder)}
 				role="button"
@@ -207,6 +247,11 @@
 				<span class="folder-icon-wrapper">
 					{#if isMoving(folderId) || ($moveFileMutation.isPending && $moveFileMutation.variables?.targetFolderId === folderId)}
 						<Loader2 size={16} class="animate-spin text-brand-500" />
+					{:else if useSharedIcon}
+						<!-- Shared Root Icon (from SPEC section 1.4) -->
+						<span class="shared-icon" class:active>
+							{@html sharedIcon}
+						</span>
 					{:else if active || expanded}
 						<FolderOpen 
 							size={16} 
@@ -221,12 +266,12 @@
 				</span>
 
 				<!-- Folder Name -->
-				<span class="folder-name" class:active class:is-ancestor={isAncestorOfActive}>
+				<span class="folder-name" class:active class:is-ancestor={isAncestorOfActive} class:root-node={isRoot}>
 					{folder.folder.name}
 				</span>
 
 				<!-- Share Indicator -->
-				{#if folder.folder.is_shared}
+				{#if folder.folder.is_shared && !useSharedIcon}
 					<ShareIndicator 
 						isShared={folder.folder.is_shared}
 						shareCount={folder.folder.share_count}
@@ -244,6 +289,9 @@
 						depth={depth + 1}
 						onFolderClick={onFolderClick}
 						{ancestorIds}
+						{rootType}
+						{isActive}
+						{sharedIcon}
 					/>
 				</div>
 			{/if}
@@ -298,6 +346,10 @@
 		background-color: color-mix(in srgb, var(--rs-brand, #c65a1e) 18%, transparent);
 	}
 
+	.folder-row.root-node {
+		font-weight: 500;
+	}
+
 	/* Chevron */
 	.chevron {
 		display: flex;
@@ -347,6 +399,24 @@
 		color: var(--rs-brand, #c65a1e);
 	}
 
+	/* Shared Icon */
+	.shared-icon {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: color-mix(in srgb, var(--rs-text-muted, #6c665f) 70%, transparent);
+		transition: color 0.12s ease;
+	}
+
+	.shared-icon :global(svg) {
+		width: 16px;
+		height: 16px;
+	}
+
+	.shared-icon.active {
+		color: var(--rs-brand, #c65a1e);
+	}
+
 	/* Folder Name */
 	.folder-name {
 		flex: 1;
@@ -366,6 +436,10 @@
 
 	.folder-row.is-ancestor .folder-name {
 		color: var(--rs-text, #151515);
+		font-weight: 500;
+	}
+
+	.folder-name.root-node {
 		font-weight: 500;
 	}
 

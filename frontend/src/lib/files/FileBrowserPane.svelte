@@ -12,6 +12,7 @@
 		folders?: Folder[];
 		files?: FileType[];
 		folderPath?: Folder[];
+		rootLabel?: string;
 		title?: string;
 		description?: string;
 		emptyTitle?: string;
@@ -63,6 +64,7 @@
 		folders = [],
 		files = [],
 		folderPath = [],
+		rootLabel = 'My Files',
 		title = 'All files',
 		description = '',
 		emptyTitle = 'No files yet',
@@ -136,7 +138,7 @@
 	<!-- Breadcrumbs -->
 	{#if showBreadcrumbs}
 		<div class="border-b border-base-300/50 bg-base-200/30 px-3 py-1.5 md:px-4 lg:px-5">
-			<Breadcrumbs {folderPath} on:navigate={onbreadcrumbNavigate} />
+			<Breadcrumbs {folderPath} {rootLabel} on:navigate={onbreadcrumbNavigate} />
 		</div>
 	{/if}
 
