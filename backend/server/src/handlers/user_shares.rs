@@ -445,40 +445,64 @@ pub async fn get_user_shared_folder_contents(
 
     // Verify the user has access to this folder via a share
     // This checks if the folder itself OR any ancestor folder is shared with the user
-    let has_access = sqlx::query_scalar::<_, bool>(
-        r#"
-        SELECT EXISTS(
-            -- Direct share on this folder
-            SELECT 1 FROM share_user_access sua
-            JOIN shares s ON sua.share_id = s.id
-            WHERE s.folder_id = $1
-            AND sua.user_id = $2
-            AND s.revoked_at IS NULL
-            UNION
-            -- Share on any ancestor folder
-            SELECT 1 FROM share_user_access sua
-            JOIN shares s ON sua.share_id = s.id
-            JOIN folders f ON s.folder_id = f.id
-            WHERE sua.user_id = $2
-            AND s.revoked_at IS NULL
-            AND s.folder_id IS NOT NULL
-            AND $3 LIKE f.path || '/%'
+    // Build the ancestor path pattern (e.g., "/parent" for "/parent/child")
+    let path_parts: Vec<&str> = folder_path.split('/').filter(|s| !s.is_empty()).collect();
+    let mut has_access = false;
+    
+    // Check each ancestor path (including the folder itself)
+    for i in 0..=path_parts.len() {
+        let ancestor_path = if i == 0 {
+            "/".to_string()
+        } else {
+            format!("/{}", path_parts[..i].join("/"))
+        };
+        
+        let ancestor_id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM folders WHERE path = $1 AND deleted_at IS NULL"
         )
-        "#,
-    )
-    .bind(folder_id)
-    .bind(auth.user_id)
-    .bind(&folder_path)
-    .fetch_one(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Error checking share access: {:?}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Internal server error")),
-        )
-            .into_response()
-    })?;
+        .bind(&ancestor_path)
+        .fetch_optional(&state.db_pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Error looking up ancestor folder: {:?}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(super::ErrorResponse::new("Internal server error")),
+            )
+                .into_response()
+        })?;
+        
+        if let Some(ancestor_id) = ancestor_id {
+            let has_share: bool = sqlx::query_scalar(
+                r#"
+                SELECT EXISTS(
+                    SELECT 1 FROM share_user_access sua
+                    JOIN shares s ON sua.share_id = s.id
+                    WHERE s.folder_id = $1
+                    AND sua.user_id = $2
+                    AND s.revoked_at IS NULL
+                )
+                "#
+            )
+            .bind(ancestor_id)
+            .bind(auth.user_id)
+            .fetch_one(&state.db_pool)
+            .await
+            .map_err(|e| {
+                tracing::error!("Error checking share for ancestor {}: {:?}", ancestor_id, e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(super::ErrorResponse::new("Internal server error")),
+                )
+                    .into_response()
+            })?;
+            
+            if has_share {
+                has_access = true;
+                break;
+            }
+        }
+    }
 
     if !has_access {
         return Err(
