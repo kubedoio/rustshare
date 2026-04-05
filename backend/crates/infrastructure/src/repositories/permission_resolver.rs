@@ -165,7 +165,7 @@ impl PermissionResolverOps for PermissionResolverRepository {
     async fn get_user_group_ids(&self, user_id: UserId) -> Result<Vec<Uuid>> {
         let rows = sqlx::query(
             r#"
-            SELECT group_id FROM user_groups WHERE user_id = $1
+            SELECT group_id FROM group_members WHERE user_id = $1
             "#,
         )
         .bind(user_id)

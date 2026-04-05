@@ -110,6 +110,8 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            starred_at: None,
+            deleted_at: None,
             tenant_id,
         };
 
@@ -147,6 +149,8 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            starred_at: None,
+            deleted_at: None,
             tenant_id,
         };
 
@@ -204,6 +208,8 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            starred_at: None,
+            deleted_at: None,
             tenant_id,
         };
 

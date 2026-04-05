@@ -17,6 +17,8 @@ pub struct Folder {
     pub owner_id: UserId,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub starred_at: Option<DateTime<Utc>>,
+    pub deleted_at: Option<DateTime<Utc>>,
     pub tenant_id: Uuid,
     /// Ancestor folder IDs (parent, grandparent, etc.) for efficient permission resolution.
     /// Stored as Option for backward compatibility with folders created before this field existed.
@@ -39,6 +41,8 @@ impl Folder {
             owner_id,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            starred_at: None,
+            deleted_at: None,
             tenant_id,
             ancestor_ids: Some(Vec::new()), // Root has no ancestors
         }
@@ -67,6 +71,8 @@ impl Folder {
             owner_id,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            starred_at: None,
+            deleted_at: None,
             tenant_id,
             ancestor_ids: None, // Must be set by caller using parent's ancestor_ids
         }
@@ -95,6 +101,8 @@ impl Folder {
             owner_id,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            starred_at: None,
+            deleted_at: None,
             tenant_id,
             ancestor_ids: Some(ancestor_ids),
         }
@@ -136,13 +144,19 @@ mod tests {
         let owner_id = Uuid::new_v4();
         let parent_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
-        let folder = Folder::new_child(
-            "Documents".to_string(),
-            "/Documents".to_string(),
-            parent_id,
+        let folder = Folder {
+            id: Uuid::new_v4(),
+            name: "Documents".to_string(),
+            path: "/Documents".to_string(),
+            parent_folder_id: Some(parent_id),
             owner_id,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            starred_at: None,
+            deleted_at: None,
             tenant_id,
-        );
+            ancestor_ids: None,
+        };
 
         assert_eq!(folder.name, "Documents");
         assert_eq!(folder.path, "/Documents");

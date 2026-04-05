@@ -178,3 +178,12 @@ pub fn share_error_response(err: ShareError) -> Response {
 
     (status, Json(ErrorResponse::new(message))).into_response()
 }
+
+/// Helper function to generate internal server error response.
+pub fn internal_error_response() -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse::new("Internal server error")),
+    )
+        .into_response()
+}

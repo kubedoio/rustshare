@@ -21,6 +21,8 @@ pub struct File {
     pub current_version: i32,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
+    pub starred_at: Option<DateTime<Utc>>,
+    pub deleted_at: Option<DateTime<Utc>>,
     pub tenant_id: Uuid,
 }
 
@@ -48,6 +50,8 @@ impl File {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            starred_at: None,
+            deleted_at: None,
             tenant_id,
         }
     }
@@ -76,6 +80,8 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            starred_at: None,
+            deleted_at: None,
             tenant_id: Uuid::new_v4(),
         };
 
@@ -97,6 +103,8 @@ mod tests {
             current_version: 1,
             created_at: Utc::now(),
             modified_at: Utc::now(),
+            starred_at: None,
+            deleted_at: None,
             tenant_id: Uuid::new_v4(),
         };
 

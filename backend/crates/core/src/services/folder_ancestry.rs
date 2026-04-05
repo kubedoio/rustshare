@@ -433,6 +433,8 @@ mod tests {
             owner_id: Uuid::new_v4(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
+            starred_at: None,
+            deleted_at: None,
             tenant_id: Uuid::new_v4(),
             ancestor_ids,
         }

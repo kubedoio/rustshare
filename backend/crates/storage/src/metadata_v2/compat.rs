@@ -383,6 +383,8 @@ fn folder_from_document(doc: &FolderDocument) -> Folder {
         owner_id: doc.owner_id,
         created_at: doc.created_at,
         updated_at: doc.updated_at,
+        starred_at: None,
+        deleted_at: None,
         tenant_id: doc.tenant_id,
         ancestor_ids: Some(doc.ancestor_ids.clone()),
     }
@@ -424,6 +426,8 @@ fn file_from_document(doc: &FileDocument) -> File {
         current_version: doc.version_number,
         created_at: doc.created_at,
         modified_at: doc.updated_at,
+        starred_at: None,
+        deleted_at: None,
         tenant_id: doc.tenant_id,
     }
 }

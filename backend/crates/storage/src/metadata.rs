@@ -701,7 +701,7 @@ impl MetadataStore {
     pub async fn find_file_by_id(&self, id: Uuid) -> Result<Option<File>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id FROM files WHERE id = $1 AND deleted_at IS NULL"#,
+            r#"SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id FROM files WHERE id = $1 AND deleted_at IS NULL"#,
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -720,6 +720,8 @@ impl MetadataStore {
                 current_version: row.try_get("current_version")?,
                 created_at: row.try_get("created_at")?,
                 modified_at: row.try_get("modified_at")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
                 tenant_id: row.try_get("tenant_id")?,
             };
             Ok(Some(file))
@@ -732,7 +734,7 @@ impl MetadataStore {
     pub async fn find_file_by_path(&self, path: &str, owner_id: Uuid) -> Result<Option<File>> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id
+            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id
             FROM files
             WHERE path = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
@@ -755,6 +757,8 @@ impl MetadataStore {
                 current_version: row.try_get("current_version")?,
                 created_at: row.try_get("created_at")?,
                 modified_at: row.try_get("modified_at")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
                 tenant_id: row.try_get("tenant_id")?,
             };
             Ok(Some(file))
@@ -815,7 +819,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
-            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id
+            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id
             FROM files
             WHERE owner_id = $1
               AND tenant_id = $2
@@ -844,6 +848,8 @@ impl MetadataStore {
                 current_version: row.try_get("current_version")?,
                 created_at: row.try_get("created_at")?,
                 modified_at: row.try_get("modified_at")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
                 tenant_id: row.try_get("tenant_id")?,
             };
             files.push(file);
@@ -1435,7 +1441,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
             FROM folders
             WHERE id = $1 AND deleted_at IS NULL
             "#,
@@ -1453,6 +1459,8 @@ impl MetadataStore {
                 owner_id: row.try_get("owner_id")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
                 tenant_id: row.try_get("tenant_id")?,
                 ancestor_ids: None, // Will be populated from folder_documents if available
             };
@@ -1466,7 +1474,7 @@ impl MetadataStore {
     pub async fn find_folder_by_path(&self, path: &str, owner_id: Uuid) -> Result<Option<Folder>> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
             FROM folders
             WHERE path = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
@@ -1485,6 +1493,8 @@ impl MetadataStore {
                 owner_id: row.try_get("owner_id")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
                 tenant_id: row.try_get("tenant_id")?,
                 ancestor_ids: None, // Will be populated from folder_documents if available
             };
@@ -1581,6 +1591,8 @@ impl MetadataStore {
                 owner_id: row.try_get("owner_id")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
                 tenant_id: row.try_get("tenant_id")?,
                 ancestor_ids: None, // Will be populated from folder_documents if available
             };
@@ -1644,9 +1656,9 @@ impl MetadataStore {
                 owner_id: row.try_get("owner_id")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
-                tenant_id: row.try_get("tenant_id")?,
                 starred_at: row.try_get("starred_at")?,
                 deleted_at: row.try_get("deleted_at")?,
+                tenant_id: row.try_get("tenant_id")?,
                 ancestor_ids: None,
                 is_shared: row.try_get("is_shared")?,
                 share_count: row.try_get("share_count")?,
@@ -1862,6 +1874,8 @@ impl MetadataStore {
                 owner_id: row.try_get("owner_id")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
                 tenant_id: row.try_get("tenant_id")?,
                 ancestor_ids: None, // Will be populated from folder_documents if available
             };
@@ -2376,6 +2390,8 @@ impl MetadataStore {
                 current_version: row.try_get("current_version")?,
                 created_at: row.try_get("created_at")?,
                 modified_at: row.try_get("modified_at")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
                 tenant_id: row.try_get("tenant_id")?,
             };
             files.push(file);
