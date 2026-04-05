@@ -6,11 +6,11 @@
 //! - Real-time and polling-based sync
 //! - Journal-based crash recovery
 
-pub mod api;
-pub mod config;
-pub mod db;
-pub mod fs;
-pub mod sync;
+// pub mod api;
+// pub mod config;
+// pub mod db;
+// pub mod fs;
+// pub mod sync;
 
 use anyhow::Result;
 use std::path::PathBuf;

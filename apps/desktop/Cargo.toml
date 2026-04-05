@@ -25,6 +25,8 @@ clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
+directories = { workspace = true }
+dirs = { workspace = true }
 
 # App specific
 tauri = { version = "2.2", optional = true } # Placeholder for recommended shell

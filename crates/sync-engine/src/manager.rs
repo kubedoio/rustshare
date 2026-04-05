@@ -8,6 +8,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info};
 use sync_domain::{SyncStatus, SyncRoot};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RpcRequest {
@@ -33,7 +34,7 @@ pub struct SyncManager {
 }
 
 impl SyncManager {
-    pub fn new(database: Database, client: Api_Client, workspace_root: PathBuf) -> Self {
+    pub fn new(database: Database, client: ApiClient, workspace_root: PathBuf) -> Self {
         let rpc_token = Uuid::new_v4().to_string();
         Self {
             database: Arc::new(Mutex::new(database)),
@@ -151,10 +152,16 @@ async fn handle_rpc(
         _ => None,
     };
 
+    let error = if result.is_none() { 
+        Some(serde_json::json!({"code": -32601, "message": "Method not found"})) 
+    } else { 
+        None 
+    };
+
     Json(RpcResponse {
         jsonrpc: "2.0".to_string(),
         result,
-        error: if result.is_none() { Some(serde_json::json!({"code": -32601, "message": "Method not found"})) } else { None },
+        error,
         id: req.id,
     })
 }
