@@ -451,7 +451,7 @@ pub async fn get_user_shared_folder_contents(
             WHERE s.folder_id IN (SELECT id FROM ancestors)
             AND (
                 s.recipient_user_id = $2
-                OR s.recipient_group_id IN (SELECT group_id FROM user_group_members WHERE user_id = $2)
+                OR s.recipient_group_id IN (SELECT group_id FROM group_members WHERE user_id = $2)
             )
             AND s.revoked_at IS NULL
         )
