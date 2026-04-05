@@ -43,7 +43,8 @@ RUN apt-get update && apt-get install -y pkg-config libssl-dev \
 COPY Cargo.toml Cargo.lock ./
 COPY rust-toolchain.toml ./
 COPY backend ./backend/
-COPY desktop ./desktop/
+COPY apps ./apps/
+COPY crates ./crates/
 
 # Build the application
 ENV CARGO_NET_RETRY=10
