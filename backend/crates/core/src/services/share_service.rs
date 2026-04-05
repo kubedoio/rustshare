@@ -16,11 +16,11 @@ use uuid::Uuid;
 use rustshare_crypto::PasswordHasher;
 
 use crate::domain::{File, Folder, Share, SharePermissions, UserId};
-use crate::services::permission_resolver::Resource;
 use crate::events::{
     AggregateType, Event, EventBroadcaster, EventType, ShareCreatedPayload, ShareRevokedPayload,
     ShareUpdatedPayload,
 };
+use crate::services::permission_resolver::Resource;
 use crate::services::ShareError;
 
 /// Trait for JWT operations needed by ShareService.
@@ -90,11 +90,25 @@ pub trait MetadataStoreOps: Send + Sync {
         tenant_id: uuid::Uuid,
     ) -> Result<Vec<File>>;
 
+    /// List files in a folder regardless of owner.
+    async fn list_files_by_parent(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        tenant_id: uuid::Uuid,
+    ) -> Result<Vec<File>>;
+
     /// List folders in a folder for an owner.
     async fn list_folders(
         &self,
         parent_id: Option<uuid::Uuid>,
         owner_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
+    ) -> Result<Vec<Folder>>;
+
+    /// List folders in a folder regardless of owner.
+    async fn list_folders_by_parent(
+        &self,
+        parent_id: Option<uuid::Uuid>,
         tenant_id: uuid::Uuid,
     ) -> Result<Vec<Folder>>;
 
@@ -117,17 +131,26 @@ pub trait MetadataStoreOps: Send + Sync {
 #[async_trait::async_trait]
 pub trait ShareNotificationRepo: Send + Sync {
     /// Check if user was already notified for this share.
-    async fn was_notified(&self, user_id: UserId, share_id: uuid::Uuid) -> Result<bool, sqlx::Error>;
+    async fn was_notified(
+        &self,
+        user_id: UserId,
+        share_id: uuid::Uuid,
+    ) -> Result<bool, sqlx::Error>;
 
     /// Record that notification was sent.
-    async fn record_notification(&self, user_id: UserId, share_id: uuid::Uuid) -> Result<(), sqlx::Error>;
+    async fn record_notification(
+        &self,
+        user_id: UserId,
+        share_id: uuid::Uuid,
+    ) -> Result<(), sqlx::Error>;
 }
 
 /// ShareService handles share link creation and management.
 ///
 /// Generic over EventStore, MetadataStore, and ShareNotificationRepo implementations
 /// to support different backends and testing with mock implementations.
-pub struct ShareService<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo> {
+pub struct ShareService<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
+{
     event_store: Arc<E>,
     metadata_store: Arc<M>,
     broadcaster: Arc<EventBroadcaster>,
@@ -135,7 +158,9 @@ pub struct ShareService<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: Sha
     notification_repo: Arc<N>,
 }
 
-impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo> ShareService<E, M, J, N> {
+impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
+    ShareService<E, M, J, N>
+{
     /// Create a new ShareService instance.
     pub fn new(
         event_store: Arc<E>,
@@ -731,13 +756,13 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
         let folders = self
             .metadata_store
-            .list_folders(Some(target_folder.id), root_folder.owner_id, target_folder.tenant_id)
+            .list_folders_by_parent(Some(target_folder.id), target_folder.tenant_id)
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
 
         let files = self
             .metadata_store
-            .list_files(Some(target_folder.id), root_folder.owner_id, target_folder.tenant_id)
+            .list_files_by_parent(Some(target_folder.id), target_folder.tenant_id)
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
 
@@ -768,7 +793,8 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         // Verify resource exists and get its owner/tenant
         let (resource_owner, resource_tenant) = match &resource {
             Resource::File(file_id) => {
-                let file = self.metadata_store
+                let file = self
+                    .metadata_store
                     .find_file_by_id(*file_id)
                     .await
                     .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
@@ -776,7 +802,8 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 (file.owner_id, file.tenant_id)
             }
             Resource::Folder(folder_id) => {
-                let folder = self.metadata_store
+                let folder = self
+                    .metadata_store
                     .find_folder_by_id(*folder_id)
                     .await
                     .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
@@ -796,12 +823,14 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             true
         } else {
             // Check if user has admin permission on resource
-            self.check_resource_permission(created_by, resource, SharePermissions::Admin).await?
+            self.check_resource_permission(created_by, resource, SharePermissions::Admin)
+                .await?
         };
 
         // Non-admins must be group members
         if !has_admin {
-            let is_member = self.metadata_store
+            let is_member = self
+                .metadata_store
                 .is_user_in_group(created_by, group_id)
                 .await
                 .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
@@ -812,17 +841,14 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
         // Check for existing group share
         let existing_shares = match &resource {
-            Resource::File(file_id) => {
-                self.metadata_store.get_file_shares(*file_id).await
-            }
-            Resource::Folder(folder_id) => {
-                self.metadata_store.get_folder_shares(*folder_id).await
-            }
-        }.map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            Resource::File(file_id) => self.metadata_store.get_file_shares(*file_id).await,
+            Resource::Folder(folder_id) => self.metadata_store.get_folder_shares(*folder_id).await,
+        }
+        .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
 
-        let already_exists = existing_shares.iter().any(|s| {
-            s.recipient_group_id == Some(group_id) && s.revoked_at.is_none()
-        });
+        let already_exists = existing_shares
+            .iter()
+            .any(|s| s.recipient_group_id == Some(group_id) && s.revoked_at.is_none());
 
         if already_exists {
             return Err(ShareError::GroupShareAlreadyExists);
@@ -854,7 +880,9 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         };
 
         // Store share
-        self.metadata_store.create_share(&share).await
+        self.metadata_store
+            .create_share(&share)
+            .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
 
         // Emit event
@@ -877,18 +905,20 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             created_by,
         );
 
-        self.event_store.append(&event, &self.broadcaster).await
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
 
         Ok(share)
     }
 
     /// Revoke a group share
-    /// 
+    ///
     /// # Arguments
     /// * `share_id` - ID of the share to revoke
     /// * `requesting_user` - User attempting to revoke
-    /// 
+    ///
     /// # Errors
     /// * NotFoundById - if share doesn't exist
     /// * InvalidState - if not a group share
@@ -899,46 +929,53 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         requesting_user: UserId,
     ) -> Result<(), ShareError> {
         // Get the share
-        let share = self.metadata_store
+        let share = self
+            .metadata_store
             .get_share_by_id(share_id)
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
-        
+
         // Verify it's a group share
         if share.recipient_group_id.is_none() {
             return Err(ShareError::InvalidState("Not a group share".to_string()));
         }
-        
+
         // Determine resource for permission check
         let resource = if let Some(file_id) = share.file_id {
             Resource::File(file_id)
         } else if let Some(folder_id) = share.folder_id {
             Resource::Folder(folder_id)
         } else {
-            return Err(ShareError::InvalidState("Share has no resource".to_string()));
+            return Err(ShareError::InvalidState(
+                "Share has no resource".to_string(),
+            ));
         };
-        
+
         // Check admin permission
-        let has_admin = self.check_resource_permission(requesting_user, resource, SharePermissions::Admin).await?;
+        let has_admin = self
+            .check_resource_permission(requesting_user, resource, SharePermissions::Admin)
+            .await?;
         if !has_admin && share.created_by != requesting_user {
             return Err(ShareError::InsufficientPermission {
                 required: SharePermissions::Admin,
                 actual: SharePermissions::View,
             });
         }
-        
+
         // Revoke the share
-        self.metadata_store.revoke_share(share_id).await
+        self.metadata_store
+            .revoke_share(share_id)
+            .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
-        
+
         // Emit event
         let payload = ShareRevokedPayload {
             share_id,
             file_id: share.resource_id().unwrap_or(share_id),
             revoked_by: requesting_user,
         };
-        
+
         let event = Event::new(
             EventType::ShareRevoked,
             share_id,
@@ -947,20 +984,22 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?,
             requesting_user,
         );
-        
-        self.event_store.append(&event, &self.broadcaster).await
+
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
-        
+
         Ok(())
     }
 
     /// Update group share permission
-    /// 
+    ///
     /// # Arguments
     /// * `share_id` - ID of the share to update
     /// * `new_permission` - New permission level
     /// * `requesting_user` - User attempting to update
-    /// 
+    ///
     /// # Errors
     /// * NotFoundById - if share doesn't exist
     /// * InvalidState - if not a group share
@@ -972,40 +1011,47 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         requesting_user: UserId,
     ) -> Result<Share, ShareError> {
         // Get the share
-        let mut share = self.metadata_store
+        let mut share = self
+            .metadata_store
             .get_share_by_id(share_id)
             .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
-        
+
         // Verify it's a group share
         if share.recipient_group_id.is_none() {
             return Err(ShareError::InvalidState("Not a group share".to_string()));
         }
-        
+
         // Determine resource for permission check
         let resource = if let Some(file_id) = share.file_id {
             Resource::File(file_id)
         } else if let Some(folder_id) = share.folder_id {
             Resource::Folder(folder_id)
         } else {
-            return Err(ShareError::InvalidState("Share has no resource".to_string()));
+            return Err(ShareError::InvalidState(
+                "Share has no resource".to_string(),
+            ));
         };
-        
+
         // Check admin permission
-        let has_admin = self.check_resource_permission(requesting_user, resource, SharePermissions::Admin).await?;
+        let has_admin = self
+            .check_resource_permission(requesting_user, resource, SharePermissions::Admin)
+            .await?;
         if !has_admin && share.created_by != requesting_user {
             return Err(ShareError::InsufficientPermission {
                 required: SharePermissions::Admin,
                 actual: SharePermissions::View,
             });
         }
-        
+
         // Update permission
         share.permissions = new_permission;
-        self.metadata_store.update_share(&share).await
+        self.metadata_store
+            .update_share(&share)
+            .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
-        
+
         // Emit event
         let payload = ShareUpdatedPayload {
             share_id,
@@ -1015,7 +1061,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             new_expires_at: None,
             updated_by: requesting_user,
         };
-        
+
         let event = Event::new(
             EventType::ShareUpdated,
             share_id,
@@ -1024,15 +1070,17 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?,
             requesting_user,
         );
-        
-        self.event_store.append(&event, &self.broadcaster).await
+
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
-        
+
         Ok(share)
     }
 
     /// Check if user has specific permission on resource
-    /// 
+    ///
     /// This method checks if the user is the owner or has a direct share
     /// with the required permission level.
     async fn check_resource_permission(
@@ -1044,7 +1092,8 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         match resource {
             Resource::File(file_id) => {
                 // Check if user owns the file
-                if let Some(file) = self.metadata_store
+                if let Some(file) = self
+                    .metadata_store
                     .find_file_by_id(file_id)
                     .await
                     .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
@@ -1053,30 +1102,33 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                         return Ok(true); // Owner has all permissions
                     }
                 }
-                
+
                 // Check for direct user share with sufficient permission
-                let shares = self.metadata_store
+                let shares = self
+                    .metadata_store
                     .get_file_shares(file_id)
                     .await
                     .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
-                
+
                 // Check direct user shares
                 let has_direct_share = shares.iter().any(|share| {
                     share.recipient_user_id == Some(user_id)
                         && share.revoked_at.is_none()
                         && share.permissions >= required
                 });
-                
+
                 if has_direct_share {
                     return Ok(true);
                 }
-                
+
                 // Check group shares - user must be member of group with sufficient permission
                 for share in &shares {
-                    if share.recipient_group_id.is_some() 
+                    if share.recipient_group_id.is_some()
                         && share.revoked_at.is_none()
-                        && share.permissions >= required {
-                        let is_member = self.metadata_store
+                        && share.permissions >= required
+                    {
+                        let is_member = self
+                            .metadata_store
                             .is_user_in_group(user_id, share.recipient_group_id.unwrap())
                             .await
                             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
@@ -1085,12 +1137,13 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                         }
                     }
                 }
-                
+
                 Ok(false)
             }
             Resource::Folder(folder_id) => {
                 // Check if user owns the folder
-                if let Some(folder) = self.metadata_store
+                if let Some(folder) = self
+                    .metadata_store
                     .find_folder_by_id(folder_id)
                     .await
                     .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
@@ -1099,30 +1152,33 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                         return Ok(true); // Owner has all permissions
                     }
                 }
-                
+
                 // Check for direct user share with sufficient permission
-                let shares = self.metadata_store
+                let shares = self
+                    .metadata_store
                     .get_folder_shares(folder_id)
                     .await
                     .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
-                
+
                 // Check direct user shares
                 let has_direct_share = shares.iter().any(|share| {
                     share.recipient_user_id == Some(user_id)
                         && share.revoked_at.is_none()
                         && share.permissions >= required
                 });
-                
+
                 if has_direct_share {
                     return Ok(true);
                 }
-                
+
                 // Check group shares - user must be member of group with sufficient permission
                 for share in &shares {
-                    if share.recipient_group_id.is_some() 
+                    if share.recipient_group_id.is_some()
                         && share.revoked_at.is_none()
-                        && share.permissions >= required {
-                        let is_member = self.metadata_store
+                        && share.permissions >= required
+                    {
+                        let is_member = self
+                            .metadata_store
                             .is_user_in_group(user_id, share.recipient_group_id.unwrap())
                             .await
                             .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
@@ -1131,7 +1187,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                         }
                     }
                 }
-                
+
                 Ok(false)
             }
         }
@@ -1193,7 +1249,9 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
             (folder.name, "folder")
         } else {
-            return Err(ShareError::InvalidState("Share has no resource".to_string()));
+            return Err(ShareError::InvalidState(
+                "Share has no resource".to_string(),
+            ));
         };
 
         // Get sharer info
@@ -1212,7 +1270,10 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             user_id,
             notification_type: NotificationType::ShareReceived,
             title: format!("New {} shared with your group", resource_type),
-            message: format!("{} shared '{}' with your group", sharer.email, resource_name),
+            message: format!(
+                "{} shared '{}' with your group",
+                sharer.email, resource_name
+            ),
             resource_id: share.resource_id().unwrap_or(share.id),
             resource_type: if share.file_id.is_some() {
                 ResourceType::File
@@ -1228,8 +1289,8 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         };
 
         // Emit NotificationCreated event via event store
-        use crate::events::{AggregateType, Event, EventType};
         use crate::events::NotificationCreatedPayload;
+        use crate::events::{AggregateType, Event, EventType};
 
         let payload = NotificationCreatedPayload {
             notification_id: uuid::Uuid::new_v4(),
@@ -1401,7 +1462,12 @@ mod tests {
                 .collect())
         }
 
-        async fn list_files(&self, parent_id: Option<Uuid>, owner_id: Uuid, _tenant_id: Uuid) -> Result<Vec<File>> {
+        async fn list_files(
+            &self,
+            parent_id: Option<Uuid>,
+            owner_id: Uuid,
+            _tenant_id: Uuid,
+        ) -> Result<Vec<File>> {
             Ok(self
                 .files
                 .lock()
@@ -1494,11 +1560,19 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ShareNotificationRepo for MockNotificationRepo {
-        async fn was_notified(&self, _user_id: UserId, _share_id: uuid::Uuid) -> Result<bool, sqlx::Error> {
+        async fn was_notified(
+            &self,
+            _user_id: UserId,
+            _share_id: uuid::Uuid,
+        ) -> Result<bool, sqlx::Error> {
             Ok(false)
         }
 
-        async fn record_notification(&self, _user_id: UserId, _share_id: uuid::Uuid) -> Result<(), sqlx::Error> {
+        async fn record_notification(
+            &self,
+            _user_id: UserId,
+            _share_id: uuid::Uuid,
+        ) -> Result<(), sqlx::Error> {
             Ok(())
         }
     }
@@ -1530,8 +1604,12 @@ mod tests {
         let mut tokens = std::collections::HashSet::new();
 
         for _ in 0..1000 {
-            let token =
-                ShareService::<MockEventStore, MockMetadataStore, MockJwtManager, MockNotificationRepo>::generate_token();
+            let token = ShareService::<
+                MockEventStore,
+                MockMetadataStore,
+                MockJwtManager,
+                MockNotificationRepo,
+            >::generate_token();
 
             // Verify token length is 32
             assert_eq!(token.len(), 32, "Token length should be 32");
@@ -1579,7 +1657,14 @@ mod tests {
 
         // Create share
         let share = service
-            .create_share(file_id, owner_id, SharePermissions::View, None, None, tenant_id)
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                tenant_id,
+            )
             .await
             .unwrap();
 
@@ -1628,7 +1713,14 @@ mod tests {
 
         // Try to create share as different user
         let result = service
-            .create_share(file_id, other_user, SharePermissions::View, None, None, tenant_id)
+            .create_share(
+                file_id,
+                other_user,
+                SharePermissions::View,
+                None,
+                None,
+                tenant_id,
+            )
             .await;
 
         assert!(matches!(result, Err(ShareError::PermissionDenied { .. })));
@@ -1657,7 +1749,14 @@ mod tests {
 
         // Create share without password
         let share = service
-            .create_share(file_id, owner_id, SharePermissions::View, None, None, tenant_id)
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                tenant_id,
+            )
             .await
             .unwrap();
 
@@ -1764,7 +1863,14 @@ mod tests {
 
         // Create share
         let share = service
-            .create_share(file_id, owner_id, SharePermissions::View, None, None, tenant_id)
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                tenant_id,
+            )
             .await
             .unwrap();
 
@@ -1817,7 +1923,14 @@ mod tests {
 
         // Create share without password
         let share = service
-            .create_share(file_id, owner_id, SharePermissions::View, None, None, tenant_id)
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                tenant_id,
+            )
             .await
             .unwrap();
 
@@ -1879,7 +1992,14 @@ mod tests {
 
         // Create share
         let share = service
-            .create_share(file_id, owner_id, SharePermissions::View, None, None, tenant_id)
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                tenant_id,
+            )
             .await
             .unwrap();
 
@@ -1907,7 +2027,10 @@ mod tests {
         let result = service.get_public_share_info(share_token).await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ShareError::ShareNotFoundByToken(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ShareError::ShareNotFoundByToken(_)
+        ));
     }
 
     #[tokio::test]
@@ -1933,7 +2056,14 @@ mod tests {
 
         // Create share
         let share = service
-            .create_share(file_id, owner_id, SharePermissions::View, None, None, tenant_id)
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                tenant_id,
+            )
             .await
             .unwrap();
 

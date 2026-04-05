@@ -30,6 +30,7 @@ export interface File {
 	share_count?: number;
 	/// Earliest share expiration date (ISO 8601 format), null if shares don't expire
 	share_expires_at?: string | null;
+	effective_permission?: 'View' | 'Edit' | 'Admin' | null;
 }
 
 export interface Folder {
@@ -47,6 +48,7 @@ export interface Folder {
 	share_count?: number;
 	/// Earliest share expiration date (ISO 8601 format), null if shares don't expire
 	share_expires_at?: string | null;
+	effective_permission?: 'View' | 'Edit' | 'Admin' | null;
 }
 
 export interface Share {
@@ -131,6 +133,7 @@ export interface ShareRecipient {
 export interface FolderContents {
 	folders: Folder[];
 	files: File[];
+	current_folder_permission?: 'View' | 'Edit' | 'Admin' | null;
 }
 
 export interface SharedFolderContents extends FolderContents {

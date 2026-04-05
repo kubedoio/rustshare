@@ -4,9 +4,7 @@
 //! using the new metadata_v2 repositories. This allows gradual migration without
 //! rewriting all services at once.
 
-use rustshare_core::domain::{
-    File, FileVersion, Folder, ReplicationJob, ReplicationState, Share,
-};
+use rustshare_core::domain::{File, FileVersion, Folder, ReplicationJob, ReplicationState, Share};
 use std::sync::Arc;
 
 use crate::repos::*;
@@ -35,7 +33,11 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
 
     async fn create_file_version(&self, version: &FileVersion) -> anyhow::Result<()> {
         let doc = version_to_document(version);
-        self.repo.file_versions().create(&doc).await.map_err(|e| e.into())
+        self.repo
+            .file_versions()
+            .create(&doc)
+            .await
+            .map_err(|e| e.into())
     }
 
     async fn find_folder_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
@@ -65,7 +67,11 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
             Some(file) => file.owner_id,
             None => uuid::Uuid::nil(),
         };
-        self.repo.files().delete(id, deleted_by).await.map_err(|e| e.into())
+        self.repo
+            .files()
+            .delete(id, deleted_by)
+            .await
+            .map_err(|e| e.into())
     }
 
     async fn list_file_versions(&self, file_id: uuid::Uuid) -> anyhow::Result<Vec<FileVersion>> {
@@ -78,7 +84,12 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
         file_id: uuid::Uuid,
         version: i32,
     ) -> anyhow::Result<Option<FileVersion>> {
-        match self.repo.file_versions().get_by_number(file_id, version).await? {
+        match self
+            .repo
+            .file_versions()
+            .get_by_number(file_id, version)
+            .await?
+        {
             Some(doc) => Ok(Some(version_from_document(&doc))),
             None => Ok(None),
         }
@@ -153,7 +164,11 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
             Some(folder) => folder.owner_id,
             None => uuid::Uuid::nil(),
         };
-        self.repo.folders().delete(id, deleted_by).await.map_err(|e| e.into())
+        self.repo
+            .folders()
+            .delete(id, deleted_by)
+            .await
+            .map_err(|e| e.into())
     }
 
     async fn list_folders(
@@ -164,7 +179,7 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
     ) -> anyhow::Result<Vec<Folder>> {
         // Use the folder children index for efficient lookup
         let folder_id = parent_id.unwrap_or_else(uuid::Uuid::nil);
-        
+
         match self.repo.folder_children_index().get(folder_id).await? {
             Some(index) => {
                 let mut folders = Vec::new();
@@ -187,6 +202,29 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
         }
     }
 
+    async fn list_folders_by_parent(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        _tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<Folder>> {
+        let folder_id = parent_id.unwrap_or_else(uuid::Uuid::nil);
+
+        match self.repo.folder_children_index().get(folder_id).await? {
+            Some(index) => {
+                let mut folders = Vec::new();
+                for entry in &index.children {
+                    if entry.kind == "folder" && !entry.deleted {
+                        if let Some(doc) = self.repo.folders().get(entry.id).await? {
+                            folders.push(folder_from_document(&doc));
+                        }
+                    }
+                }
+                Ok(folders)
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
     async fn find_descendant_folders(&self, folder_id: uuid::Uuid) -> anyhow::Result<Vec<Folder>> {
         let docs = self.repo.folders().list_descendants(folder_id).await?;
         Ok(docs.iter().map(folder_from_document).collect())
@@ -200,7 +238,7 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
     ) -> anyhow::Result<Vec<File>> {
         // Use the folder children index for efficient lookup
         let folder_id = parent_id.unwrap_or_else(uuid::Uuid::nil);
-        
+
         match self.repo.folder_children_index().get(folder_id).await? {
             Some(index) => {
                 let mut files = Vec::new();
@@ -222,12 +260,38 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
             }
         }
     }
+
+    async fn list_files_by_parent(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        _tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<File>> {
+        let folder_id = parent_id.unwrap_or_else(uuid::Uuid::nil);
+
+        match self.repo.folder_children_index().get(folder_id).await? {
+            Some(index) => {
+                let mut files = Vec::new();
+                for entry in &index.children {
+                    if entry.kind == "file" && !entry.deleted {
+                        if let Some(doc) = self.repo.files().get(entry.id).await? {
+                            files.push(file_from_document(&doc));
+                        }
+                    }
+                }
+                Ok(files)
+            }
+            None => Ok(Vec::new()),
+        }
+    }
 }
 
 /// Compatibility layer for share operations
 #[allow(async_fn_in_trait)]
 impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
-    async fn find_user_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<rustshare_core::domain::User>> {
+    async fn find_user_by_id(
+        &self,
+        id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::User>> {
         let row = sqlx::query_as::<_, rustshare_core::domain::User>(
             r#"
             SELECT 
@@ -286,7 +350,11 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
     }
 
     async fn get_folder_shares(&self, folder_id: uuid::Uuid) -> anyhow::Result<Vec<Share>> {
-        let docs = self.repo.shares().list_by_resource("folder", folder_id).await?;
+        let docs = self
+            .repo
+            .shares()
+            .list_by_resource("folder", folder_id)
+            .await?;
         Ok(docs.iter().map(share_from_document).collect())
     }
 
@@ -298,8 +366,20 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
     ) -> anyhow::Result<Vec<File>> {
         // Delegate to FolderMetadataStoreOps implementation
         <Self as rustshare_core::services::FolderMetadataStoreOps>::list_files(
-            self, parent_id, owner_id, tenant_id
-        ).await
+            self, parent_id, owner_id, tenant_id,
+        )
+        .await
+    }
+
+    async fn list_files_by_parent(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<File>> {
+        <Self as rustshare_core::services::FolderMetadataStoreOps>::list_files_by_parent(
+            self, parent_id, tenant_id,
+        )
+        .await
     }
 
     async fn list_folders(
@@ -310,8 +390,20 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
     ) -> anyhow::Result<Vec<Folder>> {
         // Delegate to FolderMetadataStoreOps implementation
         <Self as rustshare_core::services::FolderMetadataStoreOps>::list_folders(
-            self, parent_id, owner_id, tenant_id
-        ).await
+            self, parent_id, owner_id, tenant_id,
+        )
+        .await
+    }
+
+    async fn list_folders_by_parent(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<Folder>> {
+        <Self as rustshare_core::services::FolderMetadataStoreOps>::list_folders_by_parent(
+            self, parent_id, tenant_id,
+        )
+        .await
     }
 
     async fn find_descendant_folders(&self, folder_id: uuid::Uuid) -> anyhow::Result<Vec<Folder>> {
@@ -321,7 +413,11 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
 
     async fn revoke_share(&self, share_id: uuid::Uuid) -> anyhow::Result<()> {
         let revoked_by = uuid::Uuid::nil();
-        self.repo.shares().revoke(share_id, revoked_by).await.map_err(|e| e.into())
+        self.repo
+            .shares()
+            .revoke(share_id, revoked_by)
+            .await
+            .map_err(|e| e.into())
     }
 
     async fn update_share(&self, share: &Share) -> anyhow::Result<()> {
@@ -329,7 +425,11 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         self.repo.shares().update(&doc).await.map_err(|e| e.into())
     }
 
-    async fn is_user_in_group(&self, user_id: uuid::Uuid, group_id: uuid::Uuid) -> anyhow::Result<bool> {
+    async fn is_user_in_group(
+        &self,
+        user_id: uuid::Uuid,
+        group_id: uuid::Uuid,
+    ) -> anyhow::Result<bool> {
         let exists = sqlx::query_scalar::<_, bool>(
             r#"
             SELECT EXISTS(
@@ -356,7 +456,7 @@ use crate::metadata_v2::schemas::*;
 fn folder_to_document(folder: &Folder) -> FolderDocument {
     // Use folder's ancestor_ids if available, otherwise empty vec
     let ancestor_ids = folder.ancestor_ids.clone().unwrap_or_default();
-    
+
     FolderDocument {
         schema_version: CURRENT_SCHEMA_VERSION,
         id: folder.id,
@@ -487,7 +587,10 @@ fn share_to_document(share: &Share) -> ShareDocument {
         resource_id,
         scope,
         permissions: share.permissions,
-        token_hash: share.share_token.as_ref().map(|t| format!("{:x}", md5::compute(t))),
+        token_hash: share
+            .share_token
+            .as_ref()
+            .map(|t| format!("{:x}", md5::compute(t))),
         share_token: share.share_token.clone(), // Store original token
         recipient_user_id: share.recipient_user_id,
         recipient_group_id: share.recipient_group_id,

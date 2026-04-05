@@ -6,9 +6,9 @@ pub mod auth;
 // TODO: Fix chat_integration compilation errors
 // mod chat_integration;
 pub mod device_auth;
-pub mod features;
 pub mod devices;
 mod extractors;
+pub mod features;
 mod files;
 mod folders;
 mod groups;
@@ -17,9 +17,9 @@ mod notes;
 mod notifications;
 mod profile;
 mod public_shares;
-pub mod upload;
 pub mod scim;
 pub mod scim_v2;
+pub mod upload;
 // TODO: Fix search_service compilation errors
 // mod search;
 mod shares;
@@ -29,9 +29,10 @@ mod users;
 
 pub use extractors::{AdminUser, AuthenticatedSession, AuthenticatedUser, ShareSessionAuth};
 pub use files::{
-    delete_file, download_file, download_file_content, edit_file, get_file, get_file_thumbnail, get_file_versions, list_deleted_items,
-    list_files, list_starred_items, move_file, permanently_delete_file, preview_file, rename_file,
-    restore_file_from_trash, restore_file_version, toggle_file_star, update_file, upload_file,
+    delete_file, download_file, download_file_content, edit_file, get_file, get_file_thumbnail,
+    get_file_versions, list_deleted_items, list_files, list_starred_items, move_file,
+    permanently_delete_file, preview_file, rename_file, restore_file_from_trash,
+    restore_file_version, toggle_file_star, update_file, upload_file,
 };
 pub use folders::{
     create_folder, delete_folder, get_folder, get_folder_contents, get_folder_tree,
@@ -50,14 +51,15 @@ pub use shares::{
     create_public_file_share, create_public_folder_share, get_share_access_log,
     list_public_file_shares, list_public_folder_shares, list_user_shares, revoke_share,
 };
-pub use sync::{sync_handler, get_sync_cursor, get_sync_delta};
+pub use sync::{get_sync_cursor, get_sync_delta, sync_handler};
 
-pub use user_shares::{
-    create_file_share, create_folder_share, get_user_shared_folder_contents, list_file_recipients,
-    list_folder_recipients, list_received_shares, remove_recipient, update_recipient_permission,
-};
 pub use ai::{ask_question, semantic_search, summarize_file};
 pub use auth::{ensure_optional_seed_user, login, logout};
+pub use user_shares::{
+    create_file_share, create_folder_share, get_user_shared_folder_contents,
+    get_user_shared_folder_tree, list_file_recipients, list_folder_recipients,
+    list_received_shares, remove_recipient, update_recipient_permission,
+};
 // TODO: Fix chat_integration compilation errors
 // pub use chat_integration::{
 //     dispatch_webhooks, list_chat_webhooks, receive_chat_event, register_chat_webhook,
@@ -65,21 +67,20 @@ pub use auth::{ensure_optional_seed_user, login, logout};
 //     WebhookDispatchResult, WebhookListResponse,
 // };
 // pub use search::search;
-pub use users::{
-    delete_avatar, delete_user_session, get_avatar, get_user_profile,
-    list_user_security_events, list_user_sessions, update_user_password, update_user_theme,
-    upload_avatar,
-};
-pub use groups::{
-    list_my_groups, get_my_group, create_file_group_share, create_folder_group_share,
-    list_file_group_shares, list_folder_group_shares, revoke_group_share, update_group_share_permission,
-};
-pub use invites::{create_invite, get_invite, accept_invite};
-pub use notes::{
-    create_note, delete_note, get_note, get_public_note, list_notes, list_recent_notes,
-    move_note, rename_note, save_note, toggle_visibility,
-};
 pub use features::get_features;
+pub use groups::{
+    create_file_group_share, create_folder_group_share, get_my_group, list_file_group_shares,
+    list_folder_group_shares, list_my_groups, revoke_group_share, update_group_share_permission,
+};
+pub use invites::{accept_invite, create_invite, get_invite};
+pub use notes::{
+    create_note, delete_note, get_note, get_public_note, list_notes, list_recent_notes, move_note,
+    rename_note, save_note, toggle_visibility,
+};
+pub use users::{
+    delete_avatar, delete_user_session, get_avatar, get_user_profile, list_user_security_events,
+    list_user_sessions, update_user_password, update_user_theme, upload_avatar,
+};
 
 use axum::{
     http::StatusCode,

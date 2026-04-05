@@ -648,11 +648,7 @@ impl MetadataStore {
     }
 
     /// Update user's avatar path
-    pub async fn update_user_avatar(
-        &self,
-        user_id: Uuid,
-        avatar_path: Option<&str>,
-    ) -> Result<()> {
+    pub async fn update_user_avatar(&self, user_id: Uuid, avatar_path: Option<&str>) -> Result<()> {
         sqlx::query(
             r#"
             UPDATE users
@@ -804,9 +800,9 @@ impl MetadataStore {
             WHERE id = $1 AND deleted_at IS NULL
             "#,
         )
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -815,7 +811,12 @@ impl MetadataStore {
     ///
     /// Returns files owned by the specified user, optionally filtered by parent folder.
     /// Pass `None` for parent_id to get files in the root directory (no parent).
-    pub async fn list_files(&self, parent_id: Option<Uuid>, owner_id: Uuid, tenant_id: Uuid) -> Result<Vec<File>> {
+    pub async fn list_files(
+        &self,
+        parent_id: Option<Uuid>,
+        owner_id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<Vec<File>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
@@ -853,6 +854,53 @@ impl MetadataStore {
                 tenant_id: row.try_get("tenant_id")?,
             };
             files.push(file);
+        }
+
+        Ok(files)
+    }
+
+    /// List files by parent folder regardless of owner.
+    ///
+    /// This is used for collaborative folders where children may be created by
+    /// different users but still belong to the same parent folder.
+    pub async fn list_files_by_parent(
+        &self,
+        parent_id: Option<Uuid>,
+        tenant_id: Uuid,
+    ) -> Result<Vec<File>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id
+            FROM files
+            WHERE tenant_id = $1
+              AND deleted_at IS NULL
+              AND (parent_folder_id = $2 OR ($2 IS NULL AND parent_folder_id IS NULL))
+            ORDER BY name ASC
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(parent_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut files = Vec::new();
+        for row in rows {
+            files.push(File {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                size: row.try_get("size")?,
+                mime_type: row.try_get("mime_type")?,
+                content_hash: row.try_get("content_hash")?,
+                owner_id: row.try_get("owner_id")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                current_version: row.try_get("current_version")?,
+                created_at: row.try_get("created_at")?,
+                modified_at: row.try_get("modified_at")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
+                tenant_id: row.try_get("tenant_id")?,
+            });
         }
 
         Ok(files)
@@ -1535,9 +1583,9 @@ impl MetadataStore {
             WHERE id = $1 AND deleted_at IS NULL
             "#,
         )
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
 
         sqlx::query(
             r#"
@@ -1597,6 +1645,50 @@ impl MetadataStore {
                 ancestor_ids: None, // Will be populated from folder_documents if available
             };
             folders.push(folder);
+        }
+
+        Ok(folders)
+    }
+
+    /// List folders by parent folder regardless of owner.
+    ///
+    /// This preserves collaborative folder structure when shared folders contain
+    /// children created by multiple users.
+    pub async fn list_folders_by_parent(
+        &self,
+        parent_id: Option<Uuid>,
+        tenant_id: Uuid,
+    ) -> Result<Vec<Folder>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
+            FROM folders
+            WHERE tenant_id = $1
+              AND deleted_at IS NULL
+              AND (parent_folder_id = $2 OR ($2 IS NULL AND parent_folder_id IS NULL))
+            ORDER BY name ASC
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(parent_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut folders = Vec::new();
+        for row in rows {
+            folders.push(Folder {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                owner_id: row.try_get("owner_id")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
+                tenant_id: row.try_get("tenant_id")?,
+                ancestor_ids: None,
+            });
         }
 
         Ok(folders)
@@ -1670,7 +1762,12 @@ impl MetadataStore {
         Ok(folders)
     }
 
-    pub async fn set_folder_starred(&self, id: Uuid, owner_id: Uuid, starred: bool) -> Result<bool> {
+    pub async fn set_folder_starred(
+        &self,
+        id: Uuid,
+        owner_id: Uuid,
+        starred: bool,
+    ) -> Result<bool> {
         let result = sqlx::query(
             r#"
             UPDATE folders
@@ -1761,7 +1858,10 @@ impl MetadataStore {
         .await?;
 
         if duplicate > 0 {
-            anyhow::bail!("A folder named `{}` already exists in the restore destination", name);
+            anyhow::bail!(
+                "A folder named `{}` already exists in the restore destination",
+                name
+            );
         }
 
         sqlx::query(
@@ -2359,7 +2459,11 @@ impl MetadataStore {
     }
 
     /// List all markdown files for a user across their entire library.
-    pub async fn list_all_markdown_files(&self, owner_id: Uuid, tenant_id: Uuid) -> Result<Vec<File>> {
+    pub async fn list_all_markdown_files(
+        &self,
+        owner_id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<Vec<File>> {
         let rows = sqlx::query(
             r#"
             SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id
@@ -2950,12 +3054,12 @@ mod tests {
     #[ignore] // Requires database
     async fn test_get_public_shares_excludes_group_shares() {
         let (store, pool) = setup_metadata_store().await;
-        
+
         // Create test user and group
         let user_id = Uuid::new_v4();
         let group_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
-        
+
         // Create user
         let owner = User::new(
             format!("testowner_{}", user_id),
@@ -2967,7 +3071,7 @@ mod tests {
             tenant_id,
         );
         store.create_user(&owner).await.unwrap();
-        
+
         // Create file
         let file = File::new(
             "test-document.pdf".to_string(),
@@ -2980,7 +3084,7 @@ mod tests {
             tenant_id,
         );
         store.create_file(&file).await.unwrap();
-        
+
         // Create public share
         let public_share = Share {
             id: Uuid::new_v4(),
@@ -3000,7 +3104,7 @@ mod tests {
             tenant_id,
         };
         store.create_share(&public_share).await.unwrap();
-        
+
         // Create group share (same file)
         let group_share = Share {
             id: Uuid::new_v4(),
@@ -3020,10 +3124,10 @@ mod tests {
             tenant_id,
         };
         store.create_share(&group_share).await.unwrap();
-        
+
         // Query public shares
         let public_shares = store.get_user_public_shares(owner.id).await.unwrap();
-        
+
         // Should only return 1 (the public share), not 2
         assert_eq!(public_shares.len(), 1);
         assert_eq!(public_shares[0].share.id, public_share.id);

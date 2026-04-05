@@ -38,6 +38,7 @@
 		getFolderContents,
 		getFolderTree,
 		getSharedFolderContents,
+		getSharedFolderTree,
 		moveFolder,
 		permanentlyDeleteFolder,
 		renameFolder,
@@ -55,7 +56,7 @@
 	import { activityStore } from '$lib/stores/activity';
 	import { replicationStore, type ReplicationStatus } from '$lib/stores/replication';
 	import { folderTreeStore } from '$lib/stores/folderTree';
-	import type { File, Folder } from '$lib/api/types';
+	import type { File, Folder, FolderContents as ApiFolderContents } from '$lib/api/types';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 
@@ -198,8 +199,29 @@
 		enabled: true
 	});
 
+	const sharedFolderTreesQuery = createQuery<FolderTreeType[]>({
+		queryKey: [
+			'shared-folder-trees',
+			($receivedSharesQuery.data || [])
+				.filter((share) => share.resource_type === 'folder')
+				.map((share) => share.resource_id)
+				.sort()
+				.join(',')
+		],
+		queryFn: async () => {
+			const folderShares = ($receivedSharesQuery.data || []).filter(
+				(share) => share.resource_type === 'folder'
+			);
+			return Promise.all(folderShares.map((share) => getSharedFolderTree(share.resource_id)));
+		},
+		enabled:
+			activeRoot === 'shared' &&
+			!!$receivedSharesQuery.data &&
+			$receivedSharesQuery.data.some((share) => share.resource_type === 'folder')
+	});
+
 	// Query for the active workspace view
-	$: filesQuery = createQuery({
+	$: filesQuery = createQuery<ApiFolderContents>({
 		queryKey: ['file-workspace', workspaceMode, currentFolderId, activeRoot],
 		queryFn: async () => {
 			if (workspaceMode === 'starred') return getStarredContents();
@@ -224,7 +246,8 @@
 							created_at: s.created_at,
 							updated_at: s.created_at,
 							is_shared: true,
-							share_count: 1
+							share_count: 1,
+							effective_permission: s.permission
 						})),
 						files: shares.filter(s => s.resource_type === 'file').map(s => ({
 							id: s.resource_id,
@@ -239,7 +262,8 @@
 							created_at: s.created_at,
 							modified_at: s.created_at,
 							is_shared: true,
-							share_count: 1
+							share_count: 1,
+							effective_permission: s.permission
 						}))
 					};
 				}
@@ -264,6 +288,10 @@
 	$: myFilesFolderPath = currentFolderId && $folderTreeQuery.data && activeRoot === 'my-files'
 		? buildFolderPathFromApiTree($folderTreeQuery.data, currentFolderId).slice(1)
 		: [];
+	$: sharedFolderPath =
+		currentFolderId && activeRoot === 'shared' && $sharedFolderTreesQuery.data
+			? findFolderPathInSharedTrees(currentFolderId, $sharedFolderTreesQuery.data)
+			: [];
 
 	// Build breadcrumb based on current state
 	// Returns Folder-compatible objects for FileExplorer component
@@ -279,33 +307,10 @@
 			// Return my-files path (already Folder objects)
 			return myFilesFolderPath;
 		} else if (activeRoot === 'shared' && currentFolderId) {
-			// For shared folders, build path from received shares
-			const path = buildSharedFolderPath(currentFolderId, $receivedSharesQuery.data || []);
-			return path.map(segment => ({
-				id: segment.id,
-				name: segment.name,
-				path: `/shared/${segment.name}`,
-				parent_folder_id: null,
-				owner_id: 'shared',
-				created_at: '',
-				updated_at: ''
-			}));
+			return sharedFolderPath;
 		}
 
 		return [];
-	}
-
-	function buildSharedFolderPath(
-		folderId: string, 
-		shares: ReceivedShare[]
-	): Array<{ name: string; id: string }> {
-		// Find the share that contains this folder
-		const share = shares.find(s => s.resource_id === folderId || s.resource_path?.includes(folderId));
-		if (!share) return [];
-		
-		// For now, return simple path based on share info
-		// This could be enhanced with proper shared folder tree API
-		return [{ name: share.resource_name, id: share.resource_id }];
 	}
 
 	function buildFolderPathFromApiTree(root: FolderTreeType, targetId: string): Folder[] {
@@ -325,6 +330,27 @@
 		}
 		return search(root);
 	}
+
+	function findFolderPathInSharedTrees(targetId: string, trees: FolderTreeType[]): Folder[] {
+		for (const tree of trees) {
+			const path = buildFolderPathFromApiTree(tree, targetId);
+			if (path.length > 0) {
+				return path;
+			}
+		}
+		return [];
+	}
+
+	function permissionLevel(permission: 'View' | 'Edit' | 'Admin' | null | undefined): number {
+		if (permission === 'Admin') return 3;
+		if (permission === 'Edit') return 2;
+		if (permission === 'View') return 1;
+		return 0;
+	}
+
+	$: currentSharedFolderPermission =
+		activeRoot === 'shared' ? ($filesQuery.data?.current_folder_permission ?? null) : null;
+	$: hasSharedWritePermission = permissionLevel(currentSharedFolderPermission) >= 2;
 
 	// ============================================================================
 	// TITLE DERIVATION (Contextual Header)
@@ -392,8 +418,10 @@
 
 	$: showFolderTree = !isCollectionMode;
 	$: showBreadcrumbs = !isCollectionMode;
-	$: canCreateFolder = !isCollectionMode && activeRoot === 'my-files'; // Only in my-files
-	$: canUpload = !isCollectionMode && activeRoot === 'my-files'; // Only in my-files for now
+	$: canCreateFolder =
+		!isCollectionMode && (activeRoot === 'my-files' || (activeRoot === 'shared' && hasSharedWritePermission));
+	$: canUpload =
+		!isCollectionMode && (activeRoot === 'my-files' || (activeRoot === 'shared' && hasSharedWritePermission));
 	$: allowSelectionMode = workspaceMode !== 'deleted';
 	$: if (!allowSelectionMode && selectionMode) {
 		selectionMode = false;

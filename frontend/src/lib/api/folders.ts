@@ -29,6 +29,7 @@ export interface FolderTree {
     is_shared: boolean;
     share_count: number;
     share_expires_at: string | null;
+    effective_permission?: 'View' | 'Edit' | 'Admin' | null;
   };
   subfolders: FolderTree[];
 }
@@ -58,6 +59,10 @@ export async function getFolderContents(folderId: string | null): Promise<Folder
  */
 export async function getSharedFolderContents(folderId: string): Promise<FolderContents> {
   return apiClient.get<FolderContents>(`/shares/folders/${folderId}/contents`);
+}
+
+export async function getSharedFolderTree(folderId: string): Promise<FolderTree> {
+  return apiClient.get<FolderTree>(`/shares/folders/${folderId}/tree`);
 }
 
 export async function getFolderTree(): Promise<FolderTree> {

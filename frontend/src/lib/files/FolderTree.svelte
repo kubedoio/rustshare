@@ -28,7 +28,7 @@
 	interface Props {
 		folders: FolderTreeType[];
 		depth?: number;
-		onFolderClick?: (folderId: string) => void;
+		onFolderClick?: (folderId: string | null) => void;
 		// Ancestor IDs of the currently selected folder (for emphasis)
 		ancestorIds?: Set<string>;
 		// Root type for this tree section

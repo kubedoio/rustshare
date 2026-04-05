@@ -156,6 +156,14 @@ impl FolderMetadataStoreOps for MetadataStore {
         self.list_folders(parent_id, owner_id, tenant_id).await
     }
 
+    async fn list_folders_by_parent(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        tenant_id: uuid::Uuid,
+    ) -> Result<Vec<rustshare_core::domain::Folder>> {
+        self.list_folders_by_parent(parent_id, tenant_id).await
+    }
+
     async fn find_descendant_folders(
         &self,
         folder_id: uuid::Uuid,
@@ -170,6 +178,14 @@ impl FolderMetadataStoreOps for MetadataStore {
         tenant_id: uuid::Uuid,
     ) -> Result<Vec<rustshare_core::domain::File>> {
         self.list_files(parent_id, owner_id, tenant_id).await
+    }
+
+    async fn list_files_by_parent(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        tenant_id: uuid::Uuid,
+    ) -> Result<Vec<rustshare_core::domain::File>> {
+        self.list_files_by_parent(parent_id, tenant_id).await
     }
 }
 
@@ -238,6 +254,14 @@ impl ShareMetadataStoreOps for MetadataStore {
         self.list_files(parent_id, owner_id, tenant_id).await
     }
 
+    async fn list_files_by_parent(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        tenant_id: uuid::Uuid,
+    ) -> Result<Vec<rustshare_core::domain::File>> {
+        self.list_files_by_parent(parent_id, tenant_id).await
+    }
+
     async fn list_folders(
         &self,
         parent_id: Option<uuid::Uuid>,
@@ -245,6 +269,14 @@ impl ShareMetadataStoreOps for MetadataStore {
         tenant_id: uuid::Uuid,
     ) -> Result<Vec<rustshare_core::domain::Folder>> {
         self.list_folders(parent_id, owner_id, tenant_id).await
+    }
+
+    async fn list_folders_by_parent(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        tenant_id: uuid::Uuid,
+    ) -> Result<Vec<rustshare_core::domain::Folder>> {
+        self.list_folders_by_parent(parent_id, tenant_id).await
     }
 
     async fn find_descendant_folders(
@@ -297,11 +329,19 @@ impl CoreObjectStoreOps for ObjectStore {
 // ShareNotificationRepoImpl implements the core ShareNotificationRepo trait
 #[async_trait::async_trait]
 impl rustshare_core::services::ShareNotificationRepo for repos::ShareNotificationRepoImpl {
-    async fn was_notified(&self, user_id: rustshare_core::domain::UserId, share_id: uuid::Uuid) -> Result<bool, sqlx::Error> {
+    async fn was_notified(
+        &self,
+        user_id: rustshare_core::domain::UserId,
+        share_id: uuid::Uuid,
+    ) -> Result<bool, sqlx::Error> {
         self.was_notified(user_id, share_id).await
     }
 
-    async fn record_notification(&self, user_id: rustshare_core::domain::UserId, share_id: uuid::Uuid) -> Result<(), sqlx::Error> {
+    async fn record_notification(
+        &self,
+        user_id: rustshare_core::domain::UserId,
+        share_id: uuid::Uuid,
+    ) -> Result<(), sqlx::Error> {
         self.record_notification(user_id, share_id).await
     }
 }

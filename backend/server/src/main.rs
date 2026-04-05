@@ -40,10 +40,10 @@
 mod handlers;
 mod middleware;
 mod oidc;
-mod services;
 mod oidc_runtime;
 mod replication;
 mod replication_handlers;
+mod services;
 mod web_session;
 
 use crate::handlers::{
@@ -75,7 +75,7 @@ use rustshare_infrastructure::repositories::{
     FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
     ShareRepository, UserRepository,
 };
-use rustshare_storage::{EventStore, MetadataStore, ObjectStore, repos::ShareNotificationRepoImpl};
+use rustshare_storage::{repos::ShareNotificationRepoImpl, EventStore, MetadataStore, ObjectStore};
 use serde::Serialize;
 use sqlx::PgPool;
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
@@ -166,8 +166,8 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
         for chunk_index in 0..total_chunks {
             let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
             if let Err(e) = self.inner.delete(&key).await {
-                    tracing::warn!(key = %key, error = %e, "failed to delete object during cleanup");
-                }
+                tracing::warn!(key = %key, error = %e, "failed to delete object during cleanup");
+            }
         }
         Ok(())
     }
@@ -265,15 +265,17 @@ pub struct AppState {
     pub object_store: Arc<ObjectStore>,
     pub jwt_manager: Arc<JwtManager>,
     pub broadcaster: Arc<EventBroadcaster>,
-    pub file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>>,
+    pub file_service:
+        Arc<FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>>,
     pub folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
-    pub share_service: Arc<ShareService<EventStore, MetadataStore, JwtManager, ShareNotificationRepoImpl>>,
+    pub share_service:
+        Arc<ShareService<EventStore, MetadataStore, JwtManager, ShareNotificationRepoImpl>>,
     pub thumbnail_service: Arc<ThumbnailService<ObjectStore>>,
     pub permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
     pub notification_service: Arc<NotificationService<NotificationRepository>>,
     pub user_share_service: Arc<AppUserShareService>,
     pub ai_service: Option<Arc<AppAiService>>,
-    pub upload_service: Option<Arc<AppUploadService>>, 
+    pub upload_service: Option<Arc<AppUploadService>>,
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
     pub secret_key: SecretEncryptionKey,
     pub oidc_runtime_cache: OidcRuntimeCache,
@@ -618,14 +620,35 @@ async fn main() -> Result<()> {
         .route("/api/v1/files", get(handlers::list_files))
         .route("/api/v1/files/starred", get(handlers::list_starred_items))
         .route("/api/v1/files/deleted", get(handlers::list_deleted_items))
-        .route("/api/v1/files/upload", post(handlers::upload_file).layer(DefaultBodyLimit::disable()))
+        .route(
+            "/api/v1/files/upload",
+            post(handlers::upload_file).layer(DefaultBodyLimit::disable()),
+        )
         // Resumable upload routes
-        .route("/api/v1/uploads/sessions", post(handlers::upload::create_upload_session))
-        .route("/api/v1/uploads/sessions", get(handlers::upload::list_upload_sessions))
-        .route("/api/v1/uploads/sessions/{id}", get(handlers::upload::get_upload_session_status))
-        .route("/api/v1/uploads/sessions/{id}", delete(handlers::upload::abort_upload_session))
-        .route("/api/v1/uploads/sessions/{id}/chunks/{index}", put(handlers::upload::upload_chunk))
-        .route("/api/v1/uploads/sessions/{id}/complete", post(handlers::upload::complete_upload))
+        .route(
+            "/api/v1/uploads/sessions",
+            post(handlers::upload::create_upload_session),
+        )
+        .route(
+            "/api/v1/uploads/sessions",
+            get(handlers::upload::list_upload_sessions),
+        )
+        .route(
+            "/api/v1/uploads/sessions/{id}",
+            get(handlers::upload::get_upload_session_status),
+        )
+        .route(
+            "/api/v1/uploads/sessions/{id}",
+            delete(handlers::upload::abort_upload_session),
+        )
+        .route(
+            "/api/v1/uploads/sessions/{id}/chunks/{index}",
+            put(handlers::upload::upload_chunk),
+        )
+        .route(
+            "/api/v1/uploads/sessions/{id}/complete",
+            post(handlers::upload::complete_upload),
+        )
         .route("/api/v1/files/{id}", get(handlers::get_file))
         .route("/api/v1/files/{id}", put(handlers::update_file))
         .route("/api/v1/files/{id}", delete(handlers::delete_file))
@@ -667,9 +690,15 @@ async fn main() -> Result<()> {
         .route("/api/v1/notes/{id}", put(handlers::save_note))
         .route("/api/v1/notes/{id}/rename", post(handlers::rename_note))
         .route("/api/v1/notes/{id}/move", post(handlers::move_note))
-        .route("/api/v1/notes/{id}/visibility", post(handlers::toggle_visibility))
+        .route(
+            "/api/v1/notes/{id}/visibility",
+            post(handlers::toggle_visibility),
+        )
         .route("/api/v1/notes/{id}", delete(handlers::delete_note))
-        .route("/api/v1/public/notes/{share_id}", get(handlers::get_public_note))
+        .route(
+            "/api/v1/public/notes/{share_id}",
+            get(handlers::get_public_note),
+        )
         // Upload session routes (TODO-004: Resumable uploads)
         // Upload endpoints disabled - TODO: Fix upload service type issues
         // .route("/api/v1/uploads/sessions", get(handlers::list_upload_sessions))
@@ -917,7 +946,10 @@ async fn main() -> Result<()> {
             "/api/v1/folders/{id}/contents",
             get(handlers::get_folder_contents),
         )
-        .route("/api/v1/folders/{id}/star", patch(handlers::toggle_folder_star))
+        .route(
+            "/api/v1/folders/{id}/star",
+            patch(handlers::toggle_folder_star),
+        )
         .route(
             "/api/v1/folders/{id}/restore-from-trash",
             post(handlers::restore_folder_from_trash),
@@ -1037,6 +1069,10 @@ async fn main() -> Result<()> {
         .route(
             "/api/v1/shares/folders/{id}/contents",
             get(handlers::get_user_shared_folder_contents),
+        )
+        .route(
+            "/api/v1/shares/folders/{id}/tree",
+            get(handlers::get_user_shared_folder_tree),
         )
         // Group sharing routes
         .route("/api/v1/groups/my", get(handlers::list_my_groups))

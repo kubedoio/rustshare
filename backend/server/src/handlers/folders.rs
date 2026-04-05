@@ -36,6 +36,8 @@ pub struct FolderWithShares {
     pub share_count: i64,
     /// Earliest share expiration date (None if no shares have expiration)
     pub share_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_permission: Option<String>,
 }
 
 /// Folder contents with share indicators
@@ -43,6 +45,8 @@ pub struct FolderWithShares {
 pub struct FolderContentsWithShares {
     pub folders: Vec<FolderWithShares>,
     pub files: Vec<crate::handlers::files::FileWithShares>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_folder_permission: Option<String>,
 }
 
 /// Folder tree node with share information for sidebar
@@ -60,6 +64,8 @@ pub struct FolderTreeNode {
     pub is_shared: bool,
     pub share_count: i64,
     pub share_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_permission: Option<String>,
 }
 
 /// Folder tree response with share indicators
@@ -163,7 +169,8 @@ pub async fn get_folder_contents(
                 WHERE folder_id = f.id
                 AND revoked_at IS NULL
                 AND expires_at IS NOT NULL
-            ) as share_expires_at
+            ) as share_expires_at,
+            'Admin'::TEXT as effective_permission
         FROM folders f
         WHERE f.parent_folder_id = $1 AND f.owner_id = $2 AND f.tenant_id = $3 AND f.deleted_at IS NULL
         ORDER BY f.name
@@ -205,7 +212,8 @@ pub async fn get_folder_contents(
                 WHERE file_id = f.id
                 AND revoked_at IS NULL
                 AND expires_at IS NOT NULL
-            ) as share_expires_at
+            ) as share_expires_at,
+            'Admin'::TEXT as effective_permission
         FROM files f
         WHERE f.parent_folder_id = $1 AND f.owner_id = $2 AND f.tenant_id = $3 AND f.deleted_at IS NULL
         ORDER BY f.name
@@ -225,7 +233,11 @@ pub async fn get_folder_contents(
             .into_response()
     })?;
 
-    Ok(Json(FolderContentsWithShares { folders, files }))
+    Ok(Json(FolderContentsWithShares {
+        folders,
+        files,
+        current_folder_permission: None,
+    }))
 }
 
 /// List root contents (folders and files with no parent) with share indicators.
@@ -256,7 +268,8 @@ pub async fn get_root_contents(
                 WHERE folder_id = f.id
                 AND revoked_at IS NULL
                 AND expires_at IS NOT NULL
-            ) as share_expires_at
+            ) as share_expires_at,
+            'Admin'::TEXT as effective_permission
         FROM folders f
         WHERE f.parent_folder_id IS NULL AND f.owner_id = $1 AND f.tenant_id = $2 AND f.deleted_at IS NULL
         ORDER BY f.name
@@ -297,7 +310,8 @@ pub async fn get_root_contents(
                 WHERE file_id = f.id
                 AND revoked_at IS NULL
                 AND expires_at IS NOT NULL
-            ) as share_expires_at
+            ) as share_expires_at,
+            'Admin'::TEXT as effective_permission
         FROM files f
         WHERE f.parent_folder_id IS NULL AND f.owner_id = $1 AND f.tenant_id = $2 AND f.deleted_at IS NULL
         ORDER BY f.name
@@ -316,7 +330,11 @@ pub async fn get_root_contents(
             .into_response()
     })?;
 
-    Ok(Json(FolderContentsWithShares { folders, files }))
+    Ok(Json(FolderContentsWithShares {
+        folders,
+        files,
+        current_folder_permission: None,
+    }))
 }
 
 /// Build folder tree with share information recursively
@@ -368,18 +386,39 @@ async fn build_folder_tree_with_shares(
     })?;
 
     let folder_node = FolderTreeNode {
-        id: folder_row.try_get("id").map_err(|_| internal_error_response())?,
-        name: folder_row.try_get("name").map_err(|_| internal_error_response())?,
-        path: folder_row.try_get("path").map_err(|_| internal_error_response())?,
-        parent_folder_id: folder_row.try_get("parent_folder_id").map_err(|_| internal_error_response())?,
-        owner_id: folder_row.try_get("owner_id").map_err(|_| internal_error_response())?,
-        created_at: folder_row.try_get("created_at").map_err(|_| internal_error_response())?,
-        updated_at: folder_row.try_get("updated_at").map_err(|_| internal_error_response())?,
-        tenant_id: folder_row.try_get("tenant_id").map_err(|_| internal_error_response())?,
+        id: folder_row
+            .try_get("id")
+            .map_err(|_| internal_error_response())?,
+        name: folder_row
+            .try_get("name")
+            .map_err(|_| internal_error_response())?,
+        path: folder_row
+            .try_get("path")
+            .map_err(|_| internal_error_response())?,
+        parent_folder_id: folder_row
+            .try_get("parent_folder_id")
+            .map_err(|_| internal_error_response())?,
+        owner_id: folder_row
+            .try_get("owner_id")
+            .map_err(|_| internal_error_response())?,
+        created_at: folder_row
+            .try_get("created_at")
+            .map_err(|_| internal_error_response())?,
+        updated_at: folder_row
+            .try_get("updated_at")
+            .map_err(|_| internal_error_response())?,
+        tenant_id: folder_row
+            .try_get("tenant_id")
+            .map_err(|_| internal_error_response())?,
         ancestor_ids: None, // Not stored in folders table, would need to fetch from folder_documents
-        is_shared: folder_row.try_get("is_shared").map_err(|_| internal_error_response())?,
-        share_count: folder_row.try_get("share_count").map_err(|_| internal_error_response())?,
+        is_shared: folder_row
+            .try_get("is_shared")
+            .map_err(|_| internal_error_response())?,
+        share_count: folder_row
+            .try_get("share_count")
+            .map_err(|_| internal_error_response())?,
         share_expires_at: folder_row.try_get("share_expires_at").ok(),
+        effective_permission: Some("Admin".to_string()),
     };
 
     // Get child folders
@@ -400,7 +439,10 @@ async fn build_folder_tree_with_shares(
     let mut subfolders = Vec::new();
     for row in child_rows {
         let child_id: Uuid = row.try_get("id").map_err(|_| internal_error_response())?;
-        let subtree = Box::pin(build_folder_tree_with_shares(state, child_id, user_id, tenant_id)).await?;
+        let subtree = Box::pin(build_folder_tree_with_shares(
+            state, child_id, user_id, tenant_id,
+        ))
+        .await?;
         subfolders.push(subtree);
     }
 
@@ -438,7 +480,8 @@ pub async fn get_folder_tree(
     // Build subtrees for each root folder
     let mut subfolders = Vec::new();
     for folder in root_folders {
-        let subtree = build_folder_tree_with_shares(&state, folder.id, auth.user_id, auth.tenant_id).await?;
+        let subtree =
+            build_folder_tree_with_shares(&state, folder.id, auth.user_id, auth.tenant_id).await?;
         subfolders.push(subtree);
     }
 
@@ -456,6 +499,7 @@ pub async fn get_folder_tree(
         is_shared: false,
         share_count: 0,
         share_expires_at: None,
+        effective_permission: Some("Admin".to_string()),
     };
 
     let tree = FolderTreeWithShares {
@@ -493,9 +537,9 @@ pub async fn toggle_folder_star(
         })?;
 
     if !updated {
-        return Err(folder_error_response(rustshare_core::services::FolderError::NotFound(
-            folder_id,
-        )));
+        return Err(folder_error_response(
+            rustshare_core::services::FolderError::NotFound(folder_id),
+        ));
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -521,9 +565,9 @@ pub async fn restore_folder_from_trash(
         })?;
 
     if !restored {
-        return Err(folder_error_response(rustshare_core::services::FolderError::NotFound(
-            folder_id,
-        )));
+        return Err(folder_error_response(
+            rustshare_core::services::FolderError::NotFound(folder_id),
+        ));
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -551,9 +595,9 @@ pub async fn permanently_delete_folder(
         })?;
 
     if !deleted {
-        return Err(folder_error_response(rustshare_core::services::FolderError::NotFound(
-            folder_id,
-        )));
+        return Err(folder_error_response(
+            rustshare_core::services::FolderError::NotFound(folder_id),
+        ));
     }
 
     Ok(StatusCode::NO_CONTENT)

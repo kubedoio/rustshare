@@ -3,7 +3,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { createQuery } from '@tanstack/svelte-query';
-	import { getFolderTree, type FolderTree as FolderTreeType } from '$lib/api/folders';
+	import { getFolderTree, getSharedFolderTree, type FolderTree as FolderTreeType } from '$lib/api/folders';
 	import { listReceivedShares } from '$lib/api/shares';
 	import type { ReceivedShare } from '$lib/api/types';
 	import { onMount } from 'svelte';
@@ -51,6 +51,29 @@
 		})
 	);
 
+	let sharedFolderTreesQuery = $derived(
+		createQuery<FolderTreeType[]>({
+			queryKey: [
+				'shared-folder-trees',
+				($receivedSharesQuery.data || [])
+					.filter((share) => share.resource_type === 'folder')
+					.map((share) => share.resource_id)
+					.sort()
+					.join(',')
+			],
+			queryFn: async () => {
+				const folderShares = ($receivedSharesQuery.data || []).filter(
+					(share) => share.resource_type === 'folder'
+				);
+				return Promise.all(folderShares.map((share) => getSharedFolderTree(share.resource_id)));
+			},
+			enabled:
+				variant === 'files' &&
+				!!$receivedSharesQuery.data &&
+				$receivedSharesQuery.data.some((share) => share.resource_type === 'folder')
+		})
+	);
+
 	let allFilesQuery = $derived(
 		createQuery({
 			queryKey: ['all-files'],
@@ -75,6 +98,12 @@
 		!currentFolderId || !$folderTreeQuery.data || currentRoot !== 'my-files'
 			? new Set<string>()
 			: findAncestorIds($folderTreeQuery.data, currentFolderId)
+	);
+
+	let sharedAncestorIds = $derived(
+		!currentFolderId || !getSharedTreeData() || currentRoot !== 'shared'
+			? new Set<string>()
+			: findAncestorIds(getSharedTreeData()!, currentFolderId)
 	);
 
 	// ============================================================================
@@ -126,6 +155,13 @@
 	$effect(() => {
 		if (currentFolderId && $folderTreeQuery.data && currentRoot === 'my-files') {
 			expandPathToFolder($folderTreeQuery.data, currentFolderId);
+		}
+	});
+
+	$effect(() => {
+		const sharedTree = getSharedTreeData();
+		if (currentFolderId && sharedTree && currentRoot === 'shared') {
+			expandPathToFolder(sharedTree, currentFolderId);
 		}
 	});
 
@@ -192,17 +228,7 @@
 	}
 
 	function getSharedTreeData(): FolderTreeType | null {
-		if (!$receivedSharesQuery.data || $receivedSharesQuery.data.length === 0) {
-			return null;
-		}
-
-		// Build shared folder tree from received shares
-		// Only include folder-type shares
-		const folderShares = $receivedSharesQuery.data.filter(
-			share => share.resource_type === 'folder'
-		);
-
-		if (folderShares.length === 0) {
+		if (!$sharedFolderTreesQuery.data || $sharedFolderTreesQuery.data.length === 0) {
 			return null;
 		}
 
@@ -219,25 +245,17 @@
 				tenant_id: '',
 				ancestor_ids: null,
 				is_shared: true,
-				share_count: folderShares.length,
-				share_expires_at: null
+				share_count: $sharedFolderTreesQuery.data.length,
+				share_expires_at: null,
+				effective_permission: null
 			},
-			subfolders: folderShares.map(share => ({
+			subfolders: $sharedFolderTreesQuery.data.map((tree) => ({
+				...tree,
 				folder: {
-					id: share.resource_id,
-					name: share.resource_name,
-					path: share.resource_path,
+					...tree.folder,
 					parent_folder_id: 'shared-root',
-					owner_id: share.shared_by,
-					created_at: share.created_at,
-					updated_at: share.created_at,
-					tenant_id: '',
-					ancestor_ids: ['shared-root'],
-					is_shared: true,
-					share_count: 1,
-					share_expires_at: null
-				},
-				subfolders: [] // Lazy load children
+					ancestor_ids: ['shared-root', ...(tree.folder.ancestor_ids || [])]
+				}
 			}))
 		};
 
@@ -387,7 +405,7 @@
 				</div>
 			</div>
 			
-			{#if $folderTreeQuery?.isLoading || $receivedSharesQuery?.isLoading}
+			{#if $folderTreeQuery?.isLoading || $receivedSharesQuery?.isLoading || $sharedFolderTreesQuery?.isLoading}
 				<div class="px-3 py-4">
 					<div class="flex items-center gap-2 text-sm text-base-content/50">
 						<div class="w-4 h-4 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin"></div>
@@ -437,7 +455,7 @@
 										navigateToFolder(folderId, 'shared');
 									}
 								}}
-								ancestorIds={new Set()}
+								ancestorIds={sharedAncestorIds}
 								rootType="shared"
 								isActive={currentRoot === 'shared'}
 								sharedIcon={sharedIconSvg}

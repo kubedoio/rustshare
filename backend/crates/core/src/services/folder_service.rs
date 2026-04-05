@@ -12,7 +12,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::domain::{File, Folder, FolderContents, FolderId, FolderTree, UserId, SharePermissions};
+use crate::domain::{File, Folder, FolderContents, FolderId, FolderTree, SharePermissions, UserId};
 use crate::events::{
     AggregateType, Event, EventBroadcaster, EventType, FolderCreatedPayload, FolderDeletedPayload,
     FolderMovedPayload, FolderRenamedPayload,
@@ -54,11 +54,30 @@ pub trait MetadataStoreOps: Send + Sync {
         tenant_id: uuid::Uuid,
     ) -> Result<Vec<Folder>>;
 
+    /// List folders by parent regardless of owner.
+    async fn list_folders_by_parent(
+        &self,
+        parent_id: Option<FolderId>,
+        tenant_id: uuid::Uuid,
+    ) -> Result<Vec<Folder>>;
+
     /// Find all descendant folders of a given folder using recursive CTE.
     async fn find_descendant_folders(&self, folder_id: FolderId) -> Result<Vec<Folder>>;
 
     /// List files with optional parent filter.
-    async fn list_files(&self, parent_id: Option<FolderId>, owner_id: UserId, tenant_id: uuid::Uuid) -> Result<Vec<File>>;
+    async fn list_files(
+        &self,
+        parent_id: Option<FolderId>,
+        owner_id: UserId,
+        tenant_id: uuid::Uuid,
+    ) -> Result<Vec<File>>;
+
+    /// List files by parent regardless of owner.
+    async fn list_files_by_parent(
+        &self,
+        parent_id: Option<FolderId>,
+        tenant_id: uuid::Uuid,
+    ) -> Result<Vec<File>>;
 }
 
 /// FolderService manages folder operations with event sourcing.
@@ -120,7 +139,8 @@ where
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
 
             // Verify permissions: user must own the folder or have Edit permission
-            let has_permission = self.permission_resolver
+            let has_permission = self
+                .permission_resolver
                 .check_folder_permission(owner_id, parent_id, SharePermissions::Edit)
                 .await
                 .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -200,7 +220,8 @@ where
         user_id: UserId,
     ) -> Result<Folder, FolderError> {
         // 1. Check permissions first using the resolver
-        let has_permission = self.permission_resolver
+        let has_permission = self
+            .permission_resolver
             .check_folder_permission(user_id, folder_id, SharePermissions::View)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -235,14 +256,14 @@ where
         // Get files in this folder (filter by folder owner, not current user)
         let files = self
             .metadata_store
-            .list_files(Some(folder.id), folder.owner_id, folder.tenant_id)
+            .list_files_by_parent(Some(folder.id), folder.tenant_id)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
         // Get subfolders in this folder (filter by folder owner, not current user)
         let folders = self
             .metadata_store
-            .list_folders(Some(folder.id), folder.owner_id, folder.tenant_id)
+            .list_folders_by_parent(Some(folder.id), folder.tenant_id)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
@@ -276,14 +297,14 @@ where
         // Get files in this folder
         let files = self
             .metadata_store
-            .list_files(Some(folder.id), user_id, folder.tenant_id)
+            .list_files_by_parent(Some(folder.id), folder.tenant_id)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
         // Get immediate subfolders
         let subfolders = self
             .metadata_store
-            .list_folders(Some(folder.id), user_id, folder.tenant_id)
+            .list_folders_by_parent(Some(folder.id), folder.tenant_id)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
 
@@ -313,7 +334,8 @@ where
         let mut folder = self.get_folder(folder_id, user_id).await?;
 
         // Verify Edit permission
-        let has_edit_permission = self.permission_resolver
+        let has_edit_permission = self
+            .permission_resolver
             .check_folder_permission(user_id, folder_id, SharePermissions::Edit)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -403,7 +425,8 @@ where
         let mut folder = self.get_folder(folder_id, user_id).await?;
 
         // Verify Edit permission
-        let has_edit_permission = self.permission_resolver
+        let has_edit_permission = self
+            .permission_resolver
             .check_folder_permission(user_id, folder_id, SharePermissions::Edit)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -523,7 +546,8 @@ where
         let folder = self.get_folder(folder_id, user_id).await?;
 
         // Verify Admin permission for deletion
-        let has_admin_permission = self.permission_resolver
+        let has_admin_permission = self
+            .permission_resolver
             .check_folder_permission(user_id, folder_id, SharePermissions::Admin)
             .await
             .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -850,7 +874,12 @@ mod tests {
 
         // Create subfolder
         let subfolder = service
-            .create_folder("Work".to_string(), Some(parent.id), owner_id, Uuid::new_v4())
+            .create_folder(
+                "Work".to_string(),
+                Some(parent.id),
+                owner_id,
+                Uuid::new_v4(),
+            )
             .await
             .unwrap();
 
@@ -871,7 +900,9 @@ mod tests {
         );
 
         let owner_id = Uuid::new_v4();
-        let result = service.create_folder("".to_string(), None, owner_id, Uuid::new_v4()).await;
+        let result = service
+            .create_folder("".to_string(), None, owner_id, Uuid::new_v4())
+            .await;
 
         assert!(matches!(result, Err(FolderError::InvalidName(_))));
     }
@@ -907,7 +938,12 @@ mod tests {
         let owner_id = Uuid::new_v4();
         let non_existent_parent_id = Uuid::new_v4();
         let result = service
-            .create_folder("Work".to_string(), Some(non_existent_parent_id), owner_id, Uuid::new_v4())
+            .create_folder(
+                "Work".to_string(),
+                Some(non_existent_parent_id),
+                owner_id,
+                Uuid::new_v4(),
+            )
             .await;
 
         assert!(matches!(result, Err(FolderError::ParentFolderNotFound(_))));
@@ -934,7 +970,12 @@ mod tests {
 
         // Try to create subfolder as different user
         let result = service
-            .create_folder("Work".to_string(), Some(parent.id), other_user_id, Uuid::new_v4())
+            .create_folder(
+                "Work".to_string(),
+                Some(parent.id),
+                other_user_id,
+                Uuid::new_v4(),
+            )
             .await;
 
         assert!(matches!(result, Err(FolderError::PermissionDenied { .. })));
@@ -1044,11 +1085,21 @@ mod tests {
 
         // Create subfolders
         let _subfolder1 = service
-            .create_folder("Work".to_string(), Some(parent.id), owner_id, Uuid::new_v4())
+            .create_folder(
+                "Work".to_string(),
+                Some(parent.id),
+                owner_id,
+                Uuid::new_v4(),
+            )
             .await
             .unwrap();
         let _subfolder2 = service
-            .create_folder("Personal".to_string(), Some(parent.id), owner_id, Uuid::new_v4())
+            .create_folder(
+                "Personal".to_string(),
+                Some(parent.id),
+                owner_id,
+                Uuid::new_v4(),
+            )
             .await
             .unwrap();
 
@@ -1133,11 +1184,21 @@ mod tests {
             .await
             .unwrap();
         let _projects = service
-            .create_folder("Projects".to_string(), Some(work.id), owner_id, Uuid::new_v4())
+            .create_folder(
+                "Projects".to_string(),
+                Some(work.id),
+                owner_id,
+                Uuid::new_v4(),
+            )
             .await
             .unwrap();
         let _personal = service
-            .create_folder("Personal".to_string(), Some(root.id), owner_id, Uuid::new_v4())
+            .create_folder(
+                "Personal".to_string(),
+                Some(root.id),
+                owner_id,
+                Uuid::new_v4(),
+            )
             .await
             .unwrap();
 
@@ -1240,7 +1301,12 @@ mod tests {
             .await
             .unwrap();
         let projects = service
-            .create_folder("Projects".to_string(), Some(work.id), owner_id, Uuid::new_v4())
+            .create_folder(
+                "Projects".to_string(),
+                Some(work.id),
+                owner_id,
+                Uuid::new_v4(),
+            )
             .await
             .unwrap();
 
@@ -1401,7 +1467,12 @@ mod tests {
             .await
             .unwrap();
         let projects = service
-            .create_folder("Projects".to_string(), Some(work.id), owner_id, Uuid::new_v4())
+            .create_folder(
+                "Projects".to_string(),
+                Some(work.id),
+                owner_id,
+                Uuid::new_v4(),
+            )
             .await
             .unwrap();
 
@@ -1507,7 +1578,12 @@ mod tests {
             .await
             .unwrap();
         let projects = service
-            .create_folder("Projects".to_string(), Some(work.id), owner_id, Uuid::new_v4())
+            .create_folder(
+                "Projects".to_string(),
+                Some(work.id),
+                owner_id,
+                Uuid::new_v4(),
+            )
             .await
             .unwrap();
 
@@ -1615,7 +1691,12 @@ mod tests {
             .await
             .unwrap();
         let projects = service
-            .create_folder("Projects".to_string(), Some(work.id), owner_id, Uuid::new_v4())
+            .create_folder(
+                "Projects".to_string(),
+                Some(work.id),
+                owner_id,
+                Uuid::new_v4(),
+            )
             .await
             .unwrap();
 
@@ -1667,7 +1748,12 @@ mod tests {
             .await
             .unwrap();
         let projects = service
-            .create_folder("Projects".to_string(), Some(work.id), owner_id, Uuid::new_v4())
+            .create_folder(
+                "Projects".to_string(),
+                Some(work.id),
+                owner_id,
+                Uuid::new_v4(),
+            )
             .await
             .unwrap();
         let archive = service
@@ -1701,7 +1787,10 @@ mod tests {
         // Work should now have Archive as ancestor
         assert_eq!(updated_work.ancestor_ids, Some(vec![archive.id]));
         // Projects should now have Archive and Work as ancestors
-        assert_eq!(updated_projects.ancestor_ids, Some(vec![archive.id, work.id]));
+        assert_eq!(
+            updated_projects.ancestor_ids,
+            Some(vec![archive.id, work.id])
+        );
     }
 
     #[tokio::test]
@@ -1830,7 +1919,9 @@ mod tests {
 
         // Try to move A into C - this should be detected as circular
         // because A is in C's ancestor_ids [A, B]
-        let result = service.move_folder(folder_a.id, Some(folder_c.id), owner_id).await;
+        let result = service
+            .move_folder(folder_a.id, Some(folder_c.id), owner_id)
+            .await;
 
         assert!(matches!(result, Err(FolderError::CircularReference { .. })));
     }
@@ -1887,7 +1978,10 @@ mod tests {
         );
 
         // Move C (with D and E) to root
-        service.move_folder(folder_c.id, None, owner_id).await.unwrap();
+        service
+            .move_folder(folder_c.id, None, owner_id)
+            .await
+            .unwrap();
 
         // Verify ancestor_ids were updated for C and all descendants
         let updated_c = metadata_store

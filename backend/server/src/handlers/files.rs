@@ -226,9 +226,12 @@ pub async fn download_file_content(
         HeaderValue::from_str(&content_disposition)
             .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
     );
-    
+
     // Set Content-Type based on file's MIME type
-    let content_type = file.mime_type.parse().ok()
+    let content_type = file
+        .mime_type
+        .parse()
+        .ok()
         .or_else(|| HeaderValue::from_str("application/octet-stream").ok())
         .unwrap_or_else(|| HeaderValue::from_static("application/octet-stream"));
     headers.insert(header::CONTENT_TYPE, content_type);
@@ -273,9 +276,12 @@ pub async fn preview_file(
         header::CONTENT_DISPOSITION,
         HeaderValue::from_static("inline"),
     );
-    
+
     // Set Content-Type based on file's MIME type
-    let content_type = file.mime_type.parse().ok()
+    let content_type = file
+        .mime_type
+        .parse()
+        .ok()
         .or_else(|| HeaderValue::from_str("application/octet-stream").ok())
         .unwrap_or_else(|| HeaderValue::from_static("application/octet-stream"));
     headers.insert(header::CONTENT_TYPE, content_type);
@@ -514,7 +520,9 @@ fn thumbnail_error_response(err: ThumbnailError) -> Response {
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "Thumbnail generation not supported for this file type".to_string(),
         ),
-        ThumbnailError::Storage(_) | ThumbnailError::Generation(_) | ThumbnailError::Database(_) => {
+        ThumbnailError::Storage(_)
+        | ThumbnailError::Generation(_)
+        | ThumbnailError::Database(_) => {
             tracing::error!("Thumbnail service error: {}", err);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -674,22 +682,29 @@ pub async fn edit_file(
     }
 
     // Decode base64 content
-    let content = match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &req.content) {
-        Ok(bytes) => Bytes::from(bytes),
-        Err(e) => {
-            tracing::error!("Failed to decode base64 content: {}", e);
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse::new("Invalid base64 content")),
-            )
-                .into_response());
-        }
-    };
+    let content =
+        match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &req.content) {
+            Ok(bytes) => Bytes::from(bytes),
+            Err(e) => {
+                tracing::error!("Failed to decode base64 content: {}", e);
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse::new("Invalid base64 content")),
+                )
+                    .into_response());
+            }
+        };
 
     // Edit file
     let file = state
         .file_service
-        .edit_file(file_id, auth.user_id, content, &req.save_mode, req.change_description)
+        .edit_file(
+            file_id,
+            auth.user_id,
+            content,
+            &req.save_mode,
+            req.change_description,
+        )
         .await
         .map_err(file_error_response)?;
 
@@ -733,6 +748,8 @@ pub struct FileWithShares {
     pub share_count: i64,
     /// Earliest share expiration date (None if no shares have expiration)
     pub share_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_permission: Option<String>,
 }
 
 /// List all files for the current user.
@@ -766,7 +783,8 @@ pub async fn list_files(
                 WHERE file_id = f.id
                 AND revoked_at IS NULL
                 AND expires_at IS NOT NULL
-            ) as share_expires_at
+            ) as share_expires_at,
+            'Admin'::TEXT as effective_permission
         FROM files f
         WHERE f.owner_id = $1
           AND f.tenant_id = $2
@@ -798,7 +816,12 @@ pub async fn toggle_file_star(
         .metadata_store
         .set_file_starred(file_id, auth.user_id, req.starred)
         .await
-        .map_err(|e| file_error_response(FileError::Storage(format!("Failed to update star state: {}", e))))?;
+        .map_err(|e| {
+            file_error_response(FileError::Storage(format!(
+                "Failed to update star state: {}",
+                e
+            )))
+        })?;
 
     if !updated {
         return Err(file_error_response(FileError::NotFound(file_id)));
@@ -816,7 +839,9 @@ pub async fn restore_file_from_trash(
         .metadata_store
         .restore_file(file_id, auth.user_id, auth.tenant_id)
         .await
-        .map_err(|e| file_error_response(FileError::Storage(format!("Failed to restore file: {}", e))))?;
+        .map_err(|e| {
+            file_error_response(FileError::Storage(format!("Failed to restore file: {}", e)))
+        })?;
 
     if !restored {
         return Err(file_error_response(FileError::NotFound(file_id)));
@@ -834,7 +859,12 @@ pub async fn permanently_delete_file(
         .metadata_store
         .permanently_delete_file(file_id, auth.user_id)
         .await
-        .map_err(|e| file_error_response(FileError::Storage(format!("Failed to permanently delete file: {}", e))))?;
+        .map_err(|e| {
+            file_error_response(FileError::Storage(format!(
+                "Failed to permanently delete file: {}",
+                e
+            )))
+        })?;
 
     if !deleted {
         return Err(file_error_response(FileError::NotFound(file_id)));
@@ -867,7 +897,8 @@ pub async fn list_starred_items(
                 WHERE folder_id = f.id
                 AND revoked_at IS NULL
                 AND expires_at IS NOT NULL
-            ) as share_expires_at
+            ) as share_expires_at,
+            'Admin'::TEXT as effective_permission
         FROM folders f
         WHERE f.owner_id = $1
           AND f.tenant_id = $2
@@ -880,7 +911,12 @@ pub async fn list_starred_items(
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|e| file_error_response(FileError::Storage(format!("Failed to list starred folders: {}", e))))?;
+    .map_err(|e| {
+        file_error_response(FileError::Storage(format!(
+            "Failed to list starred folders: {}",
+            e
+        )))
+    })?;
 
     let files = sqlx::query_as::<_, FileWithShares>(
         r#"
@@ -903,7 +939,8 @@ pub async fn list_starred_items(
                 WHERE file_id = f.id
                 AND revoked_at IS NULL
                 AND expires_at IS NOT NULL
-            ) as share_expires_at
+            ) as share_expires_at,
+            'Admin'::TEXT as effective_permission
         FROM files f
         WHERE f.owner_id = $1
           AND f.tenant_id = $2
@@ -916,9 +953,18 @@ pub async fn list_starred_items(
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|e| file_error_response(FileError::Storage(format!("Failed to list starred files: {}", e))))?;
+    .map_err(|e| {
+        file_error_response(FileError::Storage(format!(
+            "Failed to list starred files: {}",
+            e
+        )))
+    })?;
 
-    Ok(Json(crate::handlers::folders::FolderContentsWithShares { folders, files }))
+    Ok(Json(crate::handlers::folders::FolderContentsWithShares {
+        folders,
+        files,
+        current_folder_permission: None,
+    }))
 }
 
 pub async fn list_deleted_items(
@@ -945,7 +991,8 @@ pub async fn list_deleted_items(
                 WHERE folder_id = f.id
                 AND revoked_at IS NULL
                 AND expires_at IS NOT NULL
-            ) as share_expires_at
+            ) as share_expires_at,
+            'Admin'::TEXT as effective_permission
         FROM folders f
         WHERE f.owner_id = $1
           AND f.tenant_id = $2
@@ -957,7 +1004,12 @@ pub async fn list_deleted_items(
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|e| file_error_response(FileError::Storage(format!("Failed to list deleted folders: {}", e))))?;
+    .map_err(|e| {
+        file_error_response(FileError::Storage(format!(
+            "Failed to list deleted folders: {}",
+            e
+        )))
+    })?;
 
     let files = sqlx::query_as::<_, FileWithShares>(
         r#"
@@ -980,7 +1032,8 @@ pub async fn list_deleted_items(
                 WHERE file_id = f.id
                 AND revoked_at IS NULL
                 AND expires_at IS NOT NULL
-            ) as share_expires_at
+            ) as share_expires_at,
+            'Admin'::TEXT as effective_permission
         FROM files f
         WHERE f.owner_id = $1
           AND f.tenant_id = $2
@@ -992,7 +1045,16 @@ pub async fn list_deleted_items(
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|e| file_error_response(FileError::Storage(format!("Failed to list deleted files: {}", e))))?;
+    .map_err(|e| {
+        file_error_response(FileError::Storage(format!(
+            "Failed to list deleted files: {}",
+            e
+        )))
+    })?;
 
-    Ok(Json(crate::handlers::folders::FolderContentsWithShares { folders, files }))
+    Ok(Json(crate::handlers::folders::FolderContentsWithShares {
+        folders,
+        files,
+        current_folder_permission: None,
+    }))
 }

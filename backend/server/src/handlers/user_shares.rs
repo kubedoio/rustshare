@@ -15,13 +15,15 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use rustshare_core::domain::SharePermissions;
+use rustshare_core::{domain::SharePermissions, services::Resource};
 
 use super::{share_error_response, AuthenticatedUser};
 use crate::AppState;
 
 // Re-export folder/file with shares types from folders handler
-use super::folders::{FolderWithShares, FolderContentsWithShares};
+use super::folders::{
+    FolderContentsWithShares, FolderTreeNode, FolderTreeWithShares, FolderWithShares,
+};
 // removed unused import
 
 // ============================================================================
@@ -415,6 +417,20 @@ pub async fn get_user_shared_folder_contents(
     use crate::handlers::folder_error_response;
 
     // 1. Get contents via FolderService (which handles permissions and visibility)
+    let current_folder_permission = state
+        .permission_resolver
+        .resolve_permission_with_source(auth.user_id, Resource::Folder(folder_id))
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                "failed to resolve permission for shared folder {} and user {}: {}",
+                folder_id,
+                auth.user_id,
+                error
+            );
+            crate::handlers::internal_error_response()
+        })?;
+
     let contents = state
         .folder_service
         .list_contents(folder_id, auth.user_id)
@@ -424,21 +440,20 @@ pub async fn get_user_shared_folder_contents(
     // 2. Decorate folders with share information
     let mut folders_with_shares = Vec::with_capacity(contents.folders.len());
     for f in contents.folders {
-        let share_info: (bool, i64, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
-            r#"
-            SELECT
-                EXISTS(SELECT 1 FROM shares WHERE folder_id = $1 AND revoked_at IS NULL) as is_shared,
-                (SELECT COUNT(*) FROM shares WHERE folder_id = $1 AND revoked_at IS NULL) as share_count,
-                (SELECT MIN(expires_at) FROM shares WHERE folder_id = $1 AND revoked_at IS NULL AND expires_at IS NOT NULL) as share_expires_at
-            "#
-        )
-        .bind(f.id)
-        .fetch_one(&state.db_pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Database error fetching share info for folder {}: {}", f.id, e);
-            crate::handlers::internal_error_response()
-        })?;
+        let share_info = load_folder_share_summary(&state.db_pool, f.id).await?;
+        let permission = state
+            .permission_resolver
+            .resolve_permission_with_source(auth.user_id, Resource::Folder(f.id))
+            .await
+            .map_err(|error| {
+                tracing::error!(
+                    "failed to resolve permission for shared child folder {} and user {}: {}",
+                    f.id,
+                    auth.user_id,
+                    error
+                );
+                crate::handlers::internal_error_response()
+            })?;
 
         folders_with_shares.push(FolderWithShares {
             id: f.id,
@@ -453,27 +468,27 @@ pub async fn get_user_shared_folder_contents(
             is_shared: share_info.0,
             share_count: share_info.1,
             share_expires_at: share_info.2,
+            effective_permission: permission_to_string(permission.permission),
         });
     }
 
     // 3. Decorate files with share information
     let mut files_with_shares = Vec::with_capacity(contents.files.len());
     for f in contents.files {
-        let share_info: (bool, i64, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
-            r#"
-            SELECT
-                EXISTS(SELECT 1 FROM shares WHERE file_id = $1 AND revoked_at IS NULL) as is_shared,
-                (SELECT COUNT(*) FROM shares WHERE file_id = $1 AND revoked_at IS NULL) as share_count,
-                (SELECT MIN(expires_at) FROM shares WHERE file_id = $1 AND revoked_at IS NULL AND expires_at IS NOT NULL) as share_expires_at
-            "#
-        )
-        .bind(f.id)
-        .fetch_one(&state.db_pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Database error fetching share info for file {}: {}", f.id, e);
-            crate::handlers::internal_error_response()
-        })?;
+        let share_info = load_file_share_summary(&state.db_pool, f.id).await?;
+        let permission = state
+            .permission_resolver
+            .resolve_permission_with_source(auth.user_id, Resource::File(f.id))
+            .await
+            .map_err(|error| {
+                tracing::error!(
+                    "failed to resolve permission for shared child file {} and user {}: {}",
+                    f.id,
+                    auth.user_id,
+                    error
+                );
+                crate::handlers::internal_error_response()
+            })?;
 
         files_with_shares.push(crate::handlers::files::FileWithShares {
             id: f.id,
@@ -492,15 +507,141 @@ pub async fn get_user_shared_folder_contents(
             is_shared: share_info.0,
             share_count: share_info.1,
             share_expires_at: share_info.2,
+            effective_permission: permission_to_string(permission.permission),
         });
     }
 
     Ok(Json(FolderContentsWithShares {
         folders: folders_with_shares,
         files: files_with_shares,
+        current_folder_permission: permission_to_string(current_folder_permission.permission),
     }))
 }
 
+/// Get recursive tree structure for a shared folder.
+///
+/// GET /api/shares/folders/{id}/tree
+pub async fn get_user_shared_folder_tree(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(folder_id): Path<Uuid>,
+) -> Result<Json<FolderTreeWithShares>, Response> {
+    let tree = build_user_shared_folder_tree(&state, auth.user_id, folder_id).await?;
+    Ok(Json(tree))
+}
+
+async fn build_user_shared_folder_tree(
+    state: &AppState,
+    user_id: Uuid,
+    folder_id: Uuid,
+) -> Result<FolderTreeWithShares, Response> {
+    use crate::handlers::folder_error_response;
+
+    let folder = state
+        .folder_service
+        .get_folder(folder_id, user_id)
+        .await
+        .map_err(folder_error_response)?;
+
+    let share_info = load_folder_share_summary(&state.db_pool, folder_id).await?;
+    let permission = state
+        .permission_resolver
+        .resolve_permission_with_source(user_id, Resource::Folder(folder_id))
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                "failed to resolve permission for shared tree folder {} and user {}: {}",
+                folder_id,
+                user_id,
+                error
+            );
+            crate::handlers::internal_error_response()
+        })?;
+
+    let contents = state
+        .folder_service
+        .list_contents(folder_id, user_id)
+        .await
+        .map_err(folder_error_response)?;
+
+    let mut subfolders = Vec::with_capacity(contents.folders.len());
+    for child in contents.folders {
+        let subtree = Box::pin(build_user_shared_folder_tree(state, user_id, child.id)).await?;
+        subfolders.push(subtree);
+    }
+
+    Ok(FolderTreeWithShares {
+        folder: FolderTreeNode {
+            id: folder.id,
+            name: folder.name,
+            path: folder.path,
+            parent_folder_id: folder.parent_folder_id,
+            owner_id: folder.owner_id,
+            created_at: folder.created_at,
+            updated_at: folder.updated_at,
+            tenant_id: folder.tenant_id,
+            ancestor_ids: folder.ancestor_ids,
+            is_shared: share_info.0,
+            share_count: share_info.1,
+            share_expires_at: share_info.2,
+            effective_permission: permission_to_string(permission.permission),
+        },
+        subfolders,
+    })
+}
+
+async fn load_folder_share_summary(
+    pool: &sqlx::PgPool,
+    folder_id: Uuid,
+) -> Result<(bool, i64, Option<chrono::DateTime<chrono::Utc>>), Response> {
+    sqlx::query_as(
+        r#"
+        SELECT
+            EXISTS(SELECT 1 FROM shares WHERE folder_id = $1 AND revoked_at IS NULL) as is_shared,
+            (SELECT COUNT(*) FROM shares WHERE folder_id = $1 AND revoked_at IS NULL) as share_count,
+            (SELECT MIN(expires_at) FROM shares WHERE folder_id = $1 AND revoked_at IS NULL AND expires_at IS NOT NULL) as share_expires_at
+        "#,
+    )
+    .bind(folder_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| {
+        tracing::error!("database error fetching share info for folder {}: {}", folder_id, error);
+        crate::handlers::internal_error_response()
+    })
+}
+
+async fn load_file_share_summary(
+    pool: &sqlx::PgPool,
+    file_id: Uuid,
+) -> Result<(bool, i64, Option<chrono::DateTime<chrono::Utc>>), Response> {
+    sqlx::query_as(
+        r#"
+        SELECT
+            EXISTS(SELECT 1 FROM shares WHERE file_id = $1 AND revoked_at IS NULL) as is_shared,
+            (SELECT COUNT(*) FROM shares WHERE file_id = $1 AND revoked_at IS NULL) as share_count,
+            (SELECT MIN(expires_at) FROM shares WHERE file_id = $1 AND revoked_at IS NULL AND expires_at IS NOT NULL) as share_expires_at
+        "#,
+    )
+    .bind(file_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| {
+        tracing::error!("database error fetching share info for file {}: {}", file_id, error);
+        crate::handlers::internal_error_response()
+    })
+}
+
+fn permission_to_string(permission: Option<SharePermissions>) -> Option<String> {
+    permission.map(|permission| {
+        match permission {
+            SharePermissions::View => "View",
+            SharePermissions::Edit => "Edit",
+            SharePermissions::Admin => "Admin",
+        }
+        .to_string()
+    })
+}
 
 // ============================================================================
 // Tests
