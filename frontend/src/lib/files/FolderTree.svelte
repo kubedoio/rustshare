@@ -103,7 +103,8 @@
 		const isRoot = depth === 0;
 		
 		fileBrowserUi.selectFolder(folderId);
-		onFolderClick(folderId);
+		// For root folder, pass null to navigate to root URL (/files)
+		onFolderClick(isRoot ? null : folderId);
 	}
 
 	// ============================================================================
