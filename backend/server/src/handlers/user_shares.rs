@@ -451,7 +451,7 @@ pub async fn get_user_shared_folder_contents(
     }
 
     // Get folders in this parent with share info
-    // Note: We don't filter by owner_id since this is a shared folder
+    // Note: We don't filter by tenant_id since shared folders may belong to different tenants
     let folders = sqlx::query_as::<_, FolderWithShares>(
         r#"
         SELECT
@@ -474,12 +474,11 @@ pub async fn get_user_shared_folder_contents(
                 AND expires_at IS NOT NULL
             ) as share_expires_at
         FROM folders f
-        WHERE f.parent_folder_id = $1 AND f.tenant_id = $2 AND f.deleted_at IS NULL
+        WHERE f.parent_folder_id = $1 AND f.deleted_at IS NULL
         ORDER BY f.name
         "#,
     )
     .bind(folder_id)
-    .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
     .map_err(|_| {
@@ -491,6 +490,7 @@ pub async fn get_user_shared_folder_contents(
     })?;
 
     // Get files in this parent with share info
+    // Note: We don't filter by tenant_id since shared files may belong to different tenants
     let files = sqlx::query_as::<_, FileWithShares>(
         r#"
         SELECT
@@ -514,12 +514,11 @@ pub async fn get_user_shared_folder_contents(
                 AND expires_at IS NOT NULL
             ) as share_expires_at
         FROM files f
-        WHERE f.parent_folder_id = $1 AND f.tenant_id = $2 AND f.deleted_at IS NULL
+        WHERE f.parent_folder_id = $1 AND f.deleted_at IS NULL
         ORDER BY f.name
         "#,
     )
     .bind(folder_id)
-    .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
     .map_err(|_| {
