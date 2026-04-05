@@ -33,6 +33,7 @@
 	interface Props {
 		item: FileType | Folder;
 		isFolder: boolean;
+		isSharedRoot?: boolean;
 		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
 		selectionMode?: boolean;
 		selected?: boolean;
@@ -64,6 +65,7 @@
 	let {
 		item,
 		isFolder,
+		isSharedRoot = false,
 		workspaceMode = 'all',
 		selectionMode = false,
 		selected = false,
@@ -385,7 +387,7 @@
 	<!-- Preview Icon -->
 	<td class="w-10 px-1 py-0.5">
 		<div class="flex items-center justify-center">
-			<FilePreview {item} {isFolder} size="sm" showThumbnail={!isFolder && workspaceMode !== 'deleted'} />
+			<FilePreview {item} {isFolder} {isSharedRoot} size="sm" showThumbnail={!isFolder && workspaceMode !== 'deleted'} />
 		</div>
 	</td>
 

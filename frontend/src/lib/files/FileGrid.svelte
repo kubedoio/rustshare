@@ -32,6 +32,7 @@
 	export let onEditFile: (file: FileType) => void = () => {};
 	export let selectionMode = false;
 	export let replicationStatuses: Record<string, ReplicationStatus> = {};
+	export let isSharedRoot = false;
 
 	// Drag and drop state
 	let draggedItem: { id: string; isFolder: boolean; parentFolderId: string | null } | null = null;
@@ -180,6 +181,7 @@
 			<FileGridTile
 				item={folder}
 				isFolder={true}
+				{isSharedRoot}
 				{workspaceMode}
 				selected={selectionMode && $selectionStore.selectedFolderIds.has(folder.id)}
 				{selectionMode}
@@ -207,6 +209,7 @@
 			<FileGridTile
 				item={file}
 				isFolder={false}
+				{isSharedRoot}
 				{workspaceMode}
 				selected={selectionMode && $selectionStore.selectedFileIds.has(file.id)}
 				{selectionMode}

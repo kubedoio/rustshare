@@ -6,6 +6,7 @@
 
 	export let folders: Folder[] = [];
 	export let files: FileType[] = [];
+	export let isSharedRoot: boolean = false;
 	export let emptyTitle = 'No files yet';
 	export let emptyDescription = 'Upload your first file to get started';
 	export let emptyActionLabel: string | null = 'Upload files';
@@ -195,6 +196,7 @@
 				<FileListRow
 					item={folder}
 					isFolder={true}
+					{isSharedRoot}
 					{workspaceMode}
 					{selectionMode}
 					selected={$selectionStore.selectedFolderIds.has(folder.id)}

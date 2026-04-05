@@ -23,6 +23,7 @@
 	export let replicationStatuses: Record<string, ReplicationStatus> = {};
 	export let selectionMode: boolean = false;
 	export let isUploading: boolean = false;
+	export let isSharedRoot: boolean = false;
 
 	// Event handlers
 
@@ -91,6 +92,7 @@
 			{replicationStatuses}
 			{selectionMode}
 			{isUploading}
+			{isSharedRoot}
 			{onRefresh}
 			{onNewFolder}
 			{onUpload}

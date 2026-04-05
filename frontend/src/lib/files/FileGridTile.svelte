@@ -31,6 +31,7 @@
 		item: FileType | Folder;
 		isFolder: boolean;
 		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+		isSharedRoot?: boolean;
 		selected?: boolean;
 		selectionMode?: boolean;
 		replicationStatus?: ReplicationStatus | null;
@@ -60,6 +61,7 @@
 		item,
 		isFolder,
 		workspaceMode = 'all',
+		isSharedRoot = false,
 		selected = false,
 		selectionMode = false,
 		replicationStatus = null,
@@ -421,7 +423,7 @@
 	<!-- Preview Area -->
 	<div class="aspect-square bg-base-200/50 flex items-center justify-center p-3 border-b border-base-300/30">
 		<div class="w-full h-full flex items-center justify-center">
-			<FilePreview {item} {isFolder} size="lg" showThumbnail={!isFolder && workspaceMode !== 'deleted'} />
+			<FilePreview {item} {isFolder} {isSharedRoot} size="lg" showThumbnail={!isFolder && workspaceMode !== 'deleted'} />
 		</div>
 	</div>
 

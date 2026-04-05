@@ -27,6 +27,7 @@
 		error?: Error | null;
 		replicationStatuses?: Record<string, ReplicationStatus>;
 		selectionMode?: boolean;
+		isSharedRoot?: boolean;
 		isUploading?: boolean;
 		onRefresh?: () => void;
 		onNewFolder?: () => void;
@@ -65,6 +66,7 @@
 		files = [],
 		folderPath = [],
 		rootLabel = 'My Files',
+		isSharedRoot = false,
 		title = 'All files',
 		description = '',
 		emptyTitle = 'No files yet',
@@ -175,6 +177,7 @@
 				<FileGrid
 					{folders}
 					{files}
+					{isSharedRoot}
 					{emptyTitle}
 					{emptyDescription}
 					{emptyActionLabel}
@@ -206,6 +209,7 @@
 				<FileList
 					{folders}
 					{files}
+					{isSharedRoot}
 					{emptyTitle}
 					{emptyDescription}
 					{emptyActionLabel}

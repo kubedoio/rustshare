@@ -172,6 +172,9 @@
 	// Is in collection mode?
 	$: isCollectionMode = workspaceMode === 'starred' || workspaceMode === 'recent' || workspaceMode === 'photos';
 
+	// Is shared root view?
+	$: isSharedRoot = activeRoot === 'shared' && !currentFolderId;
+
 	// Current folder ID (null at root)
 	$: currentFolderId = isCollectionMode 
 		? null 
@@ -1404,6 +1407,7 @@
 		{replicationStatuses}
 		{selectionMode}
 		{isUploading}
+		{isSharedRoot}
 		onFolderClick={handleFolderClick}
 		onFileClick={handleFileClick}
 		onRefresh={() => $filesQuery.refetch()}
