@@ -11,8 +11,7 @@
 		Users,
 		Star,
 		Image,
-		Clock,
-		Plus,
+			Plus,
 	} from 'lucide-svelte';
 	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
 	import FolderTree from '$lib/files/FolderTree.svelte';
@@ -311,7 +310,6 @@
 			- Shared (now in Library, not Primary)
 			- Starred
 			- Photos  
-			- Recent
 		-->
 		<div class="px-2 mb-4">
 			<h3 class="px-3 text-[11px] font-semibold text-base-content/40 uppercase tracking-wider mb-1">
@@ -357,19 +355,6 @@
 				>
 					<Image size={18} strokeWidth={1.75} />
 					<span>Photos</span>
-				</button>
-
-				<!-- Recent -->
-				<button
-					type="button"
-					class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
-						{isCollectionActive('recent')
-							? 'bg-brand-500/10 text-brand-600 font-medium'
-							: 'text-base-content/70 hover:bg-base-200/60'}"
-					onclick={() => navigateToCollection('recent')}
-				>
-					<Clock size={18} strokeWidth={1.75} />
-					<span>Recent</span>
 				</button>
 			</nav>
 		</div>

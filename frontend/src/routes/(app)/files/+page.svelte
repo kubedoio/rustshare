@@ -1366,7 +1366,6 @@
 	type="file"
 	class="hidden"
 	multiple
-	webkitdirectory
 	on:change={(e) => {
 		const target = e.target as HTMLInputElement;
 		if (target.files && target.files.length > 0) {
