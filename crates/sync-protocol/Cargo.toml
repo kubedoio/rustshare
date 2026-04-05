@@ -1,0 +1,11 @@
+[package]
+name = "sync-protocol"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sync-domain = { path = "../sync-domain" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }

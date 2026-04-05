@@ -1,0 +1,14 @@
+[package]
+name = "vfs-win"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sync-engine = { path = "../sync-engine" }
+sync-domain = { path = "../sync-domain" }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }

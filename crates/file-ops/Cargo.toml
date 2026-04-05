@@ -1,0 +1,18 @@
+[package]
+name = "file-ops"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sync-domain = { path = "../sync-domain" }
+tempfile = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+walkdir = { workspace = true }
+tokio = { workspace = true }
+fs4 = { version = "0.12", features = ["tokio"] }
+pathdiff = { workspace = true }
+notify = { workspace = true }
+chrono = { workspace = true }

@@ -414,23 +414,65 @@ pub async fn get_user_shared_folder_contents(
 ) -> Result<Json<FolderContentsWithShares>, Response> {
     use axum::{http::StatusCode, response::IntoResponse};
 
-    // First, verify the user has access to this folder via a share
+    // First, get the folder path to check for ancestor shares
+    let folder_path: Option<String> = sqlx::query_scalar(
+        "SELECT path FROM folders WHERE id = $1"
+    )
+    .bind(folder_id)
+    .fetch_optional(&state.db_pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Error fetching folder path: {:?}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(super::ErrorResponse::new("Internal server error")),
+        )
+            .into_response()
+    })?;
+
+    let folder_path = match folder_path {
+        Some(path) => path,
+        None => {
+            return Err(
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(super::ErrorResponse::new("Folder not found")),
+                )
+                    .into_response(),
+            );
+        }
+    };
+
+    // Verify the user has access to this folder via a share
+    // This checks if the folder itself OR any ancestor folder is shared with the user
     let has_access = sqlx::query_scalar::<_, bool>(
         r#"
         SELECT EXISTS(
+            -- Direct share on this folder
             SELECT 1 FROM share_user_access sua
             JOIN shares s ON sua.share_id = s.id
             WHERE s.folder_id = $1
             AND sua.user_id = $2
             AND s.revoked_at IS NULL
+            UNION
+            -- Share on any ancestor folder
+            SELECT 1 FROM share_user_access sua
+            JOIN shares s ON sua.share_id = s.id
+            JOIN folders f ON s.folder_id = f.id
+            WHERE sua.user_id = $2
+            AND s.revoked_at IS NULL
+            AND s.folder_id IS NOT NULL
+            AND $3 LIKE f.path || '/%'
         )
         "#,
     )
     .bind(folder_id)
     .bind(auth.user_id)
+    .bind(&folder_path)
     .fetch_one(&state.db_pool)
     .await
-    .map_err(|_| {
+    .map_err(|e| {
+        tracing::error!("Error checking share access: {:?}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(super::ErrorResponse::new("Internal server error")),
