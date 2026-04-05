@@ -44,4 +44,13 @@ launch-smoke-reports/
 .worktrees/
 .gstack/
 .superpowers
-.claude/
+# Desktop Distributables
+dist/
+*.dmg
+*.pkg
+*.msi
+bin/
+
+# Local Dev Databases
+rustshare.db
+device_id
