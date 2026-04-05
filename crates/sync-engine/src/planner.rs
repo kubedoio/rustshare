@@ -26,7 +26,7 @@ impl Planner {
                     events.push(SyncEvent::RemoteUpdated(remote.clone()));
                 }
             } else {
-                events.push(SyncEvent::RemoteCreated(remote));
+                events.push(SyncEvent::RemoteCreated(remote.clone()));
             }
             remote_map.insert(path, remote);
         }

@@ -41,6 +41,13 @@ pub struct LocalEntry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HydrationState {
+    Placeholder,
+    Materialized,
+    Pinned,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SyncStatus {
     Idle,
     Scanning,

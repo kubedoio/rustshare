@@ -53,7 +53,7 @@ impl ApiClient {
         let url = self.base_url.join("/api/v1/sync/deltas")?;
         let response = self.client.get(url)
             .headers(self.headers()?)
-            .query(&[("cursor", request.cursor)])
+            .query(&[("cursor", &request.cursor)])
             .send().await?
             .error_for_status()?;
         

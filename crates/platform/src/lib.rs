@@ -31,7 +31,7 @@ impl TokenStore {
 
     pub fn delete_token(&self, user_id: &str) -> Result<()> {
         let entry = Entry::new(&self.service, user_id).map_err(|e| anyhow!("Keyring error: {}", e))?;
-        entry.delete_password().map_err(|e| anyhow!("Keyring error: {}", e))?;
+        entry.delete_credential().map_err(|e| anyhow!("Keyring error: {}", e))?;
         Ok(())
     }
 }
