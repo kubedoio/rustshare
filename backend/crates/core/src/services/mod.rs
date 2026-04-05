@@ -21,6 +21,7 @@ mod share_service;
 mod thumbnail_service;
 mod upload_service;
 pub mod upload_session;
+#[allow(deprecated)]
 mod user_share_service;
 
 pub use ai::{ContentIndex, ContentIndexer, EmbeddingGenerator, IndexedDocument, SimpleEmbeddingGenerator};
@@ -80,6 +81,7 @@ pub use upload_session::{
 pub use upload_service::{
     UploadError, UploadMetadataStore, UploadObjectStore, UploadService, UploadSessionRepository,
 };
+#[allow(deprecated)]
 pub use user_share_service::{
     FileOps, FolderOps, ShareOps, UserOps, UserShareService, UserShareServiceDeps,
 };

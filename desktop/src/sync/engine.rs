@@ -453,7 +453,7 @@ impl SyncEngine {
 
     /// Process upload queue
     async fn process_upload_queue(
-        folder: &SyncFolder,
+        _folder: &SyncFolder,
         api_client: &ApiClient,
         db: &Database,
     ) -> Result<()> {

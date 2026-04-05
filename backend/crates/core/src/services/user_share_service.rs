@@ -1,4 +1,5 @@
 //! DEPRECATED: Use ShareService instead
+#![allow(deprecated)]
 //! 
 //! This module is being phased out in favor of the unified ShareService.
 //! New code should use ShareService for all share operations.
@@ -90,6 +91,7 @@ pub trait FolderOps: Send + Sync {
 
 /// DEPRECATED: Use ShareService instead
 #[deprecated(since = "0.2.0", note = "Use ShareService instead. See module documentation for migration guide.")]
+#[allow(deprecated)]
 pub struct UserShareService<SR, UR, FR, DR, P, N, E>
 where
     SR: ShareOps,
@@ -130,6 +132,7 @@ where
     pub broadcaster: Arc<EventBroadcaster>,
 }
 
+#[allow(deprecated)]
 impl<SR, UR, FR, DR, P, N, E> UserShareService<SR, UR, FR, DR, P, N, E>
 where
     SR: ShareOps,

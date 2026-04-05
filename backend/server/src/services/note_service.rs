@@ -430,7 +430,7 @@ impl NoteService {
 
     /// Delete a note (and its sidecar).
     pub async fn delete_note(&self, file_id: Uuid, user_id: UserId) -> Result<(), NoteError> {
-        let file = self.file_service.get_file(file_id, user_id).await?;
+        let _file = self.file_service.get_file(file_id, user_id).await?;
 
         // If public, invalidate share index
         if let Some(meta) = self.load_metadata(file_id).await? {

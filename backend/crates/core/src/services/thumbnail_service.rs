@@ -1,7 +1,6 @@
 //! Thumbnail generation service
 
 use std::sync::Arc;
-use tracing::debug;
 use uuid::Uuid;
 
 use crate::domain::{

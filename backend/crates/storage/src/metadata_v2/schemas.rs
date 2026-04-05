@@ -7,7 +7,6 @@
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::SharePermissions;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use tracing::warn;
 use uuid::Uuid;
 
 // ============================================================================

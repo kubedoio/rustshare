@@ -304,7 +304,7 @@ impl DeltaProcessor {
     /// Handle folder created delta
     async fn handle_folder_created(
         &self,
-        folder_id: uuid::Uuid,
+        _folder_id: uuid::Uuid,
         server_path: &str,
         name: &str,
         folder: &SyncFolder,
@@ -322,10 +322,10 @@ impl DeltaProcessor {
     /// Handle folder renamed delta
     async fn handle_folder_renamed(
         &self,
-        folder_id: uuid::Uuid,
+        _folder_id: uuid::Uuid,
         old_path: &str,
         new_path: &str,
-        new_name: &str,
+        _new_name: &str,
         folder: &SyncFolder,
     ) -> Result<DeltaResult> {
         let old_local = self.server_path_to_local(old_path, folder)?;
@@ -347,18 +347,18 @@ impl DeltaProcessor {
     /// Handle folder moved delta
     async fn handle_folder_moved(
         &self,
-        folder_id: uuid::Uuid,
+        _folder_id: uuid::Uuid,
         old_path: &str,
         new_path: &str,
         folder: &SyncFolder,
     ) -> Result<DeltaResult> {
-        self.handle_folder_renamed(folder_id, old_path, new_path, "", folder).await
+        self.handle_folder_renamed(_folder_id, old_path, new_path, "", folder).await
     }
 
     /// Handle folder deleted delta
     async fn handle_folder_deleted(
         &self,
-        folder_id: uuid::Uuid,
+        _folder_id: uuid::Uuid,
         server_path: &str,
         folder: &SyncFolder,
     ) -> Result<DeltaResult> {

@@ -9,7 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use rustshare_core::domain::{Folder, FolderTree};
+use rustshare_core::domain::Folder;
 
 use super::{folder_error_response, AuthenticatedUser};
 use crate::AppState;

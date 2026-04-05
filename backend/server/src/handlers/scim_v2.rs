@@ -17,7 +17,6 @@ use rustshare_core::services::{
 use serde::Deserialize;
 use sqlx::PgPool;
 use std::sync::Arc;
-use tracing::warn;
 use uuid::Uuid;
 
 use crate::AppState;

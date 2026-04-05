@@ -3,6 +3,9 @@
 //! This module implements endpoints for sharing files and folders with specific users,
 //! managing share permissions, and listing shared resources.
 
+// Allow deprecated UserShareService usage during migration period
+#![allow(deprecated)]
+
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,

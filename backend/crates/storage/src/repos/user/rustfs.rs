@@ -8,7 +8,6 @@ use crate::metadata_v2::{
 use crate::repos::PathBuilder;
 use async_trait::async_trait;
 use std::sync::Arc;
-use tracing::debug;
 use uuid::Uuid;
 
 /// RustFS-backed user repository

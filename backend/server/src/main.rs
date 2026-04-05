@@ -60,6 +60,7 @@ use axum::{
     Json, Router,
 };
 use rustshare_auth::{JwtManager, PasswordHasher};
+#[allow(deprecated)]
 use rustshare_core::{
     domain::User,
     events::EventBroadcaster,
@@ -84,6 +85,7 @@ use tower_http::trace::TraceLayer;
 use tracing::info;
 use uuid::Uuid;
 
+#[allow(deprecated)]
 type AppUserShareService = UserShareService<
     ShareRepository,
     UserRepository,
@@ -380,6 +382,7 @@ async fn main() -> Result<()> {
     let notification_service = Arc::new(NotificationService::new(notification_repository));
 
     // Initialize user share service
+    #[allow(deprecated)]
     let user_share_service = Arc::new(UserShareService::new(UserShareServiceDeps {
         share_repo: Arc::clone(&share_repository),
         user_repo: Arc::clone(&user_repository),
