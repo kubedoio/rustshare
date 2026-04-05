@@ -39,6 +39,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Cache buster - change this to invalidate build cache
+ARG CACHE_BUSTER=1
+
 # Copy all source code at once (no dummy file trick to avoid caching issues)
 COPY Cargo.toml Cargo.lock ./
 COPY rust-toolchain.toml ./
