@@ -414,108 +414,69 @@ pub async fn get_user_shared_folder_contents(
 ) -> Result<Json<FolderContentsWithShares>, Response> {
     use axum::{http::StatusCode, response::IntoResponse};
 
-    // First, get the folder path to check for ancestor shares
-    let folder_path: Option<String> = sqlx::query_scalar(
-        "SELECT path FROM folders WHERE id = $1"
+    // 1. Verify the folder exists and is not deleted
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM folders WHERE id = $1 AND deleted_at IS NULL)"
     )
     .bind(folder_id)
-    .fetch_optional(&state.db_pool)
+    .fetch_one(&state.db_pool)
     .await
     .map_err(|e| {
-        tracing::error!("Error fetching folder path: {:?}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Internal server error")),
-        )
-            .into_response()
+        tracing::error!("Database error checking existence of folder {}: {}", folder_id, e);
+        internal_error_response()
     })?;
 
-    let folder_path = match folder_path {
-        Some(path) => path,
-        None => {
-            return Err(
-                (
-                    StatusCode::NOT_FOUND,
-                    Json(super::ErrorResponse::new("Folder not found")),
-                )
-                    .into_response(),
-            );
-        }
-    };
-
-    // Verify the user has access to this folder via a share
-    // This checks if the folder itself OR any ancestor folder is shared with the user
-    // Build the ancestor path pattern (e.g., "/parent" for "/parent/child")
-    let path_parts: Vec<&str> = folder_path.split('/').filter(|s| !s.is_empty()).collect();
-    let mut has_access = false;
-    
-    // Check each ancestor path (including the folder itself)
-    for i in 0..=path_parts.len() {
-        let ancestor_path = if i == 0 {
-            "/".to_string()
-        } else {
-            format!("/{}", path_parts[..i].join("/"))
-        };
-        
-        let ancestor_id: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM folders WHERE path = $1 AND deleted_at IS NULL"
-        )
-        .bind(&ancestor_path)
-        .fetch_optional(&state.db_pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Error looking up ancestor folder: {:?}", e);
+    if !exists {
+        return Err(
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new("Internal server error")),
-            )
-                .into_response()
-        })?;
-        
-        if let Some(ancestor_id) = ancestor_id {
-            let has_share: bool = sqlx::query_scalar(
-                r#"
-                SELECT EXISTS(
-                    SELECT 1 FROM share_user_access sua
-                    JOIN shares s ON sua.share_id = s.id
-                    WHERE s.folder_id = $1
-                    AND sua.user_id = $2
-                    AND s.revoked_at IS NULL
-                )
-                "#
-            )
-            .bind(ancestor_id)
-            .bind(auth.user_id)
-            .fetch_one(&state.db_pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Error checking share for ancestor {}: {:?}", ancestor_id, e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(super::ErrorResponse::new("Internal server error")),
-                )
-                    .into_response()
-            })?;
-            
-            if has_share {
-                has_access = true;
-                break;
-            }
-        }
+                StatusCode::NOT_FOUND,
+                Json(super::ErrorResponse::new("Folder not found")),
+            ).into_response()
+        );
     }
+
+    // 2. Check if the user has access via a Recursive CTE
+    // This correctly handles inheritance (shares on ancestors) and group sharing.
+    let has_access: bool = sqlx::query_scalar(
+        r#"
+        WITH RECURSIVE ancestors AS (
+            SELECT id, parent_folder_id FROM folders WHERE id = $1 AND deleted_at IS NULL
+            UNION ALL
+            SELECT f.id, f.parent_folder_id FROM folders f
+            JOIN ancestors a ON f.id = a.parent_folder_id
+            WHERE f.deleted_at IS NULL
+        )
+        SELECT EXISTS(
+            SELECT 1 FROM shares s
+            WHERE s.folder_id IN (SELECT id FROM ancestors)
+            AND (
+                s.recipient_user_id = $2
+                OR s.recipient_group_id IN (SELECT group_id FROM user_group_members WHERE user_id = $2)
+            )
+            AND s.revoked_at IS NULL
+        )
+        "#
+    )
+    .bind(folder_id)
+    .bind(auth.user_id)
+    .fetch_one(&state.db_pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Error checking share access for folder {}: {}", folder_id, e);
+        internal_error_response()
+    })?;
 
     if !has_access {
         return Err(
             (
                 StatusCode::FORBIDDEN,
-                Json(super::ErrorResponse::new(
-                    "You don't have access to this shared folder",
-                )),
-            )
-                .into_response(),
+                Json(super::ErrorResponse::new("You don't have access to this shared folder")),
+            ).into_response()
         );
     }
 
+    // 3. Get folder contents (immediate children only)
+    
     // Get folders in this parent with share info
     // Note: We don't filter by tenant_id since shared folders may belong to different tenants
     let folders = sqlx::query_as::<_, FolderWithShares>(
@@ -541,22 +502,18 @@ pub async fn get_user_shared_folder_contents(
             ) as share_expires_at
         FROM folders f
         WHERE f.parent_folder_id = $1 AND f.deleted_at IS NULL
-        ORDER BY f.name
+        ORDER BY f.name ASC
         "#,
     )
     .bind(folder_id)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Internal server error")),
-        )
-            .into_response()
+    .map_err(|e| {
+        tracing::error!("Error listing child folders for shared folder {}: {}", folder_id, e);
+        internal_error_response()
     })?;
 
     // Get files in this parent with share info
-    // Note: We don't filter by tenant_id since shared files may belong to different tenants
     let files = sqlx::query_as::<_, FileWithShares>(
         r#"
         SELECT
@@ -581,22 +538,29 @@ pub async fn get_user_shared_folder_contents(
             ) as share_expires_at
         FROM files f
         WHERE f.parent_folder_id = $1 AND f.deleted_at IS NULL
-        ORDER BY f.name
+        ORDER BY f.name ASC
         "#,
     )
     .bind(folder_id)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Internal server error")),
-        )
-            .into_response()
+    .map_err(|e| {
+        tracing::error!("Error listing child files for shared folder {}: {}", folder_id, e);
+        internal_error_response()
     })?;
 
     Ok(Json(FolderContentsWithShares { folders, files }))
 }
+
+/// Helper function to generate internal server error response with JSON body
+fn internal_error_response() -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(super::ErrorResponse::new("Internal server error")),
+    )
+        .into_response()
+}
+
 
 // ============================================================================
 // Tests
