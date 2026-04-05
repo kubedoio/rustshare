@@ -1614,7 +1614,7 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
             FROM folders
             WHERE owner_id = $1
               AND tenant_id = $2
@@ -1943,19 +1943,19 @@ impl MetadataStore {
             r#"
             WITH RECURSIVE folder_tree AS (
                 -- Base case: start with the specified folder
-                SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id
+                SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
                 FROM folders
                 WHERE id = $1 AND deleted_at IS NULL
 
                 UNION ALL
 
                 -- Recursive case: get all direct children
-                SELECT f.id, f.name, f.path, f.parent_folder_id, f.owner_id, f.created_at, f.updated_at, f.tenant_id
+                SELECT f.id, f.name, f.path, f.parent_folder_id, f.owner_id, f.created_at, f.updated_at, f.starred_at, f.deleted_at, f.tenant_id
                 FROM folders f
                 INNER JOIN folder_tree ft ON f.parent_folder_id = ft.id
                 WHERE f.deleted_at IS NULL
             )
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
             FROM folder_tree
             ORDER BY path ASC
             "#,
@@ -2466,7 +2466,7 @@ impl MetadataStore {
     ) -> Result<Vec<File>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id
+            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id
             FROM files
             WHERE owner_id = $1
               AND tenant_id = $2
