@@ -1,30 +1,33 @@
 <script lang="ts">
   import { FileText, File, PenTool, FileType } from 'lucide-svelte';
+  import type { Component } from 'svelte';
   import FolderTreePicker from './FolderTreePicker.svelte';
 
-  type FileType = 'txt' | 'md' | 'excalidraw' | 'odt';
+  type CreateFileType = 'txt' | 'md' | 'excalidraw' | 'odt';
 
   interface Props {
     open: boolean;
     loading: boolean;
     currentFolderId: string | null;
     onClose: () => void;
-    onConfirm: (data: { targetFolderId: string | null; fileType: FileType; fileName: string }) => void;
+    onConfirm: (data: { targetFolderId: string | null; fileType: CreateFileType; fileName: string }) => void;
   }
 
   let { open, loading, currentFolderId, onClose, onConfirm }: Props = $props();
 
   let selectedFolderId: string | null = $state(currentFolderId);
-  let selectedType: FileType = $state('txt');
+  let selectedType: CreateFileType = $state('txt');
   let fileName = $state('');
   let error = $state('');
 
-  const fileTypes: { type: FileType; label: string; icon: any; color: string; extension: string }[] = [
+  const fileTypes: { type: CreateFileType; label: string; icon: Component<{ size?: number; class?: string }>; color: string; extension: string }[] = [
     { type: 'txt', label: 'Text', icon: FileText, color: 'text-gray-500', extension: '.txt' },
     { type: 'md', label: 'Markdown', icon: FileText, color: 'text-blue-500', extension: '.md' },
     { type: 'excalidraw', label: 'Excalidraw', icon: PenTool, color: 'text-purple-500', extension: '.excalidraw' },
     { type: 'odt', label: 'Document', icon: FileType, color: 'text-orange-500', extension: '.odt' }
   ];
+
+  const selectedExtension = $derived(fileTypes.find(t => t.type === selectedType)?.extension || '.txt');
 
   function handleSubmit() {
     error = '';
@@ -36,7 +39,6 @@
     }
 
     // Add extension if not present
-    const selectedExtension = fileTypes.find(t => t.type === selectedType)?.extension || '.txt';
     let finalName = trimmedName;
     if (!trimmedName.toLowerCase().endsWith(selectedExtension)) {
       finalName = trimmedName + selectedExtension;
@@ -57,13 +59,23 @@
     onClose();
   }
 
-  // Reset when opened
-  $: if (open) {
-    selectedFolderId = currentFolderId;
-    fileName = '';
-    error = '';
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && open) {
+      handleClose();
+    }
   }
+
+  // Reset when opened
+  $effect(() => {
+    if (open) {
+      selectedFolderId = currentFolderId;
+      fileName = '';
+      error = '';
+    }
+  });
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 {#if open}
   <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -132,7 +144,7 @@
             <p class="text-sm text-error mt-1">{error}</p>
           {/if}
           <p class="text-xs text-base-content/50 mt-1">
-            Extension {fileTypes.find(t => t.type === selectedType)?.extension} will be added automatically
+            Extension {selectedExtension} will be added automatically
           </p>
         </div>
       </div>
