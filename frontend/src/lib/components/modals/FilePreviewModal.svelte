@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { previewFile, downloadFile, getFileContent } from '$lib/api/files';
 	import type { File } from '$lib/api/types';
 	import { formatFileSize } from '$lib/utils/format';
@@ -75,7 +76,13 @@
 	}
 
 	function handleEdit() {
-		if (file && canEdit) {
+		if (!file || !canEdit) return;
+		
+		// Route based on editor type
+		if (capabilities?.editorType === 'image') {
+			goto(`/files/edit/${file.id}`);
+			dispatch('close');
+		} else {
 			dispatch('edit', { file });
 		}
 	}
