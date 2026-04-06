@@ -512,7 +512,8 @@
 	});
 
 	const createNoteMutation = createMutation({
-		mutationFn: () => createNote({ title: 'Untitled Note', content: '', parent_folder_id: currentFolderId }),
+		mutationFn: ({ title, content, parent_folder_id }: { title: string; content: string; parent_folder_id: string | null }) => 
+			createNote({ title, content, parent_folder_id }),
 		onSuccess: (data) => {
 			goto(`/notes/${data.id}`);
 		}
@@ -1355,7 +1356,7 @@
 			showMarkdownEditor = true;
 		};
 		const handleCreateNoteEvent = () => {
-			$createNoteMutation.mutate();
+			$createNoteMutation.mutate({ title: 'Untitled Note', content: '', parent_folder_id: currentFolderId });
 		};
 		const handleCreateFileEvent = () => {
 			showCreateFileModal = true;
@@ -1588,8 +1589,8 @@
 		open={showCreateFileModal}
 		loading={createFileLoading}
 		currentFolderId={currentFolderId}
-		onClose={() => showCreateFileModal = false}
-		onConfirm={handleCreateFileConfirm}
+		on:close={() => showCreateFileModal = false}
+		on:confirm={handleCreateFileConfirm}
 	/>
 {/if}
 
@@ -1597,8 +1598,8 @@
 	<UploadTargetModal
 		open={showUploadTargetModal}
 		currentFolderId={currentFolderId}
-		onClose={() => showUploadTargetModal = false}
-		onConfirm={handleUploadTargetConfirm}
+		on:close={() => showUploadTargetModal = false}
+		on:confirm={handleUploadTargetConfirm}
 	/>
 {/if}
 
@@ -1606,8 +1607,8 @@
 	<EditFileModal
 		open={showEditFileModal}
 		files={editableFilesForModal}
-		onClose={() => showEditFileModal = false}
-		onSelect={handleEditFileSelect}
+		on:close={() => showEditFileModal = false}
+		on:select={handleEditFileSelect}
 	/>
 {/if}
 

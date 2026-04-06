@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { createEventDispatcher } from 'svelte';
   import { FileText, File, PenTool, FileType } from 'lucide-svelte';
   import FolderTreePicker from './FolderTreePicker.svelte';
 
@@ -8,11 +9,15 @@
     open: boolean;
     loading: boolean;
     currentFolderId: string | null;
-    onClose: () => void;
-    onConfirm: (data: { targetFolderId: string | null; fileType: CreateFileType; fileName: string }) => void;
   }
 
-  let { open, loading, currentFolderId, onClose, onConfirm }: Props = $props();
+  let { open, loading, currentFolderId }: Props = $props();
+
+  type DispatchEvents = {
+    close: void;
+    confirm: { targetFolderId: string | null; fileType: CreateFileType; fileName: string };
+  }
+  const dispatch = createEventDispatcher<DispatchEvents>();
 
   let selectedFolderId: string | null = $state(currentFolderId);
   let selectedType: CreateFileType = $state('txt');
@@ -43,7 +48,7 @@
       finalName = trimmedName + selectedExtension;
     }
 
-    onConfirm({
+    dispatch('confirm', {
       targetFolderId: selectedFolderId,
       fileType: selectedType,
       fileName: finalName
@@ -55,7 +60,7 @@
     fileName = '';
     selectedFolderId = currentFolderId;
     selectedType = 'txt';
-    onClose();
+    dispatch('close');
   }
 
   function handleKeydown(e: KeyboardEvent) {

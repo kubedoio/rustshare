@@ -1,15 +1,20 @@
 <script lang="ts">
+  import { createEventDispatcher } from 'svelte';
   import { FileText, File, PenTool, Search, X } from 'lucide-svelte';
   import type { File as FileType } from '$lib/api/types';
 
   interface Props {
     open: boolean;
     files: FileType[];
-    onClose: () => void;
-    onSelect: (file: FileType) => void;
   }
 
-  let { open, files, onClose, onSelect }: Props = $props();
+  let { open, files }: Props = $props();
+
+  type DispatchEvents = {
+    close: void;
+    select: { file: FileType };
+  }
+  const dispatch = createEventDispatcher<DispatchEvents>();
 
   let searchQuery = $state('');
 
@@ -32,12 +37,12 @@
   );
 
   function handleSelect(file: FileType) {
-    onSelect(file);
+    dispatch('select', { file });
   }
 
   function handleClose() {
     searchQuery = '';
-    onClose();
+    dispatch('close');
   }
 
   function handleKeydown(e: KeyboardEvent) {
