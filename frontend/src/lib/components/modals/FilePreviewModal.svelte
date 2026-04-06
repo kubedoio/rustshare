@@ -3,7 +3,8 @@
 	import { previewFile, downloadFile, getFileContent } from '$lib/api/files';
 	import type { File } from '$lib/api/types';
 	import { formatFileSize } from '$lib/utils/format';
-	import { detectEditorType, canEditFileSize } from '$lib/utils/editor';
+	import { detectEditorType, canEditFileSize, detectFileCapabilities } from '$lib/utils/editor';
+	import OfficePreview from '$lib/components/preview/OfficePreview.svelte';
 	import { renderMarkdown } from '$lib/utils/markdown';
 
 	export let open = false;
@@ -29,8 +30,8 @@
 	}
 
 	// Determine if the file can be edited
-	$: editorType = file ? detectEditorType(file.name, file.mime_type) : 'none';
-	$: canEdit = editorType !== 'none' && file ? canEditFileSize(file.size) : false;
+	$: capabilities = file ? detectFileCapabilities(file.name, file.mime_type) : null;
+	$: canEdit = capabilities?.canEdit ?? false;
 
 	async function loadPreview() {
 		if (!file) return;
@@ -116,18 +117,8 @@
 	}
 
 	function canPreview(file: File): boolean {
-		const mimeType = file.mime_type;
-		const name = file.name;
-		return (
-			isImage(mimeType) || 
-			isPdf(mimeType) || 
-			isVideo(mimeType) || 
-			isAudio(mimeType) || 
-			isText(mimeType) || 
-			isMarkdown(name) ||
-			isExcalidraw(name) ||
-			isDrawio(name)
-		);
+		const caps = detectFileCapabilities(file.name, file.mime_type);
+		return caps.previewType !== 'none';
 	}
 
 	async function handleDownload() {
@@ -200,31 +191,47 @@
 					<p class="text-sm text-base-content/60">{error}</p>
 				</div>
 			{:else if file}
-				{#if isImage(file.mime_type) && previewUrl}
+				{#if capabilities?.previewType === 'image' && previewUrl}
 					<img src={previewUrl} alt={file.name} class="max-h-full max-w-full object-contain" />
-				{:else if isPdf(file.mime_type) && previewUrl}
+				
+				{:else if capabilities?.previewType === 'pdf' && previewUrl}
 					<iframe src={previewUrl} title={file.name} class="h-full w-full" frameborder="0"></iframe>
-				{:else if isVideo(file.mime_type) && previewUrl}
+				
+				{:else if capabilities?.previewType === 'video' && previewUrl}
 					<video src={previewUrl} controls class="max-h-full max-w-full">
 						<track kind="captions" />
 						Your browser doesn't support video playback.
 					</video>
-				{:else if isAudio(file.mime_type) && previewUrl}
+				
+				{:else if capabilities?.previewType === 'audio' && previewUrl}
 					<div class="p-8">
 						<audio src={previewUrl} controls class="w-full">
 							Your browser doesn't support audio playback.
 						</audio>
 					</div>
-				{:else if isMarkdown(file.name) && textContent !== null}
+				
+				{:else if capabilities?.previewType === 'office'}
+					<OfficePreview {file}>
+						<button slot="download-button" class="btn btn-primary" on:click={handleDownload}>
+							<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+							</svg>
+							Download to View
+						</button>
+					</OfficePreview>
+				
+				{:else if capabilities?.previewType === 'code' && textContent !== null}
+					<div class="w-full h-full overflow-auto bg-base-100">
+						<pre class="p-6 font-mono text-sm"><code>{textContent}</code></pre>
+					</div>
+				
+				{:else if file.name.toLowerCase().endsWith('.md') && textContent !== null}
 					<div class="w-full h-full p-8 overflow-auto bg-base-100">
 						<article class="prose max-w-none">
 							{@html renderMarkdown(textContent)}
 						</article>
 					</div>
-				{:else if isText(file.mime_type) && textContent !== null}
-					<div class="w-full h-full p-6 overflow-auto bg-base-100 font-mono text-sm whitespace-pre">
-						{textContent}
-					</div>
+				
 				{:else if (isExcalidraw(file.name) || isDrawio(file.name)) && textContent !== null}
 					<div class="p-12 text-center flex flex-col items-center gap-4">
 						<div class="w-20 h-20 bg-primary/10 rounded-2xl flex items-center justify-center text-primary mb-2">
@@ -240,6 +247,7 @@
 							Open in Editor
 						</button>
 					</div>
+				
 				{:else}
 					<div class="p-8 text-center">
 						<svg
@@ -257,7 +265,7 @@
 							/>
 						</svg>
 						<p class="text-base-content/60 mb-4">Preview not available for this file type</p>
-						<button class="btn btn-primary" on:click={handleDownload}> Download File </button>
+						<button class="btn btn-primary" on:click={handleDownload}>Download File</button>
 					</div>
 				{/if}
 			{/if}

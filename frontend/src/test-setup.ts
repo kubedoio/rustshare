@@ -75,6 +75,11 @@ class MockCanvasRenderingContext2D {
   fillRect = vi.fn();
   getImageData = vi.fn();
   putImageData = vi.fn();
+  translate = vi.fn();
+  rotate = vi.fn();
+  scale = vi.fn();
+  imageSmoothingEnabled = true;
+  imageSmoothingQuality = 'low';
 }
 
 class MockHTMLCanvasElement {
