@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { FolderTree } from '$lib/api/folders';
-  import { ChevronRight, ChevronDown, Folder, FolderOpen } from 'lucide-svelte';
-  import Self from './FolderTreeItem.svelte';
+  import { ChevronRight, Folder, FolderOpen } from 'lucide-svelte';
 
   interface Props {
     folder: FolderTree;
@@ -70,11 +69,7 @@
         tabindex="-1"
         aria-label={isExpanded ? 'Collapse folder' : 'Expand folder'}
       >
-        {#if isExpanded}
-          <ChevronDown size={14} />
-        {:else}
-          <ChevronRight size={14} />
-        {/if}
+        <ChevronRight size={14} class="transition-transform {isExpanded ? 'rotate-90' : ''}" />
       </button>
     {:else}
       <span class="w-5"></span>
@@ -99,7 +94,7 @@
   <!-- Children -->
   {#if isExpanded && hasChildren}
     {#each folder.subfolders as child (child.folder.id)}
-      <Self
+      <svelte:self
         folder={child}
         level={level + 1}
         {selectedFolderId}

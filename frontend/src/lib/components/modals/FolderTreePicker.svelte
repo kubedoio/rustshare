@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createQuery } from '@tanstack/svelte-query';
   import { getFolderTree, type FolderTree } from '$lib/api/folders';
-  import { Hop as Home, Loader2, AlertCircle, ChevronRight, ChevronDown, Folder, FolderOpen } from 'lucide-svelte';
+  import { Hop as Home, Loader2, AlertCircle } from 'lucide-svelte';
   import FolderTreeItem from './FolderTreeItem.svelte';
 
   interface Props {
@@ -9,6 +9,7 @@
     currentFolderId: string | null;
     expandedFolderIds?: Set<string>;
     disabledFolderIds?: Set<string>;
+    enabled?: boolean;
     onSelect: (folderId: string | null) => void;
     onToggle?: (folderId: string) => void;
   }
@@ -18,6 +19,7 @@
     currentFolderId,
     expandedFolderIds = new Set(),
     disabledFolderIds = new Set(),
+    enabled = true,
     onSelect,
     onToggle
   }: Props = $props();
@@ -32,7 +34,8 @@
   let folderTreeQuery = $derived(createQuery({
     queryKey: ['folder-tree'],
     queryFn: getFolderTree,
-    staleTime: 0
+    staleTime: 0,
+    enabled
   }));
 
   function toggleFolder(folderId: string) {
