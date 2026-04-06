@@ -1,6 +1,5 @@
 <script lang="ts">
   import { FileText, File, PenTool, FileType } from 'lucide-svelte';
-  import type { Component } from 'svelte';
   import FolderTreePicker from './FolderTreePicker.svelte';
 
   type CreateFileType = 'txt' | 'md' | 'excalidraw' | 'odt';
@@ -20,7 +19,7 @@
   let fileName = $state('');
   let error = $state('');
 
-  const fileTypes: { type: CreateFileType; label: string; icon: Component<{ size?: number; class?: string }>; color: string; extension: string }[] = [
+  const fileTypes: { type: CreateFileType; label: string; icon: any; color: string; extension: string }[] = [
     { type: 'txt', label: 'Text', icon: FileText, color: 'text-gray-500', extension: '.txt' },
     { type: 'md', label: 'Markdown', icon: FileText, color: 'text-blue-500', extension: '.md' },
     { type: 'excalidraw', label: 'Excalidraw', icon: PenTool, color: 'text-purple-500', extension: '.excalidraw' },

@@ -79,6 +79,9 @@
 	import VersionHistoryModal from '$lib/components/modals/VersionHistoryModal.svelte';
 	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
 	import ReplaceFileModal from '$lib/components/modals/ReplaceFileModal.svelte';
+	import CreateFileModal from '$lib/components/modals/CreateFileModal.svelte';
+	import UploadTargetModal from '$lib/components/modals/UploadTargetModal.svelte';
+	import EditFileModal from '$lib/components/modals/EditFileModal.svelte';
 
 	// Editors
 	import { TextEditor, MarkdownEditor, ExcalidrawEditor } from '$lib/components/editors';
@@ -114,6 +117,12 @@
 	let showReplaceFileModal = false;
 	let bulkMoveFileIds: string[] = [];
 	let bulkMoveLoading = false;
+	let showCreateFileModal = false;
+	let showUploadTargetModal = false;
+	let showEditFileModal = false;
+	let createFileLoading = false;
+	let uploadTargetFolderId: string | null = null;
+	let editableFilesForModal: File[] = [];
 
 	// Editor state
 	let showTextEditor = false;
@@ -510,11 +519,11 @@
 	});
 
 	const createFolderMutation = createMutation({
-		mutationFn: (name: string) => createFolder(name, currentFolderId),
-		onSuccess: (folder) => {
-			folderTreeStore.addFolder(folder, currentFolderId);
-			if (currentFolderId) {
-				folderTreeStore.setExpanded(currentFolderId, true);
+		mutationFn: ({ name, parentFolderId }: { name: string; parentFolderId: string | null }) => createFolder(name, parentFolderId),
+		onSuccess: (folder, { parentFolderId }) => {
+			folderTreeStore.addFolder(folder, parentFolderId);
+			if (parentFolderId) {
+				folderTreeStore.setExpanded(parentFolderId, true);
 			}
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
@@ -842,6 +851,9 @@
 		} else {
 			showNotification(`Uploaded ${successCount}, failed ${errorCount}`, 'info');
 		}
+		
+		// Reset upload target folder after uploads complete
+		uploadTargetFolderId = null;
 	}
 
 	async function handleDirectoryUpload(files: globalThis.File[]) {
@@ -1255,8 +1267,50 @@
 		replaceFileTarget = null;
 	}
 
-	function handleCreateFolder(event: CustomEvent<{ name: string }>) {
-		$createFolderMutation.mutate(event.detail.name);
+	function handleCreateFolderConfirm(event: CustomEvent<{ name: string; parentFolderId: string | null }>) {
+		$createFolderMutation.mutate({ 
+			name: event.detail.name, 
+			parentFolderId: event.detail.parentFolderId 
+		});
+	}
+
+	async function handleCreateFileConfirm(event: CustomEvent<{ targetFolderId: string | null; fileType: string; fileName: string }>) {
+		const { targetFolderId, fileType, fileName } = event.detail;
+		createFileLoading = true;
+		
+		try {
+			if (fileType === 'md') {
+				const note = await $createNoteMutation.mutateAsync({ 
+					title: fileName.replace(/\.md$/i, ''), 
+					content: '', 
+					parent_folder_id: targetFolderId 
+				});
+				showCreateFileModal = false;
+				goto(`/notes/${note.id}`);
+			} else {
+				showNotification(`File creation for ${fileType} not yet implemented`, 'info');
+				showCreateFileModal = false;
+			}
+		} catch (error) {
+			showNotification(error instanceof Error ? error.message : 'Failed to create file', 'error');
+		} finally {
+			createFileLoading = false;
+		}
+	}
+
+	function handleUploadTargetConfirm(event: CustomEvent<{ targetFolderId: string | null }>) {
+		uploadTargetFolderId = event.detail.targetFolderId;
+		showUploadTargetModal = false;
+		
+		setTimeout(() => {
+			document.getElementById('upload-file-input')?.click();
+		}, 100);
+	}
+
+	function handleEditFileSelect(event: CustomEvent<{ file: File }>) {
+		const file = event.detail.file;
+		showEditFileModal = false;
+		handleEditFile(file);
 	}
 
 	function handleVersionRestored() {
@@ -1304,15 +1358,22 @@
 			$createNoteMutation.mutate();
 		};
 		const handleCreateFileEvent = () => {
-			editorTarget = null;
-			showTextEditor = true;
+			showCreateFileModal = true;
 		};
 		const handleCreateCanvasEvent = () => {
 			editorTarget = null;
 			showExcalidrawEditor = true;
 		};
 		const handleUploadEvent = () => {
-			if (canUpload) document.getElementById('upload-file-input')?.click();
+			if (canUpload) showUploadTargetModal = true;
+		};
+
+		const handleEditFileEvent = () => {
+			editableFilesForModal = sortedFiles.filter(f => {
+				const name = f.name.toLowerCase();
+				return name.endsWith('.md') || name.endsWith('.txt') || name.endsWith('.excalidraw');
+			});
+			showEditFileModal = true;
 		};
 
 		window.addEventListener('create-folder-requested', handleCreateFolderEvent);
@@ -1321,6 +1382,7 @@
 		window.addEventListener('create-canvas-requested', handleCreateCanvasEvent);
 		window.addEventListener('upload-requested', handleUploadEvent);
 		window.addEventListener('create-note-requested', handleCreateNoteEvent);
+		window.addEventListener('edit-file-requested', handleEditFileEvent);
 		
 		return () => {
 			window.removeEventListener('create-folder-requested', handleCreateFolderEvent);
@@ -1329,6 +1391,7 @@
 			window.removeEventListener('create-canvas-requested', handleCreateCanvasEvent);
 			window.removeEventListener('upload-requested', handleUploadEvent);
 			window.removeEventListener('create-note-requested', handleCreateNoteEvent);
+			window.removeEventListener('edit-file-requested', handleEditFileEvent);
 		};
 	});
 
@@ -1358,6 +1421,9 @@
 			showVersionHistoryModal = false;
 			showFilePreviewModal = false;
 			showReplaceFileModal = false;
+			showCreateFileModal = false;
+			showUploadTargetModal = false;
+			showEditFileModal = false;
 			return;
 		}
 
@@ -1511,8 +1577,37 @@
 	<CreateFolderModal
 		open={showCreateFolderModal}
 		loading={$createFolderMutation.isPending}
+		currentFolderId={currentFolderId}
 		on:close={() => showCreateFolderModal = false}
-		on:confirm={handleCreateFolder}
+		on:confirm={handleCreateFolderConfirm}
+	/>
+{/if}
+
+{#if showCreateFileModal}
+	<CreateFileModal
+		open={showCreateFileModal}
+		loading={createFileLoading}
+		currentFolderId={currentFolderId}
+		onClose={() => showCreateFileModal = false}
+		onConfirm={handleCreateFileConfirm}
+	/>
+{/if}
+
+{#if showUploadTargetModal}
+	<UploadTargetModal
+		open={showUploadTargetModal}
+		currentFolderId={currentFolderId}
+		onClose={() => showUploadTargetModal = false}
+		onConfirm={handleUploadTargetConfirm}
+	/>
+{/if}
+
+{#if showEditFileModal}
+	<EditFileModal
+		open={showEditFileModal}
+		files={editableFilesForModal}
+		onClose={() => showEditFileModal = false}
+		onSelect={handleEditFileSelect}
 	/>
 {/if}
 
