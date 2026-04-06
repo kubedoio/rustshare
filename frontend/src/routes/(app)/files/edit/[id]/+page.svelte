@@ -76,7 +76,7 @@
   <!-- Editor -->
   <div class="flex-1 overflow-hidden">
     <ImageEditor
-      imageUrl={`/api/v1/files/${data.fileId}/download`}
+      imageUrl={`/api/v1/files/${data.fileId}/content`}
       fileName={data.file.name}
       on:save={handleSave}
       on:cancel={handleCancel}
