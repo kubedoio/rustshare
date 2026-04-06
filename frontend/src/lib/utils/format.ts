@@ -167,6 +167,7 @@ export function getFileTypeLabel(mimeType: string, fileName: string): string {
  * Check if a file is an MS Office document
  */
 export function isOfficeFile(mimeType: string, fileName: string): boolean {
+  if (!mimeType || !fileName) return false;
   const normalized = mimeType.toLowerCase();
   const name = fileName.toLowerCase();
 
@@ -191,6 +192,7 @@ export function isOfficeFile(mimeType: string, fileName: string): boolean {
  * Get Office file type label
  */
 export function getOfficeFileType(mimeType: string, fileName: string): 'word' | 'excel' | 'powerpoint' | null {
+  if (!mimeType || !fileName) return null;
   const normalized = mimeType.toLowerCase();
   const name = fileName.toLowerCase();
 

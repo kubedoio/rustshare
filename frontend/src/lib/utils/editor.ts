@@ -19,6 +19,9 @@ import { isOfficeFile } from './format';
  * Detects file capabilities based on name and MIME type
  */
 export function detectFileCapabilities(fileName: string, mimeType: string): FileCapabilities {
+  if (!fileName || !mimeType) {
+    return { editorType: 'none', previewType: 'none', canEdit: false };
+  }
   const name = fileName.toLowerCase();
   const mime = mimeType.toLowerCase();
 
