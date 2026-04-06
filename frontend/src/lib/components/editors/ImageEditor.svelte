@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, createEventDispatcher } from 'svelte';
+  import { onMount, createEventDispatcher, tick } from 'svelte';
   import { ImageEditor } from '$lib/utils/imageEditor';
   import type { CropSelection } from '$lib/utils/imageEditor';
   import { RotateCw, RotateCcw, FlipHorizontal, FlipVertical, Scissors, Undo, Redo, X, Check } from 'lucide-svelte';
@@ -35,6 +35,15 @@
   let aspectRatio = 1;
   
   onMount(async () => {
+    // Wait for canvas to be available
+    await tick();
+    
+    if (!canvas) {
+      error = 'Canvas element not found';
+      loading = false;
+      return;
+    }
+    
     try {
       editor = new ImageEditor(canvas);
       await editor.loadImage(imageUrl);
@@ -266,26 +275,27 @@
       <div class="text-error">
         <p>{error}</p>
       </div>
-    {:else}
-      <div class="relative">
-        <canvas
-          bind:this={canvas}
-          class="max-w-full max-h-full shadow-lg"
-          class:cursor-crosshair={isCropping}
-          on:mousedown={handleCanvasMouseDown}
-          on:mousemove={handleCanvasMouseMove}
-          on:mouseup={handleCanvasMouseUp}
-          on:mouseleave={handleCanvasMouseUp}
-        />
-        
-        {#if isCropping && cropSelection}
-          <div
-            class="absolute border-2 border-primary bg-primary/20 pointer-events-none"
-            style="left: {(cropSelection.x / canvas.width) * 100}%; top: {(cropSelection.y / canvas.height) * 100}%; width: {(cropSelection.width / canvas.width) * 100}%; height: {(cropSelection.height / canvas.height) * 100}%"
-          />
-        {/if}
-      </div>
     {/if}
+    
+    <!-- Canvas always rendered but hidden when loading/error -->
+    <div class="relative" class:hidden={loading || error}>
+      <canvas
+        bind:this={canvas}
+        class="max-w-full max-h-full shadow-lg"
+        class:cursor-crosshair={isCropping}
+        on:mousedown={handleCanvasMouseDown}
+        on:mousemove={handleCanvasMouseMove}
+        on:mouseup={handleCanvasMouseUp}
+        on:mouseleave={handleCanvasMouseUp}
+      ></canvas>
+      
+      {#if isCropping && cropSelection}
+        <div
+          class="absolute border-2 border-primary bg-primary/20 pointer-events-none"
+          style="left: {(cropSelection.x / canvas.width) * 100}%; top: {(cropSelection.y / canvas.height) * 100}%; width: {(cropSelection.width / canvas.width) * 100}%; height: {(cropSelection.height / canvas.height) * 100}%"
+        />
+      {/if}
+    </div>
   </div>
   
   <!-- Footer -->
