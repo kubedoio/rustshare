@@ -199,7 +199,7 @@
 					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors" on:click={() => executeGlobalAction('upload-requested')}>
 						<Upload size={16} class="text-indigo-500" /> Upload
 					</button>
-					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors border-t border-base-200 mt-1 pt-2.5" on:click={() => executeGlobalAction('create-file-requested')}>
+					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors border-t border-base-200 mt-1 pt-2.5" on:click={() => executeGlobalAction('edit-file-requested')}>
 						<Edit3 size={16} class="text-rose-500" /> Edit
 					</button>
 					<button class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-base-200 transition-colors" on:click={() => executeGlobalAction('create-canvas-requested')}>
