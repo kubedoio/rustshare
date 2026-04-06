@@ -164,6 +164,50 @@ export function getFileTypeLabel(mimeType: string, fileName: string): string {
 }
 
 /**
+ * Check if a file is an MS Office document
+ */
+export function isOfficeFile(mimeType: string, fileName: string): boolean {
+  const normalized = mimeType.toLowerCase();
+  const name = fileName.toLowerCase();
+
+  const officeMimeTypes = [
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/vnd.ms-powerpoint'
+  ];
+
+  const officeExtensions = ['.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt'];
+
+  if (officeMimeTypes.some(m => normalized.includes(m))) return true;
+  if (officeExtensions.some(ext => name.endsWith(ext))) return true;
+
+  return false;
+}
+
+/**
+ * Get Office file type label
+ */
+export function getOfficeFileType(mimeType: string, fileName: string): 'word' | 'excel' | 'powerpoint' | null {
+  const normalized = mimeType.toLowerCase();
+  const name = fileName.toLowerCase();
+
+  if (normalized.includes('wordprocessingml') || normalized.includes('msword') || name.endsWith('.docx') || name.endsWith('.doc')) {
+    return 'word';
+  }
+  if (normalized.includes('spreadsheetml') || normalized.includes('ms-excel') || name.endsWith('.xlsx') || name.endsWith('.xls')) {
+    return 'excel';
+  }
+  if (normalized.includes('presentationml') || normalized.includes('ms-powerpoint') || name.endsWith('.pptx') || name.endsWith('.ppt')) {
+    return 'powerpoint';
+  }
+
+  return null;
+}
+
+/**
  * Truncate a filename in the middle, preserving the start and the extension
  * e.g., "verylongfilenametoupload.png" -> "very..load.png"
  */
