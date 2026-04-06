@@ -212,9 +212,6 @@
         {#if saveState === 'saving'}
           <Save size={14} class="animate-pulse" />
           <span>Saving...</span>
-        {:else if saveState === 'saved'}
-          <Check size={14} class="text-success" />
-          <span class="text-success">Saved</span>
         {:else if saveState === 'error'}
           <AlertCircle size={14} class="text-error" />
           <span class="text-error">Error</span>

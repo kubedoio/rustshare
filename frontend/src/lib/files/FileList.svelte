@@ -51,7 +51,11 @@
 	}
 
 	function handleSelectAll() {
-		selectionStore.selectAll(files, folders);
+		if (allSelected) {
+			selectionStore.deselectAll();
+		} else {
+			selectionStore.selectAll(files, folders);
+		}
 	}
 
 	// Drag handlers

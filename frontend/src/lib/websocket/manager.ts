@@ -6,6 +6,7 @@ import {
 } from "$lib/stores/replication";
 import { toastStore } from "$lib/stores/toast";
 import { resolveNotificationTarget } from "$lib/utils/shared";
+import { truncateFilename } from "$lib/utils/format";
 import type { WebSocketEvent } from "./events";
 
 let currentUserId: string | null = null;
@@ -87,15 +88,15 @@ function isOwnOrSystemEvent(event: WebSocketEvent): boolean {
 function handleFileUploaded(event: WebSocketEvent): void {
   console.log("[WebSocket Manager] FileUploaded event:", event);
 
-  // Backend doesn't send file details in the event payload for generic events
-  // We just have aggregate_id (file ID) and need to invalidate queries to refetch
+  const payload = event.payload || (event as any);
+
   // Invalidate BOTH folder contents and file workspace queries
   queryClient.invalidateQueries({ queryKey: ["folder-contents"] });
   queryClient.invalidateQueries({ queryKey: ["file-workspace"] });
 
   if (!isOwnEvent(event)) {
-    // Note: for FileUploaded, the backend payload may vary, often just containing the ID
-    toastStore.show(`A new file was uploaded`, "info");
+    const fileName = payload.file_name || "New file";
+    toastStore.show(`${truncateFilename(fileName, 12)} uploaded`, "info");
   }
 }
 
@@ -108,8 +109,9 @@ function handleFileModified(event: WebSocketEvent): void {
   queryClient.invalidateQueries({ queryKey: ["file-workspace"] });
 
   if (!isOwnEvent(event)) {
+    const fileName = payload.file_name || "File";
     toastStore.show(
-      `File "${payload.file_name}" was modified (v${payload.version})`,
+      `${truncateFilename(fileName, 12)} modified (v${payload.version})`,
       "info",
     );
   }
@@ -124,8 +126,10 @@ function handleFileRenamed(event: WebSocketEvent): void {
   queryClient.invalidateQueries({ queryKey: ["file-workspace"] });
 
   if (!isOwnEvent(event)) {
+    const oldName = payload.old_name || "File";
+    const newName = payload.new_name || "File";
     toastStore.show(
-      `File renamed from "${payload.old_name}" to "${payload.new_name}"`,
+      `${truncateFilename(oldName, 12)} renamed to ${truncateFilename(newName, 12)}`,
       "info",
     );
   }
@@ -151,7 +155,8 @@ function handleFileMoved(event: WebSocketEvent): void {
   }
 
   if (!isOwnEvent(event)) {
-    toastStore.show(`File "${payload.file_name}" was moved`, "info");
+    const fileName = payload.file_name || "File";
+    toastStore.show(`${truncateFilename(fileName, 12)} moved`, "info");
   }
 }
 
@@ -173,7 +178,8 @@ function handleFileDeleted(event: WebSocketEvent): void {
   }
 
   if (!isOwnEvent(event)) {
-    toastStore.show(`File "${payload.file_name}" was deleted`, "info");
+    const fileName = payload.file_name || "File";
+    toastStore.show(`${truncateFilename(fileName, 12)} deleted`, "info");
   }
 }
 
@@ -193,7 +199,8 @@ function handleFileRestored(event: WebSocketEvent): void {
   }
 
   if (!isOwnEvent(event)) {
-    toastStore.show(`File "${payload.file_name}" was restored`, "success");
+    const fileName = payload.file_name || "File";
+    toastStore.show(`${truncateFilename(fileName, 12)} restored`, "success");
   }
 }
 
@@ -214,9 +221,8 @@ function handleFolderCreated(event: WebSocketEvent): void {
   }
 
   if (!isOwnEvent(event)) {
-    // Backend uses 'name' for FolderCreatedPayload
     const folderName = payload.name || payload.folder_name || "New folder";
-    toastStore.show(`Folder "${folderName}" was created`, "info");
+    toastStore.show(`Folder ${truncateFilename(folderName, 12)} created`, "info");
   }
 }
 
@@ -229,8 +235,10 @@ function handleFolderRenamed(event: WebSocketEvent): void {
   queryClient.invalidateQueries({ queryKey: ["file-workspace"] });
 
   if (!isOwnEvent(event)) {
+    const oldName = payload.old_name || "Folder";
+    const newName = payload.new_name || "Folder";
     toastStore.show(
-      `Folder renamed from "${payload.old_name}" to "${payload.new_name}"`,
+      `Folder ${truncateFilename(oldName, 12)} renamed to ${truncateFilename(newName, 12)}`,
       "info",
     );
   }
@@ -255,10 +263,8 @@ function handleFolderMoved(event: WebSocketEvent): void {
   }
 
   if (!isOwnEvent(event)) {
-    // Backend uses 'name' for FolderMovedPayload? Wait, check... it uses name for Created/Deleted.
-    // For moved, it usually has folder_name or something.
     const folderName = payload.name || payload.folder_name || "Folder";
-    toastStore.show(`Folder "${folderName}" was moved`, "info");
+    toastStore.show(`Folder ${truncateFilename(folderName, 12)} moved`, "info");
   }
 }
 
@@ -278,9 +284,8 @@ function handleFolderDeleted(event: WebSocketEvent): void {
   }
 
   if (!isOwnEvent(event)) {
-    // Backend uses 'name' for FolderDeletedPayload
     const folderName = payload.name || payload.folder_name || "Folder";
-    toastStore.show(`Folder "${folderName}" was deleted`, "info");
+    toastStore.show(`Folder ${truncateFilename(folderName, 12)} deleted`, "info");
   }
 }
 
@@ -293,7 +298,8 @@ function handleShareCreated(event: WebSocketEvent): void {
   queryClient.invalidateQueries({ queryKey: ["file", payload.file_id] });
 
   if (!isOwnEvent(event)) {
-    toastStore.show(`Share created for "${payload.file_name}"`, "info");
+    const fileName = payload.file_name || "File";
+    toastStore.show(`Share created for ${truncateFilename(fileName, 12)}`, "info");
   }
 }
 
