@@ -1,122 +1,114 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
-	import type { FolderTree } from '$lib/api/folders';
+  import type { FolderTree } from '$lib/api/folders';
+  import { ChevronRight, ChevronDown, Folder, FolderOpen } from 'lucide-svelte';
+  import Self from './FolderTreeItem.svelte';
 
-	export let node: FolderTree;
-	export let selectedFolderId: string | null;
-	export let currentFolderId: string | null;
-	export let expandedFolders: Set<string>;
-	export let invalidFolderIds: Set<string> = new Set();
-	export let level = 0;
+  interface Props {
+    folder: FolderTree;
+    level: number;
+    selectedFolderId: string | null;
+    currentFolderId: string | null;
+    expandedFolders: Set<string>;
+    disabledFolderIds: Set<string>;
+    onSelect: (folderId: string | null) => void;
+    onToggle: (folderId: string) => void;
+  }
 
-	type DispatchEvents = {
-		select: string;
-		toggle: FolderTree;
-	}
-	const dispatch = createEventDispatcher<DispatchEvents>();
+  let {
+    folder,
+    level,
+    selectedFolderId,
+    currentFolderId,
+    expandedFolders,
+    disabledFolderIds,
+    onSelect,
+    onToggle
+  }: Props = $props();
 
-	$: isExpanded = expandedFolders.has(node.folder.id);
-	$: hasChildren = node.subfolders && node.subfolders.length > 0;
-	$: isSelected = selectedFolderId === node.folder.id;
-	$: isCurrent = currentFolderId === node.folder.id;
-	$: isDisabled = invalidFolderIds.has(node.folder.id);
+  let isExpanded = $derived(expandedFolders.has(folder.folder.id));
+  let isSelected = $derived(selectedFolderId === folder.folder.id);
+  let isCurrent = $derived(currentFolderId === folder.folder.id);
+  let isDisabled = $derived(disabledFolderIds.has(folder.folder.id));
+  let hasChildren = $derived(folder.subfolders && folder.subfolders.length > 0);
 
-	function handleToggle(e: Event) {
-		e.stopPropagation();
-		if (hasChildren) {
-			dispatch('toggle', node);
-		}
-	}
+  function handleToggle(e: Event) {
+    e.stopPropagation();
+    onToggle(folder.folder.id);
+  }
 
-	function handleSelect() {
-		if (!isDisabled) {
-			dispatch('select', node.folder.id);
-		}
-	}
+  function handleSelect() {
+    if (!isDisabled) {
+      onSelect(folder.folder.id);
+    }
+  }
 
-	function handleKeydown(event: KeyboardEvent) {
-		if (event.key === 'Enter' || event.key === ' ') {
-			event.preventDefault();
-			handleSelect();
-		}
-	}
+  function handleKeydown(e: KeyboardEvent) {
+    if (!isDisabled && (e.key === 'Enter' || e.key === ' ')) {
+      onSelect(folder.folder.id);
+    }
+  }
 </script>
 
-<div class="folder-tree-item">
-	<div
-		class="gap-2 p-2 rounded hover:bg-base-200 flex w-full items-center text-left transition-colors"
-		class:bg-primary={isSelected}
-		class:text-primary-content={isSelected}
-		class:opacity-50={isDisabled}
-		class:cursor-not-allowed={isDisabled}
-		style="padding-left: {level * 1.5 + 0.5}rem"
-		on:click={handleSelect}
-		on:keydown={handleKeydown}
-		role="button"
-		tabindex={isDisabled ? -1 : 0}
-		aria-disabled={isDisabled}
-	>
-		{#if hasChildren}
-			<button
-				type="button"
-				class="btn btn-ghost btn-xs btn-square"
-				aria-label={`Toggle folder ${node.folder.name}`}
-				on:click={handleToggle}
-			>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					fill="none"
-					viewBox="0 0 24 24"
-					stroke-width="1.5"
-					stroke="currentColor"
-					class="w-4 h-4 transition-transform"
-					class:rotate-90={isExpanded}
-				>
-					<path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-				</svg>
-			</button>
-		{:else}
-			<span class="w-8"></span>
-		{/if}
+<div class="select-none">
+  <div
+    class="w-full flex items-center gap-2 px-4 py-2 text-left transition-colors text-sm
+      {isSelected ? 'bg-brand-500/10 text-brand-600' : 'hover:bg-base-200/50'}
+      {isDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}"
+    style="padding-left: {16 + level * 20}px"
+    role="button"
+    tabindex={isDisabled ? -1 : 0}
+    onclick={handleSelect}
+    onkeydown={handleKeydown}
+    aria-disabled={isDisabled}
+  >
+    <!-- Expand/collapse toggle -->
+    {#if hasChildren}
+      <button
+        type="button"
+        class="p-0.5 rounded hover:bg-base-300/50"
+        onclick={handleToggle}
+        tabindex="-1"
+        aria-label={isExpanded ? 'Collapse folder' : 'Expand folder'}
+      >
+        {#if isExpanded}
+          <ChevronDown size={14} />
+        {:else}
+          <ChevronRight size={14} />
+        {/if}
+      </button>
+    {:else}
+      <span class="w-5"></span>
+    {/if}
 
-		<svg
-			xmlns="http://www.w3.org/2000/svg"
-			fill="none"
-			viewBox="0 0 24 24"
-			stroke-width="1.5"
-			stroke="currentColor"
-			class="w-5 h-5 flex-shrink-0"
-		>
-			<path
-				stroke-linecap="round"
-				stroke-linejoin="round"
-				d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"
-			/>
-		</svg>
+    <!-- Folder icon -->
+    {#if isExpanded}
+      <FolderOpen size={16} class="text-amber-500" />
+    {:else}
+      <Folder size={16} class="text-amber-500" />
+    {/if}
 
-		<span class="flex-1 truncate">{node.folder.name}</span>
+    <!-- Folder name -->
+    <span class="truncate">{folder.folder.name}</span>
 
-		{#if isCurrent}
-			<span class="badge badge-sm ml-auto">Current</span>
-		{:else if isDisabled}
-			<span class="badge badge-sm badge-ghost ml-auto">Invalid</span>
-		{/if}
-	</div>
+    <!-- Current badge -->
+    {#if isCurrent}
+      <span class="ml-auto text-xs px-2 py-0.5 rounded-full bg-base-300/50 text-base-content/60 shrink-0">Current</span>
+    {/if}
+  </div>
 
-	{#if isExpanded && hasChildren}
-		<div class="ml-4">
-			{#each node.subfolders as child (child.folder.id)}
-				<svelte:self
-					node={child}
-					{selectedFolderId}
-					{currentFolderId}
-					{expandedFolders}
-					{invalidFolderIds}
-					on:select
-					on:toggle
-					level={level + 1}
-				/>
-			{/each}
-		</div>
-	{/if}
+  <!-- Children -->
+  {#if isExpanded && hasChildren}
+    {#each folder.subfolders as child (child.folder.id)}
+      <Self
+        folder={child}
+        level={level + 1}
+        {selectedFolderId}
+        {currentFolderId}
+        {expandedFolders}
+        {disabledFolderIds}
+        {onSelect}
+        {onToggle}
+      />
+    {/each}
+  {/if}
 </div>
