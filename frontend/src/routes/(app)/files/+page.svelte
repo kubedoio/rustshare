@@ -808,7 +808,7 @@
 			try {
 				await $uploadMutation.mutateAsync({
 					file: files[i],
-					folderId: currentFolderId,
+					folderId: uploadTargetFolderId ?? currentFolderId,
 					onProgress: (progress) => {
 						const currentTaskIndex = uploadTasks.findIndex(t => t.id === newTasks[i].id);
 						if (currentTaskIndex !== -1) {
