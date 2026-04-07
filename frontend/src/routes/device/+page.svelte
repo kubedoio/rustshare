@@ -28,6 +28,7 @@
 	let activeTab: 'qr' | 'key' | 'scan' = 'qr';
 	let qrDataUrl = '';
 	let qrInfo: DeviceQrInfoResponse | null = null;
+	let verificationUriComplete = '';
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	let countdownInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -58,6 +59,7 @@
 			deviceCode = response.device_code;
 			expiresIn = response.expires_in;
 			countdown = expiresIn;
+			verificationUriComplete = response.verification_uri_complete;
 
 			// Generate QR code
 			await generateQrCode();
@@ -75,11 +77,13 @@
 
 	async function generateQrCode() {
 		try {
-			qrInfo = await getDeviceQrInfo();
-			// QR payload: server URL + device code for approval
-			const pairingUrl = `${qrInfo.instance_url}/device/approve?device_code=${deviceCode}`;
+			const pairingUrl = resolvePairingUrl();
+			if (!pairingUrl) {
+				qrInfo = await getDeviceQrInfo();
+			}
+			const resolvedPairingUrl = pairingUrl || buildFallbackPairingUrl();
 			
-			qrDataUrl = await QRCode.toDataURL(pairingUrl, {
+			qrDataUrl = await QRCode.toDataURL(resolvedPairingUrl, {
 				width: 280,
 				margin: 2,
 				color: {
@@ -91,6 +95,25 @@
 		} catch (error) {
 			console.error('Failed to generate QR code:', error);
 		}
+	}
+
+	function resolvePairingUrl(): string {
+		if (verificationUriComplete) {
+			return verificationUriComplete;
+		}
+
+		// Older servers may only provide the instance base URL, so keep a fallback.
+		if (qrInfo?.instance_url) {
+			return buildFallbackPairingUrl();
+		}
+
+		return '';
+	}
+
+	function buildFallbackPairingUrl(): string {
+		return qrInfo?.instance_url
+			? `${qrInfo.instance_url}/device/approve?device_code=${deviceCode}`
+			: '';
 	}
 
 	function startPolling() {

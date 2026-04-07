@@ -3,6 +3,8 @@ use keyring::Entry;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+pub const RUSTSHARE_TOKEN_SERVICE: &str = "rustshare";
+
 pub struct TokenStore {
     service: String,
 }
@@ -78,4 +80,8 @@ pub fn get_device_id() -> Result<Uuid> {
         std::fs::write(&id_file, id.to_string())?;
         Ok(id)
     }
+}
+
+pub fn desktop_token_store() -> TokenStore {
+    TokenStore::new(RUSTSHARE_TOKEN_SERVICE)
 }

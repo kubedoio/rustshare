@@ -562,6 +562,7 @@ mod tests {
         let (metadata_store, _pool) = create_test_metadata_store().await.expect("Failed to create test metadata store");
 
         let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
         let share_id = Uuid::new_v4();
 
@@ -574,6 +575,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            tenant_id,
         );
         metadata_store.create_file(&file).await.unwrap();
 
@@ -619,6 +621,7 @@ mod tests {
         let (metadata_store, _pool) = create_test_metadata_store().await.expect("Failed to create test metadata store");
 
         let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
         let share_id = Uuid::new_v4();
 
@@ -631,6 +634,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            tenant_id,
         );
         metadata_store.create_file(&file).await.unwrap();
 
@@ -672,6 +676,7 @@ mod tests {
         let (metadata_store, _pool) = create_test_metadata_store().await.expect("Failed to create test metadata store");
 
         let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
         let share_id = Uuid::new_v4();
 
@@ -684,6 +689,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             owner_id,
+            tenant_id,
         );
         metadata_store.create_file(&file).await.unwrap();
 

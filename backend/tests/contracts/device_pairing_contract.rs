@@ -36,7 +36,10 @@ async fn test_device_pairing_creates_scoped_trust() {
     // Verify token properties
     assert_eq!(device_token.user_id, user.id);
     assert_eq!(device_token.tenant_id, tenant_id);
-    assert!(device_token.revoked_at.is_none(), "New token should not be revoked");
+    assert!(
+        device_token.revoked_at.is_none(),
+        "New token should not be revoked"
+    );
 
     // Cleanup
     cleanup_user(&ctx.pool, user.id).await;
@@ -142,7 +145,10 @@ async fn test_device_pairing_requires_user_approval() {
     };
 
     // Verify request is pending
-    assert!(pending_request.user_id.is_none(), "New request should not have user_id");
+    assert!(
+        pending_request.user_id.is_none(),
+        "New request should not have user_id"
+    );
     assert!(
         pending_request.approved_at.is_none(),
         "New request should not be approved"

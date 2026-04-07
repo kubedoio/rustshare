@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { browser } from '$app/environment';
+	import { page } from '$app/stores';
 	import { beginOidcLogin, getAuthConfig, type AuthConfig } from '$lib/api/auth';
 	import { authStore } from '$lib/stores/auth';
 
@@ -12,6 +13,7 @@
 	let errorMessage = '';
 	let isAuthConfigLoading = true;
 	let authConfigError = '';
+	let redirectTo = '/files';
 	let authConfig: AuthConfig = {
 		password_login_enabled: true,
 		oidc_enabled: false,
@@ -19,10 +21,12 @@
 		oidc_mobile_enabled: false
 	};
 
+	$: redirectTo = $page.url.searchParams.get('redirect_to') || '/files';
+
 	$: hasAnyLoginMethod = authConfig.oidc_enabled || authConfig.password_login_enabled;
 
 	$: if ($authStore.isAuthenticated && browser) {
-		goto('/dashboard');
+		goto(redirectTo);
 	}
 
 	onMount(async () => {
@@ -50,7 +54,7 @@
 
 		try {
 			await authStore.login(email, password);
-			goto('/files');
+			goto(redirectTo);
 		} catch (error: any) {
 			showError = true;
 			errorMessage = error.message || 'Login failed. Please try again.';
@@ -67,7 +71,7 @@
 
 	function handleOidcLogin() {
 		isLoading = true;
-		beginOidcLogin('/files');
+		beginOidcLogin(redirectTo);
 	}
 </script>
 
@@ -261,5 +265,3 @@
 		</section>
 	</div>
 </div>
-
-

@@ -7,22 +7,16 @@
 //! 4. On approval, client receives an access token
 
 use anyhow::Result;
+use platform::get_device_id;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{debug, error, info, warn};
-
-use crate::api::client::ApiClient;
-use crate::config::Config;
-
-/// Secure storage key for device token
-const TOKEN_KEYRING_SERVICE: &str = "rustshare-desktop";
-const TOKEN_KEYRING_USERNAME: &str = "device_token";
+use tracing::{debug, error, info};
 
 /// Device authentication state
 #[derive(Debug, Clone)]
 pub struct DeviceAuth {
-    config: Config,
+    server_url: String,
 }
 
 /// Device token stored securely
@@ -39,6 +33,8 @@ struct DeviceCodeResponse {
     user_code: String,
     device_code: String,
     expires_in: i64,
+    verification_uri: String,
+    verification_uri_complete: String,
 }
 
 /// Poll response from server
@@ -55,19 +51,19 @@ enum PollResponse {
 
 impl DeviceAuth {
     /// Create a new device auth instance
-    pub fn new(config: Config) -> Self {
-        Self { config }
+    pub fn new(server_url: impl Into<String>) -> Self {
+        Self {
+            server_url: server_url.into(),
+        }
     }
 
     /// Start device pairing flow
     /// 
     /// Returns the user code that should be displayed to the user
     pub async fn start_pairing(&self) -> Result<DevicePairingFlow> {
-        let _client = ApiClient::new(&self.config)?;
-        
         // Request device code from server
-        let response = reqwest::Client::new()
-            .post(format!("{}/api/v1/auth/device/request", self.config.server_url))
+        let response = pairing_http_client()?
+            .post(format!("{}/api/v1/auth/device/request", self.server_url))
             .send()
             .await?;
 
@@ -76,6 +72,11 @@ impl DeviceAuth {
         }
 
         let device_code_response: DeviceCodeResponse = response.json().await?;
+        let approval_url = build_approval_url(
+            &device_code_response.verification_uri,
+            &device_code_response.verification_uri_complete,
+            &device_code_response.device_code,
+        );
         
         info!(
             "Device pairing started. User code: {} (expires in {}s)",
@@ -86,74 +87,10 @@ impl DeviceAuth {
         Ok(DevicePairingFlow {
             user_code: device_code_response.user_code,
             device_code: device_code_response.device_code,
+            approval_url,
             expires_at: chrono::Utc::now() + chrono::Duration::seconds(device_code_response.expires_in),
-            server_url: self.config.server_url.clone(),
+            server_url: self.server_url.clone(),
         })
-    }
-
-    /// Load stored token from secure storage
-    pub fn load_token(&self) -> Result<Option<DeviceToken>> {
-        match keyring::Entry::new(TOKEN_KEYRING_SERVICE, TOKEN_KEYRING_USERNAME) {
-            Ok(entry) => match entry.get_password() {
-                Ok(token_json) => {
-                    match serde_json::from_str::<DeviceToken>(&token_json) {
-                        Ok(token) => {
-                            debug!("Loaded device token from keyring");
-                            Ok(Some(token))
-                        }
-                        Err(e) => {
-                            warn!("Failed to parse stored token: {}", e);
-                            Ok(None)
-                        }
-                    }
-                }
-                Err(keyring::Error::NoEntry) => Ok(None),
-                Err(e) => {
-                    warn!("Failed to read from keyring: {}", e);
-                    Ok(None)
-                }
-            }
-            Err(e) => {
-                warn!("Failed to create keyring entry: {}", e);
-                Ok(None)
-            }
-        }
-    }
-
-    /// Save token to secure storage
-    pub fn save_token(&self, token: &DeviceToken) -> Result<()> {
-        let token_json = serde_json::to_string(token)?;
-        
-        match keyring::Entry::new(TOKEN_KEYRING_SERVICE, TOKEN_KEYRING_USERNAME) {
-            Ok(entry) => {
-                entry.set_password(&token_json)?;
-                info!("Device token saved to keyring");
-                Ok(())
-            }
-            Err(e) => {
-                anyhow::bail!("Failed to create keyring entry: {}", e);
-            }
-        }
-    }
-
-    /// Clear stored token (logout)
-    pub fn clear_token(&self) -> Result<()> {
-        match keyring::Entry::new(TOKEN_KEYRING_SERVICE, TOKEN_KEYRING_USERNAME) {
-            Ok(entry) => {
-                // Delete password by setting it to empty
-                match entry.set_password("") {
-                    Ok(_) => info!("Device token cleared from keyring"),
-                    Err(e) => warn!("Failed to delete token: {}", e),
-                }
-            }
-            Err(e) => warn!("Failed to access keyring: {}", e),
-        }
-        Ok(())
-    }
-
-    /// Check if user is logged in
-    pub fn is_logged_in(&self) -> bool {
-        self.load_token().map(|t| t.is_some()).unwrap_or(false)
     }
 }
 
@@ -162,6 +99,7 @@ impl DeviceAuth {
 pub struct DevicePairingFlow {
     pub user_code: String,
     device_code: String,
+    approval_url: String,
     expires_at: chrono::DateTime<chrono::Utc>,
     server_url: String,
 }
@@ -170,6 +108,11 @@ impl DevicePairingFlow {
     /// Get the user code to display
     pub fn user_code(&self) -> &str {
         &self.user_code
+    }
+
+    /// Get the full approval URL to present to the user.
+    pub fn approval_url(&self) -> &str {
+        &self.approval_url
     }
 
     /// Check if the pairing code has expired
@@ -196,7 +139,7 @@ impl DevicePairingFlow {
             anyhow::bail!("Device code has expired");
         }
 
-        let response = reqwest::Client::new()
+        let response = pairing_http_client()?
             .post(format!("{}/api/v1/auth/device/poll", self.server_url))
             .json(&serde_json::json!({
                 "device_code": self.device_code,
@@ -268,11 +211,11 @@ impl DevicePairingFlow {
 }
 
 /// Interactive device pairing
-/// 
+///
 /// This function handles the entire pairing flow interactively,
 /// displaying the user code and polling until approval.
-pub async fn interactive_pairing(config: &Config) -> Result<DeviceToken> {
-    let auth = DeviceAuth::new(config.clone());
+pub async fn interactive_pairing(server_url: &str) -> Result<DeviceToken> {
+    let auth = DeviceAuth::new(server_url);
     
     // Start pairing flow
     let flow = auth.start_pairing().await?;
@@ -285,8 +228,7 @@ pub async fn interactive_pairing(config: &Config) -> Result<DeviceToken> {
     println!("║                                      ║");
     println!("╚══════════════════════════════════════╝");
     println!();
-    println!("Go to: {}/device", config.server_url);
-    println!("Enter the code above to authorize this device.");
+    println!("{}", pairing_instructions(flow.approval_url()));
     println!("Waiting for approval...");
     println!();
 
@@ -295,16 +237,47 @@ pub async fn interactive_pairing(config: &Config) -> Result<DeviceToken> {
     
     let device_token = DeviceToken {
         token,
-        device_id: crate::get_or_create_device_id()?,
+        device_id: get_device_id()?,
         created_at: chrono::Utc::now(),
     };
-    
-    // Save token securely
-    auth.save_token(&device_token)?;
-    
+
     println!("✓ Device paired successfully!");
     
     Ok(device_token)
+}
+
+/// Format the user-facing pairing instructions for a device approval link.
+pub fn pairing_instructions(approval_url: &str) -> String {
+    format!(
+        "Approve this device in RustShare:\n{}\n\nThis approval link is valid for 5 minutes.\nOpen it from an authenticated RustShare web UI session to approve this device.",
+        approval_url
+    )
+}
+
+fn build_approval_url(
+    verification_uri: &str,
+    verification_uri_complete: &str,
+    device_code: &str,
+) -> String {
+    if !verification_uri_complete.trim().is_empty() {
+        verification_uri_complete.to_string()
+    } else {
+        format!(
+            "{}?device_code={}",
+            verification_uri.trim_end_matches('/'),
+            device_code
+        )
+    }
+}
+
+fn desktop_user_agent() -> String {
+    format!("rustshare-desktop/{}", crate::VERSION)
+}
+
+fn pairing_http_client() -> Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .user_agent(desktop_user_agent())
+        .build()?)
 }
 
 #[cfg(test)]
@@ -324,5 +297,51 @@ mod tests {
         
         assert_eq!(token.token, deserialized.token);
         assert_eq!(token.device_id, deserialized.device_id);
+    }
+
+    #[test]
+    fn build_approval_url_prefers_complete_url() {
+        let approval_url = build_approval_url(
+            "https://example.com/device/approve",
+            "https://example.com/device/approve?device_code=device-code-123",
+            "device-code-123",
+        );
+
+        assert_eq!(
+            approval_url,
+            "https://example.com/device/approve?device_code=device-code-123"
+        );
+    }
+
+    #[test]
+    fn build_approval_url_falls_back_to_device_code_query() {
+        let approval_url = build_approval_url(
+            "https://example.com/device/approve",
+            "",
+            "device-code-123",
+        );
+
+        assert_eq!(
+            approval_url,
+            "https://example.com/device/approve?device_code=device-code-123"
+        );
+    }
+
+    #[test]
+    fn pairing_instructions_include_required_guidance() {
+        let approval_url = "https://example.com/device/approve?device_code=device-code-123";
+        let instructions = pairing_instructions(approval_url);
+
+        assert!(instructions.contains(approval_url));
+        assert!(instructions.contains("valid for 5 minutes"));
+        assert!(instructions.contains("authenticated RustShare web UI session"));
+    }
+
+    #[test]
+    fn desktop_user_agent_uses_app_identity() {
+        let user_agent = desktop_user_agent();
+
+        assert!(user_agent.starts_with("rustshare-desktop/"));
+        assert!(user_agent.ends_with(crate::VERSION));
     }
 }

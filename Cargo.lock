@@ -5497,10 +5497,12 @@ name = "rustshare-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "directories",
  "dirs 5.0.1",
  "platform",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sync-domain",
