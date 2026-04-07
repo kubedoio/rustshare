@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
-use serde::{Deserialize, Serialize};
 use sync_protocol::{DeltaRequest, DeltaResponse, DeviceRegistrationRequest, DeviceRegistrationResponse};
 use url::Url;
 

@@ -1,10 +1,8 @@
 use crate::client::ApiClient;
-use file_ops;
 use anyhow::Result;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use sync_domain::{LocalEntry, RemoteEntry};
-use uuid::Uuid;
-use tracing::{info, error};
+use tracing::info;
 
 pub struct SyncWorker {
     client: ApiClient,
@@ -15,7 +13,7 @@ impl SyncWorker {
         Self { client }
     }
 
-    pub async fn upload(&self, local: &LocalEntry, remote_root: Uuid) -> Result<()> {
+    pub async fn upload(&self, local: &LocalEntry, _remote_root: uuid::Uuid) -> Result<()> {
         info!("Uploading {}...", local.path.display());
         // In Phase 1, we'd use the resumable upload flow:
         // 1. Create session (POST /api/v1/uploads/sessions)
@@ -26,8 +24,7 @@ impl SyncWorker {
 
     pub async fn download(&self, remote: &RemoteEntry, local_dest: &Path) -> Result<()> {
         info!("Downloading {} -> {}...", remote.name, local_dest.display());
-        let response = self.client.download_file(remote.id).await?;
-        let mut stream = response.bytes_stream();
+        let _response = self.client.download_file(remote.id).await?;
         
         let mut temp_path = local_dest.to_path_buf();
         temp_path.set_extension("rs_tmp");

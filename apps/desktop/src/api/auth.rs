@@ -76,6 +76,7 @@ impl DeviceAuth {
             &device_code_response.verification_uri,
             &device_code_response.verification_uri_complete,
             &device_code_response.device_code,
+            &self.server_url,
         );
         
         info!(
@@ -258,8 +259,9 @@ fn build_approval_url(
     verification_uri: &str,
     verification_uri_complete: &str,
     device_code: &str,
+    server_url: &str,
 ) -> String {
-    if !verification_uri_complete.trim().is_empty() {
+    let raw_approval_url = if !verification_uri_complete.trim().is_empty() {
         verification_uri_complete.to_string()
     } else {
         format!(
@@ -267,6 +269,27 @@ fn build_approval_url(
             verification_uri.trim_end_matches('/'),
             device_code
         )
+    };
+
+    prefer_configured_https(server_url, &raw_approval_url)
+}
+
+fn prefer_configured_https(server_url: &str, approval_url: &str) -> String {
+    let Ok(server) = reqwest::Url::parse(server_url) else {
+        return approval_url.to_string();
+    };
+    let Ok(mut approval) = reqwest::Url::parse(approval_url) else {
+        return approval_url.to_string();
+    };
+
+    if server.scheme() == "https"
+        && approval.scheme() == "http"
+        && server.host_str() == approval.host_str()
+    {
+        let _ = approval.set_scheme("https");
+        approval.to_string()
+    } else {
+        approval_url.to_string()
     }
 }
 
@@ -305,6 +328,7 @@ mod tests {
             "https://example.com/device/approve",
             "https://example.com/device/approve?device_code=device-code-123",
             "device-code-123",
+            "https://example.com",
         );
 
         assert_eq!(
@@ -319,11 +343,27 @@ mod tests {
             "https://example.com/device/approve",
             "",
             "device-code-123",
+            "https://example.com",
         );
 
         assert_eq!(
             approval_url,
             "https://example.com/device/approve?device_code=device-code-123"
+        );
+    }
+
+    #[test]
+    fn build_approval_url_prefers_https_when_server_is_https() {
+        let approval_url = build_approval_url(
+            "http://app.rustshare.io/device/approve",
+            "http://app.rustshare.io/device/approve?device_code=device-code-123",
+            "device-code-123",
+            "https://app.rustshare.io",
+        );
+
+        assert_eq!(
+            approval_url,
+            "https://app.rustshare.io/device/approve?device_code=device-code-123"
         );
     }
 

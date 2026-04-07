@@ -3,10 +3,10 @@ use chrono::{DateTime, Utc};
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use sha2::{Digest, Sha256};
 use std::fs::File;
-use std::io::{self, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::error;
 use walkdir::WalkDir;
 
 pub fn calculate_hash(path: &Path) -> Result<String> {

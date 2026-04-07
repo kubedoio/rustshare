@@ -129,6 +129,8 @@ async fn main() -> Result<()> {
     };
     std::fs::create_dir_all(&workspace)?;
 
+    let server = normalize_server_url(&server);
+
     // Initialize logging
     let log_level = if verbose { Level::DEBUG } else { Level::INFO };
     let subscriber = FmtSubscriber::builder().with_max_level(log_level).finish();
@@ -233,6 +235,14 @@ async fn main() -> Result<()> {
 
 type PairingFuture<'a> = Pin<Box<dyn Future<Output = Result<DeviceToken>> + 'a>>;
 
+fn normalize_server_url(server: &str) -> String {
+    if server.contains("://") {
+        server.to_string()
+    } else {
+        format!("https://{}", server.trim_start_matches('/'))
+    }
+}
+
 async fn resolve_login_token<F>(
     server: &str,
     token: Option<String>,
@@ -303,5 +313,25 @@ mod tests {
 
         assert_eq!(paired_token.token, "paired-token-123");
         assert_eq!(paired_token.device_id, paired_device_id);
+    }
+
+    #[test]
+    fn normalize_server_url_keeps_existing_scheme() {
+        assert_eq!(
+            normalize_server_url("http://localhost:8080"),
+            "http://localhost:8080"
+        );
+        assert_eq!(
+            normalize_server_url("https://app.rustshare.io"),
+            "https://app.rustshare.io"
+        );
+    }
+
+    #[test]
+    fn normalize_server_url_defaults_to_https() {
+        assert_eq!(
+            normalize_server_url("app.rustshare.io"),
+            "https://app.rustshare.io"
+        );
     }
 }

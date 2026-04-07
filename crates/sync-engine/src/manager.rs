@@ -1,12 +1,12 @@
-use axum::{routing::{get, post}, Router, Json, extract::State};
+use axum::{routing::post, Router, Json, extract::State};
 use crate::client::ApiClient;
 use client_state::Database;
 use file_ops::FsWatcher;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{error, info};
-use sync_domain::{SyncStatus, SyncRoot};
+use tracing::info;
+use sync_domain::SyncRoot;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -28,7 +28,7 @@ pub struct RpcResponse {
 
 pub struct SyncManager {
     database: Arc<Mutex<Database>>,
-    client: ApiClient,
+    _client: ApiClient,
     workspace_root: PathBuf,
     rpc_token: String,
 }
@@ -38,7 +38,7 @@ impl SyncManager {
         let rpc_token = Uuid::new_v4().to_string();
         Self {
             database: Arc::new(Mutex::new(database)),
-            client,
+            _client: client,
             workspace_root,
             rpc_token,
         }
@@ -50,10 +50,6 @@ impl SyncManager {
         let (tx, mut rx) = mpsc::channel(100);
         let mut watcher = FsWatcher::new(tx)?;
         watcher.watch(&self.workspace_root)?;
-
-        let db = self.database.clone();
-        let client = self.client.clone();
-        let root = self.workspace_root.clone();
 
         tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
