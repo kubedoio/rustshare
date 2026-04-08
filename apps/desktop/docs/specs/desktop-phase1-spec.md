@@ -1,10 +1,11 @@
 # RustShare Desktop Phase 1 Specification
 
-| Status | Draft |
+| Status | Updated |
 | :--- | :--- |
-| **Version** | 1.0.0 |
+| **Version** | 1.1.0 |
 | **Author** | Antigravity (Principal Systems Engineer) |
-| **Date** | 2026-04-05 |
+| **Date** | 2026-04-08 |
+| **Updates** | Daemon architecture, Unix socket, CLI commands |
 
 ## 1. Title
 RustShare Desktop Sync Client - Phase 1
@@ -48,6 +49,10 @@ Phase 1 focuses on building a lightweight, reliable desktop synchronization clie
 - **FR-10: Activity Log**: User can view a history of recent sync operations and errors.
 - **FR-11: Device Registration**: Client identifies itself to the backend with a stable ID.
 - **FR-12: Large File Support**: Resumable transfers for large files (using existing backend capabilities).
+- **FR-13: Background Daemon**: Sync runs as a background process managed via CLI.
+- **FR-14: Daemon Lifecycle**: User can start, stop, and check status of the sync daemon.
+- **FR-15: Sync Root CRUD**: User can add, remove, update, enable, and disable sync roots via CLI.
+- **FR-16: CLI Communication**: CLI communicates with daemon via Unix socket (no TCP ports).
 
 ## 8. Non-functional Requirements
 - **NFR-1: Determinism**: Given the same state, the sync algorithm must produce the same result.
