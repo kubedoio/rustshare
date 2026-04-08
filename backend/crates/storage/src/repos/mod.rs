@@ -7,34 +7,34 @@
 //! - Dual-write adapters for migration
 //! - Factory for backend selection
 
-pub mod traits;
-pub mod rustfs_repos;
 pub mod dual_write;
-pub mod user;
-pub mod notification;
 pub mod job;
+pub mod notification;
 pub mod path_builder;
+pub mod rustfs_repos;
 pub mod search;
-pub mod sync;
-pub mod upload_session;
 pub mod share_notification;
+pub mod sync;
+pub mod traits;
+pub mod upload_session;
+pub mod user;
 
-pub use traits::*;
-pub use rustfs_repos::*;
 pub use dual_write::*;
-pub use path_builder::PathBuilder;
-pub use search::{RustFsSearchIndexRepository, SearchIndexRepository};
-pub use upload_session::RustFsUploadSessionRepository;
-pub use share_notification::{ShareNotificationRepo, ShareNotificationRepoImpl};
-pub use user::{RustFsUserRepository, UserRepository, UserRepositoryError};
-pub use notification::{
-    NotificationProjector, NotificationQuery, NotificationRepository,
-    NotificationRepositoryError, RustFsNotificationRepository,
-};
 pub use job::{
     Job, JobCoordinator, JobQuery, JobRepository, JobRepositoryError, JobStatus,
     RustFsJobRepository,
 };
+pub use notification::{
+    NotificationProjector, NotificationQuery, NotificationRepository, NotificationRepositoryError,
+    RustFsNotificationRepository,
+};
+pub use path_builder::PathBuilder;
+pub use rustfs_repos::*;
+pub use search::{RustFsSearchIndexRepository, SearchIndexRepository};
+pub use share_notification::{ShareNotificationRepo, ShareNotificationRepoImpl};
+pub use traits::*;
+pub use upload_session::RustFsUploadSessionRepository;
+pub use user::{RustFsUserRepository, UserRepository, UserRepositoryError};
 
 use thiserror::Error;
 
@@ -43,28 +43,28 @@ use thiserror::Error;
 pub enum RepositoryError {
     #[error("Entity not found: {0}")]
     NotFound(String),
-    
+
     #[error("Entity already exists: {0}")]
     AlreadyExists(String),
-    
+
     #[error("Concurrency conflict: {0}")]
     ConcurrencyConflict(String),
-    
+
     #[error("Permission denied: {0}")]
     PermissionDenied(String),
-    
+
     #[error("Validation error: {0}")]
     ValidationError(String),
-    
+
     #[error("Storage error: {0}")]
     StorageError(String),
-    
+
     #[error("Coordination error: {0}")]
     CoordinationError(String),
-    
+
     #[error("Dual-write mismatch: {0}")]
     DualWriteMismatch(String),
-    
+
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -74,7 +74,7 @@ impl RepositoryError {
     pub fn is_not_found(&self) -> bool {
         matches!(self, Self::NotFound(_))
     }
-    
+
     /// Check if this error indicates a concurrency conflict
     pub fn is_conflict(&self) -> bool {
         matches!(self, Self::ConcurrencyConflict(_))

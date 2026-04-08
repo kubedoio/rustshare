@@ -80,7 +80,7 @@ impl FolderDocument {
             ancestor_ids,
         }
     }
-    
+
     /// Create a root folder for a user
     pub fn new_root(namespace_id: Uuid, owner_id: Uuid, tenant_id: Uuid) -> Self {
         let id = Uuid::new_v4();
@@ -95,7 +95,7 @@ impl FolderDocument {
             Vec::new(), // Root has no ancestors
         )
     }
-    
+
     /// Create a child folder
     pub fn new_child(
         namespace_id: Uuid,
@@ -114,15 +114,24 @@ impl FolderDocument {
         };
         let mut ancestor_ids = parent_ancestor_ids;
         ancestor_ids.push(parent_id);
-        Self::new(id, namespace_id, Some(parent_id), name, path, owner_id, tenant_id, ancestor_ids)
+        Self::new(
+            id,
+            namespace_id,
+            Some(parent_id),
+            name,
+            path,
+            owner_id,
+            tenant_id,
+            ancestor_ids,
+        )
     }
-    
+
     /// Increment version on mutation
     pub fn bump_version(&mut self) {
         self.version += 1;
         self.updated_at = Utc::now();
     }
-    
+
     /// Validate folder name
     pub fn validate_name(name: &str) -> Result<(), String> {
         if name.is_empty() {
@@ -221,7 +230,7 @@ impl FileDocument {
             deleted: false,
         }
     }
-    
+
     /// Update file with new version
     pub fn update_version(
         &mut self,
@@ -240,7 +249,7 @@ impl FileDocument {
         }
         self.bump_version();
     }
-    
+
     /// Rename file (updates path).
     ///
     /// Both new_name and new_path accept `&str` or `String` to avoid
@@ -250,7 +259,7 @@ impl FileDocument {
         self.path = new_path.into();
         self.bump_version();
     }
-    
+
     /// Move file to new parent.
     ///
     /// The new_path accepts `&str` or `String` to avoid unnecessary allocations.
@@ -259,13 +268,13 @@ impl FileDocument {
         self.path = new_path.into();
         self.bump_version();
     }
-    
+
     /// Increment version on mutation
     pub fn bump_version(&mut self) {
         self.version += 1;
         self.updated_at = Utc::now();
     }
-    
+
     /// Validate file name
     pub fn validate_name(name: &str) -> Result<(), String> {
         if name.is_empty() {
@@ -279,7 +288,7 @@ impl FileDocument {
         }
         Ok(())
     }
-    
+
     /// Extract the hash from content_ref
     pub fn content_hash(&self) -> &str {
         self.content_ref
@@ -345,7 +354,7 @@ impl FileVersionDocument {
             change_description,
         }
     }
-    
+
     /// Extract the hash from content_ref
     pub fn content_hash(&self) -> &str {
         self.content_ref
@@ -423,7 +432,7 @@ impl ShareDocument {
         resource_type: String,
         resource_id: Uuid,
         permissions: SharePermissions,
-        share_token: String,        // Original token
+        share_token: String, // Original token
         password_hash: Option<String>,
         expires_at: Option<DateTime<Utc>>,
         created_by: Uuid,
@@ -453,7 +462,7 @@ impl ShareDocument {
             version: 1,
         }
     }
-    
+
     /// Create a new user share
     pub fn new_user_share(
         id: Uuid,
@@ -486,7 +495,7 @@ impl ShareDocument {
             version: 1,
         }
     }
-    
+
     /// Check if share is expired
     pub fn is_expired(&self) -> bool {
         if let Some(expires) = self.expires_at {
@@ -495,28 +504,28 @@ impl ShareDocument {
             false
         }
     }
-    
+
     /// Check if share is revoked
     pub fn is_revoked(&self) -> bool {
         self.revoked_at.is_some()
     }
-    
+
     /// Check if share is active (not revoked, not expired)
     pub fn is_active(&self) -> bool {
         !self.is_revoked() && !self.is_expired()
     }
-    
+
     /// Revoke the share
     pub fn revoke(&mut self) {
         self.revoked_at = Some(Utc::now());
         self.bump_version();
     }
-    
+
     /// Increment access count
     pub fn record_access(&mut self) {
         self.access_count += 1;
     }
-    
+
     /// Bump version
     pub fn bump_version(&mut self) {
         self.version += 1;
@@ -595,7 +604,7 @@ impl EventDocument {
             tenant_id,
         }
     }
-    
+
     /// Set correlation ID
     pub fn with_correlation_id(mut self, correlation_id: Uuid) -> Self {
         self.correlation_id = Some(correlation_id);
@@ -648,7 +657,7 @@ impl TombstoneDocument {
             tenant_id: file.tenant_id,
         }
     }
-    
+
     /// Create a tombstone from a folder document
     pub fn from_folder(folder: &FolderDocument, deleted_by: Uuid) -> Self {
         Self {
@@ -671,7 +680,7 @@ impl TombstoneDocument {
 // ============================================================================
 
 /// Sync cursor document for device synchronization checkpoint
-/// 
+///
 /// Each device maintains its own cursor that tracks the last event
 /// the device has successfully processed. This enables reliable
 /// incremental sync for desktop clients.
@@ -712,7 +721,7 @@ impl SyncCursorDocument {
             device_info,
         }
     }
-    
+
     /// Update the cursor and last event ID.
     ///
     /// The cursor can be any type that converts into a String,
@@ -722,31 +731,31 @@ impl SyncCursorDocument {
         self.last_event_id = last_event_id;
         self.updated_at = Utc::now();
     }
-    
+
     /// Parse cursor token to extract timestamp
-    /// 
+    ///
     /// Cursor format: base64(timestamp_millis + ":" + nonce)
     pub fn parse_cursor_timestamp(&self) -> Option<chrono::DateTime<Utc>> {
-        use base64::{Engine as _, engine::general_purpose::STANDARD};
-        
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+
         let decoded = STANDARD.decode(&self.cursor).ok()?;
         let decoded_str = String::from_utf8(decoded).ok()?;
         let parts: Vec<&str> = decoded_str.split(':').collect();
-        
+
         if parts.len() != 2 {
             return None;
         }
-        
+
         let timestamp_millis: i64 = parts[0].parse().ok()?;
         chrono::DateTime::from_timestamp_millis(timestamp_millis)
     }
-    
+
     /// Generate a new cursor token from a timestamp
-    /// 
+    ///
     /// Cursor format: base64(timestamp_millis + ":" + uuid_v4)
     pub fn generate_cursor(timestamp: DateTime<Utc>) -> String {
-        use base64::{Engine as _, engine::general_purpose::STANDARD};
-        
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+
         let timestamp_millis = timestamp.timestamp_millis();
         let nonce = Uuid::new_v4();
         let token = format!("{}:{}", timestamp_millis, nonce);
@@ -803,7 +812,7 @@ impl FolderChildrenIndex {
             children: Vec::new(),
         }
     }
-    
+
     /// Add or update a child
     pub fn upsert_child(&mut self, entry: FolderChildEntry) {
         if let Some(existing) = self.children.iter_mut().find(|c| c.id == entry.id) {
@@ -815,14 +824,14 @@ impl FolderChildrenIndex {
         self.version += 1;
         self.updated_at = Utc::now();
     }
-    
+
     /// Remove a child
     pub fn remove_child(&mut self, child_id: Uuid) {
         self.children.retain(|c| c.id != child_id);
         self.version += 1;
         self.updated_at = Utc::now();
     }
-    
+
     /// Mark a child as deleted
     pub fn mark_deleted(&mut self, child_id: Uuid) {
         if let Some(child) = self.children.iter_mut().find(|c| c.id == child_id) {
@@ -890,13 +899,13 @@ pub struct ShareEntry {
 pub trait SchemaMigration<T> {
     /// Target schema version
     const TARGET_VERSION: u32;
-    
+
     /// Migrate from a previous version
     fn migrate(value: serde_json::Value) -> Result<T, String>;
 }
 
 /// Helper to handle schema version mismatches
-pub fn ensure_current_version<T>(_doc: &mut T, current_version: u32) 
+pub fn ensure_current_version<T>(_doc: &mut T, current_version: u32)
 where
     T: Serialize + DeserializeOwned,
 {
@@ -988,13 +997,13 @@ impl UserDocument {
             version: 1,
         }
     }
-    
+
     /// Bump version on mutation
     pub fn bump_version(&mut self) {
         self.version += 1;
         self.updated_at = Utc::now();
     }
-    
+
     /// Disable the account
     pub fn disable(&mut self, reason: Option<String>) {
         self.disabled = true;
@@ -1002,7 +1011,7 @@ impl UserDocument {
         self.disabled_reason = reason;
         self.bump_version();
     }
-    
+
     /// Enable the account
     pub fn enable(&mut self) {
         self.disabled = false;
@@ -1010,7 +1019,7 @@ impl UserDocument {
         self.disabled_reason = None;
         self.bump_version();
     }
-    
+
     /// Check if user can authenticate
     pub fn can_authenticate(&self) -> bool {
         !self.disabled
@@ -1093,7 +1102,7 @@ impl NotificationDocument {
             created_at: Utc::now(),
         }
     }
-    
+
     /// Mark as read
     pub fn mark_read(&mut self) {
         self.read = true;
@@ -1147,7 +1156,7 @@ impl UserNotificationIndex {
             unread_count: 0,
         }
     }
-    
+
     /// Add a notification reference
     pub fn add_notification(&mut self, notification: &NotificationRef) {
         self.notifications.push(notification.clone());
@@ -1155,14 +1164,19 @@ impl UserNotificationIndex {
             self.unread_count += 1;
         }
         // Sort by created_at descending
-        self.notifications.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        self.notifications
+            .sort_by(|a, b| b.created_at.cmp(&a.created_at));
         self.version += 1;
         self.updated_at = Utc::now();
     }
-    
+
     /// Mark notification as read
     pub fn mark_read(&mut self, notification_id: Uuid) {
-        if let Some(notif) = self.notifications.iter_mut().find(|n| n.notification_id == notification_id) {
+        if let Some(notif) = self
+            .notifications
+            .iter_mut()
+            .find(|n| n.notification_id == notification_id)
+        {
             if !notif.read {
                 notif.read = true;
                 self.unread_count = (self.unread_count - 1).max(0);
@@ -1171,10 +1185,14 @@ impl UserNotificationIndex {
             }
         }
     }
-    
+
     /// Remove a notification
     pub fn remove_notification(&mut self, notification_id: Uuid) {
-        if let Some(pos) = self.notifications.iter().position(|n| n.notification_id == notification_id) {
+        if let Some(pos) = self
+            .notifications
+            .iter()
+            .position(|n| n.notification_id == notification_id)
+        {
             let notif = &self.notifications[pos];
             if !notif.read {
                 self.unread_count = (self.unread_count - 1).max(0);
@@ -1263,7 +1281,7 @@ impl JobQueueIndex {
             completed_recent: Vec::new(),
         }
     }
-    
+
     /// Add a pending job
     pub fn add_pending(&mut self, job: JobRef) {
         self.pending.push(job);
@@ -1271,7 +1289,7 @@ impl JobQueueIndex {
         self.version += 1;
         self.updated_at = Utc::now();
     }
-    
+
     /// Mark job as running
     pub fn mark_running(&mut self, job_id: Uuid) {
         if let Some(pos) = self.pending.iter().position(|j| j.job_id == job_id) {
@@ -1281,7 +1299,7 @@ impl JobQueueIndex {
             self.updated_at = Utc::now();
         }
     }
-    
+
     /// Mark job as completed/failed/cancelled
     pub fn mark_completed(&mut self, job_id: Uuid) {
         if let Some(pos) = self.running.iter().position(|j| j.job_id == job_id) {
@@ -1295,7 +1313,7 @@ impl JobQueueIndex {
             self.updated_at = Utc::now();
         }
     }
-    
+
     /// Remove a job from any queue
     pub fn remove_job(&mut self, job_id: Uuid) {
         self.pending.retain(|j| j.job_id != job_id);
@@ -1304,7 +1322,7 @@ impl JobQueueIndex {
         self.version += 1;
         self.updated_at = Utc::now();
     }
-    
+
     /// Sort pending jobs by priority
     fn sort_pending(&mut self) {
         self.pending.sort_by(|a, b| {
@@ -1465,10 +1483,14 @@ impl SearchIndexDocument {
             version: 1,
         }
     }
-    
+
     /// Add or update an entry
     pub fn upsert_entry(&mut self, entry: SearchIndexEntry) {
-        if let Some(existing) = self.entries.iter_mut().find(|e| e.resource_id == entry.resource_id) {
+        if let Some(existing) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.resource_id == entry.resource_id)
+        {
             *existing = entry;
         } else {
             self.entries.push(entry);
@@ -1476,19 +1498,19 @@ impl SearchIndexDocument {
         self.updated_at = Utc::now();
         self.version += 1;
     }
-    
+
     /// Remove an entry
     pub fn remove(&mut self, resource_id: Uuid) {
         self.entries.retain(|e| e.resource_id != resource_id);
         self.updated_at = Utc::now();
         self.version += 1;
     }
-    
+
     /// Remove an entry (alias for compatibility)
     pub fn remove_entry(&mut self, resource_id: Uuid) {
         self.remove(resource_id);
     }
-    
+
     /// Check if the index is empty
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()

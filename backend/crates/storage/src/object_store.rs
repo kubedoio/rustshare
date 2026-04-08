@@ -3,7 +3,6 @@ use aws_config::BehaviorVersion;
 use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use bytes::Bytes;
 
-
 /// Object storage abstraction for RustFS/S3
 pub struct ObjectStore {
     client: S3Client,
@@ -36,10 +35,7 @@ impl ObjectStore {
         ensure_bucket_exists(&client, &bucket).await?;
 
         // Create a second client for presigned URLs with public endpoint
-        let region_str = config
-            .region()
-            .map(|r| r.to_string())
-            .unwrap_or(region);
+        let region_str = config.region().map(|r| r.to_string()).unwrap_or(region);
         let presign_config = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&presign_endpoint)
             .region(aws_config::Region::new(region_str))

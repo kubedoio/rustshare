@@ -54,14 +54,18 @@ pub fn ensure_directories() -> Result<()> {
     std::fs::create_dir_all(&data)?;
     std::fs::create_dir_all(&cache)?;
 
-    info!("Directories ensured: config={}, data={}, cache={}",
-        config.display(), data.display(), cache.display());
+    info!(
+        "Directories ensured: config={}, data={}, cache={}",
+        config.display(),
+        data.display(),
+        cache.display()
+    );
 
     Ok(())
 }
 
 /// Generate a unique device identifier
-/// 
+///
 /// This ID is persisted and used to identify this device to the server.
 pub fn get_or_create_device_id() -> Result<Uuid> {
     let device_id_path = data_dir()?.join("device_id");
@@ -76,7 +80,7 @@ pub fn get_or_create_device_id() -> Result<Uuid> {
     // Generate new device ID
     let id = Uuid::new_v4();
     std::fs::write(&device_id_path, id.to_string())?;
-    
+
     info!("Generated new device ID: {}", id);
     Ok(id)
 }

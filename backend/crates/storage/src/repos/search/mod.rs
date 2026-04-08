@@ -19,15 +19,15 @@ pub use rustfs::RustFsSearchIndexRepository;
 pub trait SearchIndexRepository: Send + Sync {
     /// Index a file document
     async fn index_file(&self, file: &FileDocument) -> Result<(), RepositoryError>;
-    
+
     /// Index a folder document
     async fn index_folder(&self, folder: &FolderDocument) -> Result<(), RepositoryError>;
-    
+
     /// Remove a resource from the index
     async fn remove_from_index(&self, resource_id: Uuid) -> Result<(), RepositoryError>;
-    
+
     /// Search for resources matching the query
-    /// 
+    ///
     /// Returns up to `limit` results. Results are not filtered by permission;
     /// the caller must filter results based on user permissions.
     async fn search(

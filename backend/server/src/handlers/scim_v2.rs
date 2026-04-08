@@ -63,9 +63,11 @@ fn verify_scim_token(headers: &HeaderMap) -> Result<(), ScimV2ErrorResponse> {
         }
     };
 
-    let auth_header = headers.typed_get::<Authorization<Bearer>>().ok_or_else(|| {
-        ScimV2ErrorResponse::new(401, "Missing Authorization header with Bearer token")
-    })?;
+    let auth_header = headers
+        .typed_get::<Authorization<Bearer>>()
+        .ok_or_else(|| {
+            ScimV2ErrorResponse::new(401, "Missing Authorization header with Bearer token")
+        })?;
 
     // Use constant-time comparison to prevent timing attacks
     if !constant_time_eq::constant_time_eq(
@@ -79,10 +81,7 @@ fn verify_scim_token(headers: &HeaderMap) -> Result<(), ScimV2ErrorResponse> {
 }
 
 /// Create a SCIM JSON response.
-fn scim_json_response<T: serde::Serialize>(
-    status: StatusCode,
-    body: T,
-) -> Response {
+fn scim_json_response<T: serde::Serialize>(status: StatusCode, body: T) -> Response {
     let json = match serde_json::to_string(&body) {
         Ok(j) => j,
         Err(e) => {
@@ -145,8 +144,14 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         for filter in filters {
             match filter.attribute.as_str() {
                 "userName" => {
-                    query.push_str(&format!(" AND LOWER(username) LIKE '%{}%'", filter.value.to_lowercase()));
-                    count_query.push_str(&format!(" AND LOWER(username) LIKE '%{}%'", filter.value.to_lowercase()));
+                    query.push_str(&format!(
+                        " AND LOWER(username) LIKE '%{}%'",
+                        filter.value.to_lowercase()
+                    ));
+                    count_query.push_str(&format!(
+                        " AND LOWER(username) LIKE '%{}%'",
+                        filter.value.to_lowercase()
+                    ));
                 }
                 "externalId" => {
                     query.push_str(&format!(" AND external_id = '{}'", filter.value));
@@ -171,10 +176,12 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         // Apply pagination
         let limit = count.unwrap_or(100);
         let offset = start_index.map(|s| s - 1).unwrap_or(0).max(0);
-        
+
         query.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
 
-        let total: i64 = sqlx::query_scalar(&count_query).fetch_one(&self.pool).await?;
+        let total: i64 = sqlx::query_scalar(&count_query)
+            .fetch_one(&self.pool)
+            .await?;
 
         let users = sqlx::query_as::<_, rustshare_core::services::ScimV2UserRecord>(&query)
             .fetch_all(&self.pool)
@@ -183,7 +190,10 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         Ok((users, total))
     }
 
-    async fn get_user(&self, id: Uuid) -> Result<Option<rustshare_core::services::ScimV2UserRecord>, sqlx::Error> {
+    async fn get_user(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<rustshare_core::services::ScimV2UserRecord>, sqlx::Error> {
         sqlx::query_as::<_, rustshare_core::services::ScimV2UserRecord>(
             "SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at 
              FROM users WHERE id = $1"
@@ -193,7 +203,10 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         .await
     }
 
-    async fn get_user_by_external_id(&self, external_id: &str) -> Result<Option<rustshare_core::services::ScimV2UserRecord>, sqlx::Error> {
+    async fn get_user_by_external_id(
+        &self,
+        external_id: &str,
+    ) -> Result<Option<rustshare_core::services::ScimV2UserRecord>, sqlx::Error> {
         sqlx::query_as::<_, rustshare_core::services::ScimV2UserRecord>(
             "SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at 
              FROM users WHERE external_id = $1"
@@ -210,7 +223,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         storage_quota: i64,
     ) -> Result<Uuid, sqlx::Error> {
         let id = Uuid::new_v4();
-        
+
         // Extract email from SCIM emails
         let email = user
             .emails
@@ -245,7 +258,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                 storage_quota, theme, created_at, updated_at, disabled_at,
                 name, surname, email_sharing_enabled, tenant_id, external_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), $9, $10, $11, $12, $13, $14)
-            "#
+            "#,
         )
         .bind(id)
         .bind(&user.user_name)
@@ -255,7 +268,11 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         .bind(false) // Not admin by default
         .bind(storage_quota)
         .bind("system")
-        .bind(if user.active { None::<DateTime<Utc>> } else { Some(Utc::now()) })
+        .bind(if user.active {
+            None::<DateTime<Utc>>
+        } else {
+            Some(Utc::now())
+        })
         .bind(name)
         .bind(surname)
         .bind(true)
@@ -295,13 +312,17 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                 external_id = $8,
                 updated_at = NOW()
             WHERE id = $1
-            "#
+            "#,
         )
         .bind(id)
         .bind(&user.user_name)
         .bind(&display_name)
         .bind(&email)
-        .bind(if user.active { None::<DateTime<Utc>> } else { Some(Utc::now()) })
+        .bind(if user.active {
+            None::<DateTime<Utc>>
+        } else {
+            Some(Utc::now())
+        })
         .bind(name)
         .bind(surname)
         .bind(user.external_id.clone())
@@ -370,7 +391,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
     ) -> Result<(Vec<rustshare_core::services::ScimV2GroupRecord>, i64), sqlx::Error> {
         let mut query = String::from(
             "SELECT id, external_id, name, description, created_at, updated_at 
-             FROM user_groups WHERE 1=1"
+             FROM user_groups WHERE 1=1",
         );
         let mut count_query = String::from("SELECT COUNT(*) FROM user_groups WHERE 1=1");
 
@@ -378,8 +399,14 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         for filter in filters {
             match filter.attribute.as_str() {
                 "displayName" => {
-                    query.push_str(&format!(" AND LOWER(name) LIKE '%{}%'", filter.value.to_lowercase()));
-                    count_query.push_str(&format!(" AND LOWER(name) LIKE '%{}%'", filter.value.to_lowercase()));
+                    query.push_str(&format!(
+                        " AND LOWER(name) LIKE '%{}%'",
+                        filter.value.to_lowercase()
+                    ));
+                    count_query.push_str(&format!(
+                        " AND LOWER(name) LIKE '%{}%'",
+                        filter.value.to_lowercase()
+                    ));
                 }
                 "externalId" => {
                     query.push_str(&format!(" AND external_id = '{}'", filter.value));
@@ -394,10 +421,12 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         // Apply pagination
         let limit = count.unwrap_or(100);
         let offset = start_index.map(|s| s - 1).unwrap_or(0).max(0);
-        
+
         query.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
 
-        let total: i64 = sqlx::query_scalar(&count_query).fetch_one(&self.pool).await?;
+        let total: i64 = sqlx::query_scalar(&count_query)
+            .fetch_one(&self.pool)
+            .await?;
 
         let groups = sqlx::query_as::<_, rustshare_core::services::ScimV2GroupRecord>(&query)
             .fetch_all(&self.pool)
@@ -406,20 +435,26 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         Ok((groups, total))
     }
 
-    async fn get_group(&self, id: Uuid) -> Result<Option<rustshare_core::services::ScimV2GroupRecord>, sqlx::Error> {
+    async fn get_group(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<rustshare_core::services::ScimV2GroupRecord>, sqlx::Error> {
         sqlx::query_as::<_, rustshare_core::services::ScimV2GroupRecord>(
             "SELECT id, external_id, name, description, created_at, updated_at 
-             FROM user_groups WHERE id = $1"
+             FROM user_groups WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
         .await
     }
 
-    async fn get_group_by_external_id(&self, external_id: &str) -> Result<Option<rustshare_core::services::ScimV2GroupRecord>, sqlx::Error> {
+    async fn get_group_by_external_id(
+        &self,
+        external_id: &str,
+    ) -> Result<Option<rustshare_core::services::ScimV2GroupRecord>, sqlx::Error> {
         sqlx::query_as::<_, rustshare_core::services::ScimV2GroupRecord>(
             "SELECT id, external_id, name, description, created_at, updated_at 
-             FROM user_groups WHERE external_id = $1"
+             FROM user_groups WHERE external_id = $1",
         )
         .bind(external_id)
         .fetch_optional(&self.pool)
@@ -431,7 +466,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
 
         sqlx::query(
             "INSERT INTO user_groups (id, name, external_id, created_at, updated_at) 
-             VALUES ($1, $2, $3, NOW(), NOW())"
+             VALUES ($1, $2, $3, NOW(), NOW())",
         )
         .bind(id)
         .bind(&group.display_name)
@@ -444,7 +479,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
 
     async fn update_group(&self, id: Uuid, group: &ScimV2Group) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "UPDATE user_groups SET name = $2, external_id = $3, updated_at = NOW() WHERE id = $1"
+            "UPDATE user_groups SET name = $2, external_id = $3, updated_at = NOW() WHERE id = $1",
         )
         .bind(id)
         .bind(&group.display_name)
@@ -469,9 +504,13 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                                 // Handle array of members
                                 if let Some(members) = value.as_array() {
                                     for member in members {
-                                        if let Some(user_id_str) = member.get("value").and_then(|v| v.as_str()) {
+                                        if let Some(user_id_str) =
+                                            member.get("value").and_then(|v| v.as_str())
+                                        {
                                             if let Ok(user_id) = Uuid::parse_str(user_id_str) {
-                                                if let Err(e) = self.add_group_member(id, user_id).await {
+                                                if let Err(e) =
+                                                    self.add_group_member(id, user_id).await
+                                                {
                                                     tracing::warn!(group_id = %id, user_id = %user_id, error = %e, "failed to add group member");
                                                 }
                                             }
@@ -483,7 +522,9 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                     } else if let Some(ref value) = op.value {
                         if let Some(members) = value.get("members").and_then(|v| v.as_array()) {
                             for member in members {
-                                if let Some(user_id_str) = member.get("value").and_then(|v| v.as_str()) {
+                                if let Some(user_id_str) =
+                                    member.get("value").and_then(|v| v.as_str())
+                                {
                                     if let Ok(user_id) = Uuid::parse_str(user_id_str) {
                                         if let Err(e) = self.add_group_member(id, user_id).await {
                                             tracing::warn!(group_id = %id, user_id = %user_id, error = %e, "failed to add group member");
@@ -498,7 +539,11 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                     if let Some(ref path) = op.path {
                         // Parse path like "members[value eq \"user-id\"]"
                         if path.starts_with("members[value eq ") {
-                            if let Some(user_id_str) = path.split("value eq \"").nth(1).and_then(|s| s.split("\"").next()) {
+                            if let Some(user_id_str) = path
+                                .split("value eq \"")
+                                .nth(1)
+                                .and_then(|s| s.split("\"").next())
+                            {
                                 if let Ok(user_id) = Uuid::parse_str(user_id_str) {
                                     if let Err(e) = self.remove_group_member(id, user_id).await {
                                         tracing::warn!(group_id = %id, user_id = %user_id, error = %e, "failed to remove group member");
@@ -529,7 +574,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             FROM users u
             JOIN group_members gm ON u.id = gm.user_id
             WHERE gm.group_id = $1
-            "#
+            "#,
         )
         .bind(group_id)
         .fetch_all(&self.pool)
@@ -545,7 +590,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             FROM user_groups g
             JOIN group_members gm ON g.id = gm.group_id
             WHERE gm.user_id = $1
-            "#
+            "#,
         )
         .bind(user_id)
         .fetch_all(&self.pool)
@@ -560,7 +605,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             INSERT INTO group_members (group_id, user_id, added_at)
             VALUES ($1, $2, NOW())
             ON CONFLICT (group_id, user_id) DO NOTHING
-            "#
+            "#,
         )
         .bind(group_id)
         .bind(user_id)
@@ -580,7 +625,10 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         Ok(())
     }
 
-    async fn find_user_id_by_external_id(&self, external_id: &str) -> Result<Option<Uuid>, sqlx::Error> {
+    async fn find_user_id_by_external_id(
+        &self,
+        external_id: &str,
+    ) -> Result<Option<Uuid>, sqlx::Error> {
         sqlx::query_scalar("SELECT id FROM users WHERE external_id = $1")
             .bind(external_id)
             .fetch_optional(&self.pool)
@@ -668,7 +716,10 @@ pub async fn list_users(
         base_url,
     );
 
-    match service.list_users(query.filter.as_deref(), query.start_index, query.count).await {
+    match service
+        .list_users(query.filter.as_deref(), query.start_index, query.count)
+        .await
+    {
         Ok(response) => scim_json_response(StatusCode::OK, response),
         Err(e) => scim_error_response(e),
     }
@@ -830,7 +881,10 @@ pub async fn list_groups(
         base_url,
     );
 
-    match service.list_groups(query.filter.as_deref(), query.start_index, query.count).await {
+    match service
+        .list_groups(query.filter.as_deref(), query.start_index, query.count)
+        .await
+    {
         Ok(response) => scim_json_response(StatusCode::OK, response),
         Err(e) => scim_error_response(e),
     }
@@ -997,10 +1051,7 @@ pub async fn get_service_provider_config(
 
 /// GET /scim/v2/ResourceTypes
 /// Get supported resource types.
-pub async fn get_resource_types(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Response {
+pub async fn get_resource_types(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if let Err(err) = verify_scim_token(&headers) {
         return scim_json_response(StatusCode::UNAUTHORIZED, err);
     }
@@ -1015,23 +1066,15 @@ pub async fn get_resource_types(
     );
 
     let resource_types = service.get_resource_types();
-    
-    let response = ScimV2ListResponse::new(
-        resource_types,
-        2,
-        Some(1),
-        Some(2),
-    );
-    
+
+    let response = ScimV2ListResponse::new(resource_types, 2, Some(1), Some(2));
+
     scim_json_response(StatusCode::OK, response)
 }
 
 /// GET /scim/v2/Schemas
 /// Get supported schemas.
-pub async fn get_schemas(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Response {
+pub async fn get_schemas(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if let Err(err) = verify_scim_token(&headers) {
         return scim_json_response(StatusCode::UNAUTHORIZED, err);
     }
@@ -1046,14 +1089,9 @@ pub async fn get_schemas(
     );
 
     let schemas = service.get_schemas();
-    
-    let response = ScimV2ListResponse::new(
-        schemas,
-        2,
-        Some(1),
-        Some(2),
-    );
-    
+
+    let response = ScimV2ListResponse::new(schemas, 2, Some(1), Some(2));
+
     scim_json_response(StatusCode::OK, response)
 }
 
@@ -1064,8 +1102,7 @@ pub async fn get_schemas(
 /// Get base URL for constructing resource locations.
 fn get_base_url(_headers: &HeaderMap) -> String {
     // Try to construct from request headers, fallback to env or default
-    std::env::var("RUSTSHARE_SCIM_BASE_URL")
-        .unwrap_or_else(|_| "http://localhost:8080".to_string())
+    std::env::var("RUSTSHARE_SCIM_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string())
 }
 
 /// Get default storage quota for SCIM-provisioned users.

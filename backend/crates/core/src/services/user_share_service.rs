@@ -1,11 +1,11 @@
 //! DEPRECATED: Use ShareService instead
 #![allow(deprecated)]
-//! 
+//!
 //! This module is being phased out in favor of the unified ShareService.
 //! New code should use ShareService for all share operations.
-//! 
+//!
 //! Migration guide:
-//! - `user_share_service.create_file_share(file_id, email, perm, user)` 
+//! - `user_share_service.create_file_share(file_id, email, perm, user)`
 //!   → `share_service.create_user_share(Resource::File(file_id), email, perm, user)`
 //! - `user_share_service.create_folder_share(folder_id, email, perm, user)`
 //!   → `share_service.create_user_share(Resource::Folder(folder_id), email, perm, user)`
@@ -74,7 +74,10 @@ pub trait ShareOps: Send + Sync {
 pub trait UserOps: Send + Sync {
     async fn find_by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error>;
     async fn get_by_id(&self, user_id: UserId) -> Result<Option<User>, sqlx::Error>;
-    async fn get_tenant_id_for_user(&self, user_id: UserId) -> Result<Option<uuid::Uuid>, sqlx::Error>;
+    async fn get_tenant_id_for_user(
+        &self,
+        user_id: UserId,
+    ) -> Result<Option<uuid::Uuid>, sqlx::Error>;
 }
 
 /// Trait for file repository operations needed by UserShareService.
@@ -90,7 +93,10 @@ pub trait FolderOps: Send + Sync {
 }
 
 /// DEPRECATED: Use ShareService instead
-#[deprecated(since = "0.2.0", note = "Use ShareService instead. See module documentation for migration guide.")]
+#[deprecated(
+    since = "0.2.0",
+    note = "Use ShareService instead. See module documentation for migration guide."
+)]
 #[allow(deprecated)]
 pub struct UserShareService<SR, UR, FR, DR, P, N, E>
 where
@@ -223,7 +229,10 @@ where
     }
 
     /// DEPRECATED: Use ShareService::create_user_share with Resource::File instead
-    #[deprecated(since = "0.2.0", note = "Use ShareService::create_user_share with Resource::File instead")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use ShareService::create_user_share with Resource::File instead"
+    )]
     /// Create a share for a file with a specific user.
     pub async fn create_file_share(
         &self,
@@ -352,7 +361,10 @@ where
     }
 
     /// DEPRECATED: Use ShareService::create_user_share with Resource::Folder instead
-    #[deprecated(since = "0.2.0", note = "Use ShareService::create_user_share with Resource::Folder instead")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use ShareService::create_user_share with Resource::Folder instead"
+    )]
     /// Create a share for a folder with a specific user.
     pub async fn create_folder_share(
         &self,
@@ -481,7 +493,10 @@ where
     }
 
     /// DEPRECATED: Use ShareService::list_received_shares instead
-    #[deprecated(since = "0.2.0", note = "Use ShareService::list_received_shares instead")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use ShareService::list_received_shares instead"
+    )]
     /// List shares received by a user.
     pub async fn list_received_shares(
         &self,
@@ -511,12 +526,18 @@ where
         } else if let Some(foid) = folder_id {
             Resource::Folder(foid)
         } else {
-            return Err(ShareError::InvalidState("Share has neither file_id nor folder_id".to_string()));
+            return Err(ShareError::InvalidState(
+                "Share has neither file_id nor folder_id".to_string(),
+            ));
         };
 
         // Check if requesting user has Admin permission
         // Owners implicitly have Admin permission via ownership check in permission_resolver
-        let permission = match self.permission_resolver.resolve_permission(requesting_user, resource).await {
+        let permission = match self
+            .permission_resolver
+            .resolve_permission(requesting_user, resource)
+            .await
+        {
             Ok(Some(perm)) => perm,
             Ok(None) => {
                 return Err(ShareError::InsufficientPermission {
@@ -569,7 +590,10 @@ where
     }
 
     /// DEPRECATED: Use ShareService::update_recipient_permission instead
-    #[deprecated(since = "0.2.0", note = "Use ShareService::update_recipient_permission instead")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use ShareService::update_recipient_permission instead"
+    )]
     /// Update recipient permission (Admin permission required).
     pub async fn update_recipient_permission(
         &self,
@@ -591,7 +615,9 @@ where
         } else if let Some(foid) = share.folder_id {
             Resource::Folder(foid)
         } else {
-            return Err(ShareError::InvalidState("Share has neither file_id nor folder_id".to_string()));
+            return Err(ShareError::InvalidState(
+                "Share has neither file_id nor folder_id".to_string(),
+            ));
         };
 
         // Check if requesting user has Admin permission
@@ -696,7 +722,9 @@ where
         } else if let Some(foid) = share.folder_id {
             Resource::Folder(foid)
         } else {
-            return Err(ShareError::InvalidState("Share has neither file_id nor folder_id".to_string()));
+            return Err(ShareError::InvalidState(
+                "Share has neither file_id nor folder_id".to_string(),
+            ));
         };
 
         // Check if requesting user has Admin permission

@@ -78,23 +78,24 @@ impl DaemonHandle {
     pub fn write_pid(&self) -> Result<()> {
         // Create parent directory if needed
         if let Some(parent) = self.pid_file.parent() {
-            std::fs::create_dir_all(parent)
-                .context("Failed to create PID file directory")?;
+            std::fs::create_dir_all(parent).context("Failed to create PID file directory")?;
         }
 
         let pid = nix::unistd::getpid().as_raw();
-        std::fs::write(&self.pid_file, format!("{}\n", pid))
-            .context("Failed to write PID file")?;
+        std::fs::write(&self.pid_file, format!("{}\n", pid)).context("Failed to write PID file")?;
 
-        info!("PID file written: {} (PID: {})", self.pid_file.display(), pid);
+        info!(
+            "PID file written: {} (PID: {})",
+            self.pid_file.display(),
+            pid
+        );
         Ok(())
     }
 
     /// Removes the PID file
     pub fn remove_pid(&self) -> Result<()> {
         if self.pid_file.exists() {
-            std::fs::remove_file(&self.pid_file)
-                .context("Failed to remove PID file")?;
+            std::fs::remove_file(&self.pid_file).context("Failed to remove PID file")?;
             info!("PID file removed: {}", self.pid_file.display());
         }
         Ok(())
@@ -151,9 +152,9 @@ impl DaemonHandle {
 /// On Windows: Currently a stub
 #[cfg(unix)]
 fn process_exists(pid: nix::unistd::Pid) -> bool {
-    use nix::sys::signal::Signal;
     use nix::sys::signal;
-    
+    use nix::sys::signal::Signal;
+
     match signal::kill(pid, Some(Signal::SIGCONT)) {
         Ok(_) => true,
         Err(nix::errno::Errno::ESRCH) => false, // No such process
@@ -181,35 +182,34 @@ pub fn stop_daemon(pid_file: &Path) -> Result<()> {
         return Err(anyhow!("PID file does not exist: {}", pid_file.display()));
     }
 
-    let content = std::fs::read_to_string(pid_file)
-        .context("Failed to read PID file")?;
-    
+    let content = std::fs::read_to_string(pid_file).context("Failed to read PID file")?;
+
     let trimmed = content.trim();
-    let pid = trimmed.parse::<i32>()
+    let pid = trimmed
+        .parse::<i32>()
         .context("Failed to parse PID from file")?;
-    
+
     if pid <= 0 {
         return Err(anyhow!("Invalid PID in file: {}", pid));
     }
 
     let pid = nix::unistd::Pid::from_raw(pid);
-    
+
     // Check if process exists before sending signal
     if !process_exists(pid) {
         return Err(anyhow!("Process with PID {} is not running", pid));
     }
 
     info!("Sending SIGTERM to daemon process (PID: {})", pid);
-    
+
     #[cfg(unix)]
     {
-        use nix::sys::signal::Signal;
         use nix::sys::signal;
-        
-        signal::kill(pid, Signal::SIGTERM)
-            .context("Failed to send SIGTERM to daemon")?;
+        use nix::sys::signal::Signal;
+
+        signal::kill(pid, Signal::SIGTERM).context("Failed to send SIGTERM to daemon")?;
     }
-    
+
     #[cfg(not(unix))]
     {
         return Err(anyhow!("Daemon stop not implemented for this platform"));
@@ -230,7 +230,7 @@ pub fn stop_daemon(pid_file: &Path) -> Result<()> {
 pub async fn wait_for_stop(pid_file: &Path, timeout_secs: u64) -> Result<()> {
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(timeout_secs);
-    
+
     info!("Waiting for daemon to stop (timeout: {}s)", timeout_secs);
 
     loop {
@@ -273,23 +273,23 @@ pub async fn wait_for_stop(pid_file: &Path, timeout_secs: u64) -> Result<()> {
 #[allow(unsafe_code)]
 pub fn setup_signal_handlers() -> Result<tokio::sync::mpsc::Receiver<()>> {
     use nix::sys::signal::{self, SigHandler, Signal};
-    
+
     let (_tx, rx) = tokio::sync::mpsc::channel(1);
-    
+
     // Store sender in a static for the signal handler
     // Note: In production, you'd want a more robust solution
     // This is a simplified version for the module
-    
+
     unsafe {
         signal::signal(Signal::SIGTERM, SigHandler::SigDfl)
             .context("Failed to set SIGTERM handler")?;
         signal::signal(Signal::SIGINT, SigHandler::SigDfl)
             .context("Failed to set SIGINT handler")?;
     }
-    
+
     // For a complete implementation, you'd use signal-hook or tokio-signals
     // This is a basic placeholder that returns a channel
-    
+
     Ok(rx)
 }
 
@@ -309,7 +309,7 @@ mod tests {
     fn test_daemon_handle_new() {
         let temp_dir = TempDir::new().unwrap();
         let handle = DaemonHandle::new(temp_dir.path().to_path_buf());
-        
+
         assert_eq!(handle.data_dir(), temp_dir.path());
         assert_eq!(handle.pid_file(), temp_dir.path().join("daemon.pid"));
         assert_eq!(handle.socket_path(), temp_dir.path().join("daemon.sock"));
@@ -319,16 +319,16 @@ mod tests {
     fn test_write_and_read_pid() {
         let temp_dir = TempDir::new().unwrap();
         let handle = DaemonHandle::new(temp_dir.path().to_path_buf());
-        
+
         // Write PID
         handle.write_pid().unwrap();
         assert!(handle.pid_file().exists());
-        
+
         // Read PID
         let pid = handle.get_pid();
         assert!(pid.is_some());
         assert_eq!(pid.unwrap(), nix::unistd::getpid());
-        
+
         // Remove PID
         handle.remove_pid().unwrap();
         assert!(!handle.pid_file().exists());
@@ -338,7 +338,7 @@ mod tests {
     fn test_get_pid_no_file() {
         let temp_dir = TempDir::new().unwrap();
         let handle = DaemonHandle::new(temp_dir.path().to_path_buf());
-        
+
         let pid = handle.get_pid();
         assert!(pid.is_none());
     }
@@ -347,19 +347,19 @@ mod tests {
     fn test_cleanup_stale() {
         let temp_dir = TempDir::new().unwrap();
         let handle = DaemonHandle::new(temp_dir.path().to_path_buf());
-        
+
         // Create a fake PID file with non-existent PID
         std::fs::write(&handle.pid_file, "99999\n").unwrap();
-        
+
         // Create a fake socket file
         std::fs::write(&handle.socket_path, "").unwrap();
-        
+
         assert!(handle.pid_file().exists());
         assert!(handle.socket_path().exists());
-        
+
         // Cleanup should remove stale files
         handle.cleanup_stale().unwrap();
-        
+
         assert!(!handle.pid_file().exists());
         assert!(!handle.socket_path().exists());
     }
@@ -368,13 +368,13 @@ mod tests {
     fn test_is_running_current_process() {
         let temp_dir = TempDir::new().unwrap();
         let handle = DaemonHandle::new(temp_dir.path().to_path_buf());
-        
+
         // Write current PID
         handle.write_pid().unwrap();
-        
+
         // Should detect current process as running
         assert!(handle.is_running());
-        
+
         // Cleanup
         handle.remove_pid().unwrap();
     }
@@ -383,7 +383,7 @@ mod tests {
     fn test_is_running_no_pid() {
         let temp_dir = TempDir::new().unwrap();
         let handle = DaemonHandle::new(temp_dir.path().to_path_buf());
-        
+
         // Should return false when no PID file
         assert!(!handle.is_running());
     }
@@ -392,7 +392,7 @@ mod tests {
     fn test_stop_daemon_no_file() {
         let temp_dir = TempDir::new().unwrap();
         let pid_file = temp_dir.path().join("nonexistent.pid");
-        
+
         let result = stop_daemon(&pid_file);
         assert!(result.is_err());
     }
@@ -401,9 +401,9 @@ mod tests {
     fn test_stop_daemon_invalid_pid() {
         let temp_dir = TempDir::new().unwrap();
         let pid_file = temp_dir.path().join("daemon.pid");
-        
+
         std::fs::write(&pid_file, "not_a_number\n").unwrap();
-        
+
         let result = stop_daemon(&pid_file);
         assert!(result.is_err());
     }
@@ -412,10 +412,10 @@ mod tests {
     fn test_stop_daemon_nonexistent_process() {
         let temp_dir = TempDir::new().unwrap();
         let pid_file = temp_dir.path().join("daemon.pid");
-        
+
         // Write a PID that definitely doesn't exist (max PID + 1)
         std::fs::write(&pid_file, "999999\n").unwrap();
-        
+
         let result = stop_daemon(&pid_file);
         // Should fail because process doesn't exist
         assert!(result.is_err());

@@ -23,24 +23,17 @@ impl From<super::RepositoryError> for UploadError {
             super::RepositoryError::ConcurrencyConflict(_) => {
                 UploadError::Storage("Concurrency conflict".to_string())
             }
-            super::RepositoryError::PermissionDenied(_) => {
-                UploadError::PermissionDenied {
-                    user_id: Uuid::nil(),
-                    session_id: Uuid::nil(),
-                }
-            }
-            super::RepositoryError::ValidationError(msg) => {
-                UploadError::InvalidFileName(msg)
-            }
-            super::RepositoryError::StorageError(msg) | super::RepositoryError::CoordinationError(msg) => {
-                UploadError::Storage(msg)
-            }
+            super::RepositoryError::PermissionDenied(_) => UploadError::PermissionDenied {
+                user_id: Uuid::nil(),
+                session_id: Uuid::nil(),
+            },
+            super::RepositoryError::ValidationError(msg) => UploadError::InvalidFileName(msg),
+            super::RepositoryError::StorageError(msg)
+            | super::RepositoryError::CoordinationError(msg) => UploadError::Storage(msg),
             super::RepositoryError::DualWriteMismatch(msg) => {
                 UploadError::Storage(format!("Dual-write error: {}", msg))
             }
-            super::RepositoryError::Other(e) => {
-                UploadError::Storage(e.to_string())
-            }
+            super::RepositoryError::Other(e) => UploadError::Storage(e.to_string()),
         }
     }
 }

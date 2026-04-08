@@ -10,13 +10,26 @@ pub extern "C" fn isUnicode() -> bool {
 #[no_mangle]
 pub extern "C" fn getName() -> *const u16 {
     static NAME: &[u16] = &[
-        'R' as u16, 'u' as u16, 's' as u16, 't' as u16, 'S' as u16, 'h' as u16, 'a' as u16, 'r' as u16, 'e' as u16, '\0' as u16
+        'R' as u16,
+        'u' as u16,
+        's' as u16,
+        't' as u16,
+        'S' as u16,
+        'h' as u16,
+        'a' as u16,
+        'r' as u16,
+        'e' as u16,
+        '\0' as u16,
     ];
     NAME.as_ptr()
 }
 
 #[no_mangle]
-pub extern "C" fn setInfo(_h_inst: *mut c_void, _npp_handle: *mut c_void, _scintilla_handle: *mut c_void) {
+pub extern "C" fn setInfo(
+    _h_inst: *mut c_void,
+    _npp_handle: *mut c_void,
+    _scintilla_handle: *mut c_void,
+) {
     // Store handles for later use if needed
 }
 
@@ -60,7 +73,7 @@ pub extern "C" fn beNotified(notification: *mut SCNotification) {
         // and send a JSON-RPC request to localhost:4242.
         // For Phase 1/2 Cross-platform development, we logic-log this.
         info!("Notepad++: File Saved. Triggering RustShare Sync...");
-        
+
         // Trigger RPC call
         // let client = reqwest::blocking::Client::new();
         // let _ = client.post("http://localhost:4242/rpc")

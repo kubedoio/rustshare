@@ -84,10 +84,15 @@ pub async fn list_audit_log(
     let event_type_filter = query.event_type.as_deref().unwrap_or("all");
 
     // Fix 1: Validate the type parameter — reject unknown values immediately.
-    if !matches!(event_type_filter, "all" | "share_access" | "security_event" | "admin_action") {
+    if !matches!(
+        event_type_filter,
+        "all" | "share_access" | "security_event" | "admin_action"
+    ) {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Invalid type filter. Must be one of: share_access, security_event, admin_action, all"})),
+            Json(
+                json!({"error": "Invalid type filter. Must be one of: share_access, security_event, admin_action, all"}),
+            ),
         ));
     }
 
@@ -230,9 +235,7 @@ pub async fn list_audit_log(
     // bind_index ends here; LIMIT and OFFSET are appended after bind_params! macro in select query only
 
     // Build final queries -----------------------------------------------------
-    let count_sql = format!(
-        "{cte_sql}\nSELECT COUNT(*) FROM all_events {where_clause}"
-    );
+    let count_sql = format!("{cte_sql}\nSELECT COUNT(*) FROM all_events {where_clause}");
 
     let select_sql = format!(
         "{cte_sql}

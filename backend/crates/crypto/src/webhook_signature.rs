@@ -92,8 +92,8 @@ impl WebhookSigner {
     fn sign_raw(&self, data: impl AsRef<[u8]>) -> Result<Vec<u8>, WebhookSignatureError> {
         type HmacSha256 = Hmac<Sha256>;
 
-        let mut mac =
-            HmacSha256::new_from_slice(&self.secret).map_err(|_| WebhookSignatureError::InvalidKeyLength)?;
+        let mut mac = HmacSha256::new_from_slice(&self.secret)
+            .map_err(|_| WebhookSignatureError::InvalidKeyLength)?;
         mac.update(data.as_ref());
         Ok(mac.finalize().into_bytes().to_vec())
     }

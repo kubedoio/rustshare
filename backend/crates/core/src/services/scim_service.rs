@@ -101,17 +101,16 @@ pub enum ScimAction {
 #[async_trait::async_trait]
 pub trait ScimRepository: Send + Sync {
     /// Find user by external_id.
-    async fn find_user_by_external_id(&self, external_id: &str) -> Result<Option<User>, sqlx::Error>;
+    async fn find_user_by_external_id(
+        &self,
+        external_id: &str,
+    ) -> Result<Option<User>, sqlx::Error>;
 
     /// Find user by email (case-insensitive).
     async fn find_user_by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error>;
 
     /// Create a new user.
-    async fn create_user(
-        &self,
-        user: &User,
-        external_id: &str,
-    ) -> Result<(), sqlx::Error>;
+    async fn create_user(&self, user: &User, external_id: &str) -> Result<(), sqlx::Error>;
 
     /// Update an existing user.
     async fn update_user(
@@ -125,7 +124,8 @@ pub trait ScimRepository: Send + Sync {
     ) -> Result<(), sqlx::Error>;
 
     /// Set user's disabled_at timestamp.
-    async fn set_user_disabled(&self, external_id: &str, disabled: bool) -> Result<(), sqlx::Error>;
+    async fn set_user_disabled(&self, external_id: &str, disabled: bool)
+        -> Result<(), sqlx::Error>;
 
     /// Find group by external_id.
     async fn find_group_by_external_id(
@@ -141,17 +141,16 @@ pub trait ScimRepository: Send + Sync {
     ) -> Result<Uuid, sqlx::Error>;
 
     /// Update an existing group.
-    async fn update_group(
-        &self,
-        external_id: &str,
-        display_name: &str,
-    ) -> Result<(), sqlx::Error>;
+    async fn update_group(&self, external_id: &str, display_name: &str) -> Result<(), sqlx::Error>;
 
     /// Delete a group.
     async fn delete_group(&self, external_id: &str) -> Result<(), sqlx::Error>;
 
     /// Find user ID by external_id.
-    async fn find_user_id_by_external_id(&self, external_id: &str) -> Result<Option<Uuid>, sqlx::Error>;
+    async fn find_user_id_by_external_id(
+        &self,
+        external_id: &str,
+    ) -> Result<Option<Uuid>, sqlx::Error>;
 
     /// Get current group members.
     async fn get_group_members(&self, group_id: Uuid) -> Result<Vec<Uuid>, sqlx::Error>;
@@ -244,7 +243,11 @@ impl<R: ScimRepository> ScimService<R> {
                     scim_user.external_id, user.id
                 );
 
-                let disabled_at = if scim_user.active { None } else { Some(Utc::now()) };
+                let disabled_at = if scim_user.active {
+                    None
+                } else {
+                    Some(Utc::now())
+                };
 
                 self.repository
                     .update_user(
@@ -282,7 +285,9 @@ impl<R: ScimRepository> ScimService<R> {
 
                 let user_id = user.id;
 
-                self.repository.create_user(&user, &scim_user.external_id).await?;
+                self.repository
+                    .create_user(&user, &scim_user.external_id)
+                    .await?;
 
                 // If user should be disabled, set that now
                 if !scim_user.active {
@@ -310,7 +315,10 @@ impl<R: ScimRepository> ScimService<R> {
             .await?;
 
         if existing.is_none() {
-            warn!("Attempted to deprovision non-existent user: {}", external_id);
+            warn!(
+                "Attempted to deprovision non-existent user: {}",
+                external_id
+            );
             return Err(ScimError::UserNotFound(external_id.to_string()));
         }
 
@@ -320,7 +328,10 @@ impl<R: ScimRepository> ScimService<R> {
     }
 
     /// Provision or update a group from SCIM data.
-    pub async fn provision_group(&self, scim_group: ScimGroup) -> Result<ScimGroupResult, ScimError> {
+    pub async fn provision_group(
+        &self,
+        scim_group: ScimGroup,
+    ) -> Result<ScimGroupResult, ScimError> {
         debug!("Provisioning SCIM group: {}", scim_group.external_id);
 
         let existing = self
@@ -363,9 +374,15 @@ impl<R: ScimRepository> ScimService<R> {
                 // Add members if provided
                 if let Some(members) = scim_group.members {
                     for member in members {
-                        match self.repository.find_user_id_by_external_id(&member.value).await? {
+                        match self
+                            .repository
+                            .find_user_id_by_external_id(&member.value)
+                            .await?
+                        {
                             Some(user_id) => {
-                                if let Err(e) = self.repository.add_group_member(group_id, user_id).await {
+                                if let Err(e) =
+                                    self.repository.add_group_member(group_id, user_id).await
+                                {
                                     warn!(
                                         "Failed to add member {} to group {}: {}",
                                         member.value, scim_group.external_id, e
@@ -423,7 +440,11 @@ impl<R: ScimRepository> ScimService<R> {
         // Resolve new member IDs
         let mut new_members = Vec::new();
         for member in members {
-            match self.repository.find_user_id_by_external_id(&member.value).await? {
+            match self
+                .repository
+                .find_user_id_by_external_id(&member.value)
+                .await?
+            {
                 Some(user_id) => new_members.push(user_id),
                 None => {
                     warn!("Member {} not found during group sync", member.value);
@@ -443,21 +464,25 @@ impl<R: ScimRepository> ScimService<R> {
         // Apply changes
         for user_id in to_add {
             if let Err(e) = self.repository.add_group_member(group_id, user_id).await {
-                error!("Failed to add member {} to group {}: {}", user_id, group_id, e);
+                error!(
+                    "Failed to add member {} to group {}: {}",
+                    user_id, group_id, e
+                );
             }
         }
 
         for user_id in to_remove {
             if let Err(e) = self.repository.remove_group_member(group_id, user_id).await {
-                error!("Failed to remove member {} from group {}: {}", user_id, group_id, e);
+                error!(
+                    "Failed to remove member {} from group {}: {}",
+                    user_id, group_id, e
+                );
             }
         }
 
         debug!(
             "Group {} sync complete: added {}, removed {}",
-            group_id,
-            added_count,
-            removed_count
+            group_id, added_count, removed_count
         );
 
         Ok(())
@@ -479,7 +504,7 @@ mod base64 {
         const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         let input = input.as_ref();
         let mut result = String::new();
-        
+
         for chunk in input.chunks(3) {
             let b = match chunk.len() {
                 1 => [chunk[0], 0, 0],
@@ -487,28 +512,28 @@ mod base64 {
                 3 => [chunk[0], chunk[1], chunk[2]],
                 _ => unreachable!(),
             };
-            
+
             let idx1 = (b[0] >> 2) as usize;
             let idx2 = (((b[0] & 0b11) << 4) | (b[1] >> 4)) as usize;
             let idx3 = (((b[1] & 0b1111) << 2) | (b[2] >> 6)) as usize;
             let idx4 = (b[2] & 0b111111) as usize;
-            
+
             result.push(ALPHABET[idx1] as char);
             result.push(ALPHABET[idx2] as char);
-            
+
             if chunk.len() > 1 {
                 result.push(ALPHABET[idx3] as char);
             } else {
                 result.push('=');
             }
-            
+
             if chunk.len() > 2 {
                 result.push(ALPHABET[idx4] as char);
             } else {
                 result.push('=');
             }
         }
-        
+
         result
     }
 }

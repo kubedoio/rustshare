@@ -24,7 +24,9 @@ use uuid::Uuid;
 async fn test_pool() -> sqlx::PgPool {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
-    sqlx::PgPool::connect(&url).await.expect("DB connect failed")
+    sqlx::PgPool::connect(&url)
+        .await
+        .expect("DB connect failed")
 }
 
 async fn create_test_user(pool: &sqlx::PgPool, suffix: &str) -> Uuid {
@@ -158,7 +160,10 @@ async fn test_audit_filter_admin_action_type() {
 
     for row in &rows {
         let et: String = row.try_get("event_type").unwrap();
-        assert_eq!(et, "admin_action", "All rows must have event_type = admin_action");
+        assert_eq!(
+            et, "admin_action",
+            "All rows must have event_type = admin_action"
+        );
     }
 
     cleanup(&pool, &[actor_id]).await;
@@ -199,7 +204,10 @@ async fn test_audit_filter_security_event_type() {
         .await
         .expect("query security_event branch");
 
-    assert!(!rows.is_empty(), "security_event branch must return rows for our user");
+    assert!(
+        !rows.is_empty(),
+        "security_event branch must return rows for our user"
+    );
 
     for row in &rows {
         let et: String = row.try_get("event_type").unwrap();
@@ -238,9 +246,7 @@ async fn test_audit_all_type_union() {
     .await
     .expect("insert security_event");
 
-    let union_sql = format!(
-        "{SECURITY_BRANCH}\nUNION ALL\n{ADMIN_ACTION_BRANCH}"
-    );
+    let union_sql = format!("{SECURITY_BRANCH}\nUNION ALL\n{ADMIN_ACTION_BRANCH}");
     let cte = format!("WITH all_events AS (\n{union_sql}\n)");
     let sql = format!(
         "{cte}
@@ -426,9 +432,7 @@ async fn test_audit_pagination() {
 
     // Count total for this actor
     let cte = format!("WITH all_events AS (\n{ADMIN_ACTION_BRANCH}\n)");
-    let count_sql = format!(
-        "{cte} SELECT COUNT(*) FROM all_events WHERE actor_id = $1"
-    );
+    let count_sql = format!("{cte} SELECT COUNT(*) FROM all_events WHERE actor_id = $1");
     let total: i64 = sqlx::query_scalar(&count_sql)
         .bind(actor_id)
         .fetch_one(&pool)
@@ -467,20 +471,11 @@ async fn test_audit_pagination() {
     assert_eq!(page2.len(), 2, "Page 2 must return 2 rows");
 
     // The rows on page 1 and page 2 must be different
-    let page1_ids: Vec<Uuid> = page1
-        .iter()
-        .map(|r| r.try_get("id").unwrap())
-        .collect();
-    let page2_ids: Vec<Uuid> = page2
-        .iter()
-        .map(|r| r.try_get("id").unwrap())
-        .collect();
+    let page1_ids: Vec<Uuid> = page1.iter().map(|r| r.try_get("id").unwrap()).collect();
+    let page2_ids: Vec<Uuid> = page2.iter().map(|r| r.try_get("id").unwrap()).collect();
 
     for id in &page2_ids {
-        assert!(
-            !page1_ids.contains(id),
-            "Pages must not overlap"
-        );
+        assert!(!page1_ids.contains(id), "Pages must not overlap");
     }
 
     // Verify ordering: fetch all results and assert occurred_at is descending

@@ -26,9 +26,9 @@ impl SecretEncryptionKey {
         let bytes = STANDARD
             .decode(raw.trim())
             .map_err(|_| "RUSTSHARE_SECRET_ENCRYPTION_KEY is not valid base64".to_string())?;
-        let arr: [u8; 32] = bytes
-            .try_into()
-            .map_err(|_| "RUSTSHARE_SECRET_ENCRYPTION_KEY must decode to exactly 32 bytes".to_string())?;
+        let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+            "RUSTSHARE_SECRET_ENCRYPTION_KEY must decode to exactly 32 bytes".to_string()
+        })?;
         Ok(Self(arr))
     }
 
@@ -55,7 +55,10 @@ pub enum EncryptionError {
 ///
 /// Returns a base64-encoded string containing the 12-byte random nonce
 /// prepended to the ciphertext.
-pub fn encrypt_secret(plaintext: &str, key: &SecretEncryptionKey) -> Result<String, EncryptionError> {
+pub fn encrypt_secret(
+    plaintext: &str,
+    key: &SecretEncryptionKey,
+) -> Result<String, EncryptionError> {
     // new_from_slice is infallible for a 32-byte key (AES-256 requires exactly 32 bytes)
     let cipher = Aes256Gcm::new(key.as_bytes().into());
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
@@ -70,8 +73,11 @@ pub fn encrypt_secret(plaintext: &str, key: &SecretEncryptionKey) -> Result<Stri
 /// Decrypt a base64-encoded ciphertext produced by [`encrypt_secret`].
 #[allow(deprecated)]
 pub fn decrypt_secret(encoded: &str, key: &SecretEncryptionKey) -> Result<String, EncryptionError> {
-    let combined = STANDARD.decode(encoded).map_err(|_| EncryptionError::DecodeError)?;
-    if combined.len() < 28 {  // 12-byte nonce + 16-byte GCM tag minimum
+    let combined = STANDARD
+        .decode(encoded)
+        .map_err(|_| EncryptionError::DecodeError)?;
+    if combined.len() < 28 {
+        // 12-byte nonce + 16-byte GCM tag minimum
         return Err(EncryptionError::InvalidCiphertext);
     }
     let (nonce_bytes, ciphertext) = combined.split_at(12);
@@ -148,7 +154,10 @@ mod tests {
         raw[mid] ^= 0xFF;
         let tampered = STANDARD.encode(raw);
         let result = decrypt_secret(&tampered, &key);
-        assert!(result.is_err(), "Tampered ciphertext must fail authentication");
+        assert!(
+            result.is_err(),
+            "Tampered ciphertext must fail authentication"
+        );
     }
 
     #[test]

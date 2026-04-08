@@ -20,13 +20,13 @@ pub use manager::SessionManager;
 pub enum SessionError {
     #[error("Invalid session token")]
     InvalidToken,
-    
+
     #[error("Session has expired")]
     Expired,
-    
+
     #[error("Session has been revoked")]
     Revoked,
-    
+
     #[error("Session backend error: {0}")]
     BackendError(String),
 }
@@ -129,7 +129,7 @@ impl SessionConfig {
             cookie_same_site: "strict".to_string(),
         }
     }
-    
+
     /// Load from environment
     pub fn from_env() -> anyhow::Result<Self> {
         let jwt_secret = std::env::var("JWT_SECRET")?;
@@ -145,7 +145,7 @@ impl SessionConfig {
             .ok()
             .map(|s| s == "true" || s == "1")
             .unwrap_or(true);
-        
+
         Ok(Self {
             jwt_secret,
             session_ttl: Duration::from_secs(session_ttl_secs),
@@ -170,10 +170,10 @@ pub trait SessionStorage: Send + Sync {
         user_id: Uuid,
         ttl: Duration,
     ) -> Result<(), SessionError>;
-    
+
     /// Mark a session as revoked
     async fn revoke_session(&self, session_hash: &str, ttl: Duration) -> Result<(), SessionError>;
-    
+
     /// Check if a session is revoked
     async fn is_revoked(&self, session_hash: &str) -> Result<bool, SessionError>;
 }
@@ -240,7 +240,7 @@ mod tests {
     fn test_session_config_from_env() {
         // Set required env vars
         std::env::set_var("JWT_SECRET", "test-secret");
-        
+
         let config = SessionConfig::from_env().unwrap();
         assert_eq!(config.jwt_secret, "test-secret");
         assert!(config.use_revocation_cache);
@@ -260,11 +260,17 @@ mod tests {
         let user_id = Uuid::new_v4();
 
         // Store session
-        storage.store_session("session1", user_id, Duration::from_secs(3600)).await.unwrap();
+        storage
+            .store_session("session1", user_id, Duration::from_secs(3600))
+            .await
+            .unwrap();
         assert!(!storage.is_revoked("session1").await.unwrap());
 
         // Revoke session
-        storage.revoke_session("session1", Duration::from_secs(3600)).await.unwrap();
+        storage
+            .revoke_session("session1", Duration::from_secs(3600))
+            .await
+            .unwrap();
         assert!(storage.is_revoked("session1").await.unwrap());
     }
 
@@ -273,7 +279,10 @@ mod tests {
         let storage = InMemorySessionStorage::new();
 
         // Revoke a session that was never stored
-        storage.revoke_session("unknown_session", Duration::from_secs(3600)).await.unwrap();
+        storage
+            .revoke_session("unknown_session", Duration::from_secs(3600))
+            .await
+            .unwrap();
         assert!(storage.is_revoked("unknown_session").await.unwrap());
     }
 
@@ -282,13 +291,22 @@ mod tests {
         let storage = InMemorySessionStorage::new();
         let user_id = Uuid::new_v4();
 
-        storage.store_session("session_a", user_id, Duration::from_secs(3600)).await.unwrap();
-        storage.store_session("session_b", user_id, Duration::from_secs(3600)).await.unwrap();
+        storage
+            .store_session("session_a", user_id, Duration::from_secs(3600))
+            .await
+            .unwrap();
+        storage
+            .store_session("session_b", user_id, Duration::from_secs(3600))
+            .await
+            .unwrap();
 
         assert!(!storage.is_revoked("session_a").await.unwrap());
         assert!(!storage.is_revoked("session_b").await.unwrap());
 
-        storage.revoke_session("session_a", Duration::from_secs(3600)).await.unwrap();
+        storage
+            .revoke_session("session_a", Duration::from_secs(3600))
+            .await
+            .unwrap();
 
         assert!(storage.is_revoked("session_a").await.unwrap());
         assert!(!storage.is_revoked("session_b").await.unwrap());

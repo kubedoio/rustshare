@@ -25,15 +25,15 @@ impl SyncWorker {
     pub async fn download(&self, remote: &RemoteEntry, local_dest: &Path) -> Result<()> {
         info!("Downloading {} -> {}...", remote.name, local_dest.display());
         let _response = self.client.download_file(remote.id).await?;
-        
+
         let mut temp_path = local_dest.to_path_buf();
         temp_path.set_extension("rs_tmp");
-        
+
         // In a real implementation:
         // 1. Write stream to temp_path
         // 2. Verify hash
         // 3. atomic_rename(temp_path, local_dest)
-        
+
         Ok(())
     }
 }

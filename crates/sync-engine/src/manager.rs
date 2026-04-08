@@ -4,9 +4,9 @@ use client_state::Database;
 use file_ops::FsWatcher;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use sync_domain::SyncRoot;
 use tokio::sync::{mpsc, Mutex};
 use tracing::info;
-use sync_domain::SyncRoot;
 
 pub struct SyncManager {
     database: Arc<Mutex<Database>>,
@@ -25,7 +25,7 @@ impl SyncManager {
 
     pub async fn start(&self) -> anyhow::Result<()> {
         info!("Starting Sync Manager...");
-        
+
         let (tx, mut rx) = mpsc::channel(100);
         let mut watcher = FsWatcher::new(tx)?;
         watcher.watch(&self.workspace_root)?;
@@ -42,7 +42,7 @@ impl SyncManager {
 
     pub async fn sync_root(&self, sync_root: SyncRoot) -> anyhow::Result<()> {
         info!("Syncing root: {}", sync_root.remote_path);
-        
+
         let db = self.database.lock().await;
         db.save_sync_root(&sync_root)?;
 
@@ -103,9 +103,9 @@ impl SyncManager {
 
         // Bind and run the server
         server.bind().await?;
-        
+
         info!("Socket server starting on {:?}", server.socket_path());
-        
+
         // Run the server in a spawned task so it doesn't block
         tokio::spawn(async move {
             if let Err(e) = server.run().await {

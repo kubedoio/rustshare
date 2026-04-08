@@ -47,13 +47,11 @@ pub struct FsWatcher {
 impl FsWatcher {
     pub fn new(tx: mpsc::Sender<notify::Event>) -> Result<Self> {
         let watcher = RecommendedWatcher::new(
-            move |res: notify::Result<notify::Event>| {
-                match res {
-                    Ok(event) => {
-                        let _ = tx.blocking_send(event);
-                    }
-                    Err(e) => error!("watch error: {:?}", e),
+            move |res: notify::Result<notify::Event>| match res {
+                Ok(event) => {
+                    let _ = tx.blocking_send(event);
                 }
+                Err(e) => error!("watch error: {:?}", e),
             },
             Config::default(),
         )?;

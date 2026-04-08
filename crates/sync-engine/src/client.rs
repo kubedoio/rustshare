@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
-use sync_protocol::{DeltaRequest, DeltaResponse, DeviceRegistrationRequest, DeviceRegistrationResponse};
+use sync_protocol::{
+    DeltaRequest, DeltaResponse, DeviceRegistrationRequest, DeviceRegistrationResponse,
+};
 use url::Url;
 
 #[derive(Clone)]
@@ -37,35 +39,49 @@ impl ApiClient {
         Ok(headers)
     }
 
-    pub async fn register_device(&self, request: DeviceRegistrationRequest) -> Result<DeviceRegistrationResponse> {
+    pub async fn register_device(
+        &self,
+        request: DeviceRegistrationRequest,
+    ) -> Result<DeviceRegistrationResponse> {
         let url = self.base_url.join("/api/v1/devices/register")?;
-        let response = self.client.post(url)
+        let response = self
+            .client
+            .post(url)
             .headers(self.headers()?)
             .json(&request)
-            .send().await?
+            .send()
+            .await?
             .error_for_status()?;
-        
+
         Ok(response.json().await?)
     }
 
     pub async fn fetch_deltas(&self, request: DeltaRequest) -> Result<DeltaResponse> {
         let url = self.base_url.join("/api/v1/sync/deltas")?;
-        let response = self.client.get(url)
+        let response = self
+            .client
+            .get(url)
             .headers(self.headers()?)
             .query(&[("cursor", &request.cursor)])
-            .send().await?
+            .send()
+            .await?
             .error_for_status()?;
-        
+
         Ok(response.json().await?)
     }
 
     pub async fn download_file(&self, file_id: uuid::Uuid) -> Result<reqwest::Response> {
-        let url = self.base_url.join(&format!("/api/v1/sync/download/{}", file_id))?;
-        let response = self.client.get(url)
+        let url = self
+            .base_url
+            .join(&format!("/api/v1/sync/download/{}", file_id))?;
+        let response = self
+            .client
+            .get(url)
             .headers(self.headers()?)
-            .send().await?
+            .send()
+            .await?
             .error_for_status()?;
-        
+
         Ok(response)
     }
 }

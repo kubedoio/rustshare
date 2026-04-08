@@ -83,11 +83,7 @@ impl RpcError {
     }
 
     /// Create an error with additional data
-    pub fn with_data(
-        code: i32,
-        message: impl Into<String>,
-        data: serde_json::Value,
-    ) -> Self {
+    pub fn with_data(code: i32, message: impl Into<String>, data: serde_json::Value) -> Self {
         Self {
             code,
             message: message.into(),
@@ -107,7 +103,10 @@ impl RpcError {
 
     /// Method not found error
     pub fn method_not_found(method: impl Into<String>) -> Self {
-        Self::new(Self::METHOD_NOT_FOUND, format!("Method not found: {}", method.into()))
+        Self::new(
+            Self::METHOD_NOT_FOUND,
+            format!("Method not found: {}", method.into()),
+        )
     }
 
     /// Invalid params error
@@ -164,7 +163,8 @@ impl RpcResponse {
 }
 
 /// Handler function type for RPC methods
-type RpcHandler = std::sync::Arc<dyn Fn(serde_json::Value) -> Result<serde_json::Value> + Send + Sync>;
+type RpcHandler =
+    std::sync::Arc<dyn Fn(serde_json::Value) -> Result<serde_json::Value> + Send + Sync>;
 
 /// Unix socket server for handling RPC requests
 pub struct SocketServer {
@@ -191,7 +191,8 @@ impl SocketServer {
     where
         F: Fn(serde_json::Value) -> Result<serde_json::Value> + Send + Sync + 'static,
     {
-        self.handlers.insert(method.into(), std::sync::Arc::new(handler));
+        self.handlers
+            .insert(method.into(), std::sync::Arc::new(handler));
     }
 
     /// Bind the server to the socket
@@ -214,8 +215,7 @@ impl SocketServer {
         }
 
         // Bind to the socket
-        let listener = UnixListener::bind(path)
-            .context("Failed to bind to Unix socket")?;
+        let listener = UnixListener::bind(path).context("Failed to bind to Unix socket")?;
 
         // Set socket permissions to 0600 (user-only access)
         let path_clone = path.clone();
@@ -237,10 +237,14 @@ impl SocketServer {
 
     /// Run the server, accepting and handling connections
     pub async fn run(&self) -> Result<()> {
-        let listener = self.listener.as_ref()
+        let listener = self
+            .listener
+            .as_ref()
             .ok_or_else(|| anyhow!("Server not bound"))?;
 
-        let mut shutdown_rx = self.shutdown_tx.as_ref()
+        let mut shutdown_rx = self
+            .shutdown_tx
+            .as_ref()
             .ok_or_else(|| anyhow!("Shutdown channel not initialized"))?
             .subscribe();
 
@@ -303,7 +307,11 @@ impl SocketServer {
                 Ok(_n) => {
                     // Check for request size limit to prevent DoS
                     if line.len() > MAX_LINE_LENGTH {
-                        error!("Request too large: {} bytes (max: {})", line.len(), MAX_LINE_LENGTH);
+                        error!(
+                            "Request too large: {} bytes (max: {})",
+                            line.len(),
+                            MAX_LINE_LENGTH
+                        );
                         let error_response = RpcResponse::error(
                             None,
                             RpcError::invalid_request(format!(
@@ -387,10 +395,7 @@ impl SocketServer {
         let handler = match handlers.get(&request.method) {
             Some(h) => h,
             None => {
-                return RpcResponse::error(
-                    request.id,
-                    RpcError::method_not_found(&request.method),
-                );
+                return RpcResponse::error(request.id, RpcError::method_not_found(&request.method));
             }
         };
 
@@ -398,10 +403,7 @@ impl SocketServer {
         let params = request.params.unwrap_or(serde_json::Value::Null);
         match handler(params) {
             Ok(result) => RpcResponse::success(request.id, result),
-            Err(e) => RpcResponse::error(
-                request.id,
-                RpcError::internal_error(e.to_string()),
-            ),
+            Err(e) => RpcResponse::error(request.id, RpcError::internal_error(e.to_string())),
         }
     }
 
@@ -462,9 +464,9 @@ impl SocketClient {
         let stream = UnixStream::connect(&self.socket_path)
             .await
             .with_context(|| format!("Failed to connect to socket at {:?}", self.socket_path))?;
-        
+
         let (read_half, write_half) = stream.into_split();
-        
+
         debug!("Connected to socket at {:?}", self.socket_path);
         self.reader = Some(BufReader::new(read_half));
         self.writer = Some(write_half);
@@ -473,45 +475,62 @@ impl SocketClient {
 
     /// Send an RPC request and wait for the response
     pub async fn call(&mut self, request: &RpcRequest) -> Result<RpcResponse> {
-        let writer = self.writer.as_mut()
+        let writer = self
+            .writer
+            .as_mut()
             .ok_or_else(|| anyhow!("Not connected"))?;
-        let reader = self.reader.as_mut()
+        let reader = self
+            .reader
+            .as_mut()
             .ok_or_else(|| anyhow!("Not connected"))?;
 
         // Serialize and send the request
         let request_json = serde_json::to_string(request)?;
         let request_line = format!("{}\n", request_json);
 
-        writer.write_all(request_line.as_bytes()).await
+        writer
+            .write_all(request_line.as_bytes())
+            .await
             .context("Failed to write request")?;
-        writer.flush().await
-            .context("Failed to flush request")?;
+        writer.flush().await.context("Failed to flush request")?;
 
         // Read the response
         let mut line = String::new();
-        reader.read_line(&mut line).await
+        reader
+            .read_line(&mut line)
+            .await
             .context("Failed to read response")?;
 
         // Parse the response
-        let response: RpcResponse = serde_json::from_str(line.trim())
-            .context("Failed to parse response")?;
+        let response: RpcResponse =
+            serde_json::from_str(line.trim()).context("Failed to parse response")?;
 
         Ok(response)
     }
 
     /// Send a notification (no response expected)
-    pub async fn notify(&mut self, method: impl Into<String>, params: Option<serde_json::Value>) -> Result<()> {
+    pub async fn notify(
+        &mut self,
+        method: impl Into<String>,
+        params: Option<serde_json::Value>,
+    ) -> Result<()> {
         let request = RpcRequest::notification(method, params);
-        
-        let writer = self.writer.as_mut()
+
+        let writer = self
+            .writer
+            .as_mut()
             .ok_or_else(|| anyhow!("Not connected"))?;
 
         let request_json = serde_json::to_string(&request)?;
         let request_line = format!("{}\n", request_json);
 
-        writer.write_all(request_line.as_bytes()).await
+        writer
+            .write_all(request_line.as_bytes())
+            .await
             .context("Failed to write notification")?;
-        writer.flush().await
+        writer
+            .flush()
+            .await
             .context("Failed to flush notification")?;
 
         Ok(())
@@ -520,7 +539,7 @@ impl SocketClient {
     /// Perform a health check ping
     pub async fn ping(&mut self) -> Result<bool> {
         let request = RpcRequest::new("ping", None);
-        
+
         match self.call(&request).await {
             Ok(response) => Ok(response.is_success()),
             Err(e) => {
@@ -560,7 +579,7 @@ mod tests {
         assert_eq!(req.jsonrpc, "2.0");
         assert_eq!(req.method, "test_method");
         assert!(req.id.is_some());
-        
+
         let notification = RpcRequest::notification("notify", None);
         assert!(notification.id.is_none());
     }
@@ -570,7 +589,7 @@ mod tests {
         let err = RpcError::new(-32600, "Invalid request");
         assert_eq!(err.code, -32600);
         assert_eq!(err.message, "Invalid request");
-        
+
         let err = RpcError::method_not_found("missing_method");
         assert_eq!(err.code, RpcError::METHOD_NOT_FOUND);
     }
@@ -579,8 +598,9 @@ mod tests {
     fn test_rpc_response_creation() {
         let success = RpcResponse::success(Some(serde_json::json!(1)), serde_json::json!("result"));
         assert!(success.is_success());
-        
-        let error = RpcResponse::error(Some(serde_json::json!(1)), RpcError::internal_error("oops"));
+
+        let error =
+            RpcResponse::error(Some(serde_json::json!(1)), RpcError::internal_error("oops"));
         assert!(!error.is_success());
     }
 

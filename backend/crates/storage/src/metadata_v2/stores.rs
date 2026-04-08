@@ -21,15 +21,12 @@ impl RustFsDocumentStore {
             config,
         }
     }
-    
+
     /// Build the full object key from a document key
     fn build_key(&self, key: &str) -> String {
         format!(
             "{}/{}/{}/{}",
-            self.config.base_prefix,
-            self.config.namespace,
-            "meta",
-            key
+            self.config.base_prefix, self.config.namespace, "meta", key
         )
     }
 }
@@ -38,7 +35,7 @@ impl RustFsDocumentStore {
 impl MetadataDocumentStore for RustFsDocumentStore {
     async fn get_raw(&self, key: &str) -> Result<Option<(Vec<u8>, ObjectMetadata)>> {
         let object_key = self.build_key(key);
-        
+
         match self
             .client
             .get_object()
@@ -60,17 +57,17 @@ impl MetadataDocumentStore for RustFsDocumentStore {
                     .unwrap_or_else(Utc::now);
                 let content_length = output.content_length.unwrap_or(0) as u64;
                 let version_id = output.version_id().map(|s| s.to_string());
-                
+
                 let data = output.body.collect().await?;
                 let bytes = data.into_bytes();
-                
+
                 let metadata = ObjectMetadata {
                     etag,
                     last_modified,
                     content_length,
                     version_id,
                 };
-                
+
                 Ok(Some((bytes.to_vec(), metadata)))
             }
             Err(e) => {
@@ -84,11 +81,11 @@ impl MetadataDocumentStore for RustFsDocumentStore {
             }
         }
     }
-    
+
     async fn get_multi_raw(&self, keys: &[&str]) -> Result<Vec<(String, Vec<u8>, ObjectMetadata)>> {
         let futures: Vec<_> = keys.iter().map(|key| self.get_raw(key)).collect();
         let results = futures::future::join_all(futures).await;
-        
+
         let mut out = Vec::new();
         for (i, result) in results.into_iter().enumerate() {
             if let Some((data, meta)) = result? {
@@ -97,10 +94,10 @@ impl MetadataDocumentStore for RustFsDocumentStore {
         }
         Ok(out)
     }
-    
+
     async fn head(&self, key: &str) -> Result<Option<ObjectMetadata>> {
         let object_key = self.build_key(key);
-        
+
         match self
             .client
             .head_object()
@@ -122,7 +119,7 @@ impl MetadataDocumentStore for RustFsDocumentStore {
                     .unwrap_or_else(Utc::now);
                 let content_length = output.content_length.unwrap_or(0) as u64;
                 let version_id = output.version_id().map(|s| s.to_string());
-                
+
                 Ok(Some(ObjectMetadata {
                     etag,
                     last_modified,
@@ -140,22 +137,17 @@ impl MetadataDocumentStore for RustFsDocumentStore {
             }
         }
     }
-    
-    async fn put_raw(
-        &self,
-        key: &str,
-        data: &[u8],
-        opts: PutOptions,
-    ) -> Result<PutResult> {
+
+    async fn put_raw(&self, key: &str, data: &[u8], opts: PutOptions) -> Result<PutResult> {
         let object_key = self.build_key(key);
-        
+
         let mut request = self
             .client
             .put_object()
             .bucket(&self.bucket)
             .key(&object_key)
             .body(data.to_vec().into());
-        
+
         // Add conditional headers if provided
         if let Some(etag) = opts.if_match {
             request = request.if_match(etag);
@@ -168,56 +160,55 @@ impl MetadataDocumentStore for RustFsDocumentStore {
         } else {
             request = request.content_type("application/json");
         }
-        
+
         let output = request.send().await?;
-        
+
         Ok(PutResult {
             etag: output.e_tag().unwrap_or("").to_string(),
             version_id: output.version_id().map(|s| s.to_string()),
         })
     }
-    
+
     async fn delete(&self, key: &str) -> Result<()> {
         let object_key = self.build_key(key);
-        
+
         self.client
             .delete_object()
             .bucket(&self.bucket)
             .key(&object_key)
             .send()
             .await?;
-        
+
         Ok(())
     }
-    
+
     async fn list_prefix(&self, prefix: &str) -> Result<Vec<String>> {
         let object_prefix = self.build_key(prefix);
-        
+
         let mut keys = Vec::new();
         let mut continuation_token: Option<String> = None;
-        
+
         loop {
             let mut request = self
                 .client
                 .list_objects_v2()
                 .bucket(&self.bucket)
                 .prefix(&object_prefix);
-            
+
             if let Some(token) = &continuation_token {
                 request = request.continuation_token(token);
             }
-            
+
             let output = request.send().await?;
-            
+
             if let Some(contents) = output.contents {
                 for obj in contents {
                     if let Some(key) = obj.key {
                         // Strip the prefix to return relative keys
                         let relative_key = key
-                            .strip_prefix(&format!("{}/{}/{}/", 
-                                self.config.base_prefix,
-                                self.config.namespace,
-                                "meta"
+                            .strip_prefix(&format!(
+                                "{}/{}/{}/",
+                                self.config.base_prefix, self.config.namespace, "meta"
                             ))
                             .unwrap_or(&key)
                             .to_string();
@@ -225,14 +216,14 @@ impl MetadataDocumentStore for RustFsDocumentStore {
                     }
                 }
             }
-            
+
             if output.is_truncated.unwrap_or(false) {
                 continuation_token = output.next_continuation_token.map(|s| s.to_string());
             } else {
                 break;
             }
         }
-        
+
         Ok(keys)
     }
 }
@@ -245,12 +236,9 @@ pub struct LocalFsDocumentStore {
 
 impl LocalFsDocumentStore {
     pub fn new(base_path: std::path::PathBuf, config: MetadataBackendConfig) -> Self {
-        Self {
-            base_path,
-            config,
-        }
+        Self { base_path, config }
     }
-    
+
     fn build_path(&self, key: &str) -> std::path::PathBuf {
         self.base_path
             .join(&self.config.base_prefix)
@@ -264,34 +252,34 @@ impl LocalFsDocumentStore {
 impl MetadataDocumentStore for LocalFsDocumentStore {
     async fn get_raw(&self, key: &str) -> Result<Option<(Vec<u8>, ObjectMetadata)>> {
         let path = self.build_path(key);
-        
+
         if !path.exists() {
             return Ok(None);
         }
-        
+
         let data = tokio::fs::read(&path).await?;
-        
+
         let metadata = tokio::fs::metadata(&path).await?;
         let modified = metadata.modified()?;
         let modified_dt = DateTime::<Utc>::from(modified);
-        
+
         // Compute ETag from content hash
         let etag = format!("\"{:x}\"", md5::compute(&data));
-        
+
         let object_metadata = ObjectMetadata {
             etag,
             last_modified: modified_dt,
             content_length: metadata.len(),
             version_id: None,
         };
-        
+
         Ok(Some((data, object_metadata)))
     }
-    
+
     async fn get_multi_raw(&self, keys: &[&str]) -> Result<Vec<(String, Vec<u8>, ObjectMetadata)>> {
         let futures: Vec<_> = keys.iter().map(|key| self.get_raw(key)).collect();
         let results = futures::future::join_all(futures).await;
-        
+
         let mut out = Vec::new();
         for (i, result) in results.into_iter().enumerate() {
             if let Some((data, meta)) = result? {
@@ -300,22 +288,22 @@ impl MetadataDocumentStore for LocalFsDocumentStore {
         }
         Ok(out)
     }
-    
+
     async fn head(&self, key: &str) -> Result<Option<ObjectMetadata>> {
         let path = self.build_path(key);
-        
+
         if !path.exists() {
             return Ok(None);
         }
-        
+
         let metadata = tokio::fs::metadata(&path).await?;
         let modified = metadata.modified()?;
         let modified_dt = DateTime::<Utc>::from(modified);
-        
+
         // Read content to compute ETag
         let data = tokio::fs::read(&path).await?;
         let etag = format!("\"{:x}\"", md5::compute(&data));
-        
+
         Ok(Some(ObjectMetadata {
             etag,
             last_modified: modified_dt,
@@ -323,20 +311,15 @@ impl MetadataDocumentStore for LocalFsDocumentStore {
             version_id: None,
         }))
     }
-    
-    async fn put_raw(
-        &self,
-        key: &str,
-        data: &[u8],
-        opts: PutOptions,
-    ) -> Result<PutResult> {
+
+    async fn put_raw(&self, key: &str, data: &[u8], opts: PutOptions) -> Result<PutResult> {
         let path = self.build_path(key);
-        
+
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        
+
         // Check conditional writes
         if opts.if_match.is_some() || opts.if_none_match.is_some() {
             if let Some(expected_etag) = opts.if_match {
@@ -356,7 +339,7 @@ impl MetadataDocumentStore for LocalFsDocumentStore {
                     ));
                 }
             }
-            
+
             if let Some(expected_etag) = opts.if_none_match {
                 if path.exists() {
                     let existing = tokio::fs::read(&path).await?;
@@ -369,50 +352,50 @@ impl MetadataDocumentStore for LocalFsDocumentStore {
                 }
             }
         }
-        
+
         let etag = format!("\"{:x}\"", md5::compute(data));
-        
+
         // Write atomically using temp file + rename
         let temp_path = path.with_extension("tmp");
         tokio::fs::write(&temp_path, data).await?;
         tokio::fs::rename(&temp_path, &path).await?;
-        
+
         Ok(PutResult {
             etag,
             version_id: None,
         })
     }
-    
+
     async fn delete(&self, key: &str) -> Result<()> {
         let path = self.build_path(key);
-        
+
         if path.exists() {
             tokio::fs::remove_file(&path).await?;
         }
-        
+
         Ok(())
     }
-    
+
     async fn list_prefix(&self, prefix: &str) -> Result<Vec<String>> {
         let path = self.build_path(prefix);
-        
+
         let mut keys = Vec::new();
-        
+
         if !path.exists() {
             return Ok(keys);
         }
-        
+
         let base_meta_path = self
             .base_path
             .join(&self.config.base_prefix)
             .join(&self.config.namespace)
             .join("meta");
-        
+
         let mut entries = tokio::fs::read_dir(&path).await?;
-        
+
         while let Some(entry) = entries.next_entry().await? {
             let entry_path = entry.path();
-            
+
             if entry.file_type().await?.is_file() {
                 if let Ok(relative) = entry_path.strip_prefix(&base_meta_path) {
                     keys.push(relative.to_string_lossy().to_string());
@@ -424,7 +407,7 @@ impl MetadataDocumentStore for LocalFsDocumentStore {
                 keys.extend(sub_keys);
             }
         }
-        
+
         Ok(keys)
     }
 }
@@ -452,13 +435,13 @@ impl BlobStore for RustFsBlobStore {
             .body(data.into())
             .send()
             .await?;
-        
+
         Ok(PutResult {
             etag: output.e_tag().unwrap_or("").to_string(),
             version_id: output.version_id().map(|s| s.to_string()),
         })
     }
-    
+
     async fn get(&self, key: &str) -> Result<Option<Bytes>> {
         match self
             .client
@@ -482,7 +465,7 @@ impl BlobStore for RustFsBlobStore {
             }
         }
     }
-    
+
     async fn exists(&self, key: &str) -> Result<bool> {
         match self
             .client
@@ -503,7 +486,7 @@ impl BlobStore for RustFsBlobStore {
             }
         }
     }
-    
+
     async fn delete(&self, key: &str) -> Result<()> {
         self.client
             .delete_object()
@@ -513,9 +496,14 @@ impl BlobStore for RustFsBlobStore {
             .await?;
         Ok(())
     }
-    
+
     fn content_key(&self, hash: &str) -> String {
-        format!("shared/blobs/sha256/{}/{}/{}", &hash[0..2], &hash[2..4], hash)
+        format!(
+            "shared/blobs/sha256/{}/{}/{}",
+            &hash[0..2],
+            &hash[2..4],
+            hash
+        )
     }
 }
 
@@ -534,53 +522,58 @@ impl LocalFsBlobStore {
 impl BlobStore for LocalFsBlobStore {
     async fn put(&self, key: &str, data: Bytes) -> Result<PutResult> {
         let path = self.base_path.join(key);
-        
+
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        
+
         // Write atomically
         let temp_path = path.with_extension("tmp");
         tokio::fs::write(&temp_path, &data).await?;
         tokio::fs::rename(&temp_path, &path).await?;
-        
+
         let etag = format!("\"{:x}\"", md5::compute(&data));
-        
+
         Ok(PutResult {
             etag,
             version_id: None,
         })
     }
-    
+
     async fn get(&self, key: &str) -> Result<Option<Bytes>> {
         let path = self.base_path.join(key);
-        
+
         if !path.exists() {
             return Ok(None);
         }
-        
+
         let data = tokio::fs::read(&path).await?;
         Ok(Some(Bytes::from(data)))
     }
-    
+
     async fn exists(&self, key: &str) -> Result<bool> {
         let path = self.base_path.join(key);
         Ok(path.exists())
     }
-    
+
     async fn delete(&self, key: &str) -> Result<()> {
         let path = self.base_path.join(key);
-        
+
         if path.exists() {
             tokio::fs::remove_file(&path).await?;
         }
-        
+
         Ok(())
     }
-    
+
     fn content_key(&self, hash: &str) -> String {
-        format!("shared/blobs/sha256/{}/{}/{}", &hash[0..2], &hash[2..4], hash)
+        format!(
+            "shared/blobs/sha256/{}/{}/{}",
+            &hash[0..2],
+            &hash[2..4],
+            hash
+        )
     }
 }
 
@@ -593,7 +586,7 @@ impl RustFsEventStore {
     pub fn new(doc_store: Arc<dyn MetadataDocumentStore>) -> Self {
         Self { doc_store }
     }
-    
+
     fn build_event_key(&self, event: &EventDocument) -> String {
         let date = event.occurred_at;
         format!(
@@ -610,14 +603,14 @@ impl RustFsEventStore {
 impl EventLogStore for RustFsEventStore {
     async fn append(&self, event: &EventDocument) -> Result<()> {
         let key = self.build_event_key(event);
-        
+
         self.doc_store
             .put(&key, event, PutOptions::default())
             .await?;
-        
+
         Ok(())
     }
-    
+
     async fn read_range(
         &self,
         start: DateTime<Utc>,
@@ -626,10 +619,10 @@ impl EventLogStore for RustFsEventStore {
     ) -> Result<Vec<EventDocument>> {
         // List events by date prefix
         let mut events = Vec::new();
-        
+
         let mut current = start.date_naive();
         let end_date = end.date_naive();
-        
+
         while current <= end_date && events.len() < limit {
             let prefix = format!(
                 "events/{:04}/{:02}/{:02}/",
@@ -637,9 +630,9 @@ impl EventLogStore for RustFsEventStore {
                 current.month(),
                 current.day()
             );
-            
+
             let keys = self.doc_store.list_prefix(&prefix).await?;
-            
+
             for key in keys {
                 if let Some((event, _)) = self.doc_store.get::<EventDocument>(&key).await? {
                     if event.occurred_at >= start && event.occurred_at <= end {
@@ -647,17 +640,17 @@ impl EventLogStore for RustFsEventStore {
                     }
                 }
             }
-            
+
             current = current.succ_opt().unwrap_or(current);
         }
-        
+
         // Sort by occurred_at
         events.sort_by(|a, b| a.occurred_at.cmp(&b.occurred_at));
         events.truncate(limit);
-        
+
         Ok(events)
     }
-    
+
     async fn read_for_resource(
         &self,
         resource_type: &str,
@@ -671,33 +664,31 @@ impl EventLogStore for RustFsEventStore {
             resource_type,
             resource_id
         );
-        
+
         let now = Utc::now();
         let start = now - chrono::Duration::days(30); // Limit to recent events
-        
+
         let events = self.read_range(start, now, 10000).await?;
-        
+
         let filtered: Vec<_> = events
             .into_iter()
-            .filter(|e| e.resource_type == resource_type && e.resource_id.to_string() == resource_id)
+            .filter(|e| {
+                e.resource_type == resource_type && e.resource_id.to_string() == resource_id
+            })
             .take(limit)
             .collect();
-        
+
         Ok(filtered)
     }
-    
-    async fn read_since(
-        &self,
-        since: DateTime<Utc>,
-        limit: usize,
-    ) -> Result<Vec<EventDocument>> {
+
+    async fn read_since(&self, since: DateTime<Utc>, limit: usize) -> Result<Vec<EventDocument>> {
         // Read events from the timestamp up to now
         let now = Utc::now();
         let mut events = self.read_range(since, now, limit).await?;
-        
+
         // Filter to only events strictly after 'since'
         events.retain(|e| e.occurred_at > since);
-        
+
         Ok(events)
     }
 }
@@ -712,7 +703,7 @@ impl DocumentIndexStore {
     pub fn new(doc_store: Arc<dyn MetadataDocumentStore>, prefix: String) -> Self {
         Self { doc_store, prefix }
     }
-    
+
     fn build_key(&self, key: &str) -> String {
         format!("{}/{}", self.prefix, key)
     }
@@ -722,9 +713,13 @@ impl DocumentIndexStore {
 impl IndexStore for DocumentIndexStore {
     async fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
         let full_key = self.build_key(key);
-        Ok(self.doc_store.get::<T>(&full_key).await?.map(|(doc, _)| doc))
+        Ok(self
+            .doc_store
+            .get::<T>(&full_key)
+            .await?
+            .map(|(doc, _)| doc))
     }
-    
+
     async fn put<T: Serialize + Send + Sync>(
         &self,
         key: &str,
@@ -734,7 +729,7 @@ impl IndexStore for DocumentIndexStore {
         let full_key = self.build_key(key);
         self.doc_store.put(&full_key, value, opts).await
     }
-    
+
     async fn delete(&self, key: &str) -> Result<()> {
         let full_key = self.build_key(key);
         self.doc_store.delete(&full_key).await
@@ -772,8 +767,14 @@ mod tests {
             id: "doc2".to_string(),
             value: 2,
         };
-        store.put("doc1", &doc1, PutOptions::default()).await.unwrap();
-        store.put("doc2", &doc2, PutOptions::default()).await.unwrap();
+        store
+            .put("doc1", &doc1, PutOptions::default())
+            .await
+            .unwrap();
+        store
+            .put("doc2", &doc2, PutOptions::default())
+            .await
+            .unwrap();
 
         // Fetch multiple including a missing key
         let keys = vec!["doc1", "missing", "doc2"];

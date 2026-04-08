@@ -19,11 +19,11 @@ pub enum JwtError {
 /// JWT claims
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
-    pub sub: String,      // Subject (user ID)
+    pub sub: String, // Subject (user ID)
     pub email: String,
-    pub exp: i64,         // Expiration time
-    pub iat: i64,         // Issued at
-    pub iss: String,      // Issuer
+    pub exp: i64,    // Expiration time
+    pub iat: i64,    // Issued at
+    pub iss: String, // Issuer
 }
 
 /// JWT token manager
@@ -37,7 +37,9 @@ impl JwtManager {
     /// The secret can be any type that converts into a String,
     /// such as `&str` or `String`.
     pub fn new(secret: impl Into<String>) -> Self {
-        Self { secret: secret.into() }
+        Self {
+            secret: secret.into(),
+        }
     }
 
     /// Generate a JWT token for a user.
@@ -140,13 +142,8 @@ mod tests {
         let share_id = uuid::Uuid::new_v4();
         let file_id = uuid::Uuid::new_v4();
 
-        let claims = ShareSessionClaims::new(
-            share_id,
-            Some(file_id),
-            None,
-            SharePermissions::View,
-            3600,
-        );
+        let claims =
+            ShareSessionClaims::new(share_id, Some(file_id), None, SharePermissions::View, 3600);
 
         let token = manager.encode_custom_claims(&claims).unwrap();
         let decoded: ShareSessionClaims = manager.decode_custom(&token).unwrap();

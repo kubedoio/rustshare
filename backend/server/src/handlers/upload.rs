@@ -17,9 +17,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use rustshare_core::services::{
-    CreateSessionRequest, SessionStatusResponse, UploadError,
-};
+use rustshare_core::services::{CreateSessionRequest, SessionStatusResponse, UploadError};
 
 use super::{AuthenticatedUser, ErrorResponse};
 use crate::AppState;
@@ -379,9 +377,7 @@ pub async fn list_upload_sessions(
         .await
         .map_err(upload_error_response)?;
 
-    Ok(Json(
-        sessions.into_iter().map(|s| s.into()).collect(),
-    ))
+    Ok(Json(sessions.into_iter().map(|s| s.into()).collect()))
 }
 
 // ============================================================================
@@ -397,21 +393,25 @@ pub fn upload_error_response(err: UploadError) -> Response {
         UploadError::SessionAborted(_) => (StatusCode::GONE, err.to_string()),
         UploadError::ChunkIndexOutOfRange { .. } => (StatusCode::BAD_REQUEST, err.to_string()),
         UploadError::ChunkAlreadyReceived(_) => (StatusCode::CONFLICT, err.to_string()),
-        UploadError::ChunkHashVerificationFailed => {
-            (StatusCode::BAD_REQUEST, "Chunk hash verification failed".to_string())
-        }
-        UploadError::FileHashVerificationFailed => {
-            (StatusCode::BAD_REQUEST, "File hash verification failed".to_string())
-        }
-        UploadError::InvalidChunkSize { .. } => (StatusCode::BAD_REQUEST, err.to_string()),
-        UploadError::PermissionDenied { .. } => (
-            StatusCode::FORBIDDEN,
-            "Permission denied".to_string(),
+        UploadError::ChunkHashVerificationFailed => (
+            StatusCode::BAD_REQUEST,
+            "Chunk hash verification failed".to_string(),
         ),
+        UploadError::FileHashVerificationFailed => (
+            StatusCode::BAD_REQUEST,
+            "File hash verification failed".to_string(),
+        ),
+        UploadError::InvalidChunkSize { .. } => (StatusCode::BAD_REQUEST, err.to_string()),
+        UploadError::PermissionDenied { .. } => {
+            (StatusCode::FORBIDDEN, "Permission denied".to_string())
+        }
         UploadError::ParentFolderNotFound(_) => (StatusCode::BAD_REQUEST, err.to_string()),
         UploadError::Storage(msg) => {
             tracing::error!("Upload storage error: {}", msg);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Storage error".to_string())
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Storage error".to_string(),
+            )
         }
         UploadError::Database(msg) => {
             tracing::error!("Upload database error: {}", msg);

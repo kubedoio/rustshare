@@ -21,7 +21,9 @@ const SMTP_CONFIG_ID: &str = "00000000-0000-0000-0000-000000000002";
 async fn test_pool() -> sqlx::PgPool {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
-    sqlx::PgPool::connect(&url).await.expect("DB connect failed")
+    sqlx::PgPool::connect(&url)
+        .await
+        .expect("DB connect failed")
 }
 
 fn test_encryption_key() -> SecretEncryptionKey {
@@ -146,11 +148,17 @@ async fn test_smtp_config_update_stores_encrypted_password() {
     assert_eq!(tls_mode.as_deref(), Some("starttls"));
 
     let stored = stored_enc.as_deref().expect("password_enc must be set");
-    assert_ne!(stored, plaintext_password, "Plaintext password must not be stored");
+    assert_ne!(
+        stored, plaintext_password,
+        "Plaintext password must not be stored"
+    );
 
     // Round-trip decrypt must recover the original password
     let recovered = decrypt_secret(stored, &key).expect("decrypt stored password");
-    assert_eq!(recovered, plaintext_password, "Decrypted password must match original");
+    assert_eq!(
+        recovered, plaintext_password,
+        "Decrypted password must match original"
+    );
 
     // Cleanup
     reset_smtp_config(&pool).await;

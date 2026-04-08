@@ -53,12 +53,18 @@ impl PathBuilder {
 
     /// Path for folder document
     pub fn folder_path(&self, id: FolderId) -> String {
-        format!("{}/{}/meta/folders/{}.json", self.base_prefix, self.namespace, id)
+        format!(
+            "{}/{}/meta/folders/{}.json",
+            self.base_prefix, self.namespace, id
+        )
     }
 
     /// Path for file document
     pub fn file_path(&self, id: FileId) -> String {
-        format!("{}/{}/meta/files/{}.json", self.base_prefix, self.namespace, id)
+        format!(
+            "{}/{}/meta/files/{}.json",
+            self.base_prefix, self.namespace, id
+        )
     }
 
     /// Path for file version document
@@ -71,7 +77,10 @@ impl PathBuilder {
 
     /// Path for share document
     pub fn share_path(&self, id: ShareId) -> String {
-        format!("{}/{}/meta/shares/{}.json", self.base_prefix, self.namespace, id)
+        format!(
+            "{}/{}/meta/shares/{}.json",
+            self.base_prefix, self.namespace, id
+        )
     }
 
     /// Path for event document

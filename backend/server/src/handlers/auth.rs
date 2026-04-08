@@ -13,10 +13,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::{
-    middleware,
-    oidc,
+    middleware, oidc,
     web_session::{
-        build_expired_session_cookie, build_session_cookie, create_user_session, extract_cookie_value,
+        build_expired_session_cookie, build_session_cookie, create_user_session,
+        extract_cookie_value,
     },
     AppState,
 };
@@ -94,10 +94,15 @@ pub async fn login(
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_string());
     let ip_address = middleware::extract_client_ip(&headers, None).map(|value| value.to_string());
-    let session_token =
-        create_user_session(&state, user.id, user.tenant_id, user_agent.clone(), ip_address.clone())
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let session_token = create_user_session(
+        &state,
+        user.id,
+        user.tenant_id,
+        user_agent.clone(),
+        ip_address.clone(),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     if let Err(error) = log_user_security_event(
         &state,

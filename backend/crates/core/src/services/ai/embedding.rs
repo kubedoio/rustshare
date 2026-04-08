@@ -173,7 +173,9 @@ mod tests {
     async fn test_similarity_different() {
         let generator = SimpleEmbeddingGenerator::new();
 
-        let emb1 = generator.generate("machine learning artificial intelligence").await;
+        let emb1 = generator
+            .generate("machine learning artificial intelligence")
+            .await;
         let emb2 = generator.generate("rust programming language").await;
 
         let similarity = generator.similarity(&emb1, &emb2);
@@ -186,8 +188,12 @@ mod tests {
         let generator = SimpleEmbeddingGenerator::new();
 
         // These are somewhat related topics
-        let emb1 = generator.generate("artificial intelligence and machine learning").await;
-        let emb2 = generator.generate("neural networks and deep learning").await;
+        let emb1 = generator
+            .generate("artificial intelligence and machine learning")
+            .await;
+        let emb2 = generator
+            .generate("neural networks and deep learning")
+            .await;
 
         let similarity = generator.similarity(&emb1, &emb2);
         // Related topics should have some similarity

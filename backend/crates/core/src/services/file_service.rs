@@ -136,9 +136,9 @@ pub trait ObjectStoreOps: Send + Sync {
     async fn delete(&self, key: &str) -> Result<()>;
 }
 
-use crate::services::{PermissionResolver, PermissionResolverOps, Resource};
-use crate::domain::{SharePermissions};
+use crate::domain::SharePermissions;
 use crate::services::errors::FileError;
+use crate::services::{PermissionResolver, PermissionResolverOps, Resource};
 
 /// File service for handling file operations.
 pub struct FileService<E, M, O, P>
@@ -214,8 +214,16 @@ where
             actor_display_name: None,
         };
 
-        self.upload_file_with_actor(owner_id, actor, name, parent_folder_id, content, mime_type, tenant_id)
-            .await
+        self.upload_file_with_actor(
+            owner_id,
+            actor,
+            name,
+            parent_folder_id,
+            content,
+            mime_type,
+            tenant_id,
+        )
+        .await
     }
 
     pub async fn upload_file_with_actor(
@@ -244,7 +252,8 @@ where
                 .ok_or(FileError::ParentFolderNotFound(folder_id))?;
 
             // Verify permissions: user must own the folder or have Edit permission
-            let has_permission = self.permission_resolver
+            let has_permission = self
+                .permission_resolver
                 .check_folder_permission(owner_id, folder_id, SharePermissions::Edit)
                 .await
                 .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -380,7 +389,8 @@ where
     /// - `FileError::PermissionDenied` if the user doesn't have access
     pub async fn get_file(&self, file_id: uuid::Uuid, user_id: UserId) -> Result<File, FileError> {
         // 1. Check permissions first using the resolver
-        let has_permission = self.permission_resolver
+        let has_permission = self
+            .permission_resolver
             .check_file_permission(user_id, file_id, SharePermissions::View)
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -460,7 +470,8 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        let has_edit_permission = self.permission_resolver
+        let has_edit_permission = self
+            .permission_resolver
             .check_file_permission(user_id, file_id, SharePermissions::Edit)
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -627,7 +638,8 @@ where
         let old_version = file.current_version;
 
         // 1b. Verify Edit permission
-        let has_edit_permission = self.permission_resolver
+        let has_edit_permission = self
+            .permission_resolver
             .check_file_permission(user_id, file_id, SharePermissions::Edit)
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -740,7 +752,8 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        let has_edit_permission = self.permission_resolver
+        let has_edit_permission = self
+            .permission_resolver
             .check_file_permission(user_id, file_id, SharePermissions::Edit)
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -820,7 +833,8 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        let has_edit_permission = self.permission_resolver
+        let has_edit_permission = self
+            .permission_resolver
             .check_file_permission(user_id, file_id, SharePermissions::Edit)
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -908,7 +922,8 @@ where
         let file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Admin permission for deletion
-        let has_admin_permission = self.permission_resolver
+        let has_admin_permission = self
+            .permission_resolver
             .check_file_permission(user_id, file_id, SharePermissions::Admin)
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -985,7 +1000,8 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        let has_edit_permission = self.permission_resolver
+        let has_edit_permission = self
+            .permission_resolver
             .check_file_permission(user_id, file_id, SharePermissions::Edit)
             .await
             .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
@@ -1130,13 +1146,65 @@ where
 
         // Check for code files by extension
         let editable_extensions = [
-            "txt", "js", "ts", "tsx", "jsx", "py", "rs", "go", "java", "cpp", "c", "h",
-            "hpp", "cs", "php", "rb", "swift", "kt", "scala", "r", "m", "mm",
-            "json", "yaml", "yml", "toml", "xml", "html", "htm", "css", "scss",
-            "sass", "less", "sql", "sh", "bash", "zsh", "fish", "ps1", "bat",
-            "cmd", "dockerfile", "makefile", "cmake", "gradle", "ini", "conf",
-            "cfg", "properties", "env", "gitignore", "gitattributes", "lock",
-            "log", "csv", "tsv", "svg", "vue", "svelte",
+            "txt",
+            "js",
+            "ts",
+            "tsx",
+            "jsx",
+            "py",
+            "rs",
+            "go",
+            "java",
+            "cpp",
+            "c",
+            "h",
+            "hpp",
+            "cs",
+            "php",
+            "rb",
+            "swift",
+            "kt",
+            "scala",
+            "r",
+            "m",
+            "mm",
+            "json",
+            "yaml",
+            "yml",
+            "toml",
+            "xml",
+            "html",
+            "htm",
+            "css",
+            "scss",
+            "sass",
+            "less",
+            "sql",
+            "sh",
+            "bash",
+            "zsh",
+            "fish",
+            "ps1",
+            "bat",
+            "cmd",
+            "dockerfile",
+            "makefile",
+            "cmake",
+            "gradle",
+            "ini",
+            "conf",
+            "cfg",
+            "properties",
+            "env",
+            "gitignore",
+            "gitattributes",
+            "lock",
+            "log",
+            "csv",
+            "tsv",
+            "svg",
+            "vue",
+            "svelte",
         ];
 
         if let Some(ext) = name.rsplit('.').next() {

@@ -5549,6 +5549,7 @@ dependencies = [
  "sync-engine",
  "sync-protocol",
  "tauri",
+ "tempfile",
  "tokio",
  "toml 0.8.2",
  "tracing",

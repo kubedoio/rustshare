@@ -4,16 +4,16 @@
 //! PostgreSQL as the canonical metadata store.
 
 pub mod compat;
-pub mod schemas;
-pub mod stores;
 pub mod coordination;
 pub mod runtime_cache;
+pub mod schemas;
+pub mod stores;
 
 pub use compat::*;
-pub use schemas::*;
-pub use stores::*;
 pub use coordination::*;
 pub use runtime_cache::*;
+pub use schemas::*;
+pub use stores::*;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -55,32 +55,27 @@ pub struct ObjectMetadata {
 }
 
 /// Core trait for metadata document storage
-/// 
+///
 /// Note: This trait uses serialized bytes to be object-safe (dyn-compatible).
 /// Callers are responsible for serialization/deserialization.
 #[async_trait]
 pub trait MetadataDocumentStore: Send + Sync {
     /// Get a document by key, returns raw bytes
     async fn get_raw(&self, key: &str) -> Result<Option<(Vec<u8>, ObjectMetadata)>>;
-    
+
     /// Get multiple documents by key in parallel
     /// Returns (key, data, metadata) for all keys that exist. Missing keys are silently omitted.
     async fn get_multi_raw(&self, keys: &[&str]) -> Result<Vec<(String, Vec<u8>, ObjectMetadata)>>;
-    
+
     /// Get document metadata without fetching content
     async fn head(&self, key: &str) -> Result<Option<ObjectMetadata>>;
-    
+
     /// Store a document from raw bytes
-    async fn put_raw(
-        &self,
-        key: &str,
-        data: &[u8],
-        opts: PutOptions,
-    ) -> Result<PutResult>;
-    
+    async fn put_raw(&self, key: &str, data: &[u8], opts: PutOptions) -> Result<PutResult>;
+
     /// Delete a document
     async fn delete(&self, key: &str) -> Result<()>;
-    
+
     /// List objects with a prefix (for debugging/rebuild only)
     async fn list_prefix(&self, prefix: &str) -> Result<Vec<String>>;
 }
@@ -98,9 +93,12 @@ pub trait MetadataDocumentStoreExt: MetadataDocumentStore {
             None => Ok(None),
         }
     }
-    
+
     /// Get multiple documents by key in parallel
-    async fn get_multi<T: DeserializeOwned>(&self, keys: &[&str]) -> Result<Vec<(String, T, ObjectMetadata)>> {
+    async fn get_multi<T: DeserializeOwned>(
+        &self,
+        keys: &[&str],
+    ) -> Result<Vec<(String, T, ObjectMetadata)>> {
         let raw_results = self.get_multi_raw(keys).await?;
         let mut results = Vec::with_capacity(raw_results.len());
         for (key, data, meta) in raw_results {
@@ -109,7 +107,7 @@ pub trait MetadataDocumentStoreExt: MetadataDocumentStore {
         }
         Ok(results)
     }
-    
+
     /// Store a document
     async fn put<T: Serialize + Send + Sync>(
         &self,
@@ -131,16 +129,16 @@ impl<T: MetadataDocumentStore + ?Sized> MetadataDocumentStoreExt for T {}
 pub trait BlobStore: Send + Sync {
     /// Store blob data
     async fn put(&self, key: &str, data: Bytes) -> Result<PutResult>;
-    
+
     /// Get blob data
     async fn get(&self, key: &str) -> Result<Option<Bytes>>;
-    
+
     /// Check if blob exists
     async fn exists(&self, key: &str) -> Result<bool>;
-    
+
     /// Delete blob (only for policy enforcement, not normal operation)
     async fn delete(&self, key: &str) -> Result<()>;
-    
+
     /// Generate content-addressed key
     fn content_key(&self, hash: &str) -> String;
 }
@@ -150,7 +148,7 @@ pub trait BlobStore: Send + Sync {
 pub trait EventLogStore: Send + Sync {
     /// Append an event
     async fn append(&self, event: &EventDocument) -> Result<()>;
-    
+
     /// Read events by date range
     async fn read_range(
         &self,
@@ -158,7 +156,7 @@ pub trait EventLogStore: Send + Sync {
         end: DateTime<Utc>,
         limit: usize,
     ) -> Result<Vec<EventDocument>>;
-    
+
     /// Read events for a specific resource
     async fn read_for_resource(
         &self,
@@ -166,16 +164,12 @@ pub trait EventLogStore: Send + Sync {
         resource_id: &str,
         limit: usize,
     ) -> Result<Vec<EventDocument>>;
-    
+
     /// Read events since a given timestamp
-    /// 
+    ///
     /// Returns events that occurred after the given timestamp,
     /// ordered by timestamp ascending, up to the limit.
-    async fn read_since(
-        &self,
-        since: DateTime<Utc>,
-        limit: usize,
-    ) -> Result<Vec<EventDocument>>;
+    async fn read_since(&self, since: DateTime<Utc>, limit: usize) -> Result<Vec<EventDocument>>;
 }
 
 /// Core trait for index/projection storage
@@ -183,7 +177,7 @@ pub trait EventLogStore: Send + Sync {
 pub trait IndexStore: Send + Sync {
     /// Get an index entry
     async fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>>;
-    
+
     /// Store an index entry
     async fn put<T: Serialize + Send + Sync>(
         &self,
@@ -191,7 +185,7 @@ pub trait IndexStore: Send + Sync {
         value: &T,
         opts: PutOptions,
     ) -> Result<PutResult>;
-    
+
     /// Delete an index entry
     async fn delete(&self, key: &str) -> Result<()>;
 }
@@ -237,7 +231,7 @@ pub enum MetadataBackendType {
 
 impl std::str::FromStr for MetadataBackendType {
     type Err = anyhow::Error;
-    
+
     fn from_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
             "postgres" => Ok(Self::Postgres),

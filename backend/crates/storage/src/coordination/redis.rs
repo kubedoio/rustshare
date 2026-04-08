@@ -21,26 +21,26 @@ impl RedisCoordinationStore {
     pub async fn new(redis_url: &str) -> anyhow::Result<Self> {
         let client = redis::Client::open(redis_url)?;
         let connection_manager = redis::aio::ConnectionManager::new(client.clone()).await?;
-        
+
         Ok(Self {
             client,
             connection_manager,
             key_prefix: "rustshare:coord:".to_string(),
         })
     }
-    
+
     /// Create with custom key prefix
     pub async fn with_prefix(redis_url: &str, prefix: String) -> anyhow::Result<Self> {
         let client = redis::Client::open(redis_url)?;
         let connection_manager = redis::aio::ConnectionManager::new(client.clone()).await?;
-        
+
         Ok(Self {
             client,
             connection_manager,
             key_prefix: prefix,
         })
     }
-    
+
     fn key(&self, suffix: &str) -> String {
         format!("{}{}", self.key_prefix, suffix)
     }
@@ -61,9 +61,9 @@ impl CoordinationStore for RedisCoordinationStore {
         let key = self.key(&format!("lock:{}", resource_id));
         let lock_id = uuid::Uuid::new_v4().to_string();
         let value = format!("{}:{}", lock_id, owner);
-        
+
         let mut conn = self.connection_manager.clone();
-        
+
         // Use SET with NX (only if not exists) and EX (expiration)
         let result: Option<String> = redis::cmd("SET")
             .arg(&key)
@@ -74,15 +74,15 @@ impl CoordinationStore for RedisCoordinationStore {
             .query_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         if result.is_none() {
             return Err(CoordinationError::AlreadyLocked {
                 resource_id: resource_id.to_string(),
             });
         }
-        
+
         let expires_at = Utc::now() + chrono::Duration::from_std(ttl).unwrap_or_default();
-        
+
         Ok(LockToken {
             lock_id,
             resource_id: resource_id.to_string(),
@@ -94,9 +94,9 @@ impl CoordinationStore for RedisCoordinationStore {
     async fn release_lock(&self, token: &LockToken) -> Result<(), CoordinationError> {
         let key = self.key(&format!("lock:{}", token.resource_id));
         let expected_value = format!("{}:{}", token.lock_id, token.owner);
-        
+
         let mut conn = self.connection_manager.clone();
-        
+
         // Use a Lua script to check and delete atomically
         let script = r#"
             if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -105,21 +105,21 @@ impl CoordinationStore for RedisCoordinationStore {
                 return 0
             end
         "#;
-        
+
         let result: i32 = redis::Script::new(script)
             .key(&key)
             .arg(&expected_value)
             .invoke_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         if result == 0 {
             return Err(CoordinationError::LockNotHeld {
                 resource_id: token.resource_id.clone(),
                 lock_id: token.lock_id.clone(),
             });
         }
-        
+
         Ok(())
     }
 
@@ -131,9 +131,9 @@ impl CoordinationStore for RedisCoordinationStore {
         let key = self.key(&format!("lock:{}", token.resource_id));
         let expected_value = format!("{}:{}", token.lock_id, token.owner);
         let new_ttl_secs = additional_ttl.as_secs() as usize;
-        
+
         let mut conn = self.connection_manager.clone();
-        
+
         // Lua script to verify ownership and extend
         let script = r#"
             if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -142,7 +142,7 @@ impl CoordinationStore for RedisCoordinationStore {
                 return 0
             end
         "#;
-        
+
         let result: i32 = redis::Script::new(script)
             .key(&key)
             .arg(&expected_value)
@@ -150,16 +150,17 @@ impl CoordinationStore for RedisCoordinationStore {
             .invoke_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         if result == 0 {
             return Err(CoordinationError::LockNotHeld {
                 resource_id: token.resource_id.clone(),
                 lock_id: token.lock_id.clone(),
             });
         }
-        
-        let new_expires_at = Utc::now() + chrono::Duration::from_std(additional_ttl).unwrap_or_default();
-        
+
+        let new_expires_at =
+            Utc::now() + chrono::Duration::from_std(additional_ttl).unwrap_or_default();
+
         Ok(LockToken {
             lock_id: token.lock_id.clone(),
             resource_id: token.resource_id.clone(),
@@ -171,12 +172,12 @@ impl CoordinationStore for RedisCoordinationStore {
     async fn is_locked(&self, resource_id: &str) -> Result<bool, CoordinationError> {
         let key = self.key(&format!("lock:{}", resource_id));
         let mut conn = self.connection_manager.clone();
-        
+
         let exists: bool = conn
             .exists(&key)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         Ok(exists)
     }
 
@@ -193,9 +194,9 @@ impl CoordinationStore for RedisCoordinationStore {
         // Leases use the same underlying mechanism as locks but with different semantics
         let key = self.key(&format!("lease:{}", resource_id));
         let value = format!("{}", owner);
-        
+
         let mut conn = self.connection_manager.clone();
-        
+
         let result: Option<String> = redis::cmd("SET")
             .arg(&key)
             .arg(&value)
@@ -205,15 +206,15 @@ impl CoordinationStore for RedisCoordinationStore {
             .query_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         if result.is_none() {
             return Err(CoordinationError::AlreadyLocked {
                 resource_id: resource_id.to_string(),
             });
         }
-        
+
         let expires_at = Utc::now() + chrono::Duration::from_std(ttl).unwrap_or_default();
-        
+
         Ok(LeaseInfo {
             resource_id: resource_id.to_string(),
             owner: owner.to_string(),
@@ -223,9 +224,9 @@ impl CoordinationStore for RedisCoordinationStore {
 
     async fn release_lease(&self, resource_id: &str, owner: &str) -> Result<(), CoordinationError> {
         let key = self.key(&format!("lease:{}", resource_id));
-        
+
         let mut conn = self.connection_manager.clone();
-        
+
         // Lua script to check owner and delete
         let script = r#"
             if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -234,14 +235,14 @@ impl CoordinationStore for RedisCoordinationStore {
                 return 0
             end
         "#;
-        
+
         let _: i32 = redis::Script::new(script)
             .key(&key)
             .arg(owner)
             .invoke_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         Ok(())
     }
 
@@ -253,9 +254,9 @@ impl CoordinationStore for RedisCoordinationStore {
     ) -> Result<LeaseInfo, CoordinationError> {
         let key = self.key(&format!("lease:{}", resource_id));
         let new_ttl_secs = additional_ttl.as_secs() as usize;
-        
+
         let mut conn = self.connection_manager.clone();
-        
+
         let script = r#"
             if redis.call("get", KEYS[1]) == ARGV[1] then
                 return redis.call("expire", KEYS[1], ARGV[2])
@@ -263,7 +264,7 @@ impl CoordinationStore for RedisCoordinationStore {
                 return 0
             end
         "#;
-        
+
         let result: i32 = redis::Script::new(script)
             .key(&key)
             .arg(owner)
@@ -271,16 +272,17 @@ impl CoordinationStore for RedisCoordinationStore {
             .invoke_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         if result == 0 {
             return Err(CoordinationError::LockNotHeld {
                 resource_id: resource_id.to_string(),
                 lock_id: "lease".to_string(),
             });
         }
-        
-        let new_expires_at = Utc::now() + chrono::Duration::from_std(additional_ttl).unwrap_or_default();
-        
+
+        let new_expires_at =
+            Utc::now() + chrono::Duration::from_std(additional_ttl).unwrap_or_default();
+
         Ok(LeaseInfo {
             resource_id: resource_id.to_string(),
             owner: owner.to_string(),
@@ -291,23 +293,23 @@ impl CoordinationStore for RedisCoordinationStore {
     async fn get_lease(&self, resource_id: &str) -> Result<Option<LeaseInfo>, CoordinationError> {
         let key = self.key(&format!("lease:{}", resource_id));
         let mut conn = self.connection_manager.clone();
-        
+
         let ttl: i64 = conn
             .ttl(&key)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         if ttl <= 0 {
             return Ok(None);
         }
-        
+
         let owner: String = conn
             .get(&key)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         let expires_at = Utc::now() + chrono::Duration::seconds(ttl);
-        
+
         Ok(Some(LeaseInfo {
             resource_id: resource_id.to_string(),
             owner,
@@ -327,9 +329,9 @@ impl CoordinationStore for RedisCoordinationStore {
     ) -> Result<bool, CoordinationError> {
         let key = self.key(&format!("job:{}", job_id));
         let value = format!("{}", worker_id);
-        
+
         let mut conn = self.connection_manager.clone();
-        
+
         let result: Option<String> = redis::cmd("SET")
             .arg(&key)
             .arg(&value)
@@ -339,15 +341,19 @@ impl CoordinationStore for RedisCoordinationStore {
             .query_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         Ok(result.is_some())
     }
 
-    async fn release_job_claim(&self, job_id: &str, worker_id: &str) -> Result<(), CoordinationError> {
+    async fn release_job_claim(
+        &self,
+        job_id: &str,
+        worker_id: &str,
+    ) -> Result<(), CoordinationError> {
         let key = self.key(&format!("job:{}", job_id));
-        
+
         let mut conn = self.connection_manager.clone();
-        
+
         let script = r#"
             if redis.call("get", KEYS[1]) == ARGV[1] then
                 return redis.call("del", KEYS[1])
@@ -355,14 +361,14 @@ impl CoordinationStore for RedisCoordinationStore {
                 return 0
             end
         "#;
-        
+
         let _: i32 = redis::Script::new(script)
             .key(&key)
             .arg(worker_id)
             .invoke_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         Ok(())
     }
 
@@ -374,9 +380,9 @@ impl CoordinationStore for RedisCoordinationStore {
     ) -> Result<bool, CoordinationError> {
         let key = self.key(&format!("job:{}", job_id));
         let new_ttl_secs = additional_ttl.as_secs() as usize;
-        
+
         let mut conn = self.connection_manager.clone();
-        
+
         let script = r#"
             if redis.call("get", KEYS[1]) == ARGV[1] then
                 return redis.call("expire", KEYS[1], ARGV[2])
@@ -384,7 +390,7 @@ impl CoordinationStore for RedisCoordinationStore {
                 return 0
             end
         "#;
-        
+
         let result: i32 = redis::Script::new(script)
             .key(&key)
             .arg(worker_id)
@@ -392,30 +398,30 @@ impl CoordinationStore for RedisCoordinationStore {
             .invoke_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         Ok(result == 1)
     }
 
     async fn get_job_claim(&self, job_id: &str) -> Result<Option<WorkerClaim>, CoordinationError> {
         let key = self.key(&format!("job:{}", job_id));
         let mut conn = self.connection_manager.clone();
-        
+
         let ttl: i64 = conn
             .ttl(&key)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         if ttl <= 0 {
             return Ok(None);
         }
-        
+
         let worker_id: String = conn
             .get(&key)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         let expires_at = Utc::now() + chrono::Duration::seconds(ttl);
-        
+
         Ok(Some(WorkerClaim {
             job_id: job_id.to_string(),
             worker_id,
@@ -436,7 +442,7 @@ impl CoordinationStore for RedisCoordinationStore {
         let full_key = self.key(&format!("ratelimit:{}", key));
         let window_secs = window.as_secs() as usize;
         let mut conn = self.connection_manager.clone();
-        
+
         // Lua script for atomic increment and check
         let script = r#"
             local current = redis.call("INCR", KEYS[1])
@@ -446,19 +452,23 @@ impl CoordinationStore for RedisCoordinationStore {
             local ttl = redis.call("TTL", KEYS[1])
             return {current, ttl}
         "#;
-        
+
         let result: Vec<i64> = redis::Script::new(script)
             .key(&full_key)
             .arg(window_secs)
             .invoke_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         let current_count = result[0] as u32;
         let retry_after = result[1].max(0) as u64;
-        
+
         if current_count > max_requests {
-            Ok(RateLimitStatus::denied(current_count, max_requests, retry_after))
+            Ok(RateLimitStatus::denied(
+                current_count,
+                max_requests,
+                retry_after,
+            ))
         } else {
             Ok(RateLimitStatus::allowed(current_count, max_requests))
         }
@@ -467,12 +477,12 @@ impl CoordinationStore for RedisCoordinationStore {
     async fn reset_rate_limit(&self, key: &str) -> Result<(), CoordinationError> {
         let full_key = self.key(&format!("ratelimit:{}", key));
         let mut conn = self.connection_manager.clone();
-        
+
         let _: () = conn
             .del(&full_key)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         Ok(())
     }
 
@@ -488,7 +498,7 @@ impl CoordinationStore for RedisCoordinationStore {
     ) -> Result<(), CoordinationError> {
         let key = self.key(&format!("session:{}", token_hash));
         let mut conn = self.connection_manager.clone();
-        
+
         // Store as hash with user_id and revoked flag
         let _: () = conn
             .hset(&key, "user_id", user_id)
@@ -502,20 +512,24 @@ impl CoordinationStore for RedisCoordinationStore {
             .expire(&key, ttl.as_secs() as usize)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         Ok(())
     }
 
-    async fn revoke_session(&self, token_hash: &str, ttl: Duration) -> Result<(), CoordinationError> {
+    async fn revoke_session(
+        &self,
+        token_hash: &str,
+        ttl: Duration,
+    ) -> Result<(), CoordinationError> {
         let key = self.key(&format!("session:{}", token_hash));
         let mut conn = self.connection_manager.clone();
-        
+
         // Mark as revoked - either update existing or create new entry
         let exists: bool = conn
             .exists(&key)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         if exists {
             let _: () = conn
                 .hset(&key, "revoked", "1")
@@ -541,29 +555,29 @@ impl CoordinationStore for RedisCoordinationStore {
                 .await
                 .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
         }
-        
+
         Ok(())
     }
 
     async fn is_session_valid(&self, token_hash: &str) -> Result<bool, CoordinationError> {
         let key = self.key(&format!("session:{}", token_hash));
         let mut conn = self.connection_manager.clone();
-        
+
         let exists: bool = conn
             .exists(&key)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         if !exists {
             // Session not in cache - valid if not explicitly revoked (stateless fallback)
             return Ok(true);
         }
-        
+
         let revoked: String = conn
             .hget(&key, "revoked")
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         Ok(revoked == "0")
     }
 
@@ -573,16 +587,16 @@ impl CoordinationStore for RedisCoordinationStore {
     ) -> Result<Option<CachedSession>, CoordinationError> {
         let key = self.key(&format!("session:{}", token_hash));
         let mut conn = self.connection_manager.clone();
-        
+
         let exists: bool = conn
             .exists(&key)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         if !exists {
             return Ok(None);
         }
-        
+
         let user_id: String = conn
             .hget(&key, "user_id")
             .await
@@ -595,13 +609,13 @@ impl CoordinationStore for RedisCoordinationStore {
             .ttl(&key)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         let expires_at = if ttl > 0 {
             Utc::now() + chrono::Duration::seconds(ttl)
         } else {
             Utc::now()
         };
-        
+
         Ok(Some(CachedSession {
             token_hash: token_hash.to_string(),
             user_id,
@@ -621,7 +635,7 @@ impl CoordinationStore for RedisCoordinationStore {
     ) -> Result<bool, CoordinationError> {
         let full_key = self.key(&format!("idempotency:{}", key));
         let mut conn = self.connection_manager.clone();
-        
+
         let result: Option<String> = redis::cmd("SET")
             .arg(&full_key)
             .arg("1")
@@ -631,7 +645,7 @@ impl CoordinationStore for RedisCoordinationStore {
             .query_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         Ok(result.is_some())
     }
 
@@ -647,7 +661,7 @@ impl CoordinationStore for RedisCoordinationStore {
     ) -> Result<(), CoordinationError> {
         let key = self.key(&format!("presence:{}", user_id));
         let mut conn = self.connection_manager.clone();
-        
+
         // Use a hash to store connection IDs with their expiration
         // Also set expiration on the key itself
         let _: () = conn
@@ -658,7 +672,7 @@ impl CoordinationStore for RedisCoordinationStore {
             .expire(&key, ttl.as_secs() as usize)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         Ok(())
     }
 
@@ -669,36 +683,36 @@ impl CoordinationStore for RedisCoordinationStore {
     ) -> Result<(), CoordinationError> {
         let key = self.key(&format!("presence:{}", user_id));
         let mut conn = self.connection_manager.clone();
-        
+
         let _: () = conn
             .hdel(&key, connection_id)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         Ok(())
     }
 
     async fn get_user_connections(&self, user_id: &str) -> Result<Vec<String>, CoordinationError> {
         let key = self.key(&format!("presence:{}", user_id));
         let mut conn = self.connection_manager.clone();
-        
+
         let connections: Vec<String> = conn
             .hkeys(&key)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         Ok(connections)
     }
 
     async fn is_user_online(&self, user_id: &str) -> Result<bool, CoordinationError> {
         let key = self.key(&format!("presence:{}", user_id));
         let mut conn = self.connection_manager.clone();
-        
+
         let count: i32 = conn
             .hlen(&key)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        
+
         Ok(count > 0)
     }
 }
@@ -725,8 +739,13 @@ mod tests {
         assert!(lock.is_valid());
 
         // Duplicate should fail
-        let result = store.acquire_lock("test-resource", "owner2", Duration::from_secs(60)).await;
-        assert!(matches!(result, Err(CoordinationError::AlreadyLocked { .. })));
+        let result = store
+            .acquire_lock("test-resource", "owner2", Duration::from_secs(60))
+            .await;
+        assert!(matches!(
+            result,
+            Err(CoordinationError::AlreadyLocked { .. })
+        ));
 
         // Release
         store.release_lock(&lock).await.unwrap();
@@ -747,18 +766,30 @@ mod tests {
             .expect("Failed to connect to Redis");
 
         // Claim job
-        let claimed = store.claim_job("test-job", "worker1", Duration::from_secs(60)).await.unwrap();
+        let claimed = store
+            .claim_job("test-job", "worker1", Duration::from_secs(60))
+            .await
+            .unwrap();
         assert!(claimed);
 
         // Second claim should fail
-        let claimed = store.claim_job("test-job", "worker2", Duration::from_secs(60)).await.unwrap();
+        let claimed = store
+            .claim_job("test-job", "worker2", Duration::from_secs(60))
+            .await
+            .unwrap();
         assert!(!claimed);
 
         // Release
-        store.release_job_claim("test-job", "worker1").await.unwrap();
+        store
+            .release_job_claim("test-job", "worker1")
+            .await
+            .unwrap();
 
         // Now can claim
-        let claimed = store.claim_job("test-job", "worker2", Duration::from_secs(60)).await.unwrap();
+        let claimed = store
+            .claim_job("test-job", "worker2", Duration::from_secs(60))
+            .await
+            .unwrap();
         assert!(claimed);
     }
 }

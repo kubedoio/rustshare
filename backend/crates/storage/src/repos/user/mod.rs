@@ -14,16 +14,16 @@ pub use rustfs::RustFsUserRepository;
 pub enum UserRepositoryError {
     #[error("User not found: {0}")]
     NotFound(Uuid),
-    
+
     #[error("User with email {0} already exists")]
     DuplicateEmail(String),
-    
+
     #[error("User with username {0} already exists")]
     DuplicateUsername(String),
-    
+
     #[error("Storage error: {0}")]
     Storage(String),
-    
+
     #[error("Concurrency conflict")]
     Conflict,
 }
@@ -33,32 +33,35 @@ pub enum UserRepositoryError {
 pub trait UserRepository: Send + Sync {
     /// Create a new user
     async fn create_user(&self, user: &User) -> Result<(), UserRepositoryError>;
-    
+
     /// Get user by ID
     async fn get_user_by_id(&self, id: Uuid) -> Result<Option<User>, UserRepositoryError>;
-    
+
     /// Get user by email
     async fn get_user_by_email(&self, email: &str) -> Result<Option<User>, UserRepositoryError>;
-    
+
     /// Get user by username
-    async fn get_user_by_username(&self, username: &str) -> Result<Option<User>, UserRepositoryError>;
-    
+    async fn get_user_by_username(
+        &self,
+        username: &str,
+    ) -> Result<Option<User>, UserRepositoryError>;
+
     /// Update a user
     async fn update_user(&self, user: &User) -> Result<(), UserRepositoryError>;
-    
+
     /// Delete a user
     async fn delete_user(&self, id: Uuid) -> Result<(), UserRepositoryError>;
-    
+
     /// List all users (with optional pagination)
     async fn list_users(
         &self,
         limit: Option<usize>,
         offset: Option<usize>,
     ) -> Result<Vec<User>, UserRepositoryError>;
-    
+
     /// Check if any users exist
     async fn has_users(&self) -> Result<bool, UserRepositoryError>;
-    
+
     /// Count total users
     async fn count_users(&self) -> Result<usize, UserRepositoryError>;
 }
@@ -68,10 +71,10 @@ pub trait UserRepository: Send + Sync {
 pub trait GroupRepo: Send + Sync {
     /// Check if user is a member of a group
     async fn is_member(&self, user_id: Uuid, group_id: Uuid) -> Result<bool, UserRepositoryError>;
-    
+
     /// Get all members of a group
     async fn get_members(&self, group_id: Uuid) -> Result<Vec<Uuid>, UserRepositoryError>;
-    
+
     /// Get all groups a user is a member of
     async fn get_user_groups(&self, user_id: Uuid) -> Result<Vec<Uuid>, UserRepositoryError>;
 }
@@ -80,14 +83,17 @@ pub trait GroupRepo: Send + Sync {
 #[async_trait]
 pub trait TenantConfigRepo: Send + Sync {
     /// Get recipient visibility setting for tenant
-    async fn get_recipient_visibility(&self, tenant_id: Uuid) -> Result<RecipientVisibility, UserRepositoryError>;
+    async fn get_recipient_visibility(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<RecipientVisibility, UserRepositoryError>;
 }
 
 /// Converts between domain User and UserDocument
 pub mod conversions {
     use super::*;
     use crate::metadata_v2::schemas::UserDocument;
-    
+
     /// Convert UserDocument to domain User
     pub fn doc_to_user(doc: UserDocument) -> User {
         User {
@@ -99,7 +105,10 @@ pub mod conversions {
             is_admin: doc.is_admin,
             disabled_at: doc.disabled_at,
             storage_quota: doc.storage_quota_bytes,
-            theme: doc.theme.parse().unwrap_or(rustshare_core::domain::Theme::System),
+            theme: doc
+                .theme
+                .parse()
+                .unwrap_or(rustshare_core::domain::Theme::System),
             created_at: doc.created_at,
             updated_at: doc.updated_at,
             name: None,
@@ -109,7 +118,7 @@ pub mod conversions {
             tenant_id: doc.tenant_id,
         }
     }
-    
+
     /// Convert domain User to UserDocument
     pub fn user_to_doc(user: &User) -> UserDocument {
         UserDocument {

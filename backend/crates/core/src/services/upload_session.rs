@@ -165,8 +165,7 @@ impl UploadSession {
     pub fn has_chunk(&self, chunk_index: u32) -> bool {
         let bucket = chunk_index as usize / 32;
         let bit = chunk_index % 32;
-        bucket < self.chunks_received.len()
-            && (self.chunks_received[bucket] & (1 << bit)) != 0
+        bucket < self.chunks_received.len() && (self.chunks_received[bucket] & (1 << bit)) != 0
     }
 
     /// Mark a chunk as received
@@ -181,17 +180,13 @@ impl UploadSession {
     /// Get a list of missing chunk indices
     pub fn missing_chunks(&self) -> Vec<u32> {
         let total = self.total_chunks();
-        (0..total)
-            .filter(|&i| !self.has_chunk(i))
-            .collect()
+        (0..total).filter(|&i| !self.has_chunk(i)).collect()
     }
 
     /// Get a list of received chunk indices
     pub fn received_chunks(&self) -> Vec<u32> {
         let total = self.total_chunks();
-        (0..total)
-            .filter(|&i| self.has_chunk(i))
-            .collect()
+        (0..total).filter(|&i| self.has_chunk(i)).collect()
     }
 
     /// Check if all chunks have been received

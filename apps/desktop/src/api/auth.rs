@@ -58,7 +58,7 @@ impl DeviceAuth {
     }
 
     /// Start device pairing flow
-    /// 
+    ///
     /// Returns the user code that should be displayed to the user
     pub async fn start_pairing(&self) -> Result<DevicePairingFlow> {
         // Request device code from server
@@ -78,18 +78,18 @@ impl DeviceAuth {
             &device_code_response.device_code,
             &self.server_url,
         );
-        
+
         info!(
             "Device pairing started. User code: {} (expires in {}s)",
-            device_code_response.user_code,
-            device_code_response.expires_in
+            device_code_response.user_code, device_code_response.expires_in
         );
 
         Ok(DevicePairingFlow {
             user_code: device_code_response.user_code,
             device_code: device_code_response.device_code,
             approval_url,
-            expires_at: chrono::Utc::now() + chrono::Duration::seconds(device_code_response.expires_in),
+            expires_at: chrono::Utc::now()
+                + chrono::Duration::seconds(device_code_response.expires_in),
             server_url: self.server_url.clone(),
         })
     }
@@ -132,7 +132,7 @@ impl DevicePairingFlow {
     }
 
     /// Poll for approval
-    /// 
+    ///
     /// Returns Ok(Some(token)) when approved, Ok(None) if still pending,
     /// and Err if expired or error occurred.
     pub async fn poll(&self) -> Result<Option<String>> {
@@ -151,7 +151,7 @@ impl DevicePairingFlow {
         match response.status() {
             reqwest::StatusCode::OK => {
                 let poll_response: PollResponse = response.json().await?;
-                
+
                 match poll_response {
                     PollResponse::Pending => Ok(None),
                     PollResponse::Approved { token } => {
@@ -171,7 +171,7 @@ impl DevicePairingFlow {
                     .and_then(|v| v.to_str().ok())
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(5);
-                
+
                 debug!("Rate limited, waiting {}s", retry_after);
                 sleep(Duration::from_secs(retry_after)).await;
                 Ok(None)
@@ -185,12 +185,12 @@ impl DevicePairingFlow {
     }
 
     /// Poll until approval or expiration
-    /// 
+    ///
     /// This blocks until the user approves the device or the code expires.
     /// It respects rate limits and polls at appropriate intervals.
     pub async fn poll_until_complete(&self) -> Result<String> {
         let poll_interval = Duration::from_secs(5);
-        
+
         loop {
             if self.is_expired() {
                 anyhow::bail!("Device code expired before approval");
@@ -217,10 +217,10 @@ impl DevicePairingFlow {
 /// displaying the user code and polling until approval.
 pub async fn interactive_pairing(server_url: &str) -> Result<DeviceToken> {
     let auth = DeviceAuth::new(server_url);
-    
+
     // Start pairing flow
     let flow = auth.start_pairing().await?;
-    
+
     println!("\n╔══════════════════════════════════════╗");
     println!("║        Device Pairing Code           ║");
     println!("╠══════════════════════════════════════╣");
@@ -235,7 +235,7 @@ pub async fn interactive_pairing(server_url: &str) -> Result<DeviceToken> {
 
     // Poll until approved
     let token = flow.poll_until_complete().await?;
-    
+
     let device_token = DeviceToken {
         token,
         device_id: get_device_id()?,
@@ -243,7 +243,7 @@ pub async fn interactive_pairing(server_url: &str) -> Result<DeviceToken> {
     };
 
     println!("✓ Device paired successfully!");
-    
+
     Ok(device_token)
 }
 
@@ -317,7 +317,7 @@ mod tests {
 
         let json = serde_json::to_string(&token).unwrap();
         let deserialized: DeviceToken = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(token.token, deserialized.token);
         assert_eq!(token.device_id, deserialized.device_id);
     }
