@@ -162,6 +162,9 @@ enum VfsAction {
 enum DaemonCommands {
     /// Start the sync daemon in the background
     Start,
+    /// Run the daemon (internal use)
+    #[command(hide = true)]
+    Run,
     /// Stop the running sync daemon
     Stop,
     /// Check if the daemon is running
@@ -186,9 +189,61 @@ enum FilterAction {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
+    
+    // Handle daemon start specially - must be done before tokio runtime
+    // because daemonize forks and forking from async context causes issues
+    if let Commands::Daemon { command: DaemonCommands::Start } = &cli.command {
+        return run_daemon_start();
+    }
+    
+    // Run the async main for all other commands
+    tokio::runtime::Runtime::new()?.block_on(async_main(cli))
+}
+
+fn run_daemon_start() -> Result<()> {
+    use std::process::Command;
+    
+    let app_data_dir = PathManager::get_app_data_dir()?;
+    let daemon_handle = DaemonHandle::new(app_data_dir.clone());
+    
+    // Check if already running
+    if daemon_handle.is_running() {
+        if let Some(pid) = daemon_handle.get_pid() {
+            println!("Daemon is already running (PID: {})", pid);
+        } else {
+            println!("Daemon is already running");
+        }
+        return Ok(());
+    }
+    
+    // Cleanup stale files
+    daemon_handle.cleanup_stale()?;
+    
+    println!("Starting RustShare daemon...");
+    
+    // Spawn daemon as detached process instead of using daemonize
+    // This avoids the tokio runtime fork issues
+    let log_path = app_data_dir.join("daemon.log");
+    std::fs::create_dir_all(&app_data_dir)?;
+    
+    let child = Command::new(std::env::current_exe()?)
+        .arg("daemon")
+        .arg("run")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::fs::File::create(&log_path)?)
+        .stderr(std::fs::File::create(&log_path)?)
+        .spawn()?;
+    
+    // Write PID file
+    std::fs::write(daemon_handle.pid_file(), child.id().to_string())?;
+    
+    println!("Daemon started successfully (PID: {})", child.id());
+    Ok(())
+}
+
+async fn async_main(cli: Cli) -> Result<()> {
     let Cli {
         workspace,
         db_name,
@@ -400,46 +455,14 @@ async fn main() -> Result<()> {
 
             match command {
                 DaemonCommands::Start => {
-                    // Check if already running
-                    if daemon_handle.is_running() {
-                        if let Some(pid) = daemon_handle.get_pid() {
-                            println!("Daemon is already running (PID: {})", pid);
-                        } else {
-                            println!("Daemon is already running");
-                        }
-                        return Ok(());
-                    }
-
-                    // Cleanup stale files
-                    daemon_handle.cleanup_stale()?;
-
-                    // Fork to background using daemonize
-                    println!("Starting RustShare daemon...");
-
-                    let log_path = app_data_dir.join("daemon.log");
-                    std::fs::create_dir_all(&app_data_dir)?;
-
-                    let daemonize = daemonize::Daemonize::new()
-                        .pid_file(daemon_handle.pid_file())
-                        .working_directory(&app_data_dir)
-                        .stdout(std::fs::File::create(&log_path)?)
-                        .stderr(std::fs::File::create(&log_path)?);
-
-                    match daemonize.start() {
-                        Ok(_) => {
-                            // In daemon process - write PID and start sync core
-                            daemon_handle.write_pid()?;
-
-                            // Run the daemon with proper shutdown handling
-                            let rt = tokio::runtime::Runtime::new()?;
-                            rt.block_on(run_daemon(core, daemon_handle))?;
-                        }
-                        Err(e) => {
-                            return Err(anyhow!("Failed to daemonize: {}", e));
-                        }
-                    }
-
-                    println!("Daemon started successfully");
+                    // Handled in main() before tokio runtime
+                    unreachable!("Start command should be handled in main()");
+                }
+                DaemonCommands::Run => {
+                    // Internal command: actually run the daemon
+                    // This is spawned as a child process by the Start command
+                    daemon_handle.write_pid()?;
+                    run_daemon(core, daemon_handle).await?;
                 }
                 DaemonCommands::Stop => {
                     if !daemon_handle.is_running() {
@@ -559,19 +582,14 @@ where
 
 /// Notify the daemon about a configuration change for a specific root
 async fn run_daemon(core: SyncCore, handle: DaemonHandle) -> anyhow::Result<()> {
-    // Set up shutdown signal handling
-    let shutdown = tokio::signal::ctrl_c();
+    // Start the sync core (spawns background tasks)
+    core.start().await?;
+    tracing::info!("Sync core started, daemon is running");
 
-    tokio::select! {
-        result = core.start() => {
-            if let Err(e) = result {
-                tracing::error!("Sync core error: {}", e);
-            }
-        }
-        _ = shutdown => {
-            tracing::info!("Received shutdown signal");
-        }
-    }
+    // Wait for shutdown signal
+    let shutdown = tokio::signal::ctrl_c();
+    shutdown.await;
+    tracing::info!("Received shutdown signal");
 
     // Cleanup
     handle.remove_pid()?;

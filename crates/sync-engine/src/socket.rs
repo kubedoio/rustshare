@@ -538,7 +538,7 @@ impl SocketClient {
 
     /// Perform a health check ping
     pub async fn ping(&mut self) -> Result<bool> {
-        let request = RpcRequest::new("ping", None);
+        let request = RpcRequest::new("daemon.ping", None);
 
         match self.call(&request).await {
             Ok(response) => Ok(response.is_success()),
