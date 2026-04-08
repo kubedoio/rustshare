@@ -225,6 +225,73 @@ impl Config {
     }
 }
 
+/// Update parameters for a sync folder
+#[derive(Debug, Default)]
+pub struct FolderUpdate {
+    pub local_path: Option<PathBuf>,
+    pub enabled: Option<bool>,
+    pub direction: Option<SyncDirection>,
+    pub add_ignore_patterns: Vec<String>,
+    pub remove_ignore_patterns: Vec<String>,
+    pub clear_ignores: bool,
+}
+
+impl Config {
+    /// Update a sync folder with the given changes
+    /// 
+    /// Returns true if the folder was found and updated, false otherwise.
+    pub fn update_sync_folder(&mut self, folder_id: uuid::Uuid, updates: FolderUpdate) -> Result<bool> {
+        let Some(folder) = self.sync_folders.iter_mut().find(|f| f.folder_id == folder_id) else {
+            return Ok(false);
+        };
+
+        // Apply basic field updates
+        if let Some(local_path) = updates.local_path {
+            folder.local_path = local_path;
+        }
+        if let Some(enabled) = updates.enabled {
+            folder.enabled = enabled;
+        }
+        if let Some(direction) = updates.direction {
+            folder.direction = direction;
+        }
+
+        // Handle ignore patterns
+        if updates.clear_ignores {
+            folder.ignore_patterns = default_ignore_patterns();
+        } else {
+            // Remove patterns first
+            if !updates.remove_ignore_patterns.is_empty() {
+                folder.ignore_patterns.retain(|p| !updates.remove_ignore_patterns.contains(p));
+            }
+            // Then add new patterns (avoiding duplicates)
+            for pattern in updates.add_ignore_patterns {
+                if !folder.ignore_patterns.contains(&pattern) {
+                    folder.ignore_patterns.push(pattern);
+                }
+            }
+        }
+
+        self.save()?;
+        Ok(true)
+    }
+
+    /// Convenience method to enable or disable a sync folder
+    /// 
+    /// Returns true if the folder was found and updated, false otherwise.
+    pub fn set_folder_enabled(&mut self, folder_id: uuid::Uuid, enabled: bool) -> Result<bool> {
+        self.update_sync_folder(folder_id, FolderUpdate {
+            enabled: Some(enabled),
+            ..FolderUpdate::default()
+        })
+    }
+
+    /// Get a reference to a sync folder configuration by ID
+    pub fn get_sync_folder(&self, folder_id: uuid::Uuid) -> Option<&SyncFolderConfig> {
+        self.sync_folders.iter().find(|f| f.folder_id == folder_id)
+    }
+}
+
 /// Default ignore patterns (similar to .gitignore)
 fn default_ignore_patterns() -> Vec<String> {
     vec![
