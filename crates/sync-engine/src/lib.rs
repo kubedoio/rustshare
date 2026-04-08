@@ -3,12 +3,14 @@ pub mod client;
 pub mod planner;
 pub mod worker;
 pub mod socket;
+pub mod daemon;
 
 pub use manager::SyncManager;
 pub use client::ApiClient;
 pub use sync_domain::{SyncStatus, SyncRoot};
 pub use client_state::Database;
 pub use socket::{SocketServer, SocketClient, RpcRequest, RpcResponse};
+pub use daemon::{DaemonHandle, stop_daemon, wait_for_stop};
 use anyhow::Result;
 use std::path::PathBuf;
 
