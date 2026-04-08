@@ -337,8 +337,8 @@ impl SyncManager {
     /// 
     /// State transitions: Idle → Scanning → Planning → Executing → Idle
     pub async fn run_full_sync(&self) -> Result<()> {
-        let root_id = self.sync_root_id
-            .context("No sync root configured")?;
+        // If a specific root is configured, use it; otherwise we'll iterate all roots
+        let specific_root = self.sync_root_id;
 
         // Only one sync at a time - check and transition to Scanning
         {
