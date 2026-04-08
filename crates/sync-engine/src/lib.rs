@@ -36,7 +36,7 @@ impl SyncCore {
         }
     }
 
-    pub async fn start(&self) -> Result<()> {
+    pub async fn start(&mut self) -> Result<()> {
         self.manager
             .start_socket_server(self.socket_path.clone())
             .await?;
