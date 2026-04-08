@@ -302,13 +302,22 @@ async fn async_main(cli: Cli) -> Result<()> {
                 remote_path,
                 local_path,
             } => {
+                let root_id = Uuid::new_v4();
                 let root = SyncRoot {
-                    id: Uuid::new_v4(),
-                    remote_path,
-                    local_path: PathBuf::from(local_path),
+                    id: root_id,
+                    remote_path: remote_path.clone(),
+                    local_path: PathBuf::from(&local_path),
                 };
+                
+                // Register in database
                 core.register_root(root).await?;
-                println!("✓ Registered sync root");
+                
+                // Also add to config.toml for persistence
+                let mut config = Config::load()?;
+                let local_path_buf = PathBuf::from(local_path);
+                config.add_sync_folder(root_id, local_path_buf)?;
+                
+                println!("✓ Registered sync root {}", root_id);
             }
             SyncAction::List => {
                 let roots = core.manager.database().lock().await.get_sync_roots()?;
@@ -339,22 +348,23 @@ async fn async_main(cli: Cli) -> Result<()> {
             }
             SyncAction::Remove { root_id } => {
                 // Remove from SQLite database
-                {
+                let db_removed = {
                     let db_arc = core.manager.database();
                     let db = db_arc.lock().await;
-                    db.remove_sync_root(root_id)?;
-                }
+                    db.remove_sync_root(root_id)?
+                };
 
                 // Remove from config.toml
                 let mut config = Config::load()?;
-                let removed = config.remove_sync_folder(root_id)?;
+                let config_removed = config.remove_sync_folder(root_id)?;
 
-                if removed {
+                // Success if removed from either source
+                if db_removed || config_removed {
                     println!("✓ Removed sync root {}", root_id);
                     // Notify daemon if running
                     notify_daemon_config_change(&app_data_dir, root_id).await?;
                 } else {
-                    println!("Sync root {} not found in config", root_id);
+                    println!("Sync root {} not found", root_id);
                 }
             }
             SyncAction::Update {
