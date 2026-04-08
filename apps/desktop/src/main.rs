@@ -222,7 +222,8 @@ async fn main() -> Result<()> {
         client.set_token(token);
     }
 
-    let core = SyncCore::new(db, client, workspace.clone());
+    let socket_path = app_data_dir.join("daemon.sock");
+    let core = SyncCore::new(db, client, workspace.clone(), socket_path);
 
     match command {
         Commands::Login { token } => {
@@ -530,6 +531,31 @@ where
 }
 
 /// Notify the daemon about a configuration change for a specific root
+async fn run_daemon(core: SyncCore, handle: DaemonHandle) -> anyhow::Result<()> {
+    // Set up shutdown signal handling
+    let shutdown = tokio::signal::ctrl_c();
+    
+    tokio::select! {
+        result = core.start() => {
+            if let Err(e) = result {
+                tracing::error!("Sync core error: {}", e);
+            }
+        }
+        _ = shutdown => {
+            tracing::info!("Received shutdown signal");
+        }
+    }
+    
+    // Cleanup
+    handle.remove_pid()?;
+    if handle.socket_path().exists() {
+        std::fs::remove_file(handle.socket_path()).ok();
+    }
+    
+    tracing::info!("Daemon shutdown complete");
+    Ok(())
+}
+
 async fn notify_daemon_config_change(app_data_dir: &PathBuf, root_id: Uuid) -> Result<()> {
     use sync_engine::SocketClient;
     
