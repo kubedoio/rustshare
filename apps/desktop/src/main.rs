@@ -9,7 +9,7 @@ use tracing_subscriber::FmtSubscriber;
 use uuid::Uuid;
 
 use rustshare_desktop::api::auth::{interactive_pairing, DeviceToken};
-// Config imports available for future use: Config, FolderUpdate, SyncDirection
+use rustshare_desktop::config::{Config, FolderUpdate, SyncDirection};
 use sync_engine::{SyncCore, ApiClient, Database, SyncRoot, SocketClient, DaemonHandle, stop_daemon, wait_for_stop};
 use platform::{desktop_token_store, PathManager, get_device_id};
 
@@ -61,6 +61,24 @@ enum Commands {
     Status,
 }
 
+/// CLI argument for sync direction
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum DirectionArg {
+    Bidir,
+    Up,
+    Down,
+}
+
+impl From<DirectionArg> for SyncDirection {
+    fn from(arg: DirectionArg) -> Self {
+        match arg {
+            DirectionArg::Bidir => SyncDirection::Bidirectional,
+            DirectionArg::Up => SyncDirection::UploadOnly,
+            DirectionArg::Down => SyncDirection::DownloadOnly,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum SyncAction {
     /// Add a remote root to sync locally
@@ -72,6 +90,41 @@ enum SyncAction {
     },
     /// List all configured roots
     List,
+    /// Remove a sync root
+    Remove {
+        /// Root ID (UUID)
+        root_id: Uuid,
+    },
+    /// Update a sync root configuration
+    Update {
+        /// Root ID (UUID)
+        root_id: Uuid,
+        /// New local path
+        #[arg(long)]
+        local_path: Option<String>,
+        /// Sync direction
+        #[arg(long, value_enum)]
+        direction: Option<DirectionArg>,
+        /// Add ignore pattern (can be specified multiple times)
+        #[arg(long)]
+        ignore_pattern: Vec<String>,
+        /// Remove ignore pattern (can be specified multiple times)
+        #[arg(long)]
+        remove_ignore: Vec<String>,
+        /// Clear all ignore patterns and reset to defaults
+        #[arg(long)]
+        clear_ignores: bool,
+    },
+    /// Enable a sync root
+    Enable {
+        /// Root ID (UUID)
+        root_id: Uuid,
+    },
+    /// Disable a sync root
+    Disable {
+        /// Root ID (UUID)
+        root_id: Uuid,
+    },
     /// Manage selective sync filters
     Filter {
         #[command(subcommand)]
@@ -192,13 +245,88 @@ async fn main() -> Result<()> {
             }
             SyncAction::List => {
                 let roots = core.manager.database().lock().await.get_sync_roots()?;
+                let config = Config::load()?;
                 if roots.is_empty() {
                     println!("No sync roots configured.");
                 } else {
                     println!("Configured Sync Roots:");
                     for root in roots {
-                        println!("- [{}] {} (Remote: {})", root.id, root.local_path.display(), root.remote_path);
+                        let enabled = config.get_sync_folder(root.id)
+                            .map(|f| if f.enabled { "enabled" } else { "disabled" })
+                            .unwrap_or("unknown");
+                        let direction = config.get_sync_folder(root.id)
+                            .map(|f| format!("{:?}", f.direction))
+                            .unwrap_or_else(|| "Bidirectional".to_string());
+                        println!("- [{}] {} (Remote: {}) [{}] direction={}", 
+                            root.id, root.local_path.display(), root.remote_path, enabled, direction);
                     }
+                }
+            }
+            SyncAction::Remove { root_id } => {
+                // Remove from SQLite database
+                {
+                    let db_arc = core.manager.database();
+                    let db = db_arc.lock().await;
+                    db.remove_sync_root(root_id)?;
+                }
+                
+                // Remove from config.toml
+                let mut config = Config::load()?;
+                let removed = config.remove_sync_folder(root_id)?;
+                
+                if removed {
+                    println!("✓ Removed sync root {}", root_id);
+                    // Notify daemon if running
+                    notify_daemon_config_change(&app_data_dir, root_id).await?;
+                } else {
+                    println!("Sync root {} not found in config", root_id);
+                }
+            }
+            SyncAction::Update { root_id, local_path, direction, ignore_pattern, remove_ignore, clear_ignores } => {
+                // Build FolderUpdate from CLI args
+                let updates = FolderUpdate {
+                    local_path: local_path.map(PathBuf::from),
+                    enabled: None,
+                    direction: direction.map(|d| d.into()),
+                    add_ignore_patterns: ignore_pattern,
+                    remove_ignore_patterns: remove_ignore,
+                    clear_ignores,
+                };
+                
+                // Update config.toml
+                let mut config = Config::load()?;
+                let updated = config.update_sync_folder(root_id, updates)?;
+                
+                if updated {
+                    println!("✓ Updated sync root {}", root_id);
+                    // Notify daemon if running
+                    notify_daemon_config_change(&app_data_dir, root_id).await?;
+                } else {
+                    println!("Sync root {} not found", root_id);
+                }
+            }
+            SyncAction::Enable { root_id } => {
+                let mut config = Config::load()?;
+                let updated = config.set_folder_enabled(root_id, true)?;
+                
+                if updated {
+                    println!("✓ Enabled sync root {}", root_id);
+                    // Notify daemon if running
+                    notify_daemon_config_change(&app_data_dir, root_id).await?;
+                } else {
+                    println!("Sync root {} not found", root_id);
+                }
+            }
+            SyncAction::Disable { root_id } => {
+                let mut config = Config::load()?;
+                let updated = config.set_folder_enabled(root_id, false)?;
+                
+                if updated {
+                    println!("✓ Disabled sync root {}", root_id);
+                    // Notify daemon if running
+                    notify_daemon_config_change(&app_data_dir, root_id).await?;
+                } else {
+                    println!("Sync root {} not found", root_id);
                 }
             }
             SyncAction::Filter { action } => match action {
@@ -399,6 +527,32 @@ where
         }),
         None => pairing_flow(server).await,
     }
+}
+
+/// Notify the daemon about a configuration change for a specific root
+async fn notify_daemon_config_change(app_data_dir: &PathBuf, root_id: Uuid) -> Result<()> {
+    use sync_engine::SocketClient;
+    
+    let daemon_handle = DaemonHandle::new(app_data_dir.clone());
+    
+    if daemon_handle.is_running() {
+        let mut client = SocketClient::new(daemon_handle.socket_path());
+        match client.connect().await {
+            Ok(_) => {
+                // Send a config reload notification for the specific root
+                match client.notify("config.reload", Some(serde_json::json!({"root_id": root_id}))).await {
+                    Ok(_) => tracing::info!("Notified daemon about config change for root {}", root_id),
+                    Err(e) => tracing::warn!("Failed to notify daemon: {}", e),
+                }
+                let _ = client.disconnect().await;
+            }
+            Err(e) => {
+                tracing::warn!("Could not connect to daemon socket: {}", e);
+            }
+        }
+    }
+    
+    Ok(())
 }
 
 #[cfg(test)]

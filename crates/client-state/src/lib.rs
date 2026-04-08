@@ -116,6 +116,22 @@ impl Database {
         Ok(result)
     }
 
+    pub fn remove_sync_root(&self, root_id: Uuid) -> Result<bool> {
+        // Delete associated filters first
+        self.conn.execute(
+            "DELETE FROM sync_filters WHERE root_id = ?",
+            params![root_id.as_bytes()],
+        )?;
+        
+        // Delete the sync root
+        let deleted = self.conn.execute(
+            "DELETE FROM sync_roots WHERE id = ?",
+            params![root_id.as_bytes()],
+        )?;
+        
+        Ok(deleted > 0)
+    }
+
     pub fn update_inventory(&self, entry: &LocalEntry) -> Result<()> {
         let entry_type = match entry.entry_type {
             EntryType::File => "file",
