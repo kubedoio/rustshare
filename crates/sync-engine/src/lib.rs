@@ -16,16 +16,17 @@ use std::path::PathBuf;
 
 pub struct SyncCore {
     pub manager: SyncManager,
+    socket_path: PathBuf,
 }
 
 impl SyncCore {
-    pub fn new(database: Database, client: ApiClient, workspace_root: PathBuf) -> Self {
+    pub fn new(database: Database, client: ApiClient, workspace_root: PathBuf, socket_path: PathBuf) -> Self {
         let manager = SyncManager::new(database, client, workspace_root);
-        Self { manager }
+        Self { manager, socket_path }
     }
 
     pub async fn start(&self) -> Result<()> {
-        self.manager.start_rpc_server(4242).await?;
+        self.manager.start_socket_server(self.socket_path.clone()).await?;
         self.manager.start().await
     }
 
