@@ -2,6 +2,7 @@ pub mod client;
 pub mod daemon;
 pub mod manager;
 pub mod planner;
+pub mod retry;
 pub mod scanner;
 pub mod socket;
 pub mod worker;
