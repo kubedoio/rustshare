@@ -30,6 +30,10 @@ uuid = { workspace = true }
 directories = { workspace = true }
 dirs = { workspace = true }
 
+# Process management
+daemonize = { workspace = true }
+nix = { workspace = true }
+
 # App specific
 tauri = { version = "2.2", optional = true } # Placeholder for recommended shell
 
