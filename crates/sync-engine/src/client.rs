@@ -205,6 +205,7 @@ fn default_chunk_size() -> u64 {
 pub struct CreateUploadSessionResponse {
     pub session_id: Uuid,
     pub total_chunks: u32,
+    #[serde(default = "default_chunk_size")]
     pub chunk_size: u64,
     pub expires_at: String,
 }
