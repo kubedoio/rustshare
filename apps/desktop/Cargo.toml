@@ -36,6 +36,8 @@ nix = { workspace = true }
 
 # App specific
 tauri = { version = "2.2", optional = true } # Placeholder for recommended shell
+toml = { workspace = true }
+humantime-serde = { workspace = true }
 
 [features]
 default = []

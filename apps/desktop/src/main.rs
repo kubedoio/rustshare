@@ -3,12 +3,14 @@ use clap::{Parser, Subcommand};
 use std::future::Future;
 use std::pin::Pin;
 use std::path::PathBuf;
+use std::fs;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 use uuid::Uuid;
 
 use rustshare_desktop::api::auth::{interactive_pairing, DeviceToken};
-use sync_engine::{SyncCore, ApiClient, Database, SyncRoot};
+// Config imports available for future use: Config, FolderUpdate, SyncDirection
+use sync_engine::{SyncCore, ApiClient, Database, SyncRoot, SocketClient, DaemonHandle, stop_daemon, wait_for_stop};
 use platform::{desktop_token_store, PathManager, get_device_id};
 
 /// RustShare Desktop Sync Client (Phase 1)
@@ -50,8 +52,11 @@ enum Commands {
         #[command(subcommand)]
         action: SyncAction,
     },
-    /// Run the sync daemon
-    Daemon,
+    /// Manage the sync daemon
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommands,
+    },
     /// Show current status
     Status,
 }
@@ -91,6 +96,18 @@ enum VfsAction {
         /// File path
         path: PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+enum DaemonCommands {
+    /// Start the sync daemon in the background
+    Start,
+    /// Stop the running sync daemon
+    Stop,
+    /// Check if the daemon is running
+    Status,
+    /// Show daemon logs
+    Logs,
 }
 
 #[derive(Subcommand)]
@@ -218,11 +235,134 @@ async fn main() -> Result<()> {
                 }
             },
         },
-        Commands::Daemon => {
-            println!("Starting RustShare Sync Loop for workspace {}...", workspace.display());
-            core.start().await?;
-            tokio::signal::ctrl_c().await?;
-            println!("\nGracefully shutting down...");
+        Commands::Daemon { command } => {
+            let app_data_dir = PathManager::get_app_data_dir()?;
+            let daemon_handle = DaemonHandle::new(app_data_dir.clone());
+            
+            match command {
+                DaemonCommands::Start => {
+                    // Check if already running
+                    if daemon_handle.is_running() {
+                        if let Some(pid) = daemon_handle.get_pid() {
+                            println!("Daemon is already running (PID: {})", pid);
+                        } else {
+                            println!("Daemon is already running");
+                        }
+                        return Ok(());
+                    }
+                    
+                    // Cleanup stale files
+                    daemon_handle.cleanup_stale()?;
+                    
+                    // Fork to background using daemonize
+                    println!("Starting RustShare daemon...");
+                    
+                    let log_path = app_data_dir.join("daemon.log");
+                    std::fs::create_dir_all(&app_data_dir)?;
+                    
+                    let daemonize = daemonize::Daemonize::new()
+                        .pid_file(daemon_handle.pid_file())
+                        .working_directory(&app_data_dir)
+                        .stdout(std::fs::File::create(&log_path)?)
+                        .stderr(std::fs::File::create(&log_path)?);
+                    
+                    match daemonize.start() {
+                        Ok(_) => {
+                            // In daemon process - write PID and start sync core
+                            daemon_handle.write_pid()?;
+                            
+                            // Run the daemon
+                            let rt = tokio::runtime::Runtime::new()?;
+                            rt.block_on(async {
+                                if let Err(e) = core.start().await {
+                                    eprintln!("Daemon error: {}", e);
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            return Err(anyhow!("Failed to daemonize: {}", e));
+                        }
+                    }
+                    
+                    println!("Daemon started successfully");
+                }
+                DaemonCommands::Stop => {
+                    if !daemon_handle.is_running() {
+                        println!("Daemon is not running");
+                        // Cleanup stale files if they exist
+                        let _ = daemon_handle.cleanup_stale();
+                        return Ok(());
+                    }
+                    
+                    let pid = daemon_handle.get_pid()
+                        .ok_or_else(|| anyhow!("Could not get daemon PID"))?;
+                    
+                    println!("Stopping daemon (PID: {})...", pid);
+                    
+                    // Send SIGTERM
+                    stop_daemon(daemon_handle.pid_file())?;
+                    
+                    // Wait for stop with timeout
+                    match wait_for_stop(daemon_handle.pid_file(), 10).await {
+                        Ok(_) => {
+                            println!("Daemon stopped successfully");
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: {}", e);
+                            println!("Forcing cleanup...");
+                            let _ = daemon_handle.cleanup_stale();
+                        }
+                    }
+                }
+                DaemonCommands::Status => {
+                    if daemon_handle.is_running() {
+                        if let Some(pid) = daemon_handle.get_pid() {
+                            println!("Daemon is running (PID: {})", pid);
+                            
+                            // Try to ping daemon via socket
+                            let mut client = SocketClient::new(daemon_handle.socket_path());
+                            match client.connect().await {
+                                Ok(_) => {
+                                    match client.ping().await {
+                                        Ok(true) => println!("Daemon is responsive"),
+                                        Ok(false) => println!("Daemon ping failed"),
+                                        Err(e) => println!("Daemon ping error: {}", e),
+                                    }
+                                    let _ = client.disconnect().await;
+                                }
+                                Err(e) => {
+                                    println!("Could not connect to daemon socket: {}", e);
+                                }
+                            }
+                        } else {
+                            println!("Daemon PID file exists but could not read PID");
+                        }
+                    } else {
+                        println!("Daemon is not running");
+                        // Cleanup stale files if they exist
+                        let _ = daemon_handle.cleanup_stale();
+                    }
+                }
+                DaemonCommands::Logs => {
+                    let log_path = app_data_dir.join("daemon.log");
+                    if log_path.exists() {
+                        match fs::read_to_string(&log_path) {
+                            Ok(content) => {
+                                if content.is_empty() {
+                                    println!("Log file is empty");
+                                } else {
+                                    print!("{}", content);
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to read log file: {}", e);
+                            }
+                        }
+                    } else {
+                        println!("No log file found at {}", log_path.display());
+                    }
+                }
+            }
         }
         Commands::Status => {
             let status = core.get_status();

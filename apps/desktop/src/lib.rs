@@ -7,6 +7,7 @@
 //! - Journal-based crash recovery
 
 pub mod api;
+pub mod config;
 // pub mod db;
 // pub mod fs;
 // pub mod sync;

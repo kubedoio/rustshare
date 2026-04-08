@@ -88,6 +88,9 @@ keyring = "3.6"
 daemonize = "0.5"
 nix = { version = "0.29", features = ["process", "signal"] }
 
+# Time serialization
+humantime-serde = "1.1"
+
 # Testing
 mockall = "0.12"
 tempfile = "3.10"
