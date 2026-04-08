@@ -30,6 +30,8 @@ pathdiff = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 nix = { workspace = true }
+sha2 = "0.10"
+walkdir = "2.5"
 
 [dev-dependencies]
 test-support = { path = "../test-support" }
