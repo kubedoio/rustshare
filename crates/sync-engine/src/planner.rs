@@ -1,7 +1,6 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use sync_domain::{LocalEntry, RemoteEntry, SyncEvent};
-use uuid::Uuid;
 
 pub struct Planner;
 

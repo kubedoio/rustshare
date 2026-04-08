@@ -1,9 +1,9 @@
 use rusqlite::{params, Connection, Transaction};
 use sync_domain::{LocalEntry, SyncRoot, EntryType, HydrationState};
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
-use chrono::{DateTime, Utc, TimeZone};
+use chrono::{Utc, TimeZone};
 
 pub struct Database {
     conn: Connection,
@@ -18,7 +18,7 @@ impl Database {
 
     fn init(conn: &Connection) -> Result<()> {
         // Ensure WAL mode for better concurrency
-        conn.execute("PRAGMA journal_mode = WAL", [])?;
+        let _: String = conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS sync_roots (
@@ -86,7 +86,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn transaction(&mut self) -> Result<Transaction> {
+    pub fn transaction(&mut self) -> Result<Transaction<'_>> {
         Ok(self.conn.transaction()?)
     }
 

@@ -2,6 +2,10 @@
 
 This document provides instructions for building production-ready binary packages for RustShare Desktop on macOS and Windows.
 
+For the current macOS installation path, including first-run setup and the repo's present limitations, see [macOS client installation](./macos-client-installation.md).
+
+The current desktop login flow is pairing-first: `rustshare-desktop login` prints a short-lived approval URL, and the user approves that device from an already authenticated RustShare web UI session.
+
 ## 1. Prerequisites
 
 ### Common Dependencies

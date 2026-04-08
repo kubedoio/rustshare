@@ -22,6 +22,8 @@ export interface DeviceRequestResponse {
 	user_code: string;
 	device_code: string;
 	expires_in: number;
+	verification_uri: string;
+	verification_uri_complete: string;
 }
 
 export type DevicePollResponse =
@@ -69,6 +71,12 @@ export async function pollDevicePairing(device_code: string): Promise<DevicePoll
 
 export async function approveDevicePairing(user_code: string): Promise<{ device_name: string }> {
 	return apiClient.post<{ device_name: string }>('/auth/device/approve', { user_code });
+}
+
+export async function approveDevicePairingByDeviceCode(
+	device_code: string
+): Promise<{ device_name: string }> {
+	return apiClient.post<{ device_name: string }>('/auth/device/approve', { device_code });
 }
 
 export interface DeviceQrInfoResponse {

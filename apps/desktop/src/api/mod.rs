@@ -7,8 +7,5 @@
 //! - WebSocket real-time sync
 
 pub mod auth;
-pub mod client;
-pub mod upload;
 
-pub use client::{ApiClient, ApiError};
 pub use auth::{DeviceAuth, DeviceToken};

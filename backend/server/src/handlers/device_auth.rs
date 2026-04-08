@@ -17,7 +17,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::time::{Duration, Instant};
-
+use uuid::Uuid;
 
 use crate::handlers::AuthenticatedUser;
 use crate::oidc_runtime::load_oidc_runtime_settings;
@@ -34,6 +34,9 @@ const DEVICE_CODE_LENGTH: usize = 32;
 const TOKEN_LENGTH: usize = 32;
 const POLL_RATE_LIMIT_SECONDS: u64 = 5;
 
+/// Pairing link path used by the frontend approval flow.
+const DEVICE_APPROVAL_PATH: &str = "/device/approve";
+
 /// Response for QR info endpoint
 #[derive(Serialize)]
 pub struct DeviceQrInfoResponse {
@@ -41,32 +44,54 @@ pub struct DeviceQrInfoResponse {
     pub device_pairing_path: String,
 }
 
+/// Supported device approval lookup modes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DeviceApprovalLookup {
+    UserCode(String),
+    DeviceCode(String),
+}
+
+impl DeviceApprovalLookup {
+    fn value(&self) -> &str {
+        match self {
+            Self::UserCode(code) | Self::DeviceCode(code) => code.as_str(),
+        }
+    }
+
+    fn query(&self) -> &'static str {
+        match self {
+            Self::UserCode(_) => {
+                r#"
+            SELECT
+                id,
+                user_id,
+                approved_at IS NOT NULL as is_approved,
+                expires_at < NOW() as is_expired
+            FROM device_pair_requests
+            WHERE UPPER(user_code) = UPPER($1)
+            "#
+            }
+            Self::DeviceCode(_) => {
+                r#"
+            SELECT
+                id,
+                user_id,
+                approved_at IS NOT NULL as is_approved,
+                expires_at < NOW() as is_expired
+            FROM device_pair_requests
+            WHERE device_code = $1
+            "#
+            }
+        }
+    }
+}
+
 /// GET /api/v1/auth/device/qr-info
 /// Returns information needed for QR code generation on the device pairing page
 pub async fn device_qr_info(
     headers: HeaderMap,
 ) -> Result<Json<DeviceQrInfoResponse>, (StatusCode, Json<serde_json::Value>)> {
-    // Extract Host header from request
-    let host = headers
-        .get(axum::http::header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
-
-    // Extract protocol from X-Forwarded-Proto header, fallback to https
-    let protocol = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("https");
-
-    // Construct the instance URL
-    let instance_url = match host {
-        Some(host) => format!("{}://{}", protocol, host),
-        None => {
-            // Fall back to RUSTSHARE_PUBLIC_URL env var or default
-            std::env::var("RUSTSHARE_PUBLIC_URL")
-                .unwrap_or_else(|_| "http://localhost:8080".to_string())
-        }
-    };
+    let instance_url = build_instance_url(&headers);
 
     Ok(Json(DeviceQrInfoResponse {
         instance_url,
@@ -94,7 +119,8 @@ pub enum DevicePollResponse {
 /// Request body for device approval
 #[derive(Deserialize)]
 pub struct DeviceApproveRequest {
-    pub user_code: String,
+    pub user_code: Option<String>,
+    pub device_code: Option<String>,
 }
 
 /// Response for device approval
@@ -109,35 +135,48 @@ pub struct DeviceRequestResponse {
     pub user_code: String,
     pub device_code: String,
     pub expires_in: i64,
+    pub verification_uri: String,
+    pub verification_uri_complete: String,
 }
 
 /// POST /api/v1/auth/device/approve
-/// Approves a device pair request using the user_code
+/// Approves a device pair request using either a user_code or device_code
 pub async fn device_approve(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Json(body): Json<DeviceApproveRequest>,
 ) -> Result<Json<DeviceApproveResponse>, (StatusCode, Json<serde_json::Value>)> {
-    // Look up pair request by user_code (case-insensitive)
-    let row = sqlx::query(
-        r#"
-        SELECT
-            id,
-            user_id,
-            approved_at IS NOT NULL as is_approved,
-            expires_at < NOW() as is_expired
-        FROM device_pair_requests
-        WHERE UPPER(user_code) = UPPER($1)
-        "#,
-    )
-    .bind(&body.user_code)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|e| server_error(format!("Database error: {}", e)))?;
+    let lookup = validate_device_approval_request(&body)?;
+    approve_device_pair_request(&state.db_pool, user_id, lookup).await?;
+
+    // Return device_name - the actual device name is captured at poll time
+    // when the token is created, so we return a placeholder here
+    Ok(Json(DeviceApproveResponse {
+        device_name: "Device".to_string(),
+    }))
+}
+
+async fn fetch_pair_request_for_approval(
+    db_pool: &sqlx::PgPool,
+    lookup: &DeviceApprovalLookup,
+) -> Result<Option<sqlx::postgres::PgRow>, (StatusCode, Json<serde_json::Value>)> {
+    sqlx::query(lookup.query())
+        .bind(lookup.value())
+        .fetch_optional(db_pool)
+        .await
+        .map_err(|e| server_error(format!("Database error: {}", e)))
+}
+
+async fn approve_device_pair_request(
+    db_pool: &sqlx::PgPool,
+    user_id: Uuid,
+    lookup: DeviceApprovalLookup,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let row = fetch_pair_request_for_approval(db_pool, &lookup).await?;
 
     let (id, is_approved, is_expired) = match row {
         Some(row) => {
-            let id: uuid::Uuid = row
+            let id: Uuid = row
                 .try_get("id")
                 .map_err(|e| server_error(format!("Failed to get id: {}", e)))?;
             let is_approved: bool = row.try_get("is_approved").unwrap_or(false);
@@ -152,7 +191,6 @@ pub async fn device_approve(
         }
     };
 
-    // Check if expired
     if is_expired {
         return Err((
             StatusCode::NOT_FOUND,
@@ -160,7 +198,6 @@ pub async fn device_approve(
         ));
     }
 
-    // Check if already approved
     if is_approved {
         return Err((
             StatusCode::CONFLICT,
@@ -168,7 +205,6 @@ pub async fn device_approve(
         ));
     }
 
-    // Update the pair request with user_id and approved_at
     sqlx::query(
         r#"
         UPDATE device_pair_requests
@@ -178,15 +214,96 @@ pub async fn device_approve(
     )
     .bind(user_id)
     .bind(id)
-    .execute(&state.db_pool)
+    .execute(db_pool)
     .await
     .map_err(|e| server_error(format!("Failed to approve pair request: {}", e)))?;
 
-    // Return device_name - the actual device name is captured at poll time
-    // when the token is created, so we return a placeholder here
-    Ok(Json(DeviceApproveResponse {
-        device_name: "Device".to_string(),
-    }))
+    Ok(())
+}
+
+/// Determine how a device approval request should be resolved.
+fn validate_device_approval_request(
+    body: &DeviceApproveRequest,
+) -> Result<DeviceApprovalLookup, (StatusCode, Json<serde_json::Value>)> {
+    match (&body.user_code, &body.device_code) {
+        (Some(user_code), None) if !user_code.trim().is_empty() => {
+            Ok(DeviceApprovalLookup::UserCode(user_code.clone()))
+        }
+        (None, Some(device_code)) if !device_code.trim().is_empty() => {
+            Ok(DeviceApprovalLookup::DeviceCode(device_code.clone()))
+        }
+        (Some(_), Some(_)) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "approve_request_accepts_only_one_identifier"
+            })),
+        )),
+        (None, None) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "approve_request_requires_user_code_or_device_code"
+            })),
+        )),
+        _ => Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "approve_request_identifier_must_not_be_empty"
+            })),
+        )),
+    }
+}
+
+/// Build the public instance URL from request headers.
+fn build_instance_url(headers: &HeaderMap) -> String {
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    let protocol = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("https");
+
+    match host {
+        Some(host) => format!("{}://{}", protocol, host),
+        None => std::env::var("RUSTSHARE_PUBLIC_URL")
+            .unwrap_or_else(|_| "http://localhost:8080".to_string()),
+    }
+}
+
+/// Build the verification and deep-link URLs for device pairing.
+fn build_device_pairing_uris(instance_url: &str, device_code: &str) -> (String, String) {
+    let verification_uri = format!(
+        "{}{}",
+        instance_url.trim_end_matches('/'),
+        DEVICE_APPROVAL_PATH
+    );
+    let verification_uri_complete = format!(
+        "{}?device_code={}",
+        verification_uri,
+        urlencoding::encode(device_code)
+    );
+
+    (verification_uri, verification_uri_complete)
+}
+
+fn build_device_request_response(
+    instance_url: &str,
+    device_code: String,
+    user_code: String,
+    expires_in: i64,
+) -> DeviceRequestResponse {
+    let (verification_uri, verification_uri_complete) =
+        build_device_pairing_uris(instance_url, &device_code);
+
+    DeviceRequestResponse {
+        user_code,
+        device_code,
+        expires_in,
+        verification_uri,
+        verification_uri_complete,
+    }
 }
 
 /// Generate a random user code (8 chars from safe alphabet)
@@ -232,6 +349,7 @@ fn server_error(msg: impl Into<String>) -> (StatusCode, Json<serde_json::Value>)
 /// Generates a new device pair request with user_code and device_code
 pub async fn device_request(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<DeviceRequestResponse>, (StatusCode, Json<serde_json::Value>)> {
     let ttl_seconds = load_oidc_runtime_settings(&state)
         .await
@@ -256,11 +374,13 @@ pub async fn device_request(
     .await
     .map_err(|e| server_error(format!("Failed to create pair request: {}", e)))?;
 
-    Ok(Json(DeviceRequestResponse {
-        user_code,
+    let instance_url = build_instance_url(&headers);
+    Ok(Json(build_device_request_response(
+        &instance_url,
         device_code,
-        expires_in: ttl_seconds_i64,
-    }))
+        user_code,
+        ttl_seconds_i64,
+    )))
 }
 
 /// POST /api/v1/auth/device/poll
@@ -270,12 +390,23 @@ pub async fn device_poll(
     headers: HeaderMap,
     Json(req): Json<DevicePollRequest>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    device_poll_inner(&state.db_pool, &state.poll_rate_limiter, headers, req).await
+}
+
+async fn device_poll_inner(
+    db_pool: &sqlx::PgPool,
+    poll_rate_limiter: &std::sync::Arc<
+        tokio::sync::Mutex<std::collections::HashMap<String, Instant>>,
+    >,
+    headers: HeaderMap,
+    req: DevicePollRequest,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     // Check rate limit
     let now = Instant::now();
     let rate_limit_key = req.device_code.clone();
 
     {
-        let mut rate_limiter = state.poll_rate_limiter.lock().await;
+        let mut rate_limiter = poll_rate_limiter.lock().await;
 
         if let Some(last_request) = rate_limiter.get(&rate_limit_key) {
             let elapsed = now.duration_since(*last_request);
@@ -305,7 +436,7 @@ pub async fn device_poll(
         "#,
     )
     .bind(&req.device_code)
-    .fetch_optional(&state.db_pool)
+    .fetch_optional(db_pool)
     .await
     .map_err(|e| server_error(format!("Database error: {}", e)))?;
 
@@ -327,7 +458,7 @@ pub async fn device_poll(
         // Clean up expired request - best effort
         if let Err(e) = sqlx::query("DELETE FROM device_pair_requests WHERE device_code = $1")
             .bind(&req.device_code)
-            .execute(&state.db_pool)
+            .execute(db_pool)
             .await
         {
             tracing::debug!(device_code = %req.device_code, error = %e, "failed to clean up expired device pair request");
@@ -356,8 +487,7 @@ pub async fn device_poll(
         .to_string();
 
     // Insert token and delete pair request in a transaction
-    let mut tx = state
-        .db_pool
+    let mut tx = db_pool
         .begin()
         .await
         .map_err(|e| server_error(format!("Transaction error: {}", e)))?;
@@ -394,6 +524,7 @@ pub async fn device_poll(
 mod tests {
     use super::*;
     use std::sync::Mutex;
+    use tokio::sync::Mutex as AsyncMutex;
 
     // Static mutex to ensure env var tests run serially
     static ENV_VAR_MUTEX: Mutex<()> = Mutex::new(());
@@ -548,5 +679,342 @@ mod tests {
 
         let response = result.unwrap();
         assert_eq!(response.0.instance_url, "http://localhost:8080");
+    }
+
+    #[test]
+    fn build_device_pairing_uris_uses_approval_path_and_device_code() {
+        let (verification_uri, verification_uri_complete) =
+            build_device_pairing_uris("https://example.com", "device-code-123");
+
+        assert_eq!(verification_uri, "https://example.com/device/approve");
+        assert_eq!(
+            verification_uri_complete,
+            "https://example.com/device/approve?device_code=device-code-123"
+        );
+    }
+
+    #[test]
+    fn build_device_request_response_includes_verification_links() {
+        let response = build_device_request_response(
+            "https://rustshare.example.com",
+            "device-code-123".to_string(),
+            "ABCD1234".to_string(),
+            300,
+        );
+
+        assert_eq!(response.user_code, "ABCD1234");
+        assert_eq!(response.device_code, "device-code-123");
+        assert_eq!(response.expires_in, 300);
+        assert_eq!(
+            response.verification_uri,
+            "https://rustshare.example.com/device/approve"
+        );
+        assert_eq!(
+            response.verification_uri_complete,
+            "https://rustshare.example.com/device/approve?device_code=device-code-123"
+        );
+    }
+
+    #[test]
+    fn validate_device_approval_request_requires_exactly_one_identifier() {
+        let user_code_only = DeviceApproveRequest {
+            user_code: Some("ABCD1234".to_string()),
+            device_code: None,
+        };
+        let user_code_empty = DeviceApproveRequest {
+            user_code: Some("".to_string()),
+            device_code: None,
+        };
+        let device_code_only = DeviceApproveRequest {
+            user_code: None,
+            device_code: Some("device-code-123".to_string()),
+        };
+        let device_code_empty = DeviceApproveRequest {
+            user_code: None,
+            device_code: Some("".to_string()),
+        };
+        let both = DeviceApproveRequest {
+            user_code: Some("ABCD1234".to_string()),
+            device_code: Some("device-code-123".to_string()),
+        };
+        let neither = DeviceApproveRequest {
+            user_code: None,
+            device_code: None,
+        };
+
+        assert!(matches!(
+            validate_device_approval_request(&user_code_only),
+            Ok(DeviceApprovalLookup::UserCode(code)) if code == "ABCD1234"
+        ));
+        assert!(matches!(
+            validate_device_approval_request(&user_code_empty),
+            Err((StatusCode::BAD_REQUEST, _))
+        ));
+        assert!(matches!(
+            validate_device_approval_request(&device_code_only),
+            Ok(DeviceApprovalLookup::DeviceCode(code)) if code == "device-code-123"
+        ));
+        assert!(matches!(
+            validate_device_approval_request(&device_code_empty),
+            Err((StatusCode::BAD_REQUEST, _))
+        ));
+        assert!(matches!(
+            validate_device_approval_request(&both),
+            Err((StatusCode::BAD_REQUEST, _))
+        ));
+        assert!(matches!(
+            validate_device_approval_request(&neither),
+            Err((StatusCode::BAD_REQUEST, _))
+        ));
+    }
+
+    #[test]
+    fn device_approval_lookup_query_switches_on_lookup_mode() {
+        let user_code_lookup = DeviceApprovalLookup::UserCode("ABCD1234".to_string());
+        let device_code_lookup = DeviceApprovalLookup::DeviceCode("device-code-123".to_string());
+
+        assert!(user_code_lookup
+            .query()
+            .contains("UPPER(user_code) = UPPER($1)"));
+        assert!(device_code_lookup
+            .query()
+            .contains("WHERE device_code = $1"));
+    }
+
+    async fn test_db_pool() -> sqlx::PgPool {
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:changeme@localhost:5432/rustshare".to_string()
+        });
+
+        sqlx::PgPool::connect(&database_url)
+            .await
+            .expect("Failed to connect to test database")
+    }
+
+    async fn insert_pair_request(
+        pool: &sqlx::PgPool,
+        device_code: &str,
+        user_code: &str,
+        user_id: Option<Uuid>,
+        expires_at: chrono::DateTime<chrono::Utc>,
+        approved_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) {
+        sqlx::query(
+            r#"
+            INSERT INTO device_pair_requests (id, device_code, user_code, user_id, expires_at, approved_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(device_code)
+        .bind(user_code)
+        .bind(user_id)
+        .bind(expires_at)
+        .bind(approved_at)
+        .execute(pool)
+        .await
+        .expect("Failed to insert test pair request");
+    }
+
+    async fn insert_test_user(pool: &sqlx::PgPool, user_id: Uuid) {
+        let suffix = user_id.as_simple().to_string();
+        sqlx::query(
+            r#"
+            INSERT INTO users (
+                id,
+                username,
+                email,
+                password_hash,
+                display_name,
+                is_admin,
+                storage_quota,
+                tenant_id
+            )
+            VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7)
+            "#,
+        )
+        .bind(user_id)
+        .bind(format!("device_pairing_test_{}", suffix))
+        .bind(format!("device_pairing_test_{}@example.com", suffix))
+        .bind("test-password-hash")
+        .bind("Device Pairing Test")
+        .bind(10_737_418_240_i64)
+        .bind(Uuid::nil())
+        .execute(pool)
+        .await
+        .expect("Failed to insert test user");
+    }
+
+    async fn cleanup_test_user(pool: &sqlx::PgPool, user_id: Uuid) {
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user_id)
+            .execute(pool)
+            .await
+            .ok();
+    }
+
+    async fn device_token_count(pool: &sqlx::PgPool, user_id: Uuid) -> i64 {
+        sqlx::query(
+            r#"
+            SELECT COUNT(*)::bigint AS count
+            FROM device_tokens
+            WHERE user_id = $1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .expect("Failed to count device tokens")
+        .get::<i64, _>("count")
+    }
+
+    async fn pair_request_count(pool: &sqlx::PgPool, device_code: &str) -> i64 {
+        sqlx::query(
+            r#"
+            SELECT COUNT(*)::bigint AS count
+            FROM device_pair_requests
+            WHERE device_code = $1
+            "#,
+        )
+        .bind(device_code)
+        .fetch_one(pool)
+        .await
+        .expect("Failed to count device pair requests")
+        .get::<i64, _>("count")
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn expired_device_code_cannot_be_approved() {
+        let pool = test_db_pool().await;
+        let device_code = "expired-device-code-123";
+        let user_code = "EXPIRED12";
+        let user_id = Uuid::new_v4();
+
+        insert_test_user(&pool, user_id).await;
+
+        insert_pair_request(
+            &pool,
+            device_code,
+            user_code,
+            Some(user_id),
+            chrono::Utc::now() - chrono::Duration::minutes(1),
+            None,
+        )
+        .await;
+
+        let result = approve_device_pair_request(
+            &pool,
+            user_id,
+            DeviceApprovalLookup::DeviceCode(device_code.to_string()),
+        )
+        .await;
+
+        assert!(matches!(result, Err((StatusCode::NOT_FOUND, _))));
+        assert_eq!(device_token_count(&pool, user_id).await, 0);
+
+        sqlx::query("DELETE FROM device_pair_requests WHERE device_code = $1")
+            .bind(device_code)
+            .execute(&pool)
+            .await
+            .ok();
+        cleanup_test_user(&pool, user_id).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn approval_does_not_mint_token_until_poll() {
+        let pool = test_db_pool().await;
+        let device_code = "poll-device-code-123";
+        let user_code = "POLL1234";
+        let user_id = Uuid::new_v4();
+        let rate_limiter = std::sync::Arc::new(AsyncMutex::new(std::collections::HashMap::new()));
+
+        insert_test_user(&pool, user_id).await;
+
+        insert_pair_request(
+            &pool,
+            device_code,
+            user_code,
+            None,
+            chrono::Utc::now() + chrono::Duration::minutes(5),
+            None,
+        )
+        .await;
+
+        approve_device_pair_request(
+            &pool,
+            user_id,
+            DeviceApprovalLookup::DeviceCode(device_code.to_string()),
+        )
+        .await
+        .expect("approval should succeed");
+
+        assert_eq!(device_token_count(&pool, user_id).await, 0);
+
+        let response = device_poll_inner(
+            &pool,
+            &rate_limiter,
+            HeaderMap::new(),
+            DevicePollRequest {
+                device_code: device_code.to_string(),
+            },
+        )
+        .await
+        .expect("poll should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        assert_eq!(device_token_count(&pool, user_id).await, 1);
+        assert_eq!(pair_request_count(&pool, device_code).await, 0);
+
+        sqlx::query("DELETE FROM device_tokens WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&pool)
+            .await
+            .ok();
+        cleanup_test_user(&pool, user_id).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn approved_pair_request_is_removed_after_poll_completion() {
+        let pool = test_db_pool().await;
+        let device_code = "cleanup-device-code-123";
+        let user_code = "CLEANUP1";
+        let user_id = Uuid::new_v4();
+        let rate_limiter = std::sync::Arc::new(AsyncMutex::new(std::collections::HashMap::new()));
+
+        insert_test_user(&pool, user_id).await;
+
+        insert_pair_request(
+            &pool,
+            device_code,
+            user_code,
+            Some(user_id),
+            chrono::Utc::now() + chrono::Duration::minutes(5),
+            Some(chrono::Utc::now()),
+        )
+        .await;
+
+        let _ = device_poll_inner(
+            &pool,
+            &rate_limiter,
+            HeaderMap::new(),
+            DevicePollRequest {
+                device_code: device_code.to_string(),
+            },
+        )
+        .await
+        .expect("poll should succeed for approved request");
+
+        assert_eq!(pair_request_count(&pool, device_code).await, 0);
+
+        sqlx::query("DELETE FROM device_tokens WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&pool)
+            .await
+            .ok();
+        cleanup_test_user(&pool, user_id).await;
     }
 }

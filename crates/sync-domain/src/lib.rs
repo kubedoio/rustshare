@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use std::path::PathBuf;
-use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncRoot {
@@ -92,4 +91,3 @@ pub struct AppConfig {
     pub workspace_root: PathBuf,
     pub poll_interval_seconds: u64,
 }
-
