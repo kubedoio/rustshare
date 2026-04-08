@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::{handlers::AdminUser, AppState};
 use super::log_admin_action;
+use crate::{handlers::AdminUser, AppState};
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -385,12 +385,11 @@ pub async fn add_member(
     }
 
     // Verify user exists
-    let user_exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
-            .bind(req.user_id)
-            .fetch_one(&state.db_pool)
-            .await
-            .map_err(db_error)?;
+    let user_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
+        .bind(req.user_id)
+        .fetch_one(&state.db_pool)
+        .await
+        .map_err(db_error)?;
     if !user_exists {
         return Err(not_found("User not found"));
     }
@@ -432,14 +431,12 @@ pub async fn remove_member(
     AdminUser { user_id: actor_id }: AdminUser,
     Path((group_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    let result = sqlx::query(
-        "DELETE FROM group_members WHERE group_id = $1 AND user_id = $2",
-    )
-    .bind(group_id)
-    .bind(user_id)
-    .execute(&state.db_pool)
-    .await
-    .map_err(db_error)?;
+    let result = sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
+        .bind(group_id)
+        .bind(user_id)
+        .execute(&state.db_pool)
+        .await
+        .map_err(db_error)?;
 
     if result.rows_affected() == 0 {
         return Err(not_found("Membership not found"));

@@ -317,7 +317,7 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
 
         // Build the list of folder IDs to check: current folder + all ancestors
         let mut folder_ids_to_check = vec![folder_id];
-        
+
         // Add ancestor_ids from the folder document if available
         // Folder documents now store ancestor_ids for efficient permission resolution
         if let Some(ref ancestor_ids) = folder.ancestor_ids {
@@ -328,13 +328,16 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
             let mut current_id = folder.parent_folder_id;
             let mut depth = 0;
             const MAX_DEPTH: usize = 50;
-            
+
             while let Some(parent_id) = current_id {
                 if depth >= MAX_DEPTH {
-                    return Err(anyhow::anyhow!("Max folder depth exceeded ({} levels)", MAX_DEPTH));
+                    return Err(anyhow::anyhow!(
+                        "Max folder depth exceeded ({} levels)",
+                        MAX_DEPTH
+                    ));
                 }
                 folder_ids_to_check.push(parent_id);
-                
+
                 // Fetch parent to continue walking
                 if let Some(parent) = self.ops.find_folder_by_id(parent_id).await? {
                     current_id = parent.parent_folder_id;
@@ -348,7 +351,7 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
         // Step 2: Check cache for any folders we already know about
         let mut permissions = Vec::new();
         let mut uncached_folder_ids = Vec::new();
-        
+
         for &fid in &folder_ids_to_check {
             let cache_key = CacheKey::Folder(user_id, fid);
             let cached = { self.cache.lock().unwrap().get(&cache_key).copied() };
@@ -366,7 +369,7 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
                 .ops
                 .find_user_shares_for_folders(&uncached_folder_ids, user_id)
                 .await?;
-            
+
             // Fetch group shares for all folders at once (if user has groups)
             let group_shares = if !user_groups.is_empty() {
                 self.ops
@@ -490,10 +493,12 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
     ) -> Result<PermissionResult> {
         match resource {
             Resource::File(file_id) => {
-                self.resolve_file_permission_with_source(user_id, file_id).await
+                self.resolve_file_permission_with_source(user_id, file_id)
+                    .await
             }
             Resource::Folder(folder_id) => {
-                self.resolve_folder_permission_with_source(user_id, folder_id).await
+                self.resolve_folder_permission_with_source(user_id, folder_id)
+                    .await
             }
         }
     }
@@ -576,7 +581,10 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
                 .resolve_folder_ancestry_with_source(user_id, parent_folder_id, &user_groups)
                 .await?
             {
-                self.cache.lock().unwrap().insert(cache_key, Some(inherited_perm));
+                self.cache
+                    .lock()
+                    .unwrap()
+                    .insert(cache_key, Some(inherited_perm));
                 return Ok(PermissionResult {
                     permission: Some(inherited_perm),
                     source: inherited_source,
@@ -672,7 +680,10 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
                 .resolve_folder_ancestry_with_source(user_id, parent_folder_id, &user_groups)
                 .await?
             {
-                self.cache.lock().unwrap().insert(cache_key, Some(inherited_perm));
+                self.cache
+                    .lock()
+                    .unwrap()
+                    .insert(cache_key, Some(inherited_perm));
                 return Ok(PermissionResult {
                     permission: Some(inherited_perm),
                     source: inherited_source,
@@ -720,7 +731,10 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
 
             while let Some(parent_id) = current_id {
                 if depth >= MAX_DEPTH {
-                    return Err(anyhow::anyhow!("Max folder depth exceeded ({} levels)", MAX_DEPTH));
+                    return Err(anyhow::anyhow!(
+                        "Max folder depth exceeded ({} levels)",
+                        MAX_DEPTH
+                    ));
                 }
                 folder_ids_to_check.push(parent_id);
 
@@ -820,11 +834,17 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
         // Check closer folders first (they take precedence)
         for &folder_id in &folder_ids_to_check {
             // Check user shares first (direct shares take precedence over group shares)
-            if let Some((_, perm, share_id)) = user_shares_found.iter().find(|(fid, _, _)| *fid == folder_id) {
+            if let Some((_, perm, share_id)) = user_shares_found
+                .iter()
+                .find(|(fid, _, _)| *fid == folder_id)
+            {
                 return Ok(Some((*perm, Some(*share_id), PermissionSource::Inherited)));
             }
             // Then check group shares
-            if let Some((_, perm, share_id)) = group_shares_found.iter().find(|(fid, _, _)| *fid == folder_id) {
+            if let Some((_, perm, share_id)) = group_shares_found
+                .iter()
+                .find(|(fid, _, _)| *fid == folder_id)
+            {
                 return Ok(Some((*perm, Some(*share_id), PermissionSource::Inherited)));
             }
         }
@@ -924,7 +944,9 @@ mod tests {
                 .iter()
                 .filter(|s| {
                     s.file_id.is_none()
-                        && s.folder_id.map(|fid| folder_ids.contains(&fid)).unwrap_or(false)
+                        && s.folder_id
+                            .map(|fid| folder_ids.contains(&fid))
+                            .unwrap_or(false)
                         && s.recipient_user_id == Some(recipient_user_id)
                 })
                 .cloned()
@@ -941,7 +963,9 @@ mod tests {
                 .iter()
                 .filter(|s| {
                     s.file_id.is_none()
-                        && s.folder_id.map(|fid| folder_ids.contains(&fid)).unwrap_or(false)
+                        && s.folder_id
+                            .map(|fid| folder_ids.contains(&fid))
+                            .unwrap_or(false)
                         && s.recipient_group_id
                             .map(|gid| group_ids.contains(&gid))
                             .unwrap_or(false)

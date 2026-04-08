@@ -35,18 +35,33 @@ pub async fn create_invite(
     let workflow = sqlx::query_as::<_, WorkflowRow>(
         "SELECT id, subject, body, terms_enabled, terms_text
          FROM workflows
-         WHERE key = 'invite_email' AND status = 'active'"
+         WHERE key = 'invite_email' AND status = 'active'",
     )
     .fetch_optional(&state.db_pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?
-    .ok_or_else(|| (StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorResponse::new("Invite workflow is not active"))))?;
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(e.to_string())),
+        )
+    })?
+    .ok_or_else(|| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ErrorResponse::new("Invite workflow is not active")),
+        )
+    })?;
 
     let sender = sqlx::query_as::<_, SenderRow>("SELECT display_name FROM users WHERE id = $1")
         .bind(user_id)
         .fetch_one(&state.db_pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new(e.to_string())),
+            )
+        })?;
 
     let mut token_bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut token_bytes);
@@ -74,18 +89,25 @@ pub async fn create_invite(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?;
 
-    let origin = req.origin.unwrap_or_else(|| "https://rustshare.io".to_string());
+    let origin = req
+        .origin
+        .unwrap_or_else(|| "https://rustshare.io".to_string());
     let invite_link = format!("{}/invite/{}", origin.trim_end_matches('/'), token);
 
     let email_service = EmailService::new(state.db_pool.clone(), state.secret_key.clone());
-    let result = email_service.send_invite_email(
-        &sender.display_name,
-        &req.recipient_email, // recipient_name fallback
-        &req.recipient_email,
-        &invite_link,
-        workflow.subject.as_deref().unwrap_or("You've been invited to RustShare"),
-        workflow.body.as_deref().unwrap_or(""),
-    ).await;
+    let result = email_service
+        .send_invite_email(
+            &sender.display_name,
+            &req.recipient_email, // recipient_name fallback
+            &req.recipient_email,
+            &invite_link,
+            workflow
+                .subject
+                .as_deref()
+                .unwrap_or("You've been invited to RustShare"),
+            workflow.body.as_deref().unwrap_or(""),
+        )
+        .await;
 
     if let Err(e) = result {
         sqlx::query("DELETE FROM invite_tokens WHERE token = $1")
@@ -93,10 +115,20 @@ pub async fn create_invite(
             .execute(&state.db_pool)
             .await
             .ok();
-        return Err((StatusCode::BAD_GATEWAY, Json(ErrorResponse::new(format!("Failed to send invite email: {}", e)))));
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            Json(ErrorResponse::new(format!(
+                "Failed to send invite email: {}",
+                e
+            ))),
+        ));
     }
 
-    Ok(Json(CreateInviteResponse { token, invite_link, expires_at }))
+    Ok(Json(CreateInviteResponse {
+        token,
+        invite_link,
+        expires_at,
+    }))
 }
 
 #[derive(Serialize)]
@@ -119,28 +151,52 @@ pub async fn get_invite(
                 w.subject, w.body, w.terms_enabled, w.terms_text
          FROM invite_tokens it
          JOIN workflows w ON it.workflow_id = w.id
-         WHERE it.token = $1"
+         WHERE it.token = $1",
     )
     .bind(&token)
     .fetch_optional(&state.db_pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?
-    .ok_or_else(|| (StatusCode::GONE, Json(ErrorResponse::new("Invite link has expired or already been used"))))?;
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(e.to_string())),
+        )
+    })?
+    .ok_or_else(|| {
+        (
+            StatusCode::GONE,
+            Json(ErrorResponse::new(
+                "Invite link has expired or already been used",
+            )),
+        )
+    })?;
 
     if row.used_at.is_some() || row.revoked_at.is_some() || row.expires_at < chrono::Utc::now() {
-        return Err((StatusCode::GONE, Json(ErrorResponse::new("Invite link has expired or already been used"))));
+        return Err((
+            StatusCode::GONE,
+            Json(ErrorResponse::new(
+                "Invite link has expired or already been used",
+            )),
+        ));
     }
 
     let sender = sqlx::query_as::<_, SenderRow>("SELECT display_name FROM users WHERE id = $1")
         .bind(row.sender_id)
         .fetch_one(&state.db_pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new(e.to_string())),
+            )
+        })?;
 
     Ok(Json(InviteDetailResponse {
         sender_name: sender.display_name,
         recipient_email: row.recipient_email,
-        subject: row.subject.unwrap_or_else(|| "You've been invited to RustShare".to_string()),
+        subject: row
+            .subject
+            .unwrap_or_else(|| "You've been invited to RustShare".to_string()),
         body: row.body.unwrap_or_default(),
         terms_enabled: row.terms_enabled,
         terms_text: row.terms_text,
@@ -174,42 +230,84 @@ pub async fn accept_invite(
                 w.terms_enabled, w.terms_text
          FROM invite_tokens it
          JOIN workflows w ON it.workflow_id = w.id
-         WHERE it.token = $1"
+         WHERE it.token = $1",
     )
     .bind(&token)
     .fetch_optional(&state.db_pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?
-    .ok_or_else(|| (StatusCode::GONE, Json(ErrorResponse::new("Invite link has expired or already been used"))))?;
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(e.to_string())),
+        )
+    })?
+    .ok_or_else(|| {
+        (
+            StatusCode::GONE,
+            Json(ErrorResponse::new(
+                "Invite link has expired or already been used",
+            )),
+        )
+    })?;
 
     if row.used_at.is_some() || row.revoked_at.is_some() || row.expires_at < chrono::Utc::now() {
-        return Err((StatusCode::GONE, Json(ErrorResponse::new("Invite link has expired or already been used"))));
+        return Err((
+            StatusCode::GONE,
+            Json(ErrorResponse::new(
+                "Invite link has expired or already been used",
+            )),
+        ));
     }
 
     if req.email != row.recipient_email {
-        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse::new("Email does not match the invited address"))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new(
+                "Email does not match the invited address",
+            )),
+        ));
     }
 
     if req.password.len() < 8 {
-        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse::new("Password must be at least 8 characters"))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new("Password must be at least 8 characters")),
+        ));
     }
 
     if row.terms_enabled && !req.terms_accepted.unwrap_or(false) {
-        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse::new("You must accept the Terms & Conditions"))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new("You must accept the Terms & Conditions")),
+        ));
     }
 
     let existing: Option<Uuid> = sqlx::query_scalar("SELECT id FROM users WHERE email = $1")
         .bind(&req.email)
         .fetch_optional(&state.db_pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new(e.to_string())),
+            )
+        })?;
 
     if existing.is_some() {
-        return Err((StatusCode::CONFLICT, Json(ErrorResponse::new("An account with this email already exists"))));
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ErrorResponse::new(
+                "An account with this email already exists",
+            )),
+        ));
     }
 
-    let password_hash = PasswordHasher::hash(&req.password)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?;
+    let password_hash = PasswordHasher::hash(&req.password).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(e.to_string())),
+        )
+    })?;
 
     let user_id = Uuid::new_v4();
     let now = chrono::Utc::now();
@@ -233,7 +331,12 @@ pub async fn accept_invite(
         .bind(row.token_id)
         .execute(&state.db_pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new(e.to_string())),
+            )
+        })?;
 
     Ok(Json(AcceptInviteResponse {
         id: user_id.to_string(),

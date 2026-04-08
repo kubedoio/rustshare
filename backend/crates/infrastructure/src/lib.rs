@@ -2,12 +2,8 @@ pub mod repositories;
 
 // Implement service layer traits for repository types
 use anyhow::Result;
-use rustshare_core::domain::{
-    Notification, NotificationId, UserId,
-};
-use rustshare_core::services::{
-    CreateNotification, NotificationRepositoryOps,
-};
+use rustshare_core::domain::{Notification, NotificationId, UserId};
+use rustshare_core::services::{CreateNotification, NotificationRepositoryOps};
 
 use crate::repositories::NotificationRepository;
 

@@ -16,7 +16,9 @@ use uuid::Uuid;
 async fn test_pool() -> sqlx::PgPool {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
-    sqlx::PgPool::connect(&url).await.expect("DB connect failed")
+    sqlx::PgPool::connect(&url)
+        .await
+        .expect("DB connect failed")
 }
 
 async fn create_test_admin(pool: &sqlx::PgPool, suffix: &str) -> Uuid {
@@ -113,14 +115,12 @@ async fn test_admin_user_full_lifecycle() {
 
     // --- UPDATE QUOTA ---
     let new_quota: i64 = 21_474_836_480; // 20 GB
-    sqlx::query(
-        "UPDATE users SET storage_quota = $2, updated_at = NOW() WHERE id = $1",
-    )
-    .bind(user_id)
-    .bind(new_quota)
-    .execute(&pool)
-    .await
-    .expect("update quota");
+    sqlx::query("UPDATE users SET storage_quota = $2, updated_at = NOW() WHERE id = $1")
+        .bind(user_id)
+        .bind(new_quota)
+        .execute(&pool)
+        .await
+        .expect("update quota");
 
     sqlx::query(
         "INSERT INTO admin_actions (actor_id, action_type, target_type, target_id, detail)
@@ -210,9 +210,14 @@ async fn test_admin_user_full_lifecycle() {
     );
 
     // Verify each specific action type was logged
-    for action_type in &["user.created", "user.quota_changed", "user.disabled", "user.enabled"] {
+    for action_type in &[
+        "user.created",
+        "user.quota_changed",
+        "user.disabled",
+        "user.enabled",
+    ] {
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM admin_actions WHERE actor_id = $1 AND action_type = $2"
+            "SELECT COUNT(*) FROM admin_actions WHERE actor_id = $1 AND action_type = $2",
         )
         .bind(actor_id)
         .bind(action_type)
@@ -239,12 +244,11 @@ async fn test_admin_user_full_lifecycle() {
         .await
         .expect("delete user");
 
-    let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
-            .bind(user_id)
-            .fetch_one(&pool)
-            .await
-            .expect("check user existence");
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await
+        .expect("check user existence");
     assert!(!exists, "User must not exist after hard delete");
 
     cleanup(&pool, &[actor_id]).await;

@@ -14,11 +14,11 @@ impl Planner {
 
         // In a real implementation, we'd map remote IDs to local paths using the database.
         // For Phase 1, we assume remote paths are mirrored locally.
-        
+
         for remote in remote_entries {
             // Simplified: Mapping remote name to PathBuf
-            let path = PathBuf::from(&remote.name); 
-            
+            let path = PathBuf::from(&remote.name);
+
             if let Some(local) = local_inventory.get(&path) {
                 if local.hash != remote.hash {
                     // Conflict detection (Phase 1 policy: remote change + local change = conflict)

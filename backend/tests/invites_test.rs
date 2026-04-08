@@ -3,7 +3,9 @@ use uuid::Uuid;
 async fn test_pool() -> sqlx::PgPool {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
-    sqlx::PgPool::connect(&url).await.expect("DB connect failed")
+    sqlx::PgPool::connect(&url)
+        .await
+        .expect("DB connect failed")
 }
 
 async fn create_test_admin(pool: &sqlx::PgPool, suffix: &str) -> Uuid {
@@ -63,8 +65,16 @@ async fn test_invite_token_crud() {
     assert_eq!(count, 1);
 
     // Cleanup
-    sqlx::query("DELETE FROM invite_tokens WHERE token = $1").bind(&token).execute(&pool).await.ok();
-    sqlx::query("DELETE FROM users WHERE id = $1").bind(sender_id).execute(&pool).await.ok();
+    sqlx::query("DELETE FROM invite_tokens WHERE token = $1")
+        .bind(&token)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(sender_id)
+        .execute(&pool)
+        .await
+        .ok();
 }
 
 #[tokio::test]
@@ -112,9 +122,21 @@ async fn test_accept_invite_creates_user() {
     assert!(exists);
 
     // Cleanup
-    sqlx::query("DELETE FROM invite_tokens WHERE token = $1").bind(&token).execute(&pool).await.ok();
-    sqlx::query("DELETE FROM users WHERE email = $1").bind(&email).execute(&pool).await.ok();
-    sqlx::query("DELETE FROM users WHERE id = $1").bind(sender_id).execute(&pool).await.ok();
+    sqlx::query("DELETE FROM invite_tokens WHERE token = $1")
+        .bind(&token)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM users WHERE email = $1")
+        .bind(&email)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(sender_id)
+        .execute(&pool)
+        .await
+        .ok();
 }
 
 #[tokio::test]
@@ -139,9 +161,13 @@ async fn test_invite_token_expired() {
     .await
     .expect("insert expired token");
 
-    let row = sqlx::query_as::<_, (Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)>(
-        "SELECT used_at, revoked_at FROM invite_tokens WHERE token = $1"
-    )
+    let row = sqlx::query_as::<
+        _,
+        (
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >("SELECT used_at, revoked_at FROM invite_tokens WHERE token = $1")
     .bind(&token)
     .fetch_one(&pool)
     .await
@@ -151,6 +177,14 @@ async fn test_invite_token_expired() {
     assert!(row.1.is_none());
 
     // Cleanup
-    sqlx::query("DELETE FROM invite_tokens WHERE token = $1").bind(&token).execute(&pool).await.ok();
-    sqlx::query("DELETE FROM users WHERE id = $1").bind(sender_id).execute(&pool).await.ok();
+    sqlx::query("DELETE FROM invite_tokens WHERE token = $1")
+        .bind(&token)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(sender_id)
+        .execute(&pool)
+        .await
+        .ok();
 }

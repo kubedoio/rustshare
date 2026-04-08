@@ -3,13 +3,13 @@
 //! This module provides verification, repair, and rebuild utilities
 //! for the metadata system.
 
-pub mod verification;
-pub mod repair;
 pub mod rebuild;
+pub mod repair;
+pub mod verification;
 
-pub use verification::*;
-pub use repair::*;
 pub use rebuild::*;
+pub use repair::*;
+pub use verification::*;
 
 use serde::{Deserialize, Serialize};
 
@@ -35,7 +35,7 @@ impl OperationSummary {
             errors: Vec::new(),
         }
     }
-    
+
     pub fn success_rate(&self) -> f64 {
         if self.items_processed == 0 {
             100.0
@@ -43,20 +43,20 @@ impl OperationSummary {
             (self.items_succeeded as f64 / self.items_processed as f64) * 100.0
         }
     }
-    
+
     pub fn add_error(&mut self, error: impl Into<String>) {
         self.errors.push(error.into());
         self.items_failed += 1;
     }
-    
+
     pub fn increment_processed(&mut self) {
         self.items_processed += 1;
     }
-    
+
     pub fn increment_succeeded(&mut self) {
         self.items_succeeded += 1;
     }
-    
+
     pub fn increment_fixed(&mut self) {
         self.items_fixed += 1;
     }

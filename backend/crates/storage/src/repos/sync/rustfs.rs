@@ -5,9 +5,11 @@ use chrono::Utc;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use super::{DeltaResult, SyncCursor, SyncDelta, SyncRepository, parse_cursor};
+use super::{parse_cursor, DeltaResult, SyncCursor, SyncDelta, SyncRepository};
 use crate::metadata_v2::schemas::{EventDocument, EventType, SyncCursorDocument};
-use crate::metadata_v2::{EventLogStore, MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions};
+use crate::metadata_v2::{
+    EventLogStore, MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions,
+};
 use crate::repos::{PathBuilder, RepositoryError};
 
 /// RustFS-backed sync repository
@@ -343,9 +345,8 @@ impl SyncRepository for RustFsSyncRepository {
         limit: usize,
     ) -> Result<DeltaResult, RepositoryError> {
         // Parse the cursor to get the timestamp
-        let since_timestamp = parse_cursor(since_cursor).map_err(|e| {
-            RepositoryError::ValidationError(format!("Invalid cursor: {}", e))
-        })?;
+        let since_timestamp = parse_cursor(since_cursor)
+            .map_err(|e| RepositoryError::ValidationError(format!("Invalid cursor: {}", e)))?;
 
         // Query events from the event store
         let events = self
@@ -389,10 +390,7 @@ impl SyncRepository for RustFsSyncRepository {
         })
     }
 
-    async fn list_user_cursors(
-        &self,
-        user_id: Uuid,
-    ) -> Result<Vec<SyncCursor>, RepositoryError> {
+    async fn list_user_cursors(&self, user_id: Uuid) -> Result<Vec<SyncCursor>, RepositoryError> {
         let prefix = format!(
             "{}/{}/sync/cursors/{}/",
             self.path_builder.base_prefix(),
@@ -421,11 +419,7 @@ impl SyncRepository for RustFsSyncRepository {
         Ok(cursors)
     }
 
-    async fn delete_cursor(
-        &self,
-        user_id: Uuid,
-        device_id: Uuid,
-    ) -> Result<(), RepositoryError> {
+    async fn delete_cursor(&self, user_id: Uuid, device_id: Uuid) -> Result<(), RepositoryError> {
         let path = self.cursor_path(user_id, device_id);
 
         self.doc_store
@@ -448,12 +442,12 @@ impl RustFsSyncRepository {
     async fn is_event_relevant_to_user(&self, event: &EventDocument, _user_id: Uuid) -> bool {
         // For Phase 1, we keep this simple and include events where the user
         // is the actor. More sophisticated filtering can be added later.
-        
+
         // Note: In a full implementation, we would check:
         // 1. Does the user own the resource?
         // 2. Is the resource shared with the user?
         // 3. Is this a share event involving the user?
-        
+
         // For now, we rely on the actor_id check in the caller
         // and include share events that might affect the user
         matches!(

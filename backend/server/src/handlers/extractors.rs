@@ -34,7 +34,9 @@ impl AuthError {
             AuthError::InvalidToken => (StatusCode::UNAUTHORIZED, "Invalid token"),
             AuthError::UserNotFound => (StatusCode::UNAUTHORIZED, "User not found"),
             AuthError::AccountDisabled => (StatusCode::UNAUTHORIZED, "Account is disabled"),
-            AuthError::DatabaseError => (StatusCode::INTERNAL_SERVER_ERROR, "Authentication failed"),
+            AuthError::DatabaseError => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "Authentication failed")
+            }
         };
         (status, Json(serde_json::json!({ "error": message }))).into_response()
     }
@@ -58,14 +60,13 @@ pub async fn resolve_bearer_token(token: &str, state: &AppState) -> Result<Uuid,
             let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AuthError::InvalidToken)?;
 
             // Check disabled status
-            let disabled: bool = sqlx::query_scalar(
-                "SELECT disabled_at IS NOT NULL FROM users WHERE id = $1"
-            )
-            .bind(user_id)
-            .fetch_optional(&state.db_pool)
-            .await
-            .map_err(|_| AuthError::DatabaseError)?
-            .ok_or(AuthError::UserNotFound)?;
+            let disabled: bool =
+                sqlx::query_scalar("SELECT disabled_at IS NOT NULL FROM users WHERE id = $1")
+                    .bind(user_id)
+                    .fetch_optional(&state.db_pool)
+                    .await
+                    .map_err(|_| AuthError::DatabaseError)?
+                    .ok_or(AuthError::UserNotFound)?;
 
             if disabled {
                 return Err(AuthError::AccountDisabled);
@@ -83,7 +84,7 @@ pub async fn resolve_bearer_token(token: &str, state: &AppState) -> Result<Uuid,
 
     // Look up device token by hash
     let row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT user_id FROM device_tokens WHERE token_hash = $1 AND revoked_at IS NULL"
+        "SELECT user_id FROM device_tokens WHERE token_hash = $1 AND revoked_at IS NULL",
     )
     .bind(&token_hash)
     .fetch_optional(&state.db_pool)
@@ -103,14 +104,13 @@ pub async fn resolve_bearer_token(token: &str, state: &AppState) -> Result<Uuid,
         .map_err(|_| AuthError::DatabaseError)?;
 
     // Check disabled status for device token user
-    let disabled: bool = sqlx::query_scalar(
-        "SELECT disabled_at IS NOT NULL FROM users WHERE id = $1"
-    )
-    .bind(user_id)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|_| AuthError::DatabaseError)?
-    .ok_or(AuthError::UserNotFound)?;
+    let disabled: bool =
+        sqlx::query_scalar("SELECT disabled_at IS NOT NULL FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(|_| AuthError::DatabaseError)?
+            .ok_or(AuthError::UserNotFound)?;
 
     if disabled {
         return Err(AuthError::AccountDisabled);
@@ -167,7 +167,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             .await
             .map_err(|e| e.into_response())?;
 
-        Ok(AuthenticatedUser { 
+        Ok(AuthenticatedUser {
             user_id,
             tenant_id: Uuid::nil(), // TODO: Get tenant_id from JWT claims when available
         })
@@ -279,18 +279,18 @@ impl FromRequestParts<AppState> for AdminUser {
     ) -> Result<Self, Self::Rejection> {
         let auth = AuthenticatedUser::from_request_parts(parts, state).await?;
 
-        let row = sqlx::query(
-            "SELECT is_admin, disabled_at FROM users WHERE id = $1",
-        )
-        .bind(auth.user_id)
-        .fetch_optional(&state.db_pool)
-        .await
-        .map_err(|_| admin_internal_error("Failed to verify admin status"))?
-        .ok_or_else(|| admin_unauthorized_error("User not found"))?;
+        let row = sqlx::query("SELECT is_admin, disabled_at FROM users WHERE id = $1")
+            .bind(auth.user_id)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(|_| admin_internal_error("Failed to verify admin status"))?
+            .ok_or_else(|| admin_unauthorized_error("User not found"))?;
 
-        let is_admin: bool = row.try_get("is_admin")
+        let is_admin: bool = row
+            .try_get("is_admin")
             .map_err(|_| admin_internal_error("Failed to read admin status"))?;
-        let disabled_at: Option<chrono::DateTime<chrono::Utc>> = row.try_get("disabled_at")
+        let disabled_at: Option<chrono::DateTime<chrono::Utc>> = row
+            .try_get("disabled_at")
             .map_err(|_| admin_internal_error("Failed to read disabled status"))?;
 
         if !is_admin {
@@ -299,7 +299,9 @@ impl FromRequestParts<AppState> for AdminUser {
         if disabled_at.is_some() {
             return Err(admin_forbidden_error("Account is disabled"));
         }
-        Ok(AdminUser { user_id: auth.user_id })
+        Ok(AdminUser {
+            user_id: auth.user_id,
+        })
     }
 }
 

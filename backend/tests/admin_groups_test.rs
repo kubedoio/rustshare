@@ -15,7 +15,9 @@ use uuid::Uuid;
 async fn test_pool() -> sqlx::PgPool {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
-    sqlx::PgPool::connect(&url).await.expect("DB connect failed")
+    sqlx::PgPool::connect(&url)
+        .await
+        .expect("DB connect failed")
 }
 
 async fn create_test_user(pool: &sqlx::PgPool, suffix: &str) -> Uuid {
@@ -114,12 +116,11 @@ async fn test_create_group() {
     assert_eq!(created_by, Some(actor_id));
 
     // Verify it's in the table
-    let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1)")
-            .bind(group_id)
-            .fetch_one(&pool)
-            .await
-            .expect("check group exists");
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1)")
+        .bind(group_id)
+        .fetch_one(&pool)
+        .await
+        .expect("check group exists");
     assert!(exists, "Group must be in user_groups after insert");
 
     cleanup_group(&pool, group_id).await;
@@ -136,26 +137,22 @@ async fn test_add_member_to_group() {
     let user_id = create_test_user(&pool, suffix).await;
     let group_id = Uuid::new_v4();
 
-    sqlx::query(
-        "INSERT INTO user_groups (id, name, created_by) VALUES ($1, $2, $3)",
-    )
-    .bind(group_id)
-    .bind(format!("MemberTest {suffix}"))
-    .bind(actor_id)
-    .execute(&pool)
-    .await
-    .expect("insert group");
+    sqlx::query("INSERT INTO user_groups (id, name, created_by) VALUES ($1, $2, $3)")
+        .bind(group_id)
+        .bind(format!("MemberTest {suffix}"))
+        .bind(actor_id)
+        .execute(&pool)
+        .await
+        .expect("insert group");
 
     // Add member
-    sqlx::query(
-        "INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)",
-    )
-    .bind(group_id)
-    .bind(user_id)
-    .bind(actor_id)
-    .execute(&pool)
-    .await
-    .expect("add member");
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(group_id)
+        .bind(user_id)
+        .bind(actor_id)
+        .execute(&pool)
+        .await
+        .expect("add member");
 
     let member_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM group_members WHERE group_id = $1")
@@ -164,7 +161,10 @@ async fn test_add_member_to_group() {
             .await
             .expect("count members");
 
-    assert_eq!(member_count, 1, "Group must have exactly 1 member after add");
+    assert_eq!(
+        member_count, 1,
+        "Group must have exactly 1 member after add"
+    );
 
     cleanup_group(&pool, group_id).await;
     cleanup_users(&pool, &[actor_id, user_id]).await;
@@ -180,36 +180,31 @@ async fn test_duplicate_member_violates_unique_constraint() {
     let user_id = create_test_user(&pool, suffix).await;
     let group_id = Uuid::new_v4();
 
-    sqlx::query(
-        "INSERT INTO user_groups (id, name, created_by) VALUES ($1, $2, $3)",
-    )
-    .bind(group_id)
-    .bind(format!("DupTest {suffix}"))
-    .bind(actor_id)
-    .execute(&pool)
-    .await
-    .expect("insert group");
+    sqlx::query("INSERT INTO user_groups (id, name, created_by) VALUES ($1, $2, $3)")
+        .bind(group_id)
+        .bind(format!("DupTest {suffix}"))
+        .bind(actor_id)
+        .execute(&pool)
+        .await
+        .expect("insert group");
 
     // First insert — must succeed
-    sqlx::query(
-        "INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)",
-    )
-    .bind(group_id)
-    .bind(user_id)
-    .bind(actor_id)
-    .execute(&pool)
-    .await
-    .expect("first add member");
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(group_id)
+        .bind(user_id)
+        .bind(actor_id)
+        .execute(&pool)
+        .await
+        .expect("first add member");
 
     // Second insert of the same user — must fail with unique constraint error
-    let result = sqlx::query(
-        "INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)",
-    )
-    .bind(group_id)
-    .bind(user_id)
-    .bind(actor_id)
-    .execute(&pool)
-    .await;
+    let result =
+        sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+            .bind(group_id)
+            .bind(user_id)
+            .bind(actor_id)
+            .execute(&pool)
+            .await;
 
     assert!(
         result.is_err(),
@@ -237,25 +232,21 @@ async fn test_remove_member_from_group() {
     let user_id = create_test_user(&pool, suffix).await;
     let group_id = Uuid::new_v4();
 
-    sqlx::query(
-        "INSERT INTO user_groups (id, name, created_by) VALUES ($1, $2, $3)",
-    )
-    .bind(group_id)
-    .bind(format!("RemoveMemberTest {suffix}"))
-    .bind(actor_id)
-    .execute(&pool)
-    .await
-    .expect("insert group");
+    sqlx::query("INSERT INTO user_groups (id, name, created_by) VALUES ($1, $2, $3)")
+        .bind(group_id)
+        .bind(format!("RemoveMemberTest {suffix}"))
+        .bind(actor_id)
+        .execute(&pool)
+        .await
+        .expect("insert group");
 
-    sqlx::query(
-        "INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)",
-    )
-    .bind(group_id)
-    .bind(user_id)
-    .bind(actor_id)
-    .execute(&pool)
-    .await
-    .expect("add member");
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(group_id)
+        .bind(user_id)
+        .bind(actor_id)
+        .execute(&pool)
+        .await
+        .expect("add member");
 
     sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
         .bind(group_id)
@@ -288,26 +279,22 @@ async fn test_delete_group_cascades_members() {
     let user2_id = create_test_user(&pool, &format!("{suffix}b")).await;
     let group_id = Uuid::new_v4();
 
-    sqlx::query(
-        "INSERT INTO user_groups (id, name, created_by) VALUES ($1, $2, $3)",
-    )
-    .bind(group_id)
-    .bind(format!("CascadeTest {suffix}"))
-    .bind(actor_id)
-    .execute(&pool)
-    .await
-    .expect("insert group");
-
-    for &uid in &[user1_id, user2_id] {
-        sqlx::query(
-            "INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)",
-        )
+    sqlx::query("INSERT INTO user_groups (id, name, created_by) VALUES ($1, $2, $3)")
         .bind(group_id)
-        .bind(uid)
+        .bind(format!("CascadeTest {suffix}"))
         .bind(actor_id)
         .execute(&pool)
         .await
-        .expect("add member");
+        .expect("insert group");
+
+    for &uid in &[user1_id, user2_id] {
+        sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+            .bind(group_id)
+            .bind(uid)
+            .bind(actor_id)
+            .execute(&pool)
+            .await
+            .expect("add member");
     }
 
     // Confirm 2 members before deletion

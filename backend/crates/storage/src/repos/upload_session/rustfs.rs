@@ -11,9 +11,7 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use crate::metadata_v2::{
-    MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions,
-};
+use crate::metadata_v2::{MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions};
 use crate::repos::PathBuilder;
 
 use rustshare_core::services::UploadSessionRepository;
@@ -159,7 +157,11 @@ impl From<ChunkInfoDocument> for ChunkInfo {
 
 impl RustFsUploadSessionRepository {
     /// Create a new RustFS upload session repository
-    pub fn new(doc_store: Arc<dyn MetadataDocumentStore>, base_prefix: String, namespace: String) -> Self {
+    pub fn new(
+        doc_store: Arc<dyn MetadataDocumentStore>,
+        base_prefix: String,
+        namespace: String,
+    ) -> Self {
         Self {
             doc_store,
             path_builder: PathBuilder::new(base_prefix, namespace),
@@ -200,9 +202,9 @@ impl RustFsUploadSessionRepository {
 impl RustFsUploadSessionRepository {
     /// Get session or return error if not found (helper method)
     async fn get_required(&self, id: Uuid) -> Result<UploadSession, UploadError> {
-        self.get_session(id).await?.ok_or_else(|| {
-            UploadError::SessionNotFound(id)
-        })
+        self.get_session(id)
+            .await?
+            .ok_or_else(|| UploadError::SessionNotFound(id))
     }
 
     /// Get all chunks for a session (helper method)
@@ -214,7 +216,8 @@ impl RustFsUploadSessionRepository {
             session_id
         );
 
-        let paths = self.doc_store
+        let paths = self
+            .doc_store
             .list_prefix(&prefix)
             .await
             .map_err(|e| UploadError::Storage(e.to_string()))?;
@@ -341,7 +344,8 @@ impl UploadSessionRepository for RustFsUploadSessionRepository {
             self.path_builder.namespace(),
         );
 
-        let paths = self.doc_store
+        let paths = self
+            .doc_store
             .list_prefix(&prefix)
             .await
             .map_err(|e| UploadError::Storage(e.to_string()))?;
@@ -358,13 +362,11 @@ impl UploadSessionRepository for RustFsUploadSessionRepository {
         Ok(expired)
     }
 
-    async fn list_user_sessions(
-        &self,
-        user_id: Uuid,
-    ) -> Result<Vec<UploadSession>, UploadError> {
+    async fn list_user_sessions(&self, user_id: Uuid) -> Result<Vec<UploadSession>, UploadError> {
         let prefix = self.user_sessions_prefix(user_id);
 
-        let paths = self.doc_store
+        let paths = self
+            .doc_store
             .list_prefix(&prefix)
             .await
             .map_err(|e| UploadError::Storage(e.to_string()))?;
@@ -399,9 +401,10 @@ mod tests {
             fallback_to_leases: true,
         };
 
-        let doc_store: Arc<dyn MetadataDocumentStore> = Arc::new(
-            LocalFsDocumentStore::new(temp_dir.path().to_path_buf(), config)
-        );
+        let doc_store: Arc<dyn MetadataDocumentStore> = Arc::new(LocalFsDocumentStore::new(
+            temp_dir.path().to_path_buf(),
+            config,
+        ));
 
         let repo = RustFsUploadSessionRepository::new(
             doc_store,
@@ -417,7 +420,7 @@ mod tests {
             id,
             Uuid::new_v4(), // tenant_id
             owner_id,
-            None,           // folder_id
+            None, // folder_id
             "test.pdf".to_string(),
             "application/pdf".to_string(),
             10 * 1024 * 1024, // 10MB

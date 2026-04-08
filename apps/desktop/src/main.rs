@@ -1,15 +1,19 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
+use std::fs;
 use std::future::Future;
-use std::pin::Pin;
 use std::path::PathBuf;
+use std::pin::Pin;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 use uuid::Uuid;
 
+use platform::{desktop_token_store, get_device_id, PathManager};
 use rustshare_desktop::api::auth::{interactive_pairing, DeviceToken};
-use sync_engine::{SyncCore, ApiClient, Database, SyncRoot};
-use platform::{desktop_token_store, PathManager, get_device_id};
+use rustshare_desktop::config::{Config, FolderUpdate, SyncDirection};
+use sync_engine::{
+    stop_daemon, wait_for_stop, ApiClient, DaemonHandle, Database, SocketClient, SyncCore, SyncRoot,
+};
 
 /// RustShare Desktop Sync Client (Phase 1)
 #[derive(Parser)]
@@ -18,7 +22,12 @@ use platform::{desktop_token_store, PathManager, get_device_id};
 #[command(version)]
 struct Cli {
     /// Workspace root path
-    #[arg(short, long, env = "RUSTSHARE_WORKSPACE", default_value = "~/RustShare")]
+    #[arg(
+        short,
+        long,
+        env = "RUSTSHARE_WORKSPACE",
+        default_value = "~/RustShare"
+    )]
     workspace: PathBuf,
 
     /// Database name
@@ -50,10 +59,31 @@ enum Commands {
         #[command(subcommand)]
         action: SyncAction,
     },
-    /// Run the sync daemon
-    Daemon,
+    /// Manage the sync daemon
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommands,
+    },
     /// Show current status
     Status,
+}
+
+/// CLI argument for sync direction
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum DirectionArg {
+    Bidir,
+    Up,
+    Down,
+}
+
+impl From<DirectionArg> for SyncDirection {
+    fn from(arg: DirectionArg) -> Self {
+        match arg {
+            DirectionArg::Bidir => SyncDirection::Bidirectional,
+            DirectionArg::Up => SyncDirection::UploadOnly,
+            DirectionArg::Down => SyncDirection::DownloadOnly,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -67,6 +97,41 @@ enum SyncAction {
     },
     /// List all configured roots
     List,
+    /// Remove a sync root
+    Remove {
+        /// Root ID (UUID)
+        root_id: Uuid,
+    },
+    /// Update a sync root configuration
+    Update {
+        /// Root ID (UUID)
+        root_id: Uuid,
+        /// New local path
+        #[arg(long)]
+        local_path: Option<String>,
+        /// Sync direction
+        #[arg(long, value_enum)]
+        direction: Option<DirectionArg>,
+        /// Add ignore pattern (can be specified multiple times)
+        #[arg(long)]
+        ignore_pattern: Vec<String>,
+        /// Remove ignore pattern (can be specified multiple times)
+        #[arg(long)]
+        remove_ignore: Vec<String>,
+        /// Clear all ignore patterns and reset to defaults
+        #[arg(long)]
+        clear_ignores: bool,
+    },
+    /// Enable a sync root
+    Enable {
+        /// Root ID (UUID)
+        root_id: Uuid,
+    },
+    /// Disable a sync root
+    Disable {
+        /// Root ID (UUID)
+        root_id: Uuid,
+    },
     /// Manage selective sync filters
     Filter {
         #[command(subcommand)]
@@ -91,6 +156,18 @@ enum VfsAction {
         /// File path
         path: PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+enum DaemonCommands {
+    /// Start the sync daemon in the background
+    Start,
+    /// Stop the running sync daemon
+    Stop,
+    /// Check if the daemon is running
+    Status,
+    /// Show daemon logs
+    Logs,
 }
 
 #[derive(Subcommand)]
@@ -119,7 +196,7 @@ async fn main() -> Result<()> {
         verbose,
         command,
     } = cli;
-    
+
     // Expand ~ for workspace path
     let workspace = if workspace.to_string_lossy().starts_with("~/") {
         let home = dirs::home_dir().ok_or_else(|| anyhow!("Home dir not found"))?;
@@ -138,13 +215,13 @@ async fn main() -> Result<()> {
 
     let app_data_dir = PathManager::get_app_data_dir()?;
     let db_path = app_data_dir.join(&db_name);
-    
+
     // Initialize Database
     let db = Database::open(&db_path)?;
-    
+
     // Initialize API Client
     let mut client = ApiClient::new(&server)?;
-    
+
     // Load token if available
     let device_id = get_device_id()?;
     let token_store = desktop_token_store();
@@ -152,19 +229,24 @@ async fn main() -> Result<()> {
         client.set_token(token);
     }
 
-    let core = SyncCore::new(db, client, workspace.clone());
+    let socket_path = app_data_dir.join("daemon.sock");
+    let core = SyncCore::new(db, client, workspace.clone(), socket_path);
 
     match command {
         Commands::Login { token } => {
             info!("Authenticating device: {}", device_id);
-            let device_token =
-                resolve_login_token(&server, token, |server| Box::pin(interactive_pairing(server)))
-                    .await?;
+            let device_token = resolve_login_token(&server, token, |server| {
+                Box::pin(interactive_pairing(server))
+            })
+            .await?;
             token_store.save_token(&device_token.device_id.to_string(), &device_token.token)?;
             println!("✓ Authenticated successfully.");
         }
         Commands::Sync { action } => match action {
-            SyncAction::Add { remote_path, local_path } => {
+            SyncAction::Add {
+                remote_path,
+                local_path,
+            } => {
                 let root = SyncRoot {
                     id: Uuid::new_v4(),
                     remote_path,
@@ -175,18 +257,112 @@ async fn main() -> Result<()> {
             }
             SyncAction::List => {
                 let roots = core.manager.database().lock().await.get_sync_roots()?;
+                let config = Config::load()?;
                 if roots.is_empty() {
                     println!("No sync roots configured.");
                 } else {
                     println!("Configured Sync Roots:");
                     for root in roots {
-                        println!("- [{}] {} (Remote: {})", root.id, root.local_path.display(), root.remote_path);
+                        let enabled = config
+                            .get_sync_folder(root.id)
+                            .map(|f| if f.enabled { "enabled" } else { "disabled" })
+                            .unwrap_or("unknown");
+                        let direction = config
+                            .get_sync_folder(root.id)
+                            .map(|f| format!("{:?}", f.direction))
+                            .unwrap_or_else(|| "Bidirectional".to_string());
+                        println!(
+                            "- [{}] {} (Remote: {}) [{}] direction={}",
+                            root.id,
+                            root.local_path.display(),
+                            root.remote_path,
+                            enabled,
+                            direction
+                        );
                     }
+                }
+            }
+            SyncAction::Remove { root_id } => {
+                // Remove from SQLite database
+                {
+                    let db_arc = core.manager.database();
+                    let db = db_arc.lock().await;
+                    db.remove_sync_root(root_id)?;
+                }
+
+                // Remove from config.toml
+                let mut config = Config::load()?;
+                let removed = config.remove_sync_folder(root_id)?;
+
+                if removed {
+                    println!("✓ Removed sync root {}", root_id);
+                    // Notify daemon if running
+                    notify_daemon_config_change(&app_data_dir, root_id).await?;
+                } else {
+                    println!("Sync root {} not found in config", root_id);
+                }
+            }
+            SyncAction::Update {
+                root_id,
+                local_path,
+                direction,
+                ignore_pattern,
+                remove_ignore,
+                clear_ignores,
+            } => {
+                // Build FolderUpdate from CLI args
+                let updates = FolderUpdate {
+                    local_path: local_path.map(PathBuf::from),
+                    enabled: None,
+                    direction: direction.map(|d| d.into()),
+                    add_ignore_patterns: ignore_pattern,
+                    remove_ignore_patterns: remove_ignore,
+                    clear_ignores,
+                };
+
+                // Update config.toml
+                let mut config = Config::load()?;
+                let updated = config.update_sync_folder(root_id, updates)?;
+
+                if updated {
+                    println!("✓ Updated sync root {}", root_id);
+                    // Notify daemon if running
+                    notify_daemon_config_change(&app_data_dir, root_id).await?;
+                } else {
+                    println!("Sync root {} not found", root_id);
+                }
+            }
+            SyncAction::Enable { root_id } => {
+                let mut config = Config::load()?;
+                let updated = config.set_folder_enabled(root_id, true)?;
+
+                if updated {
+                    println!("✓ Enabled sync root {}", root_id);
+                    // Notify daemon if running
+                    notify_daemon_config_change(&app_data_dir, root_id).await?;
+                } else {
+                    println!("Sync root {} not found", root_id);
+                }
+            }
+            SyncAction::Disable { root_id } => {
+                let mut config = Config::load()?;
+                let updated = config.set_folder_enabled(root_id, false)?;
+
+                if updated {
+                    println!("✓ Disabled sync root {}", root_id);
+                    // Notify daemon if running
+                    notify_daemon_config_change(&app_data_dir, root_id).await?;
+                } else {
+                    println!("Sync root {} not found", root_id);
                 }
             }
             SyncAction::Filter { action } => match action {
                 FilterAction::Add { root_id, pattern } => {
-                    core.manager.database().lock().await.add_filter(root_id, &pattern, "exclude")?;
+                    core.manager
+                        .database()
+                        .lock()
+                        .await
+                        .add_filter(root_id, &pattern, "exclude")?;
                     println!("✓ Added exclusion filter: {}", pattern);
                 }
                 FilterAction::List { root_id } => {
@@ -218,11 +394,131 @@ async fn main() -> Result<()> {
                 }
             },
         },
-        Commands::Daemon => {
-            println!("Starting RustShare Sync Loop for workspace {}...", workspace.display());
-            core.start().await?;
-            tokio::signal::ctrl_c().await?;
-            println!("\nGracefully shutting down...");
+        Commands::Daemon { command } => {
+            let app_data_dir = PathManager::get_app_data_dir()?;
+            let daemon_handle = DaemonHandle::new(app_data_dir.clone());
+
+            match command {
+                DaemonCommands::Start => {
+                    // Check if already running
+                    if daemon_handle.is_running() {
+                        if let Some(pid) = daemon_handle.get_pid() {
+                            println!("Daemon is already running (PID: {})", pid);
+                        } else {
+                            println!("Daemon is already running");
+                        }
+                        return Ok(());
+                    }
+
+                    // Cleanup stale files
+                    daemon_handle.cleanup_stale()?;
+
+                    // Fork to background using daemonize
+                    println!("Starting RustShare daemon...");
+
+                    let log_path = app_data_dir.join("daemon.log");
+                    std::fs::create_dir_all(&app_data_dir)?;
+
+                    let daemonize = daemonize::Daemonize::new()
+                        .pid_file(daemon_handle.pid_file())
+                        .working_directory(&app_data_dir)
+                        .stdout(std::fs::File::create(&log_path)?)
+                        .stderr(std::fs::File::create(&log_path)?);
+
+                    match daemonize.start() {
+                        Ok(_) => {
+                            // In daemon process - write PID and start sync core
+                            daemon_handle.write_pid()?;
+
+                            // Run the daemon with proper shutdown handling
+                            let rt = tokio::runtime::Runtime::new()?;
+                            rt.block_on(run_daemon(core, daemon_handle))?;
+                        }
+                        Err(e) => {
+                            return Err(anyhow!("Failed to daemonize: {}", e));
+                        }
+                    }
+
+                    println!("Daemon started successfully");
+                }
+                DaemonCommands::Stop => {
+                    if !daemon_handle.is_running() {
+                        println!("Daemon is not running");
+                        // Cleanup stale files if they exist
+                        let _ = daemon_handle.cleanup_stale();
+                        return Ok(());
+                    }
+
+                    let pid = daemon_handle
+                        .get_pid()
+                        .ok_or_else(|| anyhow!("Could not get daemon PID"))?;
+
+                    println!("Stopping daemon (PID: {})...", pid);
+
+                    // Send SIGTERM
+                    stop_daemon(daemon_handle.pid_file())?;
+
+                    // Wait for stop with timeout
+                    match wait_for_stop(daemon_handle.pid_file(), 10).await {
+                        Ok(_) => {
+                            println!("Daemon stopped successfully");
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: {}", e);
+                            println!("Forcing cleanup...");
+                            let _ = daemon_handle.cleanup_stale();
+                        }
+                    }
+                }
+                DaemonCommands::Status => {
+                    if daemon_handle.is_running() {
+                        if let Some(pid) = daemon_handle.get_pid() {
+                            println!("Daemon is running (PID: {})", pid);
+
+                            // Try to ping daemon via socket
+                            let mut client = SocketClient::new(daemon_handle.socket_path());
+                            match client.connect().await {
+                                Ok(_) => {
+                                    match client.ping().await {
+                                        Ok(true) => println!("Daemon is responsive"),
+                                        Ok(false) => println!("Daemon ping failed"),
+                                        Err(e) => println!("Daemon ping error: {}", e),
+                                    }
+                                    let _ = client.disconnect().await;
+                                }
+                                Err(e) => {
+                                    println!("Could not connect to daemon socket: {}", e);
+                                }
+                            }
+                        } else {
+                            println!("Daemon PID file exists but could not read PID");
+                        }
+                    } else {
+                        println!("Daemon is not running");
+                        // Cleanup stale files if they exist
+                        let _ = daemon_handle.cleanup_stale();
+                    }
+                }
+                DaemonCommands::Logs => {
+                    let log_path = app_data_dir.join("daemon.log");
+                    if log_path.exists() {
+                        match fs::read_to_string(&log_path) {
+                            Ok(content) => {
+                                if content.is_empty() {
+                                    println!("Log file is empty");
+                                } else {
+                                    print!("{}", content);
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to read log file: {}", e);
+                            }
+                        }
+                    } else {
+                        println!("No log file found at {}", log_path.display());
+                    }
+                }
+            }
         }
         Commands::Status => {
             let status = core.get_status();
@@ -261,6 +557,65 @@ where
     }
 }
 
+/// Notify the daemon about a configuration change for a specific root
+async fn run_daemon(core: SyncCore, handle: DaemonHandle) -> anyhow::Result<()> {
+    // Set up shutdown signal handling
+    let shutdown = tokio::signal::ctrl_c();
+
+    tokio::select! {
+        result = core.start() => {
+            if let Err(e) = result {
+                tracing::error!("Sync core error: {}", e);
+            }
+        }
+        _ = shutdown => {
+            tracing::info!("Received shutdown signal");
+        }
+    }
+
+    // Cleanup
+    handle.remove_pid()?;
+    if handle.socket_path().exists() {
+        std::fs::remove_file(handle.socket_path()).ok();
+    }
+
+    tracing::info!("Daemon shutdown complete");
+    Ok(())
+}
+
+async fn notify_daemon_config_change(app_data_dir: &PathBuf, root_id: Uuid) -> Result<()> {
+    use sync_engine::SocketClient;
+
+    let daemon_handle = DaemonHandle::new(app_data_dir.clone());
+
+    if daemon_handle.is_running() {
+        let mut client = SocketClient::new(daemon_handle.socket_path());
+        match client.connect().await {
+            Ok(_) => {
+                // Send a config reload notification for the specific root
+                match client
+                    .notify(
+                        "config.reload",
+                        Some(serde_json::json!({"root_id": root_id})),
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        tracing::info!("Notified daemon about config change for root {}", root_id)
+                    }
+                    Err(e) => tracing::warn!("Failed to notify daemon: {}", e),
+                }
+                let _ = client.disconnect().await;
+            }
+            Err(e) => {
+                tracing::warn!("Could not connect to daemon socket: {}", e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,13 +633,8 @@ mod tests {
 
     #[test]
     fn login_accepts_explicit_token_fallback() {
-        let cli = Cli::try_parse_from([
-            "rustshare-desktop",
-            "login",
-            "--token",
-            "test-token-123",
-        ])
-        .unwrap();
+        let cli = Cli::try_parse_from(["rustshare-desktop", "login", "--token", "test-token-123"])
+            .unwrap();
 
         match cli.command {
             Commands::Login { token } => assert_eq!(token.as_deref(), Some("test-token-123")),
@@ -295,19 +645,15 @@ mod tests {
     #[tokio::test]
     async fn login_without_token_uses_pairing_flow_result() {
         let paired_device_id = Uuid::new_v4();
-        let paired_token = resolve_login_token(
-            "https://rustshare.example",
-            None,
-            |_| {
-                Box::pin(async move {
-                    Ok(DeviceToken {
+        let paired_token = resolve_login_token("https://rustshare.example", None, |_| {
+            Box::pin(async move {
+                Ok(DeviceToken {
                     token: "paired-token-123".to_string(),
                     device_id: paired_device_id,
                     created_at: chrono::Utc::now(),
                 })
-                })
-            },
-        )
+            })
+        })
         .await
         .unwrap();
 

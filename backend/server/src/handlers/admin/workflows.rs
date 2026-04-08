@@ -47,11 +47,16 @@ pub async fn list_workflows(
         "SELECT id, key, name, trigger_type, status, subject, body, terms_enabled, terms_text,
                 created_at, updated_at, updated_by
          FROM workflows
-         ORDER BY created_at ASC"
+         ORDER BY created_at ASC",
     )
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?;
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(e.to_string())),
+        )
+    })?;
 
     Ok(Json(rows.into_iter().map(WorkflowResponse::from).collect()))
 }
@@ -70,8 +75,18 @@ pub async fn get_workflow(
     .bind(id)
     .fetch_optional(&state.db_pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?
-    .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse::new("Workflow not found"))))?;
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(e.to_string())),
+        )
+    })?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse::new("Workflow not found")),
+        )
+    })?;
 
     Ok(Json(WorkflowResponse::from(row)))
 }
@@ -104,10 +119,28 @@ pub async fn update_workflow(
     .bind(actor_id)
     .fetch_optional(&state.db_pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?
-    .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse::new("Workflow not found"))))?;
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(e.to_string())),
+        )
+    })?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse::new("Workflow not found")),
+        )
+    })?;
 
-    log_admin_action(&state.db_pool, actor_id, "workflow.updated", Some("workflow"), Some(id), json!({})).await;
+    log_admin_action(
+        &state.db_pool,
+        actor_id,
+        "workflow.updated",
+        Some("workflow"),
+        Some(id),
+        json!({}),
+    )
+    .await;
 
     Ok(Json(WorkflowResponse::from(row)))
 }
@@ -126,11 +159,26 @@ pub async fn enable_workflow(
     .bind(id)
     .fetch_optional(&state.db_pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?
-    .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse::new("Workflow not found"))))?;
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(e.to_string())),
+        )
+    })?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse::new("Workflow not found")),
+        )
+    })?;
 
     if wf.key != "invite_email" {
-        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse::new("Only invite_email workflow can be enabled currently"))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new(
+                "Only invite_email workflow can be enabled currently",
+            )),
+        ));
     }
 
     let smtp_ok: bool = sqlx::query_scalar(
@@ -141,14 +189,24 @@ pub async fn enable_workflow(
               AND host IS NOT NULL
               AND port IS NOT NULL
               AND from_address IS NOT NULL
-        )"
+        )",
     )
     .fetch_one(&state.db_pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?;
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(e.to_string())),
+        )
+    })?;
 
     if !smtp_ok {
-        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse::new("SMTP must be configured and enabled before this workflow can be activated"))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new(
+                "SMTP must be configured and enabled before this workflow can be activated",
+            )),
+        ));
     }
 
     let row = sqlx::query_as::<_, WorkflowRow>(
@@ -162,9 +220,22 @@ pub async fn enable_workflow(
     .bind(actor_id)
     .fetch_one(&state.db_pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?;
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(e.to_string())),
+        )
+    })?;
 
-    log_admin_action(&state.db_pool, actor_id, "workflow.enabled", Some("workflow"), Some(id), json!({})).await;
+    log_admin_action(
+        &state.db_pool,
+        actor_id,
+        "workflow.enabled",
+        Some("workflow"),
+        Some(id),
+        json!({}),
+    )
+    .await;
 
     Ok(Json(WorkflowResponse::from(row)))
 }
@@ -185,10 +256,28 @@ pub async fn disable_workflow(
     .bind(actor_id)
     .fetch_optional(&state.db_pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?
-    .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse::new("Workflow not found"))))?;
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(e.to_string())),
+        )
+    })?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse::new("Workflow not found")),
+        )
+    })?;
 
-    log_admin_action(&state.db_pool, actor_id, "workflow.disabled", Some("workflow"), Some(id), json!({})).await;
+    log_admin_action(
+        &state.db_pool,
+        actor_id,
+        "workflow.disabled",
+        Some("workflow"),
+        Some(id),
+        json!({}),
+    )
+    .await;
 
     Ok(Json(WorkflowResponse::from(row)))
 }

@@ -10,8 +10,8 @@ use axum::{
 };
 use axum_extra::headers::{authorization::Bearer, Authorization, HeaderMapExt};
 use rustshare_core::services::{ScimGroup, ScimService, ScimUser};
-use sqlx::Row;
 use serde_json::json;
+use sqlx::Row;
 use std::sync::Arc;
 
 use crate::AppState;
@@ -21,7 +21,9 @@ use crate::AppState;
 // ---------------------------------------------------------------------------
 
 /// Verify SCIM bearer token from Authorization header.
-fn verify_scim_token(headers: &axum::http::HeaderMap) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+fn verify_scim_token(
+    headers: &axum::http::HeaderMap,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     let expected_token = match std::env::var("RUSTSHARE_SCIM_BEARER_TOKEN") {
         Ok(token) if !token.is_empty() => token,
         _ => {
@@ -299,8 +301,8 @@ pub async fn delete_group(
 // SCIM Repository Implementation
 // ---------------------------------------------------------------------------
 
-use rustshare_core::services::{GroupRecord, ScimRepository};
 use rustshare_core::domain::User;
+use rustshare_core::services::{GroupRecord, ScimRepository};
 use sqlx::PgPool;
 
 /// SQLx-based implementation of SCIM repository.
@@ -316,7 +318,10 @@ impl ScimRepositoryImpl {
 
 #[async_trait::async_trait]
 impl ScimRepository for ScimRepositoryImpl {
-    async fn find_user_by_external_id(&self, external_id: &str) -> Result<Option<User>, sqlx::Error> {
+    async fn find_user_by_external_id(
+        &self,
+        external_id: &str,
+    ) -> Result<Option<User>, sqlx::Error> {
         let row = sqlx::query(
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
@@ -418,7 +423,11 @@ impl ScimRepository for ScimRepositoryImpl {
         Ok(())
     }
 
-    async fn set_user_disabled(&self, external_id: &str, disabled: bool) -> Result<(), sqlx::Error> {
+    async fn set_user_disabled(
+        &self,
+        external_id: &str,
+        disabled: bool,
+    ) -> Result<(), sqlx::Error> {
         let disabled_at: Option<DateTime<Utc>> = if disabled { Some(Utc::now()) } else { None };
 
         sqlx::query(
@@ -481,11 +490,7 @@ impl ScimRepository for ScimRepositoryImpl {
         Ok(id)
     }
 
-    async fn update_group(
-        &self,
-        external_id: &str,
-        display_name: &str,
-    ) -> Result<(), sqlx::Error> {
+    async fn update_group(&self, external_id: &str, display_name: &str) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             UPDATE user_groups
@@ -511,29 +516,37 @@ impl ScimRepository for ScimRepositoryImpl {
         Ok(())
     }
 
-    async fn find_user_id_by_external_id(&self, external_id: &str) -> Result<Option<uuid::Uuid>, sqlx::Error> {
-        let id: Option<uuid::Uuid> = sqlx::query_scalar(
-            "SELECT id FROM users WHERE external_id = $1"
-        )
-        .bind(external_id)
-        .fetch_optional(&self.pool)
-        .await?;
+    async fn find_user_id_by_external_id(
+        &self,
+        external_id: &str,
+    ) -> Result<Option<uuid::Uuid>, sqlx::Error> {
+        let id: Option<uuid::Uuid> =
+            sqlx::query_scalar("SELECT id FROM users WHERE external_id = $1")
+                .bind(external_id)
+                .fetch_optional(&self.pool)
+                .await?;
 
         Ok(id)
     }
 
-    async fn get_group_members(&self, group_id: uuid::Uuid) -> Result<Vec<uuid::Uuid>, sqlx::Error> {
-        let members: Vec<uuid::Uuid> = sqlx::query_scalar(
-            "SELECT user_id FROM group_members WHERE group_id = $1"
-        )
-        .bind(group_id)
-        .fetch_all(&self.pool)
-        .await?;
+    async fn get_group_members(
+        &self,
+        group_id: uuid::Uuid,
+    ) -> Result<Vec<uuid::Uuid>, sqlx::Error> {
+        let members: Vec<uuid::Uuid> =
+            sqlx::query_scalar("SELECT user_id FROM group_members WHERE group_id = $1")
+                .bind(group_id)
+                .fetch_all(&self.pool)
+                .await?;
 
         Ok(members)
     }
 
-    async fn add_group_member(&self, group_id: uuid::Uuid, user_id: uuid::Uuid) -> Result<(), sqlx::Error> {
+    async fn add_group_member(
+        &self,
+        group_id: uuid::Uuid,
+        user_id: uuid::Uuid,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             INSERT INTO group_members (group_id, user_id, added_by)
@@ -549,14 +562,16 @@ impl ScimRepository for ScimRepositoryImpl {
         Ok(())
     }
 
-    async fn remove_group_member(&self, group_id: uuid::Uuid, user_id: uuid::Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "DELETE FROM group_members WHERE group_id = $1 AND user_id = $2"
-        )
-        .bind(group_id)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await?;
+    async fn remove_group_member(
+        &self,
+        group_id: uuid::Uuid,
+        user_id: uuid::Uuid,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
+            .bind(group_id)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }

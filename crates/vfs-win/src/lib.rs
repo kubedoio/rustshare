@@ -1,12 +1,8 @@
-#[cfg(windows)]
-use windows::{
-    core::*,
-    Win32::Storage::CloudFilters::*,
-    Win32::Foundation::*,
-};
+use anyhow::{anyhow, Result};
 use std::path::Path;
-use anyhow::{Result, anyhow};
-use tracing::{info, error};
+use tracing::{error, info};
+#[cfg(windows)]
+use windows::{core::*, Win32::Foundation::*, Win32::Storage::CloudFilters::*};
 
 pub struct VfsManagerWin {
     sync_root_id: String,
@@ -22,9 +18,18 @@ impl VfsManagerWin {
     #[cfg(windows)]
     pub fn register_root(&self, local_path: &Path) -> Result<()> {
         info!("Registering Windows Cloud Filter root at {:?}", local_path);
-        
-        let path_u16: Vec<u16> = local_path.to_str().unwrap().encode_utf16().chain(std::iter::once(0)).collect();
-        let pc_u16: Vec<u16> = self.sync_root_id.encode_utf16().chain(std::iter::once(0)).collect();
+
+        let path_u16: Vec<u16> = local_path
+            .to_str()
+            .unwrap()
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let pc_u16: Vec<u16> = self
+            .sync_root_id
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
 
         let info = CF_SYNC_REGISTRATION {
             StructSize: std::mem::size_of::<CF_SYNC_REGISTRATION>() as u32,
@@ -52,7 +57,8 @@ impl VfsManagerWin {
                 &info,
                 &policies,
                 CF_REGISTER_FLAG_NONE,
-            ).map_err(|e| anyhow!("Failed to register sync root: {}", e))?;
+            )
+            .map_err(|e| anyhow!("Failed to register sync root: {}", e))?;
         }
 
         Ok(())

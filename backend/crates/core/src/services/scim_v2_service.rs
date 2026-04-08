@@ -282,7 +282,11 @@ impl ScimV2User {
             emails: Some(vec![email]),
             phone_numbers: None,
             addresses: None,
-            groups: if group_refs.is_empty() { None } else { Some(group_refs) },
+            groups: if group_refs.is_empty() {
+                None
+            } else {
+                Some(group_refs)
+            },
             meta: Some(ScimV2Meta {
                 resource_type: "User".to_string(),
                 created: Some(user.created_at),
@@ -346,7 +350,12 @@ pub struct ScimV2ListResponse<T> {
 }
 
 impl<T> ScimV2ListResponse<T> {
-    pub fn new(resources: Vec<T>, total_results: i64, start_index: Option<i64>, count: Option<i64>) -> Self {
+    pub fn new(
+        resources: Vec<T>,
+        total_results: i64,
+        start_index: Option<i64>,
+        count: Option<i64>,
+    ) -> Self {
         Self {
             schemas: vec!["urn:ietf:params:scim:api:messages:2.0:ListResponse".to_string()],
             total_results,
@@ -439,7 +448,9 @@ pub struct ScimV2AuthScheme {
 impl ScimV2ServiceProviderConfig {
     pub fn new(base_url: &str) -> Self {
         Self {
-            schemas: vec!["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig".to_string()],
+            schemas: vec![
+                "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig".to_string(),
+            ],
             documentation_uri: Some(format!("{}/docs/scim", base_url)),
             patch: ScimV2SupportConfig { supported: true },
             bulk: ScimV2BulkConfig {
@@ -454,15 +465,14 @@ impl ScimV2ServiceProviderConfig {
             change_password: ScimV2SupportConfig { supported: false },
             sort: ScimV2SupportConfig { supported: false },
             etag: ScimV2SupportConfig { supported: false },
-            authentication_schemes: vec![
-                ScimV2AuthScheme {
-                    auth_type: "oauthbearertoken".to_string(),
-                    name: "OAuth Bearer Token".to_string(),
-                    description: "Bearer token authentication using RUSTSHARE_SCIM_BEARER_TOKEN".to_string(),
-                    spec_uri: Some("https://www.rfc-editor.org/rfc/rfc6750.txt".to_string()),
-                    documentation_uri: None,
-                },
-            ],
+            authentication_schemes: vec![ScimV2AuthScheme {
+                auth_type: "oauthbearertoken".to_string(),
+                name: "OAuth Bearer Token".to_string(),
+                description: "Bearer token authentication using RUSTSHARE_SCIM_BEARER_TOKEN"
+                    .to_string(),
+                spec_uri: Some("https://www.rfc-editor.org/rfc/rfc6750.txt".to_string()),
+                documentation_uri: None,
+            }],
             meta: Some(ScimV2Meta {
                 resource_type: "ServiceProviderConfig".to_string(),
                 created: None,
@@ -583,21 +593,21 @@ pub struct ScimFilter {
 /// Supports: userName eq "value", externalId eq "value", active eq true, etc.
 pub fn parse_filter(filter: &str) -> Result<Vec<ScimFilter>, ScimV2Error> {
     let mut filters = Vec::new();
-    
+
     // Simple parser for common filter patterns
     // Supports: attr op "value" or attr op true/false
     // Examples: userName eq "john", externalId eq "12345", active eq true
-    
+
     for part in filter.split(" and ").map(|s| s.trim()) {
         // Try to parse attribute op value pattern
         if let Some((attr, rest)) = part.split_once(' ') {
             let attr = attr.trim();
             let rest = rest.trim();
-            
+
             if let Some((op_str, value)) = rest.split_once(' ') {
                 let op_str = op_str.trim().to_lowercase();
                 let value = value.trim().trim_matches('"');
-                
+
                 let operator = match op_str.as_str() {
                     "eq" => FilterOperator::Eq,
                     "ne" => FilterOperator::Ne,
@@ -609,9 +619,14 @@ pub fn parse_filter(filter: &str) -> Result<Vec<ScimFilter>, ScimV2Error> {
                     "ge" => FilterOperator::Ge,
                     "lt" => FilterOperator::Lt,
                     "le" => FilterOperator::Le,
-                    _ => return Err(ScimV2Error::FilterParse(format!("Unknown operator: {}", op_str))),
+                    _ => {
+                        return Err(ScimV2Error::FilterParse(format!(
+                            "Unknown operator: {}",
+                            op_str
+                        )))
+                    }
                 };
-                
+
                 filters.push(ScimFilter {
                     attribute: attr.to_string(),
                     operator,
@@ -620,7 +635,7 @@ pub fn parse_filter(filter: &str) -> Result<Vec<ScimFilter>, ScimV2Error> {
             }
         }
     }
-    
+
     Ok(filters)
 }
 
@@ -639,7 +654,10 @@ pub trait ScimV2Repository: Send + Sync {
     async fn get_user(&self, id: Uuid) -> Result<Option<ScimV2UserRecord>, sqlx::Error>;
 
     /// Get a user by external_id.
-    async fn get_user_by_external_id(&self, external_id: &str) -> Result<Option<ScimV2UserRecord>, sqlx::Error>;
+    async fn get_user_by_external_id(
+        &self,
+        external_id: &str,
+    ) -> Result<Option<ScimV2UserRecord>, sqlx::Error>;
 
     /// Create a new user.
     async fn create_user(
@@ -653,7 +671,11 @@ pub trait ScimV2Repository: Send + Sync {
     async fn update_user(&self, id: Uuid, user: &ScimV2User) -> Result<(), sqlx::Error>;
 
     /// Partial update a user (PATCH).
-    async fn patch_user(&self, id: Uuid, operations: &[ScimPatchOperation]) -> Result<(), sqlx::Error>;
+    async fn patch_user(
+        &self,
+        id: Uuid,
+        operations: &[ScimPatchOperation],
+    ) -> Result<(), sqlx::Error>;
 
     /// Delete a user.
     async fn delete_user(&self, id: Uuid) -> Result<(), sqlx::Error>;
@@ -670,7 +692,10 @@ pub trait ScimV2Repository: Send + Sync {
     async fn get_group(&self, id: Uuid) -> Result<Option<ScimV2GroupRecord>, sqlx::Error>;
 
     /// Get a group by external_id.
-    async fn get_group_by_external_id(&self, external_id: &str) -> Result<Option<ScimV2GroupRecord>, sqlx::Error>;
+    async fn get_group_by_external_id(
+        &self,
+        external_id: &str,
+    ) -> Result<Option<ScimV2GroupRecord>, sqlx::Error>;
 
     /// Create a new group.
     async fn create_group(&self, group: &ScimV2Group) -> Result<Uuid, sqlx::Error>;
@@ -679,7 +704,11 @@ pub trait ScimV2Repository: Send + Sync {
     async fn update_group(&self, id: Uuid, group: &ScimV2Group) -> Result<(), sqlx::Error>;
 
     /// Partial update a group (PATCH).
-    async fn patch_group(&self, id: Uuid, operations: &[ScimPatchOperation]) -> Result<(), sqlx::Error>;
+    async fn patch_group(
+        &self,
+        id: Uuid,
+        operations: &[ScimPatchOperation],
+    ) -> Result<(), sqlx::Error>;
 
     /// Delete a group.
     async fn delete_group(&self, id: Uuid) -> Result<(), sqlx::Error>;
@@ -697,7 +726,10 @@ pub trait ScimV2Repository: Send + Sync {
     async fn remove_group_member(&self, group_id: Uuid, user_id: Uuid) -> Result<(), sqlx::Error>;
 
     /// Find user ID by external_id.
-    async fn find_user_id_by_external_id(&self, external_id: &str) -> Result<Option<Uuid>, sqlx::Error>;
+    async fn find_user_id_by_external_id(
+        &self,
+        external_id: &str,
+    ) -> Result<Option<Uuid>, sqlx::Error>;
 
     /// Clear all members from group.
     async fn clear_group_members(&self, group_id: Uuid) -> Result<(), sqlx::Error>;
@@ -756,12 +788,15 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
             None => vec![],
         };
 
-        let (users, total) = self.repository.list_users(&filters, start_index, count).await?;
+        let (users, total) = self
+            .repository
+            .list_users(&filters, start_index, count)
+            .await?;
 
         let mut resources = Vec::new();
         for user_record in users {
             let groups = self.repository.get_user_groups(user_record.id).await?;
-            
+
             // Convert record to full user
             let user = self.record_to_user(user_record, groups).await?;
             resources.push(user);
@@ -792,7 +827,9 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
     pub async fn create_user(&self, user: ScimV2User) -> Result<ScimV2User, ScimV2Error> {
         // Validate required fields
         if user.user_name.is_empty() {
-            return Err(ScimV2Error::InvalidRequest("userName is required".to_string()));
+            return Err(ScimV2Error::InvalidRequest(
+                "userName is required".to_string(),
+            ));
         }
 
         // Check for existing user by external_id
@@ -860,7 +897,10 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
             None => vec![],
         };
 
-        let (groups, total) = self.repository.list_groups(&filters, start_index, count).await?;
+        let (groups, total) = self
+            .repository
+            .list_groups(&filters, start_index, count)
+            .await?;
 
         let mut resources = Vec::new();
         for group_record in groups {
@@ -893,12 +933,18 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
     /// Create a new group.
     pub async fn create_group(&self, group: ScimV2Group) -> Result<ScimV2Group, ScimV2Error> {
         if group.display_name.is_empty() {
-            return Err(ScimV2Error::InvalidRequest("displayName is required".to_string()));
+            return Err(ScimV2Error::InvalidRequest(
+                "displayName is required".to_string(),
+            ));
         }
 
         // Check for existing group by external_id
         if let Some(ref external_id) = group.external_id {
-            if let Some(existing) = self.repository.get_group_by_external_id(external_id).await? {
+            if let Some(existing) = self
+                .repository
+                .get_group_by_external_id(external_id)
+                .await?
+            {
                 return self.update_group(existing.id, group).await;
             }
         }
@@ -910,13 +956,23 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
             for member in members {
                 if let Ok(user_id) = Uuid::parse_str(&member.value) {
                     if let Err(e) = self.repository.add_group_member(id, user_id).await {
-                        warn!("Failed to add member {} to group {}: {}", member.value, id, e);
+                        warn!(
+                            "Failed to add member {} to group {}: {}",
+                            member.value, id, e
+                        );
                     }
                 } else {
                     // Try to find by external_id
-                    if let Some(user_id) = self.repository.find_user_id_by_external_id(&member.value).await? {
+                    if let Some(user_id) = self
+                        .repository
+                        .find_user_id_by_external_id(&member.value)
+                        .await?
+                    {
                         if let Err(e) = self.repository.add_group_member(id, user_id).await {
-                            warn!("Failed to add member {} to group {}: {}", member.value, id, e);
+                            warn!(
+                                "Failed to add member {} to group {}: {}",
+                                member.value, id, e
+                            );
                         }
                     }
                 }
@@ -927,7 +983,11 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
     }
 
     /// Update a group (full replacement).
-    pub async fn update_group(&self, id: Uuid, group: ScimV2Group) -> Result<ScimV2Group, ScimV2Error> {
+    pub async fn update_group(
+        &self,
+        id: Uuid,
+        group: ScimV2Group,
+    ) -> Result<ScimV2Group, ScimV2Error> {
         if self.repository.get_group(id).await?.is_none() {
             return Err(ScimV2Error::GroupNotFound(id.to_string()));
         }
@@ -937,17 +997,27 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
         // Sync members if provided
         if let Some(ref members) = group.members {
             self.repository.clear_group_members(id).await?;
-            
+
             for member in members {
                 if let Ok(user_id) = Uuid::parse_str(&member.value) {
                     if let Err(e) = self.repository.add_group_member(id, user_id).await {
-                        warn!("Failed to add member {} to group {}: {}", member.value, id, e);
+                        warn!(
+                            "Failed to add member {} to group {}: {}",
+                            member.value, id, e
+                        );
                     }
                 } else {
                     // Try to find by external_id
-                    if let Some(user_id) = self.repository.find_user_id_by_external_id(&member.value).await? {
+                    if let Some(user_id) = self
+                        .repository
+                        .find_user_id_by_external_id(&member.value)
+                        .await?
+                    {
                         if let Err(e) = self.repository.add_group_member(id, user_id).await {
-                            warn!("Failed to add member {} to group {}: {}", member.value, id, e);
+                            warn!(
+                                "Failed to add member {} to group {}: {}",
+                                member.value, id, e
+                            );
                         }
                     }
                 }
@@ -1116,7 +1186,10 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
                     resource_type: "Schema".to_string(),
                     created: None,
                     last_modified: None,
-                    location: format!("{}/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User", self.base_url),
+                    location: format!(
+                        "{}/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User",
+                        self.base_url
+                    ),
                     version: None,
                 }),
             },
@@ -1165,7 +1238,10 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
                     resource_type: "Schema".to_string(),
                     created: None,
                     last_modified: None,
-                    location: format!("{}/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:Group", self.base_url),
+                    location: format!(
+                        "{}/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:Group",
+                        self.base_url
+                    ),
                     version: None,
                 }),
             },
@@ -1215,7 +1291,11 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
             emails: Some(vec![email]),
             phone_numbers: None,
             addresses: None,
-            groups: if group_refs.is_empty() { None } else { Some(group_refs) },
+            groups: if group_refs.is_empty() {
+                None
+            } else {
+                Some(group_refs)
+            },
             meta: Some(ScimV2Meta {
                 resource_type: "User".to_string(),
                 created: Some(record.created_at),
@@ -1249,7 +1329,11 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
             id: Some(record.id.to_string()),
             external_id: record.external_id,
             display_name: record.name,
-            members: if member_refs.is_empty() { None } else { Some(member_refs) },
+            members: if member_refs.is_empty() {
+                None
+            } else {
+                Some(member_refs)
+            },
             meta: Some(ScimV2Meta {
                 resource_type: "Group".to_string(),
                 created: Some(record.created_at),
@@ -1335,18 +1419,21 @@ mod tests {
 
     #[test]
     fn test_user_with_id() {
-        let user = ScimV2User::new("john.doe".to_string())
-            .with_id(Uuid::new_v4(), "https://example.com");
-        
+        let user =
+            ScimV2User::new("john.doe".to_string()).with_id(Uuid::new_v4(), "https://example.com");
+
         assert!(user.id.is_some());
         assert!(user.meta.is_some());
-        assert_eq!(user.schemas.schemas[0], "urn:ietf:params:scim:schemas:core:2.0:User");
+        assert_eq!(
+            user.schemas.schemas[0],
+            "urn:ietf:params:scim:schemas:core:2.0:User"
+        );
     }
 
     #[test]
     fn test_service_provider_config() {
         let config = ScimV2ServiceProviderConfig::new("https://example.com");
-        
+
         assert!(config.patch.supported);
         assert!(config.filter.supported);
         assert_eq!(config.filter.max_results, 200);

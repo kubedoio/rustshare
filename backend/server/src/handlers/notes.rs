@@ -9,9 +9,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::services::note_service::{NoteError, NoteSummary, NoteVisibility};
-use crate::{AppState, handlers::ErrorResponse};
 use super::AuthenticatedUser;
+use crate::services::note_service::{NoteError, NoteSummary, NoteVisibility};
+use crate::{handlers::ErrorResponse, AppState};
 
 // ============================================================================
 // Error Response Mapping
@@ -22,9 +22,10 @@ pub fn note_error_response(err: NoteError) -> Response {
         NoteError::NotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
         NoteError::PermissionDenied => (StatusCode::FORBIDDEN, err.to_string()),
         NoteError::InvalidName(_) => (StatusCode::BAD_REQUEST, err.to_string()),
-        NoteError::Database(_) | NoteError::Storage(_) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
-        }
+        NoteError::Database(_) | NoteError::Storage(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal server error".to_string(),
+        ),
     };
     (status, Json(ErrorResponse::new(message))).into_response()
 }
@@ -61,13 +62,21 @@ pub async fn create_note(
 ) -> Result<(StatusCode, Json<CreateNoteResponse>), Response> {
     let note = state
         .note_service
-        .create_note(auth.user_id, auth.tenant_id, req.title, req.parent_folder_id, req.content)
+        .create_note(
+            auth.user_id,
+            auth.tenant_id,
+            req.title,
+            req.parent_folder_id,
+            req.content,
+        )
         .await
         .map_err(note_error_response)?;
 
-    let public_url = note.metadata.public_share_id.as_ref().map(|id| {
-        format!("{}/p/note/{}", state.public_base_url, id)
-    });
+    let public_url = note
+        .metadata
+        .public_share_id
+        .as_ref()
+        .map(|id| format!("{}/p/note/{}", state.public_base_url, id));
 
     Ok((
         StatusCode::CREATED,
@@ -115,9 +124,11 @@ pub async fn get_note(
         .await
         .map_err(note_error_response)?;
 
-    let public_url = note.metadata.public_share_id.as_ref().map(|id| {
-        format!("{}/p/note/{}", state.public_base_url, id)
-    });
+    let public_url = note
+        .metadata
+        .public_share_id
+        .as_ref()
+        .map(|id| format!("{}/p/note/{}", state.public_base_url, id));
 
     Ok(Json(GetNoteResponse {
         id: note.id,
@@ -191,9 +202,11 @@ pub async fn rename_note(
         .await
         .map_err(note_error_response)?;
 
-    let public_url = note.metadata.public_share_id.as_ref().map(|id| {
-        format!("{}/p/note/{}", state.public_base_url, id)
-    });
+    let public_url = note
+        .metadata
+        .public_share_id
+        .as_ref()
+        .map(|id| format!("{}/p/note/{}", state.public_base_url, id));
 
     Ok(Json(GetNoteResponse {
         id: note.id,
@@ -230,9 +243,11 @@ pub async fn move_note(
         .await
         .map_err(note_error_response)?;
 
-    let public_url = note.metadata.public_share_id.as_ref().map(|id| {
-        format!("{}/p/note/{}", state.public_base_url, id)
-    });
+    let public_url = note
+        .metadata
+        .public_share_id
+        .as_ref()
+        .map(|id| format!("{}/p/note/{}", state.public_base_url, id));
 
     Ok(Json(GetNoteResponse {
         id: note.id,
@@ -348,9 +363,11 @@ pub async fn toggle_visibility(
         .await
         .map_err(note_error_response)?;
 
-    let public_url = note.metadata.public_share_id.as_ref().map(|id| {
-        format!("{}/p/note/{}", state.public_base_url, id)
-    });
+    let public_url = note
+        .metadata
+        .public_share_id
+        .as_ref()
+        .map(|id| format!("{}/p/note/{}", state.public_base_url, id));
 
     Ok(Json(VisibilityResponse {
         id: note.id,

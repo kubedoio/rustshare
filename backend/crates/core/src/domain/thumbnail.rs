@@ -90,12 +90,8 @@ pub const SUPPORTED_VIDEO_TYPES: &[&str] = &[
 ];
 
 /// Special diagram file types (identified by extension)
-pub const SUPPORTED_DIAGRAM_EXTENSIONS: &[&str] = &[
-    ".excalidraw",
-    ".excalidraw.json",
-    ".drawio",
-    ".dio",
-];
+pub const SUPPORTED_DIAGRAM_EXTENSIONS: &[&str] =
+    &[".excalidraw", ".excalidraw.json", ".drawio", ".dio"];
 
 /// Check if a MIME type is supported for thumbnail generation
 pub fn is_thumbnail_supported(mime_type: &str) -> bool {
@@ -111,7 +107,7 @@ pub fn is_file_thumbnail_supported(mime_type: &str, file_name: &str) -> bool {
     if is_thumbnail_supported(mime_type) {
         return true;
     }
-    
+
     // Check special diagram file extensions
     let name_lower = file_name.to_lowercase();
     for ext in SUPPORTED_DIAGRAM_EXTENSIONS {
@@ -119,7 +115,7 @@ pub fn is_file_thumbnail_supported(mime_type: &str, file_name: &str) -> bool {
             return true;
         }
     }
-    
+
     false
 }
 
@@ -153,7 +149,7 @@ pub fn get_file_thumbnail_category(mime_type: &str, file_name: &str) -> Thumbnai
     if category != ThumbnailCategory::Unsupported {
         return category;
     }
-    
+
     // Check for diagram files by extension
     let name_lower = file_name.to_lowercase();
     for ext in SUPPORTED_DIAGRAM_EXTENSIONS {
@@ -161,7 +157,7 @@ pub fn get_file_thumbnail_category(mime_type: &str, file_name: &str) -> Thumbnai
             return ThumbnailCategory::Diagram;
         }
     }
-    
+
     ThumbnailCategory::Unsupported
 }
 
@@ -256,9 +252,21 @@ mod tests {
 
     #[test]
     fn test_get_thumbnail_category() {
-        assert_eq!(get_thumbnail_category("image/jpeg"), ThumbnailCategory::Image);
-        assert_eq!(get_thumbnail_category("application/pdf"), ThumbnailCategory::Pdf);
-        assert_eq!(get_thumbnail_category("video/mp4"), ThumbnailCategory::Video);
-        assert_eq!(get_thumbnail_category("text/plain"), ThumbnailCategory::Unsupported);
+        assert_eq!(
+            get_thumbnail_category("image/jpeg"),
+            ThumbnailCategory::Image
+        );
+        assert_eq!(
+            get_thumbnail_category("application/pdf"),
+            ThumbnailCategory::Pdf
+        );
+        assert_eq!(
+            get_thumbnail_category("video/mp4"),
+            ThumbnailCategory::Video
+        );
+        assert_eq!(
+            get_thumbnail_category("text/plain"),
+            ThumbnailCategory::Unsupported
+        );
     }
 }

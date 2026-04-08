@@ -4,6 +4,6 @@ pub mod password;
 pub mod secret_encryption;
 pub mod webhook_signature;
 
-pub use password::{PasswordHasher, PasswordError};
-pub use secret_encryption::{encrypt_secret, decrypt_secret, EncryptionError, SecretEncryptionKey};
-pub use webhook_signature::{WebhookSigner, WebhookSignatureError};
+pub use password::{PasswordError, PasswordHasher};
+pub use secret_encryption::{decrypt_secret, encrypt_secret, EncryptionError, SecretEncryptionKey};
+pub use webhook_signature::{WebhookSignatureError, WebhookSigner};

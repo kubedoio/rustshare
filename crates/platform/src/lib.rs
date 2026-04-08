@@ -17,13 +17,17 @@ impl TokenStore {
     }
 
     pub fn save_token(&self, user_id: &str, token: &str) -> Result<()> {
-        let entry = Entry::new(&self.service, user_id).map_err(|e| anyhow!("Keyring error: {}", e))?;
-        entry.set_password(token).map_err(|e| anyhow!("Keyring error: {}", e))?;
+        let entry =
+            Entry::new(&self.service, user_id).map_err(|e| anyhow!("Keyring error: {}", e))?;
+        entry
+            .set_password(token)
+            .map_err(|e| anyhow!("Keyring error: {}", e))?;
         Ok(())
     }
 
     pub fn get_token(&self, user_id: &str) -> Result<Option<String>> {
-        let entry = Entry::new(&self.service, user_id).map_err(|e| anyhow!("Keyring error: {}", e))?;
+        let entry =
+            Entry::new(&self.service, user_id).map_err(|e| anyhow!("Keyring error: {}", e))?;
         match entry.get_password() {
             Ok(token) => Ok(Some(token)),
             Err(keyring::Error::NoEntry) => Ok(None),
@@ -32,8 +36,11 @@ impl TokenStore {
     }
 
     pub fn delete_token(&self, user_id: &str) -> Result<()> {
-        let entry = Entry::new(&self.service, user_id).map_err(|e| anyhow!("Keyring error: {}", e))?;
-        entry.delete_credential().map_err(|e| anyhow!("Keyring error: {}", e))?;
+        let entry =
+            Entry::new(&self.service, user_id).map_err(|e| anyhow!("Keyring error: {}", e))?;
+        entry
+            .delete_credential()
+            .map_err(|e| anyhow!("Keyring error: {}", e))?;
         Ok(())
     }
 }

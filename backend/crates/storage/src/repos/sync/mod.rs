@@ -8,8 +8,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::repos::RepositoryError;
 use crate::metadata_v2::schemas::SyncCursorDocument;
+use crate::repos::RepositoryError;
 
 pub mod rustfs;
 
@@ -263,20 +263,13 @@ pub trait SyncRepository: Send + Sync {
     /// List all cursors for a user
     ///
     /// Returns all device cursors for the given user.
-    async fn list_user_cursors(
-        &self,
-        user_id: Uuid,
-    ) -> Result<Vec<SyncCursor>, RepositoryError>;
+    async fn list_user_cursors(&self, user_id: Uuid) -> Result<Vec<SyncCursor>, RepositoryError>;
 
     /// Delete a cursor for a device
     ///
     /// Removes the cursor for the given device. Used when a device
     /// is deauthorized or reset.
-    async fn delete_cursor(
-        &self,
-        user_id: Uuid,
-        device_id: Uuid,
-    ) -> Result<(), RepositoryError>;
+    async fn delete_cursor(&self, user_id: Uuid, device_id: Uuid) -> Result<(), RepositoryError>;
 }
 
 /// Error type for cursor parsing
@@ -305,7 +298,7 @@ impl std::error::Error for CursorError {}
 ///
 /// Cursor format: base64(timestamp_millis + ":" + nonce)
 pub fn parse_cursor(cursor: &str) -> Result<DateTime<Utc>, CursorError> {
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     let decoded = STANDARD
         .decode(cursor)
@@ -321,8 +314,7 @@ pub fn parse_cursor(cursor: &str) -> Result<DateTime<Utc>, CursorError> {
         .parse()
         .map_err(|_| CursorError::InvalidTimestamp)?;
 
-    chrono::DateTime::from_timestamp_millis(timestamp_millis)
-        .ok_or(CursorError::InvalidTimestamp)
+    chrono::DateTime::from_timestamp_millis(timestamp_millis).ok_or(CursorError::InvalidTimestamp)
 }
 
 /// Generate a new cursor token for the current time
@@ -354,7 +346,7 @@ mod tests {
 
     #[test]
     fn test_cursor_parsing_invalid_format() {
-        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
         let invalid = STANDARD.encode("no-colon-here");
         let result = parse_cursor(&invalid);
         assert_eq!(result, Err(CursorError::InvalidFormat));

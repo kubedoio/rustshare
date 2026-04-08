@@ -23,29 +23,29 @@ pub const DEFAULT_BANDWIDTH_LIMIT_KBPS: u64 = 0;
 pub struct Config {
     /// Server URL
     pub server_url: String,
-    
+
     /// Sync interval
     #[serde(with = "humantime_serde")]
     pub sync_interval: Duration,
-    
+
     /// Bandwidth limit in KB/s (0 = unlimited)
     pub bandwidth_limit_kbps: u64,
-    
+
     /// Maximum concurrent uploads
     pub max_concurrent_uploads: usize,
-    
+
     /// Maximum concurrent downloads
     pub max_concurrent_downloads: usize,
-    
+
     /// Enable real-time sync via WebSocket
     pub enable_websocket: bool,
-    
+
     /// Chunk size for resumable uploads (bytes)
     pub upload_chunk_size: usize,
-    
+
     /// Retry configuration
     pub retry: RetryConfig,
-    
+
     /// Sync folders (folder_id -> local path)
     pub sync_folders: Vec<SyncFolderConfig>,
 }
@@ -55,15 +55,15 @@ pub struct Config {
 pub struct RetryConfig {
     /// Maximum retry attempts
     pub max_attempts: u32,
-    
+
     /// Initial retry delay
     #[serde(with = "humantime_serde")]
     pub initial_delay: Duration,
-    
+
     /// Maximum retry delay
     #[serde(with = "humantime_serde")]
     pub max_delay: Duration,
-    
+
     /// Backoff multiplier
     pub backoff_multiplier: f64,
 }
@@ -73,17 +73,17 @@ pub struct RetryConfig {
 pub struct SyncFolderConfig {
     /// Folder ID on the server
     pub folder_id: uuid::Uuid,
-    
+
     /// Local path where the folder is synced
     pub local_path: PathBuf,
-    
+
     /// Whether this folder is currently enabled for sync
     pub enabled: bool,
-    
+
     /// Sync direction
     #[serde(default)]
     pub direction: SyncDirection,
-    
+
     /// File patterns to ignore (gitignore-style)
     #[serde(default)]
     pub ignore_patterns: Vec<String>,
@@ -133,7 +133,7 @@ impl Config {
     /// Load configuration from the default location
     pub fn load() -> Result<Self> {
         let path = Self::config_path()?;
-        
+
         if !path.exists() {
             let config = Config::default();
             config.save()?;
@@ -155,15 +155,19 @@ impl Config {
     /// Save configuration to the default location
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path()?;
-        
+        self.save_to(&path)
+    }
+
+    /// Save configuration to a specific path
+    pub fn save_to(&self, path: &PathBuf) -> Result<()> {
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
         let content = toml::to_string_pretty(self)?;
-        std::fs::write(&path, content)?;
-        
+        std::fs::write(path, content)?;
+
         tracing::debug!("Configuration saved to {}", path.display());
         Ok(())
     }
@@ -176,7 +180,11 @@ impl Config {
     /// Add a sync folder
     pub fn add_sync_folder(&mut self, folder_id: uuid::Uuid, local_path: PathBuf) -> Result<()> {
         // Check if already exists
-        if let Some(existing) = self.sync_folders.iter_mut().find(|f| f.folder_id == folder_id) {
+        if let Some(existing) = self
+            .sync_folders
+            .iter_mut()
+            .find(|f| f.folder_id == folder_id)
+        {
             existing.local_path = local_path;
             existing.enabled = true;
         } else {
@@ -188,7 +196,7 @@ impl Config {
                 ignore_patterns: default_ignore_patterns(),
             });
         }
-        
+
         self.save()?;
         Ok(())
     }
@@ -197,12 +205,12 @@ impl Config {
     pub fn remove_sync_folder(&mut self, folder_id: uuid::Uuid) -> Result<bool> {
         let initial_len = self.sync_folders.len();
         self.sync_folders.retain(|f| f.folder_id != folder_id);
-        
+
         let removed = self.sync_folders.len() < initial_len;
         if removed {
             self.save()?;
         }
-        
+
         Ok(removed)
     }
 
@@ -213,7 +221,9 @@ impl Config {
 
     /// Check if a folder is synced
     pub fn is_folder_synced(&self, folder_id: uuid::Uuid) -> bool {
-        self.sync_folders.iter().any(|f| f.folder_id == folder_id && f.enabled)
+        self.sync_folders
+            .iter()
+            .any(|f| f.folder_id == folder_id && f.enabled)
     }
 
     /// Get the local path for a synced folder
@@ -225,18 +235,98 @@ impl Config {
     }
 }
 
+/// Update parameters for a sync folder
+#[derive(Debug, Default)]
+pub struct FolderUpdate {
+    pub local_path: Option<PathBuf>,
+    pub enabled: Option<bool>,
+    pub direction: Option<SyncDirection>,
+    pub add_ignore_patterns: Vec<String>,
+    pub remove_ignore_patterns: Vec<String>,
+    pub clear_ignores: bool,
+}
+
+impl Config {
+    /// Update a sync folder with the given changes
+    ///
+    /// Returns true if the folder was found and updated, false otherwise.
+    pub fn update_sync_folder(
+        &mut self,
+        folder_id: uuid::Uuid,
+        updates: FolderUpdate,
+    ) -> Result<bool> {
+        let Some(folder) = self
+            .sync_folders
+            .iter_mut()
+            .find(|f| f.folder_id == folder_id)
+        else {
+            return Ok(false);
+        };
+
+        // Apply basic field updates
+        if let Some(local_path) = updates.local_path {
+            folder.local_path = local_path;
+        }
+        if let Some(enabled) = updates.enabled {
+            folder.enabled = enabled;
+        }
+        if let Some(direction) = updates.direction {
+            folder.direction = direction;
+        }
+
+        // Handle ignore patterns
+        if updates.clear_ignores {
+            folder.ignore_patterns = default_ignore_patterns();
+        } else {
+            // Remove patterns first
+            if !updates.remove_ignore_patterns.is_empty() {
+                folder
+                    .ignore_patterns
+                    .retain(|p| !updates.remove_ignore_patterns.contains(p));
+            }
+            // Then add new patterns (avoiding duplicates)
+            for pattern in updates.add_ignore_patterns {
+                if !folder.ignore_patterns.contains(&pattern) {
+                    folder.ignore_patterns.push(pattern);
+                }
+            }
+        }
+
+        self.save()?;
+        Ok(true)
+    }
+
+    /// Convenience method to enable or disable a sync folder
+    ///
+    /// Returns true if the folder was found and updated, false otherwise.
+    pub fn set_folder_enabled(&mut self, folder_id: uuid::Uuid, enabled: bool) -> Result<bool> {
+        self.update_sync_folder(
+            folder_id,
+            FolderUpdate {
+                enabled: Some(enabled),
+                ..FolderUpdate::default()
+            },
+        )
+    }
+
+    /// Get a reference to a sync folder configuration by ID
+    pub fn get_sync_folder(&self, folder_id: uuid::Uuid) -> Option<&SyncFolderConfig> {
+        self.sync_folders.iter().find(|f| f.folder_id == folder_id)
+    }
+}
+
 /// Default ignore patterns (similar to .gitignore)
 fn default_ignore_patterns() -> Vec<String> {
     vec![
-        ".*".to_string(),           // Hidden files
-        "*.tmp".to_string(),        // Temp files
+        ".*".to_string(),    // Hidden files
+        "*.tmp".to_string(), // Temp files
         "*.temp".to_string(),
-        "*.swp".to_string(),        // Swap files
-        "*.lock".to_string(),       // Lock files
-        "~$*".to_string(),          // Office temp files
-        "Thumbs.db".to_string(),    // Windows thumbnails
-        ".DS_Store".to_string(),    // macOS metadata
-        "desktop.ini".to_string(),  // Windows desktop config
+        "*.swp".to_string(),       // Swap files
+        "*.lock".to_string(),      // Lock files
+        "~$*".to_string(),         // Office temp files
+        "Thumbs.db".to_string(),   // Windows thumbnails
+        ".DS_Store".to_string(),   // macOS metadata
+        "desktop.ini".to_string(), // Windows desktop config
     ]
 }
 
@@ -252,7 +342,7 @@ mod humantime_serde {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Duration, D::Error> {
         let s = String::deserialize(deserializer)?;
-        
+
         // Parse duration string like "30s", "5m", "1h"
         if let Some(num_str) = s.strip_suffix('s') {
             let secs: u64 = num_str.parse().map_err(serde::de::Error::custom)?;
@@ -307,5 +397,114 @@ mod tests {
         let loaded = Config::load_from(&config_path).unwrap();
         assert_eq!(loaded.server_url, "https://example.com");
         assert_eq!(loaded.sync_folders.len(), 1);
+    }
+
+    #[test]
+    fn test_update_sync_folder() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let mut config = Config::default();
+
+        // Add a sync folder
+        let folder_id = uuid::Uuid::new_v4();
+        config
+            .add_sync_folder(folder_id, "/test/path".into())
+            .unwrap();
+        assert_eq!(config.sync_folders.len(), 1);
+        assert_eq!(
+            config.sync_folders[0].local_path,
+            PathBuf::from("/test/path")
+        );
+        assert!(config.sync_folders[0].enabled);
+        assert_eq!(
+            config.sync_folders[0].direction,
+            SyncDirection::Bidirectional
+        );
+
+        // Update with FolderUpdate - change path, disable, change direction, add ignore pattern
+        let updates = FolderUpdate {
+            local_path: Some("/new/path".into()),
+            enabled: Some(false),
+            direction: Some(SyncDirection::UploadOnly),
+            add_ignore_patterns: vec!["*.log".to_string()],
+            remove_ignore_patterns: vec![],
+            clear_ignores: false,
+        };
+        let result = config.update_sync_folder(folder_id, updates).unwrap();
+        assert!(result);
+
+        // Save and reload to verify persistence
+        config.save_to(&config_path).unwrap();
+        let loaded = Config::load_from(&config_path).unwrap();
+
+        // Verify all changes persisted
+        let folder = loaded.get_sync_folder(folder_id).unwrap();
+        assert_eq!(folder.local_path, PathBuf::from("/new/path"));
+        assert!(!folder.enabled);
+        assert_eq!(folder.direction, SyncDirection::UploadOnly);
+        assert!(folder.ignore_patterns.contains(&"*.log".to_string()));
+    }
+
+    #[test]
+    fn test_set_folder_enabled() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let mut config = Config::default();
+
+        // Add a sync folder
+        let folder_id = uuid::Uuid::new_v4();
+        config
+            .add_sync_folder(folder_id, "/test/path".into())
+            .unwrap();
+        assert!(config.sync_folders[0].enabled);
+
+        // Disable it
+        let result = config.set_folder_enabled(folder_id, false).unwrap();
+        assert!(result);
+        assert!(!config.sync_folders[0].enabled);
+
+        // Save and reload
+        config.save_to(&config_path).unwrap();
+        let loaded = Config::load_from(&config_path).unwrap();
+        assert!(!loaded.sync_folders[0].enabled);
+
+        // Enable it again
+        let mut config = loaded;
+        let result = config.set_folder_enabled(folder_id, true).unwrap();
+        assert!(result);
+        assert!(config.sync_folders[0].enabled);
+
+        // Verify enabled=true persisted
+        config.save_to(&config_path).unwrap();
+        let loaded = Config::load_from(&config_path).unwrap();
+        assert!(loaded.sync_folders[0].enabled);
+    }
+
+    #[test]
+    fn test_remove_sync_folder() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let mut config = Config::default();
+
+        // Add a sync folder
+        let folder_id = uuid::Uuid::new_v4();
+        config
+            .add_sync_folder(folder_id, "/test/path".into())
+            .unwrap();
+        assert_eq!(config.sync_folders.len(), 1);
+
+        // Remove it
+        let result = config.remove_sync_folder(folder_id).unwrap();
+        assert!(result);
+        assert!(config.sync_folders.is_empty());
+
+        // Save and reload to verify persistence
+        config.save_to(&config_path).unwrap();
+        let mut loaded = Config::load_from(&config_path).unwrap();
+        assert!(loaded.sync_folders.is_empty());
+
+        // Try removing again - should return false
+        let result = loaded.remove_sync_folder(folder_id).unwrap();
+        assert!(!result);
     }
 }

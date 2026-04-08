@@ -280,7 +280,9 @@ pub async fn download_shared_file(
                 .into_response()
         })?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(token.clone()))
+            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(
+                token.clone(),
+            ))
         })?;
 
     // Verify JWT share_id matches the share we're accessing
@@ -389,7 +391,9 @@ pub async fn get_shared_folder_contents(
                 .into_response()
         })?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(token.clone()))
+            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(
+                token.clone(),
+            ))
         })?;
 
     ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
@@ -416,15 +420,14 @@ pub async fn get_shared_folder_contents(
         .await
         .map_err(super::share_error_response)?;
 
-    let root_folder_id = share.folder_id
-        .ok_or_else(|| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "Invalid share: missing folder_id"})),
-            )
-                .into_response()
-        })?;
-    
+    let root_folder_id = share.folder_id.ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "Invalid share: missing folder_id"})),
+        )
+            .into_response()
+    })?;
+
     Ok(Json(SharedFolderContentsResponse {
         root_folder_id,
         current_folder_id: current_folder.id,
@@ -456,7 +459,9 @@ pub async fn download_shared_folder_file(
                 .into_response()
         })?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(token.clone()))
+            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(
+                token.clone(),
+            ))
         })?;
 
     ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
@@ -589,7 +594,9 @@ pub async fn upload_shared_folder_file(
                 .into_response()
         })?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(token.clone()))
+            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(
+                token.clone(),
+            ))
         })?;
 
     ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;

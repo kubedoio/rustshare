@@ -4,24 +4,24 @@ use async_trait::async_trait;
 use thiserror::Error;
 use uuid::Uuid;
 
-pub mod rustfs;
 pub mod coordinator;
+pub mod rustfs;
 
-pub use rustfs::RustFsJobRepository;
 pub use coordinator::JobCoordinator;
+pub use rustfs::RustFsJobRepository;
 
 /// Errors that can occur in job repository operations
 #[derive(Debug, Error)]
 pub enum JobRepositoryError {
     #[error("Job not found: {0}")]
     NotFound(Uuid),
-    
+
     #[error("Job already claimed")]
     AlreadyClaimed,
-    
+
     #[error("Storage error: {0}")]
     Storage(String),
-    
+
     #[error("Concurrency conflict")]
     Conflict,
 }
@@ -75,25 +75,25 @@ pub struct JobQuery {
 pub trait JobRepository: Send + Sync {
     /// Create a new job
     async fn create_job(&self, job: &Job) -> Result<(), JobRepositoryError>;
-    
+
     /// Get job by ID
     async fn get_job(&self, id: Uuid) -> Result<Option<Job>, JobRepositoryError>;
-    
+
     /// Update a job
     async fn update_job(&self, job: &Job) -> Result<(), JobRepositoryError>;
-    
+
     /// Delete a job
     async fn delete_job(&self, id: Uuid) -> Result<(), JobRepositoryError>;
-    
+
     /// Query jobs
     async fn query_jobs(&self, query: JobQuery) -> Result<Vec<Job>, JobRepositoryError>;
-    
+
     /// Get pending jobs (sorted by priority)
     async fn get_pending_jobs(&self, limit: usize) -> Result<Vec<Job>, JobRepositoryError>;
-    
+
     /// Get running jobs
     async fn get_running_jobs(&self) -> Result<Vec<Job>, JobRepositoryError>;
-    
+
     /// Count jobs by status
     async fn count_jobs(&self, status: Option<JobStatus>) -> Result<usize, JobRepositoryError>;
 }
@@ -102,7 +102,7 @@ pub trait JobRepository: Send + Sync {
 pub mod conversions {
     use super::*;
     use crate::metadata_v2::schemas::{JobDocument, JobStatus as DocJobStatus};
-    
+
     fn from_core_status(status: JobStatus) -> DocJobStatus {
         match status {
             JobStatus::Pending => DocJobStatus::Pending,
@@ -112,7 +112,7 @@ pub mod conversions {
             JobStatus::Cancelled => DocJobStatus::Cancelled,
         }
     }
-    
+
     fn to_core_status(status: DocJobStatus) -> JobStatus {
         match status {
             DocJobStatus::Pending => JobStatus::Pending,
@@ -122,7 +122,7 @@ pub mod conversions {
             DocJobStatus::Cancelled => JobStatus::Cancelled,
         }
     }
-    
+
     /// Convert JobDocument to Job
     pub fn doc_to_job(doc: JobDocument) -> Job {
         Job {
@@ -144,7 +144,7 @@ pub mod conversions {
             tenant_id: doc.tenant_id,
         }
     }
-    
+
     fn parse_job_type(job_type: &str) -> crate::metadata_v2::schemas::JobType {
         match job_type {
             "thumbnail_generation" => crate::metadata_v2::schemas::JobType::ThumbnailGeneration,

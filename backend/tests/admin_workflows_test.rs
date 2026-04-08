@@ -3,7 +3,9 @@ use uuid::Uuid;
 async fn test_pool() -> sqlx::PgPool {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
-    sqlx::PgPool::connect(&url).await.expect("DB connect failed")
+    sqlx::PgPool::connect(&url)
+        .await
+        .expect("DB connect failed")
 }
 
 async fn create_test_admin(pool: &sqlx::PgPool, suffix: &str) -> Uuid {
@@ -53,7 +55,11 @@ async fn test_enable_workflow_requires_smtp() {
     let pool = test_pool().await;
     let wf_id = get_invite_workflow_id(&pool).await;
 
-    sqlx::query("UPDATE workflows SET status = 'draft' WHERE id = $1").bind(wf_id).execute(&pool).await.ok();
+    sqlx::query("UPDATE workflows SET status = 'draft' WHERE id = $1")
+        .bind(wf_id)
+        .execute(&pool)
+        .await
+        .ok();
     sqlx::query("UPDATE smtp_config SET enabled = false, host = NULL, port = NULL, from_address = NULL WHERE id = '00000000-0000-0000-0000-000000000002'")
         .execute(&pool).await.ok();
 
@@ -93,8 +99,16 @@ async fn test_disable_workflow() {
     let wf_id = get_invite_workflow_id(&pool).await;
     seed_smtp_config(&pool).await;
 
-    sqlx::query("UPDATE workflows SET status = 'active' WHERE id = $1").bind(wf_id).execute(&pool).await.ok();
-    sqlx::query("UPDATE workflows SET status = 'draft' WHERE id = $1").bind(wf_id).execute(&pool).await.ok();
+    sqlx::query("UPDATE workflows SET status = 'active' WHERE id = $1")
+        .bind(wf_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("UPDATE workflows SET status = 'draft' WHERE id = $1")
+        .bind(wf_id)
+        .execute(&pool)
+        .await
+        .ok();
 
     let status: String = sqlx::query_scalar("SELECT status FROM workflows WHERE id = $1")
         .bind(wf_id)

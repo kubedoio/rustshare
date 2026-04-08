@@ -261,13 +261,16 @@ pub async fn create_file_group_share(
         _ => {
             return Err((
                 StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": "Invalid permission. Must be View, Edit, or Admin" })),
+                Json(
+                    serde_json::json!({ "error": "Invalid permission. Must be View, Edit, or Admin" }),
+                ),
             ));
         }
     };
 
     // Create group share via service
-    let result = state.share_service
+    let result = state
+        .share_service
         .create_group_share(
             Resource::File(file_id),
             req.group_id,
@@ -280,43 +283,68 @@ pub async fn create_file_group_share(
     let share = match result {
         Ok(share) => share,
         Err(rustshare_core::services::ShareError::FileNotFound(_)) => {
-            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "File not found" }))));
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "File not found" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::FolderNotFound(_)) => {
-            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Folder not found" }))));
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "Folder not found" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::GroupNotFound(_)) => {
-            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Group not found" }))));
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "Group not found" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::NotGroupMember(_)) => {
-            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "You must be a group member to share" }))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "error": "You must be a group member to share" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::CrossTenantSharingNotAllowed) => {
-            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Cross-tenant sharing not allowed" }))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "error": "Cross-tenant sharing not allowed" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::PermissionDenied { .. }) => {
-            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Permission denied" }))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "error": "Permission denied" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::GroupShareAlreadyExists) => {
-            return Err((StatusCode::CONFLICT, Json(serde_json::json!({ "error": "Group already has access" }))));
+            return Err((
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": "Group already has access" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::InsufficientPermission { .. }) => {
-            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Admin permission required" }))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "error": "Admin permission required" })),
+            ));
         }
         Err(e) => {
             tracing::error!("Failed to create group share: {}", e);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to process share operation" }))));
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to process share operation" })),
+            ));
         }
     };
 
     // Get group name for response
-    let group_name = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM user_groups WHERE id = $1"
-    )
-    .bind(req.group_id)
-    .fetch_one(&state.db_pool)
-    .await
-    .unwrap_or_else(|_| "Unknown".to_string());
+    let group_name = sqlx::query_scalar::<_, String>("SELECT name FROM user_groups WHERE id = $1")
+        .bind(req.group_id)
+        .fetch_one(&state.db_pool)
+        .await
+        .unwrap_or_else(|_| "Unknown".to_string());
 
     let response = GroupShareResponse {
         share_id: share.id.to_string(),
@@ -351,13 +379,16 @@ pub async fn create_folder_group_share(
         _ => {
             return Err((
                 StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": "Invalid permission. Must be View, Edit, or Admin" })),
+                Json(
+                    serde_json::json!({ "error": "Invalid permission. Must be View, Edit, or Admin" }),
+                ),
             ));
         }
     };
 
     // Create group share via service
-    let result = state.share_service
+    let result = state
+        .share_service
         .create_group_share(
             Resource::Folder(folder_id),
             req.group_id,
@@ -370,43 +401,68 @@ pub async fn create_folder_group_share(
     let share = match result {
         Ok(share) => share,
         Err(rustshare_core::services::ShareError::FileNotFound(_)) => {
-            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "File not found" }))));
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "File not found" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::FolderNotFound(_)) => {
-            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Folder not found" }))));
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "Folder not found" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::GroupNotFound(_)) => {
-            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Group not found" }))));
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "Group not found" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::NotGroupMember(_)) => {
-            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "You must be a group member to share" }))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "error": "You must be a group member to share" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::CrossTenantSharingNotAllowed) => {
-            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Cross-tenant sharing not allowed" }))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "error": "Cross-tenant sharing not allowed" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::PermissionDenied { .. }) => {
-            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Permission denied" }))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "error": "Permission denied" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::GroupShareAlreadyExists) => {
-            return Err((StatusCode::CONFLICT, Json(serde_json::json!({ "error": "Group already has access" }))));
+            return Err((
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": "Group already has access" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::InsufficientPermission { .. }) => {
-            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Admin permission required" }))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "error": "Admin permission required" })),
+            ));
         }
         Err(e) => {
             tracing::error!("Failed to create group share: {}", e);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to process share operation" }))));
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to process share operation" })),
+            ));
         }
     };
 
     // Get group name for response
-    let group_name = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM user_groups WHERE id = $1"
-    )
-    .bind(req.group_id)
-    .fetch_one(&state.db_pool)
-    .await
-    .unwrap_or_else(|_| "Unknown".to_string());
+    let group_name = sqlx::query_scalar::<_, String>("SELECT name FROM user_groups WHERE id = $1")
+        .bind(req.group_id)
+        .fetch_one(&state.db_pool)
+        .await
+        .unwrap_or_else(|_| "Unknown".to_string());
 
     let response = GroupShareResponse {
         share_id: share.id.to_string(),
@@ -429,21 +485,31 @@ pub async fn revoke_group_share(
     auth: AuthenticatedUser,
     Path(share_id): Path<Uuid>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    let result = state.share_service
+    let result = state
+        .share_service
         .revoke_group_share(share_id, auth.user_id)
         .await;
 
     match result {
         Ok(_) => (),
         Err(rustshare_core::services::ShareError::ShareNotFound(_)) => {
-            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Share not found" }))));
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "Share not found" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::PermissionDenied { .. }) => {
-            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Permission denied" }))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "error": "Permission denied" })),
+            ));
         }
         Err(e) => {
             tracing::error!("Failed to revoke group share: {}", e);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to process share operation" }))));
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to process share operation" })),
+            ));
         }
     };
 
@@ -473,39 +539,51 @@ pub async fn update_group_share_permission(
         }
     };
 
-    let result = state.share_service
+    let result = state
+        .share_service
         .update_group_share_permission(share_id, permission, auth.user_id)
         .await;
 
     let share = match result {
         Ok(share) => share,
         Err(rustshare_core::services::ShareError::ShareNotFound(_)) => {
-            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Share not found" }))));
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "Share not found" })),
+            ));
         }
         Err(rustshare_core::services::ShareError::PermissionDenied { .. }) => {
-            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Permission denied" }))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "error": "Permission denied" })),
+            ));
         }
         Err(e) => {
             tracing::error!("Failed to update group share: {}", e);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to process share operation" }))));
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to process share operation" })),
+            ));
         }
     };
 
     // Get group name
     let group_name = if let Some(group_id) = share.recipient_group_id {
-        sqlx::query_scalar::<_, String>(
-            "SELECT name FROM user_groups WHERE id = $1"
-        )
-        .bind(group_id)
-        .fetch_one(&state.db_pool)
-        .await
-        .unwrap_or_else(|_| "Unknown".to_string())
+        sqlx::query_scalar::<_, String>("SELECT name FROM user_groups WHERE id = $1")
+            .bind(group_id)
+            .fetch_one(&state.db_pool)
+            .await
+            .unwrap_or_else(|_| "Unknown".to_string())
     } else {
         "Unknown".to_string()
     };
 
     let resource_id = share.file_id.or(share.folder_id).unwrap_or_default();
-    let resource_type = if share.file_id.is_some() { "file" } else { "folder" };
+    let resource_type = if share.file_id.is_some() {
+        "file"
+    } else {
+        "folder"
+    };
 
     let response = GroupShareResponse {
         share_id: share.id.to_string(),
@@ -564,7 +642,9 @@ pub async fn list_file_group_shares(
     if !has_permission {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "You do not have permission to view shares for this file" })),
+            Json(
+                serde_json::json!({ "error": "You do not have permission to view shares for this file" }),
+            ),
         ));
     }
 
@@ -592,15 +672,17 @@ pub async fn list_file_group_shares(
 
     let shares = rows
         .into_iter()
-        .map(|(share_id, group_id, group_name, permission, created_at)| GroupShareResponse {
-            share_id: share_id.to_string(),
-            resource_id: file_id.to_string(),
-            resource_type: "file".to_string(),
-            group_id: group_id.to_string(),
-            group_name,
-            permission,
-            created_at: created_at.to_rfc3339(),
-        })
+        .map(
+            |(share_id, group_id, group_name, permission, created_at)| GroupShareResponse {
+                share_id: share_id.to_string(),
+                resource_id: file_id.to_string(),
+                resource_type: "file".to_string(),
+                group_id: group_id.to_string(),
+                group_name,
+                permission,
+                created_at: created_at.to_rfc3339(),
+            },
+        )
         .collect();
 
     Ok(Json(shares))
@@ -650,7 +732,9 @@ pub async fn list_folder_group_shares(
     if !has_permission {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "You do not have permission to view shares for this folder" })),
+            Json(
+                serde_json::json!({ "error": "You do not have permission to view shares for this folder" }),
+            ),
         ));
     }
 
@@ -678,15 +762,17 @@ pub async fn list_folder_group_shares(
 
     let shares = rows
         .into_iter()
-        .map(|(share_id, group_id, group_name, permission, created_at)| GroupShareResponse {
-            share_id: share_id.to_string(),
-            resource_id: folder_id.to_string(),
-            resource_type: "folder".to_string(),
-            group_id: group_id.to_string(),
-            group_name,
-            permission,
-            created_at: created_at.to_rfc3339(),
-        })
+        .map(
+            |(share_id, group_id, group_name, permission, created_at)| GroupShareResponse {
+                share_id: share_id.to_string(),
+                resource_id: folder_id.to_string(),
+                resource_type: "folder".to_string(),
+                group_id: group_id.to_string(),
+                group_name,
+                permission,
+                created_at: created_at.to_rfc3339(),
+            },
+        )
         .collect();
 
     Ok(Json(shares))

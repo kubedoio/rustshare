@@ -17,10 +17,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{
-    handlers::AuthenticatedUser,
-    AppState,
-};
+use crate::{handlers::AuthenticatedUser, AppState};
 
 // ============================================================================
 // Request/Response Types

@@ -11,7 +11,6 @@ use rustshare_core::domain::Theme;
 use serde::{Deserialize, Serialize};
 // tracing::{error, warn} are used as tracing::error! and tracing::warn! in the code
 
-
 use crate::handlers::{AuthenticatedSession, AuthenticatedUser, ErrorResponse};
 use crate::AppState;
 
@@ -542,8 +541,8 @@ pub async fn upload_avatar(
     let processed = tokio::task::spawn_blocking(move || {
         use image::imageops::FilterType;
 
-        let img = image::load_from_memory(&body)
-            .map_err(|e| format!("Failed to load image: {}", e))?;
+        let img =
+            image::load_from_memory(&body).map_err(|e| format!("Failed to load image: {}", e))?;
 
         let resized = img.resize(AVATAR_SIZE, AVATAR_SIZE, FilterType::Lanczos3);
 
@@ -551,7 +550,12 @@ pub async fn upload_avatar(
         let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut output);
         let rgba = resized.to_rgba8();
         encoder
-            .encode(&rgba, resized.width(), resized.height(), image::ColorType::Rgba8)
+            .encode(
+                &rgba,
+                resized.width(),
+                resized.height(),
+                image::ColorType::Rgba8,
+            )
             .map_err(|e| format!("WebP encode failed: {}", e))?;
 
         Ok::<Vec<u8>, String>(output)
@@ -564,7 +568,10 @@ pub async fn upload_avatar(
             tracing::error!("Image processing failed: {}", e);
             return (
                 StatusCode::BAD_REQUEST,
-                Json(ErrorResponse::new(format!("Image processing failed: {}", e))),
+                Json(ErrorResponse::new(format!(
+                    "Image processing failed: {}",
+                    e
+                ))),
             )
                 .into_response();
         }
@@ -580,11 +587,7 @@ pub async fn upload_avatar(
 
     // Store in object storage
     let avatar_path = format!("avatars/{}.webp", user_id);
-    if let Err(e) = state
-        .object_store
-        .put(&avatar_path, processed.into())
-        .await
-    {
+    if let Err(e) = state.object_store.put(&avatar_path, processed.into()).await {
         tracing::error!("Failed to store avatar: {:?}", e);
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -602,8 +605,8 @@ pub async fn upload_avatar(
         tracing::error!("Failed to update user avatar_path: {:?}", e);
         // Try to clean up stored avatar
         if let Err(e) = state.object_store.delete(&avatar_path).await {
-                    tracing::warn!(avatar_path = %avatar_path, error = %e, "failed to delete old avatar");
-                }
+            tracing::warn!(avatar_path = %avatar_path, error = %e, "failed to delete old avatar");
+        }
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse::new("Failed to update avatar")),
@@ -611,11 +614,7 @@ pub async fn upload_avatar(
             .into_response();
     }
 
-    (
-        StatusCode::OK,
-        Json(UploadAvatarResponse { avatar_path }),
-    )
-        .into_response()
+    (StatusCode::OK, Json(UploadAvatarResponse { avatar_path })).into_response()
 }
 
 /// Delete avatar for the authenticated user.
@@ -657,8 +656,8 @@ pub async fn delete_avatar(
     // Delete from object storage if exists
     if let Some(avatar_path) = &user.avatar_path {
         if let Err(e) = state.object_store.delete(avatar_path).await {
-                    tracing::warn!(avatar_path = %avatar_path, error = %e, "failed to delete avatar");
-                }
+            tracing::warn!(avatar_path = %avatar_path, error = %e, "failed to delete avatar");
+        }
     }
 
     // Update database to clear avatar_path

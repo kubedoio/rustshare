@@ -1,9 +1,9 @@
-use rusqlite::{params, Connection, Transaction};
-use sync_domain::{LocalEntry, SyncRoot, EntryType, HydrationState};
 use anyhow::Result;
+use chrono::{TimeZone, Utc};
+use rusqlite::{params, Connection, Transaction};
 use std::path::{Path, PathBuf};
+use sync_domain::{EntryType, HydrationState, LocalEntry, SyncRoot};
 use uuid::Uuid;
-use chrono::{Utc, TimeZone};
 
 pub struct Database {
     conn: Connection,
@@ -93,13 +93,19 @@ impl Database {
     pub fn save_sync_root(&self, root: &SyncRoot) -> Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO sync_roots (id, remote_path, local_path) VALUES (?, ?, ?)",
-            params![root.id.as_bytes(), root.remote_path, root.local_path.to_str().unwrap()],
+            params![
+                root.id.as_bytes(),
+                root.remote_path,
+                root.local_path.to_str().unwrap()
+            ],
         )?;
         Ok(())
     }
 
     pub fn get_sync_roots(&self) -> Result<Vec<SyncRoot>> {
-        let mut stmt = self.conn.prepare("SELECT id, remote_path, local_path FROM sync_roots")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, remote_path, local_path FROM sync_roots")?;
         let roots = stmt.query_map([], |row| {
             let id_bytes: Vec<u8> = row.get(0)?;
             Ok(SyncRoot {
@@ -114,6 +120,22 @@ impl Database {
             result.push(root?);
         }
         Ok(result)
+    }
+
+    pub fn remove_sync_root(&self, root_id: Uuid) -> Result<bool> {
+        // Delete associated filters first
+        self.conn.execute(
+            "DELETE FROM sync_filters WHERE root_id = ?",
+            params![root_id.as_bytes()],
+        )?;
+
+        // Delete the sync root
+        let deleted = self.conn.execute(
+            "DELETE FROM sync_roots WHERE id = ?",
+            params![root_id.as_bytes()],
+        )?;
+
+        Ok(deleted > 0)
     }
 
     pub fn update_inventory(&self, entry: &LocalEntry) -> Result<()> {
@@ -142,39 +164,45 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT path, entry_type, size, hash, mtime_ms, last_synced_version, hydration_state FROM local_inventory WHERE path = ?"
         )?;
-        
-        let entry = stmt.query_row(params![path.to_str().unwrap()], |row| {
-            let entry_type_str: String = row.get(1)?;
-            let entry_type = if entry_type_str == "file" { EntryType::File } else { EntryType::Directory };
-            let mtime_ms: i64 = row.get(4)?;
-            
-            let hydration_str: String = row.get(6)?;
-            let hydration_state = match hydration_str.as_str() {
-                "placeholder" => HydrationState::Placeholder,
-                "pinned" => HydrationState::Pinned,
-                _ => HydrationState::Materialized,
-            };
 
-            Ok(LocalEntry {
-                path: PathBuf::from(row.get::<_, String>(0)?),
-                entry_type,
-                size: row.get::<_, i64>(2)? as u64,
-                hash: row.get(3)?,
-                mtime: Utc.timestamp_millis_opt(mtime_ms).unwrap(),
-                last_synced_version: row.get(5)?,
-                hydration_state,
+        let entry = stmt
+            .query_row(params![path.to_str().unwrap()], |row| {
+                let entry_type_str: String = row.get(1)?;
+                let entry_type = if entry_type_str == "file" {
+                    EntryType::File
+                } else {
+                    EntryType::Directory
+                };
+                let mtime_ms: i64 = row.get(4)?;
+
+                let hydration_str: String = row.get(6)?;
+                let hydration_state = match hydration_str.as_str() {
+                    "placeholder" => HydrationState::Placeholder,
+                    "pinned" => HydrationState::Pinned,
+                    _ => HydrationState::Materialized,
+                };
+
+                Ok(LocalEntry {
+                    path: PathBuf::from(row.get::<_, String>(0)?),
+                    entry_type,
+                    size: row.get::<_, i64>(2)? as u64,
+                    hash: row.get(3)?,
+                    mtime: Utc.timestamp_millis_opt(mtime_ms).unwrap(),
+                    last_synced_version: row.get(5)?,
+                    hydration_state,
+                })
             })
-        }).ok();
+            .ok();
 
         Ok(entry)
     }
 
     pub fn get_sync_cursor(&self) -> Result<Option<String>> {
-        let res: Result<String, _> = self.conn.query_row(
-            "SELECT cursor FROM sync_cursor WHERE id = 1",
-            [],
-            |row| row.get(0),
-        );
+        let res: Result<String, _> =
+            self.conn
+                .query_row("SELECT cursor FROM sync_cursor WHERE id = 1", [], |row| {
+                    row.get(0)
+                });
         match res {
             Ok(cursor) => Ok(Some(cursor)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -200,10 +228,10 @@ impl Database {
     }
 
     pub fn get_filters(&self, root_id: Uuid) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare("SELECT pattern FROM sync_filters WHERE root_id = ? AND filter_type = 'exclude'")?;
-        let rows = stmt.query_map(params![root_id.as_bytes()], |row| {
-            row.get::<_, String>(0)
-        })?;
+        let mut stmt = self.conn.prepare(
+            "SELECT pattern FROM sync_filters WHERE root_id = ? AND filter_type = 'exclude'",
+        )?;
+        let rows = stmt.query_map(params![root_id.as_bytes()], |row| row.get::<_, String>(0))?;
 
         let mut patterns = Vec::new();
         for row in rows {

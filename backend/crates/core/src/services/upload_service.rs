@@ -119,26 +119,36 @@ pub trait UploadSessionRepository: Send + Sync {
     ) -> Result<Vec<UploadSession>, UploadError>;
 
     /// List sessions for a user
-    async fn list_user_sessions(
-        &self,
-        user_id: UserId,
-    ) -> Result<Vec<UploadSession>, UploadError>;
+    async fn list_user_sessions(&self, user_id: UserId) -> Result<Vec<UploadSession>, UploadError>;
 }
 
 /// Object store operations for upload service
 #[async_trait::async_trait]
 pub trait UploadObjectStore: Send + Sync {
     /// Store a chunk
-    async fn put_chunk(&self, session_id: Uuid, chunk_index: u32, data: Bytes) -> Result<(), UploadError>;
+    async fn put_chunk(
+        &self,
+        session_id: Uuid,
+        chunk_index: u32,
+        data: Bytes,
+    ) -> Result<(), UploadError>;
 
     /// Get a chunk
-    async fn get_chunk(&self, session_id: Uuid, chunk_index: u32) -> Result<Option<Bytes>, UploadError>;
+    async fn get_chunk(
+        &self,
+        session_id: Uuid,
+        chunk_index: u32,
+    ) -> Result<Option<Bytes>, UploadError>;
 
     /// Delete a chunk
     async fn delete_chunk(&self, session_id: Uuid, chunk_index: u32) -> Result<(), UploadError>;
 
     /// Delete all chunks for a session
-    async fn delete_session_chunks(&self, session_id: Uuid, total_chunks: u32) -> Result<(), UploadError>;
+    async fn delete_session_chunks(
+        &self,
+        session_id: Uuid,
+        total_chunks: u32,
+    ) -> Result<(), UploadError>;
 
     /// Check if a chunk exists
     async fn chunk_exists(&self, session_id: Uuid, chunk_index: u32) -> Result<bool, UploadError>;
@@ -156,7 +166,10 @@ pub trait UploadObjectStore: Send + Sync {
 #[async_trait::async_trait]
 pub trait UploadMetadataStore: Send + Sync {
     /// Find a folder by ID
-    async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<crate::domain::Folder>, UploadError>;
+    async fn find_folder_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<crate::domain::Folder>, UploadError>;
 
     /// Create a file
     async fn create_file(&self, file: &File) -> Result<(), UploadError>;
@@ -347,7 +360,11 @@ where
         let expected_size = if chunk_index == total_chunks - 1 {
             // Last chunk
             let remainder = session.total_size % session.chunk_size;
-            if remainder == 0 { session.chunk_size } else { remainder }
+            if remainder == 0 {
+                session.chunk_size
+            } else {
+                remainder
+            }
         } else {
             session.chunk_size
         };
@@ -478,11 +495,7 @@ where
         // Store final file
         let storage_key = format!("blobs/{}", final_hash);
         self.object_store
-            .assemble_chunks(
-                session_id,
-                session.total_chunks(),
-                &storage_key,
-            )
+            .assemble_chunks(session_id, session.total_chunks(), &storage_key)
             .await?;
 
         // Create file metadata
@@ -548,7 +561,9 @@ where
 
         // Mark session complete
         session.mark_completed(file.id);
-        self.repository.complete_session(session_id, file.id).await?;
+        self.repository
+            .complete_session(session_id, file.id)
+            .await?;
 
         // Cleanup chunks - best effort, log but don't fail if cleanup fails
         if let Err(e) = self

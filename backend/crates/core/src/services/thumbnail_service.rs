@@ -4,7 +4,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::domain::{
-    FileThumbnail, ThumbnailSize, ThumbnailCategory, get_file_thumbnail_category, is_file_thumbnail_supported,
+    get_file_thumbnail_category, is_file_thumbnail_supported, FileThumbnail, ThumbnailCategory,
+    ThumbnailSize,
 };
 use crate::services::ObjectStoreOps;
 
@@ -75,7 +76,7 @@ where
 
         // Check if file exists and get content hash for storage lookup
         let file_row = sqlx::query_as::<_, (String, i64, String)>(
-            "SELECT name, size, content_hash FROM files WHERE id = $1"
+            "SELECT name, size, content_hash FROM files WHERE id = $1",
         )
         .bind(file_id)
         .fetch_optional(&self.db_pool)
@@ -94,17 +95,25 @@ where
         };
 
         // Use filename from DB if not provided
-        let file_name = if file_name.is_empty() { &db_file_name } else { file_name };
+        let file_name = if file_name.is_empty() {
+            &db_file_name
+        } else {
+            file_name
+        };
 
         if !is_file_thumbnail_supported(mime_type, file_name) {
-            tracing::warn!(mime_type = mime_type, file_name = file_name, "Unsupported file type for thumbnail");
+            tracing::warn!(
+                mime_type = mime_type,
+                file_name = file_name,
+                "Unsupported file type for thumbnail"
+            );
             return Err(ThumbnailError::UnsupportedType);
         }
 
         // Get the file content from storage using content hash
         let file_path = format!("blobs/{}", content_hash);
         tracing::debug!(file_path = %file_path, "Fetching file content from storage");
-        
+
         let content = self
             .storage
             .get(&file_path)
@@ -113,25 +122,23 @@ where
                 tracing::error!(error = %e, file_path = %file_path, "Storage error fetching file content");
                 ThumbnailError::Storage(e.to_string())
             })?;
-        
-        tracing::debug!(content_size = content.len(), "File content fetched successfully");
+
+        tracing::debug!(
+            content_size = content.len(),
+            "File content fetched successfully"
+        );
 
         // Generate thumbnail based on file type
         let category = get_file_thumbnail_category(mime_type, file_name);
         tracing::debug!(category = ?category, "Thumbnail category determined");
-        
+
         let (thumbnail_data, content_type) = match category {
-            ThumbnailCategory::Image => {
-                self.generate_image_thumbnail(&content, size).await?
-            }
-            ThumbnailCategory::Pdf => {
-                self.generate_pdf_thumbnail(&content, size).await?
-            }
-            ThumbnailCategory::Video => {
-                self.generate_video_thumbnail(&content, size).await?
-            }
+            ThumbnailCategory::Image => self.generate_image_thumbnail(&content, size).await?,
+            ThumbnailCategory::Pdf => self.generate_pdf_thumbnail(&content, size).await?,
+            ThumbnailCategory::Video => self.generate_video_thumbnail(&content, size).await?,
             ThumbnailCategory::Diagram => {
-                self.generate_diagram_thumbnail(&content, file_name, size).await?
+                self.generate_diagram_thumbnail(&content, file_name, size)
+                    .await?
             }
             ThumbnailCategory::Unsupported => {
                 return Err(ThumbnailError::UnsupportedType);
@@ -193,29 +200,41 @@ where
         let result = tokio::task::spawn_blocking(move || {
             use image::imageops::FilterType;
 
-            tracing::debug!(content_len = content_len, width = width, height = height, "Starting image thumbnail generation");
+            tracing::debug!(
+                content_len = content_len,
+                width = width,
+                height = height,
+                "Starting image thumbnail generation"
+            );
 
             // Load image
-            let img = image::load_from_memory(&content)
-                .map_err(|e| {
-                    tracing::error!(error = %e, "Failed to load image from memory");
-                    ThumbnailError::Generation(format!("Failed to load image: {}", e))
-                })?;
+            let img = image::load_from_memory(&content).map_err(|e| {
+                tracing::error!(error = %e, "Failed to load image from memory");
+                ThumbnailError::Generation(format!("Failed to load image: {}", e))
+            })?;
 
-            tracing::debug!(original_width = img.width(), original_height = img.height(), "Image loaded successfully");
+            tracing::debug!(
+                original_width = img.width(),
+                original_height = img.height(),
+                "Image loaded successfully"
+            );
 
             // Resize maintaining aspect ratio (fit within bounds)
             let resized = img.resize(width, height, FilterType::Lanczos3);
 
-            tracing::debug!(resized_width = resized.width(), resized_height = resized.height(), "Image resized");
+            tracing::debug!(
+                resized_width = resized.width(),
+                resized_height = resized.height(),
+                "Image resized"
+            );
 
             // Encode as WebP
             let mut output = Vec::new();
             let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut output);
             let rgba = resized.to_rgba8();
-            
+
             tracing::debug!(rgba_len = rgba.len(), "Encoding WebP");
-            
+
             encoder
                 .encode(
                     &rgba,
@@ -239,7 +258,10 @@ where
             Ok(Err(e)) => Err(e),
             Err(join_err) => {
                 tracing::error!(error = %join_err, "Thumbnail generation task panicked or was cancelled");
-                Err(ThumbnailError::Generation(format!("Task failed: {}", join_err)))
+                Err(ThumbnailError::Generation(format!(
+                    "Task failed: {}",
+                    join_err
+                )))
             }
         }
     }
@@ -257,19 +279,19 @@ where
             // Try to render PDF using pdf2image or similar
             // For now, generate a PDF icon placeholder with page count indicator
             // This is a simplified version - in production you'd use a PDF rendering library
-            
+
             // Create a PDF document icon
             let mut img = image::RgbaImage::new(width, height);
-            
+
             // Fill with PDF red color
             let pdf_red = image::Rgba([220, 53, 69, 255]);
             for pixel in img.pixels_mut() {
                 *pixel = pdf_red;
             }
-            
+
             // Add white PDF text/icon indicator
             // This is a simplified placeholder - real implementation would render actual PDF page
-            
+
             // Encode as WebP
             let mut output = Vec::new();
             let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut output);
@@ -297,21 +319,23 @@ where
             // Create a video play button placeholder
             // Real implementation would use ffmpeg or similar to extract a frame
             let mut img = image::RgbaImage::new(width, height);
-            
+
             // Fill with dark background
             let dark_bg = image::Rgba([30, 30, 30, 255]);
             for pixel in img.pixels_mut() {
                 *pixel = dark_bg;
             }
-            
+
             // Add play button triangle (simplified)
             let play_color = image::Rgba([255, 255, 255, 200]);
             let center_x = width / 2;
             let center_y = height / 2;
             let triangle_size = width.min(height) / 4;
-            
+
             // Simple triangle drawing
-            for y in center_y.saturating_sub(triangle_size/2)..=center_y.saturating_add(triangle_size/2) {
+            for y in center_y.saturating_sub(triangle_size / 2)
+                ..=center_y.saturating_add(triangle_size / 2)
+            {
                 for x in center_x..=center_x.saturating_add(triangle_size) {
                     if x < width && y < height {
                         let dy = y as i32 - center_y as i32;
@@ -322,7 +346,7 @@ where
                     }
                 }
             }
-            
+
             // Encode as WebP
             let mut output = Vec::new();
             let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut output);
@@ -350,18 +374,31 @@ where
 
         let result = tokio::task::spawn_blocking(move || {
             let mut img = image::RgbaImage::new(width, height);
-            
+
             // Determine diagram type and color scheme
-            let (bg_color, icon_color, _label) = if file_name.ends_with(".excalidraw") || file_name.ends_with(".excalidraw.json") {
-                // Excalidraw: light beige background
-                (image::Rgba([255, 250, 240, 255]), image::Rgba([105, 67, 53, 255]), "✏️")
-            } else if file_name.ends_with(".drawio") || file_name.ends_with(".dio") {
-                // Draw.io: blue background
-                (image::Rgba([240, 248, 255, 255]), image::Rgba([46, 125, 247, 255]), "📐")
-            } else {
-                // Generic diagram
-                (image::Rgba([245, 245, 245, 255]), image::Rgba([100, 100, 100, 255]), "📊")
-            };
+            let (bg_color, icon_color, _label) =
+                if file_name.ends_with(".excalidraw") || file_name.ends_with(".excalidraw.json") {
+                    // Excalidraw: light beige background
+                    (
+                        image::Rgba([255, 250, 240, 255]),
+                        image::Rgba([105, 67, 53, 255]),
+                        "✏️",
+                    )
+                } else if file_name.ends_with(".drawio") || file_name.ends_with(".dio") {
+                    // Draw.io: blue background
+                    (
+                        image::Rgba([240, 248, 255, 255]),
+                        image::Rgba([46, 125, 247, 255]),
+                        "📐",
+                    )
+                } else {
+                    // Generic diagram
+                    (
+                        image::Rgba([245, 245, 245, 255]),
+                        image::Rgba([100, 100, 100, 255]),
+                        "📊",
+                    )
+                };
 
             // Fill background
             for pixel in img.pixels_mut() {
@@ -419,10 +456,7 @@ where
     }
 
     /// Get thumbnail data from storage
-    pub async fn get_thumbnail_data(
-        &self,
-        storage_path: &str,
-    ) -> Result<Vec<u8>, ThumbnailError> {
+    pub async fn get_thumbnail_data(&self, storage_path: &str) -> Result<Vec<u8>, ThumbnailError> {
         self.storage
             .get(storage_path)
             .await

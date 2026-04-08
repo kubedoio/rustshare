@@ -4,7 +4,7 @@ use axum::{
         Query, State,
     },
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response, Json},
+    response::{IntoResponse, Json, Response},
 };
 use chrono::{DateTime, Utc};
 use futures_util::{SinkExt, StreamExt};
@@ -14,8 +14,8 @@ use rustshare_core::events::{
     Event, EventType, NotificationCreatedPayload, ReplicationStateChangedPayload,
     ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload,
 };
-use rustshare_storage::repos::sync::{DeltaResult, SyncDelta};
 use rustshare_storage::metadata_v2::SyncCursorDocument;
+use rustshare_storage::repos::sync::{DeltaResult, SyncDelta};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
@@ -559,7 +559,9 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires database
     async fn test_should_send_share_created_to_file_owner() {
-        let (metadata_store, _pool) = create_test_metadata_store().await.expect("Failed to create test metadata store");
+        let (metadata_store, _pool) = create_test_metadata_store()
+            .await
+            .expect("Failed to create test metadata store");
 
         let owner_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
@@ -618,7 +620,9 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires database
     async fn test_should_send_share_revoked_to_file_owner() {
-        let (metadata_store, _pool) = create_test_metadata_store().await.expect("Failed to create test metadata store");
+        let (metadata_store, _pool) = create_test_metadata_store()
+            .await
+            .expect("Failed to create test metadata store");
 
         let owner_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
@@ -673,7 +677,9 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires database
     async fn test_should_send_share_updated_to_file_owner() {
-        let (metadata_store, _pool) = create_test_metadata_store().await.expect("Failed to create test metadata store");
+        let (metadata_store, _pool) = create_test_metadata_store()
+            .await
+            .expect("Failed to create test metadata store");
 
         let owner_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
@@ -1406,8 +1412,8 @@ async fn get_or_create_cursor_impl(
     user_id: Uuid,
     device_id: Uuid,
 ) -> anyhow::Result<SyncCursorDocument> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     use rustshare_storage::metadata_v2::schemas::SyncCursorDocument;
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
 
     let now = Utc::now();
     let timestamp_millis = now.timestamp_millis();
@@ -1434,9 +1440,9 @@ async fn get_delta_impl(
     cursor: &str,
     limit: usize,
 ) -> anyhow::Result<DeltaResult> {
-    use rustshare_storage::repos::sync::parse_cursor;
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     use rustshare_core::events::Event;
+    use rustshare_storage::repos::sync::parse_cursor;
 
     // Parse the cursor to get the timestamp
     let since_timestamp = match parse_cursor(cursor) {
@@ -1499,7 +1505,8 @@ fn event_to_delta(event: &Event) -> Option<SyncDelta> {
 
     match event.event_type {
         EventType::FileUploaded => {
-            let payload: FileUploadedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            let payload: FileUploadedPayload =
+                serde_json::from_value(event.payload.clone()).ok()?;
             Some(SyncDelta::FileCreated {
                 event_id: event.id,
                 timestamp: event.timestamp,
@@ -1514,7 +1521,8 @@ fn event_to_delta(event: &Event) -> Option<SyncDelta> {
             })
         }
         EventType::FileModified => {
-            let payload: FileModifiedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            let payload: FileModifiedPayload =
+                serde_json::from_value(event.payload.clone()).ok()?;
             Some(SyncDelta::FileModified {
                 event_id: event.id,
                 timestamp: event.timestamp,
@@ -1565,7 +1573,8 @@ fn event_to_delta(event: &Event) -> Option<SyncDelta> {
             })
         }
         EventType::FolderCreated => {
-            let payload: FolderCreatedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            let payload: FolderCreatedPayload =
+                serde_json::from_value(event.payload.clone()).ok()?;
             Some(SyncDelta::FolderCreated {
                 event_id: event.id,
                 timestamp: event.timestamp,
@@ -1576,7 +1585,8 @@ fn event_to_delta(event: &Event) -> Option<SyncDelta> {
             })
         }
         EventType::FolderRenamed => {
-            let payload: FolderRenamedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            let payload: FolderRenamedPayload =
+                serde_json::from_value(event.payload.clone()).ok()?;
             Some(SyncDelta::FolderRenamed {
                 event_id: event.id,
                 timestamp: event.timestamp,
@@ -1612,7 +1622,8 @@ fn event_to_delta(event: &Event) -> Option<SyncDelta> {
             })
         }
         EventType::ShareCreated => {
-            let payload: ShareCreatedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            let payload: ShareCreatedPayload =
+                serde_json::from_value(event.payload.clone()).ok()?;
             Some(SyncDelta::ShareCreated {
                 event_id: event.id,
                 timestamp: event.timestamp,
@@ -1626,7 +1637,8 @@ fn event_to_delta(event: &Event) -> Option<SyncDelta> {
             })
         }
         EventType::ShareRevoked => {
-            let payload: ShareRevokedPayload = serde_json::from_value(event.payload.clone()).ok()?;
+            let payload: ShareRevokedPayload =
+                serde_json::from_value(event.payload.clone()).ok()?;
             Some(SyncDelta::ShareRevoked {
                 event_id: event.id,
                 timestamp: event.timestamp,

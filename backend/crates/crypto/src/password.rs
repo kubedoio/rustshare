@@ -32,8 +32,8 @@ impl PasswordHasher {
 
     /// Verify a password against a hash
     pub fn verify(password: &str, hash: &str) -> Result<bool, PasswordError> {
-        let parsed_hash = PasswordHash::new(hash)
-            .map_err(|e| PasswordError::HashError(e.to_string()))?;
+        let parsed_hash =
+            PasswordHash::new(hash).map_err(|e| PasswordError::HashError(e.to_string()))?;
 
         let argon2 = Argon2::default();
 

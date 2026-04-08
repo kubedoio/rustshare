@@ -127,7 +127,9 @@ impl From<rustshare_core::services::FileError> for NoteError {
     fn from(e: rustshare_core::services::FileError) -> Self {
         match e {
             rustshare_core::services::FileError::NotFound(id) => NoteError::NotFound(id),
-            rustshare_core::services::FileError::PermissionDenied { .. } => NoteError::PermissionDenied,
+            rustshare_core::services::FileError::PermissionDenied { .. } => {
+                NoteError::PermissionDenied
+            }
             rustshare_core::services::FileError::InvalidName(s) => NoteError::InvalidName(s),
             rustshare_core::services::FileError::Storage(s) => NoteError::Storage(s),
             rustshare_core::services::FileError::Database(e) => NoteError::Database(e.to_string()),
@@ -140,16 +142,38 @@ use rustshare_infrastructure::repositories::PermissionResolverRepository;
 
 /// Service for managing notes as files with sidecar metadata.
 pub struct NoteService {
-    file_service: Arc<FileService<rustshare_storage::EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>>,
-    folder_service: Arc<FolderService<rustshare_storage::EventStore, MetadataStore, PermissionResolverRepository>>,
+    file_service: Arc<
+        FileService<
+            rustshare_storage::EventStore,
+            MetadataStore,
+            ObjectStore,
+            PermissionResolverRepository,
+        >,
+    >,
+    folder_service: Arc<
+        FolderService<rustshare_storage::EventStore, MetadataStore, PermissionResolverRepository>,
+    >,
     metadata_store: Arc<MetadataStore>,
     object_store: Arc<ObjectStore>,
 }
 
 impl NoteService {
     pub fn new(
-        file_service: Arc<FileService<rustshare_storage::EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>>,
-        folder_service: Arc<FolderService<rustshare_storage::EventStore, MetadataStore, PermissionResolverRepository>>,
+        file_service: Arc<
+            FileService<
+                rustshare_storage::EventStore,
+                MetadataStore,
+                ObjectStore,
+                PermissionResolverRepository,
+            >,
+        >,
+        folder_service: Arc<
+            FolderService<
+                rustshare_storage::EventStore,
+                MetadataStore,
+                PermissionResolverRepository,
+            >,
+        >,
         metadata_store: Arc<MetadataStore>,
         object_store: Arc<ObjectStore>,
     ) -> Self {
@@ -217,7 +241,11 @@ impl NoteService {
         }
     }
 
-    async fn save_public_share_index(&self, share_id: &str, file_id: Uuid) -> Result<(), NoteError> {
+    async fn save_public_share_index(
+        &self,
+        share_id: &str,
+        file_id: Uuid,
+    ) -> Result<(), NoteError> {
         let key = Self::public_share_key(share_id);
         self.object_store
             .put(&key, Bytes::from(file_id.to_string()))
@@ -227,9 +255,14 @@ impl NoteService {
     }
 
     /// Find or create the user's "Notes" folder in root.
-    async fn ensure_notes_folder(&self, owner_id: UserId, tenant_id: Uuid) -> Result<Folder, NoteError> {
+    async fn ensure_notes_folder(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Folder, NoteError> {
         // Try to find existing Notes folder in root
-        let folders = self.metadata_store
+        let folders = self
+            .metadata_store
             .list_folders(None, owner_id, tenant_id)
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?;
@@ -239,7 +272,8 @@ impl NoteService {
         }
 
         // Create Notes folder
-        let folder = self.folder_service
+        let folder = self
+            .folder_service
             .create_folder("Notes".to_string(), None, owner_id, tenant_id)
             .await
             .map_err(|e| NoteError::Storage(e.to_string()))?;
@@ -248,8 +282,15 @@ impl NoteService {
     }
 
     /// Generate a collision-safe unique filename in the target folder.
-    async fn unique_note_name(&self, owner_id: UserId, tenant_id: Uuid, parent_folder_id: Option<Uuid>, base_name: &str) -> Result<String, NoteError> {
-        let files = self.metadata_store
+    async fn unique_note_name(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        parent_folder_id: Option<Uuid>,
+        base_name: &str,
+    ) -> Result<String, NoteError> {
+        let files = self
+            .metadata_store
             .list_files(parent_folder_id, owner_id, tenant_id)
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?;
@@ -266,7 +307,9 @@ impl NoteService {
             }
         }
 
-        Err(NoteError::InvalidName("Could not find unique name".to_string()))
+        Err(NoteError::InvalidName(
+            "Could not find unique name".to_string(),
+        ))
     }
 
     /// Create a new note.
@@ -290,10 +333,13 @@ impl NoteService {
         };
 
         // Generate unique filename
-        let file_name = self.unique_note_name(owner_id, tenant_id, parent_folder_id, &title).await?;
+        let file_name = self
+            .unique_note_name(owner_id, tenant_id, parent_folder_id, &title)
+            .await?;
 
         // Create file via FileService
-        let file = self.file_service
+        let file = self
+            .file_service
             .upload_file(
                 owner_id,
                 file_name.clone(),
@@ -360,12 +406,24 @@ impl NoteService {
     }
 
     /// Save note content (autosave).
-    pub async fn save_note(&self, file_id: Uuid, user_id: UserId, content: String) -> Result<Note, NoteError> {
+    pub async fn save_note(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+        content: String,
+    ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
 
         // Update file content via edit_file (overwrite mode)
-        let updated_file = self.file_service
-            .edit_file(file_id, user_id, Bytes::from(content.clone()), "overwrite", None)
+        let updated_file = self
+            .file_service
+            .edit_file(
+                file_id,
+                user_id,
+                Bytes::from(content.clone()),
+                "overwrite",
+                None,
+            )
             .await?;
 
         // Update sidecar
@@ -393,18 +451,31 @@ impl NoteService {
     }
 
     /// Rename a note (updates title and filename).
-    pub async fn rename_note(&self, file_id: Uuid, user_id: UserId, new_title: String) -> Result<Note, NoteError> {
+    pub async fn rename_note(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+        new_title: String,
+    ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
 
         // Determine new filename based on target folder
         let parent_folder_id = file.parent_folder_id;
-        let new_name = self.unique_note_name(user_id, file.tenant_id, parent_folder_id, &new_title).await?;
+        let new_name = self
+            .unique_note_name(user_id, file.tenant_id, parent_folder_id, &new_title)
+            .await?;
 
         // Rename file
-        let renamed_file = self.file_service.rename_file(file_id, new_name, user_id).await?;
+        let renamed_file = self
+            .file_service
+            .rename_file(file_id, new_name, user_id)
+            .await?;
 
         // Update sidecar title
-        let mut meta = self.load_metadata(file_id).await?.unwrap_or_else(|| NoteMetadata::new(&new_title));
+        let mut meta = self
+            .load_metadata(file_id)
+            .await?
+            .unwrap_or_else(|| NoteMetadata::new(&new_title));
         meta.title = new_title;
         meta.updated_at = Utc::now();
         self.save_metadata(file_id, &meta).await?;
@@ -449,12 +520,21 @@ impl NoteService {
     }
 
     /// Move a note to another folder.
-    pub async fn move_note(&self, file_id: Uuid, user_id: UserId, target_folder_id: Option<Uuid>) -> Result<Note, NoteError> {
-        let moved_file = self.file_service.move_file(file_id, target_folder_id, user_id).await?;
+    pub async fn move_note(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+        target_folder_id: Option<Uuid>,
+    ) -> Result<Note, NoteError> {
+        let moved_file = self
+            .file_service
+            .move_file(file_id, target_folder_id, user_id)
+            .await?;
 
-        let mut meta = self.load_metadata(file_id).await?.unwrap_or_else(|| {
-            NoteMetadata::new(moved_file.name.trim_end_matches(".md"))
-        });
+        let mut meta = self
+            .load_metadata(file_id)
+            .await?
+            .unwrap_or_else(|| NoteMetadata::new(moved_file.name.trim_end_matches(".md")));
         meta.updated_at = Utc::now();
         self.save_metadata(file_id, &meta).await?;
 
@@ -479,8 +559,14 @@ impl NoteService {
     }
 
     /// List all notes for a user.
-    pub async fn list_notes(&self, user_id: UserId, tenant_id: Uuid, limit: Option<usize>) -> Result<Vec<NoteSummary>, NoteError> {
-        self.list_notes_filtered(user_id, tenant_id, None, limit).await
+    pub async fn list_notes(
+        &self,
+        user_id: UserId,
+        tenant_id: Uuid,
+        limit: Option<usize>,
+    ) -> Result<Vec<NoteSummary>, NoteError> {
+        self.list_notes_filtered(user_id, tenant_id, None, limit)
+            .await
     }
 
     /// List notes for a user, optionally filtered to a specific folder path prefix.
@@ -492,7 +578,8 @@ impl NoteService {
         limit: Option<usize>,
     ) -> Result<Vec<NoteSummary>, NoteError> {
         // Find all markdown files owned by the user
-        let files = self.metadata_store
+        let files = self
+            .metadata_store
             .list_all_markdown_files(user_id, tenant_id)
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?;
@@ -541,17 +628,25 @@ impl NoteService {
     }
 
     /// Toggle note visibility between private and public.
-    pub async fn toggle_visibility(&self, file_id: Uuid, user_id: UserId) -> Result<Note, NoteError> {
+    pub async fn toggle_visibility(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+    ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
 
-        let mut meta = self.load_metadata(file_id).await?.unwrap_or_else(|| {
-            NoteMetadata::new(file.name.trim_end_matches(".md"))
-        });
+        let mut meta = self
+            .load_metadata(file_id)
+            .await?
+            .unwrap_or_else(|| NoteMetadata::new(file.name.trim_end_matches(".md")));
 
         match meta.visibility {
             NoteVisibility::Private => {
                 // Make public
-                let share_id = meta.public_share_id.clone().unwrap_or_else(generate_share_id);
+                let share_id = meta
+                    .public_share_id
+                    .clone()
+                    .unwrap_or_else(generate_share_id);
                 meta.visibility = NoteVisibility::Public;
                 meta.public_share_id = Some(share_id.clone());
                 meta.updated_at = Utc::now();
@@ -592,10 +687,14 @@ impl NoteService {
 
     /// Read a public note by share ID (no auth required).
     pub async fn get_public_note(&self, share_id: &str) -> Result<PublicNote, NoteError> {
-        let file_id = self.load_public_share_index(share_id).await?
+        let file_id = self
+            .load_public_share_index(share_id)
+            .await?
             .ok_or(NoteError::NotFound(Uuid::nil()))?;
 
-        let meta = self.load_metadata(file_id).await?
+        let meta = self
+            .load_metadata(file_id)
+            .await?
             .ok_or(NoteError::NotFound(file_id))?;
 
         if meta.visibility != NoteVisibility::Public {
@@ -605,7 +704,8 @@ impl NoteService {
         // We need to find the file to get its storage key, but we don't have a user_id.
         // We'll load the file content directly from the sidecar storage key? No.
         // We need to look up the file in the metadata store by ID.
-        let file = self.metadata_store
+        let file = self
+            .metadata_store
             .find_file_by_id(file_id)
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?

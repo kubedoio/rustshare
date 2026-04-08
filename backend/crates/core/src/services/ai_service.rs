@@ -309,7 +309,9 @@ where
         // Validate query
         let query = query.trim();
         if query.is_empty() {
-            return Err(AiError::InvalidQuery("Question cannot be empty".to_string()));
+            return Err(AiError::InvalidQuery(
+                "Question cannot be empty".to_string(),
+            ));
         }
         if query.len() > 2000 {
             return Err(AiError::InvalidQuery(
@@ -322,7 +324,8 @@ where
 
         if search_results.is_empty() {
             return Ok(QuestionAnswer {
-                answer: "I couldn't find any relevant documents to answer your question.".to_string(),
+                answer: "I couldn't find any relevant documents to answer your question."
+                    .to_string(),
                 citations: Vec::new(),
                 confidence: 0.0,
             });
@@ -346,7 +349,10 @@ where
 
         // Calculate confidence based on relevance scores
         let confidence = if !search_results.is_empty() {
-            let avg_score: f32 = search_results.iter().map(|r| r.relevance_score).sum::<f32>()
+            let avg_score: f32 = search_results
+                .iter()
+                .map(|r| r.relevance_score)
+                .sum::<f32>()
                 / search_results.len() as f32;
             avg_score.clamp(0.0, 1.0)
         } else {
@@ -385,13 +391,7 @@ where
     ) -> Result<(), AiError> {
         self.indexer
             .index_file(
-                file_id,
-                file_name,
-                file_path,
-                content,
-                mime_type,
-                owner_id,
-                tenant_id,
+                file_id, file_name, file_path, content, mime_type, owner_id, tenant_id,
             )
             .await
             .map_err(|e| AiError::Internal(e.to_string()))
@@ -452,11 +452,7 @@ fn extract_key_topics(content: &str) -> Vec<String> {
     let words: Vec<String> = content
         .to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
-        .filter(|s| {
-            !s.is_empty()
-                && s.len() > 3
-                && !is_common_word(s)
-        })
+        .filter(|s| !s.is_empty() && s.len() > 3 && !is_common_word(s))
         .map(|s| s.to_string())
         .collect();
 
@@ -475,21 +471,20 @@ fn extract_key_topics(content: &str) -> Vec<String> {
 /// Check if a word is a common stop word.
 fn is_common_word(word: &str) -> bool {
     const STOP_WORDS: &[&str] = &[
-        "the", "and", "for", "are", "but", "not", "you", "all", "can", "her", "was", "one",
-        "our", "out", "day", "get", "has", "him", "his", "how", "its", "may", "new", "now",
-        "old", "see", "two", "who", "boy", "did", "she", "use", "her", "way", "many",
-        "oil", "sit", "set", "run", "eat", "far", "sea", "eye", "ask", "own", "say",
-        "too", "any", "try", "let", "put", "end", "why", "turn", "here", "show", "every",
-        "good", "give", "our", "under", "name", "very", "through", "just", "form", "much",
-        "great", "think", "where", "help", "much", "before", "move", "right", "too", "means",
-        "old", "any", "same", "tell", "very", "when", "come", "also", "around", "another",
-        "came", "come", "work", "three", "must", "because", "does", "part", "even", "place",
-        "well", "such", "here", "take", "than", "them", "these", "time", "make", "well",
-        "were", "first", "water", "been", "call", "who", "its", "now", "find", "long",
-        "down", "most", "over", "think", "where", "much", "would", "there", "their",
-        "what", "said", "each", "which", "will", "about", "could", "other", "after",
-        "made", "from", "them", "many", "some", "like", "into", "time", "have", "more",
-        "word", "been", "call", "who", "oil", "sit", "set", "run", "eat", "far", "sea",
+        "the", "and", "for", "are", "but", "not", "you", "all", "can", "her", "was", "one", "our",
+        "out", "day", "get", "has", "him", "his", "how", "its", "may", "new", "now", "old", "see",
+        "two", "who", "boy", "did", "she", "use", "her", "way", "many", "oil", "sit", "set", "run",
+        "eat", "far", "sea", "eye", "ask", "own", "say", "too", "any", "try", "let", "put", "end",
+        "why", "turn", "here", "show", "every", "good", "give", "our", "under", "name", "very",
+        "through", "just", "form", "much", "great", "think", "where", "help", "much", "before",
+        "move", "right", "too", "means", "old", "any", "same", "tell", "very", "when", "come",
+        "also", "around", "another", "came", "come", "work", "three", "must", "because", "does",
+        "part", "even", "place", "well", "such", "here", "take", "than", "them", "these", "time",
+        "make", "well", "were", "first", "water", "been", "call", "who", "its", "now", "find",
+        "long", "down", "most", "over", "think", "where", "much", "would", "there", "their",
+        "what", "said", "each", "which", "will", "about", "could", "other", "after", "made",
+        "from", "them", "many", "some", "like", "into", "time", "have", "more", "word", "been",
+        "call", "who", "oil", "sit", "set", "run", "eat", "far", "sea",
     ];
 
     STOP_WORDS.contains(&word)
@@ -589,7 +584,10 @@ mod tests {
             )))
         }
 
-        async fn find_folder_by_id(&self, id: Uuid) -> anyhow::Result<Option<crate::domain::Folder>> {
+        async fn find_folder_by_id(
+            &self,
+            id: Uuid,
+        ) -> anyhow::Result<Option<crate::domain::Folder>> {
             Ok(Some(crate::domain::Folder::new_root(id, Uuid::new_v4())))
         }
 

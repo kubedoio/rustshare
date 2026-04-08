@@ -16,7 +16,9 @@ use uuid::Uuid;
 async fn test_pool() -> sqlx::PgPool {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
-    sqlx::PgPool::connect(&url).await.expect("DB connect failed")
+    sqlx::PgPool::connect(&url)
+        .await
+        .expect("DB connect failed")
 }
 
 async fn cleanup(pool: &sqlx::PgPool, user_ids: &[Uuid]) {
@@ -61,14 +63,10 @@ async fn test_non_admin_user_is_rejected() {
         .expect("fetch user row");
 
     let is_admin: bool = row.try_get("is_admin").unwrap();
-    let disabled_at: Option<chrono::DateTime<chrono::Utc>> =
-        row.try_get("disabled_at").unwrap();
+    let disabled_at: Option<chrono::DateTime<chrono::Utc>> = row.try_get("disabled_at").unwrap();
 
     // The extractor rejects when is_admin is false.
-    assert!(
-        !is_admin,
-        "Non-admin user must have is_admin = false"
-    );
+    assert!(!is_admin, "Non-admin user must have is_admin = false");
     assert!(
         disabled_at.is_none(),
         "Non-admin user should not be disabled in this test"
@@ -105,8 +103,7 @@ async fn test_disabled_admin_is_rejected() {
         .expect("fetch user row");
 
     let is_admin: bool = row.try_get("is_admin").unwrap();
-    let disabled_at: Option<chrono::DateTime<chrono::Utc>> =
-        row.try_get("disabled_at").unwrap();
+    let disabled_at: Option<chrono::DateTime<chrono::Utc>> = row.try_get("disabled_at").unwrap();
 
     // The extractor rejects when disabled_at IS NOT NULL, even for admins.
     assert!(is_admin, "User must be admin for this test case");
@@ -145,11 +142,13 @@ async fn test_active_admin_is_accepted() {
         .expect("fetch user row");
 
     let is_admin: bool = row.try_get("is_admin").unwrap();
-    let disabled_at: Option<chrono::DateTime<chrono::Utc>> =
-        row.try_get("disabled_at").unwrap();
+    let disabled_at: Option<chrono::DateTime<chrono::Utc>> = row.try_get("disabled_at").unwrap();
 
     assert!(is_admin, "Active admin must have is_admin = true");
-    assert!(disabled_at.is_none(), "Active admin must have disabled_at IS NULL");
+    assert!(
+        disabled_at.is_none(),
+        "Active admin must have disabled_at IS NULL"
+    );
 
     cleanup(&pool, &[id]).await;
 }

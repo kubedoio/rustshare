@@ -129,7 +129,10 @@ fn db_error(e: sqlx::Error) -> (StatusCode, Json<serde_json::Value>) {
 }
 
 fn not_found(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": msg })))
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({ "error": msg })),
+    )
 }
 
 // ---------------------------------------------------------------------------

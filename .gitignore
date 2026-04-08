@@ -54,3 +54,4 @@ bin/
 # Local Dev Databases
 rustshare.db
 device_id
+.worktrees/

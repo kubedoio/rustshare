@@ -16,11 +16,18 @@ pub async fn get_features(
         "SELECT EXISTS(
             SELECT 1 FROM workflows
             WHERE key = 'invite_email' AND status = 'active'
-        )"
+        )",
     )
     .fetch_one(&state.db_pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(crate::handlers::ErrorResponse::new(e.to_string()))))?;
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(crate::handlers::ErrorResponse::new(e.to_string())),
+        )
+    })?;
 
-    Ok(Json(FeaturesResponse { invite_enabled: active }))
+    Ok(Json(FeaturesResponse {
+        invite_enabled: active,
+    }))
 }

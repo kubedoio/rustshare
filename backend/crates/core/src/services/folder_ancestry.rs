@@ -408,7 +408,10 @@ mod tests {
         }
 
         async fn update_folder(&self, folder: &Folder) -> Result<()> {
-            self.folders.lock().unwrap().insert(folder.id, folder.clone());
+            self.folders
+                .lock()
+                .unwrap()
+                .insert(folder.id, folder.clone());
             Ok(())
         }
     }
@@ -509,11 +512,17 @@ mod tests {
         repo.add_folder(child);
 
         // Moving child to root should be valid
-        let valid = builder.validate_no_cycles(child_id, Some(root_id)).await.unwrap();
+        let valid = builder
+            .validate_no_cycles(child_id, Some(root_id))
+            .await
+            .unwrap();
         assert!(valid);
 
         // Moving parent to root should be valid
-        let valid = builder.validate_no_cycles(parent_id, Some(root_id)).await.unwrap();
+        let valid = builder
+            .validate_no_cycles(parent_id, Some(root_id))
+            .await
+            .unwrap();
         assert!(valid);
     }
 
@@ -541,15 +550,24 @@ mod tests {
         repo.add_folder(child);
 
         // Moving root to child would create a cycle
-        let valid = builder.validate_no_cycles(root_id, Some(child_id)).await.unwrap();
+        let valid = builder
+            .validate_no_cycles(root_id, Some(child_id))
+            .await
+            .unwrap();
         assert!(!valid);
 
         // Moving parent to child would create a cycle
-        let valid = builder.validate_no_cycles(parent_id, Some(child_id)).await.unwrap();
+        let valid = builder
+            .validate_no_cycles(parent_id, Some(child_id))
+            .await
+            .unwrap();
         assert!(!valid);
 
         // Moving folder to itself is invalid
-        let valid = builder.validate_no_cycles(parent_id, Some(parent_id)).await.unwrap();
+        let valid = builder
+            .validate_no_cycles(parent_id, Some(parent_id))
+            .await
+            .unwrap();
         assert!(!valid);
     }
 
@@ -625,10 +643,7 @@ mod tests {
         let grandparent_id = Uuid::new_v4();
 
         // Test with parent's ancestors
-        let chain = builder.build_ancestor_chain_from_parent(
-            parent_id,
-            Some(&[grandparent_id]),
-        );
+        let chain = builder.build_ancestor_chain_from_parent(parent_id, Some(&[grandparent_id]));
         assert_eq!(chain, vec![grandparent_id, parent_id]);
 
         // Test with no parent ancestors (parent is root)
@@ -741,11 +756,7 @@ mod tests {
         assert!(valid);
 
         // Moving to root is always valid
-        let valid = builder.validate_no_cycles_with_ancestors(
-            folder_b,
-            None,
-            None,
-        );
+        let valid = builder.validate_no_cycles_with_ancestors(folder_b, None, None);
         assert!(valid);
     }
 }

@@ -29,6 +29,7 @@ uuid = { workspace = true }
 pathdiff = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
+nix = { workspace = true }
 
 [dev-dependencies]
 test-support = { path = "../test-support" }

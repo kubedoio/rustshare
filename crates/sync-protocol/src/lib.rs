@@ -1,5 +1,5 @@
-use sync_domain::{RemoteEntry, SyncRoot};
 use serde::{Deserialize, Serialize};
+use sync_domain::{RemoteEntry, SyncRoot};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DeviceRegistrationRequest {

@@ -12,8 +12,8 @@ use serde_json::json;
 use sha2::Sha256;
 use uuid::Uuid;
 
-use crate::{handlers::AdminUser, AppState};
 use super::log_admin_action;
+use crate::{handlers::AdminUser, AppState};
 
 // ---------------------------------------------------------------------------
 // Supported event types
@@ -111,8 +111,7 @@ pub struct UpdateWebhookRequest {
 // Handlers
 // ---------------------------------------------------------------------------
 
-const COLS: &str =
-    "id, name, url, secret_enc, enabled, events, created_by, created_at, updated_at";
+const COLS: &str = "id, name, url, secret_enc, enabled, events, created_by, created_at, updated_at";
 
 /// GET /api/v1/admin/integrations/webhooks
 pub async fn list_webhooks(
@@ -207,8 +206,8 @@ pub async fn update_webhook(
 
     // Determine new secret
     let new_secret_enc = match req.secret.as_deref() {
-        None => current.secret_enc.clone(),          // absent = keep
-        Some("") => None,                             // empty string = clear
+        None => current.secret_enc.clone(), // absent = keep
+        Some("") => None,                   // empty string = clear
         Some(s) => encrypt_optional_secret(Some(s), &state)?,
     };
 
@@ -353,9 +352,7 @@ pub async fn test_webhook(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn validate_events(
-    events: &[String],
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+fn validate_events(events: &[String]) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     if events.is_empty() {
         return Err(bad_request("events array must not be empty"));
     }

@@ -11,7 +11,9 @@ use uuid::Uuid;
 async fn test_pool() -> PgPool {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
-    sqlx::PgPool::connect(&url).await.expect("DB connect failed")
+    sqlx::PgPool::connect(&url)
+        .await
+        .expect("DB connect failed")
 }
 
 /// Test that group sharing works end-to-end through the compat layer
@@ -167,7 +169,10 @@ async fn test_group_sharing_works_via_compat_layer() {
     assert_eq!(retrieved_share.id, share_id);
     assert_eq!(retrieved_share.file_id, Some(file_id));
     assert_eq!(retrieved_share.recipient_group_id, Some(group_id));
-    assert_eq!(retrieved_share.permissions, rustshare_core::domain::SharePermissions::View);
+    assert_eq!(
+        retrieved_share.permissions,
+        rustshare_core::domain::SharePermissions::View
+    );
 
     // Test 7: Verify get_file_shares returns the group share
     let file_shares = compat
@@ -357,7 +362,10 @@ async fn test_is_user_in_group_edge_cases() {
         .is_user_in_group(user_id, group_id)
         .await
         .expect("is_user_in_group should not fail");
-    assert!(!is_member, "User should not be in group without membership row");
+    assert!(
+        !is_member,
+        "User should not be in group without membership row"
+    );
 
     // Add user to group
     sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)")
@@ -416,14 +424,14 @@ async fn test_is_user_in_group_edge_cases() {
 /// Helper function to create a MetadataStoreCompat for testing
 /// Uses a minimal mock repository since the SQL methods only need the pool
 async fn create_test_compat(pool: sqlx::PgPool) -> MetadataStoreCompat {
+    use async_trait::async_trait;
+    use rustshare_core::domain::{FileId, FolderId, ShareId, UserId};
+    use rustshare_storage::metadata_v2::schemas::*;
     use rustshare_storage::repos::{
         EventRepository, FileRepository, FileVersionRepository, FolderChildrenIndexRepository,
         FolderRepository, RepositoryError, SearchIndexRepository, ShareRepository,
         TombstoneRepository,
     };
-    use rustshare_storage::metadata_v2::schemas::*;
-    use rustshare_core::domain::{FileId, FolderId, ShareId, UserId};
-    use async_trait::async_trait;
     use std::sync::Arc;
 
     // Minimal mock implementations that do nothing (the SQL methods only need the pool)

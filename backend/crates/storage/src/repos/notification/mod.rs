@@ -5,21 +5,21 @@ use rustshare_core::domain::Notification;
 use thiserror::Error;
 use uuid::Uuid;
 
-pub mod rustfs;
 pub mod projector;
+pub mod rustfs;
 
-pub use rustfs::RustFsNotificationRepository;
 pub use projector::NotificationProjector;
+pub use rustfs::RustFsNotificationRepository;
 
 /// Errors that can occur in notification repository operations
 #[derive(Debug, Error)]
 pub enum NotificationRepositoryError {
     #[error("Notification not found: {0}")]
     NotFound(Uuid),
-    
+
     #[error("Storage error: {0}")]
     Storage(String),
-    
+
     #[error("Concurrency conflict")]
     Conflict,
 }
@@ -39,30 +39,41 @@ pub struct NotificationQuery {
 #[async_trait]
 pub trait NotificationRepository: Send + Sync {
     /// Create a new notification
-    async fn create_notification(&self, notification: &Notification) -> Result<(), NotificationRepositoryError>;
-    
+    async fn create_notification(
+        &self,
+        notification: &Notification,
+    ) -> Result<(), NotificationRepositoryError>;
+
     /// Get notification by ID
-    async fn get_notification(&self, user_id: Uuid, id: Uuid) -> Result<Option<Notification>, NotificationRepositoryError>;
-    
+    async fn get_notification(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<Notification>, NotificationRepositoryError>;
+
     /// Get notifications for a user
     async fn get_user_notifications(
         &self,
         user_id: Uuid,
         query: NotificationQuery,
     ) -> Result<Vec<Notification>, NotificationRepositoryError>;
-    
+
     /// Count unread notifications for a user
     async fn count_unread(&self, user_id: Uuid) -> Result<u32, NotificationRepositoryError>;
-    
+
     /// Mark a notification as read
     async fn mark_read(&self, user_id: Uuid, id: Uuid) -> Result<(), NotificationRepositoryError>;
-    
+
     /// Mark all notifications as read for a user
     async fn mark_all_read(&self, user_id: Uuid) -> Result<u32, NotificationRepositoryError>;
-    
+
     /// Delete a notification
-    async fn delete_notification(&self, user_id: Uuid, id: Uuid) -> Result<(), NotificationRepositoryError>;
-    
+    async fn delete_notification(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+    ) -> Result<(), NotificationRepositoryError>;
+
     /// Delete all notifications for a user
     async fn delete_all_for_user(&self, user_id: Uuid) -> Result<u32, NotificationRepositoryError>;
 }
@@ -71,8 +82,10 @@ pub trait NotificationRepository: Send + Sync {
 pub mod conversions {
     use super::*;
     use crate::metadata_v2::schemas::{NotificationDocument, NotificationType};
-    use rustshare_core::domain::{NotificationType as CoreNotificationType, ResourceType as CoreResourceType};
-    
+    use rustshare_core::domain::{
+        NotificationType as CoreNotificationType, ResourceType as CoreResourceType,
+    };
+
     /// Convert NotificationType from core domain
     fn from_core_type(ty: CoreNotificationType) -> NotificationType {
         match ty {
@@ -81,22 +94,26 @@ pub mod conversions {
             CoreNotificationType::ShareRevoked => NotificationType::ShareRevoked,
         }
     }
-    
+
     /// Convert NotificationType to core domain
     fn to_core_type(ty: NotificationType) -> CoreNotificationType {
         match ty {
-            NotificationType::FileShared | NotificationType::FolderShared => CoreNotificationType::ShareReceived,
+            NotificationType::FileShared | NotificationType::FolderShared => {
+                CoreNotificationType::ShareReceived
+            }
             NotificationType::ShareRevoked => CoreNotificationType::ShareRevoked,
             NotificationType::FileModified => CoreNotificationType::PermissionChanged,
-            NotificationType::AccessRequested | NotificationType::AccessGranted => CoreNotificationType::PermissionChanged,
+            NotificationType::AccessRequested | NotificationType::AccessGranted => {
+                CoreNotificationType::PermissionChanged
+            }
         }
     }
-    
+
     /// Convert ResourceType to core domain
     fn to_core_resource_type(ty: &str) -> CoreResourceType {
         ty.parse().unwrap_or(CoreResourceType::File)
     }
-    
+
     /// Convert NotificationDocument to domain Notification
     pub fn doc_to_notification(doc: NotificationDocument) -> Notification {
         Notification {
@@ -113,7 +130,7 @@ pub mod conversions {
             tenant_id: doc.tenant_id,
         }
     }
-    
+
     /// Convert domain Notification to NotificationDocument
     pub fn notification_to_doc(notification: &Notification) -> NotificationDocument {
         NotificationDocument {

@@ -1,7 +1,6 @@
 use lettre::{
-    message::Mailbox,
-    transport::smtp::authentication::Credentials,
-    AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
+    message::Mailbox, transport::smtp::authentication::Credentials, AsyncSmtpTransport,
+    AsyncTransport, Message, Tokio1Executor,
 };
 use rustshare_crypto::{decrypt_secret, SecretEncryptionKey};
 use sqlx::PgPool;
@@ -39,7 +38,7 @@ impl EmailService {
         let row = sqlx::query_as::<_, SmtpConfigRow>(
             "SELECT enabled, host, port, username, password_enc, from_address, from_name, tls_mode
              FROM smtp_config
-             WHERE id = '00000000-0000-0000-0000-000000000002'"
+             WHERE id = '00000000-0000-0000-0000-000000000002'",
         )
         .fetch_optional(&self.pool)
         .await
@@ -80,35 +79,44 @@ impl EmailService {
             .body(body)
             .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
 
-        let creds = config.username.as_ref().map(|username| {
-            let password = if let Some(ref enc) = config.password_enc {
-                decrypt_secret(enc, &self.secret_key)
-                    .map_err(|_| EmailError::DecryptFailed)
-            } else {
-                Ok(String::new())
-            }?;
-            Ok(Credentials::new(username.clone(), password))
-        }).transpose()?;
+        let creds = config
+            .username
+            .as_ref()
+            .map(|username| {
+                let password = if let Some(ref enc) = config.password_enc {
+                    decrypt_secret(enc, &self.secret_key).map_err(|_| EmailError::DecryptFailed)
+                } else {
+                    Ok(String::new())
+                }?;
+                Ok(Credentials::new(username.clone(), password))
+            })
+            .transpose()?;
 
         let builder = match config.tls_mode.as_deref() {
             Some("tls") => {
                 let mut b = AsyncSmtpTransport::<Tokio1Executor>::relay(&host)
                     .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?
                     .port(port as u16);
-                if let Some(c) = creds { b = b.credentials(c); }
+                if let Some(c) = creds {
+                    b = b.credentials(c);
+                }
                 b
             }
             Some("starttls") => {
                 let mut b = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host)
                     .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?
                     .port(port as u16);
-                if let Some(c) = creds { b = b.credentials(c); }
+                if let Some(c) = creds {
+                    b = b.credentials(c);
+                }
                 b
             }
             _ => {
                 let mut b = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&host)
                     .port(port as u16);
-                if let Some(c) = creds { b = b.credentials(c); }
+                if let Some(c) = creds {
+                    b = b.credentials(c);
+                }
                 b
             }
         };

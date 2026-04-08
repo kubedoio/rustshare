@@ -226,8 +226,13 @@ mod tests {
         let owner_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
         let root_folder = Folder::new_root(owner_id, tenant_id);
-        let subfolder =
-            Folder::new_child("Documents".to_string(), "/Documents".to_string(), root_folder.id, owner_id, tenant_id);
+        let subfolder = Folder::new_child(
+            "Documents".to_string(),
+            "/Documents".to_string(),
+            root_folder.id,
+            owner_id,
+            tenant_id,
+        );
         let subtree = FolderTree::new(subfolder.clone());
 
         let tree = FolderTree::with_contents(root_folder.clone(), vec![], vec![subtree.clone()]);

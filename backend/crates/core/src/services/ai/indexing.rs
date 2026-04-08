@@ -124,10 +124,8 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         // Enforce max documents limit (LRU eviction - remove oldest)
         if index.documents.len() >= MAX_DOCUMENTS && !index.documents.contains_key(&file_id) {
             // Find oldest document and remove it
-            if let Some((oldest_id, _)) = index
-                .documents
-                .iter()
-                .min_by_key(|(_, doc)| doc.indexed_at)
+            if let Some((oldest_id, _)) =
+                index.documents.iter().min_by_key(|(_, doc)| doc.indexed_at)
             {
                 let oldest_id = *oldest_id;
                 index.documents.remove(&oldest_id);
@@ -262,9 +260,16 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     /// Extracted text content
     pub fn extract_text(content: &[u8], mime_type: &str) -> String {
         match mime_type {
-            "text/plain" | "text/markdown" | "text/csv" | "application/json"
-            | "application/xml" | "text/xml" | "text/html" | "text/css"
-            | "application/javascript" | "text/javascript" => {
+            "text/plain"
+            | "text/markdown"
+            | "text/csv"
+            | "application/json"
+            | "application/xml"
+            | "text/xml"
+            | "text/html"
+            | "text/css"
+            | "application/javascript"
+            | "text/javascript" => {
                 // Try to decode as UTF-8
                 String::from_utf8_lossy(content).into_owned()
             }
@@ -326,8 +331,8 @@ fn extract_rtf_text(rtf: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::embedding::SimpleEmbeddingGenerator;
+    use super::*;
 
     #[tokio::test]
     async fn test_index_and_search() {
@@ -362,15 +367,10 @@ mod tests {
             .unwrap();
 
         // Search for Rust-related content
-        let tenant_id = indexer
-            .indexes
-            .read()
-            .await
-            .keys()
-            .next()
-            .copied()
-            .unwrap();
-        let results = indexer.search(tenant_id, "memory safety programming", 10).await;
+        let tenant_id = indexer.indexes.read().await.keys().next().copied().unwrap();
+        let results = indexer
+            .search(tenant_id, "memory safety programming", 10)
+            .await;
 
         assert!(!results.is_empty());
         // The Rust document should have higher similarity
@@ -415,8 +415,7 @@ mod tests {
     #[tokio::test]
     async fn test_extract_text_binary() {
         let content = vec![0x89, 0x50, 0x4E, 0x47]; // PNG header
-        let text =
-            ContentIndexer::<SimpleEmbeddingGenerator>::extract_text(&content, "image/png");
+        let text = ContentIndexer::<SimpleEmbeddingGenerator>::extract_text(&content, "image/png");
         assert!(text.is_empty());
     }
 

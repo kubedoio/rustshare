@@ -12,7 +12,12 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
-async fn setup_test_env() -> (PgPool, Arc<EventStore>, Arc<MetadataStore>, Arc<ObjectStore>) {
+async fn setup_test_env() -> (
+    PgPool,
+    Arc<EventStore>,
+    Arc<MetadataStore>,
+    Arc<ObjectStore>,
+) {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
 
@@ -23,8 +28,8 @@ async fn setup_test_env() -> (PgPool, Arc<EventStore>, Arc<MetadataStore>, Arc<O
     let event_store = Arc::new(EventStore::new(pool.clone()));
     let metadata_store = Arc::new(MetadataStore::new(pool.clone()));
 
-    let s3_endpoint = std::env::var("S3_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:9000".to_string());
+    let s3_endpoint =
+        std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string());
     let s3_region = std::env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".to_string());
     let s3_bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "rustshare".to_string());
 
@@ -99,7 +104,13 @@ async fn contract_create_note_creates_markdown_file_and_metadata_sidecar() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store);
 
     let note = service
-        .create_note(user.id, tenant_id, Some("Architecture Ideas".to_string()), None, Some("# Hello".to_string()))
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Architecture Ideas".to_string()),
+            None,
+            Some("# Hello".to_string()),
+        )
         .await
         .expect("create_note should succeed");
 
@@ -128,15 +139,33 @@ async fn contract_create_note_uses_collision_safe_naming() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store);
 
     let note1 = service
-        .create_note(user.id, tenant_id, Some("Untitled Note".to_string()), None, None)
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Untitled Note".to_string()),
+            None,
+            None,
+        )
         .await
         .unwrap();
     let note2 = service
-        .create_note(user.id, tenant_id, Some("Untitled Note".to_string()), None, None)
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Untitled Note".to_string()),
+            None,
+            None,
+        )
         .await
         .unwrap();
     let note3 = service
-        .create_note(user.id, tenant_id, Some("Untitled Note".to_string()), None, None)
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Untitled Note".to_string()),
+            None,
+            None,
+        )
         .await
         .unwrap();
 
@@ -158,7 +187,13 @@ async fn contract_read_note_returns_content_and_metadata_unified() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store);
 
     let created = service
-        .create_note(user.id, tenant_id, Some("Read Test".to_string()), None, Some("body".to_string()))
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Read Test".to_string()),
+            None,
+            Some("body".to_string()),
+        )
         .await
         .unwrap();
 
@@ -179,7 +214,13 @@ async fn contract_save_note_updates_content_excerpt_and_updated_at() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store);
 
     let note = service
-        .create_note(user.id, tenant_id, Some("Save Test".to_string()), None, Some("old".to_string()))
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Save Test".to_string()),
+            None,
+            Some("old".to_string()),
+        )
         .await
         .unwrap();
 
@@ -206,13 +247,25 @@ async fn contract_rename_note_renames_file_and_sidecar_and_preserves_share_id() 
     let service = create_note_service(event_store, metadata_store.clone(), object_store);
 
     let note = service
-        .create_note(user.id, tenant_id, Some("Old Title".to_string()), None, None)
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Old Title".to_string()),
+            None,
+            None,
+        )
         .await
         .unwrap();
 
     // Make public first to generate share_id
     let _ = service.toggle_visibility(note.id, user.id).await.unwrap();
-    let share_id = service.get_note(note.id, user.id).await.unwrap().metadata.public_share_id.clone();
+    let share_id = service
+        .get_note(note.id, user.id)
+        .await
+        .unwrap()
+        .metadata
+        .public_share_id
+        .clone();
 
     let renamed = service
         .rename_note(note.id, user.id, "New Title".to_string())
@@ -235,7 +288,13 @@ async fn contract_delete_note_invalidates_public_access() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store);
 
     let note = service
-        .create_note(user.id, tenant_id, Some("Delete Test".to_string()), None, None)
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Delete Test".to_string()),
+            None,
+            None,
+        )
         .await
         .unwrap();
 
@@ -274,9 +333,15 @@ async fn contract_list_recent_notes_ordered_by_updated_at_desc() {
 
     // Touch note_a so it becomes most recent
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    service.save_note(note_a.id, user.id, "updated".to_string()).await.unwrap();
+    service
+        .save_note(note_a.id, user.id, "updated".to_string())
+        .await
+        .unwrap();
 
-    let recent = service.list_notes(user.id, tenant_id, Some(10)).await.unwrap();
+    let recent = service
+        .list_notes(user.id, tenant_id, Some(10))
+        .await
+        .unwrap();
     assert_eq!(recent[0].id, note_a.id);
     assert!(recent.iter().any(|n| n.id == note_b.id));
 
@@ -292,7 +357,13 @@ async fn contract_toggle_visibility_private_to_public_generates_share_id_and_url
     let service = create_note_service(event_store, metadata_store.clone(), object_store);
 
     let note = service
-        .create_note(user.id, tenant_id, Some("Public Test".to_string()), None, Some("secret".to_string()))
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Public Test".to_string()),
+            None,
+            Some("secret".to_string()),
+        )
         .await
         .unwrap();
 
@@ -300,7 +371,10 @@ async fn contract_toggle_visibility_private_to_public_generates_share_id_and_url
 
     let public = service.toggle_visibility(note.id, user.id).await.unwrap();
     assert_eq!(public.metadata.visibility, NoteVisibility::Public);
-    let share_id = public.metadata.public_share_id.expect("share_id should be set");
+    let share_id = public
+        .metadata
+        .public_share_id
+        .expect("share_id should be set");
     assert_eq!(share_id.len(), 32);
 
     // Public route readable anonymously
@@ -320,7 +394,13 @@ async fn contract_toggle_visibility_public_to_private_disables_access() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store);
 
     let note = service
-        .create_note(user.id, tenant_id, Some("Revoke Test".to_string()), None, None)
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Revoke Test".to_string()),
+            None,
+            None,
+        )
         .await
         .unwrap();
 
@@ -351,7 +431,9 @@ async fn contract_anonymous_request_to_private_note_returns_not_found() {
         .unwrap();
 
     // There is no share_id, so any random id should fail
-    let result = service.get_public_note("nonexistentshareid12345678901234").await;
+    let result = service
+        .get_public_note("nonexistentshareid12345678901234")
+        .await;
     assert!(result.is_err());
 
     cleanup_user(&pool, user.id).await;
@@ -366,7 +448,13 @@ async fn contract_public_note_page_does_not_leak_internal_paths() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store);
 
     let note = service
-        .create_note(user.id, tenant_id, Some("Leak Test".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Leak Test".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 

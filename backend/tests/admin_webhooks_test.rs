@@ -28,7 +28,9 @@ use uuid::Uuid;
 async fn test_pool() -> sqlx::PgPool {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
-    sqlx::PgPool::connect(&url).await.expect("DB connect failed")
+    sqlx::PgPool::connect(&url)
+        .await
+        .expect("DB connect failed")
 }
 
 fn test_encryption_key() -> SecretEncryptionKey {
@@ -70,8 +72,7 @@ async fn cleanup_users(pool: &sqlx::PgPool, user_ids: &[Uuid]) {
     }
 }
 
-const COLS: &str =
-    "id, name, url, secret_enc, enabled, events, created_by, created_at, updated_at";
+const COLS: &str = "id, name, url, secret_enc, enabled, events, created_by, created_at, updated_at";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -163,14 +164,12 @@ async fn test_update_webhook_events() {
 
     // Update events
     let new_events = vec!["user.created", "user.disabled", "user.deleted"];
-    sqlx::query(
-        "UPDATE webhook_configs SET events = $2, updated_at = NOW() WHERE id = $1",
-    )
-    .bind(webhook_id)
-    .bind(&new_events)
-    .execute(&pool)
-    .await
-    .expect("update webhook events");
+    sqlx::query("UPDATE webhook_configs SET events = $2, updated_at = NOW() WHERE id = $1")
+        .bind(webhook_id)
+        .bind(&new_events)
+        .execute(&pool)
+        .await
+        .expect("update webhook events");
 
     let updated_events: Vec<String> =
         sqlx::query_scalar("SELECT events FROM webhook_configs WHERE id = $1")
@@ -211,7 +210,11 @@ async fn test_webhook_hmac_signature_computation() {
     let hex_sig = hex::encode(result);
 
     // Must produce a valid 64-character hex string (SHA-256 output = 32 bytes)
-    assert_eq!(hex_sig.len(), 64, "HMAC-SHA256 hex signature must be 64 characters");
+    assert_eq!(
+        hex_sig.len(),
+        64,
+        "HMAC-SHA256 hex signature must be 64 characters"
+    );
     assert!(
         hex_sig.chars().all(|c| c.is_ascii_hexdigit()),
         "Signature must be a valid hex string"
@@ -221,7 +224,10 @@ async fn test_webhook_hmac_signature_computation() {
     let mut mac2 = Hmac::<Sha256>::new_from_slice(key).expect("HMAC init 2");
     mac2.update(body.as_bytes());
     let hex_sig2 = hex::encode(mac2.finalize().into_bytes());
-    assert_eq!(hex_sig, hex_sig2, "HMAC must be deterministic for same key+body");
+    assert_eq!(
+        hex_sig, hex_sig2,
+        "HMAC must be deterministic for same key+body"
+    );
 
     // A different body must produce a different signature
     let body2 = r#"{"event":"ping","timestamp":9999999999}"#;
@@ -244,7 +250,10 @@ async fn test_webhook_secret_roundtrip() {
     let encrypted = encrypt_secret(plaintext, &key).expect("encrypt");
     let decrypted = decrypt_secret(&encrypted, &key).expect("decrypt");
 
-    assert_eq!(decrypted, plaintext, "Webhook secret must round-trip correctly");
+    assert_eq!(
+        decrypted, plaintext,
+        "Webhook secret must round-trip correctly"
+    );
 }
 
 /// Delete a webhook and verify it is gone from the DB.
