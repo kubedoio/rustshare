@@ -591,14 +591,14 @@ where
 }
 
 /// Notify the daemon about a configuration change for a specific root
-async fn run_daemon(core: SyncCore, handle: DaemonHandle) -> anyhow::Result<()> {
+async fn run_daemon(mut core: SyncCore, handle: DaemonHandle) -> anyhow::Result<()> {
     // Start the sync core (spawns background tasks)
     core.start().await?;
     tracing::info!("Sync core started, daemon is running");
 
     // Wait for shutdown signal
     let shutdown = tokio::signal::ctrl_c();
-    shutdown.await;
+    let _ = shutdown.await;
     tracing::info!("Received shutdown signal");
 
     // Cleanup

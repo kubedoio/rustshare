@@ -6610,12 +6610,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "client-state",
  "file-ops",
  "futures",
  "futures-util",
  "glob",
+ "md5",
  "mockall",
  "nix",
  "notify",
@@ -6624,6 +6626,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2",
  "sync-domain",
  "sync-protocol",
  "tempfile",
@@ -6636,6 +6639,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "walkdir",
 ]
 
 [[package]]

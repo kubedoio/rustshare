@@ -15,7 +15,7 @@ pub struct MockBackend {
 impl MockBackend {
     pub async fn start() -> Result<Self> {
         let app = Router::new()
-            .post(
+            .route(
                 "/api/v1/devices/register",
                 post(|| async {
                     Json(DeviceRegistrationResponse {
@@ -23,7 +23,7 @@ impl MockBackend {
                     })
                 }),
             )
-            .get(
+            .route(
                 "/api/v1/sync/deltas",
                 get(|| async {
                     Json(DeltaResponse {

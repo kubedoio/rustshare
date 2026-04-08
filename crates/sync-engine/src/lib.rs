@@ -2,7 +2,10 @@ pub mod client;
 pub mod daemon;
 pub mod manager;
 pub mod planner;
+pub mod retry;
+pub mod scanner;
 pub mod socket;
+pub mod websocket;
 pub mod worker;
 
 use anyhow::Result;
@@ -33,7 +36,7 @@ impl SyncCore {
         }
     }
 
-    pub async fn start(&self) -> Result<()> {
+    pub async fn start(&mut self) -> Result<()> {
         self.manager
             .start_socket_server(self.socket_path.clone())
             .await?;
