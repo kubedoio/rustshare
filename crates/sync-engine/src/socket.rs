@@ -9,7 +9,11 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
+
+/// Maximum request line length to prevent DoS (1MB)
+const MAX_LINE_LENGTH: usize = 1_048_576;
 
 /// JSON-RPC 2.0 request
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,15 +171,18 @@ pub struct SocketServer {
     socket_path: std::path::PathBuf,
     listener: Option<UnixListener>,
     handlers: std::collections::HashMap<String, RpcHandler>,
+    shutdown_tx: Option<broadcast::Sender<()>>,
 }
 
 impl SocketServer {
     /// Create a new socket server
     pub fn new(socket_path: impl Into<std::path::PathBuf>) -> Self {
+        let (shutdown_tx, _) = broadcast::channel(1);
         Self {
             socket_path: socket_path.into(),
             listener: None,
             handlers: std::collections::HashMap::new(),
+            shutdown_tx: Some(shutdown_tx),
         }
     }
 
@@ -211,11 +218,16 @@ impl SocketServer {
             .context("Failed to bind to Unix socket")?;
 
         // Set socket permissions to 0600 (user-only access)
-        let metadata = std::fs::metadata(path)?;
-        let mut permissions = metadata.permissions();
-        permissions.set_mode(0o600);
-        std::fs::set_permissions(path, permissions)
-            .context("Failed to set socket permissions")?;
+        let path_clone = path.clone();
+        tokio::task::spawn_blocking(move || {
+            let metadata = std::fs::metadata(&path_clone)?;
+            let mut permissions = metadata.permissions();
+            permissions.set_mode(0o600);
+            std::fs::set_permissions(&path_clone, permissions)
+                .context("Failed to set socket permissions")
+        })
+        .await
+        .context("Failed to spawn blocking task for permissions")??;
 
         info!("Socket server bound to {:?}", path);
         self.listener = Some(listener);
@@ -228,24 +240,47 @@ impl SocketServer {
         let listener = self.listener.as_ref()
             .ok_or_else(|| anyhow!("Server not bound"))?;
 
+        let mut shutdown_rx = self.shutdown_tx.as_ref()
+            .ok_or_else(|| anyhow!("Shutdown channel not initialized"))?
+            .subscribe();
+
         info!("Socket server started, accepting connections");
 
         loop {
-            match listener.accept().await {
-                Ok((stream, _addr)) => {
-                    debug!("New connection accepted");
-                    let handlers = self.handlers.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = Self::handle_connection(stream, handlers).await {
-                            error!("Connection handler error: {}", e);
+            tokio::select! {
+                result = listener.accept() => {
+                    match result {
+                        Ok((stream, _addr)) => {
+                            debug!("New connection accepted");
+                            let handlers = self.handlers.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = Self::handle_connection(stream, handlers).await {
+                                    error!("Connection handler error: {}", e);
+                                }
+                            });
                         }
-                    });
+                        Err(e) => {
+                            error!("Failed to accept connection: {}", e);
+                        }
+                    }
                 }
-                Err(e) => {
-                    error!("Failed to accept connection: {}", e);
+                _ = shutdown_rx.recv() => {
+                    info!("Shutdown signal received, stopping server");
+                    break;
                 }
             }
         }
+
+        Ok(())
+    }
+
+    /// Trigger a graceful shutdown of the server
+    pub fn trigger_shutdown(&self) -> Result<()> {
+        if let Some(tx) = &self.shutdown_tx {
+            tx.send(()).context("Failed to send shutdown signal")?;
+            info!("Shutdown signal sent");
+        }
+        Ok(())
     }
 
     /// Handle a single connection
@@ -266,6 +301,28 @@ impl SocketServer {
                     break;
                 }
                 Ok(_n) => {
+                    // Check for request size limit to prevent DoS
+                    if line.len() > MAX_LINE_LENGTH {
+                        error!("Request too large: {} bytes (max: {})", line.len(), MAX_LINE_LENGTH);
+                        let error_response = RpcResponse::error(
+                            None,
+                            RpcError::invalid_request(format!(
+                                "Request too large: {} bytes (max: {})",
+                                line.len(),
+                                MAX_LINE_LENGTH
+                            )),
+                        );
+                        let response_json = serde_json::to_string(&error_response)?;
+                        let response_line = format!("{}\n", response_json);
+                        if let Err(e) = writer.write_all(response_line.as_bytes()).await {
+                            error!("Failed to write error response: {}", e);
+                        }
+                        if let Err(e) = writer.flush().await {
+                            error!("Failed to flush error response: {}", e);
+                        }
+                        break;
+                    }
+
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
                         continue;
@@ -355,6 +412,10 @@ impl SocketServer {
 
     /// Shutdown the server and clean up
     pub async fn shutdown(self) -> Result<()> {
+        // Trigger graceful shutdown
+        self.trigger_shutdown()?;
+
+        // Remove socket file
         if self.socket_path.exists() {
             tokio::fs::remove_file(&self.socket_path)
                 .await
@@ -362,6 +423,20 @@ impl SocketServer {
         }
         info!("Socket server shutdown");
         Ok(())
+    }
+}
+
+impl Drop for SocketServer {
+    fn drop(&mut self) {
+        // Clean up socket file on drop to prevent leaks
+        if self.socket_path.exists() {
+            // Use synchronous remove since Drop can't be async
+            if let Err(e) = std::fs::remove_file(&self.socket_path) {
+                warn!("Failed to remove socket file on drop: {}", e);
+            } else {
+                debug!("Socket file removed on drop: {:?}", self.socket_path);
+            }
+        }
     }
 }
 
