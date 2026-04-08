@@ -400,13 +400,9 @@ async fn main() -> Result<()> {
                             // In daemon process - write PID and start sync core
                             daemon_handle.write_pid()?;
                             
-                            // Run the daemon
+                            // Run the daemon with proper shutdown handling
                             let rt = tokio::runtime::Runtime::new()?;
-                            rt.block_on(async {
-                                if let Err(e) = core.start().await {
-                                    eprintln!("Daemon error: {}", e);
-                                }
-                            });
+                            rt.block_on(run_daemon(core, daemon_handle))?;
                         }
                         Err(e) => {
                             return Err(anyhow!("Failed to daemonize: {}", e));
