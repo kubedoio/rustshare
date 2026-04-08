@@ -5,6 +5,7 @@ pub mod planner;
 pub mod retry;
 pub mod scanner;
 pub mod socket;
+pub mod websocket;
 pub mod worker;
 
 use anyhow::Result;
