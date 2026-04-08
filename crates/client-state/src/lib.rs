@@ -83,6 +83,71 @@ impl Database {
             [],
         )?;
 
+        Self::create_sync_tables(conn)?;
+
+        Ok(())
+    }
+
+    fn create_sync_tables(conn: &Connection) -> Result<()> {
+        // File states - track sync state for each file
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS file_states (
+                id INTEGER PRIMARY KEY,
+                root_id BLOB NOT NULL,
+                relative_path TEXT NOT NULL,
+                local_hash TEXT,
+                remote_hash TEXT,
+                local_modified_at INTEGER,
+                remote_modified_at INTEGER,
+                size INTEGER,
+                is_directory BOOLEAN DEFAULT 0,
+                sync_status TEXT DEFAULT 'synced',
+                last_sync_at INTEGER,
+                UNIQUE(root_id, relative_path)
+            )",
+            [],
+        )?;
+
+        // Sync queue - pending operations
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS sync_queue (
+                id INTEGER PRIMARY KEY,
+                root_id BLOB NOT NULL,
+                operation TEXT NOT NULL,
+                relative_path TEXT NOT NULL,
+                priority INTEGER DEFAULT 0,
+                retry_count INTEGER DEFAULT 0,
+                last_error TEXT,
+                created_at INTEGER,
+                execute_at INTEGER
+            )",
+            [],
+        )?;
+
+        // Upload sessions - resumable uploads
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS upload_sessions (
+                id INTEGER PRIMARY KEY,
+                file_state_id INTEGER,
+                session_id TEXT,
+                total_chunks INTEGER,
+                uploaded_chunks INTEGER DEFAULT 0,
+                chunk_size INTEGER DEFAULT 5242880,
+                expires_at INTEGER
+            )",
+            [],
+        )?;
+
+        // Sync cursors - delta tracking per root
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS sync_cursors (
+                root_id BLOB PRIMARY KEY,
+                cursor TEXT,
+                updated_at INTEGER
+            )",
+            [],
+        )?;
+
         Ok(())
     }
 
