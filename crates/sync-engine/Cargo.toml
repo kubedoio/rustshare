@@ -31,6 +31,8 @@ axum = { workspace = true }
 tower = { workspace = true }
 nix = { workspace = true }
 sha2 = "0.10"
+base64 = "0.22"
+md5 = "0.7"
 walkdir = "2.5"
 
 [dev-dependencies]
