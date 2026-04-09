@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use sync_protocol::{
     DeltaRequest, DeltaResponse, DeviceRegistrationRequest, DeviceRegistrationResponse,
 };
+use chrono::{DateTime, Utc};
 use url::Url;
 use uuid::Uuid;
 
@@ -85,6 +86,20 @@ impl ApiClient {
             .error_for_status()?;
 
         Ok(response)
+    }
+
+    pub async fn delete_file(&self, file_id: Uuid) -> Result<()> {
+        let url = self.base_url.join(&format!("/api/v1/files/{}", file_id))?;
+        self.client
+            .delete(url)
+            .headers(self.headers()?)
+            .send()
+            .await
+            .context("Failed to delete file")?
+            .error_for_status()
+            .context("Server returned error when deleting file")?;
+
+        Ok(())
     }
 
     // ============================================================================
@@ -186,6 +201,66 @@ impl ApiClient {
         Ok(files)
     }
 
+    pub async fn get_folder_tree(&self) -> Result<RemoteFolderTree> {
+        let url = self.base_url.join("/api/v1/folders/tree")?;
+        let response = self
+            .client
+            .get(url)
+            .headers(self.headers()?)
+            .send()
+            .await
+            .context("Failed to fetch folder tree")?
+            .error_for_status()
+            .context("Server returned error when fetching folder tree")?;
+
+        Ok(response
+            .json()
+            .await
+            .context("Failed to parse folder tree response")?)
+    }
+
+    pub async fn create_folder(
+        &self,
+        name: &str,
+        parent_folder_id: Option<Uuid>,
+    ) -> Result<RemoteFolder> {
+        let url = self.base_url.join("/api/v1/folders")?;
+        let response = self
+            .client
+            .post(url)
+            .headers(self.headers()?)
+            .json(&CreateFolderRequest {
+                name: name.to_string(),
+                parent_folder_id,
+            })
+            .send()
+            .await
+            .context("Failed to create folder")?
+            .error_for_status()
+            .context("Server returned error when creating folder")?;
+
+        Ok(response
+            .json()
+            .await
+            .context("Failed to parse create folder response")?)
+    }
+
+    pub async fn delete_folder(&self, folder_id: Uuid) -> Result<()> {
+        let url = self
+            .base_url
+            .join(&format!("/api/v1/folders/{}", folder_id))?;
+        self.client
+            .delete(url)
+            .headers(self.headers()?)
+            .send()
+            .await
+            .context("Failed to delete folder")?
+            .error_for_status()
+            .context("Server returned error when deleting folder")?;
+
+        Ok(())
+    }
+
     // ============================================================================
     // Internal Helpers
     // ============================================================================
@@ -258,6 +333,39 @@ pub struct RemoteFile {
     pub content_hash: String,
     pub size: u64,
     pub modified_at: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct RemoteFolderTree {
+    pub folder: RemoteFolderNode,
+    #[serde(default)]
+    pub subfolders: Vec<RemoteFolderTree>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct RemoteFolderNode {
+    pub id: Uuid,
+    pub name: String,
+    pub path: String,
+    pub parent_folder_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct RemoteFolder {
+    pub id: Uuid,
+    pub name: String,
+    pub path: String,
+    pub parent_folder_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateFolderRequest {
+    pub name: String,
+    pub parent_folder_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]

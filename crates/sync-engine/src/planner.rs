@@ -14,9 +14,38 @@ pub struct RemoteFileInfo {
     pub modified_at: u64,
 }
 
+/// Information about a folder on the remote server
+#[derive(Debug, Clone)]
+pub struct RemoteFolderInfo {
+    pub id: Uuid,
+    pub relative_path: PathBuf,
+    pub modified_at: u64,
+}
+
 /// An operation to be executed during sync
 #[derive(Debug, Clone)]
 pub enum SyncOp {
+    /// Create a local directory
+    CreateLocalDir {
+        root_id: Uuid,
+        relative_path: PathBuf,
+    },
+    /// Create a remote directory
+    CreateRemoteDir {
+        root_id: Uuid,
+        relative_path: PathBuf,
+    },
+    /// Delete a local directory
+    DeleteLocalDir {
+        root_id: Uuid,
+        relative_path: PathBuf,
+    },
+    /// Delete a remote directory
+    DeleteRemoteDir {
+        root_id: Uuid,
+        relative_path: PathBuf,
+        remote_folder_id: Uuid,
+    },
     /// Upload a local file to the remote
     Upload {
         root_id: Uuid,
@@ -67,24 +96,38 @@ pub struct Conflict {
 /// The complete plan for a sync operation
 #[derive(Debug, Default)]
 pub struct SyncPlan {
+    pub create_local_dirs: Vec<SyncOp>,
+    pub create_remote_dirs: Vec<SyncOp>,
     pub uploads: Vec<SyncOp>,
     pub downloads: Vec<SyncOp>,
     pub deletes: Vec<SyncOp>,
+    pub delete_local_dirs: Vec<SyncOp>,
+    pub delete_remote_dirs: Vec<SyncOp>,
     pub conflicts: Vec<Conflict>,
 }
 
 impl SyncPlan {
     /// Returns true if the plan has no operations or conflicts
     pub fn is_empty(&self) -> bool {
-        self.uploads.is_empty()
+        self.create_local_dirs.is_empty()
+            && self.create_remote_dirs.is_empty()
+            && self.uploads.is_empty()
             && self.downloads.is_empty()
             && self.deletes.is_empty()
+            && self.delete_local_dirs.is_empty()
+            && self.delete_remote_dirs.is_empty()
             && self.conflicts.is_empty()
     }
 
     /// Returns the total number of operations (excluding conflicts)
     pub fn operation_count(&self) -> usize {
-        self.uploads.len() + self.downloads.len() + self.deletes.len()
+        self.create_local_dirs.len()
+            + self.create_remote_dirs.len()
+            + self.uploads.len()
+            + self.downloads.len()
+            + self.deletes.len()
+            + self.delete_local_dirs.len()
+            + self.delete_remote_dirs.len()
     }
 
     /// Returns the total number of conflicts
@@ -126,197 +169,12 @@ pub fn generate_plan<F>(
     _root_path: &std::path::Path,
     local_files: &[FileScanResult],
     remote_files: &[RemoteFileInfo],
-    mut db_lookup: F,
+    db_lookup: F,
 ) -> SyncPlan
 where
     F: FnMut(&PathBuf) -> Option<(String, u64, Option<Uuid>)>,
 {
-    let mut plan = SyncPlan::default();
-
-    // Build lookup maps for efficient access
-    let local_map: HashMap<&PathBuf, &FileScanResult> = local_files
-        .iter()
-        .map(|f| (&f.relative_path, f))
-        .collect();
-
-    let remote_map: HashMap<&PathBuf, &RemoteFileInfo> = remote_files
-        .iter()
-        .map(|f| (&f.relative_path, f))
-        .collect();
-
-    // Collect all unique paths from local, remote, and DB
-    let mut all_paths: std::collections::HashSet<&PathBuf> = std::collections::HashSet::new();
-    all_paths.extend(local_map.keys());
-    all_paths.extend(remote_map.keys());
-
-    // Also add paths that exist in DB but may not be in local or remote
-    // (this requires the caller to provide DB paths separately if needed)
-
-    for relative_path in all_paths {
-        let local = local_map.get(relative_path).copied();
-        let remote = remote_map.get(relative_path).copied();
-        let db = db_lookup(relative_path)
-            .map(|(hash, modified_at, remote_id)| DbFileState {
-                hash,
-                modified_at,
-                _remote_id: remote_id,
-            });
-
-        match (local, remote, db) {
-            // File exists in all three: local, remote, and DB
-            (Some(local), Some(remote), Some(db)) => {
-                let local_changed = local.hash != db.hash || local.modified_at != db.modified_at;
-                let remote_changed = remote.hash != db.hash || remote.modified_at != db.modified_at;
-
-                if local_changed && remote_changed {
-                    // Conflict: both changed
-                    let resolution = if local.modified_at >= remote.modified_at {
-                        ConflictResolution::UploadLocal
-                    } else {
-                        ConflictResolution::DownloadRemote
-                    };
-
-                    plan.conflicts.push(Conflict {
-                        root_id,
-                        relative_path: relative_path.clone(),
-                        local_modified_at: local.modified_at,
-                        remote_modified_at: remote.modified_at,
-                        resolution,
-                    });
-
-                    // Add the resolved operation
-                    match resolution {
-                        ConflictResolution::UploadLocal => {
-                            plan.uploads.push(SyncOp::Upload {
-                                root_id,
-                                relative_path: relative_path.clone(),
-                                local_path: local.absolute_path.clone(),
-                                size: local.size,
-                            });
-                        }
-                        ConflictResolution::DownloadRemote => {
-                            plan.downloads.push(SyncOp::Download {
-                                root_id,
-                                relative_path: relative_path.clone(),
-                                remote_file_id: remote.id,
-                                remote_hash: remote.hash.clone(),
-                                size: remote.size,
-                            });
-                        }
-                    }
-                } else if local_changed {
-                    // Only local changed: upload
-                    plan.uploads.push(SyncOp::Upload {
-                        root_id,
-                        relative_path: relative_path.clone(),
-                        local_path: local.absolute_path.clone(),
-                        size: local.size,
-                    });
-                } else if remote_changed {
-                    // Only remote changed: download
-                    plan.downloads.push(SyncOp::Download {
-                        root_id,
-                        relative_path: relative_path.clone(),
-                        remote_file_id: remote.id,
-                        remote_hash: remote.hash.clone(),
-                        size: remote.size,
-                    });
-                }
-                // If neither changed: no operation needed (already in sync)
-            }
-
-            // File in local and remote but not in DB: check if they're already in sync
-            (Some(local), Some(remote), None) => {
-                if local.hash == remote.hash {
-                    // Hashes match - files are already in sync, just not in DB
-                    // No operation needed (will be added to DB after sync)
-                } else {
-                    // Hashes differ - conflict, resolve by timestamp
-                    let resolution = if local.modified_at >= remote.modified_at {
-                        ConflictResolution::UploadLocal
-                    } else {
-                        ConflictResolution::DownloadRemote
-                    };
-
-                    plan.conflicts.push(Conflict {
-                        root_id,
-                        relative_path: relative_path.clone(),
-                        local_modified_at: local.modified_at,
-                        remote_modified_at: remote.modified_at,
-                        resolution,
-                    });
-
-                    match resolution {
-                        ConflictResolution::UploadLocal => {
-                            plan.uploads.push(SyncOp::Upload {
-                                root_id,
-                                relative_path: relative_path.clone(),
-                                local_path: local.absolute_path.clone(),
-                                size: local.size,
-                            });
-                        }
-                        ConflictResolution::DownloadRemote => {
-                            plan.downloads.push(SyncOp::Download {
-                                root_id,
-                                relative_path: relative_path.clone(),
-                                remote_file_id: remote.id,
-                                remote_hash: remote.hash.clone(),
-                                size: remote.size,
-                            });
-                        }
-                    }
-                }
-            }
-
-            // File only in local, not in remote or DB: upload new file
-            (Some(local), None, None) => {
-                plan.uploads.push(SyncOp::Upload {
-                    root_id,
-                    relative_path: relative_path.clone(),
-                    local_path: local.absolute_path.clone(),
-                    size: local.size,
-                });
-            }
-
-            // File only in remote, not in local or DB: download new file
-            (None, Some(remote), None) => {
-                plan.downloads.push(SyncOp::Download {
-                    root_id,
-                    relative_path: relative_path.clone(),
-                    remote_file_id: remote.id,
-                    remote_hash: remote.hash.clone(),
-                    size: remote.size,
-                });
-            }
-
-            // File in DB and local but not remote: was deleted remotely, delete locally
-            (Some(_local), None, Some(_db)) => {
-                plan.deletes.push(SyncOp::DeleteLocal {
-                    root_id,
-                    relative_path: relative_path.clone(),
-                });
-            }
-
-            // File in DB and remote but not local: was deleted locally, delete remotely
-            (None, Some(remote), Some(_db)) => {
-                plan.deletes.push(SyncOp::DeleteRemote {
-                    root_id,
-                    relative_path: relative_path.clone(),
-                    remote_file_id: remote.id,
-                });
-            }
-
-            // File only in DB: orphaned entry, no action needed (will be cleaned up)
-            (None, None, Some(_)) => {
-                // No operation - this is a database cleanup scenario
-            }
-
-            // Should never happen (all None)
-            (None, None, None) => {}
-        }
-    }
-
-    plan
+    generate_plan_with_db_files(root_id, _root_path, local_files, remote_files, &[], &[], db_lookup)
 }
 
 /// Extended version that also handles DB-only files (files that were tracked but may have been deleted)
@@ -327,6 +185,7 @@ pub fn generate_plan_with_db_files<F>(
     _root_path: &std::path::Path,
     local_files: &[FileScanResult],
     remote_files: &[RemoteFileInfo],
+    remote_dirs: &[RemoteFolderInfo],
     db_paths: &[PathBuf],
     mut db_lookup: F,
 ) -> SyncPlan
@@ -336,8 +195,20 @@ where
     let mut plan = SyncPlan::default();
 
     // Build lookup maps
+    let local_dir_map: HashMap<&PathBuf, &FileScanResult> = local_files
+        .iter()
+        .filter(|f| f.is_directory)
+        .map(|f| (&f.relative_path, f))
+        .collect();
+
+    let remote_dir_map: HashMap<&PathBuf, &RemoteFolderInfo> = remote_dirs
+        .iter()
+        .map(|f| (&f.relative_path, f))
+        .collect();
+
     let local_map: HashMap<&PathBuf, &FileScanResult> = local_files
         .iter()
+        .filter(|f| !f.is_directory)
         .map(|f| (&f.relative_path, f))
         .collect();
 
@@ -347,6 +218,31 @@ where
         .collect();
 
     let db_set: std::collections::HashSet<&PathBuf> = db_paths.iter().collect();
+
+    let mut all_dir_paths: std::collections::HashSet<&PathBuf> = std::collections::HashSet::new();
+    all_dir_paths.extend(local_dir_map.keys());
+    all_dir_paths.extend(remote_dir_map.keys());
+
+    for relative_path in all_dir_paths {
+        match (
+            local_dir_map.get(relative_path).copied(),
+            remote_dir_map.get(relative_path).copied(),
+        ) {
+            (Some(_), None) => {
+                plan.create_remote_dirs.push(SyncOp::CreateRemoteDir {
+                    root_id,
+                    relative_path: relative_path.clone(),
+                });
+            }
+            (None, Some(_)) => {
+                plan.create_local_dirs.push(SyncOp::CreateLocalDir {
+                    root_id,
+                    relative_path: relative_path.clone(),
+                });
+            }
+            _ => {}
+        }
+    }
 
     // First pass: process all paths from local and remote
     let mut all_paths: std::collections::HashSet<&PathBuf> = std::collections::HashSet::new();
@@ -501,7 +397,33 @@ where
         }
     }
 
+    sort_directory_ops(&mut plan.create_local_dirs);
+    sort_directory_ops(&mut plan.create_remote_dirs);
+    sort_directory_ops_desc(&mut plan.delete_local_dirs);
+    sort_directory_ops_desc(&mut plan.delete_remote_dirs);
+
     plan
+}
+
+fn sort_directory_ops(ops: &mut [SyncOp]) {
+    ops.sort_by_key(op_depth);
+}
+
+fn sort_directory_ops_desc(ops: &mut [SyncOp]) {
+    ops.sort_by_key(|op| std::cmp::Reverse(op_depth(op)));
+}
+
+fn op_depth(op: &SyncOp) -> usize {
+    match op {
+        SyncOp::CreateLocalDir { relative_path, .. }
+        | SyncOp::CreateRemoteDir { relative_path, .. }
+        | SyncOp::DeleteLocalDir { relative_path, .. }
+        | SyncOp::DeleteRemoteDir { relative_path, .. }
+        | SyncOp::Upload { relative_path, .. }
+        | SyncOp::Download { relative_path, .. }
+        | SyncOp::DeleteLocal { relative_path, .. }
+        | SyncOp::DeleteRemote { relative_path, .. } => relative_path.components().count(),
+    }
 }
 
 #[cfg(test)]
@@ -520,6 +442,17 @@ mod tests {
         }
     }
 
+    fn create_local_directory(path: &str, modified_at: u64) -> FileScanResult {
+        FileScanResult {
+            relative_path: PathBuf::from(path),
+            absolute_path: PathBuf::from("/test").join(path),
+            hash: String::new(),
+            size: 0,
+            modified_at,
+            is_directory: true,
+        }
+    }
+
     fn create_remote_file(
         id: Uuid,
         path: &str,
@@ -531,6 +464,14 @@ mod tests {
             relative_path: PathBuf::from(path),
             hash: hash.to_string(),
             size: 100,
+            modified_at,
+        }
+    }
+
+    fn create_remote_directory(id: Uuid, path: &str, modified_at: u64) -> RemoteFolderInfo {
+        RemoteFolderInfo {
+            id,
+            relative_path: PathBuf::from(path),
             modified_at,
         }
     }
@@ -811,5 +752,74 @@ mod tests {
 
         assert!(plan.is_empty());
         assert_eq!(plan.operation_count(), 0);
+    }
+
+    #[test]
+    fn test_create_remote_directories_for_empty_local_folders() {
+        let root_id = Uuid::new_v4();
+        let parent = create_local_directory("docs", 1000);
+        let child = create_local_directory("docs/specs", 1001);
+
+        let plan = generate_plan_with_db_files(
+            root_id,
+            Path::new("/test"),
+            &[parent, child],
+            &[],
+            &[],
+            &[],
+            |_path| None,
+        );
+
+        assert_eq!(plan.create_remote_dirs.len(), 2);
+
+        match &plan.create_remote_dirs[0] {
+            SyncOp::CreateRemoteDir { relative_path, .. } => {
+                assert_eq!(relative_path, &PathBuf::from("docs"));
+            }
+            _ => panic!("Expected CreateRemoteDir operation"),
+        }
+
+        match &plan.create_remote_dirs[1] {
+            SyncOp::CreateRemoteDir { relative_path, .. } => {
+                assert_eq!(relative_path, &PathBuf::from("docs/specs"));
+            }
+            _ => panic!("Expected CreateRemoteDir operation"),
+        }
+    }
+
+    #[test]
+    fn test_create_local_directories_for_empty_remote_folders() {
+        let root_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+        let child_id = Uuid::new_v4();
+
+        let plan = generate_plan_with_db_files(
+            root_id,
+            Path::new("/test"),
+            &[],
+            &[],
+            &[
+                create_remote_directory(parent_id, "assets", 1000),
+                create_remote_directory(child_id, "assets/icons", 1001),
+            ],
+            &[],
+            |_path| None,
+        );
+
+        assert_eq!(plan.create_local_dirs.len(), 2);
+
+        match &plan.create_local_dirs[0] {
+            SyncOp::CreateLocalDir { relative_path, .. } => {
+                assert_eq!(relative_path, &PathBuf::from("assets"));
+            }
+            _ => panic!("Expected CreateLocalDir operation"),
+        }
+
+        match &plan.create_local_dirs[1] {
+            SyncOp::CreateLocalDir { relative_path, .. } => {
+                assert_eq!(relative_path, &PathBuf::from("assets/icons"));
+            }
+            _ => panic!("Expected CreateLocalDir operation"),
+        }
     }
 }

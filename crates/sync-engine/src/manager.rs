@@ -1,5 +1,5 @@
 use crate::client::ApiClient;
-use crate::planner::{generate_plan_with_db_files, RemoteFileInfo, SyncPlan};
+use crate::planner::{generate_plan_with_db_files, RemoteFileInfo, RemoteFolderInfo, SyncPlan};
 use crate::scanner::{scan_local_root, FileScanResult};
 use crate::socket::SocketServer;
 use crate::websocket::{RemoteChangeEvent, WebSocketClient};
@@ -7,7 +7,7 @@ use crate::worker::SyncWorker;
 use anyhow::{Context, Result};
 use client_state::Database;
 use file_ops::FsWatcher;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -63,6 +63,12 @@ pub struct SyncManager {
     ws_server_url: String,
     ws_token: String,
     sync_root_id: Option<Uuid>,
+}
+
+struct RemoteState {
+    files: Vec<RemoteFileInfo>,
+    dirs: Vec<RemoteFolderInfo>,
+    absolute_folder_ids: HashMap<String, Uuid>,
 }
 
 impl SyncManager {
@@ -337,9 +343,6 @@ impl SyncManager {
     /// 
     /// State transitions: Idle → Scanning → Planning → Executing → Idle
     pub async fn run_full_sync(&self) -> Result<()> {
-        // If a specific root is configured, use it; otherwise we'll iterate all roots
-        let specific_root = self.sync_root_id;
-
         // Only one sync at a time - check and transition to Scanning
         {
             let mut state = self.state.lock().await;
@@ -351,113 +354,25 @@ impl SyncManager {
             info!("Starting full sync - state: scanning");
         }
 
-        // ====================================================================
-        // SCANNING PHASE
-        // ====================================================================
-        let local_files = match self.scan_local().await {
-            Ok(files) => files,
+        let sync_roots = match self.load_sync_roots().await {
+            Ok(roots) if !roots.is_empty() => roots,
+            Ok(_) => {
+                *self.state.lock().await = SyncState::Idle;
+                return Err(anyhow::anyhow!("No sync roots configured in database"));
+            }
             Err(e) => {
                 *self.state.lock().await = SyncState::Idle;
-                return Err(e.context("Scan phase failed"));
+                return Err(e.context("Failed to load sync roots"));
             }
         };
 
-        // Transition to Planning
-        {
-            let mut state = self.state.lock().await;
-            *state = SyncState::Planning;
-            info!("Scan complete - state: planning ({} local files)", local_files.len());
-        }
-
-        // Fetch remote files
-        let remote_files = match self.fetch_remote_files().await {
-            Ok(files) => files,
-            Err(e) => {
-                *self.state.lock().await = SyncState::Idle;
-                return Err(e.context("Failed to fetch remote files"));
+        let result = async {
+            for root in &sync_roots {
+                self.run_full_sync_for_root(root).await?;
             }
-        };
-
-        // Get sync root ID - if not specified, we need to get it from the database
-        let root_id = match specific_root {
-            Some(id) => id,
-            None => {
-                // Get first sync root from database as fallback
-                let db = self.database.lock().await;
-                match db.get_sync_roots()?.first() {
-                    Some(root) => root.id,
-                    None => {
-                        *self.state.lock().await = SyncState::Idle;
-                        return Err(anyhow::anyhow!("No sync roots configured in database"));
-                    }
-                }
-            }
-        };
-
-        // Get database state for planning
-        let db_files = self.get_database_files(root_id).await?;
-        let db_paths: Vec<PathBuf> = db_files.keys().cloned().collect();
-
-        // Build a set of remote hashes for duplicate detection
-        // (Files uploaded to root lose their path, so we match by hash)
-        let remote_hashes: std::collections::HashSet<&str> = remote_files
-            .iter()
-            .map(|f| f.hash.as_str())
-            .collect();
-
-        // Filter out local files that already exist remotely (same hash)
-        let local_files_filtered: Vec<FileScanResult> = local_files
-            .clone()
-            .into_iter()
-            .filter(|local| {
-                if remote_hashes.contains(local.hash.as_str()) {
-                    info!("File {} already exists remotely (hash match), skipping upload", local.relative_path.display());
-                    false
-                } else {
-                    true
-                }
-            })
-            .collect();
-
-        // Generate sync plan
-        let plan = generate_plan_with_db_files(
-            root_id,
-            &self.workspace_root,
-            &local_files_filtered,
-            &remote_files,
-            &db_paths,
-            |path| {
-                db_files.get(path).map(|(hash, mtime, remote_id)| {
-                    (hash.clone(), *mtime, *remote_id)
-                })
-            },
-        );
-
-        if plan.is_empty() {
-            info!("No sync operations needed - everything is in sync");
-            *self.state.lock().await = SyncState::Idle;
-            return Ok(());
+            Ok(())
         }
-
-        info!(
-            "Sync plan: {} uploads, {} downloads, {} deletes, {} conflicts",
-            plan.uploads.len(),
-            plan.downloads.len(),
-            plan.deletes.len(),
-            plan.conflicts.len()
-        );
-
-        // ====================================================================
-        // EXECUTING PHASE
-        // ====================================================================
-        {
-            let mut state = self.state.lock().await;
-            *state = SyncState::Executing;
-            info!("State: executing");
-        }
-
-        // Execute the plan
-        let result = self.execute_plan(&plan, &local_files, &remote_files, root_id).await;
+        .await;
 
         // Return to Idle
         {
@@ -470,55 +385,77 @@ impl SyncManager {
     }
 
     /// Scan the local workspace for files
-    async fn scan_local(&self) -> Result<Vec<FileScanResult>> {
+    async fn scan_local(&self, root_path: &Path) -> Result<Vec<FileScanResult>> {
         tokio::task::spawn_blocking({
-            let workspace_root = self.workspace_root.clone();
-            move || scan_local_root(&workspace_root)
+            let root_path = root_path.to_path_buf();
+            move || scan_local_root(&root_path)
         })
         .await
         .context("Scan task panicked")?
         .context("Failed to scan local root")
     }
 
-    /// Fetch remote file metadata
-    /// 
-    /// Uses /api/v1/files endpoint to get all files (delta endpoint is broken)
-    async fn fetch_remote_files(&self) -> Result<Vec<RemoteFileInfo>> {
-        match self.client.list_files().await {
-            Ok(files) => {
-                // Convert RemoteFile to RemoteFileInfo
-                let mut remote_files = Vec::new();
-                for file in files {
-                    // Parse the path to get relative path
-                    // Server returns full path like "/desktop-test/README.md"
-                    let relative_path = if file.path.starts_with('/') {
-                        PathBuf::from(&file.path[1..]) // Remove leading slash
-                    } else {
-                        PathBuf::from(&file.path)
-                    };
-                    
-                    // Parse modified_at timestamp
-                    let modified_at = chrono::DateTime::parse_from_rfc3339(&file.modified_at)
-                        .map(|dt| dt.timestamp() as u64)
-                        .unwrap_or_else(|_| chrono::Utc::now().timestamp() as u64);
-                    
-                    remote_files.push(RemoteFileInfo {
-                        id: file.id,
-                        relative_path,
-                        hash: file.content_hash,
-                        size: file.size,
-                        modified_at,
-                    });
-                }
-                
-                info!("Fetched {} remote files", remote_files.len());
-                Ok(remote_files)
-            }
-            Err(e) => {
-                tracing::warn!("Failed to fetch remote files: {}. Treating as empty remote state.", e);
-                Ok(Vec::new())
-            }
+    async fn run_full_sync_for_root(&self, root: &SyncRoot) -> Result<()> {
+        let local_files = self
+            .scan_local(&root.local_path)
+            .await
+            .with_context(|| format!("Scan phase failed for {}", root.local_path.display()))?;
+
+        {
+            let mut state = self.state.lock().await;
+            *state = SyncState::Planning;
+            info!(
+                "Scan complete for {} - state: planning ({} local entries)",
+                root.local_path.display(),
+                local_files.len()
+            );
         }
+
+        let remote_state = self
+            .fetch_remote_state(root)
+            .await
+            .with_context(|| format!("Failed to fetch remote state for {}", root.remote_path))?;
+
+        let db_files = self.get_database_files(root.id).await?;
+        let db_paths: Vec<PathBuf> = db_files.keys().cloned().collect();
+
+        let plan = generate_plan_with_db_files(
+            root.id,
+            &root.local_path,
+            &local_files,
+            &remote_state.files,
+            &remote_state.dirs,
+            &db_paths,
+            |path| db_files.get(path).map(|(hash, mtime, remote_id)| (hash.clone(), *mtime, *remote_id)),
+        );
+
+        if plan.is_empty() {
+            info!(
+                "No sync operations needed for {} -> {}",
+                root.local_path.display(),
+                root.remote_path
+            );
+            return Ok(());
+        }
+
+        info!(
+            "Sync plan for {}: {} local dirs, {} remote dirs, {} uploads, {} downloads, {} deletes, {} conflicts",
+            root.remote_path,
+            plan.create_local_dirs.len(),
+            plan.create_remote_dirs.len(),
+            plan.uploads.len(),
+            plan.downloads.len(),
+            plan.deletes.len(),
+            plan.conflicts.len()
+        );
+
+        {
+            let mut state = self.state.lock().await;
+            *state = SyncState::Executing;
+            info!("State: executing");
+        }
+
+        self.execute_plan(&plan, &local_files, &remote_state, root).await
     }
 
     /// Get file state from database for a specific root
@@ -542,23 +479,96 @@ impl SyncManager {
         Ok(result)
     }
 
+    async fn load_sync_roots(&self) -> Result<Vec<SyncRoot>> {
+        let db = self.database.lock().await;
+        let roots = db.get_sync_roots()?;
+        if let Some(root_id) = self.sync_root_id {
+            Ok(roots
+                .into_iter()
+                .filter(|root| root.id == root_id)
+                .collect())
+        } else {
+            Ok(roots)
+        }
+    }
+
+    async fn fetch_remote_state(&self, root: &SyncRoot) -> Result<RemoteState> {
+        let all_remote_files = match self.client.list_files().await {
+            Ok(files) => files,
+            Err(e) => {
+                tracing::warn!("Failed to fetch remote files for {}: {}. Treating remote file state as empty.", root.remote_path, e);
+                Vec::new()
+            }
+        };
+
+        let prefix = normalize_remote_path(&root.remote_path);
+        let mut files = Vec::new();
+        for file in all_remote_files {
+            if let Some(relative_path) = strip_remote_prefix(&file.path, &prefix) {
+                let modified_at = chrono::DateTime::parse_from_rfc3339(&file.modified_at)
+                    .map(|dt| dt.timestamp() as u64)
+                    .unwrap_or_else(|_| chrono::Utc::now().timestamp() as u64);
+
+                files.push(RemoteFileInfo {
+                    id: file.id,
+                    relative_path,
+                    hash: file.content_hash,
+                    size: file.size,
+                    modified_at,
+                });
+            }
+        }
+
+        let mut absolute_folder_ids = HashMap::new();
+        let mut dirs = Vec::new();
+        if let Ok(tree) = self.client.get_folder_tree().await {
+            collect_remote_folders(&tree, &prefix, &mut dirs, &mut absolute_folder_ids);
+        } else {
+            tracing::warn!("Failed to fetch remote folder tree for {}. Treating remote folder state as empty.", root.remote_path);
+        }
+
+        Ok(RemoteState {
+            files,
+            dirs,
+            absolute_folder_ids,
+        })
+    }
+
     /// Execute the sync plan using the worker
     async fn execute_plan(
         &self,
         plan: &SyncPlan,
         local_files: &[FileScanResult],
-        remote_files: &[RemoteFileInfo],
-        root_id: Uuid,
+        remote_state: &RemoteState,
+        root: &SyncRoot,
     ) -> Result<()> {
         let local_map: std::collections::HashMap<&PathBuf, &FileScanResult> = local_files
             .iter()
             .map(|f| (&f.relative_path, f))
             .collect();
 
-        let remote_map: std::collections::HashMap<&PathBuf, &RemoteFileInfo> = remote_files
+        let remote_map: std::collections::HashMap<&PathBuf, &RemoteFileInfo> = remote_state.files
             .iter()
             .map(|f| (&f.relative_path, f))
             .collect();
+
+        let mut absolute_folder_ids = remote_state.absolute_folder_ids.clone();
+
+        for op in &plan.create_local_dirs {
+            if let crate::planner::SyncOp::CreateLocalDir { relative_path, .. } = op {
+                let local_dir = root.local_path.join(relative_path);
+                tokio::fs::create_dir_all(&local_dir)
+                    .await
+                    .with_context(|| format!("Failed to create local directory {}", local_dir.display()))?;
+            }
+        }
+
+        for op in &plan.create_remote_dirs {
+            if let crate::planner::SyncOp::CreateRemoteDir { relative_path, .. } = op {
+                self.ensure_remote_directory(root, relative_path, &mut absolute_folder_ids)
+                    .await?;
+            }
+        }
 
         // Execute uploads
         for op in &plan.uploads {
@@ -576,7 +586,15 @@ impl SyncManager {
                             hydration_state: HydrationState::Materialized,
                         };
 
-                        if let Err(e) = self.worker.upload(&local_entry, root_id, relative_path).await {
+                        let parent_folder_id = self
+                            .resolve_remote_parent_folder_id(root, relative_path, &mut absolute_folder_ids)
+                            .await?;
+
+                        if let Err(e) = self
+                            .worker
+                            .upload(&local_entry, root.id, relative_path, parent_folder_id)
+                            .await
+                        {
                             error!("Failed to upload {}: {:#}", relative_path.display(), e);
                         } else {
                             info!("Successfully uploaded {}", relative_path.display());
@@ -607,13 +625,13 @@ impl SyncManager {
                                 .unwrap_or_else(|| chrono::Utc::now()),
                         };
 
-                        let local_dest = self.workspace_root.join(relative_path);
+                        let local_dest = root.local_path.join(relative_path);
 
                         if let Err(e) = self.worker.download(
                             &remote_entry,
                             &local_dest,
                             remote_hash,
-                            root_id,
+                            root.id,
                             relative_path,
                         ).await {
                             error!("Failed to download {}: {}", relative_path.display(), e);
@@ -630,7 +648,7 @@ impl SyncManager {
         for op in &plan.deletes {
             match op {
                 crate::planner::SyncOp::DeleteLocal { relative_path, .. } => {
-                    let local_path = self.workspace_root.join(relative_path);
+                    let local_path = root.local_path.join(relative_path);
                     if let Err(e) = tokio::fs::remove_file(&local_path).await {
                         warn!("Failed to delete local file {}: {}", local_path.display(), e);
                     } else {
@@ -638,14 +656,88 @@ impl SyncManager {
                     }
                 }
                 crate::planner::SyncOp::DeleteRemote { relative_path, remote_file_id, .. } => {
-                    // Note: Would need a delete API endpoint
-                    info!("Would delete remote file {} ({})", relative_path.display(), remote_file_id);
+                    if let Err(e) = self.client.delete_file(*remote_file_id).await {
+                        warn!("Failed to delete remote file {} ({}): {}", relative_path.display(), remote_file_id, e);
+                    } else {
+                        info!("Deleted remote file {}", relative_path.display());
+                    }
                 }
                 _ => {}
             }
         }
 
+        for op in &plan.delete_local_dirs {
+            if let crate::planner::SyncOp::DeleteLocalDir { relative_path, .. } = op {
+                let local_dir = root.local_path.join(relative_path);
+                if let Err(e) = tokio::fs::remove_dir(&local_dir).await {
+                    warn!("Failed to delete local directory {}: {}", local_dir.display(), e);
+                }
+            }
+        }
+
+        for op in &plan.delete_remote_dirs {
+            if let crate::planner::SyncOp::DeleteRemoteDir {
+                relative_path,
+                remote_folder_id,
+                ..
+            } = op
+            {
+                if let Err(e) = self.client.delete_folder(*remote_folder_id).await {
+                    warn!("Failed to delete remote directory {} ({}): {}", relative_path.display(), remote_folder_id, e);
+                }
+            }
+        }
+
         Ok(())
+    }
+
+    async fn resolve_remote_parent_folder_id(
+        &self,
+        root: &SyncRoot,
+        relative_path: &Path,
+        absolute_folder_ids: &mut HashMap<String, Uuid>,
+    ) -> Result<Option<Uuid>> {
+        let parent = relative_path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty());
+        self.ensure_remote_directory(root, parent.unwrap_or_else(|| Path::new("")), absolute_folder_ids)
+            .await
+    }
+
+    async fn ensure_remote_directory(
+        &self,
+        root: &SyncRoot,
+        relative_path: &Path,
+        absolute_folder_ids: &mut HashMap<String, Uuid>,
+    ) -> Result<Option<Uuid>> {
+        let mut current_parent: Option<Uuid> = None;
+        let mut current_absolute = normalize_remote_path(&root.remote_path);
+
+        if current_absolute != "/" {
+            current_parent = ensure_absolute_folder_path(
+                &self.client,
+                &current_absolute,
+                absolute_folder_ids,
+            )
+            .await?;
+        }
+
+        for component in relative_path.components() {
+            let std::path::Component::Normal(name) = component else {
+                continue;
+            };
+            let segment = name.to_string_lossy();
+            current_absolute = join_remote_path(&current_absolute, &segment);
+            current_parent = if let Some(existing) = absolute_folder_ids.get(&current_absolute) {
+                Some(*existing)
+            } else {
+                let created = self.client.create_folder(&segment, current_parent).await?;
+                absolute_folder_ids.insert(current_absolute.clone(), created.id);
+                Some(created.id)
+            };
+        }
+
+        Ok(current_parent)
     }
 
     /// Register a sync root
@@ -731,6 +823,101 @@ impl SyncManager {
     }
 }
 
+fn normalize_remote_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() || trimmed == "/" {
+        "/".to_string()
+    } else {
+        let without_trailing = trimmed.trim_end_matches('/');
+        if without_trailing.starts_with('/') {
+            without_trailing.to_string()
+        } else {
+            format!("/{}", without_trailing)
+        }
+    }
+}
+
+fn join_remote_path(base: &str, segment: &str) -> String {
+    let base = normalize_remote_path(base);
+    if base == "/" {
+        format!("/{}", segment)
+    } else {
+        format!("{}/{}", base, segment)
+    }
+}
+
+fn strip_remote_prefix(path: &str, prefix: &str) -> Option<PathBuf> {
+    let normalized_path = normalize_remote_path(path);
+    let normalized_prefix = normalize_remote_path(prefix);
+
+    if normalized_prefix == "/" {
+        return Some(PathBuf::from(
+            normalized_path.trim_start_matches('/'),
+        ));
+    }
+
+    if normalized_path == normalized_prefix {
+        return Some(PathBuf::new());
+    }
+
+    let full_prefix = format!("{}/", normalized_prefix);
+    normalized_path
+        .strip_prefix(&full_prefix)
+        .map(PathBuf::from)
+}
+
+fn collect_remote_folders(
+    tree: &crate::client::RemoteFolderTree,
+    prefix: &str,
+    dirs: &mut Vec<RemoteFolderInfo>,
+    absolute_folder_ids: &mut HashMap<String, Uuid>,
+) {
+    let normalized_path = normalize_remote_path(&tree.folder.path);
+    if tree.folder.id != Uuid::nil() {
+        absolute_folder_ids.insert(normalized_path.clone(), tree.folder.id);
+        if let Some(relative_path) = strip_remote_prefix(&normalized_path, prefix) {
+            if !relative_path.as_os_str().is_empty() {
+                dirs.push(RemoteFolderInfo {
+                    id: tree.folder.id,
+                    relative_path,
+                    modified_at: tree.folder.updated_at.timestamp() as u64,
+                });
+            }
+        }
+    }
+
+    for child in &tree.subfolders {
+        collect_remote_folders(child, prefix, dirs, absolute_folder_ids);
+    }
+}
+
+async fn ensure_absolute_folder_path(
+    client: &ApiClient,
+    absolute_path: &str,
+    absolute_folder_ids: &mut HashMap<String, Uuid>,
+) -> Result<Option<Uuid>> {
+    let normalized = normalize_remote_path(absolute_path);
+    if normalized == "/" {
+        return Ok(None);
+    }
+
+    let mut current_parent = None;
+    let mut current_path = "/".to_string();
+
+    for component in normalized.trim_start_matches('/').split('/') {
+        current_path = join_remote_path(&current_path, component);
+        current_parent = if let Some(existing) = absolute_folder_ids.get(&current_path) {
+            Some(*existing)
+        } else {
+            let created = client.create_folder(component, current_parent).await?;
+            absolute_folder_ids.insert(current_path.clone(), created.id);
+            Some(created.id)
+        };
+    }
+
+    Ok(current_parent)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -741,5 +928,24 @@ mod tests {
         assert_eq!(SyncState::Scanning.to_string(), "scanning");
         assert_eq!(SyncState::Planning.to_string(), "planning");
         assert_eq!(SyncState::Executing.to_string(), "executing");
+    }
+
+    #[test]
+    fn test_strip_remote_prefix_scopes_to_sync_root() {
+        assert_eq!(
+            strip_remote_prefix("/designs/icons/logo.svg", "/designs"),
+            Some(PathBuf::from("icons/logo.svg"))
+        );
+        assert_eq!(
+            strip_remote_prefix("/designs", "/designs"),
+            Some(PathBuf::new())
+        );
+        assert_eq!(strip_remote_prefix("/other/file.txt", "/designs"), None);
+    }
+
+    #[test]
+    fn test_join_remote_path_preserves_root_shape() {
+        assert_eq!(join_remote_path("/", "docs"), "/docs");
+        assert_eq!(join_remote_path("/docs", "specs"), "/docs/specs");
     }
 }

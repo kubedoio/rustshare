@@ -46,6 +46,7 @@ impl SyncWorker {
         local: &LocalEntry,
         remote_root: Uuid,
         relative_path: &Path,
+        parent_folder_id: Option<Uuid>,
     ) -> Result<()> {
         // Skip directories - they should be created separately
         if local.entry_type == sync_domain::EntryType::Directory {
@@ -71,8 +72,10 @@ impl SyncWorker {
         // Check for existing upload session
         let session = self.get_or_create_upload_session(
             file_state_id,
-            remote_root,
-            relative_path,
+            parent_folder_id,
+            relative_path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown"),
             file_size,
             total_chunks,
             file_hash,
@@ -311,8 +314,8 @@ impl SyncWorker {
     async fn get_or_create_upload_session(
         &self,
         file_state_id: i64,
-        remote_root: Uuid,
-        relative_path: &Path,
+        parent_folder_id: Option<Uuid>,
+        file_name: &str,
         file_size: u64,
         total_chunks: i32,
         file_hash: &str,
@@ -333,12 +336,10 @@ impl SyncWorker {
 
         // Create new session via API
         let session_response = self.create_upload_session(
-            remote_root,
-            relative_path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown"),
+            parent_folder_id,
             file_size,
             file_hash,
+            file_name,
         ).await?;
 
         // Store session in database
@@ -362,16 +363,13 @@ impl SyncWorker {
 
     async fn create_upload_session(
         &self,
-        _folder_id: Uuid,
-        file_name: &str,
+        folder_id: Option<Uuid>,
         total_size: u64,
         _file_hash: &str,
+        file_name: &str,
     ) -> Result<crate::client::CreateUploadSessionResponse> {
-        // TODO: Map sync root ID to actual server folder ID
-        // For now, upload to root (None) to ensure uploads work
-        // Skip file_hash - server computes it from chunks
         let request = CreateUploadSessionRequest {
-            folder_id: None,
+            folder_id,
             file_name: file_name.to_string(),
             mime_type: "application/octet-stream".to_string(),
             total_size,
@@ -439,11 +437,4 @@ impl SyncWorker {
 
         Ok(computed_hash == expected_hash)
     }
-}
-
-/// Base64 encode MD5 hash bytes
-fn base64_md5(bytes: &[u8]) -> String {
-    use base64::engine::general_purpose::STANDARD;
-    use base64::Engine;
-    STANDARD.encode(bytes)
 }
