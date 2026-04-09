@@ -128,7 +128,7 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS upload_sessions (
                 id INTEGER PRIMARY KEY,
-                file_state_id INTEGER,
+                file_state_id INTEGER UNIQUE,
                 session_id TEXT,
                 total_chunks INTEGER,
                 uploaded_chunks INTEGER DEFAULT 0,
@@ -380,6 +380,38 @@ impl Database {
             params![root_id.as_bytes(), relative_path.to_str().unwrap()],
         )?;
         Ok(deleted > 0)
+    }
+
+    /// Get all file states for a sync root
+    pub fn get_all_file_states(&self, root_id: Uuid) -> Result<Vec<FileState>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, relative_path, local_hash, remote_hash, local_modified_at, 
+                    remote_modified_at, size, is_directory, sync_status, last_sync_at 
+             FROM file_states 
+             WHERE root_id = ?"
+        )?;
+
+        let rows = stmt.query_map(params![root_id.as_bytes()], |row| {
+            Ok(FileState {
+                id: row.get(0)?,
+                root_id,
+                relative_path: PathBuf::from(row.get::<_, String>(1)?),
+                local_hash: row.get(2)?,
+                remote_hash: row.get(3)?,
+                local_modified_at: row.get(4)?,
+                remote_modified_at: row.get(5)?,
+                size: row.get(6)?,
+                is_directory: row.get(7)?,
+                sync_status: row.get(8)?,
+                last_sync_at: row.get(9)?,
+            })
+        })?;
+
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
     }
 
     // ============================================================================

@@ -225,40 +225,45 @@ where
                 // If neither changed: no operation needed (already in sync)
             }
 
-            // File in local and remote but not in DB: treat as new file on both sides
+            // File in local and remote but not in DB: check if they're already in sync
             (Some(local), Some(remote), None) => {
-                // Both exist but not in DB - conflict, resolve by timestamp
-                let resolution = if local.modified_at >= remote.modified_at {
-                    ConflictResolution::UploadLocal
+                if local.hash == remote.hash {
+                    // Hashes match - files are already in sync, just not in DB
+                    // No operation needed (will be added to DB after sync)
                 } else {
-                    ConflictResolution::DownloadRemote
-                };
+                    // Hashes differ - conflict, resolve by timestamp
+                    let resolution = if local.modified_at >= remote.modified_at {
+                        ConflictResolution::UploadLocal
+                    } else {
+                        ConflictResolution::DownloadRemote
+                    };
 
-                plan.conflicts.push(Conflict {
-                    root_id,
-                    relative_path: relative_path.clone(),
-                    local_modified_at: local.modified_at,
-                    remote_modified_at: remote.modified_at,
-                    resolution,
-                });
+                    plan.conflicts.push(Conflict {
+                        root_id,
+                        relative_path: relative_path.clone(),
+                        local_modified_at: local.modified_at,
+                        remote_modified_at: remote.modified_at,
+                        resolution,
+                    });
 
-                match resolution {
-                    ConflictResolution::UploadLocal => {
-                        plan.uploads.push(SyncOp::Upload {
-                            root_id,
-                            relative_path: relative_path.clone(),
-                            local_path: local.absolute_path.clone(),
-                            size: local.size,
-                        });
-                    }
-                    ConflictResolution::DownloadRemote => {
-                        plan.downloads.push(SyncOp::Download {
-                            root_id,
-                            relative_path: relative_path.clone(),
-                            remote_file_id: remote.id,
-                            remote_hash: remote.hash.clone(),
-                            size: remote.size,
-                        });
+                    match resolution {
+                        ConflictResolution::UploadLocal => {
+                            plan.uploads.push(SyncOp::Upload {
+                                root_id,
+                                relative_path: relative_path.clone(),
+                                local_path: local.absolute_path.clone(),
+                                size: local.size,
+                            });
+                        }
+                        ConflictResolution::DownloadRemote => {
+                            plan.downloads.push(SyncOp::Download {
+                                root_id,
+                                relative_path: relative_path.clone(),
+                                remote_file_id: remote.id,
+                                remote_hash: remote.hash.clone(),
+                                size: remote.size,
+                            });
+                        }
                     }
                 }
             }

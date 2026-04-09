@@ -59,7 +59,7 @@ impl ApiClient {
     }
 
     pub async fn fetch_deltas(&self, request: DeltaRequest) -> Result<DeltaResponse> {
-        let url = self.base_url.join("/api/v1/sync/deltas")?;
+        let url = self.base_url.join("/api/v1/sync/delta")?;
         let response = self
             .client
             .get(url)
@@ -165,6 +165,27 @@ impl ApiClient {
             .context("Failed to parse complete upload response")?)
     }
 
+    /// List files from the server
+    /// 
+    /// Uses /api/v1/files endpoint to get all files (works around broken delta endpoint)
+    pub async fn list_files(&self) -> Result<Vec<RemoteFile>> {
+        let url = self.base_url.join("/api/v1/files")?;
+        let response = self
+            .client
+            .get(url)
+            .headers(self.headers()?)
+            .send()
+            .await
+            .context("Failed to list files")?
+            .error_for_status()
+            .context("Server returned error when listing files")?;
+        
+        let files: Vec<RemoteFile> = response.json().await
+            .context("Failed to parse files list response")?;
+        
+        Ok(files)
+    }
+
     // ============================================================================
     // Internal Helpers
     // ============================================================================
@@ -226,4 +247,20 @@ pub struct CompleteUploadResponse {
     pub file_name: String,
     pub file_size: u64,
     pub content_hash: String,
+}
+
+/// File info from the files list endpoint
+#[derive(Debug, Deserialize)]
+pub struct RemoteFile {
+    pub id: Uuid,
+    pub name: String,
+    pub path: String,
+    pub content_hash: String,
+    pub size: u64,
+    pub modified_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListFilesResponse {
+    pub files: Vec<RemoteFile>,
 }

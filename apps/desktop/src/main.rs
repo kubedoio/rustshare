@@ -4,7 +4,7 @@ use std::fs;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use tracing::{info, Level};
+use tracing::{debug, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 use uuid::Uuid;
 
@@ -35,7 +35,7 @@ struct Cli {
     db_name: String,
 
     /// Server URL
-    #[arg(short, long, default_value = "https://api.rustshare.io")]
+    #[arg(short, long, default_value = "https://app.rustshare.io")]
     server: String,
 
     /// Enable verbose logging
@@ -280,8 +280,41 @@ async fn async_main(cli: Cli) -> Result<()> {
     // Load token if available
     let device_id = get_device_id()?;
     let token_store = desktop_token_store();
-    if let Ok(Some(token)) = token_store.get_token(&device_id.to_string()) {
+    let token = match token_store.get_token(&device_id.to_string()) {
+        Ok(Some(token)) => {
+            info!("Loaded auth token from keychain for device {}", device_id);
+            Some(token)
+        }
+        Ok(None) => {
+            warn!("No auth token found in keychain for device {}.", device_id);
+            None
+        }
+        Err(e) => {
+            warn!("Failed to load auth token from keychain: {}", e);
+            None
+        }
+    };
+    
+    // Fallback: try to load from token file (for daemon process)
+    let token = token.or_else(|| {
+        let token_path = app_data_dir.join("token.txt");
+        match std::fs::read_to_string(&token_path) {
+            Ok(token) => {
+                let token = token.trim().to_string();
+                info!("Loaded auth token from file for device {}", device_id);
+                Some(token)
+            }
+            Err(e) => {
+                debug!("Failed to load token from file: {}", e);
+                None
+            }
+        }
+    });
+    
+    if let Some(token) = token {
         client.set_token(token);
+    } else {
+        warn!("No auth token available for device {}. Login required.", device_id);
     }
 
     let socket_path = app_data_dir.join("daemon.sock");

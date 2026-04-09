@@ -378,15 +378,52 @@ impl SyncManager {
             }
         };
 
+        // Get sync root ID - if not specified, we need to get it from the database
+        let root_id = match specific_root {
+            Some(id) => id,
+            None => {
+                // Get first sync root from database as fallback
+                let db = self.database.lock().await;
+                match db.get_sync_roots()?.first() {
+                    Some(root) => root.id,
+                    None => {
+                        *self.state.lock().await = SyncState::Idle;
+                        return Err(anyhow::anyhow!("No sync roots configured in database"));
+                    }
+                }
+            }
+        };
+
         // Get database state for planning
-        let db_files = self.get_database_files().await?;
+        let db_files = self.get_database_files(root_id).await?;
         let db_paths: Vec<PathBuf> = db_files.keys().cloned().collect();
+
+        // Build a set of remote hashes for duplicate detection
+        // (Files uploaded to root lose their path, so we match by hash)
+        let remote_hashes: std::collections::HashSet<&str> = remote_files
+            .iter()
+            .map(|f| f.hash.as_str())
+            .collect();
+
+        // Filter out local files that already exist remotely (same hash)
+        let local_files_filtered: Vec<FileScanResult> = local_files
+            .clone()
+            .into_iter()
+            .filter(|local| {
+                if remote_hashes.contains(local.hash.as_str()) {
+                    info!("File {} already exists remotely (hash match), skipping upload", local.relative_path.display());
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
 
         // Generate sync plan
         let plan = generate_plan_with_db_files(
             root_id,
             &self.workspace_root,
-            &local_files,
+            &local_files_filtered,
             &remote_files,
             &db_paths,
             |path| {
@@ -420,7 +457,7 @@ impl SyncManager {
         }
 
         // Execute the plan
-        let result = self.execute_plan(&plan, &local_files, &remote_files).await;
+        let result = self.execute_plan(&plan, &local_files, &remote_files, root_id).await;
 
         // Return to Idle
         {
@@ -444,53 +481,64 @@ impl SyncManager {
     }
 
     /// Fetch remote file metadata
+    /// 
+    /// Uses /api/v1/files endpoint to get all files (delta endpoint is broken)
     async fn fetch_remote_files(&self) -> Result<Vec<RemoteFileInfo>> {
-        // Get the sync cursor from database
-        let cursor = {
-            let db = self.database.lock().await;
-            db.get_sync_cursor()?.unwrap_or_default()
-        };
-
-        // Fetch deltas from API
-        let request = sync_protocol::DeltaRequest {
-            cursor: Some(cursor.clone()),
-        };
-
-        let response = self.client.fetch_deltas(request).await
-            .context("Failed to fetch deltas from server")?;
-
-        // Convert DeltaChange to RemoteFileInfo
-        let mut remote_files = Vec::new();
-        for change in response.changes {
-            if let sync_protocol::DeltaChange::Upsert(entry) = change {
-                remote_files.push(RemoteFileInfo {
-                    id: entry.id,
-                    relative_path: PathBuf::from(&entry.name),
-                    hash: entry.hash.clone(),
-                    size: entry.size,
-                    modified_at: entry.modified_at.timestamp() as u64,
-                });
+        match self.client.list_files().await {
+            Ok(files) => {
+                // Convert RemoteFile to RemoteFileInfo
+                let mut remote_files = Vec::new();
+                for file in files {
+                    // Parse the path to get relative path
+                    // Server returns full path like "/desktop-test/README.md"
+                    let relative_path = if file.path.starts_with('/') {
+                        PathBuf::from(&file.path[1..]) // Remove leading slash
+                    } else {
+                        PathBuf::from(&file.path)
+                    };
+                    
+                    // Parse modified_at timestamp
+                    let modified_at = chrono::DateTime::parse_from_rfc3339(&file.modified_at)
+                        .map(|dt| dt.timestamp() as u64)
+                        .unwrap_or_else(|_| chrono::Utc::now().timestamp() as u64);
+                    
+                    remote_files.push(RemoteFileInfo {
+                        id: file.id,
+                        relative_path,
+                        hash: file.content_hash,
+                        size: file.size,
+                        modified_at,
+                    });
+                }
+                
+                info!("Fetched {} remote files", remote_files.len());
+                Ok(remote_files)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to fetch remote files: {}. Treating as empty remote state.", e);
+                Ok(Vec::new())
             }
         }
-
-        // Update cursor
-        let db = self.database.lock().await;
-        db.save_sync_cursor(&response.cursor)?;
-
-        Ok(remote_files)
     }
 
-    /// Get file state from database
-    async fn get_database_files(&self) -> Result<std::collections::HashMap<PathBuf, (String, u64, Option<Uuid>)>> {
-        // For now, we'll query the local_inventory table which has the data we need
-        // This is a simplified approach - in production, you'd use file_states table
-        let _db = self.database.lock().await;
+    /// Get file state from database for a specific root
+    async fn get_database_files(&self, root_id: Uuid) -> Result<std::collections::HashMap<PathBuf, (String, u64, Option<Uuid>)>> {
+        let db = self.database.lock().await;
+        let file_states = db.get_all_file_states(root_id)?;
         
-        // Since we don't have a get_all_file_states method, we'll return an empty map
-        // The planner will treat all files as new (which is correct for first sync)
-        // After sync, the database will be populated
-        let result = std::collections::HashMap::new();
-
+        let mut result = std::collections::HashMap::new();
+        for state in &file_states {
+            if let (Some(local_hash), Some(modified_at)) = (&state.local_hash, state.local_modified_at) {
+                // Use remote_hash timestamp if available, otherwise local
+                let mtime = state.remote_modified_at.unwrap_or(modified_at) as u64;
+                result.insert(
+                    state.relative_path.clone(), 
+                    (local_hash.clone(), mtime, None)
+                );
+            }
+        }
+        
+        info!("Loaded {} file states from database for root {}", result.len(), root_id);
         Ok(result)
     }
 
@@ -500,6 +548,7 @@ impl SyncManager {
         plan: &SyncPlan,
         local_files: &[FileScanResult],
         remote_files: &[RemoteFileInfo],
+        root_id: Uuid,
     ) -> Result<()> {
         let local_map: std::collections::HashMap<&PathBuf, &FileScanResult> = local_files
             .iter()
@@ -527,9 +576,8 @@ impl SyncManager {
                             hydration_state: HydrationState::Materialized,
                         };
 
-                        let root_id = self.sync_root_id.expect("root_id must be set");
                         if let Err(e) = self.worker.upload(&local_entry, root_id, relative_path).await {
-                            error!("Failed to upload {}: {}", relative_path.display(), e);
+                            error!("Failed to upload {}: {:#}", relative_path.display(), e);
                         } else {
                             info!("Successfully uploaded {}", relative_path.display());
                         }
@@ -560,7 +608,6 @@ impl SyncManager {
                         };
 
                         let local_dest = self.workspace_root.join(relative_path);
-                        let root_id = self.sync_root_id.expect("root_id must be set");
 
                         if let Err(e) = self.worker.download(
                             &remote_entry,
