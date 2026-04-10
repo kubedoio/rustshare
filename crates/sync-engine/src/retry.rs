@@ -544,4 +544,25 @@ mod tests {
         assert_eq!(config.base_delay_seconds, 2);
         assert_eq!(config.max_delay_seconds, 60);
     }
+
+    #[tokio::test]
+    async fn test_with_retry_sync_stops_on_non_retryable_errors() {
+        let config = RetryConfig::new(5, 0, 0);
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let attempts_clone = attempts.clone();
+
+        let result: Result<(), SyncError> = with_retry_sync(&config, "download file", move || {
+            let attempts = attempts_clone.clone();
+            async move {
+                attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Err(SyncError::Other(
+                    "HTTP 404 Not Found for remote file".to_string(),
+                ))
+            }
+        })
+        .await;
+
+        assert!(matches!(result, Err(SyncError::Other(_))));
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
 }

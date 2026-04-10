@@ -6,6 +6,7 @@
 
 use rustshare_core::domain::{File, FileVersion, Folder, ReplicationJob, ReplicationState, Share};
 use std::sync::Arc;
+use sqlx::Row;
 
 use crate::repos::*;
 
@@ -29,6 +30,41 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
         // Convert old File to new FileDocument
         let doc = file_to_document(file);
         self.repo.files().create(&doc).await.map_err(|e| e.into())
+    }
+
+    async fn find_file_by_path(&self, path: &str, owner_id: uuid::Uuid) -> anyhow::Result<Option<File>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id
+            FROM files
+            WHERE path = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(path)
+        .bind(owner_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            Ok(Some(File {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                size: row.try_get("size")?,
+                mime_type: row.try_get("mime_type")?,
+                content_hash: row.try_get("content_hash")?,
+                owner_id: row.try_get("owner_id")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                current_version: row.try_get("current_version")?,
+                created_at: row.try_get("created_at")?,
+                modified_at: row.try_get("modified_at")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
+                tenant_id: row.try_get("tenant_id")?,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn create_file_version(&self, version: &FileVersion) -> anyhow::Result<()> {

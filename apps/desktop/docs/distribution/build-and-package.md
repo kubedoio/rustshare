@@ -57,11 +57,20 @@ Location: `apps/editor-sublime/Packages/RustShareSync/`
 For a simple DMG, you can use `create-dmg`:
 
 ```bash
+VERSION=0.3.0
 mkdir -p dist/macos
-cp target/release/rustshare-desktop dist/macos/
+rm -rf "dist/macos/rustshare-desktop-${VERSION}-macos"
+mkdir -p "dist/macos/rustshare-desktop-${VERSION}-macos"
+cp target/release/rustshare-desktop "dist/macos/rustshare-desktop-${VERSION}-macos/"
+cp apps/desktop/CHANGELOG.md "dist/macos/rustshare-desktop-${VERSION}-macos/"
+tar -czf "dist/macos/rustshare-desktop-${VERSION}-macos.tar.gz" -C dist/macos "rustshare-desktop-${VERSION}-macos"
 # Sign the binary (optional but recommended for production)
-# codesign -s "Developer ID Application: ..." dist/macos/rustshare-desktop
+# codesign -s "Developer ID Application: ..." "dist/macos/rustshare-desktop-${VERSION}-macos/rustshare-desktop"
 ```
+
+This produces:
+- a versioned staging directory containing the binary and `CHANGELOG.md`
+- a versioned `.tar.gz` archive ready for internal distribution
 
 ### Windows (.zip / MSI)
 We recommend using **WiX Toolset** or simply zipping the binary + DLL:

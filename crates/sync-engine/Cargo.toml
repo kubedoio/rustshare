@@ -34,6 +34,7 @@ sha2 = "0.10"
 base64 = "0.22"
 md5 = "0.7"
 walkdir = "2.5"
+filetime = "0.2"
 
 [dev-dependencies]
 test-support = { path = "../test-support" }

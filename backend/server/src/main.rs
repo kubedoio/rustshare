@@ -234,12 +234,33 @@ impl rustshare_core::services::UploadMetadataStore for UploadMetadataStoreAdapte
             .map_err(|e| rustshare_core::services::UploadError::Database(e.to_string()))
     }
 
+    async fn find_file_by_path(
+        &self,
+        path: &str,
+        owner_id: Uuid,
+    ) -> Result<Option<rustshare_core::domain::File>, rustshare_core::services::UploadError> {
+        self.inner
+            .find_file_by_path(path, owner_id)
+            .await
+            .map_err(|e| rustshare_core::services::UploadError::Database(e.to_string()))
+    }
+
     async fn create_file(
         &self,
         file: &rustshare_core::domain::File,
     ) -> Result<(), rustshare_core::services::UploadError> {
         self.inner
             .create_file(file)
+            .await
+            .map_err(|e| rustshare_core::services::UploadError::Database(e.to_string()))
+    }
+
+    async fn update_file(
+        &self,
+        file: &rustshare_core::domain::File,
+    ) -> Result<(), rustshare_core::services::UploadError> {
+        self.inner
+            .update_file(file)
             .await
             .map_err(|e| rustshare_core::services::UploadError::Database(e.to_string()))
     }

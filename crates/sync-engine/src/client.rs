@@ -76,7 +76,7 @@ impl ApiClient {
     pub async fn download_file(&self, file_id: uuid::Uuid) -> Result<reqwest::Response> {
         let url = self
             .base_url
-            .join(&format!("/api/v1/sync/download/{}", file_id))?;
+            .join(&format!("/api/v1/files/{}/content", file_id))?;
         let response = self
             .client
             .get(url)
@@ -371,4 +371,65 @@ pub struct CreateFolderRequest {
 #[derive(Debug, Deserialize)]
 pub struct ListFilesResponse {
     pub files: Vec<RemoteFile>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::Body,
+        extract::{Path, State},
+        http::{header::AUTHORIZATION, HeaderMap, StatusCode},
+        routing::get,
+        Router,
+    };
+    use std::{net::SocketAddr, sync::Arc};
+    use tokio::net::TcpListener;
+
+    #[derive(Clone, Default)]
+    struct DownloadRouteState {
+        hits: Arc<tokio::sync::Mutex<Vec<Uuid>>>,
+    }
+
+    async fn start_download_test_server(state: DownloadRouteState) -> SocketAddr {
+        async fn download_file_content(
+            State(state): State<DownloadRouteState>,
+            Path(file_id): Path<Uuid>,
+            headers: HeaderMap,
+        ) -> (StatusCode, Body) {
+            assert_eq!(
+                headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()),
+                Some("Bearer test-token")
+            );
+            state.hits.lock().await.push(file_id);
+            (StatusCode::OK, Body::from("note body"))
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new()
+            .route("/api/v1/files/{id}/content", get(download_file_content))
+            .with_state(state);
+
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        addr
+    }
+
+    #[tokio::test]
+    async fn download_file_uses_file_content_endpoint() {
+        let state = DownloadRouteState::default();
+        let addr = start_download_test_server(state.clone()).await;
+        let mut client = ApiClient::new(&format!("http://{}", addr)).unwrap();
+        client.set_token("test-token".to_string());
+
+        let file_id = Uuid::new_v4();
+        let response = client.download_file(file_id).await.unwrap();
+        let body = response.bytes().await.unwrap();
+
+        assert_eq!(body.as_ref(), b"note body");
+        assert_eq!(state.hits.lock().await.as_slice(), &[file_id]);
+    }
 }

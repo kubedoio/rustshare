@@ -2,10 +2,10 @@
 
 | Status | Updated |
 | :--- | :--- |
-| **Version** | 1.1.0 |
+| **Version** | 1.2.0 |
 | **Author** | Antigravity (Principal Systems Engineer) |
-| **Date** | 2026-04-08 |
-| **Updates** | Daemon architecture, Unix socket, CLI commands |
+| **Date** | 2026-04-09 |
+| **Updates** | Daemon architecture, Unix socket, CLI commands, deletion semantics |
 
 ## 1. Title
 RustShare Desktop Sync Client - Phase 1
@@ -43,6 +43,10 @@ Phase 1 focuses on building a lightweight, reliable desktop synchronization clie
 - **FR-4: Local Change Detection**: Client detects additions, modifications, deletions, and renames in the local Workspace Root.
 - **FR-5: Remote Change Detection**: Client polls the backend (or receives WebSocket notifications) for remote changes.
 - **FR-6: Bi-directional Sync**: Client performs uploads and downloads to reconcile local and remote states.
+- **FR-6a: Directory Mirroring**: Client synchronizes directory structure as first-class state, including empty folders.
+- **FR-6b: Root Scoping**: Each sync root only mirrors the configured remote subtree.
+- **FR-6c: Delete Propagation**: When a previously synced file is intentionally deleted on one side, that delete propagates to the other side instead of recreating the missing copy.
+- **FR-6d: Delete Tombstones**: The local state store persists delete tombstones long enough to distinguish "intentional delete" from "new unsynced file."
 - **FR-7: Persistence**: Client survives restarts, preserving the sync queue and state.
 - **FR-8: Conflict Handling**: Client detects conflicts, creates "conflict copies," and alerts the user.
 - **FR-9: Pause/Resume**: User can manually pause and resume sync operations.
@@ -76,11 +80,17 @@ Phase 1 focuses on building a lightweight, reliable desktop synchronization clie
 ## 11. Remote Sync Behavior
 - **Polling/WS**: Initial sync uses full scan; steady state uses WebSocket notifications with a periodic poll fallback.
 - **Direction**: Remote changes take precedence in tie-breaking scenarios where timestamps are identical but hashes differ (rare).
+- **Path Preservation**: Relative paths inside a sync root are preserved on upload and download.
+- **Ordering**: Directory creation runs before file transfer so nested content never depends on flattened uploads.
+- **Deletion Model**: A missing file only means "delete the other side" when the client has prior synced state for that path. Otherwise it is treated as a new file on the side where it still exists.
+- **Delete Idempotency**: Repeating a local delete for an already-missing local file or a remote delete for an already-missing remote file must be treated as success, not as a fatal error.
+- **Tombstone Reconciliation**: If both sides are missing and a tombstone exists, the client keeps the path deleted. If one side later recreates the file, that side becomes the new source of truth for the recreated path.
 
 ## 12. Conflict Behavior
 - **Policy**: Conservative.
 - **Action**: Rename local file to `<filename> (Conflict <timestamp>).ext`.
 - **Visibility**: Expose conflict event in UI for user resolution.
+- **Deleted vs Recreated**: If a tombstoned path reappears on both sides independently, the client treats that as a conflict, not as silent resurrection.
 
 ## 13. Security Requirements
 - **Transport**: TLS 1.2+ only.
@@ -93,6 +103,7 @@ Phase 1 focuses on building a lightweight, reliable desktop synchronization clie
 
 ## 15. Recovery Requirements
 - **Database Corruption**: If the local state store is corrupt, perform a "re-index" sync (map local files to remote counterparts by hash).
+- **Delete Recovery**: The client should preserve enough tombstone state to avoid recreating deleted files immediately after restart or after a transient backend listing inconsistency.
 
 ## 16. UI Requirements
 - **Auth Screen**: Login/Logout.
@@ -113,6 +124,9 @@ Phase 1 focuses on building a lightweight, reliable desktop synchronization clie
 - [ ] Successful sync of a 1GB file with simulated restart during transfer.
 - [ ] Rename of a folder correctly propagates to remote.
 - [ ] Conflict copy generated when local and remote change simultaneously.
+- [ ] Deleting a previously synced local file removes the remote copy and does not recreate the file on the next sync cycle.
+- [ ] Deleting a previously synced remote file removes the local copy and does not recreate the file on the next sync cycle.
+- [ ] Repeating a delete after the target is already gone is idempotent and does not wedge the root in a retry loop.
 
 ## 20. Open Questions / Deferred Items
 - **Delta Sync**: Deferred to Phase 2.

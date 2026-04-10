@@ -1,5 +1,7 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
+use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fs;
 use std::future::Future;
 use std::path::PathBuf;
@@ -97,6 +99,28 @@ enum SyncAction {
     },
     /// List all configured roots
     List,
+    /// Diagnose sync root health and known broken remote entries
+    Doctor {
+        /// Optional root ID to inspect
+        root_id: Option<Uuid>,
+        /// Maximum number of broken entries to print per root
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        /// Clear quarantined broken-remote entries before printing the report
+        #[arg(long)]
+        clear_quarantine: bool,
+    },
+    /// Re-check quarantined remote entries and optionally delete confirmed stale metadata
+    CleanupRemote {
+        /// Optional root ID to inspect
+        root_id: Option<Uuid>,
+        /// Maximum number of broken entries to process per root
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
+        /// Apply remote deletions after confirming the file is still missing
+        #[arg(long)]
+        apply: bool,
+    },
     /// Remove a sync root
     Remove {
         /// Root ID (UUID)
@@ -170,7 +194,14 @@ enum DaemonCommands {
     /// Check if the daemon is running
     Status,
     /// Show daemon logs
-    Logs,
+    Logs {
+        /// Number of log lines to show
+        #[arg(long, default_value_t = 200)]
+        tail: usize,
+        /// Continue streaming appended log lines
+        #[arg(long)]
+        follow: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -195,15 +226,17 @@ fn main() -> Result<()> {
     // Handle daemon start specially - must be done before tokio runtime
     // because daemonize forks and forking from async context causes issues
     if let Commands::Daemon { command: DaemonCommands::Start } = &cli.command {
-        return run_daemon_start();
+        return run_daemon_start(&cli);
     }
     
     // Run the async main for all other commands
     tokio::runtime::Runtime::new()?.block_on(async_main(cli))
 }
 
-fn run_daemon_start() -> Result<()> {
+fn run_daemon_start(cli: &Cli) -> Result<()> {
     use std::process::Command;
+    #[cfg(unix)]
+    use std::os::unix::process::CommandExt;
     
     let app_data_dir = PathManager::get_app_data_dir()?;
     let daemon_handle = DaemonHandle::new(app_data_dir.clone());
@@ -228,19 +261,48 @@ fn run_daemon_start() -> Result<()> {
     let log_path = app_data_dir.join("daemon.log");
     std::fs::create_dir_all(&app_data_dir)?;
     
-    let child = Command::new(std::env::current_exe()?)
-        .arg("daemon")
-        .arg("run")
+    let mut command = Command::new(std::env::current_exe()?);
+    command
+        .args(daemon_run_args(cli))
         .stdin(std::process::Stdio::null())
         .stdout(std::fs::File::create(&log_path)?)
-        .stderr(std::fs::File::create(&log_path)?)
-        .spawn()?;
+        .stderr(std::fs::File::create(&log_path)?);
+
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            nix::unistd::setsid()
+                .map(|_| ())
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        });
+    }
+
+    let child = command.spawn()?;
     
     // Write PID file
     std::fs::write(daemon_handle.pid_file(), child.id().to_string())?;
     
     println!("Daemon started successfully (PID: {})", child.id());
     Ok(())
+}
+
+fn daemon_run_args(cli: &Cli) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("--workspace"),
+        cli.workspace.as_os_str().to_owned(),
+        OsString::from("--db-name"),
+        OsString::from(&cli.db_name),
+        OsString::from("--server"),
+        OsString::from(&cli.server),
+    ];
+
+    if cli.verbose {
+        args.push(OsString::from("--verbose"));
+    }
+
+    args.push(OsString::from("daemon"));
+    args.push(OsString::from("run"));
+    args
 }
 
 async fn async_main(cli: Cli) -> Result<()> {
@@ -318,7 +380,7 @@ async fn async_main(cli: Cli) -> Result<()> {
     }
 
     let socket_path = app_data_dir.join("daemon.sock");
-    let core = SyncCore::new(db, client, workspace.clone(), socket_path);
+    let core = SyncCore::new(db, client.clone(), workspace.clone(), socket_path);
 
     match command {
         Commands::Login { token } => {
@@ -327,7 +389,12 @@ async fn async_main(cli: Cli) -> Result<()> {
                 Box::pin(interactive_pairing(server))
             })
             .await?;
-            token_store.save_token(&device_token.device_id.to_string(), &device_token.token)?;
+            if let Err(e) = token_store.save_token(&device_token.device_id.to_string(), &device_token.token) {
+                warn!("Failed to save auth token to keychain: {}", e);
+            } else {
+                info!("Saved auth token to keychain for device {}", device_token.device_id);
+            }
+            persist_daemon_token(&app_data_dir, &device_token.token)?;
             println!("✓ Authenticated successfully.");
         }
         Commands::Sync { action } => match action {
@@ -336,10 +403,11 @@ async fn async_main(cli: Cli) -> Result<()> {
                 local_path,
             } => {
                 let root_id = Uuid::new_v4();
+                let resolved_local_path = resolve_sync_local_path(&workspace, &local_path);
                 let root = SyncRoot {
                     id: root_id,
                     remote_path: remote_path.clone(),
-                    local_path: PathBuf::from(&local_path),
+                    local_path: resolved_local_path.clone(),
                 };
                 
                 // Register in database
@@ -347,8 +415,7 @@ async fn async_main(cli: Cli) -> Result<()> {
                 
                 // Also add to config.toml for persistence
                 let mut config = Config::load()?;
-                let local_path_buf = PathBuf::from(local_path);
-                config.add_sync_folder(root_id, local_path_buf)?;
+                config.add_sync_folder(root_id, resolved_local_path)?;
                 
                 println!("✓ Registered sync root {}", root_id);
             }
@@ -376,6 +443,180 @@ async fn async_main(cli: Cli) -> Result<()> {
                             enabled,
                             direction
                         );
+                    }
+                }
+            }
+            SyncAction::Doctor {
+                root_id,
+                limit,
+                clear_quarantine,
+            } => {
+                let daemon_handle = DaemonHandle::new(app_data_dir.clone());
+                println!(
+                    "Daemon: {}",
+                    if daemon_handle.is_running() {
+                        "running"
+                    } else {
+                        "stopped"
+                    }
+                );
+
+                let config = Config::load()?;
+                let db_arc = core.manager.database();
+                let db = db_arc.lock().await;
+                if clear_quarantine {
+                    let cleared = match root_id {
+                        Some(root_id) => db.clear_broken_remote_entries(root_id)?,
+                        None => db.clear_all_broken_remote_entries()?,
+                    };
+                    println!("Cleared {} quarantined broken remote entr{}", cleared, if cleared == 1 { "y" } else { "ies" });
+                }
+
+                let mut roots = db.get_sync_roots()?;
+                if let Some(root_id) = root_id {
+                    roots.retain(|root| root.id == root_id);
+                }
+
+                if roots.is_empty() {
+                    println!("No matching sync roots found.");
+                } else {
+                    for root in roots {
+                        print_root_diagnosis(&db, &config, &root, limit)?;
+                    }
+                }
+            }
+            SyncAction::CleanupRemote { root_id, limit, apply } => {
+                let cleanup_targets = {
+                    let db_arc = core.manager.database();
+                    let db = db_arc.lock().await;
+                    let mut roots = db.get_sync_roots()?;
+                    if let Some(root_id) = root_id {
+                        roots.retain(|root| root.id == root_id);
+                    }
+
+                    let mut targets = Vec::new();
+                    for root in roots {
+                        let entries = db.get_broken_remote_entries(root.id)?;
+                        targets.push((root, entries));
+                    }
+                    targets
+                };
+
+                if cleanup_targets.is_empty() {
+                    println!("No matching sync roots found.");
+                } else {
+                    let mut confirmed_missing = 0usize;
+                    let mut deleted = 0usize;
+                    let mut recovered = 0usize;
+                    let mut delete_errors = 0usize;
+
+                    for (root, entries) in cleanup_targets {
+                        println!();
+                        println!("Root {} ({})", root.id, root.remote_path);
+
+                        if entries.is_empty() {
+                            println!("  No quarantined broken remote entries.");
+                            continue;
+                        }
+
+                        let total_entries = entries.len();
+                        let mut seen_remote_ids = HashSet::new();
+                        let mut processed = 0usize;
+
+                        for entry in entries {
+                            if processed >= limit {
+                                break;
+                            }
+                            if !seen_remote_ids.insert(entry.remote_file_id) {
+                                continue;
+                            }
+                            processed += 1;
+
+                            match client.download_file(entry.remote_file_id).await {
+                                Ok(_) => {
+                                    recovered += 1;
+                                    println!(
+                                        "  Recovered: {} [{}]",
+                                        entry.relative_path.display(),
+                                        entry.remote_file_id
+                                    );
+                                    let db_arc = core.manager.database();
+                                    let db = db_arc.lock().await;
+                                    let _ = db.clear_broken_remote_entries_for_path(
+                                        root.id,
+                                        &entry.relative_path,
+                                    )?;
+                                }
+                                Err(error) => {
+                                    let error_text = error.to_string();
+                                    if !is_missing_remote_error(&error_text) {
+                                        println!(
+                                            "  Skipped: {} [{}] error={}",
+                                            entry.relative_path.display(),
+                                            entry.remote_file_id,
+                                            error_text
+                                        );
+                                        continue;
+                                    }
+
+                                    confirmed_missing += 1;
+                                    if apply {
+                                        match client.delete_file(entry.remote_file_id).await {
+                                            Ok(_) => {
+                                                deleted += 1;
+                                                println!(
+                                                    "  Deleted stale remote entry: {} [{}]",
+                                                    entry.relative_path.display(),
+                                                    entry.remote_file_id
+                                                );
+                                                let db_arc = core.manager.database();
+                                                let db = db_arc.lock().await;
+                                                let _ = db.clear_broken_remote_entries_for_path(
+                                                    root.id,
+                                                    &entry.relative_path,
+                                                )?;
+                                                let _ = db.mark_file_tombstone(
+                                                    root.id,
+                                                    &entry.relative_path,
+                                                    "local",
+                                                    chrono::Utc::now().timestamp(),
+                                                )?;
+                                            }
+                                            Err(delete_error) => {
+                                                delete_errors += 1;
+                                                println!(
+                                                    "  Delete failed: {} [{}] error={}",
+                                                    entry.relative_path.display(),
+                                                    entry.remote_file_id,
+                                                    delete_error
+                                                );
+                                            }
+                                        }
+                                    } else {
+                                        println!(
+                                            "  Would delete stale remote entry: {} [{}]",
+                                            entry.relative_path.display(),
+                                            entry.remote_file_id
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        if processed == 0 {
+                            println!("  No unique quarantined entries to process.");
+                        } else if total_entries > processed {
+                            println!("  ... {} additional entries not shown", total_entries - processed);
+                        }
+                    }
+
+                    println!();
+                    println!(
+                        "Cleanup summary: confirmed_missing={} recovered={} deleted={} delete_errors={}",
+                        confirmed_missing, recovered, deleted, delete_errors
+                    );
+                    if !apply {
+                        println!("Dry run only. Re-run with --apply to delete confirmed stale metadata.");
                     }
                 }
             }
@@ -408,9 +649,13 @@ async fn async_main(cli: Cli) -> Result<()> {
                 remove_ignore,
                 clear_ignores,
             } => {
+                let resolved_local_path = local_path
+                    .as_deref()
+                    .map(|path| resolve_sync_local_path(&workspace, path));
+
                 // Build FolderUpdate from CLI args
                 let updates = FolderUpdate {
-                    local_path: local_path.map(PathBuf::from),
+                    local_path: resolved_local_path.clone(),
                     enabled: None,
                     direction: direction.map(|d| d.into()),
                     add_ignore_patterns: ignore_pattern,
@@ -421,6 +666,19 @@ async fn async_main(cli: Cli) -> Result<()> {
                 // Update config.toml
                 let mut config = Config::load()?;
                 let updated = config.update_sync_folder(root_id, updates)?;
+
+                if let Some(local_path) = resolved_local_path {
+                    let db_arc = core.manager.database();
+                    let db = db_arc.lock().await;
+                    if let Some(mut root) = db
+                        .get_sync_roots()?
+                        .into_iter()
+                        .find(|root| root.id == root_id)
+                    {
+                        root.local_path = local_path;
+                        db.save_sync_root(&root)?;
+                    }
+                }
 
                 if updated {
                     println!("✓ Updated sync root {}", root_id);
@@ -565,15 +823,18 @@ async fn async_main(cli: Cli) -> Result<()> {
                         let _ = daemon_handle.cleanup_stale();
                     }
                 }
-                DaemonCommands::Logs => {
+                DaemonCommands::Logs { tail, follow } => {
                     let log_path = app_data_dir.join("daemon.log");
                     if log_path.exists() {
-                        match fs::read_to_string(&log_path) {
+                        match read_log_tail(&log_path, tail) {
                             Ok(content) => {
                                 if content.is_empty() {
                                     println!("Log file is empty");
                                 } else {
                                     print!("{}", content);
+                                }
+                                if follow {
+                                    follow_log_file(&log_path).await?;
                                 }
                             }
                             Err(e) => {
@@ -603,6 +864,157 @@ fn normalize_server_url(server: &str) -> String {
     } else {
         format!("https://{}", server.trim_start_matches('/'))
     }
+}
+
+fn resolve_sync_local_path(workspace: &std::path::Path, local_path: &str) -> PathBuf {
+    if let Some(stripped) = local_path.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(stripped);
+        }
+    }
+
+    let local_path = PathBuf::from(local_path);
+    if local_path.is_absolute() {
+        local_path
+    } else {
+        workspace.join(local_path)
+    }
+}
+
+fn persist_daemon_token(app_data_dir: &std::path::Path, token: &str) -> Result<()> {
+    let token_path = app_data_dir.join("token.txt");
+    fs::create_dir_all(app_data_dir)?;
+    fs::write(&token_path, token)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&token_path)?.permissions();
+        permissions.set_mode(0o600);
+        fs::set_permissions(&token_path, permissions)?;
+    }
+
+    Ok(())
+}
+
+fn read_log_tail(log_path: &std::path::Path, tail: usize) -> Result<String> {
+    use std::io::{BufRead, BufReader};
+
+    let file = fs::File::open(log_path)?;
+    let reader = BufReader::new(file);
+    let lines = reader
+        .lines()
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    let start = lines.len().saturating_sub(tail);
+    let mut output = lines[start..].join("\n");
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    Ok(output)
+}
+
+async fn follow_log_file(log_path: &std::path::Path) -> Result<()> {
+    use std::io::{Read, Seek, SeekFrom};
+    use tokio::time::{sleep, Duration};
+
+    let mut offset = fs::metadata(log_path).map(|meta| meta.len()).unwrap_or(0);
+    println!("-- following {} (Ctrl+C to stop) --", log_path.display());
+
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                println!("\nStopped following logs.");
+                return Ok(());
+            }
+            _ = sleep(Duration::from_millis(500)) => {
+                let metadata = match fs::metadata(log_path) {
+                    Ok(meta) => meta,
+                    Err(_) => continue,
+                };
+
+                if metadata.len() < offset {
+                    offset = 0;
+                }
+
+                if metadata.len() == offset {
+                    continue;
+                }
+
+                let mut file = fs::File::open(log_path)?;
+                file.seek(SeekFrom::Start(offset))?;
+                let mut buf = String::new();
+                file.read_to_string(&mut buf)?;
+                print!("{}", buf);
+                offset = metadata.len();
+            }
+        }
+    }
+}
+
+fn print_root_diagnosis(
+    db: &Database,
+    config: &Config,
+    root: &SyncRoot,
+    limit: usize,
+) -> Result<()> {
+    let enabled = config
+        .get_sync_folder(root.id)
+        .map(|folder| folder.enabled)
+        .unwrap_or(true);
+    let file_states = db.get_all_file_states(root.id)?;
+    let broken_entries = db.get_broken_remote_entries(root.id)?;
+    let local_exists = root.local_path.exists();
+
+    println!();
+    println!("Root {}", root.id);
+    println!("  Local : {}", root.local_path.display());
+    println!("  Remote: {}", root.remote_path);
+    println!("  Enabled: {}", enabled);
+    println!("  Local path exists: {}", local_exists);
+    println!("  Indexed file states: {}", file_states.len());
+    println!("  Broken remote entries: {}", broken_entries.len());
+
+    if root.remote_path == "/" {
+        println!("  Warning: this is a full account root mirror");
+    }
+
+    if !local_exists {
+        println!("  Problem: local path is missing");
+    }
+
+    if file_states.is_empty() {
+        println!("  Problem: no successful synced file state recorded yet");
+    }
+
+    if !broken_entries.is_empty() {
+        println!("  Broken paths:");
+        for entry in broken_entries.into_iter().take(limit) {
+            println!(
+                "  - {} [{}] last_seen={} error={}",
+                entry.relative_path.display(),
+                entry.remote_file_id,
+                format_unix_timestamp(entry.last_seen_at),
+                entry.error
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn format_unix_timestamp(timestamp: i64) -> String {
+    chrono::DateTime::from_timestamp(timestamp, 0)
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_else(|| timestamp.to_string())
+}
+
+fn is_missing_remote_error(message: &str) -> bool {
+    let lowered = message.to_ascii_lowercase();
+    lowered.contains("404")
+        || lowered.contains("410")
+        || lowered.contains("not found")
+        || lowered.contains("gone")
 }
 
 async fn resolve_login_token<F>(
@@ -681,6 +1093,7 @@ async fn notify_daemon_config_change(app_data_dir: &PathBuf, root_id: Uuid) -> R
 mod tests {
     use super::*;
     use clap::Parser;
+    use std::path::Path;
 
     #[test]
     fn login_defaults_to_pairing_when_no_token_is_provided() {
@@ -740,5 +1153,156 @@ mod tests {
             normalize_server_url("app.rustshare.io"),
             "https://app.rustshare.io"
         );
+    }
+
+    #[test]
+    fn daemon_start_forwards_workspace_server_db_and_verbose() {
+        let cli = Cli::try_parse_from([
+            "rustshare-desktop",
+            "--workspace",
+            "/tmp/rustshare-workspace",
+            "--db-name",
+            "custom.db",
+            "--server",
+            "app.rustshare.io",
+            "--verbose",
+            "daemon",
+            "start",
+        ])
+        .unwrap();
+
+        let args = daemon_run_args(&cli)
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            vec![
+                "--workspace",
+                "/tmp/rustshare-workspace",
+                "--db-name",
+                "custom.db",
+                "--server",
+                "app.rustshare.io",
+                "--verbose",
+                "daemon",
+                "run",
+            ]
+        );
+    }
+
+    #[test]
+    fn sync_add_resolves_relative_paths_against_workspace() {
+        let resolved = resolve_sync_local_path(Path::new("/tmp/workspace"), "mirror");
+        assert_eq!(resolved, PathBuf::from("/tmp/workspace/mirror"));
+    }
+
+    #[test]
+    fn sync_add_keeps_absolute_paths() {
+        let resolved = resolve_sync_local_path(Path::new("/tmp/workspace"), "/srv/rustshare");
+        assert_eq!(resolved, PathBuf::from("/srv/rustshare"));
+    }
+
+    #[test]
+    fn persist_daemon_token_writes_token_file() {
+        let tempdir = tempfile::tempdir().unwrap();
+        persist_daemon_token(tempdir.path(), "test-token-123").unwrap();
+
+        let written = std::fs::read_to_string(tempdir.path().join("token.txt")).unwrap();
+        assert_eq!(written, "test-token-123");
+    }
+
+    #[test]
+    fn daemon_logs_accepts_tail_and_follow_flags() {
+        let cli = Cli::try_parse_from([
+            "rustshare-desktop",
+            "daemon",
+            "logs",
+            "--tail",
+            "50",
+            "--follow",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Daemon {
+                command: DaemonCommands::Logs { tail, follow },
+            } => {
+                assert_eq!(tail, 50);
+                assert!(follow);
+            }
+            _ => panic!("expected daemon logs command"),
+        }
+    }
+
+    #[test]
+    fn sync_doctor_accepts_clear_quarantine_flag() {
+        let root_id = Uuid::nil().to_string();
+        let cli = Cli::try_parse_from([
+            "rustshare-desktop",
+            "sync",
+            "doctor",
+            &root_id,
+            "--limit",
+            "25",
+            "--clear-quarantine",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Sync {
+                action: SyncAction::Doctor {
+                    root_id: parsed_root_id,
+                    limit,
+                    clear_quarantine,
+                },
+            } => {
+                assert_eq!(parsed_root_id, Some(Uuid::nil()));
+                assert_eq!(limit, 25);
+                assert!(clear_quarantine);
+            }
+            _ => panic!("expected sync doctor command"),
+        }
+    }
+
+    #[test]
+    fn sync_cleanup_remote_accepts_apply_flag() {
+        let root_id = Uuid::nil().to_string();
+        let cli = Cli::try_parse_from([
+            "rustshare-desktop",
+            "sync",
+            "cleanup-remote",
+            &root_id,
+            "--limit",
+            "12",
+            "--apply",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Sync {
+                action: SyncAction::CleanupRemote {
+                    root_id: parsed_root_id,
+                    limit,
+                    apply,
+                },
+            } => {
+                assert_eq!(parsed_root_id, Some(Uuid::nil()));
+                assert_eq!(limit, 12);
+                assert!(apply);
+            }
+            _ => panic!("expected sync cleanup-remote command"),
+        }
+    }
+
+    #[test]
+    fn read_log_tail_returns_last_n_lines() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let log_path = tempdir.path().join("daemon.log");
+        std::fs::write(&log_path, "one\ntwo\nthree\nfour\n").unwrap();
+
+        let output = read_log_tail(&log_path, 2).unwrap();
+        assert_eq!(output, "three\nfour\n");
     }
 }

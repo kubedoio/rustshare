@@ -60,6 +60,9 @@ pub trait MetadataStoreOps: Send + Sync {
     /// Create a file in the metadata store.
     async fn create_file(&self, file: &File) -> Result<()>;
 
+    /// Find a file by canonical path for a specific owner.
+    async fn find_file_by_path(&self, path: &str, owner_id: uuid::Uuid) -> Result<Option<File>>;
+
     /// Create a file version in the metadata store.
     async fn create_file_version(&self, version: &FileVersion) -> Result<()>;
 
@@ -292,8 +295,82 @@ where
                 .map_err(|e| FileError::Storage(e.to_string()))?;
         }
 
-        // 6. Create File domain object with version=1
         let size = content.len() as i64;
+        if let Some(mut existing) = self
+            .metadata_store
+            .find_file_by_path(&path, owner_id)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+        {
+            if existing.content_hash == content_hash && existing.size == size {
+                return Ok(existing);
+            }
+
+            let old_version = existing.current_version;
+            let old_content_hash = existing.content_hash.clone();
+            let old_size = existing.size;
+
+            existing.content_hash = content_hash.clone();
+            existing.size = size;
+            existing.mime_type = mime_type.clone();
+            existing.parent_folder_id = parent_folder_id;
+            existing.current_version += 1;
+            existing.modified_at = chrono::Utc::now();
+
+            self.metadata_store
+                .update_file(&existing)
+                .await
+                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+            let version = FileVersion::new(
+                existing.id,
+                existing.current_version,
+                content_hash.clone(),
+                size,
+                owner_id,
+                Some("Uploaded new content".to_string()),
+                tenant_id,
+            );
+
+            self.metadata_store
+                .create_file_version(&version)
+                .await
+                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+            self.queue_replication_if_needed(existing.id, owner_id, &version)
+                .await?;
+
+            let payload = FileModifiedPayload {
+                file_id: existing.id,
+                old_version,
+                new_version: existing.current_version,
+                old_content_hash,
+                new_content_hash: content_hash,
+                old_size,
+                new_size: size,
+                storage_key,
+                modified_by: owner_id,
+            };
+            let payload_json = serde_json::to_value(&payload)
+                .map_err(|e| FileError::Storage(format!("Failed to serialize payload: {}", e)))?;
+
+            let event = Event::new(
+                EventType::FileModified,
+                existing.id,
+                AggregateType::File,
+                payload_json,
+                owner_id,
+            );
+
+            self.event_store
+                .append(&event, &self.broadcaster)
+                .await
+                .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
+
+            return Ok(existing);
+        }
+
+        // 6. Create File domain object with version=1
         let file = File::new(
             name.clone(),
             path.clone(),

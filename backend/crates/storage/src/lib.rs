@@ -62,6 +62,14 @@ impl FileMetadataStoreOps for MetadataStore {
         self.create_file(file).await
     }
 
+    async fn find_file_by_path(
+        &self,
+        path: &str,
+        owner_id: uuid::Uuid,
+    ) -> Result<Option<rustshare_core::domain::File>> {
+        self.find_file_by_path(path, owner_id).await
+    }
+
     async fn create_file_version(
         &self,
         version: &rustshare_core::domain::FileVersion,

@@ -9,7 +9,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::domain::{File, FolderId, UserId};
-use crate::events::{AggregateType, Event, EventBroadcaster, EventType, FileUploadedPayload};
+use crate::events::{
+    AggregateType, Event, EventBroadcaster, EventType, FileModifiedPayload, FileUploadedPayload,
+};
 use crate::services::upload_session::*;
 use crate::services::FileError;
 
@@ -171,8 +173,18 @@ pub trait UploadMetadataStore: Send + Sync {
         id: Uuid,
     ) -> Result<Option<crate::domain::Folder>, UploadError>;
 
+    /// Find a file by canonical path for an owner
+    async fn find_file_by_path(
+        &self,
+        path: &str,
+        owner_id: Uuid,
+    ) -> Result<Option<File>, UploadError>;
+
     /// Create a file
     async fn create_file(&self, file: &File) -> Result<(), UploadError>;
+
+    /// Update an existing file
+    async fn update_file(&self, file: &File) -> Result<(), UploadError>;
 
     /// Create a file version
     async fn create_file_version(
@@ -498,66 +510,130 @@ where
             .assemble_chunks(session_id, session.total_chunks(), &storage_key)
             .await?;
 
-        // Create file metadata
-        let file = File::new(
-            session.file_name.clone(),
-            path.clone(),
-            final_hash.clone(),
-            session.total_size as i64,
-            session.mime_type.clone(),
-            session.folder_id,
-            user_id,
-            session.tenant_id,
-        );
+        let file = if let Some(mut existing) = self.metadata_store.find_file_by_path(&path, user_id).await? {
+            if existing.content_hash == final_hash && existing.size == session.total_size as i64 {
+                existing
+            } else {
+                let old_version = existing.current_version;
+                let old_content_hash = existing.content_hash.clone();
+                let old_size = existing.size;
 
-        // Persist file
-        self.metadata_store.create_file(&file).await?;
+                existing.content_hash = final_hash.clone();
+                existing.size = session.total_size as i64;
+                existing.mime_type = session.mime_type.clone();
+                existing.parent_folder_id = session.folder_id;
+                existing.current_version += 1;
+                existing.modified_at = chrono::Utc::now();
 
-        // Create initial version
-        let version = crate::domain::FileVersion::new(
-            file.id,
-            1,
-            final_hash.clone(),
-            session.total_size as i64,
-            user_id,
-            Some("Uploaded via resumable session".to_string()),
-            session.tenant_id,
-        );
-        self.metadata_store
-            .create_file_version(&file, &version)
-            .await?;
+                self.metadata_store.update_file(&existing).await?;
 
-        // Emit event
-        let payload = FileUploadedPayload {
-            file_id: file.id,
-            name: session.file_name.clone(),
-            path: path.clone(),
-            size: session.total_size as i64,
-            content_hash: final_hash.clone(),
-            storage_key: storage_key.clone(),
-            mime_type: session.mime_type.clone(),
-            owner_id: user_id,
-            parent_folder_id: session.folder_id,
-            actor_type: "user".to_string(),
-            actor_user_id: Some(user_id),
-            actor_share_id: None,
-            actor_share_session_id: None,
-            actor_display_name: None,
+                let version = crate::domain::FileVersion::new(
+                    existing.id,
+                    existing.current_version,
+                    final_hash.clone(),
+                    session.total_size as i64,
+                    user_id,
+                    Some("Uploaded via resumable session".to_string()),
+                    session.tenant_id,
+                );
+                self.metadata_store
+                    .create_file_version(&existing, &version)
+                    .await?;
+
+                let payload = FileModifiedPayload {
+                    file_id: existing.id,
+                    old_version,
+                    new_version: existing.current_version,
+                    old_content_hash,
+                    new_content_hash: final_hash.clone(),
+                    old_size,
+                    new_size: session.total_size as i64,
+                    storage_key: storage_key.clone(),
+                    modified_by: user_id,
+                };
+
+                let event = Event::new(
+                    EventType::FileModified,
+                    existing.id,
+                    AggregateType::File,
+                    serde_json::to_value(&payload).map_err(|e| {
+                        UploadError::Storage(format!("Failed to serialize event: {}", e))
+                    })?,
+                    user_id,
+                );
+
+                self.event_store
+                    .append(&event, &self.broadcaster)
+                    .await
+                    .map_err(|e| UploadError::Storage(format!("Failed to append event: {}", e)))?;
+
+                existing
+            }
+        } else {
+            // Create file metadata
+            let file = File::new(
+                session.file_name.clone(),
+                path.clone(),
+                final_hash.clone(),
+                session.total_size as i64,
+                session.mime_type.clone(),
+                session.folder_id,
+                user_id,
+                session.tenant_id,
+            );
+
+            // Persist file
+            self.metadata_store.create_file(&file).await?;
+
+            // Create initial version
+            let version = crate::domain::FileVersion::new(
+                file.id,
+                1,
+                final_hash.clone(),
+                session.total_size as i64,
+                user_id,
+                Some("Uploaded via resumable session".to_string()),
+                session.tenant_id,
+            );
+            self.metadata_store
+                .create_file_version(&file, &version)
+                .await?;
+
+            // Emit event
+            let payload = FileUploadedPayload {
+                file_id: file.id,
+                name: session.file_name.clone(),
+                path: path.clone(),
+                size: session.total_size as i64,
+                content_hash: final_hash.clone(),
+                storage_key: storage_key.clone(),
+                mime_type: session.mime_type.clone(),
+                owner_id: user_id,
+                parent_folder_id: session.folder_id,
+                actor_type: "user".to_string(),
+                actor_user_id: Some(user_id),
+                actor_share_id: None,
+                actor_share_session_id: None,
+                actor_display_name: None,
+            };
+
+            let event = Event::new(
+                EventType::FileUploaded,
+                file.id,
+                AggregateType::File,
+                serde_json::to_value(&payload).map_err(|e| {
+                    UploadError::Storage(format!("Failed to serialize event: {}", e))
+                })?,
+                user_id,
+            );
+
+            self.event_store
+                .append(&event, &self.broadcaster)
+                .await
+                .map_err(|e| UploadError::Storage(format!("Failed to append event: {}", e)))?;
+
+            file
         };
-
-        let event = Event::new(
-            EventType::FileUploaded,
-            file.id,
-            AggregateType::File,
-            serde_json::to_value(&payload)
-                .map_err(|e| UploadError::Storage(format!("Failed to serialize event: {}", e)))?,
-            user_id,
-        );
-
-        self.event_store
-            .append(&event, &self.broadcaster)
-            .await
-            .map_err(|e| UploadError::Storage(format!("Failed to append event: {}", e)))?;
 
         // Mark session complete
         session.mark_completed(file.id);
@@ -724,14 +800,276 @@ mod hex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{FileVersion, Folder, ReplicationState};
+    use crate::services::file_service::EventStoreOps;
+    use bytes::Bytes;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Mutex;
+    use chrono::Utc;
 
-    // Note: These tests require mock implementations of the traits
-    // which would be quite extensive. For now, we test the basic
-    // validation logic here.
+    struct MockUploadRepo {
+        session: Mutex<Option<UploadSession>>,
+        completed: Mutex<Vec<(Uuid, Uuid)>>,
+    }
+
+    impl MockUploadRepo {
+        fn new(session: UploadSession) -> Self {
+            Self {
+                session: Mutex::new(Some(session)),
+                completed: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl UploadSessionRepository for MockUploadRepo {
+        async fn create_session(&self, _session: &UploadSession) -> Result<(), UploadError> {
+            unreachable!()
+        }
+
+        async fn get_session(&self, _id: Uuid) -> Result<Option<UploadSession>, UploadError> {
+            Ok(self.session.lock().unwrap().clone())
+        }
+
+        async fn update_session(&self, session: &UploadSession) -> Result<(), UploadError> {
+            *self.session.lock().unwrap() = Some(session.clone());
+            Ok(())
+        }
+
+        async fn update_chunk_received(
+            &self,
+            _session_id: Uuid,
+            _chunk_index: u32,
+            _chunk_hash: &str,
+            _size: u64,
+        ) -> Result<(), UploadError> {
+            unreachable!()
+        }
+
+        async fn get_chunk_info(
+            &self,
+            _session_id: Uuid,
+            _chunk_index: u32,
+        ) -> Result<Option<ChunkInfo>, UploadError> {
+            unreachable!()
+        }
+
+        async fn complete_session(&self, session_id: Uuid, file_id: Uuid) -> Result<(), UploadError> {
+            self.completed.lock().unwrap().push((session_id, file_id));
+            if let Some(session) = self.session.lock().unwrap().as_mut() {
+                session.file_id = Some(file_id);
+                session.status = UploadSessionStatus::Completed;
+            }
+            Ok(())
+        }
+
+        async fn abort_session(&self, _session_id: Uuid) -> Result<(), UploadError> {
+            unreachable!()
+        }
+
+        async fn delete_session(&self, _session_id: Uuid) -> Result<(), UploadError> {
+            Ok(())
+        }
+
+        async fn list_expired_sessions(
+            &self,
+            _before: chrono::DateTime<chrono::Utc>,
+        ) -> Result<Vec<UploadSession>, UploadError> {
+            Ok(Vec::new())
+        }
+
+        async fn list_user_sessions(&self, _user_id: UserId) -> Result<Vec<UploadSession>, UploadError> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct MockUploadObjectStore {
+        assembled: Mutex<Vec<(Uuid, u32, String)>>,
+    }
+
+    impl MockUploadObjectStore {
+        fn new() -> Self {
+            Self {
+                assembled: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl UploadObjectStore for MockUploadObjectStore {
+        async fn put_chunk(&self, _session_id: Uuid, _chunk_index: u32, _data: Bytes) -> Result<(), UploadError> {
+            unreachable!()
+        }
+
+        async fn get_chunk(&self, _session_id: Uuid, _chunk_index: u32) -> Result<Option<Bytes>, UploadError> {
+            unreachable!()
+        }
+
+        async fn delete_chunk(&self, _session_id: Uuid, _chunk_index: u32) -> Result<(), UploadError> {
+            Ok(())
+        }
+
+        async fn delete_session_chunks(&self, _session_id: Uuid, _total_chunks: u32) -> Result<(), UploadError> {
+            Ok(())
+        }
+
+        async fn chunk_exists(&self, _session_id: Uuid, _chunk_index: u32) -> Result<bool, UploadError> {
+            Ok(true)
+        }
+
+        async fn assemble_chunks(
+            &self,
+            session_id: Uuid,
+            total_chunks: u32,
+            final_key: &str,
+        ) -> Result<(), UploadError> {
+            self.assembled
+                .lock()
+                .unwrap()
+                .push((session_id, total_chunks, final_key.to_string()));
+            Ok(())
+        }
+    }
+
+    struct MockUploadMetadataStore {
+        existing_file: Mutex<Option<File>>,
+        created_files: Mutex<Vec<File>>,
+        updated_files: Mutex<Vec<File>>,
+        created_versions: Mutex<Vec<FileVersion>>,
+    }
+
+    impl MockUploadMetadataStore {
+        fn new(existing_file: Option<File>) -> Self {
+            Self {
+                existing_file: Mutex::new(existing_file),
+                created_files: Mutex::new(Vec::new()),
+                updated_files: Mutex::new(Vec::new()),
+                created_versions: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl UploadMetadataStore for MockUploadMetadataStore {
+        async fn find_folder_by_id(&self, _id: Uuid) -> Result<Option<Folder>, UploadError> {
+            Ok(None)
+        }
+
+        async fn find_file_by_path(&self, _path: &str, _owner_id: Uuid) -> Result<Option<File>, UploadError> {
+            Ok(self.existing_file.lock().unwrap().clone())
+        }
+
+        async fn create_file(&self, file: &File) -> Result<(), UploadError> {
+            self.created_files.lock().unwrap().push(file.clone());
+            Ok(())
+        }
+
+        async fn update_file(&self, file: &File) -> Result<(), UploadError> {
+            self.updated_files.lock().unwrap().push(file.clone());
+            *self.existing_file.lock().unwrap() = Some(file.clone());
+            Ok(())
+        }
+
+        async fn create_file_version(&self, _file: &File, version: &FileVersion) -> Result<(), UploadError> {
+            self.created_versions.lock().unwrap().push(version.clone());
+            Ok(())
+        }
+    }
+
+    struct MockEventStore {
+        events: Mutex<Vec<Event>>,
+    }
+
+    impl MockEventStore {
+        fn new() -> Self {
+            Self {
+                events: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl EventStoreOps for MockEventStore {
+        async fn append(&self, event: &Event, _broadcaster: &EventBroadcaster) -> anyhow::Result<()> {
+            self.events.lock().unwrap().push(event.clone());
+            Ok(())
+        }
+    }
 
     #[test]
     fn test_validate_file_name() {
-        // This is a simple sanity check - full testing requires mocks
         assert!(true);
+    }
+
+    #[tokio::test]
+    async fn complete_upload_updates_existing_file_instead_of_creating_duplicate() {
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4();
+
+        let mut session = UploadSession::new(
+            session_id,
+            tenant_id,
+            owner_id,
+            None,
+            "note1.md".to_string(),
+            "text/markdown".to_string(),
+            0,
+            1024 * 1024,
+            None,
+        );
+        session.status = UploadSessionStatus::InProgress;
+        session.received_chunks = HashSet::from([0]);
+        session.uploaded_bytes = 0;
+
+        let existing_file = File {
+            id: Uuid::new_v4(),
+            name: "note1.md".to_string(),
+            path: "/note1.md".to_string(),
+            content_hash: "old-hash".to_string(),
+            size: 4,
+            mime_type: "text/markdown".to_string(),
+            parent_folder_id: None,
+            owner_id,
+            current_version: 1,
+            created_at: Utc::now(),
+            modified_at: Utc::now(),
+            starred_at: None,
+            deleted_at: None,
+            tenant_id,
+        };
+
+        let repo = Arc::new(MockUploadRepo::new(session));
+        let object_store = Arc::new(MockUploadObjectStore::new());
+        let metadata_store = Arc::new(MockUploadMetadataStore::new(Some(existing_file.clone())));
+        let event_store = Arc::new(MockEventStore::new());
+        let broadcaster = Arc::new(EventBroadcaster::new(16));
+
+        let service = UploadService::new(
+            repo.clone(),
+            object_store,
+            metadata_store.clone(),
+            event_store.clone(),
+            broadcaster,
+        );
+
+        let response = service.complete_upload(session_id, owner_id).await.unwrap();
+
+        assert_eq!(response.file_id, existing_file.id);
+        assert!(metadata_store.created_files.lock().unwrap().is_empty());
+        assert_eq!(metadata_store.updated_files.lock().unwrap().len(), 1);
+        assert_eq!(metadata_store.created_versions.lock().unwrap().len(), 1);
+        assert_eq!(repo.completed.lock().unwrap().as_slice(), &[(session_id, existing_file.id)]);
+
+        let updated = metadata_store.updated_files.lock().unwrap()[0].clone();
+        assert_eq!(updated.id, existing_file.id);
+        assert_eq!(updated.path, "/note1.md");
+        assert_eq!(updated.current_version, 2);
+
+        let events = event_store.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, EventType::FileModified);
+        let payload = events[0].payload.clone();
+        assert_eq!(payload["file_id"].as_str(), Some(&existing_file.id.to_string()));
     }
 }

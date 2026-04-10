@@ -1134,6 +1134,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sync-domain",
+ "tempfile",
  "tracing",
  "uuid",
 ]
@@ -5531,7 +5532,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-desktop"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6614,6 +6615,7 @@ dependencies = [
  "chrono",
  "client-state",
  "file-ops",
+ "filetime",
  "futures",
  "futures-util",
  "glob",

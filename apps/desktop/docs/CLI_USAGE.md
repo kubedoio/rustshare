@@ -2,7 +2,17 @@
 
 ## Overview
 
-The `rustshare-desktop` CLI provides command-line control over the RustShare sync daemon. The daemon runs as a background process, synchronizing files between your local workspace and the RustShare server.
+The `rustshare-desktop` binary is the current desktop client shipped from this repository.
+
+Today it is a CLI plus background daemon, not a finished GUI shell. The CLI handles login, sync-root management, daemon lifecycle, and recovery commands. The daemon does the actual scanning, planning, upload, download, delete, and health logging.
+
+Current implementation notes:
+
+- default server: `https://app.rustshare.io`
+- default workspace: `~/RustShare`
+- macOS runtime state: `~/Library/Application Support/io.rustshare.RustShare/`
+- live sync engine: the shared crate in `crates/sync-engine`
+- root `/` is supported, but it means a full-account mirror
 
 ## Quick Start
 
@@ -49,10 +59,16 @@ rustshare-desktop daemon start
 
 The daemon will:
 - Fork to the background
-- Write its PID to `~/.config/rustshare/daemon.pid`
-- Create a Unix socket at `~/.config/rustshare/daemon.sock`
+- Write its PID to the app-data directory as `daemon.pid`
+- Create a Unix socket there as `daemon.sock`
 - Begin synchronizing configured folders
-- Log output to `~/.config/rustshare/daemon.log`
+- Log output to `daemon.log`
+
+On macOS, those files live under:
+
+```text
+~/Library/Application Support/io.rustshare.RustShare/
+```
 
 #### `daemon stop`
 Stop the running daemon gracefully.
@@ -87,6 +103,12 @@ Display the daemon log output.
 
 ```bash
 rustshare-desktop daemon logs
+
+# Show the last 50 lines
+rustshare-desktop daemon logs --tail 50
+
+# Follow the log stream
+rustshare-desktop daemon logs --follow
 ```
 
 ### Sync Management
@@ -102,6 +124,18 @@ This creates a new sync root with:
 - A unique UUID assigned automatically
 - Bidirectional sync (default)
 - Default ignore patterns (hidden files, temp files)
+- Sync scoped to the requested remote subtree only
+- Directory structure mirrored before file transfer begins
+- File deletes recorded as tombstones so deleted paths do not immediately get recreated
+- Zero-byte files uploaded as normal files
+
+Notes:
+- `remote_path` is the source subtree on the server.
+- `local_path` is the relative destination under the workspace root.
+- Empty directories inside the selected subtree are mirrored locally and remotely.
+- Nested files keep their relative paths. The client does not flatten uploads into the sync root.
+- `remote_path` may be `/` when you intentionally want a full-account root mirror.
+- For a full-account mirror, prefer using `sync doctor` regularly because `/` roots naturally surface more stale or historical server content.
 
 #### `sync list`
 List all configured sync roots.
@@ -151,6 +185,48 @@ rustshare-desktop sync update 550e8400-e29b-41d4-a716-446655440000 --clear-ignor
 - `up` - Upload only (local changes pushed to server)
 - `down` - Download only (remote changes pulled to local)
 
+#### `sync doctor [root_id]`
+Diagnose sync root health and report known broken remote entries.
+
+```bash
+# Inspect every configured root
+rustshare-desktop sync doctor
+
+# Inspect one root and print up to 25 broken entries
+rustshare-desktop sync doctor 550e8400-e29b-41d4-a716-446655440000 --limit 25
+
+# Clear quarantined broken-entry records for one root before re-checking it
+rustshare-desktop sync doctor 550e8400-e29b-41d4-a716-446655440000 --clear-quarantine
+```
+
+The report shows:
+- whether the daemon is running
+- whether the local path exists
+- how many synced file states are indexed for the root
+- how many broken remote entries are currently quarantined
+- example broken paths and their latest error message
+
+#### `sync cleanup-remote [root_id]`
+Re-check quarantined remote entries and optionally delete confirmed stale remote metadata.
+
+```bash
+# Dry run a cleanup for one root
+rustshare-desktop sync cleanup-remote 550e8400-e29b-41d4-a716-446655440000
+
+# Process up to 100 entries per root
+rustshare-desktop sync cleanup-remote --limit 100
+
+# Delete only entries that still return a fresh 404/410 check
+rustshare-desktop sync cleanup-remote 550e8400-e29b-41d4-a716-446655440000 --apply
+```
+
+Behavior:
+- dry run is the default
+- each candidate is re-checked against the server before deletion
+- only confirmed missing remote files are deleted with `--apply`
+- recovered files are removed from quarantine automatically
+- when stale metadata is deleted with `--apply`, the client records a tombstone so the path stays deleted instead of being recreated on the next cycle
+
 #### `sync enable <root_id>`
 Enable a previously disabled sync root.
 
@@ -174,15 +250,29 @@ Show current sync status.
 rustshare-desktop status
 ```
 
+`status` is currently coarse. For real debugging, prefer:
+
+- `rustshare-desktop daemon status`
+- `rustshare-desktop daemon logs --tail 200`
+- `rustshare-desktop sync doctor <root-uuid>`
+
 ## Configuration Files
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `config.toml` | `~/.config/rustshare/config.toml` | User settings, sync folders |
-| `daemon.sock` | `~/.config/rustshare/daemon.sock` | Unix socket for CLI↔Daemon |
-| `daemon.pid` | `~/.config/rustshare/daemon.pid` | Daemon process ID |
-| `daemon.log` | `~/.config/rustshare/daemon.log` | Daemon log output |
-| `rustshare.db` | `~/.local/share/rustshare/rustshare.db` | SQLite database |
+| `config.toml` | platform config dir | user settings and sync folder metadata |
+| `daemon.sock` | app-data dir | Unix socket for CLI↔daemon RPC |
+| `daemon.pid` | app-data dir | daemon process ID |
+| `daemon.log` | app-data dir | daemon log output |
+| `rustshare.db` | app-data dir | SQLite state for sync roots, file states, upload sessions, tombstones, and quarantine |
+| `device_id` | app-data dir | stable local device identifier |
+| `token.txt` | app-data dir | daemon-readable auth token fallback |
+
+On macOS, the app-data dir resolves to:
+
+```text
+~/Library/Application Support/io.rustshare.RustShare/
+```
 
 ## Environment Variables
 
@@ -219,7 +309,7 @@ rustshare-desktop sync disable <personal-uuid>
 rustshare-desktop sync enable <personal-uuid>
 
 # 8. View logs if needed
-rustshare-desktop daemon logs
+rustshare-desktop daemon logs --follow
 
 # 9. Stop daemon when done
 rustshare-desktop daemon stop
@@ -244,11 +334,11 @@ rustshare-desktop sync update $OLD_UUID --local-path "/new/location"
 rustshare-desktop daemon status
 
 # View logs for errors
-rustshare-desktop daemon logs
+rustshare-desktop daemon logs --tail 100
 
 # Force cleanup and retry
-rm ~/.config/rustshare/daemon.pid
-rm ~/.config/rustshare/daemon.sock
+rm ~/Library/Application\ Support/io.rustshare.RustShare/daemon.pid
+rm ~/Library/Application\ Support/io.rustshare.RustShare/daemon.sock
 rustshare-desktop daemon start
 ```
 
@@ -262,8 +352,30 @@ rustshare-desktop daemon status
 rustshare-desktop sync list
 
 # Check logs
-rustshare-desktop daemon logs
+rustshare-desktop daemon logs --tail 100
+
+# Diagnose a specific root
+rustshare-desktop sync doctor <root-uuid>
+
+# Dry-run stale remote cleanup
+rustshare-desktop sync cleanup-remote <root-uuid>
 ```
+
+What "working" should look like with current sync behavior:
+- A nested remote path like `/projects/work/specs/api/openapi.yaml` appears locally as `./work/specs/api/openapi.yaml`.
+- Creating an empty folder in the synced subtree mirrors the folder even before any file exists inside it.
+- Deleting a previously synced folder propagates as a folder delete after its child entries have converged.
+- Creating an empty file syncs a real zero-byte remote file and then settles to idle.
+- Files outside the configured `remote_path` are ignored for that sync root.
+- A root configured for `/` mirrors the whole account tree, not just one folder.
+- Missing remote blobs are quarantined per path so one broken server entry does not stall the whole root forever.
+- Deletes are remembered with tombstones so removing a file on one side does not immediately recreate it from stale state.
+
+If `sync doctor` reports broken remote entries:
+- the client will skip those broken downloads temporarily and continue syncing the rest of the root
+- repeated `404 Not Found` download failures usually mean stale server metadata that should be cleaned up remotely
+- start with `rustshare-desktop sync cleanup-remote <root-uuid>` to see what would be removed
+- use `--apply` only after reviewing the dry-run output
 
 ### Permission denied on socket
 
@@ -271,11 +383,11 @@ The Unix socket is created with 0600 permissions (user-only). If you get permiss
 
 ```bash
 # Check socket permissions
-ls -la ~/.config/rustshare/daemon.sock
+ls -la ~/Library/Application\ Support/io.rustshare.RustShare/daemon.sock
 
 # Should show: srwx------ ... daemon.sock
 # If not, stop and restart daemon
 rustshare-desktop daemon stop
-rm ~/.config/rustshare/daemon.sock
+rm ~/Library/Application\ Support/io.rustshare.RustShare/daemon.sock
 rustshare-desktop daemon start
 ```

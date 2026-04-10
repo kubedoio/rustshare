@@ -2,6 +2,17 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
+## Implementation Update (2026-04-09)
+
+The shared sync engine now also records and executes directory structure as part of sync state.
+
+- Sync is scoped to each configured `SyncRoot.remote_path`
+- Directory creation is planned separately from file transfer and runs first
+- Empty directories are mirrored
+- Uploads resolve remote parent folders instead of flattening files into the sync root
+
+This closes the earlier gap where only files inside nested directories were transferred, while the directories themselves were not treated as mirrored state.
+
 **Goal:** Implement a complete bidirectional file sync engine with real-time local watching, WebSocket remote notifications, conflict resolution, and resumable uploads.
 
 **Architecture:** Scanner detects changes locally and remotely, Planner generates sync operations with conflict resolution, Executor performs transfers with concurrency control and retry logic, all orchestrated by a state machine sync loop.

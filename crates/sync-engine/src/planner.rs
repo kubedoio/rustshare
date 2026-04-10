@@ -138,10 +138,32 @@ impl SyncPlan {
 
 /// Database state for a single file
 #[derive(Debug, Clone)]
-struct DbFileState {
-    hash: String,
-    modified_at: u64,
-    _remote_id: Option<Uuid>,
+pub(crate) struct DbFileState {
+    pub(crate) hash: String,
+    pub(crate) modified_at: u64,
+    pub(crate) _remote_id: Option<Uuid>,
+    pub(crate) is_directory: bool,
+    pub(crate) sync_status: String,
+    pub(crate) tombstone_side: Option<String>,
+    pub(crate) tombstone_at: Option<u64>,
+}
+
+impl DbFileState {
+    fn synced(hash: String, modified_at: u64, remote_id: Option<Uuid>) -> Self {
+        Self {
+            hash,
+            modified_at,
+            _remote_id: remote_id,
+            is_directory: false,
+            sync_status: "synced".to_string(),
+            tombstone_side: None,
+            tombstone_at: None,
+        }
+    }
+
+    fn is_tombstone(&self) -> bool {
+        self.sync_status == "tombstone"
+    }
 }
 
 /// Generate a sync plan by comparing local, remote, and database states
@@ -169,18 +191,20 @@ pub fn generate_plan<F>(
     _root_path: &std::path::Path,
     local_files: &[FileScanResult],
     remote_files: &[RemoteFileInfo],
-    db_lookup: F,
+    mut db_lookup: F,
 ) -> SyncPlan
 where
     F: FnMut(&PathBuf) -> Option<(String, u64, Option<Uuid>)>,
 {
-    generate_plan_with_db_files(root_id, _root_path, local_files, remote_files, &[], &[], db_lookup)
+    generate_plan_with_db_files(root_id, _root_path, local_files, remote_files, &[], &[], |path| {
+        db_lookup(path).map(|(hash, modified_at, remote_id)| DbFileState::synced(hash, modified_at, remote_id))
+    })
 }
 
 /// Extended version that also handles DB-only files (files that were tracked but may have been deleted)
 ///
 /// This version requires the full list of paths from the database to properly detect deletions.
-pub fn generate_plan_with_db_files<F>(
+pub(crate) fn generate_plan_with_db_files<F>(
     root_id: Uuid,
     _root_path: &std::path::Path,
     local_files: &[FileScanResult],
@@ -190,7 +214,7 @@ pub fn generate_plan_with_db_files<F>(
     mut db_lookup: F,
 ) -> SyncPlan
 where
-    F: FnMut(&PathBuf) -> Option<(String, u64, Option<Uuid>)>,
+    F: FnMut(&PathBuf) -> Option<DbFileState>,
 {
     let mut plan = SyncPlan::default();
 
@@ -219,28 +243,79 @@ where
 
     let db_set: std::collections::HashSet<&PathBuf> = db_paths.iter().collect();
 
+    let db_dir_set: std::collections::HashSet<&PathBuf> = db_paths
+        .iter()
+        .filter(|path| {
+            db_lookup(path)
+                .as_ref()
+                .map(|state| state.is_directory)
+                .unwrap_or(false)
+        })
+        .collect();
+
     let mut all_dir_paths: std::collections::HashSet<&PathBuf> = std::collections::HashSet::new();
     all_dir_paths.extend(local_dir_map.keys());
     all_dir_paths.extend(remote_dir_map.keys());
+    all_dir_paths.extend(db_dir_set.iter().copied());
 
     for relative_path in all_dir_paths {
-        match (
-            local_dir_map.get(relative_path).copied(),
-            remote_dir_map.get(relative_path).copied(),
-        ) {
-            (Some(_), None) => {
+        let local_dir = local_dir_map.get(relative_path).copied();
+        let remote_dir = remote_dir_map.get(relative_path).copied();
+        let db_dir = if db_dir_set.contains(relative_path) {
+            db_lookup(relative_path)
+        } else {
+            None
+        };
+
+        if let Some(db_state) = db_dir.as_ref().filter(|state| state.is_tombstone()) {
+            match (local_dir, remote_dir) {
+                (Some(_), None) => {
+                    plan.create_remote_dirs.push(SyncOp::CreateRemoteDir {
+                        root_id,
+                        relative_path: relative_path.clone(),
+                    });
+                }
+                (None, Some(_)) => {
+                    plan.create_local_dirs.push(SyncOp::CreateLocalDir {
+                        root_id,
+                        relative_path: relative_path.clone(),
+                    });
+                }
+                (None, None) => {
+                    let _ = (&db_state.tombstone_side, &db_state.tombstone_at);
+                }
+                (Some(_), Some(_)) => {}
+            }
+            continue;
+        }
+
+        match (local_dir, remote_dir, db_dir) {
+            (Some(_), None, Some(_)) => {
+                plan.delete_local_dirs.push(SyncOp::DeleteLocalDir {
+                    root_id,
+                    relative_path: relative_path.clone(),
+                });
+            }
+            (None, Some(remote), Some(_)) => {
+                plan.delete_remote_dirs.push(SyncOp::DeleteRemoteDir {
+                    root_id,
+                    relative_path: relative_path.clone(),
+                    remote_folder_id: remote.id,
+                });
+            }
+            (Some(_), None, None) => {
                 plan.create_remote_dirs.push(SyncOp::CreateRemoteDir {
                     root_id,
                     relative_path: relative_path.clone(),
                 });
             }
-            (None, Some(_)) => {
+            (None, Some(_), None) => {
                 plan.create_local_dirs.push(SyncOp::CreateLocalDir {
                     root_id,
                     relative_path: relative_path.clone(),
                 });
             }
-            _ => {}
+            (Some(_), Some(_), _) | (None, None, _) => {}
         }
     }
 
@@ -254,11 +329,68 @@ where
         let local = local_map.get(relative_path).copied();
         let remote = remote_map.get(relative_path).copied();
         let db = db_lookup(relative_path)
-            .map(|(hash, modified_at, remote_id)| DbFileState {
-                hash,
-                modified_at,
-                _remote_id: remote_id,
-            });
+            ;
+
+        if let Some(db_state) = db.as_ref().filter(|state| state.is_tombstone()) {
+            match (local, remote) {
+                (Some(local), None) => {
+                    plan.uploads.push(SyncOp::Upload {
+                        root_id,
+                        relative_path: relative_path.clone(),
+                        local_path: local.absolute_path.clone(),
+                        size: local.size,
+                    });
+                }
+                (None, Some(remote)) => {
+                    plan.downloads.push(SyncOp::Download {
+                        root_id,
+                        relative_path: relative_path.clone(),
+                        remote_file_id: remote.id,
+                        remote_hash: remote.hash.clone(),
+                        size: remote.size,
+                    });
+                }
+                (Some(local), Some(remote)) => {
+                    let resolution = if local.modified_at >= remote.modified_at {
+                        ConflictResolution::UploadLocal
+                    } else {
+                        ConflictResolution::DownloadRemote
+                    };
+
+                    plan.conflicts.push(Conflict {
+                        root_id,
+                        relative_path: relative_path.clone(),
+                        local_modified_at: local.modified_at,
+                        remote_modified_at: remote.modified_at,
+                        resolution,
+                    });
+
+                    match resolution {
+                        ConflictResolution::UploadLocal => {
+                            plan.uploads.push(SyncOp::Upload {
+                                root_id,
+                                relative_path: relative_path.clone(),
+                                local_path: local.absolute_path.clone(),
+                                size: local.size,
+                            });
+                        }
+                        ConflictResolution::DownloadRemote => {
+                            plan.downloads.push(SyncOp::Download {
+                                root_id,
+                                relative_path: relative_path.clone(),
+                                remote_file_id: remote.id,
+                                remote_hash: remote.hash.clone(),
+                                size: remote.size,
+                            });
+                        }
+                    }
+                }
+                (None, None) => {
+                    let _ = (&db_state.tombstone_side, &db_state.tombstone_at);
+                }
+            }
+            continue;
+        }
 
         match (local, remote, db) {
             (Some(local), Some(remote), Some(db)) => {
@@ -728,6 +860,104 @@ mod tests {
     }
 
     #[test]
+    fn test_tombstone_keeps_deleted_path_deleted_when_both_sides_absent() {
+        let root_id = Uuid::new_v4();
+
+        let plan = generate_plan_with_db_files(
+            root_id,
+            Path::new("/test"),
+            &[],
+            &[],
+            &[],
+            &[PathBuf::from("deleted.txt")],
+            |path| {
+                if path == &PathBuf::from("deleted.txt") {
+                    Some(DbFileState {
+                        hash: "hash".to_string(),
+                        modified_at: 1000,
+                        _remote_id: None,
+                        is_directory: false,
+                        sync_status: "tombstone".to_string(),
+                        tombstone_side: Some("local".to_string()),
+                        tombstone_at: Some(1200),
+                    })
+                } else {
+                    None
+                }
+            },
+        );
+
+        assert!(plan.is_empty());
+    }
+
+    #[test]
+    fn test_local_recreation_after_tombstone_uploads_instead_of_deleting_local() {
+        let root_id = Uuid::new_v4();
+        let local = create_local_file("deleted.txt", "new_hash", 2000);
+
+        let plan = generate_plan_with_db_files(
+            root_id,
+            Path::new("/test"),
+            &[local],
+            &[],
+            &[],
+            &[PathBuf::from("deleted.txt")],
+            |path| {
+                if path == &PathBuf::from("deleted.txt") {
+                    Some(DbFileState {
+                        hash: "old_hash".to_string(),
+                        modified_at: 1000,
+                        _remote_id: None,
+                        is_directory: false,
+                        sync_status: "tombstone".to_string(),
+                        tombstone_side: Some("local".to_string()),
+                        tombstone_at: Some(1200),
+                    })
+                } else {
+                    None
+                }
+            },
+        );
+
+        assert_eq!(plan.uploads.len(), 1);
+        assert!(plan.deletes.is_empty());
+    }
+
+    #[test]
+    fn test_remote_recreation_after_tombstone_downloads_instead_of_deleting_remote() {
+        let root_id = Uuid::new_v4();
+        let remote_id = Uuid::new_v4();
+        let remote = create_remote_file(remote_id, "deleted.txt", "new_hash", 2000);
+
+        let plan = generate_plan_with_db_files(
+            root_id,
+            Path::new("/test"),
+            &[],
+            &[remote],
+            &[],
+            &[PathBuf::from("deleted.txt")],
+            |path| {
+                if path == &PathBuf::from("deleted.txt") {
+                    Some(DbFileState {
+                        hash: "old_hash".to_string(),
+                        modified_at: 1000,
+                        _remote_id: Some(remote_id),
+                        is_directory: false,
+                        sync_status: "tombstone".to_string(),
+                        tombstone_side: Some("remote".to_string()),
+                        tombstone_at: Some(1200),
+                    })
+                } else {
+                    None
+                }
+            },
+        );
+
+        assert_eq!(plan.downloads.len(), 1);
+        assert!(plan.deletes.is_empty());
+    }
+
+    #[test]
     fn test_in_sync_no_operation() {
         let root_id = Uuid::new_v4();
         let remote_id = Uuid::new_v4();
@@ -820,6 +1050,91 @@ mod tests {
                 assert_eq!(relative_path, &PathBuf::from("assets/icons"));
             }
             _ => panic!("Expected CreateLocalDir operation"),
+        }
+    }
+
+    #[test]
+    fn test_delete_local_directory_when_remote_deleted_and_dir_was_synced() {
+        let root_id = Uuid::new_v4();
+        let local_dir = create_local_directory("docs", 1000);
+
+        let plan = generate_plan_with_db_files(
+            root_id,
+            Path::new("/test"),
+            &[local_dir],
+            &[],
+            &[],
+            &[PathBuf::from("docs")],
+            |path| {
+                if path == &PathBuf::from("docs") {
+                    Some(DbFileState {
+                        hash: String::new(),
+                        modified_at: 1000,
+                        _remote_id: Some(Uuid::new_v4()),
+                        is_directory: true,
+                        sync_status: "synced".to_string(),
+                        tombstone_side: None,
+                        tombstone_at: None,
+                    })
+                } else {
+                    None
+                }
+            },
+        );
+
+        assert!(plan.create_remote_dirs.is_empty());
+        assert_eq!(plan.delete_local_dirs.len(), 1);
+
+        match &plan.delete_local_dirs[0] {
+            SyncOp::DeleteLocalDir { relative_path, .. } => {
+                assert_eq!(relative_path, &PathBuf::from("docs"));
+            }
+            _ => panic!("Expected DeleteLocalDir operation"),
+        }
+    }
+
+    #[test]
+    fn test_delete_remote_directory_when_local_deleted_and_dir_was_synced() {
+        let root_id = Uuid::new_v4();
+        let remote_dir_id = Uuid::new_v4();
+
+        let plan = generate_plan_with_db_files(
+            root_id,
+            Path::new("/test"),
+            &[],
+            &[],
+            &[create_remote_directory(remote_dir_id, "assets", 1000)],
+            &[PathBuf::from("assets")],
+            |path| {
+                if path == &PathBuf::from("assets") {
+                    Some(DbFileState {
+                        hash: String::new(),
+                        modified_at: 1000,
+                        _remote_id: Some(remote_dir_id),
+                        is_directory: true,
+                        sync_status: "synced".to_string(),
+                        tombstone_side: None,
+                        tombstone_at: None,
+                    })
+                } else {
+                    None
+                }
+            },
+        );
+
+        assert!(plan.create_local_dirs.is_empty());
+        assert_eq!(plan.delete_remote_dirs.len(), 1);
+
+        match &plan.delete_remote_dirs[0] {
+            SyncOp::DeleteRemoteDir {
+                relative_path,
+                remote_folder_id,
+                ..
+            } => {
+                assert_eq!(relative_path, &PathBuf::from("assets"));
+                assert_eq!(*remote_folder_id, remote_dir_id);
+            }
+            _ => panic!("Expected DeleteRemoteDir operation"),
         }
     }
 }

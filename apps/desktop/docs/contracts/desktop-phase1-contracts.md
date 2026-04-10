@@ -17,7 +17,8 @@
 ### 1.4 `SyncRoot`
 - **Type**: Struct
 - **Fields**: `id` (UUID), `remote_path` (String), `local_path` (Relative to WorkspaceRoot).
-- **Rule**: Mapping of a backend folder to a local directory.
+- **Rule**: Mapping of a backend folder subtree to a local directory.
+- **Behavior**: Sync is scoped to `remote_path`. The client mirrors that subtree's directory structure before syncing file contents.
 
 ### 1.5 `RemoteEntry`
 - **Fields**: `id` (UUID), `parent_id` (Option<UUID>), `name` (String), `type` (File/Dir), `size` (u64), `hash` (SHA-256), `version` (VersionToken/ETag), `modified_at` (DateTime).
@@ -37,6 +38,15 @@
 
 ### 1.10 `SyncStatus`
 - **Enum**: `Idle`, `Scanning`, `SyncingUp`, `SyncingDown`, `Paused`, `Conflicted`, `Degraded`, `Offline`.
+
+### 1.11 `FileState`
+- **Fields**: `root_id` (UUID), `relative_path` (PathBuf), `local_hash` (Option<String>), `remote_hash` (Option<String>), `remote_file_id` (Option<UUID>), `local_modified_at` (Option<i64>), `remote_modified_at` (Option<i64>), `sync_status` (String), `tombstone_side` (Option<String>), `tombstone_at` (Option<i64>).
+- **Rule**: Represents the last known synchronized state or delete tombstone for one path inside one sync root.
+
+### 1.12 `DeleteTombstone`
+- **Fields**: `root_id` (UUID), `relative_path` (PathBuf), `source_side` (`local` or `remote`), `deleted_at` (Unix timestamp).
+- **Rule**: Created only after the client has high confidence that a previously synced file was intentionally removed and the corresponding delete has been applied or confirmed on the opposite side.
+- **Behavior**: Tombstones prevent the planner from treating a recently deleted path as a brand-new upload or download.
 
 ## 2. Interface Contracts (Traits)
 
@@ -67,6 +77,8 @@ pub trait LocalStateStore {
     fn update_local_inventory(&self, entry: LocalEntry) -> Result<()>;
     fn get_sync_cursor(&self) -> Result<Option<SyncCursor>>;
     fn save_sync_cursor(&self, cursor: SyncCursor) -> Result<()>;
+    fn upsert_file_state(&self, state: FileState) -> Result<()>;
+    fn mark_delete_tombstone(&self, root_id: Uuid, relative_path: &Path, source_side: DeleteSide, deleted_at: i64) -> Result<()>;
 }
 
 pub trait FilesystemWatcher {
@@ -91,6 +103,11 @@ pub trait TransferScheduler {
 - **Atomic Rename**: All downloads go to `.rs_tmp/{guid}.tmp` and are renamed to their destination on success.
 - **Checksum Validation**: SHA-256 for all transferred content.
 - **Interrupted Uploads**: Backend supports chunked uploads; client resumes the current session.
+- **Directory Ordering**: Directory creation happens before file upload/download. Directory deletion happens after child files are removed.
+- **Empty Directories**: Empty directories inside a sync root are part of the mirrored state.
+- **Delete Detection**: Delete propagation only occurs when a path has prior synced state or a tombstone-backed delete decision.
+- **Delete Idempotency**: `ENOENT`, `404`, and `410` on delete paths are treated as already-applied deletes.
+- **State Integrity**: `remote_hash` stores the remote content hash. `remote_file_id` stores the remote object identifier. These are distinct fields and must not be overloaded.
 
 ## 5. Platform Contracts (Phase 1)
 - **Symlinks**: Ignored.

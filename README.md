@@ -27,6 +27,32 @@ The current work focuses on:
 - enforcing clearer architecture and behavior contracts
 - converging on a secure, multi-tenant, integration-friendly design
 
+## Desktop client status
+
+The current desktop client ships as a CLI plus background daemon under [apps/desktop](/Users/scolak/Projects/x/rustshare/apps/desktop).
+
+What is real today:
+
+- the live macOS path is the `rustshare-desktop` binary, currently version `0.3.0`
+- login is pairing-first, with an explicit `--token` fallback for admin and debugging workflows
+- sync roots mirror their configured remote subtree, including directory structure and empty directories
+- root `/` is supported as a full-account mirror
+- broken remote downloads are quarantined per path so one stale server record does not stall the whole root
+- stale remote metadata can be inspected with `sync doctor` and cleaned with `sync cleanup-remote`
+- zero-byte files are synced as normal files, they are no longer skipped and re-uploaded forever
+
+What is not shipped yet:
+
+- a polished `.app` bundle
+- notarized drag-and-drop macOS distribution
+- a finished GUI shell on top of the sync daemon
+
+If you want to build and run the current client, start here:
+
+- [apps/desktop/docs/distribution/macos-client-installation.md](/Users/scolak/Projects/x/rustshare/apps/desktop/docs/distribution/macos-client-installation.md)
+- [apps/desktop/docs/CLI_USAGE.md](/Users/scolak/Projects/x/rustshare/apps/desktop/docs/CLI_USAGE.md)
+- [apps/desktop/docs/architecture/desktop-phase1-architecture.md](/Users/scolak/Projects/x/rustshare/apps/desktop/docs/architecture/desktop-phase1-architecture.md)
+
 ---
 
 ## Product direction
@@ -198,6 +224,14 @@ This repository includes design and planning documents that define the target sh
 - `docs/DESIGN.md` — Design system tokens, typography, colors, and UX rules
 - `docs/SPEC.md` — Notes MVP-1 implementation specification
 - `docs/ARCHITECTURE_NOTES.md` — Notes MVP-1 key architectural decisions
+
+### Desktop client docs
+
+- `apps/desktop/docs/distribution/macos-client-installation.md` — build, install, pairing, daemon lifecycle, and troubleshooting for the current macOS CLI client
+- `apps/desktop/docs/CLI_USAGE.md` — command reference for `rustshare-desktop`
+- `apps/desktop/docs/architecture/desktop-phase1-architecture.md` — component map for the CLI, daemon, and shared sync engine
+- `apps/desktop/docs/architecture/desktop-phase1-runtime-view.md` — what the client actually does at startup, during steady-state sync, and during recovery
+- `apps/desktop/docs/distribution/build-and-package.md` — current internal packaging flow for versioned desktop artifacts
 
 ---
 
