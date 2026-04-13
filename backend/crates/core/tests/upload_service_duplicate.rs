@@ -123,6 +123,7 @@ impl UploadObjectStore for MockUploadObjectStore {
 
 struct MockUploadMetadataStore {
     existing_file: Mutex<Option<File>>,
+    folders: Mutex<Vec<Folder>>,
     created_files: Mutex<Vec<File>>,
     updated_files: Mutex<Vec<File>>,
     created_versions: Mutex<Vec<FileVersion>>,
@@ -130,8 +131,13 @@ struct MockUploadMetadataStore {
 
 impl MockUploadMetadataStore {
     fn new(existing_file: Option<File>) -> Self {
+        Self::with_folders(existing_file, Vec::new())
+    }
+
+    fn with_folders(existing_file: Option<File>, folders: Vec<Folder>) -> Self {
         Self {
             existing_file: Mutex::new(existing_file),
+            folders: Mutex::new(folders),
             created_files: Mutex::new(Vec::new()),
             updated_files: Mutex::new(Vec::new()),
             created_versions: Mutex::new(Vec::new()),
@@ -141,8 +147,14 @@ impl MockUploadMetadataStore {
 
 #[async_trait::async_trait]
 impl UploadMetadataStore for MockUploadMetadataStore {
-    async fn find_folder_by_id(&self, _id: Uuid) -> Result<Option<Folder>, UploadError> {
-        Ok(None)
+    async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<Folder>, UploadError> {
+        Ok(self
+            .folders
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|folder| folder.id == id)
+            .cloned())
     }
 
     async fn find_file_by_path(&self, _path: &str, _owner_id: Uuid) -> Result<Option<File>, UploadError> {
@@ -257,4 +269,142 @@ async fn complete_upload_updates_existing_file_instead_of_creating_duplicate() {
         events[0].payload["file_id"].as_str(),
         Some(existing_file.id.to_string().as_str())
     );
+}
+
+#[tokio::test]
+async fn complete_upload_same_path_with_identical_content_is_a_no_op() {
+    let owner_id = Uuid::new_v4();
+    let tenant_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+    let empty_hash =
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string();
+
+    let mut session = UploadSession::new(
+        session_id,
+        tenant_id,
+        owner_id,
+        None,
+        "note1.md".to_string(),
+        "text/markdown".to_string(),
+        0,
+        1024 * 1024,
+        None,
+    );
+    session.status = UploadSessionStatus::InProgress;
+    session.mark_chunk_received(0);
+
+    let existing_file = File {
+        id: Uuid::new_v4(),
+        name: "note1.md".to_string(),
+        path: "/note1.md".to_string(),
+        content_hash: empty_hash.clone(),
+        size: 0,
+        mime_type: "text/markdown".to_string(),
+        parent_folder_id: None,
+        owner_id,
+        current_version: 2,
+        created_at: Utc::now(),
+        modified_at: Utc::now(),
+        starred_at: None,
+        deleted_at: None,
+        tenant_id,
+    };
+
+    let repo = Arc::new(MockUploadRepo::new(session));
+    let metadata_store = Arc::new(MockUploadMetadataStore::new(Some(existing_file.clone())));
+    let event_store = Arc::new(MockEventStore::new());
+    let service = UploadService::new(
+        repo.clone(),
+        Arc::new(MockUploadObjectStore),
+        metadata_store.clone(),
+        event_store.clone(),
+        Arc::new(EventBroadcaster::new(16)),
+    );
+
+    let response = service.complete_upload(session_id, owner_id).await.unwrap();
+
+    assert_eq!(response.file_id, existing_file.id);
+    assert_eq!(response.content_hash, empty_hash);
+    assert!(metadata_store.created_files.lock().unwrap().is_empty());
+    assert!(metadata_store.updated_files.lock().unwrap().is_empty());
+    assert!(metadata_store.created_versions.lock().unwrap().is_empty());
+    assert!(event_store.events.lock().unwrap().is_empty());
+    assert_eq!(repo.completed.lock().unwrap().as_slice(), &[(session_id, existing_file.id)]);
+}
+
+#[tokio::test]
+async fn complete_upload_updates_existing_nested_file_in_place() {
+    let owner_id = Uuid::new_v4();
+    let tenant_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+    let parent = Folder::new_root_with_name("Uploads".to_string(), owner_id, tenant_id);
+    let child = Folder::new_child_with_ancestors(
+        "Nested".to_string(),
+        format!("{}/Nested", parent.path),
+        parent.id,
+        parent.ancestor_ids.as_deref(),
+        owner_id,
+        tenant_id,
+    );
+
+    let mut session = UploadSession::new(
+        session_id,
+        tenant_id,
+        owner_id,
+        Some(child.id),
+        "note1.md".to_string(),
+        "text/markdown".to_string(),
+        0,
+        1024 * 1024,
+        None,
+    );
+    session.status = UploadSessionStatus::InProgress;
+    session.mark_chunk_received(0);
+
+    let existing_file = File {
+        id: Uuid::new_v4(),
+        name: "note1.md".to_string(),
+        path: format!("{}/note1.md", child.path),
+        content_hash: "old-hash".to_string(),
+        size: 4,
+        mime_type: "text/markdown".to_string(),
+        parent_folder_id: Some(child.id),
+        owner_id,
+        current_version: 5,
+        created_at: Utc::now(),
+        modified_at: Utc::now(),
+        starred_at: None,
+        deleted_at: None,
+        tenant_id,
+    };
+
+    let repo = Arc::new(MockUploadRepo::new(session));
+    let metadata_store = Arc::new(MockUploadMetadataStore::with_folders(
+        Some(existing_file.clone()),
+        vec![parent, child.clone()],
+    ));
+    let event_store = Arc::new(MockEventStore::new());
+    let service = UploadService::new(
+        repo.clone(),
+        Arc::new(MockUploadObjectStore),
+        metadata_store.clone(),
+        event_store.clone(),
+        Arc::new(EventBroadcaster::new(16)),
+    );
+
+    let response = service.complete_upload(session_id, owner_id).await.unwrap();
+
+    assert_eq!(response.file_id, existing_file.id);
+    assert!(metadata_store.created_files.lock().unwrap().is_empty());
+    assert_eq!(metadata_store.updated_files.lock().unwrap().len(), 1);
+    assert_eq!(metadata_store.created_versions.lock().unwrap().len(), 1);
+
+    let updated = metadata_store.updated_files.lock().unwrap()[0].clone();
+    assert_eq!(updated.path, format!("{}/note1.md", child.path));
+    assert_eq!(updated.parent_folder_id, Some(child.id));
+    assert_eq!(updated.current_version, 6);
+
+    let events = event_store.events.lock().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_type, EventType::FileModified);
 }

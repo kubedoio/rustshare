@@ -183,3 +183,20 @@ wscat -c ws://localhost:8080/api/ws \
 - These tests verify the real-time sync functionality end-to-end
 - Integration tests (automated) are pending test server helper implementation
 - Update this document with actual test results after manual execution
+
+## Targeted Regression Checks
+
+These automated checks cover the canonical-path and nested-folder regressions that previously caused duplicate remote metadata and client drift.
+
+```bash
+cd backend
+cargo test -p rustshare-core --test file_service_duplicate -- --nocapture
+cargo test -p rustshare-core --test upload_service_duplicate -- --nocapture
+```
+
+Expected coverage:
+
+- Same-path direct uploads update the existing file instead of creating a duplicate row
+- Same-path resumable uploads update the existing file instead of creating a duplicate row
+- Same-path uploads with identical content are a metadata no-op
+- Nested-folder uploads preserve the canonical path when resolving existing files

@@ -22,6 +22,7 @@
 
 ### 1.5 `RemoteEntry`
 - **Fields**: `id` (UUID), `parent_id` (Option<UUID>), `name` (String), `type` (File/Dir), `size` (u64), `hash` (SHA-256), `version` (VersionToken/ETag), `modified_at` (DateTime).
+- **Rule**: There must be at most one live remote file row for a given canonical `(owner_id, path)` pair.
 
 ### 1.6 `LocalEntry`
 - **Fields**: `path` (Relative to WorkspaceRoot), `type` (File/Dir), `size` (u64), `hash` (SHA-256), `mtime` (DateTime), `last_synced_version` (Option<VersionToken/ETag>).
@@ -97,7 +98,12 @@ pub trait TransferScheduler {
 - `GET /api/v1/sync/roots`: Selected roots for the user.
 - `GET /api/v1/sync/deltas?cursor={cursor}`: List of remote changes since cursor.
 - `POST /api/v1/sync/upload`: Resumable endpoint (already exists in backend logic).
-- `GET /api/v1/sync/download/{file_id}`: Stream content for a direct ID.
+- `GET /api/v1/files/{id}/content`: Stream raw file content for a direct file ID.
+- `GET /api/v1/files`: Return the current live file inventory for the authenticated user.
+- `GET /api/v1/folders/tree`: Return the live folder tree for the authenticated user.
+- `POST /api/v1/notes`: Create a markdown note as a file in the requested folder (defaulting to `/Notes`).
+- `PUT /api/v1/notes/{id}`: Save note content by updating the existing file in place.
+- **Canonical path semantics**: `POST /api/v1/sync/upload` and note/file create flows must update an existing live file at the same canonical path instead of creating duplicates.
 
 ## 4. File Semantics
 - **Atomic Rename**: All downloads go to `.rs_tmp/{guid}.tmp` and are renamed to their destination on success.
@@ -105,6 +111,9 @@ pub trait TransferScheduler {
 - **Interrupted Uploads**: Backend supports chunked uploads; client resumes the current session.
 - **Directory Ordering**: Directory creation happens before file upload/download. Directory deletion happens after child files are removed.
 - **Empty Directories**: Empty directories inside a sync root are part of the mirrored state.
+- **Canonical Path Uniqueness**: Live file metadata is unique per canonical owner/path. Nested folders are part of the canonical path.
+- **In-place Updates**: Uploading new content to an existing canonical path increments the version on the existing file record and preserves the file ID.
+- **No-op Re-uploads**: Uploading identical content to an existing canonical path returns the existing file without creating a new version.
 - **Delete Detection**: Delete propagation only occurs when a path has prior synced state or a tombstone-backed delete decision.
 - **Delete Idempotency**: `ENOENT`, `404`, and `410` on delete paths are treated as already-applied deletes.
 - **State Integrity**: `remote_hash` stores the remote content hash. `remote_file_id` stores the remote object identifier. These are distinct fields and must not be overloaded.

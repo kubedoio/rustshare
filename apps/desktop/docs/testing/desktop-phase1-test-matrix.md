@@ -11,6 +11,9 @@
 | **Local Delete** | Integration | macOS, Windows | 100% | Delete file; verify remote deletion. |
 | **Remote Create** | Integration | macOS, Windows | 100% | Create remote; verify local download. |
 | **Remote Update** | Integration | macOS, Windows | 100% | Remote change; verify local hash + metadata match. |
+| **Same-path Update** | Integration | macOS, Windows | 100% | Repeated upload to same path updates existing remote file ID; no duplicate live row. |
+| **Same-content Re-upload** | Integration | macOS, Windows | 100% | Re-upload identical bytes to same path; no new version or duplicate live row. |
+| **Nested Path Mirroring** | Integration | macOS, Windows | 100% | Nested remote folder/file appears at matching local path before file content is consumed. |
 | **Conflict Handling** | Integration | macOS, Windows | 100% | Edit both simultaneously; verify conflict copy. |
 | **Atomic Renaming** | Unit | macOS, Windows | 100% | No temp files left after download success. |
 | **Pause/Resume** | Integration | macOS, Windows | 100% | Suspend loop; re-sync on resume. |

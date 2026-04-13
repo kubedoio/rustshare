@@ -2,10 +2,10 @@
 
 | Status | Updated |
 | :--- | :--- |
-| **Version** | 1.2.0 |
+| **Version** | 1.3.0 |
 | **Author** | Antigravity (Principal Systems Engineer) |
-| **Date** | 2026-04-09 |
-| **Updates** | Daemon architecture, Unix socket, CLI commands, deletion semantics |
+| **Date** | 2026-04-10 |
+| **Updates** | Daemon architecture, Unix socket, CLI commands, deletion semantics, same-path update semantics |
 
 ## 1. Title
 RustShare Desktop Sync Client - Phase 1
@@ -81,6 +81,8 @@ Phase 1 focuses on building a lightweight, reliable desktop synchronization clie
 - **Polling/WS**: Initial sync uses full scan; steady state uses WebSocket notifications with a periodic poll fallback.
 - **Direction**: Remote changes take precedence in tie-breaking scenarios where timestamps are identical but hashes differ (rare).
 - **Path Preservation**: Relative paths inside a sync root are preserved on upload and download.
+- **Same-path Update Semantics**: When a file already exists at the canonical remote path, uploads update that file in place instead of creating a duplicate row.
+- **Same-content No-op**: Re-uploading identical bytes to the same canonical path is treated as a no-op for metadata and version history.
 - **Ordering**: Directory creation runs before file transfer so nested content never depends on flattened uploads.
 - **Deletion Model**: A missing file only means "delete the other side" when the client has prior synced state for that path. Otherwise it is treated as a new file on the side where it still exists.
 - **Delete Idempotency**: Repeating a local delete for an already-missing local file or a remote delete for an already-missing remote file must be treated as success, not as a fatal error.
@@ -127,6 +129,9 @@ Phase 1 focuses on building a lightweight, reliable desktop synchronization clie
 - [ ] Deleting a previously synced local file removes the remote copy and does not recreate the file on the next sync cycle.
 - [ ] Deleting a previously synced remote file removes the local copy and does not recreate the file on the next sync cycle.
 - [ ] Repeating a delete after the target is already gone is idempotent and does not wedge the root in a retry loop.
+- [ ] Creating a nested remote folder and note materializes the full local directory path before the file is written.
+- [ ] Uploading new bytes to an existing canonical remote path updates the existing file in place and does not create a duplicate live row.
+- [ ] Re-uploading identical bytes to the same canonical remote path does not create a new version or duplicate live row.
 
 ## 20. Open Questions / Deferred Items
 - **Delta Sync**: Deferred to Phase 2.

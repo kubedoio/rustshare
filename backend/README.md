@@ -27,6 +27,8 @@ The backend is the only production runtime server. It is responsible for:
 - Unversioned `/api/...` aliases and legacy auth aliases are compatibility-only
 - New backend/client work must follow [API Contract Freeze](../docs/2026-03-21-api-contract-freeze.md)
 - Client implementations should also follow [Client Integration Checklist](../docs/2026-03-21-client-integration-checklist.md)
+- Live file metadata is unique per canonical `(owner_id, path)` pair; same-path uploads must update in place rather than create duplicates
+- Nested folder paths are part of the canonical file path contract and must be preserved across note, file, and resumable upload flows
 
 ## Stable Client Entry Points
 
@@ -54,6 +56,7 @@ The backend is the only production runtime server. It is responsible for:
 - `PUT /api/v1/files/:id`
 - `DELETE /api/v1/files/:id`
 - `GET /api/v1/files/:id/download`
+- `GET /api/v1/files/:id/content`
 - `GET /api/v1/files/:id/versions`
 - `POST /api/v1/files/:id/restore`
 - `POST /api/v1/files/:id/move`
