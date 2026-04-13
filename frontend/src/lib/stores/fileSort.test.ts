@@ -8,7 +8,7 @@ describe('fileSort store', () => {
 		fileSortState.set({
 			field: 'name',
 			order: 'asc',
-			viewMode: 'grid',
+			viewMode: 'list',
 			pageSize: 20
 		});
 		// Clear localStorage
@@ -20,7 +20,7 @@ describe('fileSort store', () => {
 			const state = get(fileSortState);
 			expect(state.field).toBe('name');
 			expect(state.order).toBe('asc');
-			expect(state.viewMode).toBe('grid');
+			expect(state.viewMode).toBe('list');
 		});
 	});
 
