@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { fileSortState, setSortField, setViewMode } from '$lib/stores/fileSort';
+import { fileSortState, setSortField, setViewMode, setPageSize } from '$lib/stores/fileSort';
 
 describe('fileSort store', () => {
 	beforeEach(() => {
@@ -8,7 +8,8 @@ describe('fileSort store', () => {
 		fileSortState.set({
 			field: 'name',
 			order: 'asc',
-			viewMode: 'grid'
+			viewMode: 'grid',
+			pageSize: 20
 		});
 		// Clear localStorage
 		localStorage.clear();
@@ -45,7 +46,8 @@ describe('fileSort store', () => {
 			fileSortState.set({
 				field: 'name',
 				order: 'desc',
-				viewMode: 'grid'
+				viewMode: 'grid',
+				pageSize: 20
 			});
 
 			setSortField('size');
@@ -92,12 +94,24 @@ describe('fileSort store', () => {
 		});
 	});
 
-	describe('localStorage persistence', () => {
+	describe('pageSize', () => {
+		it('should default to 20', () => {
+			const state = get(fileSortState);
+			expect(state.pageSize).toBe(20);
+		});
+
+		it('should update pageSize', () => {
+			setPageSize(50);
+			expect(get(fileSortState).pageSize).toBe(50);
+		});
+	});
+
+	describe('localStorage persistence v3', () => {
 		it('should save state to localStorage', () => {
 			setSortField('size');
 			setViewMode('list');
 
-			const stored = localStorage.getItem('file-sort-state');
+			const stored = localStorage.getItem('file-sort-state-v3');
 			expect(stored).toBeTruthy();
 
 			const parsed = JSON.parse(stored!);
@@ -108,11 +122,12 @@ describe('fileSort store', () => {
 		it('should load state from localStorage on init', async () => {
 			// Manually set localStorage
 			localStorage.setItem(
-				'file-sort-state',
+				'file-sort-state-v3',
 				JSON.stringify({
 					field: 'modified_at',
 					order: 'desc',
-					viewMode: 'list'
+					viewMode: 'list',
+					pageSize: 20
 				})
 			);
 
@@ -127,7 +142,7 @@ describe('fileSort store', () => {
 		});
 
 		it('should handle corrupted localStorage gracefully', async () => {
-			localStorage.setItem('file-sort-state', 'invalid json');
+			localStorage.setItem('file-sort-state-v3', 'invalid json');
 
 			vi.resetModules();
 			const { fileSortState: freshStore } = await import('./fileSort');
@@ -136,7 +151,31 @@ describe('fileSort store', () => {
 			// Should fall back to defaults
 			expect(state.field).toBe('name');
 			expect(state.order).toBe('asc');
-			expect(state.viewMode).toBe('grid');
+			expect(state.viewMode).toBe('list');
+		});
+
+		it('should save pageSize to localStorage', () => {
+			setPageSize(10);
+			const stored = localStorage.getItem('file-sort-state-v3');
+			expect(stored).toBeTruthy();
+			expect(JSON.parse(stored!).pageSize).toBe(10);
+		});
+
+		it('should load pageSize from localStorage on init', async () => {
+			localStorage.setItem(
+				'file-sort-state-v3',
+				JSON.stringify({
+					field: 'size',
+					order: 'desc',
+					viewMode: 'grid',
+					pageSize: 50
+				})
+			);
+
+			vi.resetModules();
+			const { fileSortState: freshStore } = await import('./fileSort');
+			const state = get(freshStore);
+			expect(state.pageSize).toBe(50);
 		});
 	});
 });
