@@ -32,14 +32,16 @@
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	let countdownInterval: ReturnType<typeof setInterval> | null = null;
 
-	onMount(async () => {
-		// Check if we're in scan mode (from query param)
-		const mode = $page.url.searchParams.get('mode');
-		if (mode === 'scan') {
-			activeTab = 'scan';
-		}
-		
-		await startPairing();
+	onMount(() => {
+		void (async () => {
+			// Check if we're in scan mode (from query param)
+			const mode = $page.url.searchParams.get('mode');
+			if (mode === 'scan') {
+				activeTab = 'scan';
+			}
+			
+			await startPairing();
+		})();
 	});
 
 	onDestroy(() => {

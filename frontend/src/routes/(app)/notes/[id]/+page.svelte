@@ -54,13 +54,15 @@
     renderedPreview = renderMarkdown(content);
   }
 
-  onMount(async () => {
-    if (!noteId) {
-      saveError = 'Invalid note ID';
-      isLoading = false;
-      return;
-    }
-    await loadNote();
+  onMount(() => {
+    void (async () => {
+      if (!noteId) {
+        saveError = 'Invalid note ID';
+        isLoading = false;
+        return;
+      }
+      await loadNote();
+    })();
   });
 
   onDestroy(() => {

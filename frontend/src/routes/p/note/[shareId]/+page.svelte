@@ -13,20 +13,22 @@
   let isLoading = true;
   let renderedContent = '';
 
-  onMount(async () => {
-    if (!shareId) {
-      error = 'Invalid share link';
-      isLoading = false;
-      return;
-    }
-    try {
-      note = await getPublicNote(shareId);
-      renderedContent = renderMarkdown(note.content);
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to load note';
-    } finally {
-      isLoading = false;
-    }
+  onMount(() => {
+    void (async () => {
+      if (!shareId) {
+        error = 'Invalid share link';
+        isLoading = false;
+        return;
+      }
+      try {
+        note = await getPublicNote(shareId);
+        renderedContent = renderMarkdown(note.content);
+      } catch (err) {
+        error = err instanceof Error ? err.message : 'Failed to load note';
+      } finally {
+        isLoading = false;
+      }
+    })();
   });
 </script>
 

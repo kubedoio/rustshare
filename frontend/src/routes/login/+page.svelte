@@ -29,17 +29,19 @@
 		goto(redirectTo);
 	}
 
-	onMount(async () => {
-		try {
-			authConfig = await getAuthConfig();
-			authConfigError = '';
-		} catch (error) {
-			console.error('Failed to load auth configuration:', error);
-			authConfigError =
-				'RustShare could not confirm the active login mode. Password sign-in stays available as a fallback while the operator checks OIDC settings.';
-		} finally {
-			isAuthConfigLoading = false;
-		}
+	onMount(() => {
+		void (async () => {
+			try {
+				authConfig = await getAuthConfig();
+				authConfigError = '';
+			} catch (error) {
+				console.error('Failed to load auth configuration:', error);
+				authConfigError =
+					'RustShare could not confirm the active login mode. Password sign-in stays available as a fallback while the operator checks OIDC settings.';
+			} finally {
+				isAuthConfigLoading = false;
+			}
+		})();
 	});
 
 	async function handleLogin() {

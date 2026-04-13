@@ -436,7 +436,7 @@
 				<input
 					bind:this={renameInputRef}
 					type="text"
-					class="flex-1 min-w-0 px-1.5 py-0.5 text-xs bg-base-100 border border-brand-500 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+					class="flex-1 min-w-0 px-1.5 py-0.5 text-xs bg-base-100 border border-brand-500 rounded-md focus:outline-hidden focus:ring-2 focus:ring-brand-500/20"
 					value={renameValue}
 					oninput={(e) => renameValue = e.currentTarget.value}
 					onkeydown={handleRenameKeydown}

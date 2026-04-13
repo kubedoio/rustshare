@@ -28,19 +28,21 @@
 		terms: 'text-amber-600 bg-amber-500/10'
 	};
 
-	onMount(async () => {
-		if (!browser) return;
-		loading = true;
-		try {
-			workflows = await listWorkflows();
-			if (workflows.length > 0 && !selectedWorkflow) {
-				selectWorkflow(workflows[0]);
+	onMount(() => {
+		void (async () => {
+			if (!browser) return;
+			loading = true;
+			try {
+				workflows = await listWorkflows();
+				if (workflows.length > 0 && !selectedWorkflow) {
+					selectWorkflow(workflows[0]);
+				}
+			} catch (e) {
+				workflows = [];
+			} finally {
+				loading = false;
 			}
-		} catch (e) {
-			workflows = [];
-		} finally {
-			loading = false;
-		}
+		})();
 	});
 
 	function selectWorkflow(wf: Workflow) {
@@ -210,7 +212,7 @@
 								id="wf-subject"
 								type="text"
 								bind:value={editingWorkflow.subject}
-								class="w-full rounded-xl border border-base-300/60 bg-base-200/30 px-3 py-2 text-sm focus:border-brand-500/50 focus:bg-base-100 focus:outline-none focus:ring-2 focus:ring-brand-500/10"
+								class="w-full rounded-xl border border-base-300/60 bg-base-200/30 px-3 py-2 text-sm focus:border-brand-500/50 focus:bg-base-100 focus:outline-hidden focus:ring-2 focus:ring-brand-500/10"
 							/>
 						</div>
 
@@ -224,7 +226,7 @@
 								id="wf-body"
 								bind:value={editingWorkflow.body}
 								rows="10"
-								class="w-full rounded-xl border border-base-300/60 bg-base-200/30 px-3 py-2 text-sm font-mono focus:border-brand-500/50 focus:bg-base-100 focus:outline-none focus:ring-2 focus:ring-brand-500/10 resize-y"
+								class="w-full rounded-xl border border-base-300/60 bg-base-200/30 px-3 py-2 text-sm font-mono focus:border-brand-500/50 focus:bg-base-100 focus:outline-hidden focus:ring-2 focus:ring-brand-500/10 resize-y"
 							></textarea>
 						</div>
 
@@ -237,7 +239,7 @@
 								</div>
 								<button
 									type="button"
-									class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none"
+									class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-hidden"
 									class:bg-brand-500={editingWorkflow.terms_enabled}
 									class:bg-base-300={!editingWorkflow.terms_enabled}
 									on:click={() => { if (editingWorkflow) editingWorkflow.terms_enabled = !editingWorkflow.terms_enabled; }}
@@ -260,7 +262,7 @@
 										id="wf-terms"
 										bind:value={editingWorkflow.terms_text}
 										rows="8"
-										class="w-full rounded-xl border border-base-300/60 bg-base-200/30 px-3 py-2 text-xs font-mono focus:border-brand-500/50 focus:bg-base-100 focus:outline-none focus:ring-2 focus:ring-brand-500/10 resize-y"
+										class="w-full rounded-xl border border-base-300/60 bg-base-200/30 px-3 py-2 text-xs font-mono focus:border-brand-500/50 focus:bg-base-100 focus:outline-hidden focus:ring-2 focus:ring-brand-500/10 resize-y"
 									></textarea>
 								</div>
 							{/if}

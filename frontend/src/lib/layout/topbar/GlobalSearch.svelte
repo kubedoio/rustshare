@@ -31,7 +31,7 @@
 	<input
 		type="text"
 		placeholder="Search files, folders, or activity..."
-		class="w-full rounded-2xl border border-base-300/50 bg-base-200/50 px-10 py-2 text-sm text-base-content transition-all placeholder:text-base-content/30 focus:border-brand-500/50 focus:bg-base-100 focus:outline-none focus:ring-4 focus:ring-brand-500/10"
+		class="w-full rounded-2xl border border-base-300/50 bg-base-200/50 px-10 py-2 text-sm text-base-content transition-all placeholder:text-base-content/30 focus:border-brand-500/50 focus:bg-base-100 focus:outline-hidden focus:ring-4 focus:ring-brand-500/10"
 		{value}
 		on:input={handleInput}
 		on:keydown={handleKeydown}

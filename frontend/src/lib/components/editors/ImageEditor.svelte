@@ -34,29 +34,31 @@
   let maintainAspectRatio = true;
   let aspectRatio = 1;
   
-  onMount(async () => {
-    // Wait for canvas to be available
-    await tick();
-    
-    if (!canvas) {
-      error = 'Canvas element not found';
-      loading = false;
-      return;
-    }
-    
-    try {
-      editor = new ImageEditor(canvas);
-      await editor.loadImage(imageUrl);
-      updateToolbarState();
-      const dims = editor.getDimensions();
-      resizeWidth = dims.width;
-      resizeHeight = dims.height;
-      aspectRatio = dims.width / dims.height;
-      loading = false;
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to load image';
-      loading = false;
-    }
+  onMount(() => {
+    void (async () => {
+      // Wait for canvas to be available
+      await tick();
+      
+      if (!canvas) {
+        error = 'Canvas element not found';
+        loading = false;
+        return;
+      }
+      
+      try {
+        editor = new ImageEditor(canvas);
+        await editor.loadImage(imageUrl);
+        updateToolbarState();
+        const dims = editor.getDimensions();
+        resizeWidth = dims.width;
+        resizeHeight = dims.height;
+        aspectRatio = dims.width / dims.height;
+        loading = false;
+      } catch (err) {
+        error = err instanceof Error ? err.message : 'Failed to load image';
+        loading = false;
+      }
+    })();
   });
   
   function updateToolbarState() {

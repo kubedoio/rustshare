@@ -22,15 +22,17 @@
 	let inviteOpen = false;
 	let inviteEnabled = false;
 
-	onMount(async () => {
-		if ($currentUser) {
-			try {
-				const res = await getFeatures();
-				inviteEnabled = res.invite_enabled;
-			} catch {
-				inviteEnabled = false;
+	onMount(() => {
+		void (async () => {
+			if ($currentUser) {
+				try {
+					const res = await getFeatures();
+					inviteEnabled = res.invite_enabled;
+				} catch {
+					inviteEnabled = false;
+				}
 			}
-		}
+		})();
 	});
 
 	$: unreadCountQuery = createQuery({

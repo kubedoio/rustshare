@@ -45,8 +45,8 @@
 	let showSuccess = $state(false);
 	let showError = $state(false);
 
-	onMount(async () => {
-		await loadProfile();
+	onMount(() => {
+		void loadProfile();
 	});
 
 	async function loadProfile() {
@@ -201,7 +201,7 @@
 				<!-- Avatar Section -->
 				<div class="flex flex-col items-center gap-4 mb-8">
 					<div class="avatar">
-						<div class="w-24 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2">
+						<div class="w-24 rounded-full ring-3 ring-primary ring-offset-base-100 ring-offset-2">
 							{#if previewUrl}
 								<img src={previewUrl} alt="Avatar preview" />
 							{:else if avatarUrl && !avatarError}

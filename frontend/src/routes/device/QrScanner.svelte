@@ -18,17 +18,19 @@
 	let lastErrorLogTime = 0;
 	const ERROR_LOG_THROTTLE_MS = 5000;
 
-	// Use different element IDs for inline vs modal
-	const elementId = inline ? 'qr-reader-inline' : 'qr-reader';
+	// Keep element ID reactive to prop changes in runes mode.
+	let elementId = $derived(inline ? 'qr-reader-inline' : 'qr-reader');
 
-	onMount(async () => {
-		try {
-			scanner = new Html5Qrcode(elementId);
-			await startScanning();
-		} catch (error: any) {
-			scannerError = error?.message || 'Failed to initialize QR scanner';
-			isLoading = false;
-		}
+	onMount(() => {
+		void (async () => {
+			try {
+				scanner = new Html5Qrcode(elementId);
+				await startScanning();
+			} catch (error: any) {
+				scannerError = error?.message || 'Failed to initialize QR scanner';
+				isLoading = false;
+			}
+		})();
 	});
 
 	onDestroy(() => {

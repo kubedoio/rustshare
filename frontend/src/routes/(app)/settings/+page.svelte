@@ -89,8 +89,8 @@
 		return 0;
 	})());
 
-	onMount(async () => {
-		await Promise.all([
+	onMount(() => {
+		void Promise.all([
 			loadProfile(),
 			refreshSessions(),
 			refreshDevices(),
@@ -342,19 +342,19 @@
 							<input
 								type="password"
 								placeholder="Current password"
-								class="w-full px-4 py-2 bg-base-100 border border-base-300 rounded-lg text-sm text-base-content placeholder:text-base-content/40 focus:outline-none focus:border-brand-500/50"
+								class="w-full px-4 py-2 bg-base-100 border border-base-300 rounded-lg text-sm text-base-content placeholder:text-base-content/40 focus:outline-hidden focus:border-brand-500/50"
 								bind:value={passwordForm.current_password}
 							/>
 							<input
 								type="password"
 								placeholder="New password"
-								class="w-full px-4 py-2 bg-base-100 border border-base-300 rounded-lg text-sm text-base-content placeholder:text-base-content/40 focus:outline-none focus:border-brand-500/50"
+								class="w-full px-4 py-2 bg-base-100 border border-base-300 rounded-lg text-sm text-base-content placeholder:text-base-content/40 focus:outline-hidden focus:border-brand-500/50"
 								bind:value={passwordForm.new_password}
 							/>
 							<input
 								type="password"
 								placeholder="Confirm new password"
-								class="w-full px-4 py-2 bg-base-100 border border-base-300 rounded-lg text-sm text-base-content placeholder:text-base-content/40 focus:outline-none focus:border-brand-500/50"
+								class="w-full px-4 py-2 bg-base-100 border border-base-300 rounded-lg text-sm text-base-content placeholder:text-base-content/40 focus:outline-hidden focus:border-brand-500/50"
 								bind:value={passwordForm.confirm_password}
 							/>
 						</div>
@@ -489,7 +489,7 @@
 								<input
 									type="text"
 									placeholder="XXXX-XXXX"
-									class="px-4 py-2 bg-base-100 border border-base-300 rounded-lg text-sm font-mono text-base-content placeholder:text-base-content/40 focus:outline-none focus:border-brand-500/50 w-32 uppercase"
+									class="px-4 py-2 bg-base-100 border border-base-300 rounded-lg text-sm font-mono text-base-content placeholder:text-base-content/40 focus:outline-hidden focus:border-brand-500/50 w-32 uppercase"
 									bind:value={userCodeInput}
 									maxlength="9"
 									on:input={(e) => userCodeInput = userCodeInput.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 4) + (userCodeInput.length > 4 ? '-' + userCodeInput.slice(4, 8) : '')}
@@ -621,7 +621,7 @@
 						<div class="py-4">
 							<label class="block text-sm font-medium text-base-content mb-2">Default link expiration</label>
 							<select 
-								class="w-full sm:w-auto px-4 py-2 bg-base-100 border border-base-300 rounded-lg text-sm text-base-content focus:outline-none focus:border-brand-500/50"
+								class="w-full sm:w-auto px-4 py-2 bg-base-100 border border-base-300 rounded-lg text-sm text-base-content focus:outline-hidden focus:border-brand-500/50"
 								bind:value={defaultLinkExpiration}
 							>
 								<option value="0">Never</option>
