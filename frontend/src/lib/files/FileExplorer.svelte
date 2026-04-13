@@ -1,75 +1,124 @@
 <script lang="ts">
 	import type { File as FileType, Folder } from '$lib/api/types';
 	import type { ReplicationStatus } from '$lib/stores/replication';
+	import type { SortField, SortOrder } from '$lib/stores/fileSort';
 
 	import FileBrowserPane from './FileBrowserPane.svelte';
 
-	export let folders: Folder[] = [];
-	export let files: FileType[] = [];
-	export let folderPath: Folder[] = [];
-	export let rootLabel: string = 'My Files';
-	export let title = 'All files';
-	export let description = '';
-	export let emptyTitle = 'No files yet';
-	export let emptyDescription = 'Upload your first file to get started';
-	export let emptyActionLabel: string | null = 'Upload files';
-	export let workspaceMode: 'all' | 'photos' | 'recent' | 'starred' | 'deleted' = 'all';
-	export let showBreadcrumbs = true;
-	export let canCreateFolder = true;
-	export let canUpload = true;
-	export let allowSelectionMode = true;
-	export let isLoading: boolean = false;
-	export let error: Error | null = null;
-	export let replicationStatuses: Record<string, ReplicationStatus> = {};
-	export let selectionMode: boolean = false;
-	export let isUploading: boolean = false;
-	export let isSharedRoot: boolean = false;
+	interface Props {
+		folders?: Folder[];
+		files?: FileType[];
+		folderPath?: Folder[];
+		rootLabel?: string;
+		title?: string;
+		description?: string;
+		emptyTitle?: string;
+		emptyDescription?: string;
+		emptyActionLabel?: string | null;
+		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+		showBreadcrumbs?: boolean;
+		canCreateFolder?: boolean;
+		canUpload?: boolean;
+		allowSelectionMode?: boolean;
+		isLoading?: boolean;
+		error?: Error | null;
+		replicationStatuses?: Record<string, ReplicationStatus>;
+		selectionMode?: boolean;
+		isUploading?: boolean;
+		isSharedRoot?: boolean;
+		activeSortField?: SortField;
+		activeSortOrder?: SortOrder;
+		onSort?: (field: SortField) => void;
+		onFolderClick: (folder: Folder) => void;
+		onFileClick: (file: FileType) => void;
+		onRefresh: () => void;
+		onNewFolder: () => void;
+		onUpload: () => void;
+		onToggleSelection: () => void;
+		onSelectAll: () => void;
+		onDeselectAll: () => void;
+		onBulkDelete: () => void;
+		onBulkDownload: () => void;
+		onBulkMove: () => void;
+		onRenameFile: ((file: FileType) => void) | ((file: FileType, newName: string) => void);
+		onDeleteFile: (file: FileType) => void;
+		onToggleFileStar: (file: FileType) => void;
+		onRestoreFile: (file: FileType) => void;
+		onPermanentDeleteFile: (file: FileType) => void;
+		onShareFile: (file: FileType) => void;
+		onVersionHistory: (file: FileType) => void;
+		onMoveFile: ((file: FileType) => void) | ((file: FileType, targetFolderId: string | null) => void);
+		onDownloadFile: (file: FileType) => void;
+		onReplaceFile: (file: FileType) => void;
+		onRenameFolder: ((folder: Folder) => void) | ((folder: Folder, newName: string) => void);
+		onDeleteFolder: (folder: Folder) => void;
+		onToggleFolderStar: (folder: Folder) => void;
+		onRestoreFolder: (folder: Folder) => void;
+		onPermanentDeleteFolder: (folder: Folder) => void;
+		onShareFolder: (folder: Folder) => void;
+		onMoveFolder: ((folder: Folder) => void) | ((folder: Folder, targetFolderId: string | null) => void);
+		onEditFile: (file: FileType) => void;
+		onbreadcrumbNavigate?: (event: CustomEvent<{ folderId: string | null }>) => void;
+	}
 
-	// Event handlers
-
-	export let onFolderClick: (folder: Folder) => void;
-	export let onFileClick: (file: FileType) => void;
-	export let onRefresh: () => void;
-	
-	// Action handlers
-	export let onNewFolder: () => void;
-	export let onUpload: () => void;
-	export let onToggleSelection: () => void;
-	export let onSelectAll: () => void;
-	export let onDeselectAll: () => void;
-	export let onBulkDelete: () => void;
-	export let onBulkDownload: () => void;
-	export let onBulkMove: () => void;
-
-	// Item action handlers - support both modal (no args) and inline/direct (with args)
-	export let onRenameFile: ((file: FileType) => void) | ((file: FileType, newName: string) => void);
-	export let onDeleteFile: (file: FileType) => void;
-	export let onToggleFileStar: (file: FileType) => void;
-	export let onRestoreFile: (file: FileType) => void;
-	export let onPermanentDeleteFile: (file: FileType) => void;
-	export let onShareFile: (file: FileType) => void;
-	export let onVersionHistory: (file: FileType) => void;
-	export let onMoveFile: ((file: FileType) => void) | ((file: FileType, targetFolderId: string | null) => void);
-	export let onDownloadFile: (file: FileType) => void;
-	export let onReplaceFile: (file: FileType) => void;
-	
-	export let onRenameFolder: ((folder: Folder) => void) | ((folder: Folder, newName: string) => void);
-	export let onDeleteFolder: (folder: Folder) => void;
-	export let onToggleFolderStar: (folder: Folder) => void;
-	export let onRestoreFolder: (folder: Folder) => void;
-	export let onPermanentDeleteFolder: (folder: Folder) => void;
-	export let onShareFolder: (folder: Folder) => void;
-	export let onMoveFolder: ((folder: Folder) => void) | ((folder: Folder, targetFolderId: string | null) => void);
-
-	export let onEditFile: (file: FileType) => void;
-	export let onbreadcrumbNavigate: (event: CustomEvent<{ folderId: string | null }>) => void = () => {};
-
-
+	let {
+		folders = [],
+		files = [],
+		folderPath = [],
+		rootLabel = 'My Files',
+		title = 'All files',
+		description = '',
+		emptyTitle = 'No files yet',
+		emptyDescription = 'Upload your first file to get started',
+		emptyActionLabel = 'Upload files',
+		workspaceMode = 'all',
+		showBreadcrumbs = true,
+		canCreateFolder = true,
+		canUpload = true,
+		allowSelectionMode = true,
+		isLoading = false,
+		error = null,
+		replicationStatuses = {},
+		selectionMode = false,
+		isUploading = false,
+		isSharedRoot = false,
+		activeSortField = 'name',
+		activeSortOrder = 'asc',
+		onSort = () => {},
+		onFolderClick,
+		onFileClick,
+		onRefresh,
+		onNewFolder,
+		onUpload,
+		onToggleSelection,
+		onSelectAll,
+		onDeselectAll,
+		onBulkDelete,
+		onBulkDownload,
+		onBulkMove,
+		onRenameFile,
+		onDeleteFile,
+		onToggleFileStar,
+		onRestoreFile,
+		onPermanentDeleteFile,
+		onShareFile,
+		onVersionHistory,
+		onMoveFile,
+		onDownloadFile,
+		onReplaceFile,
+		onRenameFolder,
+		onDeleteFolder,
+		onToggleFolderStar,
+		onRestoreFolder,
+		onPermanentDeleteFolder,
+		onShareFolder,
+		onMoveFolder,
+		onEditFile,
+		onbreadcrumbNavigate = () => {}
+	}: Props = $props();
 </script>
 
 <div class="flex h-full min-h-0 bg-base-100">
-
-
 	<!-- File Browser Pane -->
 	<div class="flex-1 flex min-h-0 min-w-0 flex-col overflow-hidden">
 		<FileBrowserPane
@@ -93,6 +142,9 @@
 			{selectionMode}
 			{isUploading}
 			{isSharedRoot}
+			{activeSortField}
+			{activeSortOrder}
+			{onSort}
 			{onRefresh}
 			{onNewFolder}
 			{onUpload}
@@ -122,7 +174,11 @@
 			{onPermanentDeleteFolder}
 			{onShareFolder}
 			{onMoveFolder}
-			{onbreadcrumbNavigate}
-		/>
+			onbreadcrumbNavigate={onbreadcrumbNavigate}
+		>
+			<div slot="pagination">
+				<slot name="pagination" />
+			</div>
+		</FileBrowserPane>
 	</div>
 </div>

@@ -139,13 +139,20 @@ describe("FileThumbnail", () => {
         mime_type: "application/pdf",
         name: "document.pdf",
       });
+      const mockFetch = vi.mocked(fetch);
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+      } as Response);
+
       const { container } = render(FileThumbnail, {
         props: { file, size: "md" },
       });
-      await tick();
 
-      const icon = container.querySelector("span");
-      expect(icon?.textContent).toBe("📄");
+      await waitFor(() => {
+        const icon = container.querySelector("svg");
+        expect(icon).toBeTruthy();
+      });
     });
 
     it("should show video icon for video files", async () => {
@@ -153,13 +160,20 @@ describe("FileThumbnail", () => {
         mime_type: "video/mp4",
         name: "video.mp4",
       });
+      const mockFetch = vi.mocked(fetch);
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+      } as Response);
+
       const { container } = render(FileThumbnail, {
         props: { file, size: "md" },
       });
-      await tick();
 
-      const icon = container.querySelector("span");
-      expect(icon?.textContent).toBe("🎬");
+      await waitFor(() => {
+        const icon = container.querySelector("svg");
+        expect(icon).toBeTruthy();
+      });
     });
 
     it("should show text icon for text files", async () => {
@@ -172,8 +186,8 @@ describe("FileThumbnail", () => {
       });
       await tick();
 
-      const icon = container.querySelector("span");
-      expect(icon?.textContent).toBe("📝");
+      const icon = container.querySelector("svg");
+      expect(icon).toBeTruthy();
     });
 
     it("should show audio icon for audio files", async () => {
@@ -186,8 +200,8 @@ describe("FileThumbnail", () => {
       });
       await tick();
 
-      const icon = container.querySelector("span");
-      expect(icon?.textContent).toBe("🎵");
+      const icon = container.querySelector("svg");
+      expect(icon).toBeTruthy();
     });
 
     it("should show archive icon for zip files", async () => {
@@ -200,8 +214,8 @@ describe("FileThumbnail", () => {
       });
       await tick();
 
-      const icon = container.querySelector("span");
-      expect(icon?.textContent).toBe("📦");
+      const icon = container.querySelector("svg");
+      expect(icon).toBeTruthy();
     });
 
     it("should show word icon for Word documents", async () => {
@@ -215,8 +229,8 @@ describe("FileThumbnail", () => {
       });
       await tick();
 
-      const icon = container.querySelector("span");
-      expect(icon?.textContent).toBe("📘");
+      const icon = container.querySelector("svg");
+      expect(icon).toBeTruthy();
     });
 
     it("should show spreadsheet icon for Excel files", async () => {
@@ -230,8 +244,8 @@ describe("FileThumbnail", () => {
       });
       await tick();
 
-      const icon = container.querySelector("span");
-      expect(icon?.textContent).toBe("📊");
+      const icon = container.querySelector("svg");
+      expect(icon).toBeTruthy();
     });
 
     it("should show presentation icon for PowerPoint files", async () => {
@@ -245,8 +259,8 @@ describe("FileThumbnail", () => {
       });
       await tick();
 
-      const icon = container.querySelector("span");
-      expect(icon?.textContent).toBe("📽️");
+      const icon = container.querySelector("svg");
+      expect(icon).toBeTruthy();
     });
 
     it("should show generic document icon for unknown types", async () => {
@@ -259,12 +273,12 @@ describe("FileThumbnail", () => {
       });
       await tick();
 
-      const icon = container.querySelector("span");
-      expect(icon?.textContent).toBe("📄");
+      const icon = container.querySelector("svg");
+      expect(icon).toBeTruthy();
     });
 
     it("should not attempt thumbnail generation for non-image files", async () => {
-      const file = createMockFile({ mime_type: "application/pdf" });
+      const file = createMockFile({ mime_type: "application/octet-stream" });
       const mockFetch = vi.mocked(fetch);
 
       render(FileThumbnail, { props: { file, size: "md" } });

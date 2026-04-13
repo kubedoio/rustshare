@@ -325,7 +325,7 @@
 			- Photos  
 		-->
 		<div class="px-2 mb-4">
-			<h3 class="px-3 text-[11px] font-semibold text-base-content/40 uppercase tracking-wider mb-1">
+			<h3 class="px-3 text-meta font-semibold text-base-content/40 uppercase tracking-wider mb-1">
 				Library
 			</h3>
 			<nav class="space-y-0.5" aria-label="Library">
@@ -380,7 +380,7 @@
 		-->
 		<div class="px-2">
 			<div class="flex items-center justify-between px-3 mb-1">
-				<h3 class="text-[11px] font-semibold text-base-content/40 uppercase tracking-wider">
+				<h3 class="text-meta font-semibold text-base-content/40 uppercase tracking-wider">
 					Folders
 				</h3>
 				<div class="flex items-center gap-1">
@@ -512,21 +512,21 @@
 					{/if}
 				</svg>
 				<div class="absolute inset-0 flex items-center justify-center">
-					<div class="h-2.5 w-2.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.8)] animate-pulse"></div>
+					<div class="h-2.5 w-2.5 rounded-full bg-success shadow-[0_0_8px_rgba(34,197,94,0.8)] animate-pulse"></div>
 				</div>
 			</div>
 
 			<!-- Storage Text -->
 			<div class="flex flex-col flex-1 min-w-0 justify-center">
 				<div class="flex items-center gap-2 mb-0.5">
-					<span class="text-[11px] font-bold uppercase tracking-wider text-base-content/80">Storage</span>
+					<span class="text-meta font-bold uppercase tracking-wider text-base-content/80">Storage</span>
 					{#if $currentUser?.storage_quota}
-						<span class="text-[9px] font-bold text-brand-600 bg-brand-500/10 px-1.5 py-0.5 rounded-sm">
+						<span class="text-2xs font-bold text-brand-600 bg-brand-500/10 px-1.5 py-0.5 rounded-sm">
 							{Math.round((totalSizeUsed / $currentUser.storage_quota) * 100)}%
 						</span>
 					{/if}
 				</div>
-				<div class="text-[10px] text-base-content/50 font-medium truncate">
+				<div class="text-2xs text-base-content/50 font-medium truncate">
 					{#if $allFilesQuery.isLoading}
 						Calculating usage...
 					{:else if $currentUser?.storage_quota}

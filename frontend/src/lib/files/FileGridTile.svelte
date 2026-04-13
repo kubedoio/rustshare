@@ -481,7 +481,7 @@
 					<Star size={10} class="text-brand-500 fill-brand-500" />
 				{/if}
 				
-				<span class="text-[10px] text-base-content/50 truncate font-medium font-data">
+				<span class="text-2xs text-base-content/50 truncate font-medium font-data">
 					{#if isFolder}
 						Folder
 					{:else}

@@ -14,7 +14,7 @@
 	let { label, field, activeField, activeOrder, onSort, class: className = '' }: Props = $props();
 
 	let isActive = $derived(field === activeField);
-	let ariaSort = $derived(isActive ? (activeOrder === 'asc' ? 'ascending' : 'descending') : 'none');
+	let ariaSort: 'ascending' | 'descending' | 'none' = $derived(isActive ? (activeOrder === 'asc' ? 'ascending' : 'descending') : 'none');
 
 	function handleClick() {
 		onSort(field);

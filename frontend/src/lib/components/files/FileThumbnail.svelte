@@ -1,7 +1,16 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import type { File } from '$lib/api/types';
-  import FileIcon from '$lib/components/icons/FileIcon.svelte';
+  import {
+    FileText,
+    FileVideoCamera as FileVideo,
+    File as FileAudio,
+    Package,
+    FileType,
+    FileSpreadsheet,
+    Presentation,
+    File as FileDefault
+  } from 'lucide-svelte';
 
   export let file: File;
   export let size: 'sm' | 'md' | 'lg' = 'md';
@@ -105,6 +114,19 @@
     }
     return null;
   }
+
+  function getFallbackIcon(mimeType: string) {
+    const normalized = mimeType.toLowerCase();
+    if (normalized.startsWith('video/')) return FileVideo;
+    if (normalized.startsWith('audio/')) return FileAudio;
+    if (normalized === 'application/pdf') return FileText;
+    if (normalized.includes('zip') || normalized.includes('tar') || normalized.includes('archive')) return Package;
+    if (normalized.includes('word') || normalized.includes('wordprocessingml')) return FileType;
+    if (normalized.includes('excel') || normalized.includes('spreadsheetml')) return FileSpreadsheet;
+    if (normalized.includes('powerpoint') || normalized.includes('presentationml')) return Presentation;
+    if (normalized.startsWith('text/')) return FileText;
+    return FileDefault;
+  }
 </script>
 
 <div class={`${sizeClass} flex items-center justify-center bg-base-200 rounded overflow-hidden`}>
@@ -129,7 +151,8 @@
         </svg>
       {/if}
     {:else}
-      <FileIcon mimeType={file.mime_type} size="lg" iconClass="text-base-content/50" />
+      {@const FallbackIcon = getFallbackIcon(file.mime_type)}
+      <FallbackIcon class="w-8 h-8 text-base-content/50" />
     {/if}
   {:else}
     <!-- Show thumbnail image -->

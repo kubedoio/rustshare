@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { File as FileType, Folder } from '$lib/api/types';
 	import type { ReplicationStatus } from '$lib/stores/replication';
+	import type { SortField, SortOrder } from '$lib/stores/fileSort';
 	import { viewMode } from '$lib/stores/fileBrowserUi';
 	import FileToolbar from './FileToolbar.svelte';
 	import FileList from './FileList.svelte';
@@ -29,6 +30,9 @@
 		selectionMode?: boolean;
 		isSharedRoot?: boolean;
 		isUploading?: boolean;
+		activeSortField?: SortField;
+		activeSortOrder?: SortOrder;
+		onSort?: (field: SortField) => void;
 		onRefresh?: () => void;
 		onNewFolder?: () => void;
 		onUpload?: () => void;
@@ -82,6 +86,9 @@
 		replicationStatuses = {},
 		selectionMode = false,
 		isUploading = false,
+		activeSortField = 'name',
+		activeSortOrder = 'asc',
+		onSort = () => {},
 		onRefresh = () => {},
 		onNewFolder = () => {},
 		onUpload = () => {},
@@ -216,6 +223,9 @@
 					{workspaceMode}
 					{replicationStatuses}
 					{selectionMode}
+					{activeSortField}
+					{activeSortOrder}
+					onSort={onSort}
 					onFolderClick={onFolderClick}
 					onFileClick={onFileClick}
 					onRenameFolder={onRenameFolder}
@@ -240,4 +250,10 @@
 			{/if}
 		{/if}
 	</div>
+
+	{#if !isLoading && !error && (folders.length > 0 || files.length > 0)}
+		<div class="border-t border-base-300/50 px-3 py-2 md:px-4 lg:px-5">
+			<slot name="pagination" />
+		</div>
+	{/if}
 </div>

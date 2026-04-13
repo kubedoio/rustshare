@@ -51,7 +51,7 @@
 	import { extractFolderPaths, sortFolderPaths } from '$lib/utils/directoryUpload';
 	import { queryClient } from '$lib/query-client';
 	import { searchQuery } from '$lib/stores/search';
-	import { fileSortState } from '$lib/stores/fileSort';
+	import { fileSortState, setSortField, setPageSize } from '$lib/stores/fileSort';
 	import { selectionStore, selectionCount, hasSelection } from '$lib/stores/selection';
 	import { activityStore } from '$lib/stores/activity';
 	import { replicationStore, type ReplicationStatus } from '$lib/stores/replication';
@@ -68,6 +68,7 @@
 	import FileExplorer from '$lib/files/FileExplorer.svelte';
 	import DropZone from '$lib/components/files/DropZone.svelte';
 	import UploadProgress from '$lib/components/files/UploadProgress.svelte';
+	import PaginationControls from '$lib/components/common/PaginationControls.svelte';
 	import Toast from '$lib/components/common/Toast.svelte';
 
 	// Modals
@@ -489,6 +490,29 @@
 		}
 		return 0;
 	});
+
+	// ============================================================================
+	// PAGINATION
+	// ============================================================================
+
+	let currentPage = 1;
+	$: {
+		// Reset to page 1 when page size or sort changes
+		const _ = $fileSortState.pageSize;
+		const __ = activeSortField;
+		const ___ = activeSortOrder;
+		currentPage = 1;
+	}
+
+	$: pageSize = $fileSortState.pageSize;
+	$: startIndex = (currentPage - 1) * pageSize;
+	$: folderEndIndex = Math.min(startIndex + pageSize, sortedFolders.length);
+	$: paginatedFolders = sortedFolders.slice(startIndex, folderEndIndex);
+	$: fileStartIndex = Math.max(0, startIndex - sortedFolders.length);
+	$: fileEndIndex = Math.max(0, startIndex + pageSize - sortedFolders.length);
+	$: paginatedFiles = sortedFiles.slice(fileStartIndex, fileEndIndex);
+	$: totalItems = sortedFolders.length + sortedFiles.length;
+	$: totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
 	// ============================================================================
 	// MUTATIONS
@@ -996,7 +1020,7 @@
 	}
 
 	function handleSelectAll() {
-		selectionStore.selectAll(sortedFiles, sortedFolders);
+		selectionStore.selectAll(paginatedFiles, paginatedFolders);
 	}
 
 	function handleDeselectAll() {
@@ -1482,8 +1506,8 @@
 	disabled={!canUpload || isUploading}
 >
 	<FileExplorer
-		folders={sortedFolders}
-		files={sortedFiles}
+		folders={paginatedFolders}
+		files={paginatedFiles}
 		folderPath={breadcrumbPath}
 		rootLabel={activeRoot === 'shared' ? 'Shared' : 'My Files'}
 		title={workspaceTitle}
@@ -1502,6 +1526,9 @@
 		{selectionMode}
 		{isUploading}
 		{isSharedRoot}
+		activeSortField={$fileSortState.field}
+		activeSortOrder={$fileSortState.order}
+		onSort={setSortField}
 		onFolderClick={handleFolderClick}
 		onFileClick={handleFileClick}
 		onRefresh={() => $filesQuery.refetch()}
@@ -1532,7 +1559,17 @@
 		onShareFolder={handleShareFolder}
 		onMoveFolder={handleMoveFolderWithFallback}
 		onbreadcrumbNavigate={handleBreadcrumbNavigate}
-	/>
+	>
+		<div slot="pagination" class="flex justify-center">
+			<PaginationControls
+				{currentPage}
+				{totalPages}
+				pageSize={$fileSortState.pageSize}
+				onPageChange={(page) => currentPage = page}
+				onPageSizeChange={setPageSize}
+			/>
+		</div>
+	</FileExplorer>
 </DropZone>
 
 <!-- Upload Progress -->
