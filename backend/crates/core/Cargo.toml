@@ -23,7 +23,7 @@ rustshare-crypto = { path = "../crypto" }
 url = "2.5"
 reqwest = { workspace = true }
 async-trait = "0.1"
-image = { version = "0.24", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
+image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "pool"] }
 
 [dev-dependencies]
