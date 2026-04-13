@@ -37,6 +37,7 @@ Add ascending/descending sort controls to the file-list column headers and clien
      - `activeOrder: SortOrder`
      - `onSort: (field: SortField) => void`
    - Visual: uses `text-meta` size (`0.75rem`), `uppercase`, `tracking-wider`, `font-semibold`, arrow icon from `lucide-svelte` (e.g. `ArrowUp`, `ArrowDown`, `ArrowUpDown` for neutral).
+   - Accessibility: `tabindex="0"`, `role="columnheader"`, `aria-sort="ascending|descending|none"`, keyboard handlers for `Enter` and `Space` to toggle sort.
 
 2. **`PaginationControls.svelte`**
    - Renders page-size selector, "Previous"/"Next" buttons, and "X–Y of Z" text.
@@ -50,12 +51,12 @@ Add ascending/descending sort controls to the file-list column headers and clien
 
 3. **Updates to `FileList.svelte`**
    - Replace static `<th>` elements with `<SortableTableHeader>`.
-   - Import `SortField`, `SortOrder`, and dispatch `sort` event (or accept callback prop).
-   - Slot `PaginationControls` below the table when total items exceed the current page size (or always, for consistency).
-   - Shrink data-cell font by ~10 % where appropriate:
-     - Name column: `text-[13px]` (already in place) stays.
-     - Type badge: `text-[10px]` stays.
-     - Size / Modified: move from `text-xs` (`0.75rem`) to `text-[11px]` to gain a little density while keeping `IBM Plex Sans`.
+   - Accept `onSort: (field: SortField) => void` callback prop to follow existing codebase patterns.
+   - Use DESIGN.md type tokens for data cells:
+     - Name column: `text-body-sm` (`0.875rem`).
+     - Type badge: `text-meta` (`0.75rem`).
+     - Size / Modified: `text-meta` (`0.75rem`) with `font-data`.
+   - Add a static header `<th>` for the conditional Replication Status column so column counts match.
 
 4. **Updates to `fileSortState` store**
    - Add `pageSize: 10 | 20 | 50` (default `20`).
@@ -66,7 +67,9 @@ Add ascending/descending sort controls to the file-list column headers and clien
    - Derive `currentPage` from component state (local, not persisted).
    - Reset `currentPage` to `1` whenever `searchTerm`, `workspaceMode`, `activeSortField`, or `activeSortOrder` changes.
    - Compute `paginatedFolders` / `paginatedFiles` by slicing the combined display bounds.
-   - Pass `totalItems = filteredFolders.length + filteredFiles.length` to `PaginationControls`.
+   - Render `FileList` with `paginatedFolders`, `paginatedFiles`, and `onSort` callback.
+   - Render `PaginationControls` below `FileList` whenever `totalItems > 0`.
+   - Update `handleSelectAll` to call `selectionStore.selectAll(paginatedFiles, paginatedFolders)` so selection is page-scoped.
 
 ### Pagination Logic
 
@@ -77,7 +80,7 @@ Folders are always shown before files. Given:
 
 ```ts
 const totalItems = sortedFolders.length + sortedFiles.length;
-const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+const totalPages = Math.ceil(totalItems / pageSize);
 const start = (currentPage - 1) * pageSize;
 const end = start + pageSize;
 
@@ -111,16 +114,20 @@ const paginatedFiles = sortedFiles.slice(fileStart, fileEnd);
 
 ### Error Handling & Edge Cases
 
-- Empty result set: show existing empty state, hide pagination controls.
-- Single page: still render pagination bar for page-size selector, but disable prev/next.
-- Page out of bounds after filter/sort change: reset to page 1 reactively.
-- Zero total items: `totalPages = 1`, prev/next disabled.
+- **Selection + pagination:** `allSelected` in `FileList.svelte` reflects only the paginated items (folders + files on the current page). `handleSelectAll` in `+page.svelte` calls `selectionStore.selectAll(paginatedFiles, paginatedFolders)` so the checkbox state and action are consistent and page-scoped.
+- **Empty result set:** show existing empty state, hide pagination controls.
+- **Page reset triggers:** reset `currentPage` to `1` whenever `searchTerm`, `workspaceMode`, `activeSortField`, or `activeSortOrder` changes. Note that `workspaceMode === 'recent'` forces `activeSortField = 'modified_at'` and `activeSortOrder = 'desc'`, so entering/leaving recent mode must also reset the page.
+- **Zero total items:** `totalPages = 0`; pagination controls are hidden entirely.
 
 ### Testing
 
 - Unit test `fileSortState` store for `pageSize` persistence.
 - Verify `+page.svelte` pagination slicing with Vitest-style logic tests (or existing `.test.ts` patterns) for boundary cases:
   - folders only, files only, mixed, exact multiples of page size, non-exact.
+- Test pagination + selection interaction:
+  - `allSelected` is `true` only when every item on the current page is selected.
+  - `handleSelectAll` selects/deselects only the paginated items.
+  - Changing pages preserves existing selections.
 - Existing `sorting.test.ts` continues to cover sort behavior; no new sort logic needed.
 
 ## File Changes
@@ -130,5 +137,5 @@ const paginatedFiles = sortedFiles.slice(fileStart, fileEnd);
 | `frontend/src/lib/stores/fileSort.ts` | Add `pageSize`, bump storage key |
 | `frontend/src/lib/components/common/SortableTableHeader.svelte` | New component |
 | `frontend/src/lib/components/common/PaginationControls.svelte` | New component |
-| `frontend/src/lib/files/FileList.svelte` | Use sortable headers, add pagination slot, minor font tweaks |
-| `frontend/src/routes/(app)/files/+page.svelte` | Import components, add pagination state & slicing, pass paginated arrays |
+| `frontend/src/lib/files/FileList.svelte` | Use sortable headers, accept `onSort` callback prop, minor font tweaks |
+| `frontend/src/routes/(app)/files/+page.svelte` | Import components, add pagination state & slicing, render `PaginationControls` as sibling below `FileList`, pass paginated arrays |
