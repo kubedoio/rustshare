@@ -1,7 +1,12 @@
 <script lang="ts">
 	import type { File as FileType, Folder } from '$lib/api/types';
 	import type { ReplicationStatus } from '$lib/stores/replication';
+	import type { SortField, SortOrder } from '$lib/stores/fileSort';
 	import { selectionStore } from '$lib/stores/selection';
+	import SortableTableHeader from '$lib/components/common/SortableTableHeader.svelte';
+	import EmptyState from '$lib/components/common/EmptyState.svelte';
+	import FileListSkeleton from '$lib/components/common/FileListSkeleton.svelte';
+	import { FolderOpen } from 'lucide-svelte';
 	import FileListRow from './FileListRow.svelte';
 
 	export let folders: Folder[] = [];
@@ -33,6 +38,10 @@
 	export let onEditFile: (file: FileType) => void = () => {};
 	export let selectionMode = false;
 	export let replicationStatuses: Record<string, ReplicationStatus> = {};
+	export let activeSortField: SortField = 'name';
+	export let activeSortOrder: SortOrder = 'asc';
+	export let onSort: (field: SortField) => void = () => {};
+	export let isLoading = false;
 
 	// Drag and drop state
 	let draggedItem: { id: string; isFolder: boolean; parentFolderId: string | null } | null = null;
@@ -172,108 +181,102 @@
 		$selectionStore.selectedFolderIds.size + $selectionStore.selectedFileIds.size === folders.length + files.length;
 </script>
 
-<div class="relative overflow-x-auto rounded-xl border border-base-300 bg-base-100">
-	<table class="w-full">
-		<thead>
-			<tr class="border-b border-base-300 bg-base-200/50">
-				<th class="w-10 px-4 py-2 text-left">
-					{#if selectionMode}
-						<input
-							type="checkbox"
-							class="w-4 h-4 rounded border-base-300 text-brand-500 focus:ring-brand-500 bg-base-100"
-							checked={allSelected}
-							on:change={handleSelectAll}
-						/>
-					{/if}
-				</th>
-				<th class="w-12 px-2 py-2 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider">Preview</th>
-				<th class="px-4 py-2 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider">Name</th>
-				<th class="px-4 py-2 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider hidden md:table-cell">Type</th>
-				<th class="px-4 py-2 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider hidden sm:table-cell">Size</th>
-				<th class="px-4 py-2 text-left text-xs font-semibold text-base-content/60 uppercase tracking-wider hidden lg:table-cell">Modified</th>
-				<th class="w-10 px-4 py-2"></th>
-			</tr>
-		</thead>
-		<tbody class="divide-y divide-base-300/40">
-			<!-- Folders -->
-			{#each folders as folder (folder.id)}
-				<FileListRow
-					item={folder}
-					isFolder={true}
-					{isSharedRoot}
-					{workspaceMode}
-					{selectionMode}
-					selected={$selectionStore.selectedFolderIds.has(folder.id)}
-					isDragging={draggedItem?.id === folder.id}
-					isDropTarget={dragOverFolderId === folder.id}
-					canDrop={isValidDropTarget(folder)}
-					onSelect={(e) => handleFolderToggle(folder, e)}
-					onToggleSelect={() => handleFolderToggle(folder)}
-					onNavigate={() => onFolderClick(folder)}
-					onRename={(newName) => onRenameFolder(folder, newName)}
-					onDelete={() => onDeleteFolder(folder)}
-					onToggleStar={() => onToggleFolderStar(folder)}
-					onRestore={() => onRestoreFolder(folder)}
-					onPermanentDelete={() => onPermanentDeleteFolder(folder)}
-					onShare={() => onShareFolder(folder)}
-					onMove={() => onMoveFolder(folder, null)}
-					onDragStart={() => handleDragStart({ id: folder.id, isFolder: true, parentFolderId: folder.parent_folder_id })}
-					onDragEnd={handleDragEnd}
-					onDrop={(e) => handleDropOnFolder(folder, e)}
-					onDragOver={() => handleDragOverFolder(folder.id)}
-					onDragLeave={handleDragLeaveFolder}
-				/>
-			{/each}
+{#if isLoading}
+	<FileListSkeleton />
+{:else}
+	<div class="relative overflow-x-auto rounded-xl border border-base-300 bg-base-100">
+		<table class="w-full">
+			<thead>
+				<tr class="border-b border-base-300 bg-base-200/50">
+					<th class="w-10 px-4 py-2 text-left">
+						{#if selectionMode}
+							<input
+								type="checkbox"
+								class="w-4 h-4 rounded border-base-300 text-brand-500 focus:ring-brand-500 bg-base-100"
+								checked={allSelected}
+								on:change={handleSelectAll}
+							/>
+						{/if}
+					</th>
+					<th class="w-12 px-2 py-2 text-left text-meta font-semibold text-base-content/60 uppercase tracking-wider">Preview</th>
+					<SortableTableHeader label="Name" field="name" activeField={activeSortField} activeOrder={activeSortOrder} onSort={onSort} />
+					<SortableTableHeader label="Type" field="mime_type" activeField={activeSortField} activeOrder={activeSortOrder} onSort={onSort} class="hidden md:table-cell" />
+					<SortableTableHeader label="Size" field="size" activeField={activeSortField} activeOrder={activeSortOrder} onSort={onSort} class="hidden sm:table-cell" />
+					<SortableTableHeader label="Modified" field="modified_at" activeField={activeSortField} activeOrder={activeSortOrder} onSort={onSort} class="hidden lg:table-cell" />
+					<th class="px-4 py-2 text-left text-meta font-semibold text-base-content/60 uppercase tracking-wider hidden xl:table-cell">Status</th>
+					<th class="w-10 px-4 py-2"></th>
+				</tr>
+			</thead>
+			<tbody class="divide-y divide-base-300/40">
+				<!-- Folders -->
+				{#each folders as folder (folder.id)}
+					<FileListRow
+						item={folder}
+						isFolder={true}
+						{isSharedRoot}
+						{workspaceMode}
+						{selectionMode}
+						selected={$selectionStore.selectedFolderIds.has(folder.id)}
+						isDragging={draggedItem?.id === folder.id}
+						isDropTarget={dragOverFolderId === folder.id}
+						canDrop={isValidDropTarget(folder)}
+						onSelect={(e) => handleFolderToggle(folder, e)}
+						onToggleSelect={() => handleFolderToggle(folder)}
+						onNavigate={() => onFolderClick(folder)}
+						onRename={(newName) => onRenameFolder(folder, newName)}
+						onDelete={() => onDeleteFolder(folder)}
+						onToggleStar={() => onToggleFolderStar(folder)}
+						onRestore={() => onRestoreFolder(folder)}
+						onPermanentDelete={() => onPermanentDeleteFolder(folder)}
+						onShare={() => onShareFolder(folder)}
+						onMove={() => onMoveFolder(folder, null)}
+						onDragStart={() => handleDragStart({ id: folder.id, isFolder: true, parentFolderId: folder.parent_folder_id })}
+						onDragEnd={handleDragEnd}
+						onDrop={(e) => handleDropOnFolder(folder, e)}
+						onDragOver={() => handleDragOverFolder(folder.id)}
+						onDragLeave={handleDragLeaveFolder}
+					/>
+				{/each}
 
-			<!-- Files -->
-			{#each files as file (file.id)}
-				<FileListRow
-					item={file}
-					isFolder={false}
-					{workspaceMode}
-					{selectionMode}
-					selected={$selectionStore.selectedFileIds.has(file.id)}
-					replicationStatus={replicationStatuses[file.id]}
-					isDragging={draggedItem?.id === file.id}
-					onSelect={(e) => (selectionMode ? handleFileToggle(file, e) : onFileClick(file))}
-					onToggleSelect={() => handleFileToggle(file)}
-					onNavigate={() => {}}
-					onRename={(newName) => onRenameFile(file, newName)}
-					onDelete={() => onDeleteFile(file)}
-					onToggleStar={() => onToggleFileStar(file)}
-					onRestore={() => onRestoreFile(file)}
-					onPermanentDelete={() => onPermanentDeleteFile(file)}
-					onShare={() => onShareFile(file)}
-					onMove={() => onMoveFile(file, null)}
-					onDownload={() => onDownloadFile(file)}
-					onVersionHistory={() => onVersionHistory(file)}
-					onReplace={() => onReplaceFile(file)}
-					onEdit={() => { console.log('[FileList] onEdit triggered for', file.name); onEditFile(file); }}
-					onDragStart={() => handleDragStart({ id: file.id, isFolder: false, parentFolderId: file.parent_folder_id })}
-					onDragEnd={handleDragEnd}
-				/>
-			{/each}
-		</tbody>
-	</table>
+				<!-- Files -->
+				{#each files as file (file.id)}
+					<FileListRow
+						item={file}
+						isFolder={false}
+						{workspaceMode}
+						{selectionMode}
+						selected={$selectionStore.selectedFileIds.has(file.id)}
+						replicationStatus={replicationStatuses[file.id]}
+						isDragging={draggedItem?.id === file.id}
+						onSelect={(e) => (selectionMode ? handleFileToggle(file, e) : onFileClick(file))}
+						onToggleSelect={() => handleFileToggle(file)}
+						onNavigate={() => {}}
+						onRename={(newName) => onRenameFile(file, newName)}
+						onDelete={() => onDeleteFile(file)}
+						onToggleStar={() => onToggleFileStar(file)}
+						onRestore={() => onRestoreFile(file)}
+						onPermanentDelete={() => onPermanentDeleteFile(file)}
+						onShare={() => onShareFile(file)}
+						onMove={() => onMoveFile(file, null)}
+						onDownload={() => onDownloadFile(file)}
+						onVersionHistory={() => onVersionHistory(file)}
+						onReplace={() => onReplaceFile(file)}
+						onEdit={() => { console.log('[FileList] onEdit triggered for', file.name); onEditFile(file); }}
+						onDragStart={() => handleDragStart({ id: file.id, isFolder: false, parentFolderId: file.parent_folder_id })}
+						onDragEnd={handleDragEnd}
+					/>
+				{/each}
+			</tbody>
+		</table>
 
-	{#if folders.length === 0 && files.length === 0}
-		<div class="flex flex-col items-center justify-center py-16 text-center">
-			<div class="w-16 h-16 rounded-2xl bg-base-200 flex items-center justify-center mb-4">
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-8 h-8 text-base-content/30">
-					<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
-				</svg>
-			</div>
-			<h3 class="text-lg font-semibold text-base-content mb-1">{emptyTitle}</h3>
-			<p class="text-sm text-base-content/60 mb-4">{emptyDescription}</p>
-			{#if emptyActionLabel}
-				<button
-					type="button"
-					class="px-4 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors"
-					on:click={() => document.getElementById('upload-file-input')?.click()}
-				>
-					{emptyActionLabel}
-				</button>
-			{/if}
-		</div>
-	{/if}
-</div>
+		{#if folders.length === 0 && files.length === 0}
+			<EmptyState
+				icon={FolderOpen}
+				title={emptyTitle}
+				description={emptyDescription}
+				actionLabel={emptyActionLabel ?? undefined}
+				onAction={() => document.getElementById('upload-file-input')?.click()}
+			/>
+		{/if}
+	</div>
+{/if}

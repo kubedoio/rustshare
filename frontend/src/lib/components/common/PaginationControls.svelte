@@ -13,6 +13,30 @@
 
 	const pageSizeOptions: Array<10 | 20 | 50> = [10, 20, 50];
 
+	function getVisiblePages(currentPage: number, totalPages: number): Array<number | '...'> {
+		if (totalPages <= 7) {
+			return Array.from({ length: totalPages }, (_, i) => i + 1);
+		}
+
+		const pages: Array<number | '...'> = [1];
+
+		if (currentPage <= 3) {
+			pages.push(2, 3);
+			pages.push('...');
+			pages.push(totalPages);
+		} else if (currentPage >= totalPages - 2) {
+			pages.push('...');
+			pages.push(totalPages - 2, totalPages - 1, totalPages);
+		} else {
+			pages.push('...');
+			pages.push(currentPage - 1, currentPage, currentPage + 1);
+			pages.push('...');
+			pages.push(totalPages);
+		}
+
+		return pages;
+	}
+
 	function handlePrevious() {
 		if (currentPage > 1) {
 			onPageChange(currentPage - 1);
@@ -51,20 +75,29 @@
 	</button>
 
 	<div class="flex items-center gap-1">
-		{#each Array.from({ length: totalPages }, (_, i) => i + 1) as page}
-			<button
-				type="button"
-				class="btn btn-sm min-w-[2rem] px-2 font-data text-sm transition-colors"
-				class:bg-brand-500={page === currentPage}
-				class:text-white={page === currentPage}
-				class:hover:bg-brand-600={page === currentPage}
-				class:btn-ghost={page !== currentPage}
-				aria-current={page === currentPage ? 'page' : undefined}
-				aria-label="Page {page}"
-				onclick={() => handlePageClick(page)}
-			>
-				{page}
-			</button>
+		{#each getVisiblePages(currentPage, totalPages) as item}
+			{#if item === '...'}
+				<span
+					class="min-w-[2rem] px-2 font-data text-sm text-ink-muted flex items-center justify-center select-none"
+					aria-hidden="true"
+				>
+					...
+				</span>
+			{:else}
+				<button
+					type="button"
+					class="btn btn-sm min-w-[2rem] px-2 font-data text-sm transition-colors"
+					class:bg-brand-500={item === currentPage}
+					class:text-white={item === currentPage}
+					class:hover:bg-brand-600={item === currentPage}
+					class:btn-ghost={item !== currentPage}
+					aria-current={item === currentPage ? 'page' : undefined}
+					aria-label="Page {item}"
+					onclick={() => handlePageClick(item)}
+				>
+					{item}
+				</button>
+			{/if}
 		{/each}
 	</div>
 

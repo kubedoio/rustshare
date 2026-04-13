@@ -399,7 +399,7 @@
 					<input
 						bind:this={renameInputRef}
 						type="text"
-						class="flex-1 min-w-0 px-2 py-0.5 text-xs bg-base-100 border border-brand-500 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+						class="flex-1 min-w-0 px-2 py-0.5 text-meta bg-base-100 border border-brand-500 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500/20"
 						value={renameValue}
 						oninput={(e) => renameValue = e.currentTarget.value}
 						onkeydown={handleRenameKeydown}
@@ -410,7 +410,7 @@
 			{:else if isFolder && workspaceMode === 'all'}
 				<button
 					type="button"
-					class="text-[13px] font-medium text-base-content truncate hover:text-brand-500 transition-colors text-left min-w-0 flex items-center gap-1 group/link"
+					class="text-body-sm font-medium text-base-content truncate hover:text-brand-500 transition-colors text-left min-w-0 flex items-center gap-1 group/link"
 					onclick={handleNavigate}
 					ondblclick={maybeStartRename}
 				>
@@ -419,7 +419,7 @@
 				</button>
 			{:else}
 				<span 
-					class="text-[13px] font-medium text-base-content truncate min-w-0 block"
+					class="text-body-sm font-medium text-base-content truncate min-w-0 block"
 					ondblclick={maybeStartRename}
 				>
 					{item.name}
@@ -442,29 +442,29 @@
 
 	<!-- Type -->
 	<td class="px-3 py-0.5 hidden md:table-cell w-28">
-		<span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-base-200/70 text-base-content/60 uppercase tracking-tight">
+		<span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-2xs font-medium bg-base-200/70 text-base-content/60 uppercase tracking-tight">
 			{fileTypeLabel}
 		</span>
 	</td>
 
 	<!-- Size -->
 	<td class="px-3 py-0.5 hidden sm:table-cell w-20">
-		<span class="text-xs text-base-content/50 tabular-nums font-data">{displaySize}</span>
+		<span class="text-meta text-base-content/50 tabular-nums font-data">{displaySize}</span>
 	</td>
 
 	<!-- Modified -->
 	<td class="px-3 py-0.5 hidden lg:table-cell w-36">
-		<span class="text-xs text-base-content/50 font-data">{displayDate}</span>
+		<span class="text-meta text-base-content/50 font-data">{displayDate}</span>
 	</td>
 
 	<!-- Replication Status (hidden on smaller screens) -->
-	{#if !isFolder && replicationStatus}
-		<td class="px-3 py-0.5 hidden xl:table-cell w-28">
-			<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium {replicationStateBadgeClass(replicationStatus.replicationState)}">
+	<td class="px-3 py-0.5 hidden xl:table-cell w-28">
+		{#if !isFolder && replicationStatus}
+			<span class="inline-flex items-center px-1.5 py-0.5 rounded text-2xs font-medium {replicationStateBadgeClass(replicationStatus.replicationState)}">
 				{formatReplicationStateLabel(replicationStatus.replicationState)}
 			</span>
-		</td>
-	{/if}
+		{/if}
+	</td>
 
 	<!-- Actions -->
 	<td class="w-12 px-3 py-0.5">

@@ -63,7 +63,7 @@
 	<div class="min-w-0">
 		<h1 class="text-title-lg font-bold text-base-content truncate">{title}</h1>
 		{#if description}
-			<p class="text-[13px] text-base-content/50 mt-0.5 truncate">{description}</p>
+			<p class="text-body-sm text-base-content/50 mt-0.5 truncate">{description}</p>
 		{/if}
 	</div>
 

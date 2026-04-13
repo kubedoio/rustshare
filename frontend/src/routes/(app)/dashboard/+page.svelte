@@ -20,6 +20,8 @@
     Loader2,
     Activity
   } from 'lucide-svelte';
+  import EmptyState from '$lib/components/common/EmptyState.svelte';
+  import DashboardSkeleton from '$lib/components/common/DashboardSkeleton.svelte';
 
   // Specific query for all user files to get accurate totals
   const allFilesQuery = createQuery({
@@ -89,6 +91,9 @@
   <title>Dashboard - RustShare</title>
 </svelte:head>
 
+{#if $allFilesQuery.isLoading && $recentNotesQuery.isLoading}
+  <DashboardSkeleton />
+{:else}
 <!-- Main dashboard container - aligned with topbar "+ New" button via consistent padding -->
 <div class="dashboard-container">
   <!-- Workspace Overview Panel -->
@@ -219,23 +224,13 @@
         <div class="notes-loading-spinner"></div>
       </div>
     {:else if noteFiles.length === 0}
-      <div class="notes-empty">
-        <StickyNote size={24} class="text-base-content/20" />
-        <p class="notes-empty-text">No notes found</p>
-        <p class="notes-empty-hint">Create a new note to get started</p>
-        <button 
-          class="btn btn-sm btn-primary mt-3"
-          on:click={handleCreateNote}
-          disabled={$createNoteMutation.isPending}
-        >
-          {#if $createNoteMutation.isPending}
-            <Loader2 size={14} class="animate-spin" />
-          {:else}
-            <Plus size={14} />
-          {/if}
-          <span>Create Note</span>
-        </button>
-      </div>
+      <EmptyState
+        icon={StickyNote}
+        title="No notes found"
+        description="Create a new note to get started"
+        actionLabel="Create Note"
+        onAction={handleCreateNote}
+      />
     {:else}
       <div class="notes-grid">
         {#each noteFiles as note}
@@ -293,6 +288,7 @@
     </section>
   {/if}
 </div>
+{/if}
 
 <style>
   /* Dashboard Container - Aligned with topbar */
@@ -360,7 +356,7 @@
     background: color-mix(in oklab, var(--brand-500) 10%, transparent);
     border: 1px solid color-mix(in oklab, var(--brand-500) 20%, transparent);
     color: var(--brand-600);
-    font-size: 11px;
+    font-size: 0.75rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -386,7 +382,7 @@
   .workspace-description {
     margin-top: 0.75rem;
     max-width: 36rem;
-    font-size: 13px;
+    font-size: 0.875rem;
     line-height: 1.625;
     color: color-mix(in oklab, var(--base-content) 60%, transparent);
   }
@@ -424,7 +420,7 @@
   }
 
   .storage-label {
-    font-size: 10px;
+    font-size: 0.625rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -433,7 +429,7 @@
 
   .storage-value {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
     color: var(--base-content);
   }
@@ -491,7 +487,7 @@
   }
 
   .action-button-label {
-    font-size: 10px;
+    font-size: 0.625rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -500,7 +496,7 @@
 
   .action-button-value {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 700;
   }
 
@@ -548,7 +544,7 @@
   }
 
   .stat-box-label {
-    font-size: 9px;
+    font-size: 0.625rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -566,33 +562,33 @@
   }
 
   .stat-box:hover .stat-box-icon-info {
-    background: #366d8c;
+    background: var(--info);
     color: white;
   }
 
   .stat-box:hover .stat-box-icon-brand {
-    background: #c65a1e;
+    background: var(--brand-500);
     color: white;
   }
 
   .stat-box:hover .stat-box-icon-warning {
-    background: #a56a12;
+    background: var(--warning);
     color: white;
   }
 
   .stat-box-icon-info {
-    background: color-mix(in oklab, #366d8c 10%, transparent);
-    color: #366d8c;
+    background: color-mix(in oklab, var(--info) 10%, transparent);
+    color: var(--info);
   }
 
   .stat-box-icon-brand {
-    background: color-mix(in oklab, #c65a1e 10%, transparent);
-    color: #c65a1e;
+    background: color-mix(in oklab, var(--brand-500) 10%, transparent);
+    color: var(--brand-500);
   }
 
   .stat-box-icon-warning {
-    background: color-mix(in oklab, #a56a12 10%, transparent);
-    color: #a56a12;
+    background: color-mix(in oklab, var(--warning) 10%, transparent);
+    color: var(--warning);
   }
 
   .stat-box-value {
@@ -637,7 +633,7 @@
   }
 
   .notes-panel-title {
-    font-size: 14px;
+    font-size: 0.875rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -645,7 +641,7 @@
   }
 
   .notes-panel-subtitle {
-    font-size: 12px;
+    font-size: 0.75rem;
     color: color-mix(in oklab, var(--base-content) 50%, transparent);
   }
 
@@ -711,7 +707,7 @@
   }
 
   .note-card-title {
-    font-size: 13px;
+    font-size: 0.875rem;
     font-weight: 600;
     color: var(--base-content);
     line-height: 1.4;
@@ -723,7 +719,7 @@
   }
 
   .note-card-meta {
-    font-size: 11px;
+    font-size: 0.75rem;
     color: color-mix(in oklab, var(--base-content) 50%, transparent);
   }
 
@@ -744,26 +740,6 @@
 
   @keyframes spin {
     to { transform: rotate(360deg); }
-  }
-
-  .notes-empty {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 2rem 0;
-    text-align: center;
-  }
-
-  .notes-empty-text {
-    margin-top: 0.75rem;
-    font-size: 13px;
-    color: color-mix(in oklab, var(--base-content) 60%, transparent);
-  }
-
-  .notes-empty-hint {
-    margin-top: 0.25rem;
-    font-size: 12px;
-    color: color-mix(in oklab, var(--base-content) 40%, transparent);
   }
 
   /* Shared Panel */
@@ -791,7 +767,7 @@
   }
 
   .shared-panel-title {
-    font-size: 11px;
+    font-size: 0.75rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -826,8 +802,8 @@
     align-items: center;
     justify-content: center;
     border-radius: 0.75rem;
-    background: color-mix(in oklab, #a855f7 10%, transparent);
-    color: #a855f7;
+    background: color-mix(in oklab, var(--info) 10%, transparent);
+    color: var(--info);
     flex-shrink: 0;
   }
 
@@ -837,7 +813,7 @@
   }
 
   .shared-item-name {
-    font-size: 13px;
+    font-size: 0.875rem;
     font-weight: 500;
     color: var(--base-content);
     white-space: nowrap;
@@ -846,7 +822,7 @@
   }
 
   .shared-item-meta {
-    font-size: 11px;
+    font-size: 0.75rem;
     color: color-mix(in oklab, var(--base-content) 50%, transparent);
   }
 
@@ -855,7 +831,7 @@
   }
 
   .shared-item-type {
-    font-size: 10px;
+    font-size: 0.625rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: -0.025em;

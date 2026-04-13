@@ -25,7 +25,9 @@ export default {
 				mono: ['IBM Plex Mono', 'monospace']
 			},
 			fontSize: {
-				'2xs': ['0.625rem', { lineHeight: '0.875rem' }]
+				'2xs': ['0.625rem', { lineHeight: '0.875rem' }],
+				'meta': ['0.75rem', { lineHeight: '1.35', fontWeight: '500' }],
+				'body-sm': ['0.875rem', { lineHeight: '1.45', fontWeight: '400' }]
 			},
 			boxShadow: {
 				panel: '0 18px 45px rgba(39, 25, 14, 0.08)',

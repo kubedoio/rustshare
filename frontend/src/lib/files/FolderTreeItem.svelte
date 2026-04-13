@@ -67,7 +67,7 @@
 
 <div class="select-none">
 	<div
-		class="group flex items-center gap-1.5 px-2 py-1 mx-1 rounded-md text-[13px] transition-all cursor-pointer
+		class="group flex items-center gap-1.5 px-2 py-1 mx-1 rounded-md text-body-sm transition-all cursor-pointer
 			{isSelected 
 				? 'bg-brand-500/15 text-brand-600 font-medium' 
 				: 'text-base-content/70 hover:bg-base-200/50 hover:text-base-content'}
