@@ -19,24 +19,17 @@
 	function handleClick() {
 		onSort(field);
 	}
-
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter' || e.key === ' ') {
-			e.preventDefault();
-			onSort(field);
-		}
-	}
 </script>
 
 <th
-	class="px-4 py-2 text-left text-meta font-semibold text-base-content/60 uppercase tracking-wider font-data select-none cursor-pointer hover:text-base-content transition-colors {className}"
-	tabindex="0"
-	role="columnheader"
+	class="px-4 py-2 text-left text-meta font-semibold text-base-content/60 uppercase tracking-wider font-data select-none {className}"
 	aria-sort={ariaSort}
-	onclick={handleClick}
-	onkeydown={handleKeydown}
 >
-	<div class="flex items-center gap-1">
+	<button
+		type="button"
+		class="flex items-center gap-1 w-full text-left hover:text-base-content transition-colors cursor-pointer"
+		onclick={handleClick}
+	>
 		<span>{label}</span>
 		{#if isActive}
 			{#if activeOrder === 'asc'}
@@ -47,5 +40,5 @@
 		{:else}
 			<ArrowUpDown size={12} class="text-base-content/30" />
 		{/if}
-	</div>
+	</button>
 </th>
