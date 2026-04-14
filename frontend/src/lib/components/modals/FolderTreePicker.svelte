@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createQuery } from '@tanstack/svelte-query';
+  import { createQuery } from '$lib/query-compat';
   import { getFolderTree, type FolderTree } from '$lib/api/folders';
   import { Hop as Home, Loader2, AlertCircle } from 'lucide-svelte';
   import FolderTreeItem from './FolderTreeItem.svelte';

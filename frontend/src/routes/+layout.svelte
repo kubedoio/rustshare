@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { QueryClientProvider } from '@tanstack/svelte-query';
+	import { QueryClientProvider } from '$lib/query-compat';
 	import { queryClient } from '$lib/query-client';
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';

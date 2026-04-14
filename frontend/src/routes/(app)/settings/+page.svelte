@@ -19,7 +19,7 @@
 	import { formatFileSize, formatDate } from '$lib/utils/format';
 	import { listAllFiles } from '$lib/api/files';
 	import type { File } from '$lib/api/types';
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery } from '$lib/query-compat';
 	import { FileText, Folder, FileIcon, ImageIcon, VideoIcon, MusicIcon, Clock } from 'lucide-svelte';
 	
 	// Settings components

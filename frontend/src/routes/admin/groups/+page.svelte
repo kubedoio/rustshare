@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createQuery, createMutation } from '@tanstack/svelte-query';
+	import { createQuery, createMutation } from '$lib/query-compat';
 	import { queryClient } from '$lib/query-client';
 	import { listAdminGroups, deleteAdminGroup, type AdminGroup } from '$lib/api/admin';
 	import GroupTable from '$lib/components/admin/GroupTable.svelte';

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery } from '$lib/query-compat';
 	import { queryClient } from '$lib/query-client';
 	import { listWebhooks } from '$lib/api/admin';
 	import WebhookList from '$lib/components/admin/WebhookList.svelte';

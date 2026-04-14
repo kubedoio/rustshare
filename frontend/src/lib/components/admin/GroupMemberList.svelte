@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createMutation } from '@tanstack/svelte-query';
+	import { createMutation } from '$lib/query-compat';
 	import { addGroupMember, removeGroupMember, type GroupMember, type AdminUser } from '$lib/api/admin';
 	import UserSearchInput from '$lib/components/common/UserSearchInput.svelte';
 

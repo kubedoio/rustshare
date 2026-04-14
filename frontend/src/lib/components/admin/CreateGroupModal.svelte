@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createMutation } from '@tanstack/svelte-query';
+	import { createMutation } from '$lib/query-compat';
 	import { createAdminGroup, type AdminGroupDetail } from '$lib/api/admin';
 
 	export let open: boolean = false;

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery } from '$lib/query-compat';
 	import { queryClient } from '$lib/query-client';
 	import { listAdminUsers } from '$lib/api/admin';
 	import UserTable from '$lib/components/admin/UserTable.svelte';

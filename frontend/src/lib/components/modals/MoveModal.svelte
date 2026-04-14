@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery } from '$lib/query-compat';
 	import { getFolderTree } from '$lib/api/folders';
 	import type { FolderTree } from '$lib/api/folders';
 	import { Hop as Home, Loader as Loader2, CircleAlert as AlertCircle } from 'lucide-svelte';

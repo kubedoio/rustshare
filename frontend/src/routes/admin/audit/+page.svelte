@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery } from '$lib/query-compat';
 	import { listAuditLog } from '$lib/api/admin';
 	import AuditTable from '$lib/components/admin/AuditTable.svelte';
 

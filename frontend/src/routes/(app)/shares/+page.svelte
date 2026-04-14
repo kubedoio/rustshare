@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createMutation, createQuery } from '@tanstack/svelte-query';
+	import { createMutation, createQuery } from '$lib/query-compat';
 	import type { Share, ShareAccessLogEntry } from '$lib/api/types';
 	import { getShareType, getShareTypeLabel } from '$lib/api/types';
 	import { getShareAccessLog, listAllUserShares, revokeShare } from '$lib/api/shares';

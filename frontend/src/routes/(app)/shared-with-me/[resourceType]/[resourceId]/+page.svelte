@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery } from '$lib/query-compat';
 	import { downloadFile, getFile } from '$lib/api/files';
 	import { getFolder, getSharedFolderContents } from '$lib/api/folders';
 	import { listReceivedShares } from '$lib/api/shares';

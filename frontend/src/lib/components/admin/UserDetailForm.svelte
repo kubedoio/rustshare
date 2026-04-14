@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createMutation } from '@tanstack/svelte-query';
+	import { createMutation } from '$lib/query-compat';
 	import { goto } from '$app/navigation';
 	import {
 		updateAdminUser,

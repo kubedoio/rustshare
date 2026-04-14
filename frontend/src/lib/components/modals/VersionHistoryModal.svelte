@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import { createQuery, createMutation } from '@tanstack/svelte-query';
+  import { createQuery, createMutation } from '$lib/query-compat';
   import { getFileVersions, restoreFileVersion, getFile } from '$lib/api/files';
   import { formatFileSize, formatDate } from '$lib/utils/format';
   import type { FileVersion } from '$lib/api/types';

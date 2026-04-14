@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createQuery, createMutation } from '@tanstack/svelte-query';
+  import { createQuery, createMutation } from '$lib/query-compat';
   import { listAllFiles } from '$lib/api/files';
   import { listRecentNotes, createNote } from '$lib/api/notes';
   import { currentUser } from '$lib/stores/auth';

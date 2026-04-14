@@ -2,7 +2,7 @@
 	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery } from '$lib/query-compat';
 	import { getFolderTree, getSharedFolderTree, type FolderTree as FolderTreeType } from '$lib/api/folders';
 	import { listReceivedShares } from '$lib/api/shares';
 	import type { ReceivedShare } from '$lib/api/types';

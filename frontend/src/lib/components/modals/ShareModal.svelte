@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createQuery, createMutation } from '@tanstack/svelte-query';
+	import { createQuery, createMutation } from '$lib/query-compat';
 	import {
 		createFileUserShare,
 		createFolderUserShare,

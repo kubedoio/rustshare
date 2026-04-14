@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+	import { createQuery, createMutation, useQueryClient } from '$lib/query-compat';
 	import { getSmtpConfig, updateSmtpConfig, testSmtpConfig, type SmtpConfigRequest } from '$lib/api/admin';
 
 	const queryClient = useQueryClient();

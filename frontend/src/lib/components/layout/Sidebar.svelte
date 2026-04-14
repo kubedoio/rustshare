@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery } from '$lib/query-compat';
 	import { page } from '$app/stores';
 	import { getUnreadNotificationCount } from '$lib/api/notifications';
 	import { authStore } from '$lib/stores/auth';

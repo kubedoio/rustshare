@@ -16,7 +16,7 @@
 	 */
 
 	import { onMount } from 'svelte';
-	import { createQuery, createMutation } from '@tanstack/svelte-query';
+	import { createQuery, createMutation } from '$lib/query-compat';
 	import { truncateFilename } from '$lib/utils/format';
 	import {
 		deleteFile,

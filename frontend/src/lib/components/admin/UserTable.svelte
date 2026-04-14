@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createMutation } from '@tanstack/svelte-query';
+	import { createMutation } from '$lib/query-compat';
 	import type { AdminUser } from '$lib/api/admin';
 	import { disableAdminUser, enableAdminUser, deleteAdminUser } from '$lib/api/admin';
 

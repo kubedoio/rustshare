@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createMutation, createQuery } from '@tanstack/svelte-query';
+  import { createMutation, createQuery } from '$lib/query-compat';
   import { goto } from '$app/navigation';
   import {
     deleteNotification,

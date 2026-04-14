@@ -3,7 +3,7 @@
 	import ThemeToggle from '$lib/components/common/ThemeToggle.svelte';
 	import { currentUser, authStore } from '$lib/stores/auth';
 	import { searchQuery as globalSearchQuery } from '$lib/stores/search';
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery } from '$lib/query-compat';
 	import { getUnreadNotificationCount } from '$lib/api/notifications';
 	import { listAllFiles } from '$lib/api/files';
 	import { getFolderTree, type FolderTree } from '$lib/api/folders';
