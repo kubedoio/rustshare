@@ -30,7 +30,7 @@ type MutationMethods<TData, TError, TVariables, TContext> = {
 	mutate: (
 		variables: TVariables,
 		options?: MutateOptions<TData, TError, TVariables, TContext>
-	) => void;
+	) => Promise<TData>;
 	mutateAsync: (
 		variables: TVariables,
 		options?: MutateOptions<TData, TError, TVariables, TContext>
@@ -130,11 +130,7 @@ export function createMutation<
 ): MutationStoreResult<TData, TError, TVariables, TContext> {
 	const observer = new MutationObserver<TData, TError, TVariables, TContext>(queryClient, options);
 	const methods: MutationMethods<TData, TError, TVariables, TContext> = {
-		mutate: (variables, mutateOptions) => {
-			void observer.mutate(variables, mutateOptions).catch(() => {
-				// Keep parity with store-style mutate(), which exposes state through the store.
-			});
-		},
+		mutate: (variables, mutateOptions) => observer.mutate(variables, mutateOptions),
 		mutateAsync: (variables, mutateOptions) => observer.mutate(variables, mutateOptions),
 		reset: () => observer.reset()
 	};
