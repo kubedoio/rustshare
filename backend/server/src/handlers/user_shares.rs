@@ -441,6 +441,7 @@ pub async fn get_user_shared_folder_contents(
     let mut folders_with_shares = Vec::with_capacity(contents.folders.len());
     for f in contents.folders {
         let share_info = load_folder_share_summary(&state.db_pool, f.id).await?;
+        let size = load_folder_size(&state.db_pool, f.id).await?;
         let permission = state
             .permission_resolver
             .resolve_permission_with_source(auth.user_id, Resource::Folder(f.id))
@@ -465,6 +466,7 @@ pub async fn get_user_shared_folder_contents(
             updated_at: f.updated_at,
             starred_at: f.starred_at,
             deleted_at: f.deleted_at,
+            size,
             is_shared: share_info.0,
             share_count: share_info.1,
             share_expires_at: share_info.2,
@@ -630,6 +632,34 @@ async fn load_file_share_summary(
         tracing::error!("database error fetching share info for file {}: {}", file_id, error);
         crate::handlers::internal_error_response()
     })
+}
+
+async fn load_folder_size(
+    pool: &sqlx::PgPool,
+    folder_id: Uuid,
+) -> Result<i64, Response> {
+    let size: i64 = sqlx::query_scalar(
+        r#"
+        WITH RECURSIVE folder_tree AS (
+            SELECT id FROM folders WHERE id = $1
+            UNION ALL
+            SELECT child.id FROM folders child
+            INNER JOIN folder_tree parent ON child.parent_folder_id = parent.id
+            WHERE child.deleted_at IS NULL
+        )
+        SELECT COALESCE(SUM(files.size), 0) FROM files
+        WHERE files.parent_folder_id IN (SELECT id FROM folder_tree)
+        AND files.deleted_at IS NULL
+        "#,
+    )
+    .bind(folder_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| {
+        tracing::error!("database error fetching size for folder {}: {}", folder_id, error);
+        crate::handlers::internal_error_response()
+    })?;
+    Ok(size)
 }
 
 fn permission_to_string(permission: Option<SharePermissions>) -> Option<String> {

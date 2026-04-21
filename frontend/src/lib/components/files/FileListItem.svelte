@@ -46,7 +46,11 @@
 	}: Props = $props();
 
 	let fileItem = $derived(isFolder ? undefined : (item as File));
-	let displaySize = $derived(isFolder ? '-' : formatFileSize(fileItem?.size || 0));
+	let displaySize = $derived(
+		isFolder
+			? (typeof (item as Folder).size === 'number' ? formatFileSize((item as Folder).size) : '-')
+			: formatFileSize(fileItem?.size || 0)
+	);
 	let displayDate = $derived(
 		formatDate(
 			isFolder ? (item as Folder).updated_at : (item as File).modified_at

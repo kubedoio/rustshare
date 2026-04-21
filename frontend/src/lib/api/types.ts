@@ -43,6 +43,8 @@ export interface Folder {
 	updated_at: string;
 	starred_at?: string | null;
 	deleted_at?: string | null;
+	/// Total recursive size of all files within this folder (in bytes)
+	size?: number;
 	// Share indicators
 	is_shared?: boolean;
 	share_count?: number;
