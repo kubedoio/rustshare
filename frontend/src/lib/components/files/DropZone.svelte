@@ -1,17 +1,20 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
   import { collectFilesFromDataTransfer } from '$lib/utils/directoryUpload';
 
-  export let disabled = false;
+  interface Props {
+    disabled?: boolean;
+    onFilesDropped?: (files: globalThis.File[]) => void;
+    onDirectoryDropped?: (files: globalThis.File[]) => void;
+  }
 
-  type DispatchEvents = {
-    filesDropped: globalThis.File[];
-    directoryDropped: globalThis.File[];
-  };
-  const dispatch = createEventDispatcher<DispatchEvents>();
+  let {
+    disabled = false,
+    onFilesDropped = () => {},
+    onDirectoryDropped = () => {}
+  }: Props = $props();
 
-  let isDragging = false;
-  let dragCounter = 0;
+  let isDragging = $state(false);
+  let dragCounter = $state(0);
 
   function isFileDrag(event: DragEvent) {
     return event.dataTransfer?.types?.includes('Files') ?? false;
@@ -59,24 +62,24 @@
       const items = await collectFilesFromDataTransfer(event.dataTransfer.items);
       if (items.length > 0) {
         const files = items.map((i) => i.file);
-        dispatch('directoryDropped', files);
+        onDirectoryDropped(files);
       }
       return;
     }
 
     const files = event.dataTransfer?.files;
     if (files && files.length > 0) {
-      dispatch('filesDropped', Array.from(files));
+      onFilesDropped(Array.from(files));
     }
   }
 </script>
 
 <div
   class="relative"
-  on:dragenter={handleDragEnter}
-  on:dragleave={handleDragLeave}
-  on:dragover={handleDragOver}
-  on:drop={handleDrop}
+  ondragenter={handleDragEnter}
+  ondragleave={handleDragLeave}
+  ondragover={handleDragOver}
+  ondrop={handleDrop}
   role="region"
   aria-label="File drop zone"
 >

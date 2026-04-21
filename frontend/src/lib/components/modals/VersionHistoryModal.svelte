@@ -1,39 +1,48 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
   import { createQuery, createMutation } from '$lib/query-compat';
   import { getFileVersions, restoreFileVersion, getFile } from '$lib/api/files';
   import { formatFileSize, formatDate } from '$lib/utils/format';
   import type { FileVersion } from '$lib/api/types';
   import { ApiError } from '$lib/api/types';
 
-  export let open = false;
-  export let fileId: string;
-  export let fileName: string;
-
-  let selectedVersion: FileVersion | null = null;
-  let showRestoreConfirm = false;
-  let conflictError = false;
-  let errorMessage = '';
-
-  type DispatchEvents = {
-    close: void;
-    restored: { version: number };
+  interface Props {
+    open?: boolean;
+    fileId?: string;
+    fileName?: string;
+    onClose?: () => void;
+    onRestored?: (payload: { version: number }) => void;
   }
-  const dispatch = createEventDispatcher<DispatchEvents>();
+
+  let {
+    open = false,
+    fileId = '',
+    fileName = '',
+    onClose = () => {},
+    onRestored = () => {}
+  }: Props = $props();
+
+  let selectedVersion: FileVersion | null = $state(null);
+  let showRestoreConfirm = $state(false);
+  let conflictError = $state(false);
+  let errorMessage = $state('');
 
   // Reactive query for file details
-  $: fileQuery = createQuery({
-    queryKey: ['file', fileId],
-    queryFn: () => getFile(fileId),
-    enabled: open && !!fileId
-  });
+  let fileQuery = $derived(
+    createQuery({
+      queryKey: ['file', fileId],
+      queryFn: () => getFile(fileId),
+      enabled: open && !!fileId
+    })
+  );
 
   // Reactive query for version history
-  $: versionsQuery = createQuery({
-    queryKey: ['file-versions', fileId],
-    queryFn: () => getFileVersions(fileId),
-    enabled: open && !!fileId
-  });
+  let versionsQuery = $derived(
+    createQuery({
+      queryKey: ['file-versions', fileId],
+      queryFn: () => getFileVersions(fileId),
+      enabled: open && !!fileId
+    })
+  );
 
   // Mutation for restoring version
   const restoreMutation = createMutation({
@@ -46,7 +55,7 @@
       return { version: versionNumber, result };
     },
     onSuccess: ({ version }) => {
-      dispatch('restored', { version });
+      onRestored({ version });
       showRestoreConfirm = false;
       selectedVersion = null;
       conflictError = false;
@@ -64,7 +73,7 @@
   });
 
   function handleClose() {
-    dispatch('close');
+    onClose();
     selectedVersion = null;
     showRestoreConfirm = false;
     conflictError = false;
@@ -98,17 +107,24 @@
   }
 
   // Sort versions in descending order (newest first)
-  $: sortedVersions = $versionsQuery.data ? [...$versionsQuery.data].sort((a, b) => b.version_number - a.version_number) : [];
+  let sortedVersions = $derived(
+    $versionsQuery.data ? [...$versionsQuery.data].sort((a, b) => b.version_number - a.version_number) : []
+  );
 
   // Get current version
-  $: currentVersionNumber = $fileQuery.data?.current_version;
+  let currentVersionNumber = $derived($fileQuery.data?.current_version);
 
-  $: console.log('[VersionHistoryModal] Props:', { open, fileId, fileName });
-  $: console.log('[VersionHistoryModal] Query states:', {
-    versionsLoading: $versionsQuery.isLoading,
-    versionsError: $versionsQuery.isError,
-    versionsData: $versionsQuery.data,
-    sortedVersions
+  $effect(() => {
+    console.log('[VersionHistoryModal] Props:', { open, fileId, fileName });
+  });
+
+  $effect(() => {
+    console.log('[VersionHistoryModal] Query states:', {
+      versionsLoading: $versionsQuery.isLoading,
+      versionsError: $versionsQuery.isError,
+      versionsData: $versionsQuery.data,
+      sortedVersions
+    });
   });
 </script>
 
@@ -162,7 +178,7 @@
                   {#if !isCurrent}
                     <button
                       class="btn btn-sm btn-outline"
-                      on:click={() => handleRestore(version)}
+                      onclick={() => handleRestore(version)}
                       disabled={$restoreMutation.isPending}
                     >
                       Restore
@@ -186,7 +202,7 @@
       <button
         type="button"
         class="btn"
-        on:click={handleClose}
+        onclick={handleClose}
         disabled={$restoreMutation.isPending}
       >
         Close
@@ -216,14 +232,14 @@
         <button
           type="button"
           class="btn btn-ghost"
-          on:click={cancelRestore}
+          onclick={cancelRestore}
         >
           Cancel
         </button>
         <button
           type="button"
           class="btn btn-primary"
-          on:click={reloadVersions}
+          onclick={reloadVersions}
         >
           Reload
         </button>
@@ -258,7 +274,7 @@
         <button
           type="button"
           class="btn btn-ghost"
-          on:click={cancelRestore}
+          onclick={cancelRestore}
           disabled={$restoreMutation.isPending}
         >
           Cancel
@@ -266,7 +282,7 @@
         <button
           type="button"
           class="btn btn-warning"
-          on:click={confirmRestore}
+          onclick={confirmRestore}
           disabled={$restoreMutation.isPending}
         >
           {#if $restoreMutation.isPending}

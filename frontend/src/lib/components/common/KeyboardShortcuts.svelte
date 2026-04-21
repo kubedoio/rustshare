@@ -1,13 +1,12 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  import { createEventDispatcher } from 'svelte';
+  import { Info } from 'lucide-svelte';
 
-  export let open = false;
-
-  type DispatchEvents = {
-    close: void;
+  interface Props {
+    open?: boolean;
+    onClose?: () => void;
   }
-  const dispatch = createEventDispatcher<DispatchEvents>();
+
+  let { open = false, onClose = () => {} }: Props = $props();
 
   interface ShortcutGroup {
     category: string;
@@ -51,7 +50,7 @@
   ];
 
   function handleClose() {
-    dispatch('close');
+    onClose();
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -60,12 +59,11 @@
     }
   }
 
-  onMount(() => {
+  $effect(() => {
     window.addEventListener('keydown', handleKeydown);
-  });
-
-  onDestroy(() => {
-    window.removeEventListener('keydown', handleKeydown);
+    return () => {
+      window.removeEventListener('keydown', handleKeydown);
+    };
   });
 </script>
 
@@ -97,19 +95,7 @@
 
       <!-- Platform-specific note -->
       <div class="alert alert-info">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          class="stroke-current shrink-0 w-6 h-6"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
-        </svg>
+        <Info class="stroke-current shrink-0 w-6 h-6" />
         <span class="text-sm">
           On macOS, use <kbd class="kbd kbd-sm">Cmd</kbd> instead of <kbd class="kbd kbd-sm">Ctrl</kbd>
         </span>
@@ -117,11 +103,11 @@
     </div>
 
     <div class="modal-action">
-      <button class="btn btn-primary" on:click={handleClose}>Got it!</button>
+      <button class="btn btn-primary" onclick={handleClose}>Got it!</button>
     </div>
   </div>
 
   <form method="dialog" class="modal-backdrop">
-    <button type="button" on:click={handleClose}>close</button>
+    <button type="button" onclick={handleClose}>close</button>
   </form>
 </dialog>

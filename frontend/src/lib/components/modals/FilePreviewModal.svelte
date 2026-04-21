@@ -1,38 +1,46 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { previewFile, downloadFile, getFileContent } from '$lib/api/files';
 	import type { File } from '$lib/api/types';
 	import { formatFileSize } from '$lib/utils/format';
-	import { detectEditorType, canEditFileSize, detectFileCapabilities } from '$lib/utils/editor';
+	import { detectEditorType, detectFileCapabilities } from '$lib/utils/editor';
 	import OfficePreview from '$lib/components/preview/OfficePreview.svelte';
 	import { renderMarkdown } from '$lib/utils/markdown';
 
-	export let open = false;
-	export let file: File | null = null;
-
-	type DispatchEvents = {
-		close: void;
-		edit: { file: File };
-	}
-	const dispatch = createEventDispatcher<DispatchEvents>();
-
-	let previewUrl: string | null = null;
-	let textContent: string | null = null;
-	let isLoading = false;
-	let error: string | null = null;
-
-	$: if (open && file) {
-		loadPreview();
+	interface Props {
+		open?: boolean;
+		file?: File | null;
+		onClose?: () => void;
+		onEdit?: (payload: { file: File }) => void;
 	}
 
-	$: if (!open) {
-		cleanup();
-	}
+	let {
+		open = false,
+		file = null,
+		onClose = () => {},
+		onEdit = () => {}
+	}: Props = $props();
+
+	let previewUrl: string | null = $state(null);
+	let textContent: string | null = $state(null);
+	let isLoading = $state(false);
+	let error: string | null = $state(null);
+
+	$effect(() => {
+		if (open && file) {
+			loadPreview();
+		}
+	});
+
+	$effect(() => {
+		if (!open) {
+			cleanup();
+		}
+	});
 
 	// Determine if the file can be edited
-	$: capabilities = file ? detectFileCapabilities(file.name, file.mime_type) : null;
-	$: canEdit = capabilities?.canEdit ?? false;
+	let capabilities = $derived(file ? detectFileCapabilities(file.name, file.mime_type) : null);
+	let canEdit = $derived(capabilities?.canEdit ?? false);
 
 	async function loadPreview() {
 		if (!file) return;
@@ -72,7 +80,7 @@
 	}
 
 	function handleClose() {
-		dispatch('close');
+		onClose();
 	}
 
 	function handleEdit() {
@@ -81,9 +89,9 @@
 		// Route based on editor type
 		if (capabilities?.editorType === 'image') {
 			goto(`/files/edit/${file.id}`);
-			dispatch('close');
+			onClose();
 		} else {
-			dispatch('edit', { file });
+			onEdit({ file });
 		}
 	}
 
@@ -148,7 +156,7 @@
 				<h3 class="font-bold text-lg truncate">{file?.name || ''}</h3>
 				{#if file}
 					<p class="text-sm text-base-content/60">
-						{formatFileSize(file.size)} • {file.mime_type}
+						{formatFileSize(file.size)} &bull; {file.mime_type}
 					</p>
 				{/if}
 			</div>
@@ -157,7 +165,7 @@
 				type="button"
 				class="btn btn-ghost btn-sm btn-circle"
 				aria-label="Close file preview"
-				on:click={handleClose}
+				onclick={handleClose}
 			>
 				<svg
 					xmlns="http://www.w3.org/2000/svg"
@@ -207,19 +215,19 @@
 				{:else if capabilities?.previewType === 'video' && previewUrl}
 					<video src={previewUrl} controls class="max-h-full max-w-full">
 						<track kind="captions" />
-						Your browser doesn't support video playback.
+						Your browser does not support video playback.
 					</video>
 				
 				{:else if capabilities?.previewType === 'audio' && previewUrl}
 					<div class="p-8">
 						<audio src={previewUrl} controls class="w-full">
-							Your browser doesn't support audio playback.
+							Your browser does not support audio playback.
 						</audio>
 					</div>
 				
 				{:else if capabilities?.previewType === 'office' && file}
 					<OfficePreview {file}>
-						<button slot="download-button" class="btn btn-primary" on:click={handleDownload}>
+						<button slot="download-button" class="btn btn-primary" onclick={handleDownload}>
 							<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
 							</svg>
@@ -250,7 +258,7 @@
 						<p class="text-base-content/60 max-w-md">
 							This file is a diagram that can be viewed and edited in the specialized editor.
 						</p>
-						<button class="btn btn-primary mt-4" on:click={handleEdit}>
+						<button class="btn btn-primary mt-4" onclick={handleEdit}>
 							Open in Editor
 						</button>
 					</div>
@@ -272,7 +280,7 @@
 							/>
 						</svg>
 						<p class="text-base-content/60 mb-4">Preview not available for this file type</p>
-						<button class="btn btn-primary" on:click={handleDownload}>Download File</button>
+						<button class="btn btn-primary" onclick={handleDownload}>Download File</button>
 					</div>
 				{/if}
 			{/if}
@@ -280,7 +288,7 @@
 
 		<div class="mt-4 gap-2 flex justify-end">
 			{#if canEdit}
-				<button class="btn btn-primary" on:click={handleEdit}>
+				<button class="btn btn-primary" onclick={handleEdit}>
 					<svg
 						xmlns="http://www.w3.org/2000/svg"
 						fill="none"
@@ -299,7 +307,7 @@
 				</button>
 			{/if}
 			{#if file && (previewUrl || textContent !== null) && canPreview(file)}
-				<button class="btn btn-outline" on:click={handleDownload}>
+				<button class="btn btn-outline" onclick={handleDownload}>
 					<svg
 						xmlns="http://www.w3.org/2000/svg"
 						fill="none"
@@ -317,11 +325,11 @@
 					Download
 				</button>
 			{/if}
-			<button class="btn" on:click={handleClose}>Close</button>
+			<button class="btn" onclick={handleClose}>Close</button>
 		</div>
 	</div>
 
 	<form method="dialog" class="modal-backdrop">
-		<button type="button" on:click={handleClose}>close</button>
+		<button type="button" onclick={handleClose}>close</button>
 	</form>
 </dialog>

@@ -1,4 +1,4 @@
-<div class="max-w-[1200px] mx-auto px-4 pb-10 flex flex-col gap-4">
+<div class="max-w-[1200px] mx-auto px-4 pb-10 flex flex-col gap-4" aria-busy="true" aria-label="Loading dashboard">
 	<!-- Workspace Panel -->
 	<div class="bg-base-100 border border-base-300 rounded-3xl p-6 shadow-sm flex flex-col gap-5">
 		<div class="grid lg:grid-cols-[1fr_auto] gap-8">

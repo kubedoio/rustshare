@@ -480,12 +480,14 @@
 			</button>
 
 			{#if showActions}
-				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 				<div
 					bind:this={actionMenuRef}
 					class="fixed z-[70] w-44 rounded-xl border border-base-300/70 bg-base-100 py-1 shadow-xl shadow-black/20"
 					style={`top: ${menuTop}px; left: ${menuLeft}px;`}
 					onclick={(e) => e.stopPropagation()}
+					onkeydown={(e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); showActions = false; } }}
+					tabindex="-1"
+					role="menu"
 				>
 					{#if workspaceMode === 'deleted'}
 						<button

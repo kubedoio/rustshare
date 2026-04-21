@@ -1,37 +1,34 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import { toastStore } from '$lib/stores/toast';
-
-  $: toasts = $toastStore;
 
   function handleClose(id: string) {
     toastStore.dismiss(id);
   }
-
-  function handleAction(id: string, href: string) {
-    toastStore.dismiss(id);
-    goto(href);
-  }
 </script>
 
-{#if toasts.length > 0}
-  <div class="toast toast-end toast-top z-[100] mt-16">
-    {#each toasts as toast (toast.id)}
-      <div class="alert {toast.type === 'success' ? 'alert-success' : toast.type === 'error' ? 'alert-error' : 'alert-info'} shadow-lg">
+{#if $toastStore.length > 0}
+  <div class="toast toast-end toast-top z-[100] mt-16" role="region" aria-label="Notifications">
+    {#each $toastStore as toast (toast.id)}
+      <div
+        class="alert {toast.type === 'success' ? 'alert-success' : toast.type === 'error' ? 'alert-error' : 'alert-info'} shadow-lg"
+        role={toast.type === 'error' ? 'alert' : 'status'}
+        aria-live={toast.type === 'error' ? 'assertive' : 'polite'}
+      >
         <div class="flex items-center justify-between gap-2 w-full">
           <span class="flex-1">{toast.message}</span>
           <div class="flex items-center gap-2">
             {#if toast.actionHref}
-              <button
+              <a
                 class="btn btn-xs btn-ghost"
-                on:click={() => toast.actionHref && handleAction(toast.id, toast.actionHref)}
+                href={toast.actionHref}
+                onclick={() => toastStore.dismiss(toast.id)}
               >
                 {toast.actionLabel || 'Open'}
-              </button>
+              </a>
             {/if}
             <button
               class="btn btn-xs btn-ghost"
-              on:click={() => handleClose(toast.id)}
+              onclick={() => handleClose(toast.id)}
               aria-label="Close notification"
             >
               ✕

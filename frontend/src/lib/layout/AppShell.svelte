@@ -86,7 +86,7 @@
 
 		<KeyboardShortcuts
 			open={$showKeyboardShortcuts}
-			on:close={() => showKeyboardShortcuts.set(false)}
+			onClose={() => showKeyboardShortcuts.set(false)}
 		/>
 
 		<ToastContainer />

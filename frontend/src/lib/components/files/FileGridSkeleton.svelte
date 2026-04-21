@@ -1,8 +1,12 @@
 <script lang="ts">
-  export let count = 4;
+  interface Props {
+    count?: number;
+  }
+
+  let { count = 4 }: Props = $props();
 </script>
 
-<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" aria-busy="true" aria-label="Loading files">
   {#each Array(count) as _}
     <div class="card bg-base-100 shadow-sm">
       <div class="card-body p-3 lg:p-4">

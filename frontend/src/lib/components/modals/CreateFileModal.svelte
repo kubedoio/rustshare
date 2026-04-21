@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
   import { FileText, File, PenTool, FileType } from 'lucide-svelte';
   import ModalBase from '$lib/components/common/ModalBase.svelte';
   import FolderTreePicker from './FolderTreePicker.svelte';
@@ -7,18 +6,14 @@
   type CreateFileType = 'txt' | 'md' | 'excalidraw' | 'odt';
 
   interface Props {
-    open: boolean;
-    loading: boolean;
-    currentFolderId: string | null;
+    open?: boolean;
+    loading?: boolean;
+    currentFolderId?: string | null;
+    onClose?: () => void;
+    onConfirm?: (payload: { targetFolderId: string | null; fileType: CreateFileType; fileName: string }) => void;
   }
 
-  let { open, loading, currentFolderId }: Props = $props();
-
-  type DispatchEvents = {
-    close: void;
-    confirm: { targetFolderId: string | null; fileType: CreateFileType; fileName: string };
-  }
-  const dispatch = createEventDispatcher<DispatchEvents>();
+  let { open = false, loading = false, currentFolderId = null, onClose = () => {}, onConfirm = () => {} }: Props = $props();
 
   let selectedFolderId: string | null = $state(null);
   let selectedType: CreateFileType = $state('txt');
@@ -49,7 +44,7 @@
       finalName = trimmedName + selectedExtension;
     }
 
-    dispatch('confirm', {
+    onConfirm({
       targetFolderId: selectedFolderId,
       fileType: selectedType,
       fileName: finalName
@@ -61,7 +56,7 @@
     fileName = '';
     selectedFolderId = currentFolderId;
     selectedType = 'txt';
-    dispatch('close');
+    onClose();
   }
 
   // Reset when opened
@@ -86,7 +81,7 @@
   <div class="mb-5">
     <label class="text-sm font-medium text-base-content/80 mb-2 block">Location</label>
     <FolderTreePicker
-      {selectedFolderId}
+      selectedFolderId={selectedFolderId}
       {currentFolderId}
       onSelect={(id) => selectedFolderId = id}
     />
@@ -100,8 +95,8 @@
         <button
           type="button"
           class="flex items-center gap-2 p-3 rounded-lg border transition-all text-left
-            {selectedType === ft.type 
-              ? 'border-brand-500 bg-brand-500/10' 
+            {selectedType === ft.type
+              ? 'border-brand-500 bg-brand-500/10'
               : 'border-base-300 hover:border-brand-500/30 hover:bg-base-200/50'}"
           onclick={() => selectedType = ft.type}
         >

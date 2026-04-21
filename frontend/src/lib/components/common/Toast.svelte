@@ -1,14 +1,21 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  interface Props {
+    message: string;
+    type?: 'success' | 'error' | 'info';
+    duration?: number;
+    onClose?: () => void;
+  }
 
-  export let message: string;
-  export let type: 'success' | 'error' | 'info' = 'info';
-  export let duration: number = 3000;
-  export let onClose: () => void = () => {};
+  let {
+    message,
+    type = 'info',
+    duration = 3000,
+    onClose = () => {}
+  }: Props = $props();
 
-  let visible = true;
+  let visible = $state(true);
 
-  onMount(() => {
+  $effect(() => {
     if (duration > 0) {
       const timer = setTimeout(() => {
         visible = false;

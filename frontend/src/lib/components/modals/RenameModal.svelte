@@ -1,20 +1,26 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
   import ModalBase from '$lib/components/common/ModalBase.svelte';
 
-  export let open = false;
-  export let loading = false;
-  export let itemName = '';
-  export let itemType: 'file' | 'folder' = 'folder';
-
-  let newName = '';
-  let error = '';
-
-  type DispatchEvents = {
-    close: void;
-    confirm: { newName: string };
+  interface Props {
+    open?: boolean;
+    loading?: boolean;
+    itemName?: string;
+    itemType?: 'file' | 'folder';
+    onClose?: () => void;
+    onConfirm?: (payload: { newName: string }) => void;
   }
-  const dispatch = createEventDispatcher<DispatchEvents>();
+
+  let {
+    open = false,
+    loading = false,
+    itemName = '',
+    itemType = 'folder',
+    onClose = () => {},
+    onConfirm = () => {}
+  }: Props = $props();
+
+  let newName = $state('');
+  let error = $state('');
 
   function handleSubmit() {
     error = '';
@@ -34,13 +40,13 @@
       return;
     }
 
-    dispatch('confirm', { newName: newName.trim() });
+    onConfirm({ newName: newName.trim() });
   }
 
   function handleClose() {
     newName = '';
     error = '';
-    dispatch('close');
+    onClose();
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -51,10 +57,12 @@
     }
   }
 
-  $: if (open) {
-    newName = itemName;
-    error = '';
-  }
+  $effect(() => {
+    if (open) {
+      newName = itemName;
+      error = '';
+    }
+  });
 </script>
 
 <ModalBase
@@ -62,7 +70,7 @@
   title="Rename {itemType === 'folder' ? 'Folder' : 'File'}"
   onClose={handleClose}
 >
-  <form on:submit|preventDefault={handleSubmit}>
+  <form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
     <div class="form-control">
       <label class="label" for="item-name">
         <span class="label-text">New Name</span>
@@ -74,7 +82,7 @@
         class="input input-bordered"
         class:input-error={error}
         bind:value={newName}
-        on:keydown={handleKeydown}
+        onkeydown={handleKeydown}
         disabled={loading}
       />
       {#if error}
@@ -88,7 +96,7 @@
       <button
         type="button"
         class="btn btn-ghost"
-        on:click={handleClose}
+        onclick={handleClose}
         disabled={loading}
       >
         Cancel

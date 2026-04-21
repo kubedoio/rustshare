@@ -1,30 +1,41 @@
 <script lang="ts">
 	import { currentUser, authStore } from '$lib/stores/auth';
-	import { createEventDispatcher } from 'svelte';
 	import ThemeToggle from '$lib/components/common/ThemeToggle.svelte';
 	import WebSocketStatus from '$lib/components/common/WebSocketStatus.svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { getAvatarUrl } from '$lib/api/users';
 
-	export let onMenuClick: () => void = () => {};
-	export let onHelpClick: () => void = () => {};
-	export let onSearchChange: ((query: string) => void) | null = null;
-	export let searchQuery = '';
+	interface Props {
+		onMenuClick?: () => void;
+		onHelpClick?: () => void;
+		onSearchChange?: ((query: string) => void) | null;
+		searchQuery?: string;
+		onSearch?: (payload: { query: string }) => void;
+	}
 
-	const dispatch = createEventDispatcher();
+	let {
+		onMenuClick = () => {},
+		onHelpClick = () => {},
+		onSearchChange = null,
+		searchQuery = '',
+		onSearch = () => {}
+	}: Props = $props();
 
 	// Cache buster for avatar - updates when user or avatar changes
-	let lastUserId = $currentUser?.id;
-	let lastAvatarPath = $currentUser?.avatar_path;
-	let avatarTimestamp = Date.now();
-	let avatarError = false;
-	$: if ($currentUser?.id !== lastUserId || $currentUser?.avatar_path !== lastAvatarPath) {
-		lastUserId = $currentUser?.id;
-		lastAvatarPath = $currentUser?.avatar_path;
-		avatarTimestamp = Date.now();
-		avatarError = false;
-	}
+	let lastUserId = $state($currentUser?.id);
+	let lastAvatarPath = $state($currentUser?.avatar_path);
+	let avatarTimestamp = $state(Date.now());
+	let avatarError = $state(false);
+
+	$effect(() => {
+		if ($currentUser?.id !== lastUserId || $currentUser?.avatar_path !== lastAvatarPath) {
+			lastUserId = $currentUser?.id;
+			lastAvatarPath = $currentUser?.avatar_path;
+			avatarTimestamp = Date.now();
+			avatarError = false;
+		}
+	});
 
 	function handleSearchInput(event: Event) {
 		const target = event.target as HTMLInputElement;
@@ -32,7 +43,7 @@
 		if (onSearchChange) {
 			onSearchChange(searchQuery);
 		}
-		dispatch('search', { query: searchQuery });
+		onSearch({ query: searchQuery });
 	}
 
 	function clearSearch() {
@@ -40,7 +51,7 @@
 		if (onSearchChange) {
 			onSearchChange('');
 		}
-		dispatch('search', { query: '' });
+		onSearch({ query: '' });
 	}
 
 	async function handleLogout() {
@@ -57,7 +68,7 @@
 		<button
 			class="btn btn-ghost btn-square lg:hidden flex-shrink-0"
 			aria-label="Open navigation menu"
-			on:click={onMenuClick}
+			onclick={onMenuClick}
 		>
 			<svg
 				xmlns="http://www.w3.org/2000/svg"
@@ -105,13 +116,13 @@
 							placeholder="Search files and folders..."
 							class="input input-bordered input-sm w-full"
 							bind:value={searchQuery}
-							on:input={handleSearchInput}
+							oninput={handleSearchInput}
 						/>
 						{#if searchQuery}
 							<button
 								class="btn btn-square btn-sm"
 								aria-label="Clear search"
-								on:click={clearSearch}
+								onclick={clearSearch}
 							>
 								<svg
 									xmlns="http://www.w3.org/2000/svg"
@@ -169,13 +180,13 @@
 								placeholder="Search..."
 								class="input input-bordered input-sm w-full"
 								bind:value={searchQuery}
-								on:input={handleSearchInput}
+								oninput={handleSearchInput}
 							/>
 							{#if searchQuery}
 								<button
 									class="btn btn-square btn-sm"
 									aria-label="Clear search"
-									on:click={clearSearch}
+									onclick={clearSearch}
 								>
 									<svg
 										xmlns="http://www.w3.org/2000/svg"
@@ -198,7 +209,7 @@
 		<!-- Help button -->
 		<button
 			class="btn btn-ghost btn-circle btn-sm"
-			on:click={onHelpClick}
+			onclick={onHelpClick}
 			title="Keyboard shortcuts"
 		>
 			<svg
@@ -222,7 +233,7 @@
 				<button type="button" class="btn btn-ghost btn-circle avatar">
 					<div class="w-8 lg:w-10 rounded-full bg-primary text-primary-content flex items-center justify-center overflow-hidden">
 						{#if $currentUser.avatar_path && !avatarError}
-							<img src={`${getAvatarUrl($currentUser.id)}?t=${avatarTimestamp}`} alt="Avatar" class="w-full h-full object-cover" on:error={() => avatarError = true} />
+							<img src={`${getAvatarUrl($currentUser.id)}?t=${avatarTimestamp}`} alt="Avatar" class="w-full h-full object-cover" onerror={() => avatarError = true} />
 						{:else}
 							<span class="text-lg lg:text-xl font-semibold">{$currentUser.display_name[0].toUpperCase()}</span>
 						{/if}
@@ -256,7 +267,7 @@
 					</a></li>
 					<li class="divider"></li>
 					<li>
-						<button on:click={handleLogout} class="text-error">
+						<button onclick={handleLogout} class="text-error">
 							<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
 								<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
 							</svg>

@@ -1,13 +1,17 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
+  interface Props {
+    disabled?: boolean;
+    multiple?: boolean;
+    onFilesSelected?: (files: globalThis.File[]) => void;
+  }
 
-  export let disabled = false;
-  export let multiple = true;
+  let {
+    disabled = false,
+    multiple = true,
+    onFilesSelected = () => {}
+  }: Props = $props();
 
-  type DispatchEvents = { filesSelected: globalThis.File[] }
-  const dispatch = createEventDispatcher<DispatchEvents>();
-
-  let fileInput: HTMLInputElement;
+  let fileInput: HTMLInputElement | undefined = $state();
 
   function handleClick() {
     fileInput?.click();
@@ -18,7 +22,7 @@
     const files = target.files;
 
     if (files && files.length > 0) {
-      dispatch('filesSelected', Array.from(files));
+      onFilesSelected(Array.from(files));
       // Reset input so same file can be selected again
       target.value = '';
     }
@@ -31,13 +35,13 @@
   type="file"
   class="hidden"
   {multiple}
-  on:change={handleFileChange}
+  onchange={handleFileChange}
   {disabled}
 />
 
 <button
   class="btn btn-primary btn-sm lg:btn-md"
-  on:click={handleClick}
+  onclick={handleClick}
   {disabled}
 >
   <svg

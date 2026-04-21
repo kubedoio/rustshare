@@ -1,21 +1,16 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
   import { FileText, File, PenTool, Search, X } from 'lucide-svelte';
   import ModalBase from '$lib/components/common/ModalBase.svelte';
   import type { File as FileType } from '$lib/api/types';
 
   interface Props {
-    open: boolean;
-    files: FileType[];
+    open?: boolean;
+    files?: FileType[];
+    onClose?: () => void;
+    onSelect?: (payload: { file: FileType }) => void;
   }
 
-  let { open, files }: Props = $props();
-
-  type DispatchEvents = {
-    close: void;
-    select: { file: FileType };
-  }
-  const dispatch = createEventDispatcher<DispatchEvents>();
+  let { open = false, files = [], onClose = () => {}, onSelect = () => {} }: Props = $props();
 
   let searchQuery = $state('');
 
@@ -32,18 +27,18 @@
   }
 
   let filteredFiles = $derived(
-    searchQuery.trim() 
+    searchQuery.trim()
       ? files.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
       : files
   );
 
   function handleSelect(file: FileType) {
-    dispatch('select', { file });
+    onSelect({ file });
   }
 
   function handleClose() {
     searchQuery = '';
-    dispatch('close');
+    onClose();
   }
 </script>
 

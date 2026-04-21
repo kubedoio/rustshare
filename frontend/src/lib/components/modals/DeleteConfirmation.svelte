@@ -1,24 +1,30 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
   import ModalBase from '$lib/components/common/ModalBase.svelte';
 
-  export let open = false;
-  export let loading = false;
-  export let itemName = '';
-  export let itemType: 'file' | 'folder' = 'folder';
-
-  type DispatchEvents = {
-    close: void;
-    confirm: void;
+  interface Props {
+    open?: boolean;
+    loading?: boolean;
+    itemName?: string;
+    itemType?: 'file' | 'folder';
+    onClose?: () => void;
+    onConfirm?: () => void;
   }
-  const dispatch = createEventDispatcher<DispatchEvents>();
+
+  let {
+    open = false,
+    loading = false,
+    itemName = '',
+    itemType = 'folder',
+    onClose = () => {},
+    onConfirm = () => {}
+  }: Props = $props();
 
   function handleConfirm() {
-    dispatch('confirm');
+    onConfirm();
   }
 
   function handleClose() {
-    dispatch('close');
+    onClose();
   }
 </script>
 
@@ -41,7 +47,7 @@
     <button
       type="button"
       class="btn btn-ghost"
-      on:click={handleClose}
+      onclick={handleClose}
       disabled={loading}
     >
       Cancel
@@ -49,7 +55,7 @@
     <button
       type="button"
       class="btn btn-error"
-      on:click={handleConfirm}
+      onclick={handleConfirm}
       disabled={loading}
     >
       {#if loading}

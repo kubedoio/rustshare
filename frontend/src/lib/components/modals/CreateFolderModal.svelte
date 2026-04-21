@@ -1,21 +1,26 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
   import ModalBase from '$lib/components/common/ModalBase.svelte';
   import FolderTreePicker from './FolderTreePicker.svelte';
 
-  export let open = false;
-  export let loading = false;
-  export let currentFolderId: string | null = null;
-
-  let folderName = '';
-  let error = '';
-  let selectedParentId: string | null = null;
-
-  type DispatchEvents = {
-    close: void;
-    confirm: { name: string; parentFolderId: string | null };
+  interface Props {
+    open?: boolean;
+    loading?: boolean;
+    currentFolderId?: string | null;
+    onClose?: () => void;
+    onConfirm?: (payload: { name: string; parentFolderId: string | null }) => void;
   }
-  const dispatch = createEventDispatcher<DispatchEvents>();
+
+  let {
+    open = false,
+    loading = false,
+    currentFolderId = null,
+    onClose = () => {},
+    onConfirm = () => {}
+  }: Props = $props();
+
+  let folderName = $state('');
+  let error = $state('');
+  let selectedParentId: string | null = $state(null);
 
   function handleSubmit() {
     error = '';
@@ -30,7 +35,7 @@
       return;
     }
 
-    dispatch('confirm', { 
+    onConfirm({
       name: folderName.trim(),
       parentFolderId: selectedParentId
     });
@@ -40,7 +45,7 @@
     folderName = '';
     error = '';
     selectedParentId = currentFolderId;
-    dispatch('close');
+    onClose();
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -51,11 +56,13 @@
     }
   }
 
-  $: if (open) {
-    folderName = '';
-    error = '';
-    selectedParentId = currentFolderId;
-  }
+  $effect(() => {
+    if (open) {
+      folderName = '';
+      error = '';
+      selectedParentId = currentFolderId;
+    }
+  });
 </script>
 
 <ModalBase
@@ -63,7 +70,7 @@
   title="Create New Folder"
   onClose={handleClose}
 >
-  <form on:submit|preventDefault={handleSubmit}>
+  <form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
     <!-- Location Section -->
     <div class="mb-4">
       <label class="text-sm font-medium text-base-content/80 mb-2 block">Location</label>
@@ -86,7 +93,7 @@
         class="input input-bordered"
         class:input-error={error}
         bind:value={folderName}
-        on:keydown={handleKeydown}
+        onkeydown={handleKeydown}
         disabled={loading}
       />
       {#if error}
@@ -100,7 +107,7 @@
       <button
         type="button"
         class="btn btn-ghost"
-        on:click={handleClose}
+        onclick={handleClose}
         disabled={loading}
       >
         Cancel

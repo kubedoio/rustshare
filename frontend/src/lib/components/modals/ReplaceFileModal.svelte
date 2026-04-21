@@ -1,21 +1,16 @@
 <script lang="ts">
   import type { File } from '$lib/api/types';
   import { updateFile } from '$lib/api/files';
-  import { createEventDispatcher } from 'svelte';
   import ModalBase from '$lib/components/common/ModalBase.svelte';
 
   interface Props {
     file?: File | null;
     open?: boolean;
+    onClose?: () => void;
+    onSuccess?: () => void;
   }
 
-  let { file = null, open = false }: Props = $props();
-
-  type DispatchEvents = {
-    close: void;
-    success: void;
-  }
-  const dispatch = createEventDispatcher<DispatchEvents>();
+  let { file = null, open = false, onClose = () => {}, onSuccess = () => {} }: Props = $props();
 
   let selectedFile: globalThis.File | null = $state(null);
   let uploading = $state(false);
@@ -37,7 +32,7 @@
 
     try {
       await updateFile(file.id, selectedFile, file.current_version);
-      dispatch('success');
+      onSuccess();
       handleClose();
     } catch (err) {
       if (err instanceof Error) {
@@ -58,7 +53,7 @@
     if (!uploading) {
       selectedFile = null;
       error = null;
-      dispatch('close');
+      onClose();
     }
   }
 </script>

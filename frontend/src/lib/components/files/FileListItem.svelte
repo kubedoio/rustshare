@@ -8,33 +8,49 @@
 	import { formatFileSize, formatDate } from '$lib/utils/format';
 	import FileIcon from '$lib/components/icons/FileIcon.svelte';
 	import { detectEditorType } from '$lib/utils/editor';
-	import { createEventDispatcher } from 'svelte';
 	import FileThumbnail from './FileThumbnail.svelte';
 	import ShareIndicator from './ShareIndicator.svelte';
 
-	export let item: File | Folder;
-	export let isFolder: boolean;
-	export let onSelect: (event?: MouseEvent) => void;
-	export let selectionMode = false;
-	export let selected = false;
-	export let replicationStatus: ReplicationStatus | null = null;
-	export let onEditFile: (file: File) => void = () => {};
-
-	type DispatchEvents = {
-		rename: { item: File | Folder; isFolder: boolean };
-		delete: { item: File | Folder; isFolder: boolean };
-		share: { item: File | Folder; isFolder: boolean };
-		versionHistory: { item: File };
-		move: { item: File | Folder; isFolder: boolean };
-		download: { item: File };
-		replace: { item: File };
+	interface Props {
+		item: File | Folder;
+		isFolder: boolean;
+		onSelect: (event?: MouseEvent) => void;
+		selectionMode?: boolean;
+		selected?: boolean;
+		replicationStatus?: ReplicationStatus | null;
+		onEditFile?: (file: File) => void;
+		onRename?: (payload: { item: File | Folder; isFolder: boolean }) => void;
+		onDelete?: (payload: { item: File | Folder; isFolder: boolean }) => void;
+		onShare?: (payload: { item: File | Folder; isFolder: boolean }) => void;
+		onVersionHistory?: (payload: { item: File }) => void;
+		onMove?: (payload: { item: File | Folder; isFolder: boolean }) => void;
+		onDownload?: (payload: { item: File }) => void;
+		onReplace?: (payload: { item: File }) => void;
 	}
-	const dispatch = createEventDispatcher<DispatchEvents>();
 
-	$: fileItem = isFolder ? undefined : (item as File);
-	$: displaySize = isFolder ? '-' : formatFileSize(fileItem?.size || 0);
-	$: displayDate = formatDate(
-		isFolder ? (item as Folder).updated_at : (item as File).modified_at
+	let {
+		item,
+		isFolder,
+		onSelect,
+		selectionMode = false,
+		selected = false,
+		replicationStatus = null,
+		onEditFile = () => {},
+		onRename = () => {},
+		onDelete = () => {},
+		onShare = () => {},
+		onVersionHistory = () => {},
+		onMove = () => {},
+		onDownload = () => {},
+		onReplace = () => {}
+	}: Props = $props();
+
+	let fileItem = $derived(isFolder ? undefined : (item as File));
+	let displaySize = $derived(isFolder ? '-' : formatFileSize(fileItem?.size || 0));
+	let displayDate = $derived(
+		formatDate(
+			isFolder ? (item as Folder).updated_at : (item as File).modified_at
+		)
 	);
 
 	function getFileItem(): File {
@@ -44,43 +60,43 @@
 	function handleRename(e: Event) {
 		e.stopPropagation();
 		e.preventDefault();
-		dispatch('rename', { item, isFolder });
+		onRename({ item, isFolder });
 	}
 
 	function handleShare(e: Event) {
 		e.stopPropagation();
 		e.preventDefault();
-		dispatch('share', { item, isFolder });
+		onShare({ item, isFolder });
 	}
 
 	function handleVersionHistory(e: Event) {
 		e.stopPropagation();
 		e.preventDefault();
-		dispatch('versionHistory', { item: item as File });
+		onVersionHistory({ item: item as File });
 	}
 
 	function handleDelete(e: Event) {
 		e.stopPropagation();
 		e.preventDefault();
-		dispatch('delete', { item, isFolder });
+		onDelete({ item, isFolder });
 	}
 
 	function handleMove(e: Event) {
 		e.stopPropagation();
 		e.preventDefault();
-		dispatch('move', { item, isFolder });
+		onMove({ item, isFolder });
 	}
 
 	function handleDownload(e: Event) {
 		e.stopPropagation();
 		e.preventDefault();
-		dispatch('download', { item: item as File });
+		onDownload({ item: item as File });
 	}
 
 	function handleReplace(e: Event) {
 		e.stopPropagation();
 		e.preventDefault();
-		dispatch('replace', { item: item as File });
+		onReplace({ item: item as File });
 	}
 
 	function handleEdit(e: Event) {
@@ -105,8 +121,8 @@
 	class="card bg-base-100 shadow-sm hover:shadow-md group relative touch-manipulation transition-shadow"
 	class:ring-2={selectionMode && selected}
 	class:ring-primary={selectionMode && selected}
-	on:click={handleCardActivate}
-	on:keydown={handleCardKeydown}
+	onclick={handleCardActivate}
+	onkeydown={handleCardKeydown}
 	role="button"
 	tabindex="0"
 >
@@ -117,7 +133,7 @@
 					type="checkbox"
 					class="checkbox checkbox-sm"
 					checked={selected}
-					on:click|stopPropagation={onSelect}
+					onclick={(e) => { e.stopPropagation(); onSelect(e); }}
 				/>
 			{/if}
 
@@ -125,8 +141,8 @@
 			{#if isFolder}
 				<div
 					class="cursor-pointer text-brand-500 flex items-center justify-center"
-					on:click={onSelect}
-					on:keydown={(e) => e.key === 'Enter' && onSelect()}
+					onclick={(e) => { e.stopPropagation(); onSelect(); }}
+					onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onSelect(); } }}
 					role="button"
 					tabindex="0"
 				>
@@ -139,7 +155,7 @@
 			{/if}
 
 			<div class="min-w-0 flex-1">
-				<button type="button" class="w-full text-left" on:click|stopPropagation={onSelect}>
+				<button type="button" class="w-full text-left" onclick={(e) => { e.stopPropagation(); onSelect(); }}>
 					<h3
 						class="font-semibold text-sm lg:text-base hover:text-primary cursor-pointer truncate flex items-center gap-2"
 					>
@@ -175,7 +191,7 @@
 					type="button"
 					class="btn btn-ghost btn-sm btn-circle lg:opacity-0 lg:group-hover:opacity-100 lg:min-h-0 lg:min-w-0 min-h-[44px] min-w-[44px] opacity-100 transition-opacity"
 					aria-label={`Open actions for ${item.name}`}
-					on:click|stopPropagation
+					onclick={(e) => e.stopPropagation()}
 				>
 					<svg
 						xmlns="http://www.w3.org/2000/svg"
@@ -194,7 +210,7 @@
 				</button>
 				<ul class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-[1]">
 					<li>
-						<button type="button" on:click|stopPropagation={handleRename}>
+						<button type="button" onclick={(e) => { e.stopPropagation(); handleRename(e); }}>
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
 								fill="none"
@@ -213,7 +229,7 @@
 						</button>
 					</li>
 					<li>
-						<button type="button" on:click|stopPropagation={handleShare}>
+						<button type="button" onclick={(e) => { e.stopPropagation(); handleShare(e); }}>
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
 								fill="none"
@@ -233,7 +249,7 @@
 					</li>
 					{#if !isFolder}
 						<li>
-							<button type="button" on:click|stopPropagation={handleDownload}>
+							<button type="button" onclick={(e) => { e.stopPropagation(); handleDownload(e); }}>
 								<svg
 									xmlns="http://www.w3.org/2000/svg"
 									fill="none"
@@ -252,7 +268,7 @@
 							</button>
 						</li>
 						<li>
-							<button type="button" on:click|stopPropagation={handleReplace}>
+							<button type="button" onclick={(e) => { e.stopPropagation(); handleReplace(e); }}>
 								<svg
 									xmlns="http://www.w3.org/2000/svg"
 									fill="none"
@@ -272,7 +288,7 @@
 						</li>
 						{#if detectEditorType(getFileItem().name, getFileItem().mime_type) !== 'none'}
 							<li>
-								<button type="button" on:click|stopPropagation={handleEdit}>
+								<button type="button" onclick={(e) => { e.stopPropagation(); handleEdit(e); }}>
 									<svg
 										xmlns="http://www.w3.org/2000/svg"
 										fill="none"
@@ -292,7 +308,7 @@
 							</li>
 						{/if}
 						<li>
-							<button type="button" on:click|stopPropagation={handleVersionHistory}>
+							<button type="button" onclick={(e) => { e.stopPropagation(); handleVersionHistory(e); }}>
 								<svg
 									xmlns="http://www.w3.org/2000/svg"
 									fill="none"
@@ -312,7 +328,7 @@
 						</li>
 					{/if}
 					<li>
-						<button type="button" on:click|stopPropagation={handleMove}>
+						<button type="button" onclick={(e) => { e.stopPropagation(); handleMove(e); }}>
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
 								fill="none"
@@ -331,7 +347,7 @@
 						</button>
 					</li>
 					<li>
-						<button type="button" on:click|stopPropagation={handleDelete} class="text-error">
+						<button type="button" onclick={(e) => { e.stopPropagation(); handleDelete(e); }} class="text-error">
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
 								fill="none"

@@ -1,18 +1,21 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
 	import type { Folder } from '$lib/api/types';
 	import { Home, ChevronRight } from 'lucide-svelte';
 
-	export let folderPath: Folder[] = [];
-	export let rootLabel: string = 'My Files';
-
-	type DispatchEvents = {
-		navigate: { folderId: string | null };
+	interface Props {
+		folderPath?: Folder[];
+		rootLabel?: string;
+		onNavigate?: (payload: { folderId: string | null }) => void;
 	}
-	const dispatch = createEventDispatcher<DispatchEvents>();
+
+	let {
+		folderPath = [],
+		rootLabel = 'My Files',
+		onNavigate = () => {}
+	}: Props = $props();
 
 	function handleNavigate(folderId: string | null) {
-		dispatch('navigate', { folderId });
+		onNavigate({ folderId });
 	}
 </script>
 
@@ -23,7 +26,7 @@
 			<button
 				type="button"
 				class="flex items-center gap-1.5 px-2 py-1 text-sm font-medium text-base-content/70 hover:text-brand-600 hover:bg-brand-500/10 rounded-md transition-colors"
-				on:click={() => handleNavigate(null)}
+				onclick={() => handleNavigate(null)}
 				aria-label="My Files"
 			>
 				<Home size={14} />
@@ -49,7 +52,7 @@
 					<button
 						type="button"
 						class="px-2 py-1 text-sm font-medium text-base-content/70 hover:text-brand-600 hover:bg-brand-500/10 rounded-md transition-colors truncate max-w-[100px] sm:max-w-[150px] md:max-w-[200px]"
-						on:click={() => handleNavigate(folder.id)}
+						onclick={() => handleNavigate(folder.id)}
 						title={folder.name}
 					>
 						{folder.name}

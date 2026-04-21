@@ -2,7 +2,7 @@
 	const rows = Array.from({ length: 8 });
 </script>
 
-<div class="relative overflow-x-auto rounded-xl border border-base-300 bg-base-100">
+<div class="relative overflow-x-auto rounded-xl border border-base-300 bg-base-100" aria-busy="true" aria-label="Loading file list">
 	<table class="w-full">
 		<thead>
 			<tr class="border-b border-base-300 bg-base-200/50">

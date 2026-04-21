@@ -446,7 +446,7 @@
 <FilePreviewModal
 	open={showPreviewModal}
 	file={previewFile}
-	on:close={() => {
+	onClose={() => {
 		showPreviewModal = false;
 		previewFile = null;
 	}}

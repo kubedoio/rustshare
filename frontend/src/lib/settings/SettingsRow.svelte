@@ -1,20 +1,32 @@
 <script lang="ts">
-	export let label: string;
-	export let description: string | undefined = undefined;
-	export let value: string | undefined = undefined;
-	export let actionLabel: string | undefined = undefined;
-	export let actionHref: string | undefined = undefined;
-	export let danger: boolean = false;
-	export let loading: boolean = false;
-	export let compact: boolean = false;
-
 	import { ChevronRight } from 'lucide-svelte';
-	import { createEventDispatcher } from 'svelte';
 
-	const dispatch = createEventDispatcher();
+	interface Props {
+		label: string;
+		description?: string;
+		value?: string;
+		actionLabel?: string;
+		actionHref?: string;
+		danger?: boolean;
+		loading?: boolean;
+		compact?: boolean;
+		onAction?: () => void;
+	}
+
+	let {
+		label,
+		description = undefined,
+		value = undefined,
+		actionLabel = undefined,
+		actionHref = undefined,
+		danger = false,
+		loading = false,
+		compact = false,
+		onAction = () => {}
+	}: Props = $props();
 
 	function handleClick() {
-		dispatch('action');
+		onAction();
 	}
 </script>
 
@@ -51,7 +63,7 @@
 							? 'text-error hover:bg-error/10' 
 							: 'text-brand-400 hover:bg-brand-500/10'}
 						{loading ? 'opacity-50 cursor-not-allowed' : ''}"
-					on:click={handleClick}
+					onclick={handleClick}
 					disabled={loading}
 				>
 					{#if loading}

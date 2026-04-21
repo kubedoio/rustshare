@@ -71,22 +71,9 @@
 	import PaginationControls from '$lib/components/common/PaginationControls.svelte';
 	import Toast from '$lib/components/common/Toast.svelte';
 
-	// Modals
-	import RenameModal from '$lib/components/modals/RenameModal.svelte';
-	import DeleteConfirmation from '$lib/components/modals/DeleteConfirmation.svelte';
-	import MoveModal from '$lib/components/modals/MoveModal.svelte';
-	import ShareModal from '$lib/components/modals/ShareModal.svelte';
-	import CreateFolderModal from '$lib/components/modals/CreateFolderModal.svelte';
-	import VersionHistoryModal from '$lib/components/modals/VersionHistoryModal.svelte';
-	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
-	import ReplaceFileModal from '$lib/components/modals/ReplaceFileModal.svelte';
-	import CreateFileModal from '$lib/components/modals/CreateFileModal.svelte';
-	import UploadTargetModal from '$lib/components/modals/UploadTargetModal.svelte';
-	import EditFileModal from '$lib/components/modals/EditFileModal.svelte';
-
-	// Editors
-	import { TextEditor, MarkdownEditor, ExcalidrawEditor } from '$lib/components/editors';
 	import { detectEditorType } from '$lib/utils/editor';
+	import FileModals from './FileModals.svelte';
+	import FileEditorPane from './FileEditorPane.svelte';
 
 	// ============================================================================
 	// STATE
@@ -729,8 +716,8 @@
 		}
 	}
 
-	function handleBreadcrumbNavigate(event: CustomEvent<{ folderId: string | null }>) {
-		const targetId = event.detail.folderId;
+	function handleBreadcrumbNavigate(event: { folderId: string | null }) {
+		const targetId = event.folderId;
 		if (targetId === null) {
 			// Navigate to root of current root
 			if (activeRoot === 'shared') {
@@ -761,8 +748,8 @@
 	// OTHER HANDLERS (unchanged from original)
 	// ============================================================================
 
-	function handleEditFile(event: CustomEvent<{ file: File }> | File) {
-		const file = event instanceof CustomEvent ? event.detail.file : event;
+	function handleEditFile(event: { file: File } | File) {
+		const file = 'file' in event ? event.file : event;
 		if (detectEditorType(file.name, file.mime_type) === 'markdown') {
 			goto(`/notes/${file.id}`);
 			return;
@@ -1138,12 +1125,12 @@
 		$renameFolderMutation.mutate({ folderId: folder.id, newName });
 	}
 
-	function handleRenameConfirm(event: CustomEvent<{ newName: string }>) {
+	function handleRenameConfirm(event: { newName: string }) {
 		if (!renameTarget) return;
 		if (renameType === 'file') {
-			$renameFileMutation.mutate({ fileId: renameTarget.id, newName: event.detail.newName });
+			$renameFileMutation.mutate({ fileId: renameTarget.id, newName: event.newName });
 		} else {
-			$renameFolderMutation.mutate({ folderId: renameTarget.id, newName: event.detail.newName });
+			$renameFolderMutation.mutate({ folderId: renameTarget.id, newName: event.newName });
 		}
 	}
 
@@ -1202,13 +1189,13 @@
 		}
 	}
 
-	async function handleMoveConfirm(event: CustomEvent<{ targetFolderId: string | null }>) {
+	async function handleMoveConfirm(event: { targetFolderId: string | null }) {
 		if (bulkMoveFileIds.length > 0) {
 			bulkMoveLoading = true;
 
 			try {
 				for (const fileId of bulkMoveFileIds) {
-					await moveFile(fileId, event.detail.targetFolderId);
+					await moveFile(fileId, event.targetFolderId);
 				}
 
 				queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
@@ -1229,9 +1216,9 @@
 
 		if (!moveTarget) return;
 		if (moveType === 'file') {
-			$moveFileMutation.mutate({ fileId: moveTarget.id, targetFolderId: event.detail.targetFolderId });
+			$moveFileMutation.mutate({ fileId: moveTarget.id, targetFolderId: event.targetFolderId });
 		} else {
-			$moveFolderMutation.mutate({ folderId: moveTarget.id, targetFolderId: event.detail.targetFolderId });
+			$moveFolderMutation.mutate({ folderId: moveTarget.id, targetFolderId: event.targetFolderId });
 		}
 	}
 
@@ -1248,8 +1235,8 @@
 		showShareModal = true;
 	}
 
-	function handleShareNotification(e: CustomEvent<{ message: string; type: 'success' | 'error' | 'info' }>) {
-		showNotification(e.detail.message, e.detail.type);
+	function handleShareNotification(e: { message: string; type: 'success' | 'error' | 'info' }) {
+		showNotification(e.message, e.type);
 	}
 
 	// Other handlers
@@ -1292,15 +1279,15 @@
 		replaceFileTarget = null;
 	}
 
-	function handleCreateFolderConfirm(event: CustomEvent<{ name: string; parentFolderId: string | null }>) {
+	function handleCreateFolderConfirm(event: { name: string; parentFolderId: string | null }) {
 		$createFolderMutation.mutate({ 
-			name: event.detail.name, 
-			parentFolderId: event.detail.parentFolderId 
+			name: event.name, 
+			parentFolderId: event.parentFolderId 
 		});
 	}
 
-	async function handleCreateFileConfirm(event: CustomEvent<{ targetFolderId: string | null; fileType: string; fileName: string }>) {
-		const { targetFolderId, fileType, fileName } = event.detail;
+	async function handleCreateFileConfirm(event: { targetFolderId: string | null; fileType: string; fileName: string }) {
+		const { targetFolderId, fileType, fileName } = event;
 		createFileLoading = true;
 		
 		try {
@@ -1323,8 +1310,8 @@
 		}
 	}
 
-	function handleUploadTargetConfirm(event: CustomEvent<{ targetFolderId: string | null }>) {
-		uploadTargetFolderId = event.detail.targetFolderId;
+	function handleUploadTargetConfirm(event: { targetFolderId: string | null }) {
+		uploadTargetFolderId = event.targetFolderId;
 		showUploadTargetModal = false;
 		
 		setTimeout(() => {
@@ -1332,8 +1319,8 @@
 		}, 100);
 	}
 
-	function handleEditFileSelect(event: CustomEvent<{ file: File }>) {
-		const file = event.detail.file;
+	function handleEditFileSelect(event: { file: File }) {
+		const file = event.file;
 		showEditFileModal = false;
 		handleEditFile(file);
 	}
@@ -1501,8 +1488,8 @@
 />
 
 <DropZone
-	on:filesDropped={(e) => handleFilesSelected(e.detail)}
-	on:directoryDropped={(e) => handleDirectoryUpload(e.detail)}
+	onFilesDropped={handleFilesSelected}
+	onDirectoryDropped={handleDirectoryUpload}
 	disabled={!canUpload || isUploading}
 >
 	<FileExplorer
@@ -1575,146 +1562,73 @@
 <!-- Upload Progress -->
 <UploadProgress tasks={uploadTasks} onClose={handleCloseProgress} />
 
-<!-- Modals -->
-{#if showRenameModal}
-	<RenameModal
-		open={showRenameModal}
-		loading={$renameFileMutation.isPending || $renameFolderMutation.isPending}
-		itemName={renameTarget?.name || ''}
-		itemType={renameType}
-		on:close={() => { showRenameModal = false; renameTarget = null; }}
-		on:confirm={handleRenameConfirm}
+	<FileModals
+		{currentFolderId}
+		moveCurrentFolderId={moveType === 'file'
+			? ((moveTarget as File | null)?.parent_folder_id ?? null)
+			: ((moveTarget as Folder | null)?.parent_folder_id ?? null)}
+		showRenameModal={showRenameModal}
+		renameTarget={renameTarget}
+		renameType={renameType}
+		renameLoading={$renameFileMutation.isPending || $renameFolderMutation.isPending}
+		onRenameClose={() => { showRenameModal = false; renameTarget = null; }}
+		onRenameConfirm={handleRenameConfirm}
+		showDeleteModal={showDeleteModal}
+		deleteTarget={deleteTarget}
+		deleteType={deleteType}
+		deleteLoading={$deleteFileMutation.isPending || $deleteFolderMutation.isPending}
+		onDeleteClose={() => { showDeleteModal = false; deleteTarget = null; }}
+		onDeleteConfirm={handleDeleteConfirm}
+		showMoveModal={showMoveModal}
+		moveTarget={moveTarget}
+		moveType={moveType}
+		moveLoading={$moveFileMutation.isPending || $moveFolderMutation.isPending}
+		{bulkMoveFileIds}
+		{bulkMoveLoading}
+		onMoveClose={() => { showMoveModal = false; moveTarget = null; bulkMoveFileIds = []; }}
+		onMoveConfirm={handleMoveConfirm}
+		showCreateFolderModal={showCreateFolderModal}
+		createFolderLoading={$createFolderMutation.isPending}
+		onCreateFolderClose={() => showCreateFolderModal = false}
+		onCreateFolderConfirm={handleCreateFolderConfirm}
+		showCreateFileModal={showCreateFileModal}
+		createFileLoading={createFileLoading}
+		onCreateFileClose={() => showCreateFileModal = false}
+		onCreateFileConfirm={handleCreateFileConfirm}
+		showUploadTargetModal={showUploadTargetModal}
+		onUploadTargetClose={() => showUploadTargetModal = false}
+		onUploadTargetConfirm={handleUploadTargetConfirm}
+		showEditFileModal={showEditFileModal}
+		editableFilesForModal={editableFilesForModal}
+		onEditFileClose={() => showEditFileModal = false}
+		onEditFileSelect={handleEditFileSelect}
+		showShareModal={showShareModal}
+		shareTarget={shareTarget}
+		shareType={shareType}
+		onShareClose={() => { showShareModal = false; shareTarget = null; }}
+		onShareNotification={handleShareNotification}
+		showVersionHistoryModal={showVersionHistoryModal}
+		versionHistoryTarget={versionHistoryTarget}
+		onVersionHistoryClose={() => { showVersionHistoryModal = false; versionHistoryTarget = null; }}
+		onVersionRestored={handleVersionRestored}
+		showFilePreviewModal={showFilePreviewModal}
+		previewTarget={previewTarget}
+		onFilePreviewClose={() => { showFilePreviewModal = false; previewTarget = null; }}
+		onEditFile={handleEditFile}
+		showReplaceFileModal={showReplaceFileModal}
+		replaceFileTarget={replaceFileTarget}
+		onReplaceFileClose={() => { showReplaceFileModal = false; replaceFileTarget = null; }}
+		onReplaceSuccess={handleReplaceSuccess}
 	/>
-{/if}
 
-{#if showDeleteModal}
-	<DeleteConfirmation
-		open={showDeleteModal}
-		loading={$deleteFileMutation.isPending || $deleteFolderMutation.isPending}
-		itemName={deleteTarget?.name || ''}
-		itemType={deleteType}
-		on:close={() => { showDeleteModal = false; deleteTarget = null; }}
-		on:confirm={handleDeleteConfirm}
+	<FileEditorPane
+		showTextEditor={showTextEditor}
+		showMarkdownEditor={showMarkdownEditor}
+		showExcalidrawEditor={showExcalidrawEditor}
+		editorTarget={editorTarget}
+		onEditorClose={handleEditorClose}
+		onEditorSaved={handleEditorSaved}
 	/>
-{/if}
-
-{#if showMoveModal}
-	<MoveModal
-		open={showMoveModal}
-		loading={$moveFileMutation.isPending || $moveFolderMutation.isPending || bulkMoveLoading}
-		itemName={bulkMoveFileIds.length > 0 ? `${bulkMoveFileIds.length} selected file${bulkMoveFileIds.length === 1 ? '' : 's'}` : moveTarget?.name || ''}
-		itemType={moveType}
-		itemId={bulkMoveFileIds.length > 0 ? null : moveTarget?.id || null}
-		currentFolderId={bulkMoveFileIds.length > 0 ? currentFolderId : moveCurrentFolderId}
-		on:close={() => { showMoveModal = false; moveTarget = null; bulkMoveFileIds = []; }}
-		on:confirm={handleMoveConfirm}
-	/>
-{/if}
-
-{#if showCreateFolderModal}
-	<CreateFolderModal
-		open={showCreateFolderModal}
-		loading={$createFolderMutation.isPending}
-		currentFolderId={currentFolderId}
-		on:close={() => showCreateFolderModal = false}
-		on:confirm={handleCreateFolderConfirm}
-	/>
-{/if}
-
-{#if showCreateFileModal}
-	<CreateFileModal
-		open={showCreateFileModal}
-		loading={createFileLoading}
-		currentFolderId={currentFolderId}
-		on:close={() => showCreateFileModal = false}
-		on:confirm={handleCreateFileConfirm}
-	/>
-{/if}
-
-{#if showUploadTargetModal}
-	<UploadTargetModal
-		open={showUploadTargetModal}
-		currentFolderId={currentFolderId}
-		on:close={() => showUploadTargetModal = false}
-		on:confirm={handleUploadTargetConfirm}
-	/>
-{/if}
-
-{#if showEditFileModal}
-	<EditFileModal
-		open={showEditFileModal}
-		files={editableFilesForModal}
-		on:close={() => showEditFileModal = false}
-		on:select={handleEditFileSelect}
-	/>
-{/if}
-
-{#if showShareModal}
-	<ShareModal
-		open={showShareModal}
-		resourceId={shareTarget?.id || ''}
-		resourceName={shareTarget?.name || ''}
-		resourceType={shareType}
-		on:close={() => { showShareModal = false; shareTarget = null; }}
-		on:notification={handleShareNotification}
-	/>
-{/if}
-
-{#if showVersionHistoryModal && versionHistoryTarget}
-	<VersionHistoryModal
-		open={showVersionHistoryModal}
-		fileId={versionHistoryTarget.id}
-		fileName={versionHistoryTarget.name}
-		on:close={() => { showVersionHistoryModal = false; versionHistoryTarget = null; }}
-		on:restored={handleVersionRestored}
-	/>
-{/if}
-
-{#if showFilePreviewModal && previewTarget}
-	<FilePreviewModal
-		open={showFilePreviewModal}
-		file={previewTarget}
-		on:close={() => { showFilePreviewModal = false; previewTarget = null; }}
-		on:edit={handleEditFile}
-	/>
-{/if}
-
-<!-- Editors -->
-{#if showTextEditor && editorTarget}
-	<TextEditor
-		open={showTextEditor}
-		file={editorTarget}
-		on:close={handleEditorClose}
-		on:saved={handleEditorSaved}
-	/>
-{/if}
-
-{#if showMarkdownEditor && editorTarget}
-	<MarkdownEditor
-		open={showMarkdownEditor}
-		file={editorTarget}
-		on:close={handleEditorClose}
-		on:saved={handleEditorSaved}
-	/>
-{/if}
-
-{#if showExcalidrawEditor && editorTarget}
-	<ExcalidrawEditor
-		open={showExcalidrawEditor}
-		file={editorTarget}
-		on:close={handleEditorClose}
-		on:saved={handleEditorSaved}
-	/>
-{/if}
-
-{#if showReplaceFileModal && replaceFileTarget}
-	<ReplaceFileModal
-		open={showReplaceFileModal}
-		file={replaceFileTarget}
-		on:close={() => { showReplaceFileModal = false; replaceFileTarget = null; }}
-		on:success={handleReplaceSuccess}
-	/>
-{/if}
 
 <!-- Toast -->
 {#if showToast}

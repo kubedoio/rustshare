@@ -25,67 +25,81 @@
 	import type { Share, ShareRecipient } from '$lib/api/types';
 	import { queryClient } from '$lib/query-client';
 	import { formatDate } from '$lib/utils/format';
-	import { createEventDispatcher } from 'svelte';
 	import { Users, UserPlus, Link, Loader as Loader2, Trash2, X, Mail, User } from 'lucide-svelte';
 
-	export let open = false;
-	export let resourceId: string;
-	export let resourceName: string;
-	export let resourceType: 'file' | 'folder' = 'file';
-
-	type DispatchEvents = {
-		close: void;
-		notification: { message: string; type: 'success' | 'error' | 'info' };
+	interface Props {
+		open?: boolean;
+		resourceId?: string;
+		resourceName?: string;
+		resourceType?: 'file' | 'folder';
+		onClose?: () => void;
+		onNotification?: (payload: { message: string; type: 'success' | 'error' | 'info' }) => void;
 	}
-	const dispatch = createEventDispatcher<DispatchEvents>();
+
+	let {
+		open = false,
+		resourceId = '',
+		resourceName = '',
+		resourceType = 'file',
+		onClose = () => {},
+		onNotification = () => {}
+	}: Props = $props();
 
 	// Form state for new share
-	let permissions: 'View' | 'Edit' | 'Admin' = 'View';
-	let password = '';
-	let expiresAt = '';
-	let uploadOnly = false;
-	let activeTab: 'public' | 'share' = 'public';
-	let recipientPermissionDrafts: Record<string, 'View' | 'Edit' | 'Admin'> = {};
+	let permissions: 'View' | 'Edit' | 'Admin' = $state('View');
+	let password = $state('');
+	let expiresAt = $state('');
+	let uploadOnly = $state(false);
+	let activeTab: 'public' | 'share' = $state('public');
+	let recipientPermissionDrafts: Record<string, 'View' | 'Edit' | 'Admin'> = $state({});
 
 	// User sharing state
-	let recipientEmail = '';
-	let userPermission: 'View' | 'Edit' | 'Admin' = 'View';
+	let recipientEmail = $state('');
+	let userPermission: 'View' | 'Edit' | 'Admin' = $state('View');
 
 	// Group sharing state
-	let selectedGroupId = '';
-	let groupPermission: 'View' | 'Edit' | 'Admin' = 'View';
+	let selectedGroupId = $state('');
+	let groupPermission: 'View' | 'Edit' | 'Admin' = $state('View');
 
 	// Query for existing shares
-	$: sharesQuery = createQuery({
-		queryKey: ['public-shares', resourceType, resourceId],
-		queryFn: () =>
-			resourceType === 'folder' ? listFolderShares(resourceId) : listFileShares(resourceId),
-		enabled: open
-	});
+	let sharesQuery = $derived(
+		createQuery({
+			queryKey: ['public-shares', resourceType, resourceId],
+			queryFn: () =>
+				resourceType === 'folder' ? listFolderShares(resourceId) : listFileShares(resourceId),
+			enabled: open
+		})
+	);
 
-	$: recipientsQuery = createQuery({
-		queryKey: ['share-recipients', resourceType, resourceId],
-		queryFn: () =>
-			resourceType === 'folder' ? listFolderRecipients(resourceId) : listFileRecipients(resourceId),
-		enabled: open
-	});
+	let recipientsQuery = $derived(
+		createQuery({
+			queryKey: ['share-recipients', resourceType, resourceId],
+			queryFn: () =>
+				resourceType === 'folder' ? listFolderRecipients(resourceId) : listFileRecipients(resourceId),
+			enabled: open
+		})
+	);
 
 	// Query for user's groups
-	$: groupsQuery = createQuery({
-		queryKey: ['my-groups'],
-		queryFn: listMyGroups,
-		enabled: open && activeTab === 'share'
-	});
+	let groupsQuery = $derived(
+		createQuery({
+			queryKey: ['my-groups'],
+			queryFn: listMyGroups,
+			enabled: open && activeTab === 'share'
+		})
+	);
 
 	// Query for existing group shares
-	$: groupSharesQuery = createQuery({
-		queryKey: ['group-shares', resourceType, resourceId],
-		queryFn: () =>
-			resourceType === 'folder'
-				? listFolderGroupShares(resourceId)
-				: listFileGroupShares(resourceId),
-		enabled: open && activeTab === 'share'
-	});
+	let groupSharesQuery = $derived(
+		createQuery({
+			queryKey: ['group-shares', resourceType, resourceId],
+			queryFn: () =>
+				resourceType === 'folder'
+					? listFolderGroupShares(resourceId)
+					: listFileGroupShares(resourceId),
+			enabled: open && activeTab === 'share'
+		})
+	);
 
 	// Mutation for creating public share
 	const createShareMutation = createMutation({
@@ -96,7 +110,7 @@
 			queryClient.invalidateQueries({ queryKey: ['public-shares', resourceType, resourceId] });
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
-			dispatch('notification', {
+			onNotification({
 				message: 'Share link created successfully',
 				type: 'success'
 			});
@@ -107,7 +121,7 @@
 			handleCopyLink(response.share_url);
 		},
 		onError: (error) => {
-			dispatch('notification', {
+			onNotification({
 				message: error instanceof Error ? error.message : 'Failed to create share',
 				type: 'error'
 			});
@@ -133,7 +147,7 @@
 			queryClient.invalidateQueries({ queryKey: ['received-shares'] });
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
-			dispatch('notification', {
+			onNotification({
 				message: `Shared with ${recipientEmail.trim()}`,
 				type: 'success'
 			});
@@ -141,7 +155,7 @@
 			userPermission = 'View';
 		},
 		onError: (error) => {
-			dispatch('notification', {
+			onNotification({
 				message: error instanceof Error ? error.message : 'Failed to share',
 				type: 'error'
 			});
@@ -163,7 +177,7 @@
 		onSuccess: (data) => {
 			queryClient.invalidateQueries({ queryKey: ['group-shares', resourceType, resourceId] });
 			queryClient.invalidateQueries({ queryKey: ['received-shares'] });
-			dispatch('notification', {
+			onNotification({
 				message: `Shared with group "${data.group_name}"`,
 				type: 'success'
 			});
@@ -171,7 +185,7 @@
 			groupPermission = 'View';
 		},
 		onError: (error) => {
-			dispatch('notification', {
+			onNotification({
 				message: error instanceof Error ? error.message : 'Failed to share with group',
 				type: 'error'
 			});
@@ -188,13 +202,13 @@
 			queryClient.invalidateQueries({ queryKey: ['group-shares', resourceType, resourceId] });
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
-			dispatch('notification', {
+			onNotification({
 				message: 'Access revoked successfully',
 				type: 'success'
 			});
 		},
 		onError: (error) => {
-			dispatch('notification', {
+			onNotification({
 				message: error instanceof Error ? error.message : 'Failed to revoke access',
 				type: 'error'
 			});
@@ -212,13 +226,13 @@
 			queryClient.invalidateQueries({ queryKey: ['received-shares'] });
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
-			dispatch('notification', {
+			onNotification({
 				message: 'Permission updated',
 				type: 'success'
 			});
 		},
 		onError: (error) => {
-			dispatch('notification', {
+			onNotification({
 				message: error instanceof Error ? error.message : 'Failed to update permission',
 				type: 'error'
 			});
@@ -234,13 +248,13 @@
 			queryClient.invalidateQueries({ queryKey: ['received-shares'] });
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
-			dispatch('notification', {
+			onNotification({
 				message: 'Access removed successfully',
 				type: 'success'
 			});
 		},
 		onError: (error) => {
-			dispatch('notification', {
+			onNotification({
 				message: error instanceof Error ? error.message : 'Failed to remove access',
 				type: 'error'
 			});
@@ -251,13 +265,13 @@
 		navigator.clipboard
 			.writeText(url)
 			.then(() => {
-				dispatch('notification', {
+				onNotification({
 					message: 'Share link copied to clipboard',
 					type: 'success'
 				});
 			})
 			.catch(() => {
-				dispatch('notification', {
+				onNotification({
 					message: 'Failed to copy link',
 					type: 'error'
 				});
@@ -286,7 +300,7 @@
 
 	function handleShareWithUser() {
 		if (!recipientEmail.trim()) {
-			dispatch('notification', {
+			onNotification({
 				message: 'Please enter an email address',
 				type: 'error'
 			});
@@ -297,7 +311,7 @@
 
 	function handleShareWithGroup() {
 		if (!selectedGroupId) {
-			dispatch('notification', {
+			onNotification({
 				message: 'Please select a group',
 				type: 'error'
 			});
@@ -307,7 +321,7 @@
 	}
 
 	function handleRevoke(shareId: string, type: 'public' | 'group') {
-		const message = type === 'public' 
+		const message = type === 'public'
 			? 'Are you sure you want to revoke this share link?'
 			: 'Are you sure you want to remove this group\'s access?';
 		if (confirm(message)) {
@@ -373,7 +387,7 @@
 		userPermission = 'View';
 		selectedGroupId = '';
 		groupPermission = 'View';
-		dispatch('close');
+		onClose();
 	}
 
 	function getShareUrl(token: string | null): string | null {
@@ -387,24 +401,27 @@
 		return group?.name || 'Unknown Group';
 	}
 
-	$: if ($recipientsQuery.data) {
-		const nextDrafts: Record<string, 'View' | 'Edit' | 'Admin'> = {};
-		for (const recipient of $recipientsQuery.data) {
-			nextDrafts[recipient.share_id] =
-				recipientPermissionDrafts[recipient.share_id] || recipient.permission;
+	$effect(() => {
+		if ($recipientsQuery.data) {
+			const nextDrafts: Record<string, 'View' | 'Edit' | 'Admin'> = {};
+			for (const recipient of $recipientsQuery.data) {
+				nextDrafts[recipient.share_id] =
+					recipientPermissionDrafts[recipient.share_id] || recipient.permission;
+			}
+			if (recipientDraftsChanged(nextDrafts)) {
+				recipientPermissionDrafts = nextDrafts;
+			}
 		}
-		if (recipientDraftsChanged(nextDrafts)) {
-			recipientPermissionDrafts = nextDrafts;
-		}
-	}
+	});
 
-	$: isLoading =
+	let isLoading = $derived(
 		$createShareMutation.isPending ||
 		$revokeShareMutation.isPending ||
 		$createUserShareMutation.isPending ||
 		$createGroupShareMutation.isPending ||
 		$updateRecipientPermissionMutation.isPending ||
-		$removeRecipientMutation.isPending;
+		$removeRecipientMutation.isPending
+	);
 </script>
 
 <dialog class="modal" class:modal-open={open}>
@@ -416,7 +433,7 @@
 				type="button"
 				class:tab-active={activeTab === 'public'}
 				class="tab"
-				on:click={() => (activeTab = 'public')}
+				onclick={() => (activeTab = 'public')}
 			>
 				<Link class="w-4 h-4 mr-1" />
 				Link
@@ -425,7 +442,7 @@
 				type="button"
 				class:tab-active={activeTab === 'share'}
 				class="tab"
-				on:click={() => (activeTab = 'share')}
+				onclick={() => (activeTab = 'share')}
 			>
 				<UserPlus class="w-4 h-4 mr-1" />
 				Share
@@ -438,7 +455,7 @@
 				<div class="card bg-base-200 p-4">
 					<h4 class="font-semibold mb-3">Create Public Share Link</h4>
 
-					<form on:submit|preventDefault={handleCreateShare} class="space-y-4">
+					<form onsubmit={(e) => { e.preventDefault(); handleCreateShare(); }} class="space-y-4">
 						<!-- Permission selector -->
 						<div class="form-control">
 							<label class="label" for="permissions">
@@ -553,7 +570,7 @@
 												<button
 													type="button"
 													class="btn btn-sm btn-ghost"
-													on:click={() => handleCopyLink(getShareUrl(share.share_token)!)}
+													onclick={() => handleCopyLink(getShareUrl(share.share_token)!)}
 													title="Copy to clipboard"
 												>
 													<svg
@@ -606,7 +623,7 @@
 										<button
 											type="button"
 											class="btn btn-sm btn-error"
-											on:click={() => handleRevoke(share.id, 'public')}
+											onclick={() => handleRevoke(share.id, 'public')}
 											disabled={isLoading}
 										>
 											{#if $revokeShareMutation.isPending}
@@ -634,7 +651,7 @@
 						<Mail class="w-4 h-4" />
 						Share with a Person
 					</h4>
-					<form on:submit|preventDefault={handleShareWithUser} class="space-y-3">
+					<form onsubmit={(e) => { e.preventDefault(); handleShareWithUser(); }} class="space-y-3">
 						<div class="flex gap-2">
 							<input
 								type="email"
@@ -652,8 +669,8 @@
 								<option value="Edit">Edit</option>
 								<option value="Admin">Admin</option>
 							</select>
-							<button 
-								type="submit" 
+							<button
+								type="submit"
 								class="btn btn-primary"
 								disabled={isLoading || !recipientEmail.trim()}
 							>
@@ -673,7 +690,7 @@
 						<Users class="w-4 h-4" />
 						Share with a Group
 					</h4>
-					<form on:submit|preventDefault={handleShareWithGroup} class="space-y-3">
+					<form onsubmit={(e) => { e.preventDefault(); handleShareWithGroup(); }} class="space-y-3">
 						{#if $groupsQuery.isLoading}
 							<div class="flex items-center gap-2 py-2 text-base-content/60">
 								<Loader2 class="w-4 h-4 animate-spin" />
@@ -706,8 +723,8 @@
 									<option value="Edit">Edit</option>
 									<option value="Admin">Admin</option>
 								</select>
-								<button 
-									type="submit" 
+								<button
+									type="submit"
 									class="btn btn-primary"
 									disabled={isLoading || !selectedGroupId}
 								>
@@ -757,7 +774,7 @@
 											class="select select-bordered select-sm"
 											value={currentRecipientPermission(recipient)}
 											disabled={isLoading}
-											on:change={(event) =>
+											onchange={(event) =>
 												handleRecipientPermissionSelect(recipient.share_id, event)}
 										>
 											<option value="View">View</option>
@@ -767,7 +784,7 @@
 										<button
 											type="button"
 											class="btn btn-sm btn-ghost"
-											on:click={() => handleSaveRecipientPermission(recipient)}
+											onclick={() => handleSaveRecipientPermission(recipient)}
 											disabled={isLoading ||
 												currentRecipientPermission(recipient) === recipient.permission}
 										>
@@ -776,7 +793,7 @@
 										<button
 											type="button"
 											class="btn btn-sm btn-error btn-ghost"
-											on:click={() => handleRemoveRecipient(recipient)}
+											onclick={() => handleRemoveRecipient(recipient)}
 											disabled={isLoading}
 											title="Remove access"
 										>
@@ -818,7 +835,7 @@
 									<button
 										type="button"
 										class="btn btn-sm btn-error btn-ghost"
-										on:click={() => handleRevoke(groupShare.share_id, 'group')}
+										onclick={() => handleRevoke(groupShare.share_id, 'group')}
 										disabled={isLoading}
 										title="Remove group access"
 									>
@@ -835,11 +852,11 @@
 		{/if}
 
 		<div class="modal-action">
-			<button type="button" class="btn" on:click={handleClose} disabled={isLoading}>Close</button>
+			<button type="button" class="btn" onclick={handleClose} disabled={isLoading}>Close</button>
 		</div>
 	</div>
 
 	<form method="dialog" class="modal-backdrop">
-		<button type="button" on:click={handleClose} disabled={isLoading}>close</button>
+		<button type="button" onclick={handleClose} disabled={isLoading}>close</button>
 	</form>
 </dialog>

@@ -1,35 +1,45 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
 	import { createQuery } from '$lib/query-compat';
 	import { getFolderTree } from '$lib/api/folders';
 	import type { FolderTree } from '$lib/api/folders';
 	import { Hop as Home, Loader as Loader2, CircleAlert as AlertCircle } from 'lucide-svelte';
 	import MoveFolderTreeItem from './MoveFolderTreeItem.svelte';
 
-	export let open = false;
-	export let loading = false;
-	export let itemName = '';
-	export let itemType: 'file' | 'folder' = 'file';
-	export let currentFolderId: string | null = null;
-	export let itemId: string | null = null;
-
-	type DispatchEvents = {
-		close: void;
-		confirm: { targetFolderId: string | null };
+	interface Props {
+		open?: boolean;
+		loading?: boolean;
+		itemName?: string;
+		itemType?: 'file' | 'folder';
+		currentFolderId?: string | null;
+		itemId?: string | null;
+		onClose?: () => void;
+		onConfirm?: (payload: { targetFolderId: string | null }) => void;
 	}
-	const dispatch = createEventDispatcher<DispatchEvents>();
 
-	let selectedFolderId: string | null = null;
-	let error = '';
-	let invalidFolderIds = new Set<string>();
-	let expandedFolders = new Set<string>();
+	let {
+		open = false,
+		loading = false,
+		itemName = '',
+		itemType = 'file',
+		currentFolderId = null,
+		itemId = null,
+		onClose = () => {},
+		onConfirm = () => {}
+	}: Props = $props();
+
+	let selectedFolderId: string | null = $state(null);
+	let error = $state('');
+	let invalidFolderIds = $state(new Set<string>());
+	let expandedFolders = $state(new Set<string>());
 
 	// Query for folder tree
-	$: folderTreeQuery = createQuery({
-		queryKey: ['folder-tree'],
-		queryFn: getFolderTree,
-		enabled: open
-	});
+	let folderTreeQuery = $derived(
+		createQuery({
+			queryKey: ['folder-tree'],
+			queryFn: getFolderTree,
+			enabled: open
+		})
+	);
 
 	// Build set of invalid folder IDs (folder itself + all descendants) to prevent circular moves
 	function getDescendantIds(tree: FolderTree, folderId: string): Set<string> {
@@ -57,11 +67,13 @@
 	}
 
 	// Update invalid folder IDs when folder tree loads
-	$: if ($folderTreeQuery.data && itemType === 'folder' && itemId) {
-		invalidFolderIds = getDescendantIds($folderTreeQuery.data, itemId);
-	} else {
-		invalidFolderIds = new Set();
-	}
+	$effect(() => {
+		if ($folderTreeQuery.data && itemType === 'folder' && itemId) {
+			invalidFolderIds = getDescendantIds($folderTreeQuery.data, itemId);
+		} else {
+			invalidFolderIds = new Set();
+		}
+	});
 
 	function handleSubmit() {
 		error = '';
@@ -76,14 +88,14 @@
 			return;
 		}
 
-		dispatch('confirm', { targetFolderId: selectedFolderId });
+		onConfirm({ targetFolderId: selectedFolderId });
 	}
 
 	function handleClose() {
 		selectedFolderId = null;
 		error = '';
 		expandedFolders = new Set();
-		dispatch('close');
+		onClose();
 	}
 
 	function toggleFolder(folderId: string) {
@@ -102,11 +114,13 @@
 	}
 
 	// Reset when opened
-	$: if (open) {
-		selectedFolderId = null;
-		error = '';
-		expandedFolders = new Set();
-	}
+	$effect(() => {
+		if (open) {
+			selectedFolderId = null;
+			error = '';
+			expandedFolders = new Set();
+		}
+	});
 </script>
 
 {#if open}
@@ -115,7 +129,7 @@
 		<button
 			type="button"
 			class="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-default"
-			on:click={handleClose}
+			onclick={handleClose}
 			aria-label="Close"
 		></button>
 
@@ -148,10 +162,10 @@
 						<button
 							type="button"
 							class="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors border-b border-base-300/30
-								{selectedFolderId === null 
-									? 'bg-brand-500/10 text-brand-600' 
+								{selectedFolderId === null
+									? 'bg-brand-500/10 text-brand-600'
 									: 'hover:bg-base-200/50'}"
-							on:click={() => selectFolder(null)}
+							onclick={() => selectFolder(null)}
 						>
 							<Home size={18} />
 							<span class="font-medium">Home</span>
@@ -193,7 +207,7 @@
 				<button
 					type="button"
 					class="px-4 py-2 text-sm font-medium text-base-content/70 hover:text-base-content hover:bg-base-200 rounded-lg transition-colors"
-					on:click={handleClose}
+					onclick={handleClose}
 					disabled={loading}
 				>
 					Cancel
@@ -201,7 +215,7 @@
 				<button
 					type="button"
 					class="px-4 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
-					on:click={handleSubmit}
+					onclick={handleSubmit}
 					disabled={loading || selectedFolderId === currentFolderId}
 				>
 					{#if loading}

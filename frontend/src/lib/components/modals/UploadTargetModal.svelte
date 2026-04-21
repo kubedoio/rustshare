@@ -1,31 +1,26 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
   import { Upload } from 'lucide-svelte';
   import ModalBase from '$lib/components/common/ModalBase.svelte';
   import FolderTreePicker from './FolderTreePicker.svelte';
 
   interface Props {
-    open: boolean;
-    currentFolderId: string | null;
+    open?: boolean;
+    currentFolderId?: string | null;
+    onClose?: () => void;
+    onConfirm?: (payload: { targetFolderId: string | null }) => void;
   }
 
-  let { open, currentFolderId }: Props = $props();
-
-  type DispatchEvents = {
-    close: void;
-    confirm: { targetFolderId: string | null };
-  }
-  const dispatch = createEventDispatcher<DispatchEvents>();
+  let { open = false, currentFolderId = null, onClose = () => {}, onConfirm = () => {} }: Props = $props();
 
   let selectedFolderId: string | null = $state(null);
 
   function handleSubmit() {
-    dispatch('confirm', { targetFolderId: selectedFolderId });
+    onConfirm({ targetFolderId: selectedFolderId });
   }
 
   function handleClose() {
     selectedFolderId = currentFolderId;
-    dispatch('close');
+    onClose();
   }
 
   $effect(() => {
