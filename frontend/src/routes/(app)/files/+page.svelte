@@ -117,8 +117,8 @@
 
 	// Trash state
 	let showEmptyTrashModal = false;
-	let trashSummary = $state({ file_count: 0, folder_count: 0, total_size: 0 });
-	let emptyingTrash = $state(false);
+	let trashSummary = { file_count: 0, folder_count: 0, total_size: 0 };
+	let emptyingTrash = false;
 
 	// Editor state
 	let showTextEditor = false;
