@@ -363,7 +363,7 @@
 									<select
 										class="px-3 py-2 bg-base-100 border border-base-300 rounded-lg text-sm text-base-content focus:outline-hidden focus:border-brand-500/50"
 										value={trashRetentionDays === null ? 'never' : String(trashRetentionDays)}
-										onchange={(e) => {
+										on:change={(e) => {
 											const val = (e.target as HTMLSelectElement).value;
 											const days = val === 'never' ? null : Number(val);
 											trashRetentionDays = days;
