@@ -879,9 +879,26 @@ pub async fn list_starred_items(
 ) -> Result<Json<crate::handlers::folders::FolderContentsWithShares>, Response> {
     let folders = sqlx::query_as::<_, crate::handlers::folders::FolderWithShares>(
         r#"
+        WITH RECURSIVE folder_tree AS (
+            SELECT id, parent_folder_id, id as root_id
+            FROM folders
+            WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND starred_at IS NOT NULL
+            UNION ALL
+            SELECT child.id, child.parent_folder_id, parent.root_id
+            FROM folders child
+            INNER JOIN folder_tree parent ON child.parent_folder_id = parent.id
+            WHERE child.deleted_at IS NULL
+        ),
+        folder_sizes AS (
+            SELECT ft.root_id, COALESCE(SUM(files.size), 0) as total_size
+            FROM folder_tree ft
+            LEFT JOIN files ON files.parent_folder_id = ft.id AND files.deleted_at IS NULL
+            GROUP BY ft.root_id
+        )
         SELECT
             f.id, f.name, f.path, f.parent_folder_id, f.owner_id,
             f.created_at, f.updated_at, f.starred_at, f.deleted_at,
+            COALESCE(fs.total_size, 0) as size,
             EXISTS(
                 SELECT 1 FROM shares
                 WHERE folder_id = f.id
@@ -900,6 +917,7 @@ pub async fn list_starred_items(
             ) as share_expires_at,
             'Admin'::TEXT as effective_permission
         FROM folders f
+        LEFT JOIN folder_sizes fs ON fs.root_id = f.id
         WHERE f.owner_id = $1
           AND f.tenant_id = $2
           AND f.deleted_at IS NULL
@@ -973,9 +991,25 @@ pub async fn list_deleted_items(
 ) -> Result<Json<crate::handlers::folders::FolderContentsWithShares>, Response> {
     let folders = sqlx::query_as::<_, crate::handlers::folders::FolderWithShares>(
         r#"
+        WITH RECURSIVE folder_tree AS (
+            SELECT id, parent_folder_id, id as root_id
+            FROM folders
+            WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL
+            UNION ALL
+            SELECT child.id, child.parent_folder_id, parent.root_id
+            FROM folders child
+            INNER JOIN folder_tree parent ON child.parent_folder_id = parent.id
+        ),
+        folder_sizes AS (
+            SELECT ft.root_id, COALESCE(SUM(files.size), 0) as total_size
+            FROM folder_tree ft
+            LEFT JOIN files ON files.parent_folder_id = ft.id
+            GROUP BY ft.root_id
+        )
         SELECT
             f.id, f.name, f.path, f.parent_folder_id, f.owner_id,
             f.created_at, f.updated_at, f.starred_at, f.deleted_at,
+            COALESCE(fs.total_size, 0) as size,
             EXISTS(
                 SELECT 1 FROM shares
                 WHERE folder_id = f.id
@@ -994,6 +1028,7 @@ pub async fn list_deleted_items(
             ) as share_expires_at,
             'Admin'::TEXT as effective_permission
         FROM folders f
+        LEFT JOIN folder_sizes fs ON fs.root_id = f.id
         WHERE f.owner_id = $1
           AND f.tenant_id = $2
           AND f.deleted_at IS NOT NULL

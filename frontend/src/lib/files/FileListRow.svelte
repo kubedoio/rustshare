@@ -79,7 +79,11 @@
 
 	// Derived values
 	let fileItem = $derived(isFolder ? null : (item as FileType));
-	let displaySize = $derived(isFolder ? '—' : formatFileSize(fileItem?.size || 0));
+	let displaySize = $derived(
+		isFolder
+			? (typeof (item as Folder).size === 'number' ? formatFileSize((item as Folder).size) : '—')
+			: formatFileSize(fileItem?.size || 0)
+	);
 	let displayDate = $derived(formatDate(
 		workspaceMode === 'deleted'
 			? (item.deleted_at ?? (isFolder ? (item as Folder).updated_at : (item as FileType).modified_at))
