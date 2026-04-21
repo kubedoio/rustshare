@@ -152,6 +152,7 @@ export interface UpdateUserRequest {
 	email?: string;
 	storage_quota_bytes?: number;
 	is_admin?: boolean;
+	password?: string;
 }
 
 export interface OidcConfig {

@@ -61,6 +61,7 @@ pub struct UpdateUserRequest {
     pub email: Option<String>,
     pub storage_quota_bytes: Option<i64>,
     pub is_admin: Option<bool>,
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -398,22 +399,74 @@ pub async fn update_admin_user(
     let new_is_admin = req.is_admin.unwrap_or(current.is_admin);
 
     let quota_changed = new_quota != current.storage_quota;
+    let password_changed = req.password.is_some();
 
-    let row = sqlx::query_as::<_, UserRow>(&format!(
+    // Validate and hash password if provided
+    let password_hash = if let Some(ref pw) = req.password {
+        if pw.len() < 8 {
+            return Err(bad_request("Password must be at least 8 characters"));
+        }
+        let hash = PasswordHasher::hash(pw)
+            .map_err(|_| internal_error("Password hashing failed"))?;
+        Some(hash)
+    } else {
+        None
+    };
+
+    // Build dynamic query
+    let password_clause = if password_changed { ", password_hash = $6" } else { "" };
+    let query = format!(
         "UPDATE users
-         SET display_name = $2, email = $3, storage_quota = $4, is_admin = $5, updated_at = NOW()
+         SET display_name = $2, email = $3, storage_quota = $4, is_admin = $5{}, updated_at = NOW()
          WHERE id = $1
-         RETURNING {cols}"
-    ))
-    .bind(user_id)
-    .bind(&new_display_name)
-    .bind(&new_email)
-    .bind(new_quota)
-    .bind(new_is_admin)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(db_error)?
-    .ok_or_else(|| not_found("User not found"))?;
+         RETURNING {cols}",
+        password_clause
+    );
+
+    let mut q = sqlx::query_as::<_, UserRow>(&query)
+        .bind(user_id)
+        .bind(&new_display_name)
+        .bind(&new_email)
+        .bind(new_quota)
+        .bind(new_is_admin);
+
+    if let Some(ref hash) = password_hash {
+        q = q.bind(hash);
+    }
+
+    let row = q
+        .fetch_optional(&state.db_pool)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| not_found("User not found"))?;
+
+    if password_changed {
+        // Invalidate all sessions for the user
+        sqlx::query("DELETE FROM user_sessions WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&state.db_pool)
+            .await
+            .map_err(db_error)?;
+
+        // Revoke all device tokens for the user
+        sqlx::query(
+            "UPDATE device_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL",
+        )
+        .bind(user_id)
+        .execute(&state.db_pool)
+        .await
+        .map_err(db_error)?;
+
+        log_admin_action(
+            &state.db_pool,
+            actor_id,
+            "user.password_changed",
+            Some("user"),
+            Some(user_id),
+            json!({"username": current.username}),
+        )
+        .await;
+    }
 
     if quota_changed {
         log_admin_action(

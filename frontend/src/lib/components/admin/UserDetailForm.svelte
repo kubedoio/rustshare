@@ -19,6 +19,8 @@
 		user.storage_quota_bytes > 0
 			? String(Math.round(user.storage_quota_bytes / (1024 * 1024 * 1024)))
 			: '';
+	let password = '';
+	let confirm_password = '';
 
 	$: {
 		email = user.email;
@@ -27,6 +29,8 @@
 		quota_gb = user.storage_quota_bytes > 0
 			? String(Math.round(user.storage_quota_bytes / (1024 * 1024 * 1024)))
 			: '';
+		password = '';
+		confirm_password = '';
 	}
 	let errors: Record<string, string> = {};
 
@@ -40,6 +44,14 @@
 		if (quota_gb !== '' && (isNaN(Number(quota_gb)) || Number(quota_gb) < 0)) {
 			errors.quota = 'Quota must be a non-negative number';
 		}
+		if (password) {
+			if (password.length < 8) {
+				errors.password = 'Password must be at least 8 characters';
+			}
+			if (password !== confirm_password) {
+				errors.confirm_password = 'Passwords do not match';
+			}
+		}
 		return Object.keys(errors).length === 0;
 	}
 
@@ -50,9 +62,14 @@
 				display_name: display_name.trim() || undefined,
 				is_admin,
 				storage_quota_bytes:
-					quota_gb !== '' ? Math.round(Number(quota_gb) * 1024 * 1024 * 1024) : undefined
+					quota_gb !== '' ? Math.round(Number(quota_gb) * 1024 * 1024 * 1024) : undefined,
+				password: password || undefined
 			}),
-		onSuccess: () => onRefresh()
+		onSuccess: () => {
+			password = '';
+			confirm_password = '';
+			onRefresh();
+		}
 	});
 
 	const disableMutation = createMutation({
@@ -166,6 +183,43 @@
 						<input type="checkbox" class="checkbox" bind:checked={is_admin} />
 						<span class="label-text">Admin privileges</span>
 					</label>
+				</div>
+
+				<div class="divider"></div>
+				<h4 class="text-sm font-semibold">Set Password</h4>
+				<p class="text-xs text-base-content/60">
+					Leave blank to keep the current password. Changing the password will log the user out
+					everywhere.
+				</p>
+
+				<div class="form-control mt-2">
+					<label class="label" for="edit-password">
+						<span class="label-text">New Password</span>
+					</label>
+					<input
+						id="edit-password"
+						type="password"
+						class="input input-bordered"
+						class:input-error={errors.password}
+						bind:value={password}
+						placeholder="••••••••"
+					/>
+					{#if errors.password}<p class="text-error text-xs mt-1">{errors.password}</p>{/if}
+				</div>
+
+				<div class="form-control">
+					<label class="label" for="edit-confirm-password">
+						<span class="label-text">Confirm Password</span>
+					</label>
+					<input
+						id="edit-confirm-password"
+						type="password"
+						class="input input-bordered"
+						class:input-error={errors.confirm_password}
+						bind:value={confirm_password}
+						placeholder="••••••••"
+					/>
+					{#if errors.confirm_password}<p class="text-error text-xs mt-1">{errors.confirm_password}</p>{/if}
 				</div>
 
 				{#if $updateMutation.isError}
