@@ -254,3 +254,19 @@ export async function getFileContent(fileId: string): Promise<string> {
 
   return response.text();
 }
+
+// Trash operations
+
+export interface TrashSummary {
+  file_count: number;
+  folder_count: number;
+  total_size: number;
+}
+
+export async function getTrashSummary(): Promise<TrashSummary> {
+  return apiClient.get<TrashSummary>("/trash/summary");
+}
+
+export async function emptyTrash(): Promise<void> {
+  return apiClient.delete<void>("/trash/empty");
+}

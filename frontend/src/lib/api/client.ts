@@ -37,7 +37,14 @@ export class ApiClient {
 
 		// Handle 401 Unauthorized
 		if (response.status === 401) {
-			throw new ApiError(401, 'Unauthorized');
+			let errorMessage = 'Unauthorized';
+			try {
+				const errorData = await response.json();
+				errorMessage = errorData.error || errorData.message || errorMessage;
+			} catch {
+				// keep default message if body isn't JSON
+			}
+			throw new ApiError(401, errorMessage);
 		}
 
 		// Handle other errors

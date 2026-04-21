@@ -52,10 +52,29 @@ pub async fn login(
     Json(req): Json<LoginRequest>,
 ) -> Result<Response, (StatusCode, String)> {
     if !oidc::password_login_enabled() {
-        return Err((
+        return Ok((
             StatusCode::FORBIDDEN,
-            "Password login is disabled for this deployment".to_string(),
-        ));
+            Json(serde_json::json!({ "error": "Password login is disabled for this deployment" })),
+        )
+            .into_response());
+    }
+
+    // Check brute-force protection before any credential verification
+    let client_ip = middleware::extract_client_ip(&headers, None).map(|ip| ip.to_string());
+    if let Some(ref ip) = client_ip {
+        match state.metadata_store.is_ip_blocked(ip).await {
+            Ok(true) => {
+                return Ok((
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(serde_json::json!({ "error": "Too many failed login attempts. Please try again later." })),
+                )
+                    .into_response());
+            }
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!("Failed to check IP block status: {}", e);
+            }
+        }
     }
 
     // Find user
@@ -63,15 +82,46 @@ pub async fn login(
         .metadata_store
         .find_user_by_email(&req.email)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let user = match user {
+        Some(u) => u,
+        None => {
+            if let Some(ref ip) = client_ip {
+                if let Err(e) = state.metadata_store.record_login_failure(ip).await {
+                    tracing::warn!("Failed to record login failure: {}", e);
+                }
+            }
+            return Ok((
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Invalid credentials" })),
+            )
+                .into_response());
+        }
+    };
 
     // Verify password
     let is_valid = PasswordHasher::verify(&req.password, &user.password_hash)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if !is_valid {
-        return Err((StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()));
+        if let Some(ref ip) = client_ip {
+            if let Err(e) = state.metadata_store.record_login_failure(ip).await {
+                tracing::warn!("Failed to record login failure: {}", e);
+            }
+        }
+        return Ok((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "Invalid credentials" })),
+        )
+            .into_response());
+    }
+
+    // Successful login — clear any failed attempts for this IP
+    if let Some(ref ip) = client_ip {
+        if let Err(e) = state.metadata_store.clear_login_attempts(ip).await {
+            tracing::warn!("Failed to clear login attempts: {}", e);
+        }
     }
 
     // Reject disabled accounts
@@ -93,7 +143,7 @@ pub async fn login(
         .get(header::USER_AGENT)
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_string());
-    let ip_address = middleware::extract_client_ip(&headers, None).map(|value| value.to_string());
+    let ip_address = client_ip.clone();
     let session_token = create_user_session(
         &state,
         user.id,

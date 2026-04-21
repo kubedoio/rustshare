@@ -23,6 +23,7 @@ pub struct ProfileResponse {
     pub display_name: String,
     pub avatar_path: Option<String>,
     pub email_sharing_enabled: bool,
+    pub trash_retention_days: Option<i32>,
     pub theme: Theme,
     pub storage_quota: i64,
     pub created_at: String,
@@ -49,9 +50,16 @@ pub struct UpdateProfileResponse {
     pub display_name: String,
     pub avatar_path: Option<String>,
     pub email_sharing_enabled: bool,
+    pub trash_retention_days: Option<i32>,
     pub theme: Theme,
     pub storage_quota: i64,
     pub created_at: String,
+}
+
+/// Request for PATCH /api/v1/users/me/trash-retention
+#[derive(Debug, Deserialize)]
+pub struct UpdateTrashRetentionRequest {
+    pub days: Option<i32>,
 }
 
 /// Validate profile update request
@@ -113,6 +121,7 @@ pub async fn get_profile(
                 display_name: user.display_name,
                 avatar_path: user.avatar_path,
                 email_sharing_enabled: user.email_sharing_enabled,
+                trash_retention_days: user.trash_retention_days,
                 theme: user.theme,
                 storage_quota: user.storage_quota,
                 created_at: user.created_at.to_rfc3339(),
@@ -239,6 +248,7 @@ pub async fn update_profile(
                 display_name: updated_user.display_name,
                 avatar_path: updated_user.avatar_path,
                 email_sharing_enabled: updated_user.email_sharing_enabled,
+                trash_retention_days: updated_user.trash_retention_days,
                 theme: updated_user.theme,
                 storage_quota: updated_user.storage_quota,
                 created_at: updated_user.created_at.to_rfc3339(),
@@ -257,6 +267,7 @@ pub async fn update_profile(
                 display_name: display_name.unwrap_or(user.display_name),
                 avatar_path: user.avatar_path,
                 email_sharing_enabled: email_sharing_enabled.unwrap_or(user.email_sharing_enabled),
+                trash_retention_days: user.trash_retention_days,
                 theme: theme.unwrap_or(user.theme),
                 storage_quota: user.storage_quota,
                 created_at: user.created_at.to_rfc3339(),
@@ -264,5 +275,84 @@ pub async fn update_profile(
 
             (StatusCode::OK, Json(response)).into_response()
         }
+    }
+}
+
+
+/// Update the current user's trash retention setting.
+///
+/// # Endpoint
+/// `PATCH /api/v1/users/me/trash-retention`
+///
+/// # Authentication
+/// Requires valid JWT token or session cookie.
+///
+/// # Request Body
+/// ```json
+/// {
+///   "days": 30 | null
+/// }
+/// ```
+///
+/// # Response
+/// - 200 OK: Returns updated profile
+/// - 400 Bad Request: Invalid days value
+/// - 401 Unauthorized: Missing or invalid authentication
+/// - 500 Internal Server Error: Database error
+pub async fn update_trash_retention(
+    State(state): State<AppState>,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+    Json(req): Json<UpdateTrashRetentionRequest>,
+) -> Response {
+    // Validate
+    if let Some(days) = req.days {
+        if days < 1 || days > 365 {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse::new("trash_retention_days must be between 1 and 365")),
+            )
+                .into_response();
+        }
+    }
+
+    // Update in database
+    if let Err(e) = state
+        .metadata_store
+        .update_user_trash_retention(user_id, req.days)
+        .await
+    {
+        tracing::error!("Failed to update trash retention: {:?}", e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new("Failed to update trash retention")),
+        )
+            .into_response();
+    }
+
+    // Fetch updated user to return complete profile
+    match state.metadata_store.find_user_by_id(user_id).await {
+        Ok(Some(updated_user)) => {
+            let response = UpdateProfileResponse {
+                id: updated_user.id.to_string(),
+                username: updated_user.username,
+                email: updated_user.email,
+                name: updated_user.name,
+                surname: updated_user.surname,
+                display_name: updated_user.display_name,
+                avatar_path: updated_user.avatar_path,
+                email_sharing_enabled: updated_user.email_sharing_enabled,
+                trash_retention_days: updated_user.trash_retention_days,
+                theme: updated_user.theme,
+                storage_quota: updated_user.storage_quota,
+                created_at: updated_user.created_at.to_rfc3339(),
+            };
+
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new("Failed to fetch updated profile")),
+        )
+            .into_response(),
     }
 }

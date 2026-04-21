@@ -17,7 +17,7 @@
 
 	import { onMount } from 'svelte';
 	import { createQuery, createMutation } from '$lib/query-compat';
-	import { truncateFilename } from '$lib/utils/format';
+	import { truncateFilename, formatFileSize } from '$lib/utils/format';
 	import {
 		deleteFile,
 		downloadFile,
@@ -29,7 +29,9 @@
 		restoreFileFromTrash,
 		setFileStarred,
 		uploadFile,
-		listAllFiles
+		listAllFiles,
+		getTrashSummary,
+		emptyTrash
 	} from '$lib/api/files';
 	import { createNote } from '$lib/api/notes';
 	import {
@@ -74,6 +76,7 @@
 	import { detectEditorType } from '$lib/utils/editor';
 	import FileModals from './FileModals.svelte';
 	import FileEditorPane from './FileEditorPane.svelte';
+	import EmptyTrashModal from '$lib/components/modals/EmptyTrashModal.svelte';
 
 	// ============================================================================
 	// STATE
@@ -111,6 +114,11 @@
 	let createFileLoading = false;
 	let uploadTargetFolderId: string | null = null;
 	let editableFilesForModal: File[] = [];
+
+	// Trash state
+	let showEmptyTrashModal = false;
+	let trashSummary = $state({ file_count: 0, folder_count: 0, total_size: 0 });
+	let emptyingTrash = $state(false);
 
 	// Editor state
 	let showTextEditor = false;
@@ -699,6 +707,20 @@
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['all-files'] });
 			showNotification('Folder deleted permanently', 'success');
+		}
+	});
+
+	const emptyTrashMutation = createMutation({
+		mutationFn: () => emptyTrash(),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['all-files'] });
+			showNotification('Trash emptied successfully', 'success');
+			showEmptyTrashModal = false;
+		},
+		onError: (error: Error) => {
+			showNotification(error.message || 'Failed to empty trash', 'error');
+			emptyingTrash = false;
 		}
 	});
 
@@ -1357,6 +1379,25 @@
 		$permanentlyDeleteFolderMutation.mutate(folder.id);
 	}
 
+	async function openEmptyTrashModal() {
+		try {
+			const summary = await getTrashSummary();
+			trashSummary = summary;
+			showEmptyTrashModal = true;
+		} catch (error) {
+			showNotification('Failed to load trash summary', 'error');
+		}
+	}
+
+	function handleEmptyTrash() {
+		emptyingTrash = true;
+		$emptyTrashMutation.mutate(undefined, {
+			onSettled: () => {
+				emptyingTrash = false;
+			}
+		});
+	}
+
 	// Keyboard shortcuts and event listeners
 	onMount(() => {
 		const handleCreateFolderEvent = () => {
@@ -1486,6 +1527,22 @@
 		}
 	}}
 />
+
+{#if workspaceMode === 'deleted'}
+	<div class="mb-3 flex items-center justify-between px-1">
+		<div class="text-sm text-base-content/60">
+			Items in trash are automatically deleted based on your <a href="/settings" class="text-brand-500 hover:underline">settings</a>.
+		</div>
+		<button
+			type="button"
+			class="flex items-center gap-2 rounded-lg border border-error/30 bg-error/10 px-3 py-1.5 text-sm font-medium text-error transition-colors hover:bg-error/20"
+			onclick={openEmptyTrashModal}
+		>
+			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+			Empty Trash
+		</button>
+	</div>
+{/if}
 
 <DropZone
 	onFilesDropped={handleFilesSelected}
@@ -1619,6 +1676,16 @@
 		replaceFileTarget={replaceFileTarget}
 		onReplaceFileClose={() => { showReplaceFileModal = false; replaceFileTarget = null; }}
 		onReplaceSuccess={handleReplaceSuccess}
+	/>
+
+	<EmptyTrashModal
+		open={showEmptyTrashModal}
+		loading={emptyingTrash}
+		fileCount={trashSummary.file_count}
+		folderCount={trashSummary.folder_count}
+		totalSize={trashSummary.total_size}
+		onClose={() => showEmptyTrashModal = false}
+		onConfirm={handleEmptyTrash}
 	/>
 
 	<FileEditorPane

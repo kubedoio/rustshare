@@ -44,6 +44,7 @@ mod oidc_runtime;
 mod replication;
 mod replication_handlers;
 mod services;
+mod trash_cleanup;
 mod web_session;
 
 use crate::handlers::{
@@ -51,6 +52,7 @@ use crate::handlers::{
 };
 use crate::oidc_runtime::{seed_oidc_config_from_env, OidcRuntimeCache};
 use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
+use crate::trash_cleanup::{spawn_trash_cleanup_worker, TrashCleanupConfig};
 use anyhow::Result;
 use axum::{
     extract::DefaultBodyLimit,
@@ -515,6 +517,9 @@ async fn main() -> Result<()> {
         replication_worker_config,
     );
 
+    let trash_cleanup_config = TrashCleanupConfig::from_env();
+    spawn_trash_cleanup_worker(Arc::clone(&metadata_store), trash_cleanup_config);
+
     // Bootstrap admin user if no users exist
     if !metadata_store.has_users().await? {
         let admin_username = std::env::var("RUSTSHARE_ADMIN_USERNAME")?;
@@ -641,6 +646,8 @@ async fn main() -> Result<()> {
         .route("/api/v1/files", get(handlers::list_files))
         .route("/api/v1/files/starred", get(handlers::list_starred_items))
         .route("/api/v1/files/deleted", get(handlers::list_deleted_items))
+        .route("/api/v1/trash/summary", get(handlers::get_trash_summary))
+        .route("/api/v1/trash/empty", delete(handlers::empty_trash))
         .route(
             "/api/v1/files/upload",
             post(handlers::upload_file).layer(DefaultBodyLimit::disable()),
@@ -866,6 +873,15 @@ async fn main() -> Result<()> {
             "/api/v1/admin/config/smtp/test",
             post(handlers::admin::config::test_smtp_config),
         )
+        // Admin security config
+        .route(
+            "/api/v1/admin/config/security",
+            get(handlers::admin::config::get_security_config),
+        )
+        .route(
+            "/api/v1/admin/config/security",
+            put(handlers::admin::config::update_security_config),
+        )
         // Admin webhooks
         .route(
             "/api/v1/admin/integrations/webhooks",
@@ -1052,6 +1068,10 @@ async fn main() -> Result<()> {
         // Profile routes (Task 17)
         .route("/api/v1/users/me/profile", get(handlers::get_profile))
         .route("/api/v1/users/me/profile", patch(handlers::update_profile))
+        .route(
+            "/api/v1/users/me/trash-retention",
+            patch(handlers::update_trash_retention),
+        )
         // Avatar routes (Task 18)
         .route(
             "/api/v1/users/me/avatar",

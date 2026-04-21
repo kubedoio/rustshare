@@ -68,6 +68,8 @@ pub struct User {
     pub avatar_path: Option<String>,
     /// Whether email can be shared with other users
     pub email_sharing_enabled: bool,
+    /// Trash retention period in days (None = never auto-delete)
+    pub trash_retention_days: Option<i32>,
     /// Tenant this user belongs to
     pub tenant_id: Uuid,
 }
@@ -99,6 +101,7 @@ impl User {
             surname: None,
             avatar_path: None,
             email_sharing_enabled: true,
+            trash_retention_days: Some(30),
             tenant_id,
         }
     }

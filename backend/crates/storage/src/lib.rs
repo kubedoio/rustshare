@@ -13,8 +13,8 @@ pub mod session;
 
 pub use event_store::EventStore;
 pub use metadata::{
-    MetadataStore, PublicShareAccessLogEntry, ReplicationAttemptRecord, ShareAccessLogEntry,
-    UserSecurityEvent, UserSecurityEventRecord,
+    MetadataStore, PublicShareAccessLogEntry, ReplicationAttemptRecord, SecurityConfig,
+    ShareAccessLogEntry, UserSecurityEvent, UserSecurityEventRecord,
 };
 pub use object_store::ObjectStore;
 

@@ -110,6 +110,14 @@ pub struct UserSecurityEvent {
     pub occurred_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SecurityConfig {
+    pub login_protection_enabled: bool,
+    pub max_login_attempts: i32,
+    pub login_block_duration_minutes: i32,
+    pub updated_at: DateTime<Utc>,
+}
+
 impl MetadataStore {
     fn permission_to_db_value(permission: SharePermissions) -> &'static str {
         match permission {
@@ -148,8 +156,8 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         sqlx::query(
             r#"
-            INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, created_at, updated_at, tenant_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             "#,
         )
         .bind(user.id)
@@ -159,8 +167,14 @@ impl MetadataStore {
         .bind(&user.display_name)
         .bind(user.is_admin)
         .bind(user.storage_quota)
+        .bind(user.theme.to_string())
         .bind(user.created_at)
         .bind(user.updated_at)
+        .bind(user.name.as_deref())
+        .bind(user.surname.as_deref())
+        .bind(user.avatar_path.as_deref())
+        .bind(user.email_sharing_enabled)
+        .bind(user.trash_retention_days)
         .bind(user.tenant_id)
         .execute(&self.pool)
         .await?;
@@ -469,7 +483,7 @@ impl MetadataStore {
     pub async fn find_user_by_email(&self, email: &str) -> Result<Option<User>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, tenant_id FROM users WHERE email = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id FROM users WHERE email = $1"#,
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -495,6 +509,7 @@ impl MetadataStore {
                 surname: row.try_get("surname")?,
                 avatar_path: row.try_get("avatar_path")?,
                 email_sharing_enabled: row.try_get("email_sharing_enabled")?,
+                trash_retention_days: row.try_get("trash_retention_days")?,
                 tenant_id: row.try_get("tenant_id")?,
             };
             Ok(Some(user))
@@ -506,7 +521,7 @@ impl MetadataStore {
     /// Find user by username.
     pub async fn find_user_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, tenant_id FROM users WHERE username = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id FROM users WHERE username = $1"#,
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -529,6 +544,7 @@ impl MetadataStore {
                 surname: row.try_get("surname")?,
                 avatar_path: row.try_get("avatar_path")?,
                 email_sharing_enabled: row.try_get("email_sharing_enabled")?,
+                trash_retention_days: row.try_get("trash_retention_days")?,
                 tenant_id: row.try_get("tenant_id")?,
             }))
         } else {
@@ -540,7 +556,7 @@ impl MetadataStore {
     pub async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, tenant_id FROM users WHERE id = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id FROM users WHERE id = $1"#,
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -566,6 +582,7 @@ impl MetadataStore {
                 surname: row.try_get("surname")?,
                 avatar_path: row.try_get("avatar_path")?,
                 email_sharing_enabled: row.try_get("email_sharing_enabled")?,
+                trash_retention_days: row.try_get("trash_retention_days")?,
                 tenant_id: row.try_get("tenant_id")?,
             };
             Ok(Some(user))
@@ -647,6 +664,19 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Update user's trash retention setting.
+    pub async fn update_user_trash_retention(&self, user_id: Uuid, days: Option<i32>) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE users SET trash_retention_days = $1, updated_at = NOW() WHERE id = $2"#
+        )
+        .bind(days)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// Update user's avatar path
     pub async fn update_user_avatar(&self, user_id: Uuid, avatar_path: Option<&str>) -> Result<()> {
         sqlx::query(
@@ -663,6 +693,195 @@ impl MetadataStore {
         .await?;
 
         Ok(())
+    }
+
+    /// List all users that have trash auto-clean enabled (trash_retention_days IS NOT NULL).
+    pub async fn list_users_with_trash_retention(&self) -> Result<Vec<(Uuid, Uuid, i32)>> {
+        let rows = sqlx::query(
+            r#"SELECT id, tenant_id, trash_retention_days FROM users WHERE trash_retention_days IS NOT NULL"#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut users = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: Uuid = row.try_get("id")?;
+            let tenant_id: Uuid = row.try_get("tenant_id")?;
+            let days: i32 = row.try_get("trash_retention_days")?;
+            users.push((id, tenant_id, days));
+        }
+
+        Ok(users)
+    }
+
+    // -----------------------------------------------------------------
+    // Login protection
+    // -----------------------------------------------------------------
+
+    /// Check if an IP address is currently blocked from logging in.
+    pub async fn is_ip_blocked(&self, ip_address: &str) -> Result<bool> {
+        let row = sqlx::query(
+            r#"
+            SELECT blocked_until
+            FROM login_attempts
+            WHERE ip_address = $1
+            "#,
+        )
+        .bind(ip_address)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let blocked_until: Option<chrono::DateTime<Utc>> = row.try_get("blocked_until")?;
+            if let Some(until) = blocked_until {
+                if until > Utc::now() {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
+    /// Record a failed login attempt for an IP address.
+    /// If failed_count reaches max_login_attempts, blocks the IP for login_block_duration_minutes.
+    pub async fn record_login_failure(&self, ip_address: &str) -> Result<()> {
+        let config = sqlx::query(
+            r#"
+            SELECT login_protection_enabled, max_login_attempts, login_block_duration_minutes
+            FROM security_config
+            WHERE id = 1
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        let enabled: bool = config.try_get("login_protection_enabled")?;
+        if !enabled {
+            return Ok(());
+        }
+
+        let max_attempts: i32 = config.try_get("max_login_attempts")?;
+        let block_duration: i32 = config.try_get("login_block_duration_minutes")?;
+
+        // Check if an existing block has expired — if so, reset the count
+        let existing = sqlx::query(
+            "SELECT blocked_until FROM login_attempts WHERE ip_address = $1"
+        )
+        .bind(ip_address)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = existing {
+            let blocked_until: Option<chrono::DateTime<Utc>> = row.try_get("blocked_until")?;
+            if let Some(until) = blocked_until {
+                if until <= Utc::now() {
+                    // Block expired — reset count so user gets a fresh start
+                    sqlx::query(
+                        "UPDATE login_attempts SET failed_count = 0, blocked_until = NULL WHERE ip_address = $1"
+                    )
+                    .bind(ip_address)
+                    .execute(&self.pool)
+                    .await?;
+                }
+            }
+        }
+
+        let row = sqlx::query(
+            r#"
+            INSERT INTO login_attempts (ip_address, failed_count, last_attempt_at)
+            VALUES ($1, 1, NOW())
+            ON CONFLICT (ip_address) DO UPDATE SET
+                failed_count = login_attempts.failed_count + 1,
+                last_attempt_at = NOW()
+            RETURNING failed_count
+            "#,
+        )
+        .bind(ip_address)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let failed_count: i32 = row.try_get("failed_count")?;
+
+        if failed_count >= max_attempts {
+            let block_until = Utc::now() + chrono::Duration::minutes(block_duration as i64);
+            sqlx::query(
+                r#"
+                UPDATE login_attempts
+                SET blocked_until = $2
+                WHERE ip_address = $1
+                "#,
+            )
+            .bind(ip_address)
+            .bind(block_until)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Clear login attempts for an IP address after a successful login.
+    pub async fn clear_login_attempts(&self, ip_address: &str) -> Result<()> {
+        sqlx::query("DELETE FROM login_attempts WHERE ip_address = $1")
+            .bind(ip_address)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Get the current security configuration.
+    pub async fn get_security_config(&self) -> Result<SecurityConfig> {
+        let row = sqlx::query(
+            r#"
+            SELECT login_protection_enabled, max_login_attempts, login_block_duration_minutes, updated_at
+            FROM security_config
+            WHERE id = 1
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(SecurityConfig {
+            login_protection_enabled: row.try_get("login_protection_enabled")?,
+            max_login_attempts: row.try_get("max_login_attempts")?,
+            login_block_duration_minutes: row.try_get("login_block_duration_minutes")?,
+            updated_at: row.try_get("updated_at")?,
+        })
+    }
+
+    /// Update the security configuration.
+    pub async fn update_security_config(
+        &self,
+        login_protection_enabled: Option<bool>,
+        max_login_attempts: Option<i32>,
+        login_block_duration_minutes: Option<i32>,
+    ) -> Result<SecurityConfig> {
+        let row = sqlx::query(
+            r#"
+            UPDATE security_config
+            SET
+                login_protection_enabled = COALESCE($1, login_protection_enabled),
+                max_login_attempts = COALESCE($2, max_login_attempts),
+                login_block_duration_minutes = COALESCE($3, login_block_duration_minutes),
+                updated_at = NOW()
+            WHERE id = 1
+            RETURNING login_protection_enabled, max_login_attempts, login_block_duration_minutes, updated_at
+            "#,
+        )
+        .bind(login_protection_enabled)
+        .bind(max_login_attempts)
+        .bind(login_block_duration_minutes)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(SecurityConfig {
+            login_protection_enabled: row.try_get("login_protection_enabled")?,
+            max_login_attempts: row.try_get("max_login_attempts")?,
+            login_block_duration_minutes: row.try_get("login_block_duration_minutes")?,
+            updated_at: row.try_get("updated_at")?,
+        })
     }
 
     /// Create a new file in the projection table
@@ -1931,6 +2150,86 @@ impl MetadataStore {
         .await?;
 
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Get a summary of trashed items for a user.
+    pub async fn get_trash_summary(&self, owner_id: Uuid, tenant_id: Uuid) -> Result<(i64, i64, i64)> {
+        let file_row = sqlx::query(
+            r#"
+            SELECT COUNT(*) as count, COALESCE(SUM(size), 0)::bigint as total_size
+            FROM files
+            WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL
+            "#,
+        )
+        .bind(owner_id)
+        .bind(tenant_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let file_count: i64 = file_row.try_get("count")?;
+        let total_size: i64 = file_row.try_get("total_size")?;
+
+        let folder_row = sqlx::query(
+            "SELECT COUNT(*) as count FROM folders WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL"
+        )
+        .bind(owner_id)
+        .bind(tenant_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let folder_count: i64 = folder_row.try_get("count")?;
+
+        Ok((file_count, folder_count, total_size))
+    }
+
+    /// Permanently delete all trashed items for a user.
+    pub async fn empty_trash(&self, owner_id: Uuid, tenant_id: Uuid) -> Result<()> {
+        // Delete trashed files first (to avoid FK violations when deleting folders)
+        sqlx::query(
+            "DELETE FROM files WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL"
+        )
+        .bind(owner_id)
+        .bind(tenant_id)
+        .execute(&self.pool)
+        .await?;
+
+        // Delete trashed folders (cascade will handle any remaining child records)
+        sqlx::query(
+            "DELETE FROM folders WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL"
+        )
+        .bind(owner_id)
+        .bind(tenant_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Permanently delete trashed items older than the given number of days for a user.
+    pub async fn clean_old_trash(&self, owner_id: Uuid, tenant_id: Uuid, days: i32) -> Result<u64> {
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(days.into());
+
+        // Delete old trashed files first
+        let file_result = sqlx::query(
+            "DELETE FROM files WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL AND deleted_at < $3"
+        )
+        .bind(owner_id)
+        .bind(tenant_id)
+        .bind(cutoff)
+        .execute(&self.pool)
+        .await?;
+
+        // Delete old trashed folders
+        let folder_result = sqlx::query(
+            "DELETE FROM folders WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL AND deleted_at < $3"
+        )
+        .bind(owner_id)
+        .bind(tenant_id)
+        .bind(cutoff)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(file_result.rows_affected() + folder_result.rows_affected())
     }
 
     /// Find all descendant folders of a given folder using recursive CTE

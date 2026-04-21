@@ -10,6 +10,7 @@
 		revokeUserDevice,
 		getProfile,
 		updateProfile,
+		updateTrashRetention,
 		type UserSession,
 		type UserDevice,
 		type FullUserProfile
@@ -56,9 +57,11 @@
 	let securityNotifications = $state(true);
 	let marketingNotifications = $state(false);
 	
-	// Profile state (for email sharing toggle)
+	// Profile state (for email sharing and trash retention)
 	let profile = $state<FullUserProfile | null>(null);
 	let profileLoading = $state(true);
+	let trashRetentionDays = $state<number | null>(30);
+	let trashRetentionSaving = $state(false);
 	
 	// Sharing defaults (placeholder for future API implementation)
 	let defaultLinkExpiration = $state('30');
@@ -130,10 +133,26 @@
 		try {
 			profile = await getProfile();
 			emailSharingEnabled = profile.email_sharing_enabled;
+			trashRetentionDays = profile.trash_retention_days ?? 30;
 		} catch (error) {
 			console.error('Failed to load profile:', error);
 		} finally {
 			profileLoading = false;
+		}
+	}
+
+	async function handleTrashRetentionChange(days: number | null) {
+		if (!profile) return;
+		trashRetentionSaving = true;
+		try {
+			await updateTrashRetention({ days });
+			showNotification('Trash retention updated', 'success');
+		} catch (error) {
+			showNotification(error instanceof Error ? error.message : 'Failed to update trash retention', 'error');
+			// Revert on error
+			trashRetentionDays = profile.trash_retention_days ?? 30;
+		} finally {
+			trashRetentionSaving = false;
 		}
 	}
 
@@ -325,6 +344,42 @@
 							</SettingsSection>
 						</div>
 					{/if}
+
+					<!-- Trash Section -->
+					<div class="border-t border-base-300 pt-6 mt-6">
+						<SettingsSection title="Trash" description="Automatically delete items after they've been in trash for a set period">
+							<div class="py-4">
+								<div class="flex items-center justify-between">
+									<div>
+										<p class="text-sm font-medium text-base-content">Auto-clean trash</p>
+										<p class="text-xs text-base-content/60 mt-0.5">
+											{#if trashRetentionDays === null}
+												Items are kept indefinitely
+											{:else}
+												Items deleted after {trashRetentionDays} days in trash
+											{/if}
+										</p>
+									</div>
+									<select
+										class="px-3 py-2 bg-base-100 border border-base-300 rounded-lg text-sm text-base-content focus:outline-hidden focus:border-brand-500/50"
+										value={trashRetentionDays === null ? 'never' : String(trashRetentionDays)}
+										onchange={(e) => {
+											const val = (e.target as HTMLSelectElement).value;
+											const days = val === 'never' ? null : Number(val);
+											trashRetentionDays = days;
+											handleTrashRetentionChange(days);
+										}}
+										disabled={trashRetentionSaving}
+									>
+										<option value="7">7 days</option>
+										<option value="30">30 days</option>
+										<option value="90">90 days</option>
+										<option value="never">Never</option>
+									</select>
+								</div>
+							</div>
+						</SettingsSection>
+					</div>
 				</div>
 			</div>
 
