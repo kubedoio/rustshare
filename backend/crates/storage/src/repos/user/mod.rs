@@ -115,6 +115,7 @@ pub mod conversions {
             surname: None,
             avatar_path: None,
             email_sharing_enabled: true,
+            trash_retention_days: Some(30),
             tenant_id: doc.tenant_id,
         }
     }
