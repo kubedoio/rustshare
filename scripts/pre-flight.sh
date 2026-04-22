@@ -78,9 +78,9 @@ generate_secret() {
 	openssl rand -base64 32
 }
 
-# Generate a strong password (human-memorable, alphanumeric + symbols)
+# Generate a strong password (URL-safe hex — avoids / and + that break DATABASE_URL)
 generate_password() {
-	openssl rand -base64 24
+	openssl rand -hex 24
 }
 
 # ---------------------------------------------------------------------------
