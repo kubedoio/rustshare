@@ -15,7 +15,6 @@ describe("FileThumbnail", () => {
     path: "/test-image.jpg",
     size: 1024000,
     mime_type: "image/jpeg",
-    content_hash: "abc123",
     storage_key: "blobs/abc123",
     owner_id: "user-id",
     parent_folder_id: null,

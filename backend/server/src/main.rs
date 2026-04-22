@@ -349,6 +349,19 @@ async fn main() -> Result<()> {
 
     // Initialize JWT manager
     let jwt_secret = std::env::var("JWT_SECRET")?;
+    if jwt_secret.len() < 32 {
+        return Err(anyhow::anyhow!(
+            "JWT_SECRET must be at least 32 characters long. Generate one with: openssl rand -base64 32"
+        ));
+    }
+    if jwt_secret == "dev-secret-change-in-production"
+        || jwt_secret == "dev-secret-key-change-in-production-12345"
+        || jwt_secret == "ci-pilot-secret"
+    {
+        return Err(anyhow::anyhow!(
+            "JWT_SECRET is using a known weak default value. Generate a strong secret with: openssl rand -base64 32"
+        ));
+    }
     let jwt_manager = Arc::new(JwtManager::new(jwt_secret));
 
     // Initialize EventBroadcaster
@@ -555,6 +568,12 @@ async fn main() -> Result<()> {
     .await?;
 
     // Load secret encryption key
+    let encryption_key = std::env::var("RUSTSHARE_SECRET_ENCRYPTION_KEY").unwrap_or_default();
+    if encryption_key == "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" {
+        return Err(anyhow::anyhow!(
+            "RUSTSHARE_SECRET_ENCRYPTION_KEY is using a known weak default value. Generate a strong key with: openssl rand -base64 32"
+        ));
+    }
     let secret_key = SecretEncryptionKey::from_env()
         .map_err(|e| anyhow::anyhow!("Secret encryption key error: {}", e))?;
 

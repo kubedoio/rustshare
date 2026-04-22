@@ -18,6 +18,7 @@ enum RateLimitScope {
     ShareDownload,
     ShareUpload,
     AuthenticatedShareAdmin,
+    AiQuery,
 }
 
 impl RateLimitScope {
@@ -30,6 +31,7 @@ impl RateLimitScope {
             Self::ShareDownload => HeaderValue::from_static("share-download"),
             Self::ShareUpload => HeaderValue::from_static("share-upload"),
             Self::AuthenticatedShareAdmin => HeaderValue::from_static("authenticated-share-admin"),
+            Self::AiQuery => HeaderValue::from_static("ai-query"),
         }
     }
 }
@@ -45,6 +47,7 @@ pub struct RateLimitConfig {
     pub share_upload: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
     pub authenticated_share_admin:
         Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
+    pub ai_query: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
 }
 
 impl RateLimitConfig {
@@ -83,6 +86,11 @@ impl RateLimitConfig {
             authenticated_share_admin: Arc::new(RateLimiter::dashmap(quota_from_env(
                 "RUSTSHARE_RATE_LIMIT_AUTHENTICATED_SHARE_ADMIN_PER_MINUTE",
                 120,
+            ))),
+            // AI endpoints (search, summarize, ask)
+            ai_query: Arc::new(RateLimiter::dashmap(quota_from_env(
+                "RUSTSHARE_RATE_LIMIT_AI_QUERY_PER_MINUTE",
+                30,
             ))),
         }
     }
@@ -213,7 +221,18 @@ fn classify_request(method: &Method, path: &str) -> Option<RateLimitScope> {
         return Some(RateLimitScope::AuthenticatedShareAdmin);
     }
 
+    if matches_ai_query(method, path) {
+        return Some(RateLimitScope::AiQuery);
+    }
+
     None
+}
+
+fn matches_ai_query(method: &Method, path: &str) -> bool {
+    method == Method::POST
+        && (path == "/api/v1/ai/search"
+            || path == "/api/v1/ai/summarize"
+            || path == "/api/v1/ai/ask")
 }
 
 fn matches_auth_login(method: &Method, path: &str) -> bool {
@@ -252,6 +271,7 @@ fn limiter_for_scope(
         RateLimitScope::ShareDownload => &config.share_download,
         RateLimitScope::ShareUpload => &config.share_upload,
         RateLimitScope::AuthenticatedShareAdmin => &config.authenticated_share_admin,
+        RateLimitScope::AiQuery => &config.ai_query,
     }
 }
 
@@ -271,6 +291,7 @@ mod tests {
         assert!(config.share_download.check_key(&test_ip).is_ok());
         assert!(config.share_upload.check_key(&test_ip).is_ok());
         assert!(config.authenticated_share_admin.check_key(&test_ip).is_ok());
+        assert!(config.ai_query.check_key(&test_ip).is_ok());
     }
 
     #[tokio::test]

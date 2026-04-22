@@ -107,16 +107,6 @@ pub struct AiErrorResponse {
     pub details: Option<String>,
 }
 
-/// Check if the request is within rate limits.
-/// For Phase 1.5, we use a simple per-user rate limit.
-/// Future phases: Use Redis or database for distributed rate limiting.
-fn check_rate_limit(_user_id: Uuid) -> Result<(), Response> {
-    // TODO: Implement proper rate limiting with Redis/database
-    // For now, always allow - real implementation would check against
-    // a rate limit store
-    Ok(())
-}
-
 // ============================================================================
 // Handlers
 // ============================================================================
@@ -132,8 +122,7 @@ pub async fn semantic_search(
     auth: AuthenticatedUser,
     Json(request): Json<SemanticSearchRequest>,
 ) -> Result<(StatusCode, Json<SemanticSearchResponse>), Response> {
-    // Contract A-04: Rate limiting
-    check_rate_limit(auth.user_id)?;
+    // Contract A-04: Rate limiting enforced by middleware
 
     // Contract A-05: Input validation
     let query = request.query.trim();
@@ -194,8 +183,7 @@ pub async fn summarize_file(
     auth: AuthenticatedUser,
     Json(request): Json<SummarizeRequest>,
 ) -> Result<(StatusCode, Json<SummarizeResponse>), Response> {
-    // Contract A-04: Rate limiting
-    check_rate_limit(auth.user_id)?;
+    // Contract A-04: Rate limiting enforced by middleware
 
     // Get AI service from state or return not implemented
     let summary = if let Some(ref ai_service) = state.ai_service {
@@ -240,8 +228,7 @@ pub async fn ask_question(
     auth: AuthenticatedUser,
     Json(request): Json<AskQuestionRequest>,
 ) -> Result<(StatusCode, Json<AskQuestionResponse>), Response> {
-    // Contract A-04: Rate limiting
-    check_rate_limit(auth.user_id)?;
+    // Contract A-04: Rate limiting enforced by middleware
 
     // Contract A-05: Input validation
     let question = request.question.trim();

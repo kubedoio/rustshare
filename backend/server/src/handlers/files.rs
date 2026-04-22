@@ -120,7 +120,6 @@ pub async fn upload_file(
             name: file.name,
             size: file.size,
             mime_type: file.mime_type,
-            content_hash: file.content_hash,
             current_version: file.current_version,
             created_at: file.created_at.to_rfc3339(),
         }),
@@ -133,7 +132,6 @@ pub struct FileUploadResponse {
     pub name: String,
     pub size: i64,
     pub mime_type: String,
-    pub content_hash: String,
     pub current_version: i32,
     pub created_at: String,
 }
@@ -196,47 +194,36 @@ pub async fn download_file_content(
         Err(e) => return file_error_response(e).into_response(),
     };
 
-    // Get file content from storage
+    // Generate a time-limited presigned URL with attachment disposition
     let storage_key = file.storage_key();
-    let content = match state.object_store.get(&storage_key).await {
-        Ok(data) => data,
+    let content_disposition = format!(
+        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+        file.name.replace('"', "\\\""),
+        urlencoding::encode(&file.name)
+    );
+    let presigned_url = match state
+        .object_store
+        .get_presigned_url_with_disposition(&storage_key, 3600, Some(&content_disposition))
+        .await
+    {
+        Ok(url) => url,
         Err(e) => {
-            tracing::error!("Failed to get file content from storage: {}", e);
+            tracing::error!("Failed to generate presigned URL: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to retrieve file content")),
+                Json(ErrorResponse::new("Failed to generate download URL")),
             )
                 .into_response();
         }
     };
 
-    // Build Content-Disposition header with original filename
-    // Use RFC 5987 encoding for non-ASCII characters
-    let filename = &file.name;
-    let content_disposition = format!(
-        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
-        filename.replace('"', "\\\""),
-        urlencoding::encode(filename)
-    );
-
-    // Build response with proper headers
+    // Redirect to the presigned URL
     let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&content_disposition)
-            .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
-    );
+    headers.insert(header::LOCATION, HeaderValue::from_str(&presigned_url).unwrap_or_else(|_| {
+        HeaderValue::from_static("/")
+    }));
 
-    // Set Content-Type based on file's MIME type
-    let content_type = file
-        .mime_type
-        .parse()
-        .ok()
-        .or_else(|| HeaderValue::from_str("application/octet-stream").ok())
-        .unwrap_or_else(|| HeaderValue::from_static("application/octet-stream"));
-    headers.insert(header::CONTENT_TYPE, content_type);
-
-    (StatusCode::OK, headers, content).into_response()
+    (StatusCode::FOUND, headers).into_response()
 }
 
 /// Preview file content (inline disposition for browser viewing).
@@ -256,37 +243,31 @@ pub async fn preview_file(
         Err(e) => return file_error_response(e).into_response(),
     };
 
-    // Get file content from storage
+    // Generate a time-limited presigned URL with inline disposition
     let storage_key = file.storage_key();
-    let content = match state.object_store.get(&storage_key).await {
-        Ok(data) => data,
+    let presigned_url = match state
+        .object_store
+        .get_presigned_url_with_disposition(&storage_key, 3600, Some("inline"))
+        .await
+    {
+        Ok(url) => url,
         Err(e) => {
-            tracing::error!("Failed to get file content from storage: {}", e);
+            tracing::error!("Failed to generate presigned URL: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to retrieve file content")),
+                Json(ErrorResponse::new("Failed to generate preview URL")),
             )
                 .into_response();
         }
     };
 
-    // Build response with inline disposition for browser preview
+    // Redirect to the presigned URL
     let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_DISPOSITION,
-        HeaderValue::from_static("inline"),
-    );
+    headers.insert(header::LOCATION, HeaderValue::from_str(&presigned_url).unwrap_or_else(|_| {
+        HeaderValue::from_static("/")
+    }));
 
-    // Set Content-Type based on file's MIME type
-    let content_type = file
-        .mime_type
-        .parse()
-        .ok()
-        .or_else(|| HeaderValue::from_str("application/octet-stream").ok())
-        .unwrap_or_else(|| HeaderValue::from_static("application/octet-stream"));
-    headers.insert(header::CONTENT_TYPE, content_type);
-
-    (StatusCode::OK, headers, content).into_response()
+    (StatusCode::FOUND, headers).into_response()
 }
 
 /// Delete a file.
@@ -374,7 +355,6 @@ pub async fn update_file(
     Ok(Json(FileUpdateResponse {
         id: file.id,
         current_version: file.current_version,
-        content_hash: file.content_hash,
         size: file.size,
         modified_at: file.modified_at.to_rfc3339(),
     }))
@@ -384,7 +364,6 @@ pub async fn update_file(
 pub struct FileUpdateResponse {
     pub id: Uuid,
     pub current_version: i32,
-    pub content_hash: String,
     pub size: i64,
     pub modified_at: String,
 }
@@ -396,17 +375,38 @@ pub struct FileUpdateResponse {
 /// Get file version history.
 ///
 /// GET /api/files/{id}/versions
+#[derive(Debug, Serialize)]
+pub struct FileVersionResponse {
+    pub id: Uuid,
+    pub version_number: i32,
+    pub size: i64,
+    pub created_at: String,
+    pub created_by_user_id: Uuid,
+    pub change_description: Option<String>,
+}
+
 pub async fn get_file_versions(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
-) -> Result<Json<Vec<FileVersion>>, Response> {
+) -> Result<Json<Vec<FileVersionResponse>>, Response> {
     let versions = state
         .file_service
         .list_versions(file_id, auth.user_id)
         .await
         .map_err(file_error_response)?;
-    Ok(Json(versions))
+    let response: Vec<FileVersionResponse> = versions
+        .into_iter()
+        .map(|v| FileVersionResponse {
+            id: v.id,
+            version_number: v.version_number,
+            size: v.size,
+            created_at: v.created_at.to_rfc3339(),
+            created_by_user_id: v.created_by,
+            change_description: v.change_description,
+        })
+        .collect();
+    Ok(Json(response))
 }
 
 /// Restore a file to a previous version.
@@ -430,7 +430,6 @@ pub async fn restore_file_version(
         id: file.id,
         current_version: file.current_version,
         restored_from_version: req.version,
-        content_hash: file.content_hash,
         size: file.size,
         modified_at: file.modified_at.to_rfc3339(),
     }))
@@ -446,7 +445,6 @@ pub struct FileRestoreResponse {
     pub id: Uuid,
     pub current_version: i32,
     pub restored_from_version: i32,
-    pub content_hash: String,
     pub size: i64,
     pub modified_at: String,
 }
@@ -658,7 +656,6 @@ pub struct EditFileRequest {
 pub struct EditFileResponse {
     pub id: Uuid,
     pub current_version: i32,
-    pub content_hash: String,
     pub size: i64,
     pub modified_at: String,
     pub saved_as_new_version: bool,
@@ -711,7 +708,6 @@ pub async fn edit_file(
     Ok(Json(EditFileResponse {
         id: file.id,
         current_version: file.current_version,
-        content_hash: file.content_hash,
         size: file.size,
         modified_at: file.modified_at.to_rfc3339(),
         saved_as_new_version: req.save_mode == "new_version",
@@ -733,7 +729,6 @@ pub struct FileWithShares {
     pub id: Uuid,
     pub name: String,
     pub path: String,
-    pub content_hash: String,
     pub size: i64,
     pub mime_type: String,
     pub parent_folder_id: Option<Uuid>,
@@ -765,7 +760,7 @@ pub async fn list_files(
     let files = sqlx::query_as::<_, FileWithShares>(
         r#"
         SELECT
-            f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
+            f.id, f.name, f.path, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
             f.created_at, f.modified_at, f.starred_at, f.deleted_at,
             EXISTS(
@@ -939,7 +934,7 @@ pub async fn list_starred_items(
     let files = sqlx::query_as::<_, FileWithShares>(
         r#"
         SELECT
-            f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
+            f.id, f.name, f.path, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
             f.created_at, f.modified_at, f.starred_at, f.deleted_at,
             EXISTS(
@@ -1049,7 +1044,7 @@ pub async fn list_deleted_items(
     let files = sqlx::query_as::<_, FileWithShares>(
         r#"
         SELECT
-            f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
+            f.id, f.name, f.path, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
             f.created_at, f.modified_at, f.starred_at, f.deleted_at,
             EXISTS(

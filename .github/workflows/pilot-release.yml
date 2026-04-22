@@ -40,8 +40,9 @@ jobs:
       - name: Boot pilot stack
         env:
           RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
-          JWT_SECRET: ci-pilot-secret
-          RUSTSHARE_SECRET_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          # CI secrets must be configured in repository Settings > Secrets and variables > Actions
+          JWT_SECRET: ${{ secrets.CI_JWT_SECRET }}
+          RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ secrets.CI_ENCRYPTION_KEY }}
         run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml up -d postgres rustfs backend nginx
 
       - name: Wait for health endpoint

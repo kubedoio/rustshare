@@ -221,7 +221,6 @@ export async function restoreFileVersion(
 export interface EditFileResponse {
   id: string;
   current_version: number;
-  content_hash: string;
   size: number;
   modified_at: string;
   saved_as_new_version: boolean;

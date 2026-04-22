@@ -496,7 +496,6 @@ pub async fn get_user_shared_folder_contents(
             id: f.id,
             name: f.name,
             path: f.path,
-            content_hash: f.content_hash,
             size: f.size,
             mime_type: f.mime_type,
             parent_folder_id: f.parent_folder_id,

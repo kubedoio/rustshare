@@ -4,7 +4,8 @@ services:
     environment:
       POSTGRES_DB: rustshare
       POSTGRES_USER: rustshare
-      POSTGRES_PASSWORD: changeme
+      # Must be set via env var or .env file — see .env.example
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -18,8 +19,9 @@ services:
   rustfs:
     image: rustfs/rustfs:latest
     environment:
-      RUSTFS_ROOT_USER: rustfsadmin
-      RUSTFS_ROOT_PASSWORD: rustfsadmin
+      # Must be set via env var or .env file — see .env.example
+      RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER}
+      RUSTFS_ROOT_PASSWORD: ${RUSTFS_ROOT_PASSWORD}
       RUSTFS_DATA_DIR: /data
       RUSTFS_LOGS_DIR: /logs
     volumes:
@@ -49,23 +51,25 @@ services:
         soft: 65536
         hard: 65536
     environment:
-      DATABASE_URL: postgres://rustshare:changeme@postgres:5432/rustshare
+      # Must be set via env var or .env file — see .env.example
+      DATABASE_URL: ${DATABASE_URL}
       RUST_LOG: debug
       RUSTFS_ENDPOINT: http://rustfs:9000
       RUSTFS_PUBLIC_ENDPOINT: http://localhost:9000
       RUSTFS_REGION: us-east-1
       RUSTFS_BUCKET: rustshare-files
-      AWS_ACCESS_KEY_ID: rustfsadmin
-      AWS_SECRET_ACCESS_KEY: rustfsadmin
-      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
-      RUSTSHARE_SECRET_ENCRYPTION_KEY: ${RUSTSHARE_SECRET_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
-      RUSTSHARE_ADMIN_USERNAME: admin
-      RUSTSHARE_ADMIN_EMAIL: admin@localhost
-      RUSTSHARE_ADMIN_PASSWORD: admin123
-      RUSTSHARE_DEMO_VIEWER_USERNAME: viewer
-      RUSTSHARE_DEMO_VIEWER_EMAIL: viewer@localhost
-      RUSTSHARE_DEMO_VIEWER_PASSWORD: viewer123
-      RUSTSHARE_DEMO_VIEWER_DISPLAY_NAME: Viewer User
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      # CRITICAL: Must be strong random values. Server refuses to start with weak secrets.
+      JWT_SECRET: ${JWT_SECRET}
+      RUSTSHARE_SECRET_ENCRYPTION_KEY: ${RUSTSHARE_SECRET_ENCRYPTION_KEY}
+      RUSTSHARE_ADMIN_USERNAME: ${RUSTSHARE_ADMIN_USERNAME:-admin}
+      RUSTSHARE_ADMIN_EMAIL: ${RUSTSHARE_ADMIN_EMAIL:-admin@localhost}
+      RUSTSHARE_ADMIN_PASSWORD: ${RUSTSHARE_ADMIN_PASSWORD}
+      RUSTSHARE_DEMO_VIEWER_USERNAME: ${RUSTSHARE_DEMO_VIEWER_USERNAME:-viewer}
+      RUSTSHARE_DEMO_VIEWER_EMAIL: ${RUSTSHARE_DEMO_VIEWER_EMAIL:-viewer@localhost}
+      RUSTSHARE_DEMO_VIEWER_PASSWORD: ${RUSTSHARE_DEMO_VIEWER_PASSWORD}
+      RUSTSHARE_DEMO_VIEWER_DISPLAY_NAME: ${RUSTSHARE_DEMO_VIEWER_DISPLAY_NAME:-Viewer User}
       PASSWORD_LOGIN_ENABLED: ${PASSWORD_LOGIN_ENABLED:-true}
       OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}

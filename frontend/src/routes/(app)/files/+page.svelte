@@ -258,7 +258,6 @@
 							id: s.resource_id,
 							name: s.resource_name,
 							path: s.resource_path,
-							content_hash: '',
 							size: 0,
 							mime_type: 'application/octet-stream',
 							parent_folder_id: null,
