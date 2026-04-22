@@ -326,7 +326,7 @@ impl ScimRepository for ScimRepositoryImpl {
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
                    storage_quota, theme, created_at, updated_at, disabled_at, 
-                   name, surname, avatar_path, email_sharing_enabled, tenant_id
+                   name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id
             FROM users
             WHERE external_id = $1
             "#,
@@ -345,7 +345,7 @@ impl ScimRepository for ScimRepositoryImpl {
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
                    storage_quota, theme, created_at, updated_at, disabled_at,
-                   name, surname, avatar_path, email_sharing_enabled, tenant_id
+                   name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id
             FROM users
             WHERE LOWER(email) = $1
             "#,
@@ -363,8 +363,8 @@ impl ScimRepository for ScimRepositoryImpl {
             INSERT INTO users (
                 id, username, display_name, password_hash, email, is_admin,
                 storage_quota, theme, created_at, updated_at, disabled_at,
-                name, surname, avatar_path, email_sharing_enabled, tenant_id, external_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, external_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             "#,
         )
         .bind(user.id)
@@ -382,6 +382,7 @@ impl ScimRepository for ScimRepositoryImpl {
         .bind(&user.surname)
         .bind(&user.avatar_path)
         .bind(user.email_sharing_enabled)
+        .bind(user.trash_retention_days)
         .bind(user.tenant_id)
         .bind(external_id)
         .execute(&self.pool)
@@ -619,6 +620,7 @@ fn map_user_row(row: &sqlx::postgres::PgRow) -> Result<User, sqlx::Error> {
         surname: row.try_get("surname")?,
         avatar_path: row.try_get("avatar_path")?,
         email_sharing_enabled: row.try_get("email_sharing_enabled")?,
+        trash_retention_days: row.try_get("trash_retention_days")?,
         tenant_id: row.try_get("tenant_id")?,
     })
 }

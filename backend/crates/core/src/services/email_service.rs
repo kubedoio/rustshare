@@ -14,6 +14,8 @@ pub enum EmailError {
     DecryptFailed,
     #[error("Failed to send email: {0}")]
     SmtpSendFailed(String),
+    #[error("Invalid SMTP TLS mode: {0}. Must be 'tls' or 'starttls'")]
+    InvalidTlsMode(String),
 }
 
 pub struct EmailService {
@@ -111,13 +113,10 @@ impl EmailService {
                 }
                 b
             }
-            _ => {
-                let mut b = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&host)
-                    .port(port as u16);
-                if let Some(c) = creds {
-                    b = b.credentials(c);
-                }
-                b
+            other => {
+                return Err(EmailError::InvalidTlsMode(
+                    other.unwrap_or("(not set)").to_string(),
+                ));
             }
         };
 

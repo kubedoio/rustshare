@@ -24,6 +24,7 @@ pub mod upload;
 // mod search;
 mod shares;
 mod sync;
+mod trash;
 mod user_shares;
 mod users;
 
@@ -42,7 +43,8 @@ pub use folders::{
 pub use notifications::{
     count_unread_notifications, delete_notification, list_notifications, mark_notification_read,
 };
-pub use profile::{get_profile, update_profile};
+pub use profile::{get_profile, update_profile, update_trash_retention};
+pub use trash::{empty_trash, get_trash_summary};
 pub use public_shares::{
     create_session, download_shared_file, download_shared_folder_file, get_share_info,
     get_shared_folder_contents, upload_shared_folder_file,

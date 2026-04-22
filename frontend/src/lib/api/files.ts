@@ -221,7 +221,6 @@ export async function restoreFileVersion(
 export interface EditFileResponse {
   id: string;
   current_version: number;
-  content_hash: string;
   size: number;
   modified_at: string;
   saved_as_new_version: boolean;
@@ -253,4 +252,20 @@ export async function getFileContent(fileId: string): Promise<string> {
   }
 
   return response.text();
+}
+
+// Trash operations
+
+export interface TrashSummary {
+  file_count: number;
+  folder_count: number;
+  total_size: number;
+}
+
+export async function getTrashSummary(): Promise<TrashSummary> {
+  return apiClient.get<TrashSummary>("/trash/summary");
+}
+
+export async function emptyTrash(): Promise<void> {
+  return apiClient.delete<void>("/trash/empty");
 }

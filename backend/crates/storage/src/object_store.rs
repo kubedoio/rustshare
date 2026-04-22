@@ -111,6 +111,16 @@ impl ObjectStore {
 
     /// Generate a presigned URL for downloading an object
     pub async fn get_presigned_url(&self, key: &str, expires_in_secs: u64) -> Result<String> {
+        self.get_presigned_url_with_disposition(key, expires_in_secs, None).await
+    }
+
+    /// Generate a presigned URL with optional response-content-disposition
+    pub async fn get_presigned_url_with_disposition(
+        &self,
+        key: &str,
+        expires_in_secs: u64,
+        content_disposition: Option<&str>,
+    ) -> Result<String> {
         use aws_sdk_s3::presigning::PresigningConfig;
         use std::time::Duration;
 
@@ -121,12 +131,11 @@ impl ObjectStore {
         // Use the presign client if available (with public endpoint)
         let client = self.public_endpoint.as_ref().unwrap_or(&self.client);
 
-        let presigned_request = client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .presigned(presigning_config)
-            .await?;
+        let mut req = client.get_object().bucket(&self.bucket).key(key);
+        if let Some(cd) = content_disposition {
+            req = req.response_content_disposition(cd);
+        }
+        let presigned_request = req.presigned(presigning_config).await?;
 
         Ok(presigned_request.uri().to_string())
     }

@@ -62,6 +62,12 @@ export const updateSmtpConfig = (data: SmtpConfigRequest) =>
 export const testSmtpConfig = () =>
 	apiClient.post<{ success: boolean; message?: string }>('/admin/config/smtp/test');
 
+// Security config
+export const getSecurityConfig = () =>
+	apiClient.get<SecurityConfig>('/admin/config/security');
+export const updateSecurityConfig = (data: SecurityConfigRequest) =>
+	apiClient.put<SecurityConfig>('/admin/config/security', data);
+
 // Webhooks
 export const listWebhooks = () =>
 	apiClient.get<{ webhooks: Webhook[] }>('/admin/integrations/webhooks');
@@ -226,6 +232,19 @@ export interface UpdateWebhookRequest {
 	secret?: string;
 	enabled?: boolean;
 	events?: string[];
+}
+
+export interface SecurityConfig {
+	login_protection_enabled: boolean;
+	max_login_attempts: number;
+	login_block_duration_minutes: number;
+	updated_at: string;
+}
+
+export interface SecurityConfigRequest {
+	login_protection_enabled?: boolean;
+	max_login_attempts?: number;
+	login_block_duration_minutes?: number;
 }
 
 export interface AuditEntry {

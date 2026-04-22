@@ -29,6 +29,7 @@ impl UserRepository {
             surname: row.try_get("surname")?,
             avatar_path: row.try_get("avatar_path")?,
             email_sharing_enabled: row.try_get("email_sharing_enabled")?,
+            trash_retention_days: row.try_get("trash_retention_days")?,
             tenant_id: row.try_get("tenant_id")?,
         })
     }
@@ -45,7 +46,7 @@ impl UserRepository {
         let row = sqlx::query(
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
-                   storage_quota, theme, created_at, updated_at, disabled_at, tenant_id
+                   storage_quota, theme, created_at, updated_at, disabled_at, trash_retention_days, tenant_id
             FROM users
             WHERE LOWER(email) = $1
             "#,
@@ -62,7 +63,7 @@ impl UserRepository {
         let row = sqlx::query(
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
-                   storage_quota, theme, created_at, updated_at, disabled_at, tenant_id
+                   storage_quota, theme, created_at, updated_at, disabled_at, trash_retention_days, tenant_id
             FROM users
             WHERE id = $1
             "#,

@@ -493,6 +493,106 @@ pub async fn test_smtp_config(
 }
 
 // ---------------------------------------------------------------------------
+// Security config — request / response types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct SecurityConfigResponse {
+    pub login_protection_enabled: bool,
+    pub max_login_attempts: i32,
+    pub login_block_duration_minutes: i32,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateSecurityConfigRequest {
+    pub login_protection_enabled: Option<bool>,
+    pub max_login_attempts: Option<i32>,
+    pub login_block_duration_minutes: Option<i32>,
+}
+
+// ---------------------------------------------------------------------------
+// Security config handlers
+// ---------------------------------------------------------------------------
+
+/// GET /api/v1/admin/config/security
+pub async fn get_security_config(
+    State(state): State<AppState>,
+    AdminUser { .. }: AdminUser,
+) -> Result<Json<SecurityConfigResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let config = state
+        .metadata_store
+        .get_security_config()
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get security config: {}", e);
+            internal_error("Failed to get security config")
+        })?;
+
+    Ok(Json(SecurityConfigResponse {
+        login_protection_enabled: config.login_protection_enabled,
+        max_login_attempts: config.max_login_attempts,
+        login_block_duration_minutes: config.login_block_duration_minutes,
+        updated_at: config.updated_at,
+    }))
+}
+
+/// PUT /api/v1/admin/config/security
+pub async fn update_security_config(
+    State(state): State<AppState>,
+    AdminUser { user_id: actor_id }: AdminUser,
+    Json(req): Json<UpdateSecurityConfigRequest>,
+) -> Result<Json<SecurityConfigResponse>, (StatusCode, Json<serde_json::Value>)> {
+    if let Some(max) = req.max_login_attempts {
+        if max < 1 || max > 100 {
+            return Err(bad_request("max_login_attempts must be between 1 and 100"));
+        }
+    }
+
+    if let Some(duration) = req.login_block_duration_minutes {
+        if duration < 1 || duration > 10080 {
+            return Err(bad_request(
+                "login_block_duration_minutes must be between 1 and 10080 (7 days)",
+            ));
+        }
+    }
+
+    let config = state
+        .metadata_store
+        .update_security_config(
+            req.login_protection_enabled,
+            req.max_login_attempts,
+            req.login_block_duration_minutes,
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to update security config: {}", e);
+            internal_error("Failed to update security config")
+        })?;
+
+    log_admin_action(
+        &state.db_pool,
+        actor_id,
+        "config.security_updated",
+        None,
+        None,
+        json!({
+            "login_protection_enabled": config.login_protection_enabled,
+            "max_login_attempts": config.max_login_attempts,
+            "login_block_duration_minutes": config.login_block_duration_minutes,
+        }),
+    )
+    .await;
+
+    Ok(Json(SecurityConfigResponse {
+        login_protection_enabled: config.login_protection_enabled,
+        max_login_attempts: config.max_login_attempts,
+        login_block_duration_minutes: config.login_block_duration_minutes,
+        updated_at: config.updated_at,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

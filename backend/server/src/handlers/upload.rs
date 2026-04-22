@@ -145,8 +145,6 @@ pub struct CompleteUploadResponse {
     pub file_name: String,
     /// File size
     pub file_size: u64,
-    /// Content hash (SHA-256)
-    pub content_hash: String,
 }
 
 // ============================================================================
@@ -317,7 +315,7 @@ pub async fn complete_upload(
             file_id: response.file_id,
             file_name: response.file_name,
             file_size: response.file_size,
-            content_hash: response.content_hash,
+
         }),
     ))
 }

@@ -729,7 +729,6 @@ pub async fn upload_shared_folder_file(
             name: file.name,
             size: file.size,
             mime_type: file.mime_type,
-            content_hash: file.content_hash,
             current_version: file.current_version,
             created_at: file.created_at.to_rfc3339(),
         }),

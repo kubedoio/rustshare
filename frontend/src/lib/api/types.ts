@@ -14,7 +14,6 @@ export interface File {
 	id: string;
 	name: string;
 	path: string;
-	content_hash: string;
 	storage_key?: string;
 	size: number;
 	mime_type: string;
@@ -161,7 +160,6 @@ export interface FileVersion {
 	id: string;
 	version_number: number;
 	size: number;
-	content_hash: string;
 	created_at: string;
 	created_by_user_id: string;
 	change_description?: string;

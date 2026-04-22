@@ -116,6 +116,7 @@ export interface FullUserProfile {
 	display_name: string;
 	avatar_path: string | null;
 	email_sharing_enabled: boolean;
+	trash_retention_days: number | null;
 	theme: Theme;
 	storage_quota: number;
 	storage_used: number;
@@ -133,6 +134,10 @@ export interface UpdateProfileRequest {
 	email_sharing_enabled?: boolean;
 }
 
+export interface UpdateTrashRetentionRequest {
+	days: number | null;
+}
+
 /**
  * Get the current user's full profile
  */
@@ -145,6 +150,10 @@ export async function getProfile(): Promise<FullUserProfile> {
  */
 export async function updateProfile(request: UpdateProfileRequest): Promise<FullUserProfile> {
 	return apiClient.patch<FullUserProfile>('/users/me/profile', request);
+}
+
+export async function updateTrashRetention(request: UpdateTrashRetentionRequest): Promise<FullUserProfile> {
+	return apiClient.patch<FullUserProfile>('/users/me/trash-retention', request);
 }
 
 /**

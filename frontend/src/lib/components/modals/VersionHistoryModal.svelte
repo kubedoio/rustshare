@@ -168,9 +168,6 @@
                   <div class="text-sm">{formatDate(version.created_at)}</div>
                 </td>
                 <td>{formatFileSize(version.size)}</td>
-                <td>
-                  <code class="text-xs bg-base-200 px-2 py-1 rounded">{version.content_hash.substring(0, 12)}...</code>
-                </td>
                 <td class="text-sm text-base-content/70">
                   {version.change_description || '-'}
                 </td>
@@ -260,7 +257,6 @@
         <div class="bg-base-200 p-3 rounded text-sm mb-4">
           <div><strong>Date:</strong> {formatDate(selectedVersion.created_at)}</div>
           <div><strong>Size:</strong> {formatFileSize(selectedVersion.size)}</div>
-          <div><strong>Hash:</strong> <code class="text-xs">{selectedVersion.content_hash.substring(0, 32)}...</code></div>
         </div>
       {/if}
 

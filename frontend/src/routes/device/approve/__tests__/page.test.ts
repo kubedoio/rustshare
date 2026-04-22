@@ -2,8 +2,9 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '$lib/api/types';
 
-const { goto, approveDevicePairingByDeviceCode, pageStore, authStoreValue } = vi.hoisted(() => ({
+const { goto, approveDevicePairing, approveDevicePairingByDeviceCode, pageStore, authStoreValue } = vi.hoisted(() => ({
 	goto: vi.fn(),
+	approveDevicePairing: vi.fn(),
 	approveDevicePairingByDeviceCode: vi.fn(),
 	pageStore: createMockStore({
 		url: new URL('http://localhost/device/approve?device_code=device-code-123')
@@ -55,6 +56,7 @@ vi.mock('$lib/stores/auth', () => ({
 }));
 
 vi.mock('$lib/api/auth', () => ({
+	approveDevicePairing,
 	approveDevicePairingByDeviceCode
 }));
 
@@ -73,7 +75,7 @@ describe('device approval page', () => {
 		});
 	});
 
-	it('shows invalid state when device_code is missing', async () => {
+	it('shows manual entry form when device_code is missing and user is authenticated', async () => {
 		pageStore.set({
 			url: new URL('http://localhost/device/approve')
 		});
@@ -82,12 +84,12 @@ describe('device approval page', () => {
 
 		await waitFor(() => {
 			expect(
-				screen.getByText(/missing its device token/i)
+				screen.getByText(/enter the pairing code/i)
 			).toBeTruthy();
 		});
 	});
 
-	it('redirects unauthenticated users to login with a return target', async () => {
+	it('redirects unauthenticated users to login with a return target (device_code flow)', async () => {
 		authStoreValue.set({
 			user: null,
 			isAuthenticated: false,
@@ -99,6 +101,25 @@ describe('device approval page', () => {
 		await waitFor(() => {
 			expect(goto).toHaveBeenCalledWith(
 				'/login?redirect_to=%2Fdevice%2Fapprove%3Fdevice_code%3Ddevice-code-123'
+			);
+		});
+	});
+
+	it('redirects unauthenticated users to login (manual entry flow)', async () => {
+		pageStore.set({
+			url: new URL('http://localhost/device/approve')
+		});
+		authStoreValue.set({
+			user: null,
+			isAuthenticated: false,
+			isLoading: false
+		});
+
+		render(DeviceApprovePage);
+
+		await waitFor(() => {
+			expect(goto).toHaveBeenCalledWith(
+				'/login?redirect_to=%2Fdevice%2Fapprove'
 			);
 		});
 	});
@@ -117,11 +138,55 @@ describe('device approval page', () => {
 		});
 	});
 
+	it('submits user_code approval for manual entry', async () => {
+		pageStore.set({
+			url: new URL('http://localhost/device/approve')
+		});
+		approveDevicePairing.mockResolvedValue({ device_name: 'Device' });
+
+		render(DeviceApprovePage);
+
+		await waitFor(() => {
+			expect(screen.getByText(/enter the pairing code/i)).toBeTruthy();
+		});
+
+		const input = screen.getByPlaceholderText(/ABCD-1234/i);
+		await fireEvent.input(input, { target: { value: 'TEST-CODE' } });
+		await fireEvent.click(screen.getByRole('button', { name: /approve device/i }));
+
+		expect(approveDevicePairing).toHaveBeenCalledWith('TEST-CODE');
+
+		await waitFor(() => {
+			expect(screen.getByText(/device approved/i)).toBeTruthy();
+		});
+	});
+
 	it('shows an expired-link style error when approval returns not found', async () => {
 		approveDevicePairingByDeviceCode.mockRejectedValue(new ApiError(404, 'code_not_found'));
 
 		render(DeviceApprovePage);
 
+		await fireEvent.click(screen.getByRole('button', { name: /approve device/i }));
+
+		await waitFor(() => {
+			expect(screen.getByText(/invalid or has expired/i)).toBeTruthy();
+		});
+	});
+
+	it('shows a code-not-found error for manual entry with invalid code', async () => {
+		pageStore.set({
+			url: new URL('http://localhost/device/approve')
+		});
+		approveDevicePairing.mockRejectedValue(new ApiError(404, 'code_not_found'));
+
+		render(DeviceApprovePage);
+
+		await waitFor(() => {
+			expect(screen.getByText(/enter the pairing code/i)).toBeTruthy();
+		});
+
+		const input = screen.getByPlaceholderText(/ABCD-1234/i);
+		await fireEvent.input(input, { target: { value: 'BAD-CODE' } });
 		await fireEvent.click(screen.getByRole('button', { name: /approve device/i }));
 
 		await waitFor(() => {

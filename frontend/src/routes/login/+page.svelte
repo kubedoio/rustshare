@@ -251,6 +251,17 @@
 						control plane or re-enable password login before inviting users.
 					</div>
 				{/if}
+
+				<div class="mt-6 flex items-center justify-center gap-2 text-sm text-base-content/60">
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+						<rect width="8" height="14" x="8" y="6" rx="4"/>
+						<path d="M15 6h1a4 4 0 0 1 4 4v4a4 4 0 0 1-4 4h-1"/>
+						<path d="M9 6H8a4 4 0 0 0-4 4v4a4 4 0 0 0 4 4h1"/>
+					</svg>
+					<a href="/device/approve" class="text-brand-500 hover:text-brand-600 hover:underline font-medium">
+						Use a device pairing code
+					</a>
+				</div>
 			{/if}
 
 			<div class="mt-6 border border-base-300/70 bg-base-200/55 px-4 py-3">

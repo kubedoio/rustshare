@@ -56,7 +56,6 @@ export interface PublicShareUploadResponse {
 	name: string;
 	size: number;
 	mime_type: string;
-	content_hash: string;
 	current_version: number;
 	created_at: string;
 }

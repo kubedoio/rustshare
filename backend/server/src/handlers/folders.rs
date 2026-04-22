@@ -214,7 +214,7 @@ pub async fn get_folder_contents(
     let files = sqlx::query_as::<_, crate::handlers::files::FileWithShares>(
         r#"
         SELECT
-            f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
+            f.id, f.name, f.path, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
             f.created_at, f.modified_at, f.starred_at, f.deleted_at,
             EXISTS(
@@ -330,7 +330,7 @@ pub async fn get_root_contents(
     let files = sqlx::query_as::<_, crate::handlers::files::FileWithShares>(
         r#"
         SELECT
-            f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
+            f.id, f.name, f.path, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
             f.created_at, f.modified_at, f.starred_at, f.deleted_at,
             EXISTS(
