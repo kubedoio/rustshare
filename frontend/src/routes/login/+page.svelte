@@ -203,6 +203,12 @@
 				{/if}
 
 				{#if authConfig.password_login_enabled}
+						{#if showError}
+					<div class="mb-4 border border-error/25 bg-error/10 p-3 text-sm text-error" role="alert">
+						<span>{errorMessage}</span>
+					</div>
+						{/if}
+
 					<form on:submit={handleSubmit} class="space-y-4">
 						<div>
 							<label for="email" class="mb-1.5 block text-sm font-semibold text-base-content">Email</label>
