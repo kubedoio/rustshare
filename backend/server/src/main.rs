@@ -85,6 +85,7 @@ use tokio::sync::Mutex;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::info;
+use rand::Rng;
 use uuid::Uuid;
 
 #[allow(deprecated)]
@@ -537,7 +538,19 @@ async fn main() -> Result<()> {
     if !metadata_store.has_users().await? {
         let admin_username = std::env::var("RUSTSHARE_ADMIN_USERNAME")?;
         let admin_email = std::env::var("RUSTSHARE_ADMIN_EMAIL")?;
-        let admin_password = std::env::var("RUSTSHARE_ADMIN_PASSWORD")?;
+
+        // Use env password if provided, otherwise generate a strong random one
+        let admin_password = match std::env::var("RUSTSHARE_ADMIN_PASSWORD") {
+            Ok(pwd) => pwd,
+            Err(_) => {
+                const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+                let mut rng = rand::thread_rng();
+                let password: String = (0..32)
+                    .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
+                    .collect();
+                password
+            }
+        };
 
         let password_hash = PasswordHasher::hash(&admin_password)?;
         let admin_user = User::new(
@@ -552,7 +565,13 @@ async fn main() -> Result<()> {
 
         metadata_store.create_user(&admin_user).await?;
 
-        info!("Admin user created: {} ({})", admin_username, admin_email);
+        info!("╔══════════════════════════════════════════════════════════════════╗");
+        info!("║  BOOTSTRAP ADMIN PASSWORD                                        ║");
+        info!("╠══════════════════════════════════════════════════════════════════╣");
+        info!("║  Email:    {:<53} ║", admin_email);
+        info!("║  Password: {:<53} ║", admin_password);
+        info!("╚══════════════════════════════════════════════════════════════════╝");
+        info!("Log in and change this password immediately. It will not be shown again.");
     }
 
     ensure_optional_seed_user(

@@ -176,7 +176,7 @@
 	$: activeRoot = (urlRoot === 'shared' ? 'shared' : 'my-files') as ExplorerRoot;
 
 	// Is in collection mode?
-	$: isCollectionMode = workspaceMode === 'starred' || workspaceMode === 'recent' || workspaceMode === 'photos';
+	$: isCollectionMode = workspaceMode === 'starred' || workspaceMode === 'recent' || workspaceMode === 'photos' || workspaceMode === 'deleted';
 
 	// Is shared root view?
 	$: isSharedRoot = activeRoot === 'shared' && !currentFolderId;
@@ -367,7 +367,7 @@
 				? 'Recent'
 				: workspaceMode === 'starred'
 					? 'Starred'
-					: 'Deleted')
+					: 'Trash')
 		: activeRoot === 'shared'
 			? (currentFolderId ? breadcrumbPath[breadcrumbPath.length - 1]?.name : 'Shared')
 			: (currentFolderId ? breadcrumbPath[breadcrumbPath.length - 1]?.name : 'My Files');

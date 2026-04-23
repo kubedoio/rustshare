@@ -14,6 +14,7 @@
 	let isAuthConfigLoading = true;
 	let authConfigError = '';
 	let redirectTo = '/files';
+	let isReturningFromDeviceApproval = false;
 	let authConfig: AuthConfig = {
 		password_login_enabled: true,
 		oidc_enabled: false,
@@ -22,6 +23,7 @@
 	};
 
 	$: redirectTo = $page.url.searchParams.get('redirect_to') || '/files';
+	$: isReturningFromDeviceApproval = redirectTo.startsWith('/device/approve');
 
 	$: hasAnyLoginMethod = authConfig.oidc_enabled || authConfig.password_login_enabled;
 
@@ -167,6 +169,14 @@
 					<span class="loading loading-spinner loading-md"></span>
 				</div>
 			{:else}
+				{#if isReturningFromDeviceApproval}
+					<div class="mb-4 border border-info/25 bg-info/10 p-3 text-sm text-info" role="alert">
+						<span>
+							<strong>Approve a device pairing</strong> — sign in first, then you can enter the pairing code.
+						</span>
+					</div>
+				{/if}
+
 				{#if authConfigError}
 					<div class="alert alert-warning mb-4 text-sm" role="alert">
 						<span>{authConfigError}</span>
@@ -265,7 +275,7 @@
 						<path d="M9 6H8a4 4 0 0 0-4 4v4a4 4 0 0 0 4 4h1"/>
 					</svg>
 					<a href="/device/approve" class="text-brand-500 hover:text-brand-600 hover:underline font-medium">
-						Use a device pairing code
+						Approve a device pairing
 					</a>
 				</div>
 			{/if}

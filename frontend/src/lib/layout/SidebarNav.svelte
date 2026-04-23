@@ -7,7 +7,7 @@
 	import { listReceivedShares } from '$lib/api/shares';
 	import type { ReceivedShare } from '$lib/api/types';
 	import { onMount } from 'svelte';
-	import { ChevronRight, Folder, FolderOpen, Hop as Home, Users, Star, Image, Search, Plus, HardDrive } from 'lucide-svelte';
+	import { ChevronRight, Folder, FolderOpen, Hop as Home, Users, Star, Image, Search, Plus, HardDrive, Trash } from 'lucide-svelte';
 	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
 	import FolderTree from '$lib/files/FolderTree.svelte';
 	import { currentUser } from '$lib/stores/auth';
@@ -368,6 +368,19 @@
 				>
 					<Image size={18} strokeWidth={1.75} />
 					<span>Photos</span>
+				</button>
+
+				<!-- Trash -->
+				<button
+					type="button"
+					class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+						{isCollectionActive('deleted')
+							? 'bg-brand-500/10 text-brand-600 font-medium'
+							: 'text-base-content/70 hover:bg-base-200/60'}"
+					onclick={() => navigateToCollection('deleted')}
+				>
+					<Trash size={18} strokeWidth={1.75} />
+					<span>Trash</span>
 				</button>
 			</nav>
 		</div>

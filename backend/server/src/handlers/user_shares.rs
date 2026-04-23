@@ -646,7 +646,7 @@ async fn load_folder_size(
             INNER JOIN folder_tree parent ON child.parent_folder_id = parent.id
             WHERE child.deleted_at IS NULL
         )
-        SELECT COALESCE(SUM(files.size), 0) FROM files
+        SELECT COALESCE(SUM(files.size), 0)::bigint FROM files
         WHERE files.parent_folder_id IN (SELECT id FROM folder_tree)
         AND files.deleted_at IS NULL
         "#,

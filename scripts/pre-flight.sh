@@ -96,7 +96,6 @@ SECRET_SPECS=(
 	"POSTGRES_PASSWORD|password|16|changeme"
 	"RUSTFS_ROOT_USER|password|4|rustfsadmin"
 	"RUSTFS_ROOT_PASSWORD|password|16|rustfsadmin"
-	"RUSTSHARE_ADMIN_PASSWORD|password|12|admin123"
 	"RUSTSHARE_DEMO_VIEWER_PASSWORD|password|12|"
 	"STORAGE_ACCESS_KEY|password|4|rustfsadmin"
 	"STORAGE_SECRET_KEY|password|16|rustfsadmin"
@@ -239,6 +238,18 @@ echo "Secrets OK:              ${OK_COUNT}"
 echo "Secrets generated:       ${GENERATED_COUNT}"
 echo "Secrets regenerated:     ${WEAK_COUNT}"
 echo "Total issues:            ${TOTAL_ISSUES}"
+echo
+
+# ---------------------------------------------------------------------------
+# Admin bootstrap warning
+# ---------------------------------------------------------------------------
+
+echo
+warn "Admin password is NOT stored in .env"
+echo "  On first boot, the backend will generate a random admin password"
+echo "  and print it to the container logs. Retrieve it with:"
+echo "    docker logs rustshare-backend-1 | grep 'Bootstrap admin password'"
+echo "  Log in, then change the password immediately."
 echo
 
 if [[ "${TOTAL_ISSUES}" -gt 0 ]]; then

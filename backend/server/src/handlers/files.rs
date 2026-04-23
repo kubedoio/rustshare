@@ -885,7 +885,7 @@ pub async fn list_starred_items(
             WHERE child.deleted_at IS NULL
         ),
         folder_sizes AS (
-            SELECT ft.root_id, COALESCE(SUM(files.size), 0) as total_size
+            SELECT ft.root_id, COALESCE(SUM(files.size), 0)::bigint as total_size
             FROM folder_tree ft
             LEFT JOIN files ON files.parent_folder_id = ft.id AND files.deleted_at IS NULL
             GROUP BY ft.root_id
@@ -996,7 +996,7 @@ pub async fn list_deleted_items(
             INNER JOIN folder_tree parent ON child.parent_folder_id = parent.id
         ),
         folder_sizes AS (
-            SELECT ft.root_id, COALESCE(SUM(files.size), 0) as total_size
+            SELECT ft.root_id, COALESCE(SUM(files.size), 0)::bigint as total_size
             FROM folder_tree ft
             LEFT JOIN files ON files.parent_folder_id = ft.id
             GROUP BY ft.root_id
