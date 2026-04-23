@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use rustshare_core::{
-    domain::{File, FileVersion, ThumbnailSize},
+    domain::{File, ThumbnailSize},
     services::{FileError, ThumbnailError},
 };
 

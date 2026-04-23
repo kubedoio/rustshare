@@ -141,7 +141,7 @@ pub trait ObjectStoreOps: Send + Sync {
 
 use crate::domain::SharePermissions;
 use crate::services::errors::FileError;
-use crate::services::{PermissionResolver, PermissionResolverOps, Resource};
+use crate::services::{PermissionResolver, PermissionResolverOps};
 
 /// File service for handling file operations.
 pub struct FileService<E, M, O, P>

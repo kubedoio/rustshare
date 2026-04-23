@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
 	import { currentUser, authStore } from '$lib/stores/auth';
 	import { approveDevicePairing } from '$lib/api/auth';
 	import {
@@ -11,9 +12,11 @@
 		getProfile,
 		updateProfile,
 		updateTrashRetention,
+		listUserSecurityEvents,
 		type UserSession,
 		type UserDevice,
-		type FullUserProfile
+		type FullUserProfile,
+		type UserSecurityEvent
 	} from '$lib/api/users';
 	import { themeStore, type Theme } from '$lib/stores/theme';
 	import Toast from '$lib/components/common/Toast.svelte';
@@ -21,12 +24,15 @@
 	import { listAllFiles } from '$lib/api/files';
 	import type { File } from '$lib/api/types';
 	import { createQuery } from '$lib/query-compat';
-	import { FileText, Folder, FileIcon, ImageIcon, VideoIcon, MusicIcon, Clock } from 'lucide-svelte';
+	import { FileText, Folder, FileIcon, ImageIcon, VideoIcon, MusicIcon, Clock, Smartphone } from 'lucide-svelte';
 	
 	// Settings components
 	import SettingsTabs, { type TabId } from '$lib/settings/SettingsTabs.svelte';
 	import SettingsSection from '$lib/settings/SettingsSection.svelte';
 	import SettingsRow from '$lib/settings/SettingsRow.svelte';
+
+	// Valid tabs for deep-linking
+	const VALID_TABS: TabId[] = ['general', 'security', 'notifications', 'devices', 'appearance', 'sharing', 'activity'];
 
 	// State
 	let activeTab = $state<TabId>('general');
@@ -51,6 +57,10 @@
 	let userCodeInput = $state('');
 	let approvingDevice = $state(false);
 	
+	// Security events state
+	let securityEvents = $state<UserSecurityEvent[]>([]);
+	let securityEventsLoading = $state(true);
+
 	// Notifications state (placeholder for future API implementation)
 	let emailNotifications = $state(true);
 	let fileShareNotifications = $state(true);
@@ -93,13 +103,29 @@
 	})());
 
 	onMount(() => {
+		const tabFromUrl = $page.url.searchParams.get('tab');
+		if (tabFromUrl && VALID_TABS.includes(tabFromUrl as TabId)) {
+			activeTab = tabFromUrl as TabId;
+		}
 		void Promise.all([
 			loadProfile(),
 			refreshSessions(),
 			refreshDevices(),
-			loadActivity()
+			loadActivity(),
+			loadSecurityEvents()
 		]);
 	});
+
+	async function loadSecurityEvents() {
+		securityEventsLoading = true;
+		try {
+			securityEvents = await listUserSecurityEvents();
+		} catch (error) {
+			console.error('Failed to load security events:', error);
+		} finally {
+			securityEventsLoading = false;
+		}
+	}
 
 	async function loadActivity() {
 		activityLoading = true;
@@ -472,6 +498,35 @@
 					</div>
 
 					<div class="border-t border-base-300 pt-6 mt-6">
+						<SettingsSection title="Recent Activity" description="Security-relevant events from the last 30 days">
+							{#if securityEventsLoading}
+								<div class="py-8 text-center">
+									<div class="inline-block w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
+								</div>
+							{:else if securityEvents.length === 0}
+								<p class="py-4 text-sm text-base-content/60">No recent activity</p>
+							{:else}
+								<div class="space-y-2 py-2">
+									{#each securityEvents as event}
+										<div class="flex items-start justify-between p-3 bg-base-100 rounded-lg border border-base-300">
+											<div>
+												<p class="text-sm font-medium text-base-content">{event.description}</p>
+												<p class="text-xs text-base-content/50 mt-0.5">
+													{formatDateTime(event.occurred_at)}
+													{#if event.ip_address} &middot; {event.ip_address}{/if}
+												</p>
+											</div>
+											<span class="text-xs px-2 py-0.5 rounded-full bg-base-200 text-base-content/60 capitalize whitespace-nowrap">
+												{event.event_type.replace(/_/g, ' ')}
+											</span>
+										</div>
+									{/each}
+								</div>
+							{/if}
+						</SettingsSection>
+					</div>
+
+					<div class="border-t border-base-300 pt-6 mt-6">
 						<SettingsRow
 							label="Sign out"
 							description="Sign out of your account on this device"
@@ -571,7 +626,13 @@
 									<div class="inline-block w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
 								</div>
 							{:else if devices.length === 0}
-								<p class="py-4 text-sm text-base-content/60">No devices connected</p>
+								<div class="py-6 text-center">
+									<Smartphone size={32} class="mx-auto text-base-content/20 mb-2" />
+									<p class="text-sm text-base-content/60">No devices connected</p>
+									<p class="text-xs text-base-content/40 mt-1">
+										Use the <a href="/device" class="text-brand-500 hover:underline">Pair This Device</a> link below to connect a desktop or mobile client.
+									</p>
+								</div>
 							{:else}
 								<div class="space-y-3 py-4">
 									{#each devices as device}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ChevronDown, User, Settings, Shield, LogOut, Bell } from 'lucide-svelte';
+	import { ChevronDown, User, Settings, Shield, LogOut, Bell, Smartphone } from 'lucide-svelte';
 	import type { User as UserType } from '$lib/api/types';
 
 	export let user: UserType | null;
@@ -58,6 +58,9 @@
 					{#if unreadCount > 0}
 						<span class="badge badge-error badge-sm">{unreadCount}</span>
 					{/if}
+				</a>
+				<a href="/settings?tab=devices" role="menuitem" class="flex items-center gap-3 px-4 py-2 text-sm font-medium hover:bg-base-200 transition-colors">
+					<Smartphone size={16} class="text-base-content/60" /> Devices
 				</a>
 				<a href="/settings" role="menuitem" class="flex items-center gap-3 px-4 py-2 text-sm font-medium hover:bg-base-200 transition-colors">
 					<Settings size={16} class="text-base-content/60" /> Settings

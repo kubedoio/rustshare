@@ -18,7 +18,7 @@ use crate::events::{
     FolderMovedPayload, FolderRenamedPayload,
 };
 use crate::services::FolderError;
-use crate::services::{PermissionResolver, PermissionResolverOps, Resource};
+use crate::services::{PermissionResolver, PermissionResolverOps};
 
 /// Trait for event store operations needed by FolderService.
 ///

@@ -141,14 +141,23 @@
 				<p class="rounded-lg bg-base-200 px-4 py-3 text-sm text-base-content/70">
 					This approval link is valid for 5 minutes and should be opened from an authenticated RustShare web UI session.
 				</p>
-				<button
-					type="button"
-					class="btn btn-primary"
-					on:click={handleApproveByDeviceCode}
-					disabled={isSubmitting}
-				>
-					{#if isSubmitting}Approving...{:else}Approve Device{/if}
-				</button>
+				<div class="flex gap-3">
+					<button
+						type="button"
+						class="btn btn-primary"
+						on:click={handleApproveByDeviceCode}
+						disabled={isSubmitting}
+					>
+						{#if isSubmitting}Approving...{:else}Approve Device{/if}
+					</button>
+					<button
+						type="button"
+						class="btn btn-outline"
+						on:click={() => goto('/files')}
+					>
+						Cancel
+					</button>
+				</div>
 			</div>
 		{:else if state === 'success'}
 			<div class="mt-4 space-y-3">
