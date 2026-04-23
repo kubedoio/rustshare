@@ -194,36 +194,41 @@ pub async fn download_file_content(
         Err(e) => return file_error_response(e).into_response(),
     };
 
-    // Generate a time-limited presigned URL with attachment disposition
+    // Stream the file content directly (avoids redirecting to internal storage URLs)
     let storage_key = file.storage_key();
-    let content_disposition = format!(
-        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
-        file.name.replace('"', "\\\""),
-        urlencoding::encode(&file.name)
-    );
-    let presigned_url = match state
-        .object_store
-        .get_presigned_url_with_disposition(&storage_key, 3600, Some(&content_disposition))
-        .await
-    {
-        Ok(url) => url,
+    let bytes = match state.object_store.get(&storage_key).await {
+        Ok(bytes) => bytes,
         Err(e) => {
-            tracing::error!("Failed to generate presigned URL: {}", e);
+            tracing::error!("Failed to read file content: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to generate download URL")),
+                Json(ErrorResponse::new("Failed to read file content")),
             )
                 .into_response();
         }
     };
 
-    // Redirect to the presigned URL
-    let mut headers = HeaderMap::new();
-    headers.insert(header::LOCATION, HeaderValue::from_str(&presigned_url).unwrap_or_else(|_| {
-        HeaderValue::from_static("/")
-    }));
+    let content_disposition = format!(
+        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+        file.name.replace('"', "\\\""),
+        urlencoding::encode(&file.name)
+    );
 
-    (StatusCode::FOUND, headers).into_response()
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&file.mime_type).unwrap_or_else(|_| {
+            HeaderValue::from_static("application/octet-stream")
+        }),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&content_disposition).unwrap_or_else(|_| {
+            HeaderValue::from_static("attachment")
+        }),
+    );
+
+    (StatusCode::OK, headers, bytes).into_response()
 }
 
 /// Preview file content (inline disposition for browser viewing).
@@ -243,31 +248,33 @@ pub async fn preview_file(
         Err(e) => return file_error_response(e).into_response(),
     };
 
-    // Generate a time-limited presigned URL with inline disposition
+    // Stream the file content directly (avoids redirecting to internal storage URLs)
     let storage_key = file.storage_key();
-    let presigned_url = match state
-        .object_store
-        .get_presigned_url_with_disposition(&storage_key, 3600, Some("inline"))
-        .await
-    {
-        Ok(url) => url,
+    let bytes = match state.object_store.get(&storage_key).await {
+        Ok(bytes) => bytes,
         Err(e) => {
-            tracing::error!("Failed to generate presigned URL: {}", e);
+            tracing::error!("Failed to read file content: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to generate preview URL")),
+                Json(ErrorResponse::new("Failed to read file content")),
             )
                 .into_response();
         }
     };
 
-    // Redirect to the presigned URL
     let mut headers = HeaderMap::new();
-    headers.insert(header::LOCATION, HeaderValue::from_str(&presigned_url).unwrap_or_else(|_| {
-        HeaderValue::from_static("/")
-    }));
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&file.mime_type).unwrap_or_else(|_| {
+            HeaderValue::from_static("application/octet-stream")
+        }),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("inline"),
+    );
 
-    (StatusCode::FOUND, headers).into_response()
+    (StatusCode::OK, headers, bytes).into_response()
 }
 
 /// Delete a file.
