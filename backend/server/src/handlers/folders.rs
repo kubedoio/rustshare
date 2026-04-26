@@ -426,35 +426,35 @@ async fn build_folder_tree_with_shares(
     let folder_node = FolderTreeNode {
         id: folder_row
             .try_get("id")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         name: folder_row
             .try_get("name")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         path: folder_row
             .try_get("path")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         parent_folder_id: folder_row
             .try_get("parent_folder_id")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         owner_id: folder_row
             .try_get("owner_id")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         created_at: folder_row
             .try_get("created_at")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         updated_at: folder_row
             .try_get("updated_at")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         tenant_id: folder_row
             .try_get("tenant_id")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         ancestor_ids: None, // Not stored in folders table, would need to fetch from folder_documents
         is_shared: folder_row
             .try_get("is_shared")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         share_count: folder_row
             .try_get("share_count")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         share_expires_at: folder_row.try_get("share_expires_at").ok(),
         effective_permission: Some("Admin".to_string()),
     };
@@ -472,11 +472,11 @@ async fn build_folder_tree_with_shares(
     .bind(tenant_id)
     .fetch_all(state.metadata_store.pool())
     .await
-    .map_err(|_| internal_error_response())?;
+    .map_err(|_| super::internal_error_response())?;
 
     let mut subfolders = Vec::new();
     for row in child_rows {
-        let child_id: Uuid = row.try_get("id").map_err(|_| internal_error_response())?;
+        let child_id: Uuid = row.try_get("id").map_err(|_| super::internal_error_response())?;
         let subtree = Box::pin(build_folder_tree_with_shares(
             state, child_id, user_id, tenant_id,
         ))
@@ -488,15 +488,6 @@ async fn build_folder_tree_with_shares(
         folder: folder_node,
         subfolders,
     })
-}
-
-fn internal_error_response() -> Response {
-    use axum::{http::StatusCode, response::IntoResponse, Json};
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(super::ErrorResponse::new("Internal server error")),
-    )
-        .into_response()
 }
 
 /// Get full folder tree (recursive) with share information.
@@ -513,7 +504,7 @@ pub async fn get_folder_tree(
         .metadata_store
         .list_folders_with_shares(None, auth.user_id, auth.tenant_id)
         .await
-        .map_err(|_| internal_error_response())?;
+        .map_err(|_| super::internal_error_response())?;
 
     // Build subtrees for each root folder
     let mut subfolders = Vec::new();

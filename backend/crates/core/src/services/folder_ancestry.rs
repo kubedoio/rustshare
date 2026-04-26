@@ -7,7 +7,8 @@
 
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use crate::domain::{Folder, FolderId};
 
@@ -47,7 +48,7 @@ struct CacheEntry {
 pub struct FolderAncestryBuilder<R: AncestryFolderRepository> {
     repo: Arc<R>,
     /// Cache of folder_id -> ancestor_ids
-    cache: Mutex<HashMap<FolderId, CacheEntry>>,
+    cache: RwLock<HashMap<FolderId, CacheEntry>>,
     /// Maximum cache size before eviction
     max_cache_size: usize,
 }
@@ -57,7 +58,7 @@ impl<R: AncestryFolderRepository> FolderAncestryBuilder<R> {
     pub fn new(repo: Arc<R>) -> Self {
         Self {
             repo,
-            cache: Mutex::new(HashMap::new()),
+            cache: RwLock::new(HashMap::new()),
             max_cache_size: 1000,
         }
     }
@@ -66,7 +67,7 @@ impl<R: AncestryFolderRepository> FolderAncestryBuilder<R> {
     pub fn with_cache_size(repo: Arc<R>, max_cache_size: usize) -> Self {
         Self {
             repo,
-            cache: Mutex::new(HashMap::new()),
+            cache: RwLock::new(HashMap::new()),
             max_cache_size,
         }
     }
@@ -80,7 +81,7 @@ impl<R: AncestryFolderRepository> FolderAncestryBuilder<R> {
     pub async fn build_ancestor_chain(&self, folder_id: FolderId) -> Result<Vec<FolderId>> {
         // Check cache first
         {
-            let cache = self.cache.lock().unwrap();
+            let cache = self.cache.read().await;
             if let Some(entry) = cache.get(&folder_id) {
                 return Ok(entry.ancestor_ids.clone());
             }
@@ -119,7 +120,7 @@ impl<R: AncestryFolderRepository> FolderAncestryBuilder<R> {
         ancestor_ids.reverse();
 
         // Cache the result
-        self.put_in_cache(folder_id, ancestor_ids.clone());
+        self.put_in_cache(folder_id, ancestor_ids.clone()).await;
 
         Ok(ancestor_ids)
     }
@@ -242,7 +243,7 @@ impl<R: AncestryFolderRepository> FolderAncestryBuilder<R> {
         self.repo.update_folder(&folder).await?;
 
         // Update cache
-        self.put_in_cache(folder_id, new_ancestor_ids.clone());
+        self.put_in_cache(folder_id, new_ancestor_ids.clone()).await;
 
         // Get all descendants and update their ancestor_ids
         let descendants = self.repo.find_descendant_folders(folder_id).await?;
@@ -273,7 +274,7 @@ impl<R: AncestryFolderRepository> FolderAncestryBuilder<R> {
             self.repo.update_folder(&descendant).await?;
 
             // Update cache
-            self.put_in_cache(descendant.id, new_descendant_ancestors);
+            self.put_in_cache(descendant.id, new_descendant_ancestors).await;
 
             updated_count += 1;
         }
@@ -282,20 +283,20 @@ impl<R: AncestryFolderRepository> FolderAncestryBuilder<R> {
     }
 
     /// Get ancestor_ids from cache if available.
-    pub fn get_cached_ancestors(&self, folder_id: FolderId) -> Option<Vec<FolderId>> {
-        let cache = self.cache.lock().unwrap();
+    pub async fn get_cached_ancestors(&self, folder_id: FolderId) -> Option<Vec<FolderId>> {
+        let cache = self.cache.read().await;
         cache.get(&folder_id).map(|e| e.ancestor_ids.clone())
     }
 
     /// Clear the cache.
-    pub fn clear_cache(&self) {
-        let mut cache = self.cache.lock().unwrap();
+    pub async fn clear_cache(&self) {
+        let mut cache = self.cache.write().await;
         cache.clear();
     }
 
     /// Put an entry in the cache, evicting oldest entries if needed.
-    fn put_in_cache(&self, folder_id: FolderId, ancestor_ids: Vec<FolderId>) {
-        let mut cache = self.cache.lock().unwrap();
+    async fn put_in_cache(&self, folder_id: FolderId, ancestor_ids: Vec<FolderId>) {
+        let mut cache = self.cache.write().await;
 
         // Simple eviction: if at capacity, clear half the cache
         // (In production, use a proper LRU cache)
@@ -341,7 +342,7 @@ impl<R: AncestryFolderRepository> FolderAncestryBuilder<R> {
         folder_id: FolderId,
     ) -> Result<bool> {
         // Try cache first
-        if let Some(ancestors) = self.get_cached_ancestors(folder_id) {
+        if let Some(ancestors) = self.get_cached_ancestors(folder_id).await {
             return Ok(ancestors.contains(&potential_ancestor));
         }
 
@@ -349,7 +350,7 @@ impl<R: AncestryFolderRepository> FolderAncestryBuilder<R> {
         if let Some(folder) = self.repo.find_folder_by_id(folder_id).await? {
             if let Some(ref ancestors) = folder.ancestor_ids {
                 // Update cache for next time
-                self.put_in_cache(folder_id, ancestors.clone());
+                self.put_in_cache(folder_id, ancestors.clone()).await;
                 return Ok(ancestors.contains(&potential_ancestor));
             }
         }
@@ -364,7 +365,7 @@ impl<R: AncestryFolderRepository> FolderAncestryBuilder<R> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use std::sync::Mutex;
+    use tokio::sync::Mutex;
     use uuid::Uuid;
 
     // Mock repository for testing
@@ -379,19 +380,19 @@ mod tests {
             }
         }
 
-        fn add_folder(&self, folder: Folder) {
-            self.folders.lock().unwrap().insert(folder.id, folder);
+        async fn add_folder(&self, folder: Folder) {
+            self.folders.lock().await.insert(folder.id, folder);
         }
     }
 
     #[allow(async_fn_in_trait)]
     impl AncestryFolderRepository for MockFolderRepository {
         async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>> {
-            Ok(self.folders.lock().unwrap().get(&id).cloned())
+            Ok(self.folders.lock().await.get(&id).cloned())
         }
 
         async fn find_descendant_folders(&self, folder_id: FolderId) -> Result<Vec<Folder>> {
-            let folders = self.folders.lock().unwrap();
+            let folders = self.folders.lock().await;
             let mut descendants = Vec::new();
             let mut to_process = vec![folder_id];
 
@@ -410,7 +411,7 @@ mod tests {
         async fn update_folder(&self, folder: &Folder) -> Result<()> {
             self.folders
                 .lock()
-                .unwrap()
+                .await
                 .insert(folder.id, folder.clone());
             Ok(())
         }
@@ -451,7 +452,7 @@ mod tests {
         // Create root folder
         let root_id = Uuid::new_v4();
         let root = create_test_folder(root_id, "Root", None, Some(vec![]));
-        repo.add_folder(root);
+        repo.add_folder(root).await;
 
         // Build chain for root - should be empty
         let chain = builder.build_ancestor_chain(root_id).await.unwrap();
@@ -477,9 +478,9 @@ mod tests {
             Some(vec![root_id, parent_id]),
         );
 
-        repo.add_folder(root);
-        repo.add_folder(parent);
-        repo.add_folder(child);
+        repo.add_folder(root).await;
+        repo.add_folder(parent).await;
+        repo.add_folder(child).await;
 
         // Build chain for child - should be [root, parent]
         let chain = builder.build_ancestor_chain(child_id).await.unwrap();
@@ -507,9 +508,9 @@ mod tests {
             Some(vec![root_id, parent_id]),
         );
 
-        repo.add_folder(root);
-        repo.add_folder(parent);
-        repo.add_folder(child);
+        repo.add_folder(root).await;
+        repo.add_folder(parent).await;
+        repo.add_folder(child).await;
 
         // Moving child to root should be valid
         let valid = builder
@@ -545,9 +546,9 @@ mod tests {
             Some(vec![root_id, parent_id]),
         );
 
-        repo.add_folder(root);
-        repo.add_folder(parent);
-        repo.add_folder(child);
+        repo.add_folder(root).await;
+        repo.add_folder(parent).await;
+        repo.add_folder(child).await;
 
         // Moving root to child would create a cycle
         let valid = builder
@@ -578,7 +579,7 @@ mod tests {
 
         let folder_id = Uuid::new_v4();
         let folder = create_test_folder(folder_id, "Folder", None, Some(vec![]));
-        repo.add_folder(folder);
+        repo.add_folder(folder).await;
 
         // Moving to root (None) should always be valid
         let valid = builder.validate_no_cycles(folder_id, None).await.unwrap();
@@ -613,10 +614,10 @@ mod tests {
         );
         let root_b = create_test_folder(root_b_id, "RootB", None, Some(vec![]));
 
-        repo.add_folder(root_a);
-        repo.add_folder(parent_a);
-        repo.add_folder(child_a);
-        repo.add_folder(root_b);
+        repo.add_folder(root_a).await;
+        repo.add_folder(parent_a).await;
+        repo.add_folder(child_a).await;
+        repo.add_folder(root_b).await;
 
         // Move parent_a (and its child) to root_b
         let updated = builder
@@ -674,9 +675,9 @@ mod tests {
             Some(vec![root_id, parent_id]),
         );
 
-        repo.add_folder(root);
-        repo.add_folder(parent);
-        repo.add_folder(child);
+        repo.add_folder(root).await;
+        repo.add_folder(parent).await;
+        repo.add_folder(child).await;
 
         // Root is ancestor of parent
         assert!(builder.is_ancestor_of(root_id, parent_id).await.unwrap());
@@ -705,8 +706,8 @@ mod tests {
         let root = create_test_folder(root_id, "Root", None, Some(vec![]));
         let parent = create_test_folder(parent_id, "Parent", Some(root_id), Some(vec![root_id]));
 
-        repo.add_folder(root);
-        repo.add_folder(parent);
+        repo.add_folder(root).await;
+        repo.add_folder(parent).await;
 
         // First call should populate cache
         let chain1 = builder.build_ancestor_chain(parent_id).await.unwrap();
@@ -717,12 +718,12 @@ mod tests {
         assert_eq!(chain2, vec![root_id]);
 
         // Verify it's in cache
-        let cached = builder.get_cached_ancestors(parent_id);
+        let cached = builder.get_cached_ancestors(parent_id).await;
         assert_eq!(cached, Some(vec![root_id]));
 
         // Clear cache
-        builder.clear_cache();
-        let cached = builder.get_cached_ancestors(parent_id);
+        builder.clear_cache().await;
+        let cached = builder.get_cached_ancestors(parent_id).await;
         assert_eq!(cached, None);
     }
 

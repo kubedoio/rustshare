@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
-use sha2::{Digest, Sha256};
 use std::fs::File;
-use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use tracing::{debug, trace, warn};
 use walkdir::WalkDir;
@@ -79,7 +77,7 @@ pub fn scan_local_root(root_path: &Path) -> Result<Vec<FileScanResult>> {
         let hash = if is_directory {
             String::new()
         } else {
-            match compute_file_hash(absolute_path) {
+            match file_ops::calculate_hash(absolute_path) {
                 Ok(h) => h,
                 Err(e) => {
                     warn!("Failed to compute hash for {}: {}", absolute_path.display(), e);
@@ -100,34 +98,6 @@ pub fn scan_local_root(root_path: &Path) -> Result<Vec<FileScanResult>> {
     
     debug!(count = results.len(), "Directory scan complete");
     Ok(results)
-}
-
-/// Compute SHA-256 hash of a file, streaming to handle large files
-pub fn compute_file_hash(path: &Path) -> Result<String> {
-    trace!(path = %path.display(), "Computing file hash");
-    
-    let file = File::open(path)
-        .with_context(|| format!("Failed to open file: {}", path.display()))?;
-    
-    let mut reader = BufReader::new(file);
-    let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 8192]; // 8KB chunks
-    
-    loop {
-        let bytes_read = reader.read(&mut buffer)
-            .with_context(|| format!("Failed to read file: {}", path.display()))?;
-        
-        if bytes_read == 0 {
-            break;
-        }
-        
-        hasher.update(&buffer[..bytes_read]);
-    }
-    
-    let hash = format!("{:x}", hasher.finalize());
-    trace!(path = %path.display(), hash = %hash, "File hash computed");
-    
-    Ok(hash)
 }
 
 /// Detect changes by comparing current scan with database state
@@ -208,7 +178,7 @@ mod tests {
         file.write_all(b"hello world").unwrap();
         drop(file);
         
-        let hash = compute_file_hash(&file_path).unwrap();
+        let hash = file_ops::calculate_hash(&file_path).unwrap();
         
         // Known SHA-256 hash for "hello world"
         assert_eq!(

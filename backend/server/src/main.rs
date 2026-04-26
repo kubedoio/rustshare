@@ -37,6 +37,7 @@
 //! - Ensure target group health checks are configured
 //!
 
+mod adapters;
 mod handlers;
 mod middleware;
 mod oidc;
@@ -105,180 +106,10 @@ type AppAiService = AiService<SimpleEmbeddingGenerator, PermissionResolverReposi
 // Note: Upload service disabled due to trait mismatch between storage and core crates
 pub type AppUploadService = rustshare_core::services::UploadService<
     rustshare_storage::repos::RustFsUploadSessionRepository,
-    UploadObjectStoreAdapter,
-    UploadMetadataStoreAdapter,
+    adapters::UploadObjectStoreAdapter,
+    adapters::UploadMetadataStoreAdapter,
     EventStore,
 >;
-
-/// Adapter for ObjectStore to implement UploadObjectStore trait
-#[derive(Clone)]
-pub struct UploadObjectStoreAdapter {
-    inner: Arc<ObjectStore>,
-}
-
-impl UploadObjectStoreAdapter {
-    pub fn new(inner: Arc<ObjectStore>) -> Self {
-        Self { inner }
-    }
-}
-
-#[async_trait::async_trait]
-impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
-    async fn put_chunk(
-        &self,
-        session_id: Uuid,
-        chunk_index: u32,
-        data: bytes::Bytes,
-    ) -> Result<(), rustshare_core::services::UploadError> {
-        let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-        self.inner
-            .put(&key, data)
-            .await
-            .map_err(|e| rustshare_core::services::UploadError::Storage(e.to_string()))
-    }
-
-    async fn get_chunk(
-        &self,
-        session_id: Uuid,
-        chunk_index: u32,
-    ) -> Result<Option<bytes::Bytes>, rustshare_core::services::UploadError> {
-        let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-        match self.inner.get(&key).await {
-            Ok(data) => Ok(Some(data)),
-            Err(_) => Ok(None), // Chunk not found
-        }
-    }
-
-    async fn delete_chunk(
-        &self,
-        session_id: Uuid,
-        chunk_index: u32,
-    ) -> Result<(), rustshare_core::services::UploadError> {
-        let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-        self.inner
-            .delete(&key)
-            .await
-            .map_err(|e| rustshare_core::services::UploadError::Storage(e.to_string()))
-    }
-
-    async fn delete_session_chunks(
-        &self,
-        session_id: Uuid,
-        total_chunks: u32,
-    ) -> Result<(), rustshare_core::services::UploadError> {
-        for chunk_index in 0..total_chunks {
-            let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-            if let Err(e) = self.inner.delete(&key).await {
-                tracing::warn!(key = %key, error = %e, "failed to delete object during cleanup");
-            }
-        }
-        Ok(())
-    }
-
-    async fn chunk_exists(
-        &self,
-        session_id: Uuid,
-        chunk_index: u32,
-    ) -> Result<bool, rustshare_core::services::UploadError> {
-        let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-        self.inner
-            .exists(&key)
-            .await
-            .map_err(|e| rustshare_core::services::UploadError::Storage(e.to_string()))
-    }
-
-    async fn assemble_chunks(
-        &self,
-        session_id: Uuid,
-        total_chunks: u32,
-        final_key: &str,
-    ) -> Result<(), rustshare_core::services::UploadError> {
-        // Download all chunks and concatenate
-        let mut assembled = Vec::new();
-        for chunk_index in 0..total_chunks {
-            let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-            let chunk_data = self
-                .inner
-                .get(&key)
-                .await
-                .map_err(|e| rustshare_core::services::UploadError::Storage(e.to_string()))?;
-            assembled.extend_from_slice(&chunk_data);
-        }
-
-        // Upload assembled file
-        self.inner
-            .put(final_key, bytes::Bytes::from(assembled))
-            .await
-            .map_err(|e| rustshare_core::services::UploadError::Storage(e.to_string()))
-    }
-}
-
-/// Adapter for MetadataStore to implement UploadMetadataStore trait
-#[derive(Clone)]
-pub struct UploadMetadataStoreAdapter {
-    inner: Arc<MetadataStore>,
-}
-
-impl UploadMetadataStoreAdapter {
-    pub fn new(inner: Arc<MetadataStore>) -> Self {
-        Self { inner }
-    }
-}
-
-#[async_trait::async_trait]
-impl rustshare_core::services::UploadMetadataStore for UploadMetadataStoreAdapter {
-    async fn find_folder_by_id(
-        &self,
-        id: Uuid,
-    ) -> Result<Option<rustshare_core::domain::Folder>, rustshare_core::services::UploadError> {
-        self.inner
-            .find_folder_by_id(id)
-            .await
-            .map_err(|e| rustshare_core::services::UploadError::Database(e.to_string()))
-    }
-
-    async fn find_file_by_path(
-        &self,
-        path: &str,
-        owner_id: Uuid,
-    ) -> Result<Option<rustshare_core::domain::File>, rustshare_core::services::UploadError> {
-        self.inner
-            .find_file_by_path(path, owner_id)
-            .await
-            .map_err(|e| rustshare_core::services::UploadError::Database(e.to_string()))
-    }
-
-    async fn create_file(
-        &self,
-        file: &rustshare_core::domain::File,
-    ) -> Result<(), rustshare_core::services::UploadError> {
-        self.inner
-            .create_file(file)
-            .await
-            .map_err(|e| rustshare_core::services::UploadError::Database(e.to_string()))
-    }
-
-    async fn update_file(
-        &self,
-        file: &rustshare_core::domain::File,
-    ) -> Result<(), rustshare_core::services::UploadError> {
-        self.inner
-            .update_file(file)
-            .await
-            .map_err(|e| rustshare_core::services::UploadError::Database(e.to_string()))
-    }
-
-    async fn create_file_version(
-        &self,
-        _file: &rustshare_core::domain::File,
-        version: &rustshare_core::domain::FileVersion,
-    ) -> Result<(), rustshare_core::services::UploadError> {
-        self.inner
-            .create_file_version(version)
-            .await
-            .map_err(|e| rustshare_core::services::UploadError::Database(e.to_string()))
-    }
-}
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -485,8 +316,8 @@ async fn main() -> Result<()> {
 
     let upload_service = Arc::new(AppUploadService::new(
         Arc::new(upload_session_repo),
-        Arc::new(UploadObjectStoreAdapter::new(Arc::clone(&object_store))),
-        Arc::new(UploadMetadataStoreAdapter::new(Arc::clone(&metadata_store))),
+        Arc::new(adapters::UploadObjectStoreAdapter::new(Arc::clone(&object_store))),
+        Arc::new(adapters::UploadMetadataStoreAdapter::new(Arc::clone(&metadata_store))),
         Arc::clone(&event_store),
         Arc::clone(&broadcaster),
     ));
@@ -500,21 +331,6 @@ async fn main() -> Result<()> {
     let rate_limit_config = Arc::new(middleware::RateLimitConfig::new());
 
     info!("Rate limiting initialized");
-
-    // TODO: Fix chat_integration compilation errors
-    // // Initialize chat integration service
-    // let chat_webhook_secret = std::env::var("RUSTSHARE_CHAT_WEBHOOK_SECRET")
-    //     .unwrap_or_else(|_| "default_chat_webhook_secret_change_in_production".to_string());
-    // let webhook_dispatcher = Arc::new(HttpWebhookDispatcher::new());
-    // let chat_integration_service = Arc::new(ChatIntegrationService::new(
-    //     Arc::clone(&metadata_store),
-    //     Arc::clone(&event_store),
-    //     Arc::clone(&broadcaster),
-    //     chat_webhook_secret,
-    //     webhook_dispatcher,
-    // ));
-
-    // info!("Chat integration service initialized");
 
     // Parse default tenant ID from env or use nil UUID
     let default_tenant_id = std::env::var("RUSTSHARE_DEFAULT_TENANT_ID")
@@ -765,14 +581,6 @@ async fn main() -> Result<()> {
             "/api/v1/public/notes/{share_id}",
             get(handlers::get_public_note),
         )
-        // Upload session routes (TODO-004: Resumable uploads)
-        // Upload endpoints disabled - TODO: Fix upload service type issues
-        // .route("/api/v1/uploads/sessions", get(handlers::list_upload_sessions))
-        // .route("/api/v1/uploads/sessions", post(handlers::create_upload_session))
-        // .route("/api/v1/uploads/sessions/{id}", get(handlers::get_upload_session_status))
-        // .route("/api/v1/uploads/sessions/{id}/chunks/{index}", put(handlers::upload_chunk))
-        // .route("/api/v1/uploads/sessions/{id}/complete", post(handlers::complete_upload))
-        // .route("/api/v1/uploads/sessions/{id}", delete(handlers::abort_upload_session))
         .route(
             "/api/admin/replication/jobs",
             get(replication_handlers::list_replication_jobs),
@@ -941,31 +749,6 @@ async fn main() -> Result<()> {
             "/api/v1/admin/integrations/webhooks/{id}/test",
             post(handlers::admin::webhooks::test_webhook),
         )
-        // Chat integration routes (TODO: Uncomment when chat_integration module is fixed)
-        // .route(
-        //     "/api/v1/integrations/chat/unfurl",
-        //     post(handlers::unfurl_link),
-        // )
-        // .route(
-        //     "/api/v1/integrations/chat/unfurl/public",
-        //     post(handlers::unfurl_link_public),
-        // )
-        // .route(
-        //     "/api/v1/integrations/chat/events",
-        //     post(handlers::receive_chat_event),
-        // )
-        // .route(
-        //     "/api/v1/integrations/webhooks/dispatch",
-        //     post(handlers::dispatch_webhooks),
-        // )
-        // .route(
-        //     "/api/v1/admin/integrations/chat/webhooks",
-        //     get(handlers::list_chat_webhooks),
-        // )
-        // .route(
-        //     "/api/v1/admin/integrations/chat/webhooks",
-        //     post(handlers::register_chat_webhook),
-        // )
         // SCIM provisioning endpoints (webhook-style, not full RFC 7644)
         .route("/api/v1/scim/users", post(handlers::scim::provision_user))
         .route(
@@ -1228,9 +1011,6 @@ async fn main() -> Result<()> {
         .route("/api/v1/ai/search", post(handlers::semantic_search))
         .route("/api/v1/ai/summarize", post(handlers::summarize_file))
         .route("/api/v1/ai/ask", post(handlers::ask_question))
-        // TODO: Fix search_service compilation errors
-        // // Search endpoint (Task Phase 1)
-        // .route("/api/v1/search", get(handlers::search))
         // WebSocket sync endpoint (Task Phase 3A)
         .route("/api/ws", get(handlers::sync_handler))
         // HTTP Sync API endpoints (Desktop Client Sync)

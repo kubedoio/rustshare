@@ -4,7 +4,6 @@
 //! handling chunked uploads, and assembling files on completion.
 
 use bytes::Bytes;
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -241,7 +240,7 @@ where
         request: CreateSessionRequest,
     ) -> Result<CreateSessionResponse, UploadError> {
         // Validate file name
-        self.validate_file_name(&request.file_name)?;
+        crate::validation::validate_name(&request.file_name).map_err(|msg| UploadError::InvalidFileName(msg))?;
 
         // Validate parent folder if provided
         if let Some(folder_id) = request.folder_id {
@@ -390,7 +389,7 @@ where
         }
 
         // Calculate chunk hash
-        let chunk_hash = self.calculate_sha256(&data);
+        let chunk_hash = crate::validation::calculate_sha256(&data);
 
         // Verify hash if provided
         if let Some(expected_hash) = provided_hash {
@@ -476,7 +475,7 @@ where
 
         // Assemble chunks and calculate final hash
         let final_content = self.assemble_content(&session).await?;
-        let final_hash = self.calculate_sha256(&final_content);
+        let final_hash = crate::validation::calculate_sha256(&final_content);
 
         // Verify final hash if expected
         if let Some(expected_hash) = &session.file_hash {
@@ -756,45 +755,6 @@ where
         Ok(Bytes::from(content))
     }
 
-    /// Validate file name
-    fn validate_file_name(&self, name: &str) -> Result<(), UploadError> {
-        if name.is_empty() {
-            return Err(UploadError::InvalidFileName(
-                "File name cannot be empty".to_string(),
-            ));
-        }
-
-        if name.contains('/') {
-            return Err(UploadError::InvalidFileName(
-                "File name cannot contain forward slash (/)".to_string(),
-            ));
-        }
-
-        if name.contains('\0') {
-            return Err(UploadError::InvalidFileName(
-                "File name cannot contain null character".to_string(),
-            ));
-        }
-
-        Ok(())
-    }
-
-    /// Calculate SHA256 hash
-    fn calculate_sha256(&self, content: &Bytes) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(content);
-        hex::encode(hasher.finalize())
-    }
-}
-
-mod hex {
-    pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes
-            .as_ref()
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect()
-    }
 }
 
 #[cfg(test)]

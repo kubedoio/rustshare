@@ -3,8 +3,6 @@
 pub mod admin;
 pub mod ai;
 pub mod auth;
-// TODO: Fix chat_integration compilation errors
-// mod chat_integration;
 pub mod device_auth;
 pub mod devices;
 mod extractors;
@@ -20,8 +18,6 @@ mod public_shares;
 pub mod scim;
 pub mod scim_v2;
 pub mod upload;
-// TODO: Fix search_service compilation errors
-// mod search;
 mod shares;
 mod sync;
 mod trash;
@@ -62,13 +58,6 @@ pub use user_shares::{
     get_user_shared_folder_tree, list_file_recipients, list_folder_recipients,
     list_received_shares, remove_recipient, update_recipient_permission,
 };
-// TODO: Fix chat_integration compilation errors
-// pub use chat_integration::{
-//     dispatch_webhooks, list_chat_webhooks, receive_chat_event, register_chat_webhook,
-//     unfurl_link, unfurl_link_public, DispatchWebhookResponse, UnfurlLinkRequest, UnfurlLinkResponse,
-//     WebhookDispatchResult, WebhookListResponse,
-// };
-// pub use search::search;
 pub use features::get_features;
 pub use groups::{
     create_file_group_share, create_folder_group_share, get_my_group, list_file_group_shares,

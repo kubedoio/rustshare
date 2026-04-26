@@ -181,6 +181,23 @@ where
             permission_resolver,
         }
     }
+    async fn require_file_permission(
+        &self,
+        user_id: UserId,
+        file_id: FileId,
+        required: SharePermissions,
+    ) -> Result<(), FileError> {
+        let has = self
+            .permission_resolver
+            .check_file_permission(user_id, file_id, required)
+            .await
+            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+        if !has {
+            return Err(FileError::PermissionDenied { file_id, user_id });
+        }
+        Ok(())
+    }
+
 
     /// Upload a new file.
     ///
@@ -466,15 +483,7 @@ where
     /// - `FileError::PermissionDenied` if the user doesn't have access
     pub async fn get_file(&self, file_id: uuid::Uuid, user_id: UserId) -> Result<File, FileError> {
         // 1. Check permissions first using the resolver
-        let has_permission = self
-            .permission_resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
-            .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_permission {
-            return Err(FileError::PermissionDenied { file_id, user_id });
-        }
+        self.require_file_permission(user_id, file_id, SharePermissions::View).await?;
 
         // 2. Find file by ID
         let file = self
@@ -547,15 +556,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        let has_edit_permission = self
-            .permission_resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
-            .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_edit_permission {
-            return Err(FileError::PermissionDenied { file_id, user_id });
-        }
+        self.require_file_permission(user_id, file_id, SharePermissions::Edit).await?;
 
         // 2. Check optimistic lock (current_version == expected_version)
         if file.current_version != expected_version {
@@ -715,15 +716,7 @@ where
         let old_version = file.current_version;
 
         // 1b. Verify Edit permission
-        let has_edit_permission = self
-            .permission_resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
-            .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_edit_permission {
-            return Err(FileError::PermissionDenied { file_id, user_id });
-        }
+        self.require_file_permission(user_id, file_id, SharePermissions::Edit).await?;
 
         // 2. Find the old version
         let old_file_version = self
@@ -829,15 +822,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        let has_edit_permission = self
-            .permission_resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
-            .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_edit_permission {
-            return Err(FileError::PermissionDenied { file_id, user_id });
-        }
+        self.require_file_permission(user_id, file_id, SharePermissions::Edit).await?;
 
         // 2. If target folder is specified, verify it exists
         let new_path = if let Some(folder_id) = target_folder_id {
@@ -910,15 +895,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        let has_edit_permission = self
-            .permission_resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
-            .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_edit_permission {
-            return Err(FileError::PermissionDenied { file_id, user_id });
-        }
+        self.require_file_permission(user_id, file_id, SharePermissions::Edit).await?;
 
         if file.name == new_name {
             return Ok(file);
@@ -999,15 +976,7 @@ where
         let file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Admin permission for deletion
-        let has_admin_permission = self
-            .permission_resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Admin)
-            .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_admin_permission {
-            return Err(FileError::PermissionDenied { file_id, user_id });
-        }
+        self.require_file_permission(user_id, file_id, SharePermissions::Admin).await?;
 
         // 2. Create FileDeleted event
         let payload = FileDeletedPayload {
@@ -1077,15 +1046,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        let has_edit_permission = self
-            .permission_resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
-            .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_edit_permission {
-            return Err(FileError::PermissionDenied { file_id, user_id });
-        }
+        self.require_file_permission(user_id, file_id, SharePermissions::Edit).await?;
 
         // 2. Validate file is editable based on mime type and extension
         self.validate_file_editable(&file)?;

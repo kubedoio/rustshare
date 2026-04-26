@@ -113,6 +113,23 @@ where
             permission_resolver,
         }
     }
+    async fn require_folder_permission(
+        &self,
+        user_id: UserId,
+        folder_id: FolderId,
+        required: SharePermissions,
+    ) -> Result<(), FolderError> {
+        let has = self
+            .permission_resolver
+            .check_folder_permission(user_id, folder_id, required)
+            .await
+            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+        if !has {
+            return Err(FolderError::PermissionDenied { folder_id, user_id });
+        }
+        Ok(())
+    }
+
 
     /// Create a new folder.
     ///
@@ -139,18 +156,7 @@ where
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
 
             // Verify permissions: user must own the folder or have Edit permission
-            let has_permission = self
-                .permission_resolver
-                .check_folder_permission(owner_id, parent_id, SharePermissions::Edit)
-                .await
-                .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-            if !has_permission {
-                return Err(FolderError::PermissionDenied {
-                    folder_id: parent_id,
-                    user_id: owner_id,
-                });
-            }
+            self.require_folder_permission(owner_id, parent_id, SharePermissions::Edit).await?;
 
             // Construct path: parent_path + "/" + name
             let path = format!("{}/{}", parent.path.trim_end_matches('/'), name);
@@ -220,15 +226,7 @@ where
         user_id: UserId,
     ) -> Result<Folder, FolderError> {
         // 1. Check permissions first using the resolver
-        let has_permission = self
-            .permission_resolver
-            .check_folder_permission(user_id, folder_id, SharePermissions::View)
-            .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_permission {
-            return Err(FolderError::PermissionDenied { folder_id, user_id });
-        }
+        self.require_folder_permission(user_id, folder_id, SharePermissions::View).await?;
 
         // 2. Find folder by ID
         let folder = self
@@ -334,15 +332,7 @@ where
         let mut folder = self.get_folder(folder_id, user_id).await?;
 
         // Verify Edit permission
-        let has_edit_permission = self
-            .permission_resolver
-            .check_folder_permission(user_id, folder_id, SharePermissions::Edit)
-            .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_edit_permission {
-            return Err(FolderError::PermissionDenied { folder_id, user_id });
-        }
+        self.require_folder_permission(user_id, folder_id, SharePermissions::Edit).await?;
 
         // Check if name is actually changing
         if folder.name == new_name {
@@ -425,15 +415,7 @@ where
         let mut folder = self.get_folder(folder_id, user_id).await?;
 
         // Verify Edit permission
-        let has_edit_permission = self
-            .permission_resolver
-            .check_folder_permission(user_id, folder_id, SharePermissions::Edit)
-            .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_edit_permission {
-            return Err(FolderError::PermissionDenied { folder_id, user_id });
-        }
+        self.require_folder_permission(user_id, folder_id, SharePermissions::Edit).await?;
 
         // Check if parent is actually changing
         if folder.parent_folder_id == new_parent_id {
@@ -546,15 +528,7 @@ where
         let folder = self.get_folder(folder_id, user_id).await?;
 
         // Verify Admin permission for deletion
-        let has_admin_permission = self
-            .permission_resolver
-            .check_folder_permission(user_id, folder_id, SharePermissions::Admin)
-            .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_admin_permission {
-            return Err(FolderError::PermissionDenied { folder_id, user_id });
-        }
+        self.require_folder_permission(user_id, folder_id, SharePermissions::Admin).await?;
 
         // Check if it's the system root folder (nil UUID) - only protect system folders
         // User-created root folders should be deletable even if named "Root"

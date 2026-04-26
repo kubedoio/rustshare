@@ -1,5 +1,7 @@
-use crate::client::{
-    ApiClient, CompleteUploadResponse, CreateUploadSessionRequest, UploadChunkResponse,
+use crate::client::ApiClient;
+use sync_protocol::{
+    CompleteUploadResponse, CreateUploadSessionRequest, CreateUploadSessionResponse,
+    UploadChunkResponse,
 };
 use crate::retry::{with_retry, with_retry_sync, RetryConfig};
 use anyhow::{Context, Result};
@@ -752,7 +754,7 @@ impl SyncWorker {
         total_size: u64,
         _file_hash: &str,
         file_name: &str,
-    ) -> Result<crate::client::CreateUploadSessionResponse> {
+    ) -> Result<sync_protocol::CreateUploadSessionResponse> {
         let request = CreateUploadSessionRequest {
             folder_id,
             file_name: file_name.to_string(),
