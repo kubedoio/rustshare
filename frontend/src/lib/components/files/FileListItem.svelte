@@ -48,8 +48,8 @@
 	let fileItem = $derived(isFolder ? undefined : (item as File));
 	let displaySize = $derived(
 		isFolder
-			? (typeof (item as Folder).size === 'number' ? formatFileSize((item as Folder).size) : '-')
-			: formatFileSize(fileItem?.size || 0)
+			? (typeof (item as Folder).size === 'number' ? formatFileSize((item as Folder).size as number) : '-')
+			: formatFileSize(fileItem?.size ?? 0)
 	);
 	let displayDate = $derived(
 		formatDate(

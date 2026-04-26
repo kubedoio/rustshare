@@ -1,0 +1,27 @@
+--- frontend/src/routes/login/__tests__/page.test.ts
++++ frontend/src/routes/login/__tests__/page.test.ts
+@@ -8,7 +8,8 @@
+ vi.mock('$lib/stores/auth', () => ({
+	authStore: {
+		setLoading: vi.fn(),
+-		login: vi.fn()
++		login: vi.fn(),
++		subscribe: (fn: any) => { fn({ isAuthenticated: false }); return () => {}; }
+	}
+ }));
+
+@@ -16,6 +17,15 @@
+	getAuthConfig: vi.fn()
+ }));
+
++vi.mock('$app/stores', () => ({
++	page: {
++		subscribe: (fn: any) => {
++			fn({ url: { searchParams: new URLSearchParams() } });
++			return () => {};
++		}
++	}
++}));
++
+ import LoginPage from '../+page.svelte';
+ import { getAuthConfig } from '$lib/api/auth';

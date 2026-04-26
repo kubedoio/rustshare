@@ -11,13 +11,13 @@ describe('PaginationControls', () => {
     onPageSizeChange = vi.fn();
   });
 
-  function getProps(overrides: Partial<{ currentPage: number; totalPages: number; pageSize: 10 | 20 | 50 }> = {}) {
+  function getProps(overrides: Partial<{ currentPage: number; totalPages: number; pageSize: 10 | 20 | 50; onPageChange: any; onPageSizeChange: any }> = {}) {
     return {
       currentPage: 1,
       totalPages: 5,
       pageSize: 10 as const,
-      onPageChange,
-      onPageSizeChange,
+      onPageChange: onPageChange as any,
+      onPageSizeChange: onPageSizeChange as any,
       ...overrides
     };
   }
