@@ -712,7 +712,7 @@ pub async fn list_users(
     let service = ScimV2Service::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         base_url,
     );
 
@@ -741,7 +741,7 @@ pub async fn get_user(
     let service = ScimV2Service::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         base_url,
     );
 
@@ -767,7 +767,7 @@ pub async fn create_user(
     let service = ScimV2Service::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         base_url,
     );
 
@@ -794,7 +794,7 @@ pub async fn update_user(
     let service = ScimV2Service::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         base_url,
     );
 
@@ -821,7 +821,7 @@ pub async fn patch_user(
     let service = ScimV2Service::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         base_url,
     );
 
@@ -847,7 +847,7 @@ pub async fn delete_user(
     let service = ScimV2Service::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         base_url,
     );
 
@@ -877,7 +877,7 @@ pub async fn list_groups(
     let service = ScimV2Service::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         base_url,
     );
 
@@ -906,7 +906,7 @@ pub async fn get_group(
     let service = ScimV2Service::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         base_url,
     );
 
@@ -932,7 +932,7 @@ pub async fn create_group(
     let service = ScimV2Service::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         base_url,
     );
 
@@ -959,7 +959,7 @@ pub async fn update_group(
     let service = ScimV2Service::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         base_url,
     );
 
@@ -986,7 +986,7 @@ pub async fn patch_group(
     let service = ScimV2Service::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         base_url,
     );
 
@@ -1012,7 +1012,7 @@ pub async fn delete_group(
     let service = ScimV2Service::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         base_url,
     );
 
@@ -1041,7 +1041,7 @@ pub async fn get_service_provider_config(
     let service = ScimV2Service::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         base_url,
     );
 
@@ -1061,7 +1061,7 @@ pub async fn get_resource_types(State(state): State<AppState>, headers: HeaderMa
     let service = ScimV2Service::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         base_url,
     );
 
@@ -1084,7 +1084,7 @@ pub async fn get_schemas(State(state): State<AppState>, headers: HeaderMap) -> R
     let service = ScimV2Service::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         base_url,
     );
 
@@ -1105,10 +1105,3 @@ fn get_base_url(_headers: &HeaderMap) -> String {
     std::env::var("RUSTSHARE_SCIM_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string())
 }
 
-/// Get default storage quota for SCIM-provisioned users.
-fn default_storage_quota_bytes() -> i64 {
-    std::env::var("RUSTSHARE_DEFAULT_STORAGE_QUOTA_BYTES")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(10_737_418_240) // 10 GB
-}

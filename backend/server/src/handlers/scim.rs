@@ -103,7 +103,7 @@ pub async fn provision_user(
     let service = ScimService::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
     );
 
     match service.provision_user(scim_user).await {
@@ -156,7 +156,7 @@ pub async fn deprovision_user(
     let service = ScimService::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
     );
 
     match service.deprovision_user(&external_id).await {
@@ -219,7 +219,7 @@ pub async fn provision_group(
     let service = ScimService::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
     );
 
     match service.provision_group(scim_group).await {
@@ -272,7 +272,7 @@ pub async fn delete_group(
     let service = ScimService::new(
         repository,
         state.default_tenant_id,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
     );
 
     match service.delete_group(&external_id).await {
@@ -625,12 +625,6 @@ fn map_user_row(row: &sqlx::postgres::PgRow) -> Result<User, sqlx::Error> {
     })
 }
 
-fn default_storage_quota_bytes() -> i64 {
-    std::env::var("RUSTSHARE_DEFAULT_STORAGE_QUOTA_BYTES")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(10_737_418_240) // 10 GB
-}
 
 // Constant-time comparison for tokens
 mod constant_time_eq {

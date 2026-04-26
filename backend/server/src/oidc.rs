@@ -645,7 +645,7 @@ async fn find_or_create_oidc_user(
         password_hash,
         email.to_string(),
         false,
-        default_storage_quota_bytes(),
+        crate::default_storage_quota_bytes(),
         state.default_tenant_id,
     );
 
@@ -726,12 +726,6 @@ fn display_name_from_email(email: &str) -> String {
         .replace(['.', '_', '-'], " ")
 }
 
-fn default_storage_quota_bytes() -> i64 {
-    std::env::var("RUSTSHARE_DEFAULT_STORAGE_QUOTA_BYTES")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(10_737_418_240)
-}
 
 #[cfg(test)]
 mod tests {
