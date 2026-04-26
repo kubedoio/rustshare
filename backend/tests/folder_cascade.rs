@@ -49,7 +49,7 @@ async fn setup_test_env() -> (
 }
 
 /// Create a test user in the database
-async fn create_test_user(metadata_store: &MetadataStore, username: &str) -> User {
+async fn create_test_user(metadata_store: &MetadataStore, username: &str, tenant_id: Uuid) -> User {
     let user = User::new(
         username.to_string(),
         format!("{} Display", username),
@@ -57,6 +57,7 @@ async fn create_test_user(metadata_store: &MetadataStore, username: &str) -> Use
         format!("{}@test.local", username),
         false,
         10_737_418_240, // 10GB
+        tenant_id,
     );
 
     metadata_store
@@ -82,7 +83,8 @@ async fn test_folder_cascade_delete() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "cascade_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "cascade_user", tenant_id).await;
 
     // Create services
     let folder_service = FolderService::new(event_store.clone(), metadata_store.clone());
@@ -234,7 +236,8 @@ async fn test_deep_hierarchy_cascade_delete() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "deep_cascade_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "deep_cascade_user", tenant_id).await;
 
     // Create services
     let folder_service = FolderService::new(event_store.clone(), metadata_store.clone());
@@ -312,7 +315,8 @@ async fn test_cascade_delete_with_siblings() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "siblings_cascade_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "siblings_cascade_user", tenant_id).await;
 
     // Create services
     let folder_service = FolderService::new(event_store.clone(), metadata_store.clone());
@@ -418,7 +422,8 @@ async fn test_leaf_folder_delete() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "leaf_delete_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "leaf_delete_user", tenant_id).await;
 
     // Create services
     let folder_service = FolderService::new(event_store.clone(), metadata_store.clone());

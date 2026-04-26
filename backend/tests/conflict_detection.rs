@@ -44,7 +44,7 @@ async fn setup_test_env() -> (PgPool, Arc<EventStore>, Arc<MetadataStore>, Arc<O
 }
 
 /// Create a test user in the database
-async fn create_test_user(metadata_store: &MetadataStore, username: &str) -> User {
+async fn create_test_user(metadata_store: &MetadataStore, username: &str, tenant_id: Uuid) -> User {
     let user = User::new(
         username.to_string(),
         format!("{} Display", username),
@@ -52,6 +52,7 @@ async fn create_test_user(metadata_store: &MetadataStore, username: &str) -> Use
         format!("{}@test.local", username),
         false,
         10_737_418_240, // 10GB
+        tenant_id,
     );
 
     metadata_store
@@ -77,7 +78,8 @@ async fn test_optimistic_locking_conflict() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "conflict_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "conflict_user", tenant_id).await;
 
     // Create FileService
     let file_service = FileService::new(
@@ -168,7 +170,8 @@ async fn test_successful_sequential_updates() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "sequential_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "sequential_user", tenant_id).await;
 
     // Create FileService
     let file_service = FileService::new(
@@ -236,7 +239,8 @@ async fn test_update_without_version_check() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "noversion_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "noversion_user", tenant_id).await;
 
     // Create FileService
     let file_service = FileService::new(
@@ -291,7 +295,8 @@ async fn test_multiple_conflict_scenarios() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "multiconflict_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "multiconflict_user", tenant_id).await;
 
     // Create FileService
     let file_service = FileService::new(

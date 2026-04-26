@@ -44,7 +44,7 @@ async fn setup_test_env() -> (PgPool, Arc<EventStore>, Arc<MetadataStore>, Arc<O
 }
 
 /// Create a test user in the database
-async fn create_test_user(metadata_store: &MetadataStore, username: &str) -> User {
+async fn create_test_user(metadata_store: &MetadataStore, username: &str, tenant_id: Uuid) -> User {
     let user = User::new(
         username.to_string(),
         format!("{} Display", username),
@@ -52,6 +52,7 @@ async fn create_test_user(metadata_store: &MetadataStore, username: &str) -> Use
         format!("{}@test.local", username),
         false,
         10_737_418_240, // 10GB
+        tenant_id,
     );
 
     metadata_store
@@ -77,7 +78,8 @@ async fn test_file_upload_download_flow() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "fileops_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "fileops_user", tenant_id).await;
 
     // Create FileService
     let file_service = FileService::new(
@@ -151,7 +153,8 @@ async fn test_file_upload_with_parent_folder() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "fileops_folder_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "fileops_folder_user", tenant_id).await;
 
     // Create a parent folder
     let parent_folder = rustshare_core::domain::Folder::new_child(
@@ -159,10 +162,11 @@ async fn test_file_upload_with_parent_folder() {
         "/Documents".to_string(),
         Uuid::new_v4(), // Dummy parent
         user.id,
+        tenant_id,
     );
 
     // Need to create a root folder first
-    let root_folder = rustshare_core::domain::Folder::new_root(user.id);
+    let root_folder = rustshare_core::domain::Folder::new_root(user.id, tenant_id);
     metadata_store
         .create_folder(&root_folder)
         .await
@@ -173,6 +177,7 @@ async fn test_file_upload_with_parent_folder() {
         "/Documents".to_string(),
         root_folder.id,
         user.id,
+        tenant_id,
     );
 
     metadata_store
@@ -241,7 +246,8 @@ async fn test_file_deduplication() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "fileops_dedup_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "fileops_dedup_user", tenant_id).await;
 
     // Create FileService
     let file_service = FileService::new(
@@ -302,10 +308,11 @@ async fn test_move_file_to_folder() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "fileops_move_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "fileops_move_user", tenant_id).await;
 
     // Create root folder
-    let root_folder = rustshare_core::domain::Folder::new_root(user.id);
+    let root_folder = rustshare_core::domain::Folder::new_root(user.id, tenant_id);
     metadata_store
         .create_folder(&root_folder)
         .await
@@ -317,6 +324,7 @@ async fn test_move_file_to_folder() {
         "/Target".to_string(),
         root_folder.id,
         user.id,
+        tenant_id,
     );
     metadata_store
         .create_folder(&target_folder)
@@ -393,10 +401,11 @@ async fn test_move_file_to_root() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "fileops_move_root_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "fileops_move_root_user", tenant_id).await;
 
     // Create root folder
-    let root_folder = rustshare_core::domain::Folder::new_root(user.id);
+    let root_folder = rustshare_core::domain::Folder::new_root(user.id, tenant_id);
     metadata_store
         .create_folder(&root_folder)
         .await
@@ -408,6 +417,7 @@ async fn test_move_file_to_root() {
         "/Source".to_string(),
         root_folder.id,
         user.id,
+        tenant_id,
     );
     metadata_store
         .create_folder(&source_folder)
