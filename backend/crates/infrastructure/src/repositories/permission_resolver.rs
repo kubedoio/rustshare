@@ -59,7 +59,6 @@ impl PermissionResolverOps for PermissionResolverRepository {
         self.share_repo
             .find_user_share(file_id, folder_id, recipient_user_id)
             .await
-            .map_err(|e| anyhow::anyhow!(e))
     }
 
     async fn find_group_shares(
@@ -149,17 +148,11 @@ impl PermissionResolverOps for PermissionResolverRepository {
     }
 
     async fn find_file_by_id(&self, id: FileId) -> Result<Option<File>> {
-        self.file_repo
-            .get_by_id(id)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))
+        self.file_repo.get_by_id(id).await
     }
 
     async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>> {
-        self.folder_repo
-            .get_by_id(id)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))
+        self.folder_repo.get_by_id(id).await
     }
 
     async fn get_user_group_ids(&self, user_id: UserId) -> Result<Vec<Uuid>> {

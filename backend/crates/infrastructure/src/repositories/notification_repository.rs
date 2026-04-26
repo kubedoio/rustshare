@@ -1,6 +1,6 @@
 use chrono::Utc;
 use rustshare_core::domain::{Notification, NotificationId, UserId};
-use rustshare_core::services::CreateNotification;
+use rustshare_core::services::{CreateNotification, NotificationError};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -10,28 +10,30 @@ pub struct NotificationRepository {
 }
 
 impl NotificationRepository {
-    fn map_notification_row(row: sqlx::postgres::PgRow) -> Result<Notification, sqlx::Error> {
+    fn map_notification_row(row: sqlx::postgres::PgRow) -> Result<Notification, NotificationError> {
         let notification_type = row
-            .try_get::<String, _>("notification_type")?
+            .try_get::<String, _>("notification_type")
+            .map_err(|e| NotificationError::Database(e.to_string()))?
             .parse()
-            .map_err(|err: String| sqlx::Error::Decode(err.into()))?;
+            .map_err(|err: String| NotificationError::Database(err))?;
         let resource_type = row
-            .try_get::<String, _>("resource_type")?
+            .try_get::<String, _>("resource_type")
+            .map_err(|e| NotificationError::Database(e.to_string()))?
             .parse()
-            .map_err(|err: String| sqlx::Error::Decode(err.into()))?;
+            .map_err(|err: String| NotificationError::Database(err))?;
 
         Ok(Notification {
-            id: row.try_get("id")?,
-            user_id: row.try_get("user_id")?,
+            id: row.try_get("id").map_err(|e| NotificationError::Database(e.to_string()))?,
+            user_id: row.try_get("user_id").map_err(|e| NotificationError::Database(e.to_string()))?,
             notification_type,
-            title: row.try_get("title")?,
-            message: row.try_get("message")?,
-            resource_id: row.try_get("resource_id")?,
+            title: row.try_get("title").map_err(|e| NotificationError::Database(e.to_string()))?,
+            message: row.try_get("message").map_err(|e| NotificationError::Database(e.to_string()))?,
+            resource_id: row.try_get("resource_id").map_err(|e| NotificationError::Database(e.to_string()))?,
             resource_type,
-            action_url: row.try_get("action_url")?,
-            read: row.try_get("read")?,
-            created_at: row.try_get("created_at")?,
-            tenant_id: row.try_get("tenant_id")?,
+            action_url: row.try_get("action_url").map_err(|e| NotificationError::Database(e.to_string()))?,
+            read: row.try_get("read").map_err(|e| NotificationError::Database(e.to_string()))?,
+            created_at: row.try_get("created_at").map_err(|e| NotificationError::Database(e.to_string()))?,
+            tenant_id: row.try_get("tenant_id").map_err(|e| NotificationError::Database(e.to_string()))?,
         })
     }
 
@@ -41,7 +43,7 @@ impl NotificationRepository {
     }
 
     /// Insert a new notification.
-    pub async fn create(&self, request: CreateNotification) -> Result<Notification, sqlx::Error> {
+    pub async fn create(&self, request: CreateNotification) -> Result<Notification, NotificationError> {
         let id = Uuid::new_v4();
         let created_at = Utc::now();
 
@@ -66,7 +68,8 @@ impl NotificationRepository {
         .bind(request.action_url)
         .bind(created_at)
         .fetch_one(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| NotificationError::Database(e.to_string()))?;
 
         Self::map_notification_row(row)
     }
@@ -75,7 +78,7 @@ impl NotificationRepository {
     pub async fn find_by_id(
         &self,
         notification_id: NotificationId,
-    ) -> Result<Option<Notification>, sqlx::Error> {
+    ) -> Result<Option<Notification>, NotificationError> {
         let row = sqlx::query(
             r#"
             SELECT id, user_id, notification_type, title, message,
@@ -86,7 +89,8 @@ impl NotificationRepository {
         )
         .bind(notification_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| NotificationError::Database(e.to_string()))?;
 
         row.map(Self::map_notification_row).transpose()
     }
@@ -98,7 +102,7 @@ impl NotificationRepository {
         unread_only: bool,
         limit: i64,
         offset: i64,
-    ) -> Result<Vec<Notification>, sqlx::Error> {
+    ) -> Result<Vec<Notification>, NotificationError> {
         let rows = if unread_only {
             sqlx::query(
                 r#"
@@ -114,7 +118,8 @@ impl NotificationRepository {
             .bind(limit)
             .bind(offset)
             .fetch_all(&self.pool)
-            .await?
+            .await
+            .map_err(|e| NotificationError::Database(e.to_string()))?
         } else {
             sqlx::query(
                 r#"
@@ -130,14 +135,15 @@ impl NotificationRepository {
             .bind(limit)
             .bind(offset)
             .fetch_all(&self.pool)
-            .await?
+            .await
+            .map_err(|e| NotificationError::Database(e.to_string()))?
         };
 
         rows.into_iter().map(Self::map_notification_row).collect()
     }
 
     /// Count unread notifications for a user.
-    pub async fn count_unread(&self, user_id: UserId) -> Result<i64, sqlx::Error> {
+    pub async fn count_unread(&self, user_id: UserId) -> Result<i64, NotificationError> {
         let result: (i64,) = sqlx::query_as(
             r#"
             SELECT COUNT(*)
@@ -147,7 +153,8 @@ impl NotificationRepository {
         )
         .bind(user_id)
         .fetch_one(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| NotificationError::Database(e.to_string()))?;
 
         Ok(result.0)
     }
@@ -157,7 +164,7 @@ impl NotificationRepository {
         &self,
         user_id: UserId,
         unread_only: bool,
-    ) -> Result<i64, sqlx::Error> {
+    ) -> Result<i64, NotificationError> {
         let result: (i64,) = if unread_only {
             sqlx::query_as(
                 r#"
@@ -168,7 +175,8 @@ impl NotificationRepository {
             )
             .bind(user_id)
             .fetch_one(&self.pool)
-            .await?
+            .await
+            .map_err(|e| NotificationError::Database(e.to_string()))?
         } else {
             sqlx::query_as(
                 r#"
@@ -179,7 +187,8 @@ impl NotificationRepository {
             )
             .bind(user_id)
             .fetch_one(&self.pool)
-            .await?
+            .await
+            .map_err(|e| NotificationError::Database(e.to_string()))?
         };
 
         Ok(result.0)
@@ -189,7 +198,7 @@ impl NotificationRepository {
     pub async fn mark_as_read(
         &self,
         notification_id: NotificationId,
-    ) -> Result<Notification, sqlx::Error> {
+    ) -> Result<Notification, NotificationError> {
         let row = sqlx::query(
             r#"
             UPDATE notifications
@@ -201,13 +210,14 @@ impl NotificationRepository {
         )
         .bind(notification_id)
         .fetch_one(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| NotificationError::Database(e.to_string()))?;
 
         Self::map_notification_row(row)
     }
 
     /// Delete a notification.
-    pub async fn delete(&self, notification_id: NotificationId) -> Result<(), sqlx::Error> {
+    pub async fn delete(&self, notification_id: NotificationId) -> Result<(), NotificationError> {
         sqlx::query(
             r#"
             DELETE FROM notifications
@@ -216,7 +226,8 @@ impl NotificationRepository {
         )
         .bind(notification_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| NotificationError::Database(e.to_string()))?;
 
         Ok(())
     }

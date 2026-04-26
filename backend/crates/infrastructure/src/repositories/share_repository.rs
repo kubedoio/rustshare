@@ -59,7 +59,7 @@ impl ShareRepository {
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
         recipient_user_id: UserId,
-    ) -> Result<Option<Share>, sqlx::Error> {
+    ) -> anyhow::Result<Option<Share>> {
         let result = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
@@ -79,7 +79,7 @@ impl ShareRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        result.map(Self::map_share_row).transpose()
+        result.map(Self::map_share_row).transpose().map_err(|e| e.into())
     }
 
     /// List all shares received by a user (paginated).
@@ -88,7 +88,7 @@ impl ShareRepository {
         user_id: UserId,
         limit: i64,
         offset: i64,
-    ) -> Result<Vec<Share>, sqlx::Error> {
+    ) -> anyhow::Result<Vec<Share>> {
         let rows = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
@@ -107,7 +107,10 @@ impl ShareRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter().map(Self::map_share_row).collect()
+        rows.into_iter()
+            .map(Self::map_share_row)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.into())
     }
 
     /// List all recipients of a resource (for multi-user shares on same resource).
@@ -115,7 +118,7 @@ impl ShareRepository {
         &self,
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
-    ) -> Result<Vec<Share>, sqlx::Error> {
+    ) -> anyhow::Result<Vec<Share>> {
         let rows = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
@@ -134,7 +137,10 @@ impl ShareRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter().map(Self::map_share_row).collect()
+        rows.into_iter()
+            .map(Self::map_share_row)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.into())
     }
 
     /// Create a new user share.
@@ -146,7 +152,7 @@ impl ShareRepository {
         permissions: SharePermissions,
         created_by: UserId,
         tenant_id: Uuid,
-    ) -> Result<Share, sqlx::Error> {
+    ) -> anyhow::Result<Share> {
         let id = Uuid::new_v4();
         let created_at = Utc::now();
 
@@ -174,7 +180,7 @@ impl ShareRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        Self::map_share_row(row)
+        Self::map_share_row(row).map_err(|e| e.into())
     }
 
     /// Update recipient permission on a user share.
@@ -182,7 +188,7 @@ impl ShareRepository {
         &self,
         share_id: ShareId,
         new_permission: SharePermissions,
-    ) -> Result<Share, sqlx::Error> {
+    ) -> anyhow::Result<Share> {
         let row = sqlx::query(
             r#"
             UPDATE shares
@@ -198,12 +204,12 @@ impl ShareRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        Self::map_share_row(row)
+        Self::map_share_row(row).map_err(|e| e.into())
     }
 
     /// Delete (revoke) a share by setting revoked_at timestamp.
     /// This is a soft delete operation.
-    pub async fn delete_share(&self, share_id: ShareId) -> Result<(), sqlx::Error> {
+    pub async fn delete_share(&self, share_id: ShareId) -> anyhow::Result<()> {
         let revoked_at = Utc::now();
 
         sqlx::query(
@@ -222,7 +228,7 @@ impl ShareRepository {
     }
 
     /// Find a share by its ID.
-    pub async fn find_share_by_id(&self, share_id: ShareId) -> Result<Option<Share>, sqlx::Error> {
+    pub async fn find_share_by_id(&self, share_id: ShareId) -> anyhow::Result<Option<Share>> {
         let result = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, permissions, password_hash,
@@ -236,16 +242,16 @@ impl ShareRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        result.map(Self::map_share_row).transpose()
+        result.map(Self::map_share_row).transpose().map_err(|e| e.into())
     }
 
     /// Get a share by ID (alias for find_share_by_id).
-    pub async fn get_by_id(&self, share_id: ShareId) -> Result<Option<Share>, sqlx::Error> {
+    pub async fn get_by_id(&self, share_id: ShareId) -> anyhow::Result<Option<Share>> {
         self.find_share_by_id(share_id).await
     }
 
     /// Revoke a share (alias for delete_share).
-    pub async fn revoke_share(&self, share_id: ShareId) -> Result<(), sqlx::Error> {
+    pub async fn revoke_share(&self, share_id: ShareId) -> anyhow::Result<()> {
         self.delete_share(share_id).await
     }
 }
@@ -257,7 +263,7 @@ impl rustshare_core::services::ShareOps for ShareRepository {
         file_id: Option<rustshare_core::domain::FileId>,
         folder_id: Option<rustshare_core::domain::FolderId>,
         recipient_user_id: rustshare_core::domain::UserId,
-    ) -> Result<Option<rustshare_core::domain::Share>, sqlx::Error> {
+    ) -> anyhow::Result<Option<rustshare_core::domain::Share>> {
         self.find_user_share(file_id, folder_id, recipient_user_id)
             .await
     }
@@ -270,7 +276,7 @@ impl rustshare_core::services::ShareOps for ShareRepository {
         permissions: rustshare_core::domain::SharePermissions,
         created_by: rustshare_core::domain::UserId,
         tenant_id: Uuid,
-    ) -> Result<rustshare_core::domain::Share, sqlx::Error> {
+    ) -> anyhow::Result<rustshare_core::domain::Share> {
         self.create_user_share(
             file_id,
             folder_id,
@@ -286,14 +292,14 @@ impl rustshare_core::services::ShareOps for ShareRepository {
         &self,
         share_id: rustshare_core::domain::ShareId,
         new_permission: rustshare_core::domain::SharePermissions,
-    ) -> Result<rustshare_core::domain::Share, sqlx::Error> {
+    ) -> anyhow::Result<rustshare_core::domain::Share> {
         self.update_share_permission(share_id, new_permission).await
     }
 
     async fn get_by_id(
         &self,
         share_id: rustshare_core::domain::ShareId,
-    ) -> Result<Option<rustshare_core::domain::Share>, sqlx::Error> {
+    ) -> anyhow::Result<Option<rustshare_core::domain::Share>> {
         self.get_by_id(share_id).await
     }
 
@@ -302,7 +308,7 @@ impl rustshare_core::services::ShareOps for ShareRepository {
         user_id: rustshare_core::domain::UserId,
         limit: i64,
         offset: i64,
-    ) -> Result<Vec<rustshare_core::domain::Share>, sqlx::Error> {
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Share>> {
         self.list_received_shares(user_id, limit, offset).await
     }
 
@@ -310,14 +316,14 @@ impl rustshare_core::services::ShareOps for ShareRepository {
         &self,
         file_id: Option<rustshare_core::domain::FileId>,
         folder_id: Option<rustshare_core::domain::FolderId>,
-    ) -> Result<Vec<rustshare_core::domain::Share>, sqlx::Error> {
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Share>> {
         self.list_share_recipients(file_id, folder_id).await
     }
 
     async fn revoke_share(
         &self,
         share_id: rustshare_core::domain::ShareId,
-    ) -> Result<(), sqlx::Error> {
+    ) -> anyhow::Result<()> {
         self.revoke_share(share_id).await
     }
 }
