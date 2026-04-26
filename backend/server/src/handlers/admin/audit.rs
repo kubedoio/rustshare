@@ -2,13 +2,12 @@
 
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
     Json,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use uuid::Uuid;
 
+use super::{admin_bad_request, admin_internal_error};
 use crate::{handlers::AdminUser, AppState};
 
 // ---------------------------------------------------------------------------
@@ -76,7 +75,7 @@ pub async fn list_audit_log(
     State(state): State<AppState>,
     AdminUser { user_id: _ }: AdminUser,
     Query(query): Query<AuditLogQuery>,
-) -> Result<Json<PaginatedAuditLog>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<PaginatedAuditLog>, axum::response::Response> {
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.per_page.unwrap_or(20).clamp(1, 100);
     let offset = (page - 1) * per_page;
@@ -88,20 +87,16 @@ pub async fn list_audit_log(
         event_type_filter,
         "all" | "share_access" | "security_event" | "admin_action"
     ) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(
-                json!({"error": "Invalid type filter. Must be one of: share_access, security_event, admin_action, all"}),
-            ),
+        return Err(admin_bad_request(
+            "Invalid type filter. Must be one of: share_access, security_event, admin_action, all",
         ));
     }
 
     // Fix 2: Reject the combination of type=share_access with user_id filter,
     // since share_access_log has no user UUID column.
     if event_type_filter == "share_access" && query.user_id.is_some() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "user_id filter cannot be combined with type=share_access"})),
+        return Err(admin_bad_request(
+            "user_id filter cannot be combined with type=share_access",
         ));
     }
 
@@ -304,10 +299,7 @@ LIMIT ${limit_pos} OFFSET ${offset_pos}"
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn db_error(e: sqlx::Error) -> (StatusCode, Json<serde_json::Value>) {
+fn db_error(e: sqlx::Error) -> axum::response::Response {
     tracing::error!("Database error: {:?}", e);
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": "Database error" })),
-    )
+    admin_internal_error("Database error")
 }

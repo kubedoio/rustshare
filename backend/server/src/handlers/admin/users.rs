@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use super::log_admin_action;
+use super::{admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, log_admin_action};
 use crate::{handlers::AdminUser, AppState};
 
 // ---------------------------------------------------------------------------
@@ -114,7 +114,7 @@ pub async fn list_admin_users(
     State(state): State<AppState>,
     AdminUser { user_id: _ }: AdminUser,
     Query(query): Query<ListUsersQuery>,
-) -> Result<Json<PaginatedUsers>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<PaginatedUsers>, axum::response::Response> {
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.per_page.unwrap_or(20).clamp(1, 100);
     let offset = (page - 1) * per_page;
@@ -264,16 +264,16 @@ pub async fn create_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Json(req): Json<CreateUserRequest>,
-) -> Result<(StatusCode, Json<AdminUserResponse>), (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(StatusCode, Json<AdminUserResponse>), axum::response::Response> {
     // Validate inputs
     if req.username.trim().is_empty() {
-        return Err(bad_request("Username must not be empty"));
+        return Err(admin_bad_request("Username must not be empty"));
     }
     if !req.email.contains('@') {
-        return Err(bad_request("Invalid email address"));
+        return Err(admin_bad_request("Invalid email address"));
     }
     if req.password.len() < 8 {
-        return Err(bad_request("Password must be at least 8 characters"));
+        return Err(admin_bad_request("Password must be at least 8 characters"));
     }
 
     // Check username uniqueness
@@ -283,7 +283,7 @@ pub async fn create_admin_user(
         .await
         .map_err(db_error)?;
     if username_count > 0 {
-        return Err(conflict_error("Username already taken"));
+        return Err(admin_conflict("Username already taken"));
     }
 
     // Check email uniqueness
@@ -293,12 +293,12 @@ pub async fn create_admin_user(
         .await
         .map_err(db_error)?;
     if email_count > 0 {
-        return Err(conflict_error("Email already registered"));
+        return Err(admin_conflict("Email already registered"));
     }
 
     // Hash password
     let password_hash = PasswordHasher::hash(&req.password)
-        .map_err(|_| internal_error("Password hashing failed"))?;
+        .map_err(|_| admin_internal_error("Password hashing failed"))?;
 
     let new_id = Uuid::new_v4();
     let display_name = req
@@ -344,14 +344,14 @@ pub async fn get_admin_user(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
     Path(user_id): Path<Uuid>,
-) -> Result<Json<AdminUserDetailResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<AdminUserDetailResponse>, axum::response::Response> {
     let cols = "id, username, email, display_name, is_admin, storage_quota, disabled_at, created_at, updated_at";
     let row = sqlx::query_as::<_, UserRow>(&format!("SELECT {cols} FROM users WHERE id = $1"))
         .bind(user_id)
         .fetch_optional(&state.db_pool)
         .await
         .map_err(db_error)?
-        .ok_or_else(|| not_found("User not found"))?;
+        .ok_or_else(|| admin_not_found("User not found"))?;
 
     let storage_used_bytes: i64 = sqlx::query_scalar(
         "SELECT COALESCE(SUM(size), 0)::BIGINT FROM (
@@ -378,7 +378,7 @@ pub async fn update_admin_user(
     AdminUser { user_id: actor_id }: AdminUser,
     Path(user_id): Path<Uuid>,
     Json(req): Json<UpdateUserRequest>,
-) -> Result<Json<AdminUserResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<AdminUserResponse>, axum::response::Response> {
     let cols = "id, username, email, display_name, is_admin, storage_quota, disabled_at, created_at, updated_at";
 
     // Fetch current user
@@ -387,7 +387,7 @@ pub async fn update_admin_user(
         .fetch_optional(&state.db_pool)
         .await
         .map_err(db_error)?
-        .ok_or_else(|| not_found("User not found"))?;
+        .ok_or_else(|| admin_not_found("User not found"))?;
 
     let new_display_name = req
         .display_name
@@ -404,10 +404,10 @@ pub async fn update_admin_user(
     // Validate and hash password if provided
     let password_hash = if let Some(ref pw) = req.password {
         if pw.len() < 8 {
-            return Err(bad_request("Password must be at least 8 characters"));
+            return Err(admin_bad_request("Password must be at least 8 characters"));
         }
         let hash = PasswordHasher::hash(pw)
-            .map_err(|_| internal_error("Password hashing failed"))?;
+            .map_err(|_| admin_internal_error("Password hashing failed"))?;
         Some(hash)
     } else {
         None
@@ -438,7 +438,7 @@ pub async fn update_admin_user(
         .fetch_optional(&state.db_pool)
         .await
         .map_err(db_error)?
-        .ok_or_else(|| not_found("User not found"))?;
+        .ok_or_else(|| admin_not_found("User not found"))?;
 
     if password_changed {
         // Invalidate all sessions for the user
@@ -491,9 +491,9 @@ pub async fn disable_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(user_id): Path<Uuid>,
-) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<StatusCode, axum::response::Response> {
     if user_id == actor_id {
-        return Err(bad_request("Cannot disable your own account"));
+        return Err(admin_bad_request("Cannot disable your own account"));
     }
 
     sqlx::query("UPDATE users SET disabled_at = NOW() WHERE id = $1")
@@ -535,7 +535,7 @@ pub async fn enable_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(user_id): Path<Uuid>,
-) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<StatusCode, axum::response::Response> {
     sqlx::query("UPDATE users SET disabled_at = NULL WHERE id = $1")
         .bind(user_id)
         .execute(&state.db_pool)
@@ -560,9 +560,9 @@ pub async fn delete_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(user_id): Path<Uuid>,
-) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<StatusCode, axum::response::Response> {
     if user_id == actor_id {
-        return Err(bad_request("Cannot delete your own account"));
+        return Err(admin_bad_request("Cannot delete your own account"));
     }
 
     // Collect distinct storage keys before deletion
@@ -608,29 +608,7 @@ pub async fn delete_admin_user(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn db_error(e: sqlx::Error) -> (StatusCode, Json<serde_json::Value>) {
+fn db_error(e: sqlx::Error) -> axum::response::Response {
     tracing::error!("Database error: {:?}", e);
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": "Database error" })),
-    )
-}
-
-fn not_found(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::NOT_FOUND, Json(json!({ "error": msg })))
-}
-
-fn bad_request(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::BAD_REQUEST, Json(json!({ "error": msg })))
-}
-
-fn internal_error(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": msg })),
-    )
-}
-
-fn conflict_error(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::CONFLICT, Json(json!({ "error": msg })))
+    admin_internal_error("Database error")
 }

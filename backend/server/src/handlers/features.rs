@@ -1,7 +1,7 @@
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Serialize;
 
-use crate::{handlers::AuthenticatedUser, AppState};
+use crate::{handlers::AuthenticatedUser, state::DatabaseState};
 
 #[derive(Serialize)]
 pub struct FeaturesResponse {
@@ -9,7 +9,7 @@ pub struct FeaturesResponse {
 }
 
 pub async fn get_features(
-    State(state): State<AppState>,
+    State(db): State<DatabaseState>,
     AuthenticatedUser { .. }: AuthenticatedUser,
 ) -> Result<Json<FeaturesResponse>, (StatusCode, Json<crate::handlers::ErrorResponse>)> {
     let active: bool = sqlx::query_scalar(
@@ -18,7 +18,7 @@ pub async fn get_features(
             WHERE key = 'invite_email' AND status = 'active'
         )",
     )
-    .fetch_one(&state.db_pool)
+    .fetch_one(&db.db_pool)
     .await
     .map_err(|e| {
         (

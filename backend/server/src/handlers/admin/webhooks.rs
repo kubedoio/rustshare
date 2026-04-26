@@ -12,7 +12,7 @@ use serde_json::json;
 use sha2::Sha256;
 use uuid::Uuid;
 
-use super::log_admin_action;
+use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_action};
 use crate::{handlers::AdminUser, AppState};
 
 // ---------------------------------------------------------------------------
@@ -117,7 +117,7 @@ const COLS: &str = "id, name, url, secret_enc, enabled, events, created_by, crea
 pub async fn list_webhooks(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
-) -> Result<Json<Vec<WebhookResponse>>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<Vec<WebhookResponse>>, axum::response::Response> {
     let rows = sqlx::query_as::<_, WebhookRow>(&format!(
         "SELECT {COLS} FROM webhook_configs ORDER BY created_at DESC"
     ))
@@ -133,13 +133,13 @@ pub async fn create_webhook(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Json(req): Json<CreateWebhookRequest>,
-) -> Result<(StatusCode, Json<WebhookResponse>), (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(StatusCode, Json<WebhookResponse>), axum::response::Response> {
     // Validate
     if req.name.trim().is_empty() {
-        return Err(bad_request("name must not be empty"));
+        return Err(admin_bad_request("name must not be empty"));
     }
     if req.url.trim().is_empty() {
-        return Err(bad_request("url must not be empty"));
+        return Err(admin_bad_request("url must not be empty"));
     }
     validate_events(&req.events)?;
 
@@ -182,7 +182,7 @@ pub async fn update_webhook(
     AdminUser { user_id: actor_id }: AdminUser,
     Path(webhook_id): Path<Uuid>,
     Json(req): Json<UpdateWebhookRequest>,
-) -> Result<Json<WebhookResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<WebhookResponse>, axum::response::Response> {
     // Fetch current
     let current = sqlx::query_as::<_, WebhookRow>(&format!(
         "SELECT {COLS} FROM webhook_configs WHERE id = $1"
@@ -191,7 +191,7 @@ pub async fn update_webhook(
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
-    .ok_or_else(|| not_found("Webhook not found"))?;
+    .ok_or_else(|| admin_not_found("Webhook not found"))?;
 
     let new_name = req.name.as_deref().unwrap_or(&current.name).to_string();
     let new_url = req.url.as_deref().unwrap_or(&current.url).to_string();
@@ -231,7 +231,7 @@ pub async fn update_webhook(
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
-    .ok_or_else(|| not_found("Webhook not found"))?;
+    .ok_or_else(|| admin_not_found("Webhook not found"))?;
 
     log_admin_action(
         &state.db_pool,
@@ -251,7 +251,7 @@ pub async fn delete_webhook(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(webhook_id): Path<Uuid>,
-) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<StatusCode, axum::response::Response> {
     let result = sqlx::query("DELETE FROM webhook_configs WHERE id = $1")
         .bind(webhook_id)
         .execute(&state.db_pool)
@@ -259,7 +259,7 @@ pub async fn delete_webhook(
         .map_err(db_error)?;
 
     if result.rows_affected() == 0 {
-        return Err(not_found("Webhook not found"));
+        return Err(admin_not_found("Webhook not found"));
     }
 
     log_admin_action(
@@ -282,7 +282,7 @@ pub async fn test_webhook(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
     Path(webhook_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<serde_json::Value>, axum::response::Response> {
     // Fetch webhook
     let webhook = sqlx::query_as::<_, WebhookRow>(&format!(
         "SELECT {COLS} FROM webhook_configs WHERE id = $1"
@@ -291,7 +291,7 @@ pub async fn test_webhook(
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
-    .ok_or_else(|| not_found("Webhook not found"))?;
+    .ok_or_else(|| admin_not_found("Webhook not found"))?;
 
     // Build payload
     let now_secs = std::time::SystemTime::now()
@@ -300,13 +300,13 @@ pub async fn test_webhook(
         .as_secs();
     let payload = json!({"event": "ping", "timestamp": now_secs});
     let body_str = serde_json::to_string(&payload)
-        .map_err(|_| internal_error("Failed to serialize payload"))?;
+        .map_err(|_| admin_internal_error("Failed to serialize payload"))?;
 
     // Build HTTP client with 10s timeout
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|e| internal_error(&format!("Failed to build HTTP client: {e}")))?;
+        .map_err(|e| admin_internal_error(&format!("Failed to build HTTP client: {e}")))?;
 
     let mut request = client
         .post(&webhook.url)
@@ -316,10 +316,10 @@ pub async fn test_webhook(
     // If there is a secret, compute HMAC-SHA256 and add signature header
     if let Some(ref enc) = webhook.secret_enc {
         let plaintext = decrypt_secret(enc, &state.secret_key)
-            .map_err(|_| internal_error("Failed to decrypt webhook secret"))?;
+            .map_err(|_| admin_internal_error("Failed to decrypt webhook secret"))?;
 
         let mut mac = Hmac::<Sha256>::new_from_slice(plaintext.as_bytes())
-            .map_err(|_| internal_error("Failed to create HMAC"))?;
+            .map_err(|_| admin_internal_error("Failed to create HMAC"))?;
         mac.update(body_str.as_bytes());
         let result = mac.finalize();
         let sig_hex = hex::encode(result.into_bytes());
@@ -352,13 +352,13 @@ pub async fn test_webhook(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn validate_events(events: &[String]) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+fn validate_events(events: &[String]) -> Result<(), axum::response::Response> {
     if events.is_empty() {
-        return Err(bad_request("events array must not be empty"));
+        return Err(admin_bad_request("events array must not be empty"));
     }
     for event in events {
         if !VALID_EVENTS.contains(&event.as_str()) {
-            return Err(bad_request(&format!("Unknown event type: {event}")));
+            return Err(admin_bad_request(&format!("Unknown event type: {event}")));
         }
     }
     Ok(())
@@ -367,36 +367,18 @@ fn validate_events(events: &[String]) -> Result<(), (StatusCode, Json<serde_json
 fn encrypt_optional_secret(
     secret: Option<&str>,
     state: &AppState,
-) -> Result<Option<String>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Option<String>, axum::response::Response> {
     match secret {
         Some(s) if !s.is_empty() => {
             let enc = encrypt_secret(s, &state.secret_key)
-                .map_err(|_| internal_error("Failed to encrypt webhook secret"))?;
+                .map_err(|_| admin_internal_error("Failed to encrypt webhook secret"))?;
             Ok(Some(enc))
         }
         _ => Ok(None),
     }
 }
 
-fn db_error(e: sqlx::Error) -> (StatusCode, Json<serde_json::Value>) {
+fn db_error(e: sqlx::Error) -> axum::response::Response {
     tracing::error!("Database error: {:?}", e);
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": "Database error" })),
-    )
-}
-
-fn not_found(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::NOT_FOUND, Json(json!({ "error": msg })))
-}
-
-fn bad_request(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::BAD_REQUEST, Json(json!({ "error": msg })))
-}
-
-fn internal_error(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": msg })),
-    )
+    admin_internal_error("Database error")
 }

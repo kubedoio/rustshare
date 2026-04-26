@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::{uuid, Uuid};
 
-use super::log_admin_action;
+use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_action};
 use crate::{
     handlers::AdminUser,
     oidc_runtime::{invalidate_oidc_runtime_cache, OIDC_CONFIG_ID},
@@ -177,7 +177,7 @@ pub struct UpdateSmtpConfigRequest {
 pub async fn get_oidc_config(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
-) -> Result<Json<OidcConfigResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<OidcConfigResponse>, axum::response::Response> {
     let row = sqlx::query_as::<_, OidcConfigRow>(
         "SELECT id, enabled, provider_name, client_id, client_secret_enc,
                 issuer_url, redirect_url, login_label, scopes, auto_provision_users, device_pair_code_ttl_seconds,
@@ -189,7 +189,7 @@ pub async fn get_oidc_config(
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
-    .ok_or_else(|| not_found("OIDC config not found"))?;
+    .ok_or_else(|| admin_not_found("OIDC config not found"))?;
 
     Ok(Json(OidcConfigResponse::from(row)))
 }
@@ -199,11 +199,11 @@ pub async fn update_oidc_config(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Json(req): Json<UpdateOidcConfigRequest>,
-) -> Result<Json<OidcConfigResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<OidcConfigResponse>, axum::response::Response> {
     // Validate TTL value
     if let Some(ttl) = req.device_pair_code_ttl_seconds {
         if ![300, 600, 1800].contains(&ttl) {
-            return Err(bad_request(
+            return Err(admin_bad_request(
                 "device_pair_code_ttl_seconds must be 300, 600, or 1800",
             ));
         }
@@ -221,7 +221,7 @@ pub async fn update_oidc_config(
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
-    .ok_or_else(|| not_found("OIDC config not found"))?;
+    .ok_or_else(|| admin_not_found("OIDC config not found"))?;
 
     let new_enabled = req.enabled.unwrap_or(current.enabled);
     let new_provider_name = req.provider_name.or(current.provider_name);
@@ -244,7 +244,7 @@ pub async fn update_oidc_config(
     let new_secret_enc: Option<String> = match req.client_secret {
         Some(ref s) if !s.is_empty() => {
             let enc = encrypt_secret(s, &state.secret_key)
-                .map_err(|_| internal_error("Failed to encrypt client secret"))?;
+                .map_err(|_| admin_internal_error("Failed to encrypt client secret"))?;
             Some(enc)
         }
         Some(_) => None, // empty string → clear
@@ -285,7 +285,7 @@ pub async fn update_oidc_config(
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
-    .ok_or_else(|| not_found("OIDC config not found"))?;
+    .ok_or_else(|| admin_not_found("OIDC config not found"))?;
 
     log_admin_action(
         &state.db_pool,
@@ -306,7 +306,7 @@ pub async fn update_oidc_config(
 pub async fn test_oidc_config(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<serde_json::Value>, axum::response::Response> {
     // Read current issuer_url
     let row = sqlx::query_as::<_, OidcConfigRow>(
         "SELECT id, enabled, provider_name, client_id, client_secret_enc,
@@ -319,11 +319,11 @@ pub async fn test_oidc_config(
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
-    .ok_or_else(|| not_found("OIDC config not found"))?;
+    .ok_or_else(|| admin_not_found("OIDC config not found"))?;
 
     let issuer_url = row
         .issuer_url
-        .ok_or_else(|| bad_request("No issuer URL configured"))?;
+        .ok_or_else(|| admin_bad_request("No issuer URL configured"))?;
 
     // Build discovery URL
     let discovery_url = if issuer_url.ends_with("/.well-known/openid-configuration") {
@@ -338,7 +338,7 @@ pub async fn test_oidc_config(
     let client = openidconnect::reqwest::ClientBuilder::new()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|e| internal_error(&format!("Failed to build HTTP client: {}", e)))?;
+        .map_err(|e| admin_internal_error(&format!("Failed to build HTTP client: {}", e)))?;
 
     match client.get(&discovery_url).send().await {
         Ok(resp) => {
@@ -376,7 +376,7 @@ pub async fn test_oidc_config(
 pub async fn get_smtp_config(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
-) -> Result<Json<SmtpConfigResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<SmtpConfigResponse>, axum::response::Response> {
     let row = sqlx::query_as::<_, SmtpConfigRow>(
         "SELECT id, enabled, host, port, username, password_enc,
                 from_address, from_name, tls_mode, updated_by, updated_at
@@ -387,7 +387,7 @@ pub async fn get_smtp_config(
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
-    .ok_or_else(|| not_found("SMTP config not found"))?;
+    .ok_or_else(|| admin_not_found("SMTP config not found"))?;
 
     Ok(Json(SmtpConfigResponse::from(row)))
 }
@@ -397,7 +397,7 @@ pub async fn update_smtp_config(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Json(req): Json<UpdateSmtpConfigRequest>,
-) -> Result<Json<SmtpConfigResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<SmtpConfigResponse>, axum::response::Response> {
     // Fetch current row to preserve unset fields
     let current = sqlx::query_as::<_, SmtpConfigRow>(
         "SELECT id, enabled, host, port, username, password_enc,
@@ -409,7 +409,7 @@ pub async fn update_smtp_config(
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
-    .ok_or_else(|| not_found("SMTP config not found"))?;
+    .ok_or_else(|| admin_not_found("SMTP config not found"))?;
 
     let new_enabled = req.enabled.unwrap_or(current.enabled);
     let new_host = req.host.or(current.host);
@@ -426,7 +426,7 @@ pub async fn update_smtp_config(
     let new_password_enc: Option<String> = match req.password {
         Some(ref s) if !s.is_empty() => {
             let enc = encrypt_secret(s, &state.secret_key)
-                .map_err(|_| internal_error("Failed to encrypt SMTP password"))?;
+                .map_err(|_| admin_internal_error("Failed to encrypt SMTP password"))?;
             Some(enc)
         }
         Some(_) => None, // empty string → clear
@@ -462,7 +462,7 @@ pub async fn update_smtp_config(
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
-    .ok_or_else(|| not_found("SMTP config not found"))?;
+    .ok_or_else(|| admin_not_found("SMTP config not found"))?;
 
     log_admin_action(
         &state.db_pool,
@@ -519,14 +519,14 @@ pub struct UpdateSecurityConfigRequest {
 pub async fn get_security_config(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
-) -> Result<Json<SecurityConfigResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<SecurityConfigResponse>, axum::response::Response> {
     let config = state
         .metadata_store
         .get_security_config()
         .await
         .map_err(|e| {
             tracing::error!("Failed to get security config: {}", e);
-            internal_error("Failed to get security config")
+            admin_internal_error("Failed to get security config")
         })?;
 
     Ok(Json(SecurityConfigResponse {
@@ -542,16 +542,16 @@ pub async fn update_security_config(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Json(req): Json<UpdateSecurityConfigRequest>,
-) -> Result<Json<SecurityConfigResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<SecurityConfigResponse>, axum::response::Response> {
     if let Some(max) = req.max_login_attempts {
         if max < 1 || max > 100 {
-            return Err(bad_request("max_login_attempts must be between 1 and 100"));
+            return Err(admin_bad_request("max_login_attempts must be between 1 and 100"));
         }
     }
 
     if let Some(duration) = req.login_block_duration_minutes {
         if duration < 1 || duration > 10080 {
-            return Err(bad_request(
+            return Err(admin_bad_request(
                 "login_block_duration_minutes must be between 1 and 10080 (7 days)",
             ));
         }
@@ -567,7 +567,7 @@ pub async fn update_security_config(
         .await
         .map_err(|e| {
             tracing::error!("Failed to update security config: {}", e);
-            internal_error("Failed to update security config")
+            admin_internal_error("Failed to update security config")
         })?;
 
     log_admin_action(
@@ -596,25 +596,7 @@ pub async fn update_security_config(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn db_error(e: sqlx::Error) -> (StatusCode, Json<serde_json::Value>) {
+fn db_error(e: sqlx::Error) -> axum::response::Response {
     tracing::error!("Database error: {:?}", e);
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": "Database error" })),
-    )
-}
-
-fn not_found(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::NOT_FOUND, Json(json!({ "error": msg })))
-}
-
-fn bad_request(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::BAD_REQUEST, Json(json!({ "error": msg })))
-}
-
-fn internal_error(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": msg })),
-    )
+    admin_internal_error("Database error")
 }

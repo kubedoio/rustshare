@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use super::log_admin_action;
+use super::{admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, log_admin_action};
 use crate::{handlers::AdminUser, AppState};
 
 // ---------------------------------------------------------------------------
@@ -104,7 +104,7 @@ struct MemberRow {
 pub async fn list_groups(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
-) -> Result<Json<Vec<GroupResponse>>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<Vec<GroupResponse>>, axum::response::Response> {
     let rows = sqlx::query_as::<_, GroupRow>(
         r#"
         SELECT
@@ -146,9 +146,9 @@ pub async fn create_group(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Json(req): Json<CreateGroupRequest>,
-) -> Result<(StatusCode, Json<GroupResponse>), (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(StatusCode, Json<GroupResponse>), axum::response::Response> {
     if req.name.trim().is_empty() {
-        return Err(bad_request("Group name must not be empty"));
+        return Err(admin_bad_request("Group name must not be empty"));
     }
 
     let new_id = Uuid::new_v4();
@@ -169,7 +169,7 @@ pub async fn create_group(
     .map_err(|e| {
         if let sqlx::Error::Database(ref db_err) = e {
             if db_err.constraint() == Some("user_groups_name_key") {
-                return conflict_error("A group with that name already exists");
+                return admin_conflict("A group with that name already exists");
             }
         }
         db_error(e)
@@ -204,7 +204,7 @@ pub async fn get_group(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
     Path(group_id): Path<Uuid>,
-) -> Result<Json<GroupDetailResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<GroupDetailResponse>, axum::response::Response> {
     let row = sqlx::query_as::<_, GroupDetailRow>(
         "SELECT id, name, description, created_by, created_at, updated_at
          FROM user_groups WHERE id = $1",
@@ -213,7 +213,7 @@ pub async fn get_group(
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
-    .ok_or_else(|| not_found("Group not found"))?;
+    .ok_or_else(|| admin_not_found("Group not found"))?;
 
     let members = sqlx::query_as::<_, MemberRow>(
         r#"
@@ -254,7 +254,7 @@ pub async fn update_group(
     AdminUser { user_id: actor_id }: AdminUser,
     Path(group_id): Path<Uuid>,
     Json(req): Json<UpdateGroupRequest>,
-) -> Result<Json<GroupResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<GroupResponse>, axum::response::Response> {
     // Fetch current group
     let current = sqlx::query_as::<_, GroupDetailRow>(
         "SELECT id, name, description, created_by, created_at, updated_at
@@ -264,11 +264,11 @@ pub async fn update_group(
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
-    .ok_or_else(|| not_found("Group not found"))?;
+    .ok_or_else(|| admin_not_found("Group not found"))?;
 
     let new_name = req.name.as_deref().unwrap_or(&current.name).to_string();
     if new_name.trim().is_empty() {
-        return Err(bad_request("Group name must not be empty"));
+        return Err(admin_bad_request("Group name must not be empty"));
     }
     // description: None means "keep current"; Some(None) not possible with this type,
     // so we use Option<String>: None = keep, Some(v) = set (including clearing to empty).
@@ -293,12 +293,12 @@ pub async fn update_group(
     .map_err(|e| {
         if let sqlx::Error::Database(ref db_err) = e {
             if db_err.constraint() == Some("user_groups_name_key") {
-                return conflict_error("A group with that name already exists");
+                return admin_conflict("A group with that name already exists");
             }
         }
         db_error(e)
     })?
-    .ok_or_else(|| not_found("Group not found"))?;
+    .ok_or_else(|| admin_not_found("Group not found"))?;
 
     log_admin_action(
         &state.db_pool,
@@ -333,7 +333,7 @@ pub async fn delete_group(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(group_id): Path<Uuid>,
-) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<StatusCode, axum::response::Response> {
     // Verify group exists and grab name for audit log
     let row = sqlx::query_as::<_, GroupDetailRow>(
         "SELECT id, name, description, created_by, created_at, updated_at
@@ -343,7 +343,7 @@ pub async fn delete_group(
     .fetch_optional(&state.db_pool)
     .await
     .map_err(db_error)?
-    .ok_or_else(|| not_found("Group not found"))?;
+    .ok_or_else(|| admin_not_found("Group not found"))?;
 
     // Log before deletion so the target still exists in the DB
     log_admin_action(
@@ -372,7 +372,7 @@ pub async fn add_member(
     AdminUser { user_id: actor_id }: AdminUser,
     Path(group_id): Path<Uuid>,
     Json(req): Json<AddMemberRequest>,
-) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<StatusCode, axum::response::Response> {
     // Verify group exists
     let group_exists: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1)")
@@ -381,7 +381,7 @@ pub async fn add_member(
             .await
             .map_err(db_error)?;
     if !group_exists {
-        return Err(not_found("Group not found"));
+        return Err(admin_not_found("Group not found"));
     }
 
     // Verify user exists
@@ -391,7 +391,7 @@ pub async fn add_member(
         .await
         .map_err(db_error)?;
     if !user_exists {
-        return Err(not_found("User not found"));
+        return Err(admin_not_found("User not found"));
     }
 
     let result = sqlx::query(
@@ -409,7 +409,7 @@ pub async fn add_member(
     .map_err(db_error)?;
 
     if result.rows_affected() == 0 {
-        return Err(conflict_error("User is already a member of this group"));
+        return Err(admin_conflict("User is already a member of this group"));
     }
 
     log_admin_action(
@@ -430,7 +430,7 @@ pub async fn remove_member(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path((group_id, user_id)): Path<(Uuid, Uuid)>,
-) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<StatusCode, axum::response::Response> {
     let result = sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
         .bind(group_id)
         .bind(user_id)
@@ -439,7 +439,7 @@ pub async fn remove_member(
         .map_err(db_error)?;
 
     if result.rows_affected() == 0 {
-        return Err(not_found("Membership not found"));
+        return Err(admin_not_found("Membership not found"));
     }
 
     log_admin_action(
@@ -459,22 +459,7 @@ pub async fn remove_member(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn db_error(e: sqlx::Error) -> (StatusCode, Json<serde_json::Value>) {
+fn db_error(e: sqlx::Error) -> axum::response::Response {
     tracing::error!("Database error: {:?}", e);
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": "Database error" })),
-    )
-}
-
-fn not_found(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::NOT_FOUND, Json(json!({ "error": msg })))
-}
-
-fn bad_request(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::BAD_REQUEST, Json(json!({ "error": msg })))
-}
-
-fn conflict_error(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::CONFLICT, Json(json!({ "error": msg })))
+    admin_internal_error("Database error")
 }

@@ -20,6 +20,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::AppState;
+use super::ErrorResponse;
 
 // ---------------------------------------------------------------------------
 // Query parameters
@@ -87,7 +88,7 @@ fn scim_json_response<T: serde::Serialize>(status: StatusCode, body: T) -> Respo
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("JSON serialization error: {}", e)})),
+                Json(ErrorResponse::new(format!("JSON serialization error: {}", e))),
             )
                 .into_response();
         }
