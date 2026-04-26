@@ -55,7 +55,7 @@ impl UserRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        row.map(Self::map_user_row).transpose()?
+        row.map(Self::map_user_row).transpose().map_err(|e| e.into())
     }
 
     /// Find a user by ID.
@@ -72,7 +72,7 @@ impl UserRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        row.map(Self::map_user_row).transpose()?
+        row.map(Self::map_user_row).transpose().map_err(|e| e.into())
     }
 
     /// Update user's theme preference.
