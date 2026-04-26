@@ -1,6 +1,6 @@
 //! Admin OIDC and SMTP config handlers.
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use rustshare_crypto::encrypt_secret;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -355,7 +355,7 @@ pub async fn test_oidc_config(
                         "success": false,
                         "message": format!("Discovery URL returned HTTP {}", status_code)
                     })),
-                ))
+                ).into_response())
             }
         }
         Err(e) => Err((
@@ -364,7 +364,7 @@ pub async fn test_oidc_config(
                 "success": false,
                 "message": format!("{}", e)
             })),
-        )),
+        ).into_response()),
     }
 }
 
