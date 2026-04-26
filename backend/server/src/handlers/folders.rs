@@ -550,12 +550,13 @@ pub async fn restore_folder_from_trash(
         .await
         .map_err(|e| {
             use axum::response::IntoResponse;
-            match e {
-                rustshare_core::services::FolderError::DuplicateName { .. } => {
-                    (StatusCode::CONFLICT, Json(super::ErrorResponse::new(e.to_string())))
-                        .into_response()
-                }
-                _ => folder_error_response(e),
+            let msg = e.to_string();
+            if msg.contains("already exists") {
+                (StatusCode::CONFLICT, Json(super::ErrorResponse::new(msg)))
+                    .into_response()
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(super::ErrorResponse::new(msg)))
+                    .into_response()
             }
         })?;
 

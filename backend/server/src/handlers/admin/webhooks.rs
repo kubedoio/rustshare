@@ -3,6 +3,7 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
+    response::IntoResponse,
     Json,
 };
 use hmac::{Hmac, Mac};
@@ -338,13 +339,13 @@ pub async fn test_webhook(
                         "status": "error",
                         "detail": format!("Webhook returned HTTP {http_status}")
                     })),
-                ))
+                ).into_response())
             }
         }
         Err(e) => Err((
             StatusCode::BAD_GATEWAY,
             Json(json!({"status": "error", "detail": e.to_string()})),
-        )),
+        ).into_response()),
     }
 }
 
