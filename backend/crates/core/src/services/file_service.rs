@@ -191,7 +191,7 @@ where
             .permission_resolver
             .check_file_permission(user_id, file_id, required)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
         if !has {
             return Err(FileError::PermissionDenied { file_id, user_id });
         }
@@ -268,7 +268,7 @@ where
                 .metadata_store
                 .find_folder_by_id(folder_id)
                 .await
-                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+                .map_err(|e| FileError::Database(e.to_string()))?
                 .ok_or(FileError::ParentFolderNotFound(folder_id))?;
 
             // Verify permissions: user must own the folder or have Edit permission
@@ -276,7 +276,7 @@ where
                 .permission_resolver
                 .check_folder_permission(owner_id, folder_id, SharePermissions::Edit)
                 .await
-                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+                .map_err(|e| FileError::Database(e.to_string()))?;
 
             if !has_permission {
                 return Err(FileError::PermissionDenied {
@@ -317,7 +317,7 @@ where
             .metadata_store
             .find_file_by_path(&path, owner_id)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+            .map_err(|e| FileError::Database(e.to_string()))?
         {
             if existing.content_hash == content_hash && existing.size == size {
                 return Ok(existing);
@@ -337,7 +337,7 @@ where
             self.metadata_store
                 .update_file(&existing)
                 .await
-                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+                .map_err(|e| FileError::Database(e.to_string()))?;
 
             let version = FileVersion::new(
                 existing.id,
@@ -352,7 +352,7 @@ where
             self.metadata_store
                 .create_file_version(&version)
                 .await
-                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+                .map_err(|e| FileError::Database(e.to_string()))?;
 
             self.queue_replication_if_needed(existing.id, owner_id, &version)
                 .await?;
@@ -436,7 +436,7 @@ where
         self.metadata_store
             .create_file(&file)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         // Create version 1 entry
         let version = FileVersion::new(
@@ -460,7 +460,7 @@ where
         self.metadata_store
             .create_file_version(&version)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         self.queue_replication_if_needed(file.id, owner_id, &version)
             .await?;
@@ -490,7 +490,7 @@ where
             .metadata_store
             .find_file_by_id(file_id)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+            .map_err(|e| FileError::Database(e.to_string()))?
             .ok_or(FileError::NotFound(file_id))?;
 
         Ok(file)
@@ -599,7 +599,7 @@ where
         self.metadata_store
             .update_file(&file)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         // 6. Create FileVersion snapshot
         let version = FileVersion::new(
@@ -615,7 +615,7 @@ where
         self.metadata_store
             .create_file_version(&version)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         self.queue_replication_if_needed(file.id, user_id, &version)
             .await?;
@@ -681,7 +681,7 @@ where
             .metadata_store
             .list_file_versions(file_id)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         Ok(versions)
     }
@@ -723,7 +723,7 @@ where
             .metadata_store
             .find_file_version(file_id, version_number)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+            .map_err(|e| FileError::Database(e.to_string()))?
             .ok_or(FileError::VersionNotFound(version_number))?;
 
         // 3. Read content from RustFS (using the old version's storage key)
@@ -744,7 +744,7 @@ where
         self.metadata_store
             .update_file(&file)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         // 5. Create FileVersion snapshot
         let version = FileVersion::new(
@@ -760,7 +760,7 @@ where
         self.metadata_store
             .create_file_version(&version)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         self.queue_replication_if_needed(file.id, user_id, &version)
             .await?;
@@ -830,7 +830,7 @@ where
                 .metadata_store
                 .find_folder_by_id(folder_id)
                 .await
-                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+                .map_err(|e| FileError::Database(e.to_string()))?
                 .ok_or(FileError::FolderNotFound(folder_id))?;
             format!("{}/{}", folder.path, file.name)
         } else {
@@ -849,7 +849,7 @@ where
         self.metadata_store
             .update_file(&file)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         // 6. Create FileMoved event
         let payload = FileMovedPayload {
@@ -877,7 +877,7 @@ where
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         Ok(file)
     }
@@ -908,7 +908,7 @@ where
                 .metadata_store
                 .find_folder_by_id(parent_id)
                 .await
-                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+                .map_err(|e| FileError::Database(e.to_string()))?
                 .ok_or(FileError::FolderNotFound(parent_id))?;
 
             if parent.path == "/" {
@@ -927,7 +927,7 @@ where
         self.metadata_store
             .update_file(&file)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         let payload = FileRenamedPayload {
             file_id,
@@ -953,7 +953,7 @@ where
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         Ok(file)
     }
@@ -1001,13 +1001,13 @@ where
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         // 4. Delete file from metadata store (CASCADE will handle file_versions)
         self.metadata_store
             .delete_file(file_id)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         // Note: We don't delete from RustFS (blob storage) because of deduplication
         // The same content hash might be used by other files or versions
@@ -1103,7 +1103,7 @@ where
         self.metadata_store
             .update_file(&file)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         // 7. Create FileVersion snapshot
         let version = FileVersion::new(
@@ -1125,7 +1125,7 @@ where
         self.metadata_store
             .create_file_version(&version)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         self.queue_replication_if_needed(file.id, user_id, &version)
             .await?;
@@ -1299,7 +1299,7 @@ where
             .metadata_store
             .count_enabled_replication_targets()
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         if target_count == 0 {
             return Ok(());
@@ -1310,12 +1310,12 @@ where
         self.metadata_store
             .create_replication_job(&job)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         self.metadata_store
             .update_file_version_replication_state(version.id, ReplicationState::Queued)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         self.publish_replication_state_event(ReplicationEventContext {
             file_id,

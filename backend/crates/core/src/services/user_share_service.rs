@@ -546,7 +546,7 @@ where
                 });
             }
             Err(e) => {
-                return Err(ShareError::Database(sqlx::Error::Protocol(e.to_string())));
+                return Err(ShareError::Database(e.to_string()));
             }
         };
 
@@ -625,7 +625,7 @@ where
             .permission_resolver
             .resolve_permission(requesting_user, resource)
             .await
-            .map_err(|e| ShareError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         if permission != Some(SharePermissions::Admin) {
             return Err(ShareError::InsufficientPermission {
@@ -732,7 +732,7 @@ where
             .permission_resolver
             .resolve_permission(requesting_user, resource)
             .await
-            .map_err(|e| ShareError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         if permission != Some(SharePermissions::Admin) {
             return Err(ShareError::InsufficientPermission {

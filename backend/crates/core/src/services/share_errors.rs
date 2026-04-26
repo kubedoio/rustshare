@@ -43,7 +43,7 @@ pub enum ShareError {
 
     /// Database operation failed.
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(String),
 
     /// Password hashing operation failed.
     #[error("Password hashing error: {0}")]

@@ -48,7 +48,7 @@ pub enum FileError {
 
     /// Database operation failed.
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(String),
 
     /// Storage operation failed.
     #[error("Storage error: {0}")]
@@ -102,7 +102,7 @@ pub enum FolderError {
 
     /// Database operation failed.
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(String),
 }
 
 #[cfg(test)]
