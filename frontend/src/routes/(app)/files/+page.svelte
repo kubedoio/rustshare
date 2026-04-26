@@ -737,8 +737,8 @@
 		}
 	}
 
-	function handleBreadcrumbNavigate(event: { folderId: string | null }) {
-		const targetId = event.folderId;
+	function handleBreadcrumbNavigate(event: CustomEvent<{ folderId: string | null }>) {
+		const targetId = event.detail.folderId;
 		if (targetId === null) {
 			// Navigate to root of current root
 			if (activeRoot === 'shared') {

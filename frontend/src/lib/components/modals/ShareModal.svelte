@@ -85,7 +85,7 @@
 		createQuery({
 			queryKey: ['my-groups'],
 			queryFn: listMyGroups,
-			enabled: open && activeTab === 'share'
+			enabled: open && activeTab === ('share' as any)
 		})
 	);
 
@@ -97,7 +97,7 @@
 				resourceType === 'folder'
 					? listFolderGroupShares(resourceId)
 					: listFileGroupShares(resourceId),
-			enabled: open && activeTab === 'share'
+			enabled: open && activeTab === ('share' as any)
 		})
 	);
 
