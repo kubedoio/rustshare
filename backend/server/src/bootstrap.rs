@@ -3,7 +3,7 @@ use crate::handlers::ensure_optional_seed_user;
 use crate::oidc_runtime::{seed_oidc_config_from_env, OidcRuntimeCache};
 use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
 use crate::trash_cleanup::{spawn_trash_cleanup_worker, TrashCleanupConfig};
-use crate::{AppState, AppAiService, AppUploadService, AppUserShareService};
+use crate::state::{AppState, AppAiService, AppUploadService, AppUserShareService};
 use anyhow::Result;
 use rustshare_auth::{JwtManager, PasswordHasher};
 #[allow(deprecated)]

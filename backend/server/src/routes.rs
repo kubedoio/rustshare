@@ -1,5 +1,5 @@
 use axum::Router;
-use crate::AppState;
+use crate::state::AppState;
 
 pub fn health_routes() -> Router<AppState> {
     use axum::routing::get;
