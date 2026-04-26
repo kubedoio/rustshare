@@ -1225,7 +1225,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .notification_repo
             .was_notified(user_id, share.id)
             .await
-            .map_err(ShareError::Database)?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         if was_notified {
             return Ok(());
@@ -1322,7 +1322,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         self.notification_repo
             .record_notification(user_id, share.id)
             .await
-            .map_err(ShareError::Database)?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         Ok(())
     }

@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 use crate::domain::{
-    File, FileVersion, Folder, FolderId, ReplicationJob, ReplicationState, UserId,
+    File, FileId, FileVersion, Folder, FolderId, ReplicationJob, ReplicationState, UserId,
 };
 use crate::events::{
     AggregateType, Event, EventBroadcaster, EventType, FileDeletedPayload, FileModifiedPayload,

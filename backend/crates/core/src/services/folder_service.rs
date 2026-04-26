@@ -194,7 +194,7 @@ where
             folder.id,
             AggregateType::Folder,
             serde_json::to_value(payload)
-                .map_err(|e| FolderError::Database(sqlx::Error::Decode(Box::new(e))))?,
+                .map_err(|e| FolderError::Database(e.to_string()))?,
             owner_id,
         );
 
@@ -374,7 +374,7 @@ where
             folder_id,
             AggregateType::Folder,
             serde_json::to_value(payload)
-                .map_err(|e| FolderError::Database(sqlx::Error::Decode(Box::new(e))))?,
+                .map_err(|e| FolderError::Database(e.to_string()))?,
             user_id,
         );
 
@@ -483,7 +483,7 @@ where
             folder_id,
             AggregateType::Folder,
             serde_json::to_value(payload)
-                .map_err(|e| FolderError::Database(sqlx::Error::Decode(Box::new(e))))?,
+                .map_err(|e| FolderError::Database(e.to_string()))?,
             user_id,
         );
 
@@ -543,7 +543,7 @@ where
                 descendant.id,
                 AggregateType::Folder,
                 serde_json::to_value(payload)
-                    .map_err(|e| FolderError::Database(sqlx::Error::Decode(Box::new(e))))?,
+                    .map_err(|e| FolderError::Database(e.to_string()))?,
                 user_id,
             );
 
