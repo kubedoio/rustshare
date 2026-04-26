@@ -201,14 +201,7 @@ pub async fn get_folder_contents(
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|_| {
-        use axum::{http::StatusCode, response::IntoResponse, Json};
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Internal server error")),
-        )
-            .into_response()
-    })?;
+    .map_err(|_| super::internal_error_response())?;
 
     // Get files in this parent with share info
     let files = sqlx::query_as::<_, crate::handlers::files::FileWithShares>(
@@ -244,14 +237,7 @@ pub async fn get_folder_contents(
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|_| {
-        use axum::{http::StatusCode, response::IntoResponse, Json};
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Internal server error")),
-        )
-            .into_response()
-    })?;
+    .map_err(|_| super::internal_error_response())?;
 
     Ok(Json(FolderContentsWithShares {
         folders,
@@ -317,14 +303,7 @@ pub async fn get_root_contents(
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|_| {
-        use axum::{http::StatusCode, response::IntoResponse, Json};
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Internal server error")),
-        )
-            .into_response()
-    })?;
+    .map_err(|_| super::internal_error_response())?;
 
     // Get root files with share info
     let files = sqlx::query_as::<_, crate::handlers::files::FileWithShares>(
@@ -359,14 +338,7 @@ pub async fn get_root_contents(
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|_| {
-        use axum::{http::StatusCode, response::IntoResponse, Json};
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Internal server error")),
-        )
-            .into_response()
-    })?;
+    .map_err(|_| super::internal_error_response())?;
 
     Ok(Json(FolderContentsWithShares {
         folders,
@@ -414,14 +386,7 @@ async fn build_folder_tree_with_shares(
     .bind(tenant_id)
     .fetch_one(state.metadata_store.pool())
     .await
-    .map_err(|_| {
-        use axum::{http::StatusCode, response::IntoResponse, Json};
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Internal server error")),
-        )
-            .into_response()
-    })?;
+    .map_err(|_| super::internal_error_response())?;
 
     let folder_node = FolderTreeNode {
         id: folder_row
@@ -585,12 +550,13 @@ pub async fn restore_folder_from_trash(
         .await
         .map_err(|e| {
             use axum::response::IntoResponse;
-            let status = if e.to_string().contains("already exists") {
-                StatusCode::CONFLICT
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            };
-            (status, Json(super::ErrorResponse::new(e.to_string()))).into_response()
+            match e {
+                rustshare_core::services::FolderError::DuplicateName { .. } => {
+                    (StatusCode::CONFLICT, Json(super::ErrorResponse::new(e.to_string())))
+                        .into_response()
+                }
+                _ => folder_error_response(e),
+            }
         })?;
 
     if !restored {
