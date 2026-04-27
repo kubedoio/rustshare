@@ -30,7 +30,7 @@ export function renderMarkdown(markdown: string): string {
 			// Links
 			.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text: string, url: string) => {
 				const safeUrl = url.replace(/^javascript:/i, '#');
-				return `<a href="${safeUrl}" class="text-primary hover:underline" target="_blank">${text}</a>`;
+				return `<a href="${safeUrl}" class="text-primary hover:underline" target="_blank" rel="noopener noreferrer">${text}</a>`;
 			})
 			// Images
 			.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt: string, url: string) => {
@@ -48,5 +48,5 @@ export function renderMarkdown(markdown: string): string {
 			// Line breaks
 			.replace(/\n/g, '<br />');
 
-	return DOMPurify.sanitize(rawHtml);
+	return DOMPurify.sanitize(rawHtml, { ADD_ATTR: ['target'] });
 }

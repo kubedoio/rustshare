@@ -11,6 +11,13 @@ describe('renderMarkdown', () => {
         expect(html).toContain('<strong>bold</strong>');
     });
 
+    it('preserves target="_blank" and rel on links after sanitization', () => {
+        const input = '[link](https://example.com)';
+        const html = renderMarkdown(input);
+        expect(html).toContain('target="_blank"');
+        expect(html).toContain('rel="noopener noreferrer"');
+    });
+
     it('prevents javascript: URIs in links', () => {
         const input = '[click](javascript:alert(1))';
         const html = renderMarkdown(input);
