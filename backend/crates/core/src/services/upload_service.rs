@@ -948,7 +948,7 @@ mod tests {
     }
 
     impl EventStoreOps for MockEventStore {
-        async fn append(&self, event: &Event, _broadcaster: &EventBroadcaster) -> Result<()> {
+        async fn append(&self, event: &Event, _broadcaster: &EventBroadcaster) -> anyhow::Result<()> {
             self.events.lock().unwrap().push(event.clone());
             Ok(())
         }
