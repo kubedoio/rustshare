@@ -99,6 +99,7 @@ async fn test_optimistic_locking_conflict() {
             None,
             initial_content.clone(),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload initial file");
@@ -189,6 +190,7 @@ async fn test_successful_sequential_updates() {
             None,
             v1_content,
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file");
@@ -258,6 +260,7 @@ async fn test_update_without_version_check() {
             None,
             v1_content,
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file");
@@ -313,6 +316,7 @@ async fn test_multiple_conflict_scenarios() {
             None,
             Bytes::from("v1"),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file");

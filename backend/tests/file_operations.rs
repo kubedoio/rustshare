@@ -94,7 +94,7 @@ async fn test_file_upload_download_flow() {
     let mime_type = "text/plain".to_string();
 
     let uploaded_file = file_service
-        .upload_file(user.id, file_name.clone(), None, file_content.clone(), mime_type.clone())
+        .upload_file(user.id, file_name.clone(), None, file_content.clone(), mime_type.clone(), tenant_id)
         .await
         .expect("Failed to upload file");
 
@@ -203,6 +203,7 @@ async fn test_file_upload_with_parent_folder() {
             Some(parent_folder.id),
             file_content.clone(),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file to folder");
@@ -266,6 +267,7 @@ async fn test_file_deduplication() {
             None,
             file_content.clone(),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload first file");
@@ -277,6 +279,7 @@ async fn test_file_deduplication() {
             None,
             file_content.clone(),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload second file");
@@ -347,6 +350,7 @@ async fn test_move_file_to_folder() {
             None,
             file_content.clone(),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file");
@@ -440,6 +444,7 @@ async fn test_move_file_to_root() {
             Some(source_folder.id),
             file_content.clone(),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file");

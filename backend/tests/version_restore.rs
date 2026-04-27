@@ -98,6 +98,7 @@ async fn test_version_restore_flow() {
             None,
             v1_content.clone(),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload v1");
@@ -211,6 +212,7 @@ async fn test_restore_multiple_versions() {
             None,
             Bytes::from("v1"),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload v1");
@@ -318,6 +320,7 @@ async fn test_restore_same_version_multiple_times() {
             None,
             Bytes::from("Original content"),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file");
@@ -404,6 +407,7 @@ async fn test_get_specific_version() {
             None,
             Bytes::from("Version 1"),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file");
@@ -481,6 +485,7 @@ async fn test_restore_nonexistent_version() {
             None,
             Bytes::from("Only version"),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file");

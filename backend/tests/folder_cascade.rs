@@ -96,22 +96,22 @@ async fn test_folder_cascade_delete() {
 
     // Step 1: Create folder hierarchy: Root → Docs → Work → Projects
     let root = folder_service
-        .create_folder(user.id, "Root".to_string(), None)
+        .create_folder("Root".to_string(), None, user.id, tenant_id)
         .await
         .expect("Failed to create Root folder");
 
     let docs = folder_service
-        .create_folder(user.id, "Docs".to_string(), Some(root.id))
+        .create_folder("Docs".to_string(), Some(root.id), user.id, tenant_id)
         .await
         .expect("Failed to create Docs folder");
 
     let work = folder_service
-        .create_folder(user.id, "Work".to_string(), Some(docs.id))
+        .create_folder("Work".to_string(), Some(docs.id), user.id, tenant_id)
         .await
         .expect("Failed to create Work folder");
 
     let projects = folder_service
-        .create_folder(user.id, "Projects".to_string(), Some(work.id))
+        .create_folder("Projects".to_string(), Some(work.id), user.id, tenant_id)
         .await
         .expect("Failed to create Projects folder");
 
@@ -123,6 +123,7 @@ async fn test_folder_cascade_delete() {
             Some(root.id),
             Bytes::from("File in root"),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file to root");
@@ -134,6 +135,7 @@ async fn test_folder_cascade_delete() {
             Some(docs.id),
             Bytes::from("File in docs"),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file to docs");
@@ -145,6 +147,7 @@ async fn test_folder_cascade_delete() {
             Some(work.id),
             Bytes::from("File in work"),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file to work");
@@ -156,6 +159,7 @@ async fn test_folder_cascade_delete() {
             Some(projects.id),
             Bytes::from("File in projects"),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file to projects");
@@ -249,7 +253,7 @@ async fn test_deep_hierarchy_cascade_delete() {
 
     // Create a deeper hierarchy: Root → L1 → L2 → L3 → L4 → L5
     let root = folder_service
-        .create_folder(user.id, "Root".to_string(), None)
+        .create_folder("Root".to_string(), None, user.id, tenant_id)
         .await
         .expect("Failed to create root");
 
@@ -258,7 +262,7 @@ async fn test_deep_hierarchy_cascade_delete() {
 
     for i in 1..=5 {
         let folder = folder_service
-            .create_folder(user.id, format!("Level{}", i), Some(parent_id))
+            .create_folder(format!("Level{}", i), Some(parent_id), user.id, tenant_id)
             .await
             .expect(&format!("Failed to create level {} folder", i));
 
@@ -273,6 +277,7 @@ async fn test_deep_hierarchy_cascade_delete() {
                 Some(folder.id),
                 Bytes::from(format!("Content at level {}", i)),
                 "text/plain".to_string(),
+            tenant_id,
             )
             .await
             .expect(&format!("Failed to upload file to level {}", i));
@@ -331,37 +336,37 @@ async fn test_cascade_delete_with_siblings() {
     //       └── ChildB2
 
     let root = folder_service
-        .create_folder(user.id, "Root".to_string(), None)
+        .create_folder("Root".to_string(), None, user.id, tenant_id)
         .await
         .expect("Failed to create root");
 
     let folder_a = folder_service
-        .create_folder(user.id, "FolderA".to_string(), Some(root.id))
+        .create_folder("FolderA".to_string(), Some(root.id), user.id, tenant_id)
         .await
         .expect("Failed to create FolderA");
 
     let child_a1 = folder_service
-        .create_folder(user.id, "ChildA1".to_string(), Some(folder_a.id))
+        .create_folder("ChildA1".to_string(), Some(folder_a.id), user.id, tenant_id)
         .await
         .expect("Failed to create ChildA1");
 
     let child_a2 = folder_service
-        .create_folder(user.id, "ChildA2".to_string(), Some(folder_a.id))
+        .create_folder("ChildA2".to_string(), Some(folder_a.id), user.id, tenant_id)
         .await
         .expect("Failed to create ChildA2");
 
     let folder_b = folder_service
-        .create_folder(user.id, "FolderB".to_string(), Some(root.id))
+        .create_folder("FolderB".to_string(), Some(root.id), user.id, tenant_id)
         .await
         .expect("Failed to create FolderB");
 
     let child_b1 = folder_service
-        .create_folder(user.id, "ChildB1".to_string(), Some(folder_b.id))
+        .create_folder("ChildB1".to_string(), Some(folder_b.id), user.id, tenant_id)
         .await
         .expect("Failed to create ChildB1");
 
     let child_b2 = folder_service
-        .create_folder(user.id, "ChildB2".to_string(), Some(folder_b.id))
+        .create_folder("ChildB2".to_string(), Some(folder_b.id), user.id, tenant_id)
         .await
         .expect("Failed to create ChildB2");
 
@@ -435,17 +440,17 @@ async fn test_leaf_folder_delete() {
 
     // Create simple hierarchy: Root → Parent → Leaf
     let root = folder_service
-        .create_folder(user.id, "Root".to_string(), None)
+        .create_folder("Root".to_string(), None, user.id, tenant_id)
         .await
         .expect("Failed to create root");
 
     let parent = folder_service
-        .create_folder(user.id, "Parent".to_string(), Some(root.id))
+        .create_folder("Parent".to_string(), Some(root.id), user.id, tenant_id)
         .await
         .expect("Failed to create parent");
 
     let leaf = folder_service
-        .create_folder(user.id, "Leaf".to_string(), Some(parent.id))
+        .create_folder("Leaf".to_string(), Some(parent.id), user.id, tenant_id)
         .await
         .expect("Failed to create leaf");
 
@@ -457,6 +462,7 @@ async fn test_leaf_folder_delete() {
             Some(leaf.id),
             Bytes::from("Leaf content"),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file to leaf");
