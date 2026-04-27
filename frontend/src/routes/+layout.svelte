@@ -6,6 +6,6 @@
 </script>
 
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
-<QueryClientProvider client={queryClient} children={null as any}>
+<QueryClientProvider client={queryClient}>
 	<slot />
 </QueryClientProvider>
