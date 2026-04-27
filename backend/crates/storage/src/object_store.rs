@@ -13,11 +13,9 @@ pub struct ObjectStore {
 impl ObjectStore {
     /// Create new object store
     pub async fn new(endpoint: String, region: String, bucket: String) -> Result<Self> {
-        // Check if there's a public endpoint for presigned URLs
+        // Use public endpoint for presigned URLs if configured.
         let public_endpoint = std::env::var("RUSTFS_PUBLIC_ENDPOINT").ok();
-
-        // Use public endpoint for presigned URLs if configured
-        let presign_endpoint = public_endpoint.clone().unwrap_or_else(|| endpoint.clone());
+        let presign_endpoint = presign_endpoint(&endpoint, public_endpoint);
 
         let config = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&endpoint)
@@ -141,6 +139,10 @@ impl ObjectStore {
     }
 }
 
+fn presign_endpoint(internal_endpoint: &str, public_endpoint: Option<String>) -> String {
+    public_endpoint.unwrap_or_else(|| internal_endpoint.to_string())
+}
+
 async fn ensure_bucket_exists(client: &S3Client, bucket: &str) -> Result<()> {
     match client.head_bucket().bucket(bucket).send().await {
         Ok(_) => {
@@ -164,5 +166,27 @@ async fn ensure_bucket_exists(client: &S3Client, bucket: &str) -> Result<()> {
             tracing::info!(bucket = %bucket, "Created object storage bucket");
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::presign_endpoint;
+
+    #[test]
+    fn presign_endpoint_uses_public_endpoint_when_configured() {
+        let endpoint = presign_endpoint(
+            "http://rustfs:9000",
+            Some("https://files.example.com".to_string()),
+        );
+
+        assert_eq!(endpoint, "https://files.example.com");
+    }
+
+    #[test]
+    fn presign_endpoint_falls_back_to_internal_endpoint() {
+        let endpoint = presign_endpoint("http://rustfs:9000", None);
+
+        assert_eq!(endpoint, "http://rustfs:9000");
     }
 }
