@@ -220,16 +220,16 @@ where
         folder_id: FolderId,
         user_id: UserId,
     ) -> Result<Folder, FolderError> {
-        // 1. Check permissions first using the resolver
-        self.require_folder_permission(user_id, folder_id, SharePermissions::View).await?;
-
-        // 2. Find folder by ID
+        // 1. Find folder by ID
         let folder = self
             .metadata_store
             .find_folder_by_id(folder_id)
             .await
             .map_err(|e| FolderError::Database(e.to_string()))?
             .ok_or(FolderError::NotFound(folder_id))?;
+
+        // 2. Check permissions using the resolver
+        self.require_folder_permission(user_id, folder_id, SharePermissions::View).await?;
 
         Ok(folder)
     }
@@ -465,7 +465,7 @@ where
         folder.ancestor_ids = new_ancestor_ids;
 
         // Update descendants' paths
-        self.update_descendant_paths_and_ancestors(folder_id, &old_path, &new_path, user_id)
+        self.update_descendant_paths_and_ancestors(folder_id, &old_path, &new_path, folder.ancestor_ids.clone(), user_id)
             .await?;
 
         // Emit FolderMoved event
@@ -574,6 +574,7 @@ where
         folder_id: FolderId,
         old_path: &str,
         new_path: &str,
+        new_ancestor_ids: Option<Vec<Uuid>>,
         _user_id: UserId,
     ) -> Result<(), FolderError> {
         // Get all descendants (excluding the folder itself)
@@ -589,15 +590,8 @@ where
             .filter(|d| d.id != folder_id)
             .collect();
 
-        // Get the moved folder's new ancestor_ids to compute descendants' new ancestors
-        let moved_folder = self
-            .metadata_store
-            .find_folder_by_id(folder_id)
-            .await
-            .map_err(|e| FolderError::Database(e.to_string()))?
-            .ok_or(FolderError::NotFound(folder_id))?;
-
-        let new_moved_folder_ancestors = moved_folder.ancestor_ids.clone().unwrap_or_default();
+        // Use the moved folder's new ancestor_ids to compute descendants' new ancestors
+        let new_moved_folder_ancestors = new_ancestor_ids.unwrap_or_default();
 
         // Update each descendant's path and ancestor_ids
         for mut descendant in descendants {
