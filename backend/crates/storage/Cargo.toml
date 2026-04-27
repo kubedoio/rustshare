@@ -18,18 +18,18 @@ tracing.workspace = true
 aws-sdk-s3.workspace = true
 aws-config.workspace = true
 bytes = "1.5"
-md5 = "0.7"
+md5 = "0.8"
 async-trait = "0.1"
 futures = "0.3"
 
 # Redis support for distributed coordination (optional)
-redis = { version = "0.24", features = ["tokio-comp", "connection-manager"], optional = true }
+redis = { version = "1.2", features = ["tokio-comp", "connection-manager"], optional = true }
 
 # JWT for session management
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 
 # Crypto for session hashing
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 base64 = "0.22"
 

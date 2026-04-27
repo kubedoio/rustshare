@@ -17,7 +17,7 @@ rustshare-crypto = { path = "../crates/crypto" }
 
 tokio.workspace = true
 axum = { workspace = true, features = ["multipart", "ws"] }
-axum-extra = { version = "0.10", features = ["typed-header"] }
+axum-extra = { version = "0.12", features = ["typed-header"] }
 tower.workspace = true
 tower-http = { workspace = true, features = ["fs"] }
 sqlx.workspace = true
@@ -38,8 +38,8 @@ hex = { workspace = true }
 sha2.workspace = true
 reqwest = { workspace = true }
 async-trait = "0.1"
-governor = "0.6"
-constant_time_eq = "0.3"
+governor = "0.10"
+constant_time_eq = "0.5"
 nonzero_ext = "0.3"
 openidconnect = "4.0.1"
 url = "2.5"
@@ -47,7 +47,7 @@ urlencoding = "2.1"
 base64 = { workspace = true }
 rand = { workspace = true }
 thiserror = { workspace = true }
-image = { version = "0.24", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
+image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
 mime_guess = "2.0"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "pool"] }
 
@@ -100,7 +100,7 @@ name = "compat_layer_integration_test"
 path = "../tests/compat_layer_integration_test.rs"
 
 [dev-dependencies]
-tokio-tungstenite = "0.24"
+tokio-tungstenite = "0.29"
 rustshare-crypto = { path = "../crates/crypto" }
 hmac = { workspace = true }
 hex = { workspace = true }
