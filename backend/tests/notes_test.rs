@@ -5,7 +5,8 @@
 use bytes::Bytes;
 use rustshare_core::domain::User;
 use rustshare_core::events::EventBroadcaster;
-use rustshare_core::services::{FileService, FolderService};
+use rustshare_core::services::{FileService, FolderService, PermissionResolver};
+use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_server::services::note_service::{NoteService, NoteVisibility};
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
@@ -110,10 +111,11 @@ fn create_note_service(
     event_store: Arc<EventStore>,
     metadata_store: Arc<MetadataStore>,
     object_store: Arc<ObjectStore>,
+    pool: &PgPool,
 ) -> Arc<NoteService> {
     let broadcaster = Arc::new(EventBroadcaster::new(100));
-    let file_service = Arc::new(create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool));
-    let folder_service = Arc::new(create_folder_service(event_store.clone(), metadata_store.clone(), &pool));
+    let file_service = Arc::new(create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), pool));
+    let folder_service = Arc::new(create_folder_service(event_store.clone(), metadata_store.clone(), pool));
 
     Arc::new(NoteService::new(
         file_service,
@@ -129,7 +131,7 @@ async fn contract_create_note_creates_markdown_file_and_metadata_sidecar() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_contract_user_1", tenant_id).await;
-    let service = create_note_service(event_store, metadata_store.clone(), object_store);
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
         .create_note(
@@ -164,7 +166,7 @@ async fn contract_create_note_uses_collision_safe_naming() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_contract_user_2", tenant_id).await;
-    let service = create_note_service(event_store, metadata_store.clone(), object_store);
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note1 = service
         .create_note(
@@ -212,7 +214,7 @@ async fn contract_read_note_returns_content_and_metadata_unified() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_contract_user_3", tenant_id).await;
-    let service = create_note_service(event_store, metadata_store.clone(), object_store);
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let created = service
         .create_note(
@@ -239,7 +241,7 @@ async fn contract_save_note_updates_content_excerpt_and_updated_at() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_contract_user_4", tenant_id).await;
-    let service = create_note_service(event_store, metadata_store.clone(), object_store);
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
         .create_note(
@@ -272,7 +274,7 @@ async fn contract_rename_note_renames_file_and_sidecar_and_preserves_share_id() 
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_contract_user_5", tenant_id).await;
-    let service = create_note_service(event_store, metadata_store.clone(), object_store);
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
         .create_note(
@@ -313,7 +315,7 @@ async fn contract_delete_note_invalidates_public_access() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_contract_user_6", tenant_id).await;
-    let service = create_note_service(event_store, metadata_store.clone(), object_store);
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
         .create_note(
@@ -348,7 +350,7 @@ async fn contract_list_recent_notes_ordered_by_updated_at_desc() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_contract_user_7", tenant_id).await;
-    let service = create_note_service(event_store, metadata_store.clone(), object_store);
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note_a = service
         .create_note(user.id, tenant_id, Some("A".to_string()), None, None)
@@ -382,7 +384,7 @@ async fn contract_toggle_visibility_private_to_public_generates_share_id_and_url
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_contract_user_8", tenant_id).await;
-    let service = create_note_service(event_store, metadata_store.clone(), object_store);
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
         .create_note(
@@ -419,7 +421,7 @@ async fn contract_toggle_visibility_public_to_private_disables_access() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_contract_user_9", tenant_id).await;
-    let service = create_note_service(event_store, metadata_store.clone(), object_store);
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
         .create_note(
@@ -451,7 +453,7 @@ async fn contract_anonymous_request_to_private_note_returns_not_found() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_contract_user_10", tenant_id).await;
-    let service = create_note_service(event_store, metadata_store.clone(), object_store);
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
         .create_note(user.id, tenant_id, Some("Private".to_string()), None, None)
@@ -473,7 +475,7 @@ async fn contract_public_note_page_does_not_leak_internal_paths() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_contract_user_11", tenant_id).await;
-    let service = create_note_service(event_store, metadata_store.clone(), object_store);
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
         .create_note(

@@ -37,23 +37,15 @@
 //! - Ensure target group health checks are configured
 //!
 
-mod adapters;
-mod bootstrap;
-mod handlers;
-mod middleware;
-mod oidc;
-mod oidc_runtime;
-mod replication;
-mod replication_handlers;
-mod routes;
-mod services;
-mod state;
-mod trash_cleanup;
-mod web_session;
+use rustshare_server::{
+    adapters, bootstrap, handlers, middleware, oidc, oidc_runtime, replication,
+    replication_handlers, routes, services, state, trash_cleanup, web_session,
+};
 
-pub use state::{AppAiService, AppState, AppUploadService, AppUserShareService};
-
-pub use bootstrap::default_storage_quota_bytes;
+pub use rustshare_server::{
+    AppAiService, AppState, AppUploadService, AppUserShareService,
+    default_storage_quota_bytes,
+};
 
 use anyhow::Result;
 use axum::{

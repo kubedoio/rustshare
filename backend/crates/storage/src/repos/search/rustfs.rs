@@ -252,7 +252,7 @@ impl SearchIndexRepository for RustFsSearchIndexRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
+    use crate::metadata_v2::PutResult;
 
     #[test]
     fn test_extract_terms() {
