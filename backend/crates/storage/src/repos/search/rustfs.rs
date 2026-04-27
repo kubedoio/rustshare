@@ -306,7 +306,7 @@ mod tests {
             _data: &[u8],
             _opts: PutOptions,
         ) -> anyhow::Result<PutResult> {
-            Ok(PutResult { etag: None, version_id: None })
+            Ok(PutResult { etag: String::new(), version_id: None })
         }
 
         async fn delete(&self, _key: &str) -> anyhow::Result<()> {
