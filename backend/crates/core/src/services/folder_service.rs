@@ -666,7 +666,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::Folder;
+    use crate::domain::{File, FileId, Folder, Share};
     use std::collections::HashMap;
     use std::sync::Mutex;
     use uuid::Uuid;
@@ -779,6 +779,81 @@ mod tests {
                 .cloned()
                 .unwrap_or_default())
         }
+
+        async fn list_folders_by_parent(
+            &self,
+            parent_id: Option<FolderId>,
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<Folder>> {
+            let folders = self.folders.lock().unwrap();
+            Ok(folders
+                .values()
+                .filter(|f| f.parent_folder_id == parent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_files_by_parent(
+            &self,
+            parent_id: Option<FolderId>,
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<File>> {
+            let files = self.files.lock().unwrap();
+            Ok(files
+                .get(&parent_id.unwrap_or_default())
+                .cloned()
+                .unwrap_or_default())
+        }
+    }
+
+    struct MockPermissionOps;
+
+    impl PermissionResolverOps for MockPermissionOps {
+        async fn find_user_share(
+            &self,
+            _file_id: Option<FileId>,
+            _folder_id: Option<FolderId>,
+            _recipient_user_id: UserId,
+        ) -> Result<Option<Share>> {
+            Ok(None)
+        }
+
+        async fn find_group_shares(
+            &self,
+            _file_id: Option<FileId>,
+            _folder_id: Option<FolderId>,
+            _group_ids: &[Uuid],
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_user_shares_for_folders(
+            &self,
+            _folder_ids: &[Uuid],
+            _recipient_user_id: UserId,
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_group_shares_for_folders(
+            &self,
+            _folder_ids: &[Uuid],
+            _group_ids: &[Uuid],
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_file_by_id(&self, _id: FileId) -> Result<Option<File>> {
+            Ok(None)
+        }
+
+        async fn find_folder_by_id(&self, _id: FolderId) -> Result<Option<Folder>> {
+            Ok(None)
+        }
+
+        async fn get_user_group_ids(&self, _user_id: UserId) -> Result<Vec<Uuid>> {
+            Ok(Vec::new())
+        }
     }
 
     #[tokio::test]
@@ -789,6 +864,7 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -816,6 +892,7 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -851,6 +928,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -869,6 +947,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -887,6 +966,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -911,6 +991,7 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -943,6 +1024,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -966,6 +1048,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -983,6 +1066,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1005,6 +1089,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1027,6 +1112,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1074,6 +1160,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1096,6 +1183,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1120,6 +1208,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1187,6 +1276,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1209,6 +1299,7 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1241,6 +1332,7 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1286,6 +1378,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1309,6 +1402,7 @@ mod tests {
             event_store.clone(),
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1341,6 +1435,7 @@ mod tests {
             event_store.clone(),
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1379,6 +1474,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1407,6 +1503,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1452,6 +1549,7 @@ mod tests {
             event_store.clone(),
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1489,6 +1587,7 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1518,6 +1617,7 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1575,6 +1675,7 @@ mod tests {
             event_store,
             metadata_store,
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1601,6 +1702,7 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1631,6 +1733,7 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1689,6 +1792,7 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1755,6 +1859,7 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1786,55 +1891,6 @@ mod tests {
         assert_eq!(updated_work.ancestor_ids, Some(Vec::new()));
     }
 
-    struct MockPermissionOps;
-
-    impl PermissionResolverOps for MockPermissionOps {
-        async fn find_user_share(
-            &self,
-            _file_id: Option<FileId>,
-            _folder_id: Option<FolderId>,
-            _recipient_user_id: UserId,
-        ) -> Result<Option<Share>> {
-            Ok(None)
-        }
-
-        async fn find_group_shares(
-            &self,
-            _file_id: Option<FileId>,
-            _folder_id: Option<FolderId>,
-            _group_ids: &[Uuid],
-        ) -> Result<Vec<Share>> {
-            Ok(Vec::new())
-        }
-
-        async fn find_user_shares_for_folders(
-            &self,
-            _folder_ids: &[Uuid],
-            _recipient_user_id: UserId,
-        ) -> Result<Vec<Share>> {
-            Ok(Vec::new())
-        }
-
-        async fn find_group_shares_for_folders(
-            &self,
-            _folder_ids: &[Uuid],
-            _group_ids: &[Uuid],
-        ) -> Result<Vec<Share>> {
-            Ok(Vec::new())
-        }
-
-        async fn find_file_by_id(&self, _id: FileId) -> Result<Option<File>> {
-            Ok(None)
-        }
-
-        async fn find_folder_by_id(&self, _id: FolderId) -> Result<Option<Folder>> {
-            Ok(None)
-        }
-
-        async fn get_user_group_ids(&self, _user_id: UserId) -> Result<Vec<Uuid>> {
-            Ok(Vec::new())
-        }
-    }
 
     #[tokio::test]
     async fn test_move_folder_circular_with_ancestor_ids() {

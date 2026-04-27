@@ -1546,6 +1546,36 @@ mod tests {
             // Tests can override this by using a custom mock if needed
             Ok(false)
         }
+
+        async fn list_files_by_parent(
+            &self,
+            parent_id: Option<uuid::Uuid>,
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<File>> {
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|file| file.parent_folder_id == parent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_folders_by_parent(
+            &self,
+            parent_id: Option<uuid::Uuid>,
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<Folder>> {
+            Ok(self
+                .folders
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|folder| folder.parent_folder_id == parent_id)
+                .cloned()
+                .collect())
+        }
     }
 
     struct MockJwtManager;

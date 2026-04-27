@@ -760,10 +760,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{FileVersion, Folder, ReplicationState};
+    use crate::domain::{FileVersion, Folder};
     use crate::services::file_service::EventStoreOps;
     use bytes::Bytes;
-    use std::collections::{HashMap, HashSet};
     use std::sync::Mutex;
     use chrono::Utc;
 
@@ -948,9 +947,8 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
     impl EventStoreOps for MockEventStore {
-        async fn append(&self, event: &Event, _broadcaster: &EventBroadcaster) -> anyhow::Result<()> {
+        async fn append(&self, event: &Event, _broadcaster: &EventBroadcaster) -> Result<()> {
             self.events.lock().unwrap().push(event.clone());
             Ok(())
         }
@@ -979,7 +977,7 @@ mod tests {
             None,
         );
         session.status = UploadSessionStatus::InProgress;
-        session.received_chunks = HashSet::from([0]);
+        session.mark_chunk_received(0);
         session.uploaded_bytes = 0;
 
         let existing_file = File {
@@ -1030,6 +1028,6 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, EventType::FileModified);
         let payload = events[0].payload.clone();
-        assert_eq!(payload["file_id"].as_str(), Some(&existing_file.id.to_string()));
+        assert_eq!(payload["file_id"].as_str(), Some(existing_file.id.to_string().as_str()));
     }
 }
