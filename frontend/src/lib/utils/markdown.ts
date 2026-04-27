@@ -1,11 +1,12 @@
+import DOMPurify from 'isomorphic-dompurify';
+
 /**
  * Basic markdown to HTML renderer
  */
 export function renderMarkdown(markdown: string): string {
 	if (!markdown) return '';
 
-	return (
-		markdown
+	const rawHtml = markdown
 			// Escape HTML
 			.replace(/&/g, '&amp;')
 			.replace(/</g, '&lt;')
@@ -45,6 +46,7 @@ export function renderMarkdown(markdown: string): string {
 			// Horizontal rule
 			.replace(/^---$/gim, '<hr class="my-4 border-base-300" />')
 			// Line breaks
-			.replace(/\n/g, '<br />')
-	);
+			.replace(/\n/g, '<br />');
+
+	return DOMPurify.sanitize(rawHtml);
 }
