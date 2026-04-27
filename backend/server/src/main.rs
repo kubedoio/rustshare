@@ -55,7 +55,6 @@ use axum::{
     routing::{any},
     Json, Router,
 };
-use serde::Serialize;
 use std::path::PathBuf;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
@@ -131,13 +130,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Health check endpoint
-pub(crate) async fn health_check() -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "ok".to_string(),
-    })
-}
-
 fn frontend_service() -> ServeDir<ServeFile> {
     let dist_dir = frontend_dist_dir();
     let fallback_file = dist_dir.join("200.html");
@@ -157,9 +149,3 @@ async fn api_not_found() -> impl IntoResponse {
         Json(serde_json::json!({ "error": "API route not found" })),
     )
 }
-
-#[derive(Serialize)]
-struct HealthResponse {
-    status: String,
-}
-// test

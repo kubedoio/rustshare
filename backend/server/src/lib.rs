@@ -18,3 +18,18 @@ pub mod web_session;
 
 pub use state::{AppAiService, AppState, AppUploadService, AppUserShareService};
 pub use bootstrap::default_storage_quota_bytes;
+
+use axum::{http::StatusCode, response::IntoResponse, Json};
+use serde::Serialize;
+
+/// Health check endpoint
+pub(crate) async fn health_check() -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "ok".to_string(),
+    })
+}
+
+#[derive(Serialize)]
+pub(crate) struct HealthResponse {
+    status: String,
+}
