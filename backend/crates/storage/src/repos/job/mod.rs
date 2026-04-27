@@ -127,7 +127,12 @@ pub mod conversions {
     pub fn doc_to_job(doc: JobDocument) -> Job {
         Job {
             id: doc.id,
-            job_type: format!("{:?}", doc.job_type),
+            job_type: match doc.job_type {
+                crate::metadata_v2::schemas::JobType::Replication => "replication",
+                crate::metadata_v2::schemas::JobType::ThumbnailGeneration => "thumbnail_generation",
+                crate::metadata_v2::schemas::JobType::VirusScan => "virus_scan",
+                crate::metadata_v2::schemas::JobType::MetadataExtraction => "metadata_extraction",
+            }.to_string(),
             resource_type: doc.resource_type,
             resource_id: doc.resource_id,
             status: to_core_status(doc.status),

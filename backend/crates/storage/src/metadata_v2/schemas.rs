@@ -1521,8 +1521,8 @@ impl SearchIndexDocument {
 pub fn tokenize_search_query(query: &str) -> Vec<String> {
     query
         .to_lowercase()
-        .split_whitespace()
-        .map(|s| s.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+        .split(|c: char| !c.is_alphanumeric())
+        .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
         .collect()
 }
