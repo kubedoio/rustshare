@@ -861,7 +861,7 @@ mod tests {
         }
 
         async fn get_chunk(&self, _session_id: Uuid, _chunk_index: u32) -> Result<Option<Bytes>, UploadError> {
-            unreachable!()
+            Ok(None)
         }
 
         async fn delete_chunk(&self, _session_id: Uuid, _chunk_index: u32) -> Result<(), UploadError> {
