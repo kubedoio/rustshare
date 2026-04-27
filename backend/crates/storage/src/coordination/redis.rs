@@ -70,7 +70,7 @@ impl CoordinationStore for RedisCoordinationStore {
             .arg(&value)
             .arg("NX")
             .arg("EX")
-            .arg(ttl.as_secs() as usize)
+            .arg(ttl.as_secs() as i64)
             .query_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
@@ -130,7 +130,7 @@ impl CoordinationStore for RedisCoordinationStore {
     ) -> Result<LockToken, CoordinationError> {
         let key = self.key(&format!("lock:{}", token.resource_id));
         let expected_value = format!("{}:{}", token.lock_id, token.owner);
-        let new_ttl_secs = additional_ttl.as_secs() as usize;
+        let new_ttl_secs = additional_ttl.as_secs() as i64;
 
         let mut conn = self.connection_manager.clone();
 
@@ -202,7 +202,7 @@ impl CoordinationStore for RedisCoordinationStore {
             .arg(&value)
             .arg("NX")
             .arg("EX")
-            .arg(ttl.as_secs() as usize)
+            .arg(ttl.as_secs() as i64)
             .query_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
@@ -253,7 +253,7 @@ impl CoordinationStore for RedisCoordinationStore {
         additional_ttl: Duration,
     ) -> Result<LeaseInfo, CoordinationError> {
         let key = self.key(&format!("lease:{}", resource_id));
-        let new_ttl_secs = additional_ttl.as_secs() as usize;
+        let new_ttl_secs = additional_ttl.as_secs() as i64;
 
         let mut conn = self.connection_manager.clone();
 
@@ -337,7 +337,7 @@ impl CoordinationStore for RedisCoordinationStore {
             .arg(&value)
             .arg("NX")
             .arg("EX")
-            .arg(ttl.as_secs() as usize)
+            .arg(ttl.as_secs() as i64)
             .query_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
@@ -379,7 +379,7 @@ impl CoordinationStore for RedisCoordinationStore {
         additional_ttl: Duration,
     ) -> Result<bool, CoordinationError> {
         let key = self.key(&format!("job:{}", job_id));
-        let new_ttl_secs = additional_ttl.as_secs() as usize;
+        let new_ttl_secs = additional_ttl.as_secs() as i64;
 
         let mut conn = self.connection_manager.clone();
 
@@ -509,7 +509,7 @@ impl CoordinationStore for RedisCoordinationStore {
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
         let _: () = conn
-            .expire(&key, ttl.as_secs() as usize)
+            .expire(&key, ttl.as_secs() as i64)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
 
@@ -537,7 +537,7 @@ impl CoordinationStore for RedisCoordinationStore {
                 .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
             // Extend TTL to ensure revocation persists
             let _: () = conn
-                .expire(&key, ttl.as_secs() as usize)
+                .expire(&key, ttl.as_secs() as i64)
                 .await
                 .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
         } else {
@@ -551,7 +551,7 @@ impl CoordinationStore for RedisCoordinationStore {
                 .await
                 .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
             let _: () = conn
-                .expire(&key, ttl.as_secs() as usize)
+                .expire(&key, ttl.as_secs() as i64)
                 .await
                 .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
         }
@@ -641,7 +641,7 @@ impl CoordinationStore for RedisCoordinationStore {
             .arg("1")
             .arg("NX")
             .arg("EX")
-            .arg(ttl.as_secs() as usize)
+            .arg(ttl.as_secs() as i64)
             .query_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
@@ -669,7 +669,7 @@ impl CoordinationStore for RedisCoordinationStore {
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
         let _: () = conn
-            .expire(&key, ttl.as_secs() as usize)
+            .expire(&key, ttl.as_secs() as i64)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
 
