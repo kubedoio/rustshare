@@ -8,13 +8,23 @@ vi.mock('$app/navigation', () => ({
 vi.mock('$lib/stores/auth', () => ({
 	authStore: {
 		setLoading: vi.fn(),
-		login: vi.fn()
+		login: vi.fn(),
+		subscribe: (fn: any) => { fn({ isAuthenticated: false }); return () => {}; }
 	}
 }));
 
 vi.mock('$lib/api/auth', () => ({
 	beginOidcLogin: vi.fn(),
 	getAuthConfig: vi.fn()
+}));
+
+vi.mock('$app/stores', () => ({
+	page: {
+		subscribe: (fn: any) => {
+			fn({ url: { searchParams: new URLSearchParams() } });
+			return () => {};
+		}
+	}
 }));
 
 import LoginPage from '../+page.svelte';

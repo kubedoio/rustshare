@@ -68,10 +68,10 @@
 				onSelect={(e) => (selectionMode ? handleFolderToggle(folder, e) : onFolderClick(folder))}
 				selected={selectionMode && $selectionStore.selectedFolderIds.has(folder.id)}
 				{selectionMode}
-				on:rename={(e) => e.detail.isFolder && onRenameFolder(folder)}
-				on:delete={(e) => e.detail.isFolder && onDeleteFolder(folder)}
-				on:share={(e) => e.detail.isFolder && onShareFolder(folder)}
-				on:move={(e) => e.detail.isFolder && onMoveFolder(folder)}
+				onRename={() => onRenameFolder(folder)}
+				onDelete={() => onDeleteFolder(folder)}
+				onShare={() => onShareFolder(folder)}
+				onMove={() => onMoveFolder(folder)}
 			/>
 		{/each}
 
@@ -83,13 +83,13 @@
 				onSelect={(e) => (selectionMode ? handleFileToggle(file, e) : onFileClick(file))}
 				selected={selectionMode && $selectionStore.selectedFileIds.has(file.id)}
 				{selectionMode}
-				on:rename={(e) => !e.detail.isFolder && onRenameFile(file)}
-				on:delete={(e) => !e.detail.isFolder && onDeleteFile(file)}
-				on:share={(e) => !e.detail.isFolder && onShareFile(file)}
-				on:versionHistory={handleVersionHistoryClick}
-				on:move={(e) => !e.detail.isFolder && onMoveFile(file)}
-				on:download={(e) => onDownloadFile(e.detail.item)}
-				on:replace={(e) => onReplaceFile(e.detail.item)}
+				onRename={() => onRenameFile(file)}
+				onDelete={() => onDeleteFile(file)}
+				onShare={() => onShareFile(file)}
+				onVersionHistory={() => onVersionHistory(file)}
+				onMove={() => onMoveFile(file)}
+				onDownload={() => onDownloadFile(file)}
+				onReplace={() => onReplaceFile(file)}
 				onEditFile={onEditFile}
 			/>
 		{/each}

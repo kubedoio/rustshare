@@ -259,6 +259,7 @@ mod tests {
                 "recipient_id": recipient_id.to_string(),
                 "resource_name": "document.pdf"
             }),
+            tenant_id: Uuid::new_v4(),
         };
 
         projector.project(&event).await.unwrap();
@@ -298,6 +299,7 @@ mod tests {
                 "shared_with": [user1.to_string(), user2.to_string()],
                 "file_name": "report.docx"
             }),
+            tenant_id: Uuid::new_v4(),
         };
 
         projector.project(&event).await.unwrap();

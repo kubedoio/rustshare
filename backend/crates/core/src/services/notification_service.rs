@@ -33,13 +33,13 @@ pub struct CreateNotification {
 #[allow(async_fn_in_trait)]
 pub trait NotificationRepositoryOps: Send + Sync {
     /// Create a new notification.
-    async fn create(&self, request: CreateNotification) -> Result<Notification, sqlx::Error>;
+    async fn create(&self, request: CreateNotification) -> Result<Notification, NotificationError>;
 
     /// Find a notification by ID.
     async fn find_by_id(
         &self,
         notification_id: NotificationId,
-    ) -> Result<Option<Notification>, sqlx::Error>;
+    ) -> Result<Option<Notification>, NotificationError>;
 
     /// List notifications for a user (paginated, optional unread filter).
     async fn list_for_user(
@@ -48,22 +48,22 @@ pub trait NotificationRepositoryOps: Send + Sync {
         unread_only: bool,
         limit: i64,
         offset: i64,
-    ) -> Result<Vec<Notification>, sqlx::Error>;
+    ) -> Result<Vec<Notification>, NotificationError>;
 
     /// Count notifications for a user with optional unread filtering.
-    async fn count_for_user(&self, user_id: UserId, unread_only: bool) -> Result<i64, sqlx::Error>;
+    async fn count_for_user(&self, user_id: UserId, unread_only: bool) -> Result<i64, NotificationError>;
 
     /// Count unread notifications for a user.
-    async fn count_unread(&self, user_id: UserId) -> Result<i64, sqlx::Error>;
+    async fn count_unread(&self, user_id: UserId) -> Result<i64, NotificationError>;
 
     /// Mark a notification as read.
     async fn mark_as_read(
         &self,
         notification_id: NotificationId,
-    ) -> Result<Notification, sqlx::Error>;
+    ) -> Result<Notification, NotificationError>;
 
     /// Delete a notification.
-    async fn delete(&self, notification_id: NotificationId) -> Result<(), sqlx::Error>;
+    async fn delete(&self, notification_id: NotificationId) -> Result<(), NotificationError>;
 }
 
 /// NotificationService handles persistent notification operations.
@@ -87,10 +87,7 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
         &self,
         request: CreateNotification,
     ) -> Result<Notification, NotificationError> {
-        self.repository
-            .create(request)
-            .await
-            .map_err(NotificationError::Database)
+        self.repository.create(request).await
     }
 
     /// Get a notification by ID with ownership validation.
@@ -105,8 +102,7 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
         let notification = self
             .repository
             .find_by_id(notification_id)
-            .await
-            .map_err(NotificationError::Database)?
+            .await?
             .ok_or(NotificationError::NotFoundById(notification_id))?;
 
         // Verify ownership
@@ -139,17 +135,13 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
         self.repository
             .list_for_user(user_id, unread_only, limit, offset)
             .await
-            .map_err(NotificationError::Database)
     }
 
     /// Count unread notifications for a user.
     ///
     /// Returns the count or a NotificationError.
     pub async fn count_unread(&self, user_id: UserId) -> Result<i64, NotificationError> {
-        self.repository
-            .count_unread(user_id)
-            .await
-            .map_err(NotificationError::Database)
+        self.repository.count_unread(user_id).await
     }
 
     /// Count notifications for a user with optional unread filtering.
@@ -158,10 +150,7 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
         user_id: UserId,
         unread_only: bool,
     ) -> Result<i64, NotificationError> {
-        self.repository
-            .count_for_user(user_id, unread_only)
-            .await
-            .map_err(NotificationError::Database)
+        self.repository.count_for_user(user_id, unread_only).await
     }
 
     /// Mark a notification as read with ownership validation.
@@ -177,8 +166,7 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
         let notification = self
             .repository
             .find_by_id(notification_id)
-            .await
-            .map_err(NotificationError::Database)?
+            .await?
             .ok_or(NotificationError::NotFoundById(notification_id))?;
 
         if notification.user_id != user_id {
@@ -189,10 +177,7 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
         }
 
         // Mark as read
-        self.repository
-            .mark_as_read(notification_id)
-            .await
-            .map_err(NotificationError::Database)
+        self.repository.mark_as_read(notification_id).await
     }
 
     /// Delete a notification with ownership validation.
@@ -208,8 +193,7 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
         let notification = self
             .repository
             .find_by_id(notification_id)
-            .await
-            .map_err(NotificationError::Database)?
+            .await?
             .ok_or(NotificationError::NotFoundById(notification_id))?;
 
         if notification.user_id != user_id {
@@ -220,10 +204,7 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
         }
 
         // Delete
-        self.repository
-            .delete(notification_id)
-            .await
-            .map_err(NotificationError::Database)
+        self.repository.delete(notification_id).await
     }
 }
 
@@ -246,7 +227,10 @@ mod tests {
     }
 
     impl NotificationRepositoryOps for MockNotificationRepository {
-        async fn create(&self, request: CreateNotification) -> Result<Notification, sqlx::Error> {
+        async fn create(
+            &self,
+            request: CreateNotification,
+        ) -> Result<Notification, NotificationError> {
             let notification = Notification {
                 id: Uuid::new_v4(),
                 user_id: request.user_id,
@@ -270,7 +254,7 @@ mod tests {
         async fn find_by_id(
             &self,
             notification_id: NotificationId,
-        ) -> Result<Option<Notification>, sqlx::Error> {
+        ) -> Result<Option<Notification>, NotificationError> {
             Ok(self
                 .notifications
                 .lock()
@@ -286,7 +270,7 @@ mod tests {
             unread_only: bool,
             limit: i64,
             offset: i64,
-        ) -> Result<Vec<Notification>, sqlx::Error> {
+        ) -> Result<Vec<Notification>, NotificationError> {
             let notifications = self.notifications.lock().unwrap();
             let mut filtered: Vec<_> = notifications
                 .iter()
@@ -312,7 +296,7 @@ mod tests {
             &self,
             user_id: UserId,
             unread_only: bool,
-        ) -> Result<i64, sqlx::Error> {
+        ) -> Result<i64, NotificationError> {
             let count = self
                 .notifications
                 .lock()
@@ -324,7 +308,7 @@ mod tests {
             Ok(count as i64)
         }
 
-        async fn count_unread(&self, user_id: UserId) -> Result<i64, sqlx::Error> {
+        async fn count_unread(&self, user_id: UserId) -> Result<i64, NotificationError> {
             let count = self
                 .notifications
                 .lock()
@@ -338,23 +322,23 @@ mod tests {
         async fn mark_as_read(
             &self,
             notification_id: NotificationId,
-        ) -> Result<Notification, sqlx::Error> {
+        ) -> Result<Notification, NotificationError> {
             let mut notifications = self.notifications.lock().unwrap();
             if let Some(notification) = notifications.iter_mut().find(|n| n.id == notification_id) {
                 notification.read = true;
                 Ok(notification.clone())
             } else {
-                Err(sqlx::Error::RowNotFound)
+                Err(NotificationError::NotFound)
             }
         }
 
-        async fn delete(&self, notification_id: NotificationId) -> Result<(), sqlx::Error> {
+        async fn delete(&self, notification_id: NotificationId) -> Result<(), NotificationError> {
             let mut notifications = self.notifications.lock().unwrap();
             if let Some(pos) = notifications.iter().position(|n| n.id == notification_id) {
                 notifications.remove(pos);
                 Ok(())
             } else {
-                Err(sqlx::Error::RowNotFound)
+                Err(NotificationError::NotFound)
             }
         }
     }

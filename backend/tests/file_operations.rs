@@ -15,6 +15,9 @@ use rustshare_core::services::FileService;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
 use std::sync::Arc;
+use rustshare_core::events::EventBroadcaster;
+use rustshare_core::services::PermissionResolver;
+use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use uuid::Uuid;
 
 /// Setup test environment with database and S3 connections
@@ -43,8 +46,45 @@ async fn setup_test_env() -> (PgPool, Arc<EventStore>, Arc<MetadataStore>, Arc<O
     (pool, event_store, metadata_store, object_store)
 }
 
+
+fn create_file_service(
+    event_store: Arc<EventStore>,
+    metadata_store: Arc<MetadataStore>,
+    object_store: Arc<ObjectStore>,
+    pool: &PgPool,
+) -> FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository> {
+    let broadcaster = Arc::new(EventBroadcaster::new(100));
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(pool.clone()),
+    )));
+    FileService::new(
+        event_store,
+        metadata_store,
+        object_store,
+        broadcaster,
+        permission_resolver,
+    )
+}
+
+fn create_folder_service(
+    event_store: Arc<EventStore>,
+    metadata_store: Arc<MetadataStore>,
+    pool: &PgPool,
+) -> FolderService<EventStore, MetadataStore, PermissionResolverRepository> {
+    let broadcaster = Arc::new(EventBroadcaster::new(100));
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(pool.clone()),
+    )));
+    FolderService::new(
+        event_store,
+        metadata_store,
+        broadcaster,
+        permission_resolver,
+    )
+}
+
 /// Create a test user in the database
-async fn create_test_user(metadata_store: &MetadataStore, username: &str) -> User {
+async fn create_test_user(metadata_store: &MetadataStore, username: &str, tenant_id: Uuid) -> User {
     let user = User::new(
         username.to_string(),
         format!("{} Display", username),
@@ -52,6 +92,7 @@ async fn create_test_user(metadata_store: &MetadataStore, username: &str) -> Use
         format!("{}@test.local", username),
         false,
         10_737_418_240, // 10GB
+        tenant_id,
     );
 
     metadata_store
@@ -77,14 +118,11 @@ async fn test_file_upload_download_flow() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "fileops_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "fileops_user", tenant_id).await;
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Step 1: Upload a file
     let file_content = Bytes::from("Hello, this is test file content!");
@@ -92,7 +130,7 @@ async fn test_file_upload_download_flow() {
     let mime_type = "text/plain".to_string();
 
     let uploaded_file = file_service
-        .upload_file(user.id, file_name.clone(), None, file_content.clone(), mime_type.clone())
+        .upload_file(user.id, file_name.clone(), None, file_content.clone(), mime_type.clone(), tenant_id)
         .await
         .expect("Failed to upload file");
 
@@ -151,7 +189,8 @@ async fn test_file_upload_with_parent_folder() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "fileops_folder_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "fileops_folder_user", tenant_id).await;
 
     // Create a parent folder
     let parent_folder = rustshare_core::domain::Folder::new_child(
@@ -159,10 +198,11 @@ async fn test_file_upload_with_parent_folder() {
         "/Documents".to_string(),
         Uuid::new_v4(), // Dummy parent
         user.id,
+        tenant_id,
     );
 
     // Need to create a root folder first
-    let root_folder = rustshare_core::domain::Folder::new_root(user.id);
+    let root_folder = rustshare_core::domain::Folder::new_root(user.id, tenant_id);
     metadata_store
         .create_folder(&root_folder)
         .await
@@ -173,6 +213,7 @@ async fn test_file_upload_with_parent_folder() {
         "/Documents".to_string(),
         root_folder.id,
         user.id,
+        tenant_id,
     );
 
     metadata_store
@@ -181,11 +222,7 @@ async fn test_file_upload_with_parent_folder() {
         .expect("Failed to create parent folder");
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Upload file to parent folder
     let file_content = Bytes::from("Document content in folder");
@@ -198,6 +235,7 @@ async fn test_file_upload_with_parent_folder() {
             Some(parent_folder.id),
             file_content.clone(),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file to folder");
@@ -241,14 +279,11 @@ async fn test_file_deduplication() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "fileops_dedup_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "fileops_dedup_user", tenant_id).await;
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Upload same content twice with different names
     let file_content = Bytes::from("Identical content for deduplication test");
@@ -260,6 +295,7 @@ async fn test_file_deduplication() {
             None,
             file_content.clone(),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload first file");
@@ -271,6 +307,7 @@ async fn test_file_deduplication() {
             None,
             file_content.clone(),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload second file");
@@ -302,10 +339,11 @@ async fn test_move_file_to_folder() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "fileops_move_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "fileops_move_user", tenant_id).await;
 
     // Create root folder
-    let root_folder = rustshare_core::domain::Folder::new_root(user.id);
+    let root_folder = rustshare_core::domain::Folder::new_root(user.id, tenant_id);
     metadata_store
         .create_folder(&root_folder)
         .await
@@ -317,6 +355,7 @@ async fn test_move_file_to_folder() {
         "/Target".to_string(),
         root_folder.id,
         user.id,
+        tenant_id,
     );
     metadata_store
         .create_folder(&target_folder)
@@ -324,11 +363,7 @@ async fn test_move_file_to_folder() {
         .expect("Failed to create target folder");
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Upload a file at root (no parent folder)
     let file_content = Bytes::from("File to be moved");
@@ -339,6 +374,7 @@ async fn test_move_file_to_folder() {
             None,
             file_content.clone(),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file");
@@ -393,10 +429,11 @@ async fn test_move_file_to_root() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
     // Create test user
-    let user = create_test_user(&metadata_store, "fileops_move_root_user").await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "fileops_move_root_user", tenant_id).await;
 
     // Create root folder
-    let root_folder = rustshare_core::domain::Folder::new_root(user.id);
+    let root_folder = rustshare_core::domain::Folder::new_root(user.id, tenant_id);
     metadata_store
         .create_folder(&root_folder)
         .await
@@ -408,6 +445,7 @@ async fn test_move_file_to_root() {
         "/Source".to_string(),
         root_folder.id,
         user.id,
+        tenant_id,
     );
     metadata_store
         .create_folder(&source_folder)
@@ -415,11 +453,7 @@ async fn test_move_file_to_root() {
         .expect("Failed to create source folder");
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Upload a file in source folder
     let file_content = Bytes::from("File to move to root");
@@ -430,6 +464,7 @@ async fn test_move_file_to_root() {
             Some(source_folder.id),
             file_content.clone(),
             "text/plain".to_string(),
+            tenant_id,
         )
         .await
         .expect("Failed to upload file");

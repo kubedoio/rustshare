@@ -1,4 +1,5 @@
 use crate::client::ApiClient;
+use sync_protocol::RemoteFolderTree;
 use crate::planner::{generate_plan_with_db_files, DbFileState, RemoteFileInfo, RemoteFolderInfo, SyncPlan};
 use crate::scanner::{scan_local_root, FileScanResult};
 use crate::socket::SocketServer;
@@ -1074,7 +1075,7 @@ fn strip_remote_prefix(path: &str, prefix: &str) -> Option<PathBuf> {
 }
 
 fn collect_remote_folders(
-    tree: &crate::client::RemoteFolderTree,
+    tree: &sync_protocol::RemoteFolderTree,
     prefix: &str,
     dirs: &mut Vec<RemoteFolderInfo>,
     absolute_folder_ids: &mut HashMap<String, Uuid>,

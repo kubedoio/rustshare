@@ -8,6 +8,8 @@ use rustshare_core::services::{FileService, FolderService, ShareService};
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
 use std::sync::Arc;
+use rustshare_core::services::PermissionResolver;
+use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use uuid::Uuid;
 
 /// Test context holding all necessary services and stores
@@ -21,21 +23,29 @@ pub struct TestContext {
 
 impl TestContext {
     /// Create a new FileService instance
-    pub fn file_service(&self) -> FileService<EventStore, MetadataStore, ObjectStore> {
+    pub fn file_service(&self) -> FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository> {
+        let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+            PermissionResolverRepository::new(self.pool.clone()),
+        )));
         FileService::new(
             self.event_store.clone(),
             self.metadata_store.clone(),
             self.object_store.clone(),
             self.broadcaster.clone(),
+            permission_resolver,
         )
     }
 
     /// Create a new FolderService instance
-    pub fn folder_service(&self) -> FolderService<EventStore, MetadataStore> {
+    pub fn folder_service(&self) -> FolderService<EventStore, MetadataStore, PermissionResolverRepository> {
+        let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+            PermissionResolverRepository::new(self.pool.clone()),
+        )));
         FolderService::new(
             self.event_store.clone(),
             self.metadata_store.clone(),
             self.broadcaster.clone(),
+            permission_resolver,
         )
     }
 }

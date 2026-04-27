@@ -459,8 +459,6 @@ impl RustFsSyncRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // Note: These tests would require a full integration setup with
     // a running RustFS instance. For unit tests, we would typically
     // use mock implementations of the dependencies.

@@ -2845,6 +2845,7 @@ mod tests {
     async fn test_create_and_find_user() {
         let pool = setup_test_db().await;
         let store = MetadataStore::new(pool.clone());
+        let tenant_id = Uuid::new_v4();
 
         let user = User::new(
             "testuser".to_string(),
@@ -2853,6 +2854,7 @@ mod tests {
             "test@example.com".to_string(),
             false,
             10_737_418_240, // 10GB
+            tenant_id,
         );
 
         store.create_user(&user).await.unwrap();
@@ -2875,6 +2877,7 @@ mod tests {
     #[ignore] // Requires DATABASE_URL
     async fn test_file_crud() {
         let (store, pool) = setup_metadata_store().await;
+        let tenant_id = Uuid::new_v4();
 
         // First create a user to own the file
         let owner = User::new(
@@ -2884,6 +2887,7 @@ mod tests {
             "fileowner@example.com".to_string(),
             false,
             10_737_418_240,
+            tenant_id,
         );
         store.create_user(&owner).await.unwrap();
 
@@ -2896,6 +2900,7 @@ mod tests {
             "application/pdf".to_string(),
             None, // No parent folder
             owner.id,
+            tenant_id,
         );
 
         // Test: create_file
@@ -2925,7 +2930,7 @@ mod tests {
         assert_eq!(found_updated.size, 4096);
 
         // Test: list_files (with no parent_id filter)
-        let files = store.list_files(None, owner.id).await.unwrap();
+        let files = store.list_files(None, owner.id, tenant_id).await.unwrap();
         assert!(!files.is_empty());
         assert!(files.iter().any(|f| f.id == file.id));
 
@@ -2946,6 +2951,7 @@ mod tests {
     #[ignore] // Requires DATABASE_URL
     async fn test_file_versions() {
         let (store, pool) = setup_metadata_store().await;
+        let tenant_id = Uuid::new_v4();
 
         // First create a user to own the file
         let user = User::new(
@@ -2955,6 +2961,7 @@ mod tests {
             "versionuser@example.com".to_string(),
             false,
             10_737_418_240,
+            tenant_id,
         );
         store.create_user(&user).await.unwrap();
 
@@ -2967,6 +2974,7 @@ mod tests {
             "text/plain".to_string(),
             None,
             user.id,
+            tenant_id,
         );
         store.create_file(&file).await.unwrap();
 
@@ -2978,6 +2986,7 @@ mod tests {
             100,
             user.id,
             Some("Initial version".to_string()),
+            tenant_id,
         );
         store.create_file_version(&version1).await.unwrap();
 
@@ -2989,11 +2998,12 @@ mod tests {
             200,
             user.id,
             Some("Second version".to_string()),
+            tenant_id,
         );
         store.create_file_version(&version2).await.unwrap();
 
         // Create file version 3
-        let version3 = FileVersion::new(file.id, 3, "hash3".to_string(), 300, user.id, None);
+        let version3 = FileVersion::new(file.id, 3, "hash3".to_string(), 300, user.id, None, tenant_id);
         store.create_file_version(&version3).await.unwrap();
 
         // Test: list_file_versions (should be in DESC order: 3, 2, 1)
@@ -3039,6 +3049,7 @@ mod tests {
     #[ignore] // Requires DATABASE_URL
     async fn test_folder_crud() {
         let (store, pool) = setup_metadata_store().await;
+        let tenant_id = Uuid::new_v4();
 
         // First create a user to own the folders
         let owner = User::new(
@@ -3048,11 +3059,12 @@ mod tests {
             "folderowner@example.com".to_string(),
             false,
             10_737_418_240,
+            tenant_id,
         );
         store.create_user(&owner).await.unwrap();
 
         // Test: create_folder (root folder)
-        let root_folder = Folder::new_root(owner.id);
+        let root_folder = Folder::new_root(owner.id, tenant_id);
         store.create_folder(&root_folder).await.unwrap();
 
         // Test: find_folder_by_id
@@ -3071,6 +3083,7 @@ mod tests {
             "/Documents".to_string(),
             root_folder.id,
             owner.id,
+            tenant_id,
         );
         store.create_folder(&docs_folder).await.unwrap();
 
@@ -3080,6 +3093,7 @@ mod tests {
             "/Photos".to_string(),
             root_folder.id,
             owner.id,
+            tenant_id,
         );
         store.create_folder(&photos_folder).await.unwrap();
 
@@ -3089,6 +3103,7 @@ mod tests {
             "/Documents/Work".to_string(),
             docs_folder.id,
             owner.id,
+            tenant_id,
         );
         store.create_folder(&work_folder).await.unwrap();
 
@@ -3098,12 +3113,13 @@ mod tests {
             "/Documents/Work/Projects".to_string(),
             work_folder.id,
             owner.id,
+            tenant_id,
         );
         store.create_folder(&projects_folder).await.unwrap();
 
         // Test: list_folders (root level - should return Documents and Photos)
         let root_children = store
-            .list_folders(Some(root_folder.id), owner.id)
+            .list_folders(Some(root_folder.id), owner.id, tenant_id)
             .await
             .unwrap();
         assert_eq!(root_children.len(), 2);
@@ -3112,14 +3128,14 @@ mod tests {
 
         // Test: list_folders (Documents children - should return Work)
         let docs_children = store
-            .list_folders(Some(docs_folder.id), owner.id)
+            .list_folders(Some(docs_folder.id), owner.id, tenant_id)
             .await
             .unwrap();
         assert_eq!(docs_children.len(), 1);
         assert_eq!(docs_children[0].name, "Work");
 
         // Test: list_folders (no parent - should return root folder)
-        let root_folders = store.list_folders(None, owner.id).await.unwrap();
+        let root_folders = store.list_folders(None, owner.id, tenant_id).await.unwrap();
         assert_eq!(root_folders.len(), 1);
         assert_eq!(root_folders[0].name, "Root");
 
@@ -3202,6 +3218,7 @@ mod tests {
     #[ignore] // Requires DATABASE_URL
     async fn test_share_crud() {
         let (store, pool) = setup_metadata_store().await;
+        let tenant_id = Uuid::new_v4();
 
         // First create a user to own the file
         let owner = User::new(
@@ -3211,6 +3228,7 @@ mod tests {
             "shareowner@example.com".to_string(),
             false,
             10_737_418_240,
+            tenant_id,
         );
         store.create_user(&owner).await.unwrap();
 
@@ -3223,6 +3241,7 @@ mod tests {
             "application/pdf".to_string(),
             None,
             owner.id,
+            tenant_id,
         );
         store.create_file(&file).await.unwrap();
 
@@ -3234,6 +3253,7 @@ mod tests {
             SharePermissions::View,
             Some("hashed_password".to_string()),
             None,
+            tenant_id,
         );
         store.create_share(&share).await.unwrap();
 
@@ -3269,6 +3289,7 @@ mod tests {
             SharePermissions::Edit,
             None,
             None,
+            tenant_id,
         );
         store.create_share(&share2).await.unwrap();
 

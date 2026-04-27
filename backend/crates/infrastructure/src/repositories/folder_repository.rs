@@ -14,7 +14,7 @@ impl FolderRepository {
     }
 
     /// Get a folder by ID.
-    pub async fn get_by_id(&self, folder_id: FolderId) -> Result<Option<Folder>, sqlx::Error> {
+    pub async fn get_by_id(&self, folder_id: FolderId) -> anyhow::Result<Option<Folder>> {
         let row = sqlx::query(
             r#"
             SELECT id, name, path, parent_folder_id, owner_id,
@@ -49,7 +49,7 @@ impl rustshare_core::services::FolderOps for FolderRepository {
     async fn get_by_id(
         &self,
         folder_id: rustshare_core::domain::FolderId,
-    ) -> Result<Option<rustshare_core::domain::Folder>, sqlx::Error> {
+    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
         self.get_by_id(folder_id).await
     }
 }

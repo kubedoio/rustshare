@@ -13,7 +13,6 @@ use axum::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::{distributions::Uniform, Rng};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::time::{Duration, Instant};
@@ -21,7 +20,8 @@ use uuid::Uuid;
 
 use crate::handlers::AuthenticatedUser;
 use crate::oidc_runtime::load_oidc_runtime_settings;
-use crate::AppState;
+use crate::state::{AppConfigState, DatabaseState};
+use super::ErrorResponse;
 
 /// User code alphabet - excludes ambiguous characters: 0, O, 1, I, L
 const USER_CODE_ALPHABET: &[char] = &[
@@ -90,7 +90,7 @@ impl DeviceApprovalLookup {
 /// Returns information needed for QR code generation on the device pairing page
 pub async fn device_qr_info(
     headers: HeaderMap,
-) -> Result<Json<DeviceQrInfoResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<DeviceQrInfoResponse>, (StatusCode, Json<ErrorResponse>)> {
     let instance_url = build_instance_url(&headers);
 
     Ok(Json(DeviceQrInfoResponse {
@@ -142,12 +142,12 @@ pub struct DeviceRequestResponse {
 /// POST /api/v1/auth/device/approve
 /// Approves a device pair request using either a user_code or device_code
 pub async fn device_approve(
-    State(state): State<AppState>,
+    State(db): State<DatabaseState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Json(body): Json<DeviceApproveRequest>,
-) -> Result<Json<DeviceApproveResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<DeviceApproveResponse>, (StatusCode, Json<ErrorResponse>)> {
     let lookup = validate_device_approval_request(&body)?;
-    approve_device_pair_request(&state.db_pool, user_id, lookup).await?;
+    approve_device_pair_request(&db.db_pool, user_id, lookup).await?;
 
     // Return device_name - the actual device name is captured at poll time
     // when the token is created, so we return a placeholder here
@@ -159,7 +159,7 @@ pub async fn device_approve(
 async fn fetch_pair_request_for_approval(
     db_pool: &sqlx::PgPool,
     lookup: &DeviceApprovalLookup,
-) -> Result<Option<sqlx::postgres::PgRow>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Option<sqlx::postgres::PgRow>, (StatusCode, Json<ErrorResponse>)> {
     sqlx::query(lookup.query())
         .bind(lookup.value())
         .fetch_optional(db_pool)
@@ -171,7 +171,7 @@ async fn approve_device_pair_request(
     db_pool: &sqlx::PgPool,
     user_id: Uuid,
     lookup: DeviceApprovalLookup,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
     let row = fetch_pair_request_for_approval(db_pool, &lookup).await?;
 
     let (id, is_approved, is_expired) = match row {
@@ -186,7 +186,7 @@ async fn approve_device_pair_request(
         None => {
             return Err((
                 StatusCode::NOT_FOUND,
-                Json(json!({"error": "code_not_found"})),
+                Json(ErrorResponse::new("code_not_found")),
             ));
         }
     };
@@ -194,14 +194,14 @@ async fn approve_device_pair_request(
     if is_expired {
         return Err((
             StatusCode::NOT_FOUND,
-            Json(json!({"error": "code_not_found"})),
+            Json(ErrorResponse::new("code_not_found")),
         ));
     }
 
     if is_approved {
         return Err((
             StatusCode::CONFLICT,
-            Json(json!({"error": "already_approved"})),
+            Json(ErrorResponse::new("already_approved")),
         ));
     }
 
@@ -224,7 +224,7 @@ async fn approve_device_pair_request(
 /// Determine how a device approval request should be resolved.
 fn validate_device_approval_request(
     body: &DeviceApproveRequest,
-) -> Result<DeviceApprovalLookup, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<DeviceApprovalLookup, (StatusCode, Json<ErrorResponse>)> {
     match (&body.user_code, &body.device_code) {
         (Some(user_code), None) if !user_code.trim().is_empty() => {
             Ok(DeviceApprovalLookup::UserCode(user_code.clone()))
@@ -234,21 +234,15 @@ fn validate_device_approval_request(
         }
         (Some(_), Some(_)) => Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": "approve_request_accepts_only_one_identifier"
-            })),
+            Json(ErrorResponse::new("approve_request_accepts_only_one_identifier")),
         )),
         (None, None) => Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": "approve_request_requires_user_code_or_device_code"
-            })),
+            Json(ErrorResponse::new("approve_request_requires_user_code_or_device_code")),
         )),
         _ => Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": "approve_request_identifier_must_not_be_empty"
-            })),
+            Json(ErrorResponse::new("approve_request_identifier_must_not_be_empty")),
         )),
     }
 }
@@ -338,19 +332,19 @@ fn hash_token(raw: &str) -> String {
 }
 
 /// Standard server error response
-fn server_error(msg: impl Into<String>) -> (StatusCode, Json<serde_json::Value>) {
+fn server_error(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({ "error": msg.into() })),
+        Json(ErrorResponse::new(msg)),
     )
 }
 
 /// POST /api/v1/auth/device/request
 /// Generates a new device pair request with user_code and device_code
 pub async fn device_request(
-    State(state): State<AppState>,
+    State(state): State<crate::state::AppState>,
     headers: HeaderMap,
-) -> Result<Json<DeviceRequestResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<DeviceRequestResponse>, (StatusCode, Json<ErrorResponse>)> {
     let ttl_seconds = load_oidc_runtime_settings(&state)
         .await
         .map(|settings| settings.device_pair_code_ttl_seconds())
@@ -386,11 +380,12 @@ pub async fn device_request(
 /// POST /api/v1/auth/device/poll
 /// Polls for approval status and issues token when approved
 pub async fn device_poll(
-    State(state): State<AppState>,
+    State(db): State<DatabaseState>,
+    State(config): State<AppConfigState>,
     headers: HeaderMap,
     Json(req): Json<DevicePollRequest>,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    device_poll_inner(&state.db_pool, &state.poll_rate_limiter, headers, req).await
+) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
+    device_poll_inner(&db.db_pool, &config.poll_rate_limiter, headers, req).await
 }
 
 async fn device_poll_inner(
@@ -400,7 +395,7 @@ async fn device_poll_inner(
     >,
     headers: HeaderMap,
     req: DevicePollRequest,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
     // Check rate limit
     let now = Instant::now();
     let rate_limit_key = req.device_code.clone();
@@ -415,7 +410,7 @@ async fn device_poll_inner(
                 return Ok((
                     StatusCode::TOO_MANY_REQUESTS,
                     [(axum::http::header::RETRY_AFTER, retry_after.to_string())],
-                    Json(serde_json::json!({ "error": "Rate limit exceeded" })),
+                    Json(ErrorResponse::new("Rate limit exceeded")),
                 )
                     .into_response());
             }

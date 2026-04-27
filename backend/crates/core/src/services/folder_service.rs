@@ -113,6 +113,23 @@ where
             permission_resolver,
         }
     }
+    async fn require_folder_permission(
+        &self,
+        user_id: UserId,
+        folder_id: FolderId,
+        required: SharePermissions,
+    ) -> Result<(), FolderError> {
+        let has = self
+            .permission_resolver
+            .check_folder_permission(user_id, folder_id, required)
+            .await
+            .map_err(|e| FolderError::Database(e.to_string()))?;
+        if !has {
+            return Err(FolderError::PermissionDenied { folder_id, user_id });
+        }
+        Ok(())
+    }
+
 
     /// Create a new folder.
     ///
@@ -135,22 +152,11 @@ where
                 .metadata_store
                 .find_folder_by_id(parent_id)
                 .await
-                .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?
+                .map_err(|e| FolderError::Database(e.to_string()))?
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
 
             // Verify permissions: user must own the folder or have Edit permission
-            let has_permission = self
-                .permission_resolver
-                .check_folder_permission(owner_id, parent_id, SharePermissions::Edit)
-                .await
-                .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-            if !has_permission {
-                return Err(FolderError::PermissionDenied {
-                    folder_id: parent_id,
-                    user_id: owner_id,
-                });
-            }
+            self.require_folder_permission(owner_id, parent_id, SharePermissions::Edit).await?;
 
             // Construct path: parent_path + "/" + name
             let path = format!("{}/{}", parent.path.trim_end_matches('/'), name);
@@ -188,25 +194,20 @@ where
             folder.id,
             AggregateType::Folder,
             serde_json::to_value(payload)
-                .map_err(|e| FolderError::Database(sqlx::Error::Decode(Box::new(e))))?,
+                .map_err(|e| FolderError::Database(e.to_string()))?,
             owner_id,
         );
 
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|e| {
-                FolderError::Database(sqlx::Error::Protocol(format!(
-                    "Failed to append event: {}",
-                    e
-                )))
-            })?;
+            .map_err(|e| FolderError::Database(format!("Failed to append event: {}", e)))?;
 
         // Insert into metadata store
         self.metadata_store
             .create_folder(&folder)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         Ok(folder)
     }
@@ -219,24 +220,16 @@ where
         folder_id: FolderId,
         user_id: UserId,
     ) -> Result<Folder, FolderError> {
-        // 1. Check permissions first using the resolver
-        let has_permission = self
-            .permission_resolver
-            .check_folder_permission(user_id, folder_id, SharePermissions::View)
-            .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_permission {
-            return Err(FolderError::PermissionDenied { folder_id, user_id });
-        }
-
-        // 2. Find folder by ID
+        // 1. Find folder by ID
         let folder = self
             .metadata_store
             .find_folder_by_id(folder_id)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?
+            .map_err(|e| FolderError::Database(e.to_string()))?
             .ok_or(FolderError::NotFound(folder_id))?;
+
+        // 2. Check permissions using the resolver
+        self.require_folder_permission(user_id, folder_id, SharePermissions::View).await?;
 
         Ok(folder)
     }
@@ -258,14 +251,14 @@ where
             .metadata_store
             .list_files_by_parent(Some(folder.id), folder.tenant_id)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         // Get subfolders in this folder (filter by folder owner, not current user)
         let folders = self
             .metadata_store
             .list_folders_by_parent(Some(folder.id), folder.tenant_id)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         Ok(FolderContents::with_contents(files, folders))
     }
@@ -299,14 +292,14 @@ where
             .metadata_store
             .list_files_by_parent(Some(folder.id), folder.tenant_id)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         // Get immediate subfolders
         let subfolders = self
             .metadata_store
             .list_folders_by_parent(Some(folder.id), folder.tenant_id)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         // Recursively build trees for each subfolder
         let mut subfolder_trees = Vec::new();
@@ -334,15 +327,7 @@ where
         let mut folder = self.get_folder(folder_id, user_id).await?;
 
         // Verify Edit permission
-        let has_edit_permission = self
-            .permission_resolver
-            .check_folder_permission(user_id, folder_id, SharePermissions::Edit)
-            .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_edit_permission {
-            return Err(FolderError::PermissionDenied { folder_id, user_id });
-        }
+        self.require_folder_permission(user_id, folder_id, SharePermissions::Edit).await?;
 
         // Check if name is actually changing
         if folder.name == new_name {
@@ -358,7 +343,7 @@ where
                 .metadata_store
                 .find_folder_by_id(parent_id)
                 .await
-                .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?
+                .map_err(|e| FolderError::Database(e.to_string()))?
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
             format!("{}/{}", parent.path.trim_end_matches('/'), new_name)
         } else {
@@ -371,7 +356,7 @@ where
         folder.updated_at = chrono::Utc::now();
 
         // Update descendants' paths and ancestor_ids
-        self.update_descendant_paths_and_ancestors(folder_id, &old_path, &new_path, user_id)
+        self.update_descendant_paths_and_ancestors(folder_id, &old_path, &new_path, folder.ancestor_ids.clone(), user_id)
             .await?;
 
         // Emit FolderRenamed event
@@ -389,25 +374,20 @@ where
             folder_id,
             AggregateType::Folder,
             serde_json::to_value(payload)
-                .map_err(|e| FolderError::Database(sqlx::Error::Decode(Box::new(e))))?,
+                .map_err(|e| FolderError::Database(e.to_string()))?,
             user_id,
         );
 
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|e| {
-                FolderError::Database(sqlx::Error::Protocol(format!(
-                    "Failed to append event: {}",
-                    e
-                )))
-            })?;
+            .map_err(|e| FolderError::Database(format!("Failed to append event: {}", e)))?;
 
         // Update in metadata store
         self.metadata_store
             .update_folder(&folder)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         Ok(folder)
     }
@@ -425,15 +405,7 @@ where
         let mut folder = self.get_folder(folder_id, user_id).await?;
 
         // Verify Edit permission
-        let has_edit_permission = self
-            .permission_resolver
-            .check_folder_permission(user_id, folder_id, SharePermissions::Edit)
-            .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_edit_permission {
-            return Err(FolderError::PermissionDenied { folder_id, user_id });
-        }
+        self.require_folder_permission(user_id, folder_id, SharePermissions::Edit).await?;
 
         // Check if parent is actually changing
         if folder.parent_folder_id == new_parent_id {
@@ -458,7 +430,7 @@ where
                     .metadata_store
                     .find_descendant_folders(folder_id)
                     .await
-                    .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+                    .map_err(|e| FolderError::Database(e.to_string()))?;
                 descendants.iter().any(|d| d.id == parent_id)
             };
 
@@ -493,7 +465,7 @@ where
         folder.ancestor_ids = new_ancestor_ids;
 
         // Update descendants' paths
-        self.update_descendant_paths_and_ancestors(folder_id, &old_path, &new_path, user_id)
+        self.update_descendant_paths_and_ancestors(folder_id, &old_path, &new_path, folder.ancestor_ids.clone(), user_id)
             .await?;
 
         // Emit FolderMoved event
@@ -511,25 +483,20 @@ where
             folder_id,
             AggregateType::Folder,
             serde_json::to_value(payload)
-                .map_err(|e| FolderError::Database(sqlx::Error::Decode(Box::new(e))))?,
+                .map_err(|e| FolderError::Database(e.to_string()))?,
             user_id,
         );
 
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|e| {
-                FolderError::Database(sqlx::Error::Protocol(format!(
-                    "Failed to append event: {}",
-                    e
-                )))
-            })?;
+            .map_err(|e| FolderError::Database(format!("Failed to append event: {}", e)))?;
 
         // Update in metadata store
         self.metadata_store
             .update_folder(&folder)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         Ok(folder)
     }
@@ -546,15 +513,7 @@ where
         let folder = self.get_folder(folder_id, user_id).await?;
 
         // Verify Admin permission for deletion
-        let has_admin_permission = self
-            .permission_resolver
-            .check_folder_permission(user_id, folder_id, SharePermissions::Admin)
-            .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_admin_permission {
-            return Err(FolderError::PermissionDenied { folder_id, user_id });
-        }
+        self.require_folder_permission(user_id, folder_id, SharePermissions::Admin).await?;
 
         // Check if it's the system root folder (nil UUID) - only protect system folders
         // User-created root folders should be deletable even if named "Root"
@@ -567,7 +526,7 @@ where
             .metadata_store
             .find_descendant_folders(folder_id)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         // Delete in reverse order (children before parents) to maintain referential integrity
         for descendant in descendants.iter().rev() {
@@ -584,25 +543,20 @@ where
                 descendant.id,
                 AggregateType::Folder,
                 serde_json::to_value(payload)
-                    .map_err(|e| FolderError::Database(sqlx::Error::Decode(Box::new(e))))?,
+                    .map_err(|e| FolderError::Database(e.to_string()))?,
                 user_id,
             );
 
             self.event_store
                 .append(&event, &self.broadcaster)
                 .await
-                .map_err(|e| {
-                    FolderError::Database(sqlx::Error::Protocol(format!(
-                        "Failed to append event: {}",
-                        e
-                    )))
-                })?;
+                .map_err(|e| FolderError::Database(format!("Failed to append event: {}", e)))?;
 
             // Delete from metadata store
             self.metadata_store
                 .delete_folder(descendant.id)
                 .await
-                .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+                .map_err(|e| FolderError::Database(e.to_string()))?;
         }
 
         Ok(())
@@ -620,6 +574,7 @@ where
         folder_id: FolderId,
         old_path: &str,
         new_path: &str,
+        new_ancestor_ids: Option<Vec<Uuid>>,
         _user_id: UserId,
     ) -> Result<(), FolderError> {
         // Get all descendants (excluding the folder itself)
@@ -627,7 +582,7 @@ where
             .metadata_store
             .find_descendant_folders(folder_id)
             .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?;
 
         // Filter to get only descendants, not the folder itself
         let descendants: Vec<_> = all_descendants
@@ -635,15 +590,8 @@ where
             .filter(|d| d.id != folder_id)
             .collect();
 
-        // Get the moved folder's new ancestor_ids to compute descendants' new ancestors
-        let moved_folder = self
-            .metadata_store
-            .find_folder_by_id(folder_id)
-            .await
-            .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?
-            .ok_or(FolderError::NotFound(folder_id))?;
-
-        let new_moved_folder_ancestors = moved_folder.ancestor_ids.clone().unwrap_or_default();
+        // Use the moved folder's new ancestor_ids to compute descendants' new ancestors
+        let new_moved_folder_ancestors = new_ancestor_ids.unwrap_or_default();
 
         // Update each descendant's path and ancestor_ids
         for mut descendant in descendants {
@@ -676,7 +624,7 @@ where
                 self.metadata_store
                     .update_folder(&descendant)
                     .await
-                    .map_err(|e| FolderError::Database(sqlx::Error::Protocol(e.to_string())))?;
+                    .map_err(|e| FolderError::Database(e.to_string()))?;
             }
         }
 
@@ -712,7 +660,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::Folder;
+    use crate::domain::{File, FileId, Folder, Share};
     use std::collections::HashMap;
     use std::sync::Mutex;
     use uuid::Uuid;
@@ -825,6 +773,102 @@ mod tests {
                 .cloned()
                 .unwrap_or_default())
         }
+
+        async fn list_folders_by_parent(
+            &self,
+            parent_id: Option<FolderId>,
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<Folder>> {
+            let folders = self.folders.lock().unwrap();
+            Ok(folders
+                .values()
+                .filter(|f| f.parent_folder_id == parent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_files_by_parent(
+            &self,
+            parent_id: Option<FolderId>,
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<File>> {
+            let files = self.files.lock().unwrap();
+            Ok(files
+                .get(&parent_id.unwrap_or_default())
+                .cloned()
+                .unwrap_or_default())
+        }
+    }
+
+    #[derive(Clone)]
+    struct MockPermissionOps {
+        metadata_store: Option<Arc<MockMetadataStore>>,
+    }
+
+    impl MockPermissionOps {
+        fn new() -> Self {
+            Self {
+                metadata_store: None,
+            }
+        }
+
+        fn with_store(store: Arc<MockMetadataStore>) -> Self {
+            Self {
+                metadata_store: Some(store),
+            }
+        }
+    }
+
+    impl PermissionResolverOps for MockPermissionOps {
+        async fn find_user_share(
+            &self,
+            _file_id: Option<FileId>,
+            _folder_id: Option<FolderId>,
+            _recipient_user_id: UserId,
+        ) -> Result<Option<Share>> {
+            Ok(None)
+        }
+
+        async fn find_group_shares(
+            &self,
+            _file_id: Option<FileId>,
+            _folder_id: Option<FolderId>,
+            _group_ids: &[Uuid],
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_user_shares_for_folders(
+            &self,
+            _folder_ids: &[Uuid],
+            _recipient_user_id: UserId,
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_group_shares_for_folders(
+            &self,
+            _folder_ids: &[Uuid],
+            _group_ids: &[Uuid],
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_file_by_id(&self, _id: FileId) -> Result<Option<File>> {
+            Ok(None)
+        }
+
+        async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>> {
+            if let Some(store) = &self.metadata_store {
+                store.find_folder_by_id(id).await
+            } else {
+                Ok(None)
+            }
+        }
+
+        async fn get_user_group_ids(&self, _user_id: UserId) -> Result<Vec<Uuid>> {
+            Ok(Vec::new())
+        }
     }
 
     #[tokio::test]
@@ -835,6 +879,7 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -862,6 +907,7 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -895,8 +941,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -913,8 +960,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -931,8 +979,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -957,6 +1006,7 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -987,8 +1037,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1010,8 +1061,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1027,8 +1079,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1049,8 +1102,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1071,8 +1125,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1118,8 +1173,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1140,8 +1196,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1164,8 +1221,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1231,8 +1289,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1255,6 +1314,7 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1287,6 +1347,7 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1330,8 +1391,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1353,8 +1415,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store.clone(),
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1385,8 +1448,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store.clone(),
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1423,8 +1487,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1451,8 +1516,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1496,8 +1562,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store.clone(),
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1535,6 +1602,7 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1564,6 +1632,7 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1619,8 +1688,9 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1647,6 +1717,7 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1677,6 +1748,7 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1735,6 +1807,7 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1801,6 +1874,7 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1832,61 +1906,12 @@ mod tests {
         assert_eq!(updated_work.ancestor_ids, Some(Vec::new()));
     }
 
-    struct MockPermissionOps;
-
-    impl PermissionResolverOps for MockPermissionOps {
-        async fn find_user_share(
-            &self,
-            _file_id: Option<FileId>,
-            _folder_id: Option<FolderId>,
-            _recipient_user_id: UserId,
-        ) -> Result<Option<Share>> {
-            Ok(None)
-        }
-
-        async fn find_group_shares(
-            &self,
-            _file_id: Option<FileId>,
-            _folder_id: Option<FolderId>,
-            _group_ids: &[Uuid],
-        ) -> Result<Vec<Share>> {
-            Ok(Vec::new())
-        }
-
-        async fn find_user_shares_for_folders(
-            &self,
-            _folder_ids: &[Uuid],
-            _recipient_user_id: UserId,
-        ) -> Result<Vec<Share>> {
-            Ok(Vec::new())
-        }
-
-        async fn find_group_shares_for_folders(
-            &self,
-            _folder_ids: &[Uuid],
-            _group_ids: &[Uuid],
-        ) -> Result<Vec<Share>> {
-            Ok(Vec::new())
-        }
-
-        async fn find_file_by_id(&self, _id: FileId) -> Result<Option<File>> {
-            Ok(None)
-        }
-
-        async fn find_folder_by_id(&self, _id: FolderId) -> Result<Option<Folder>> {
-            Ok(None)
-        }
-
-        async fn get_user_group_ids(&self, _user_id: UserId) -> Result<Vec<Uuid>> {
-            Ok(Vec::new())
-        }
-    }
 
     #[tokio::test]
     async fn test_move_folder_circular_with_ancestor_ids() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let permission_ops = Arc::new(MockPermissionOps);
+        let permission_ops = Arc::new(MockPermissionOps::with_store(metadata_store.clone()));
         let permission_resolver = Arc::new(PermissionResolver::new(permission_ops));
 
         let service = FolderService::new(
@@ -1930,7 +1955,7 @@ mod tests {
     async fn test_deep_nesting_ancestor_ids() {
         let event_store = Arc::new(MockEventStore::new());
         let metadata_store = Arc::new(MockMetadataStore::new());
-        let permission_ops = Arc::new(MockPermissionOps);
+        let permission_ops = Arc::new(MockPermissionOps::with_store(metadata_store.clone()));
         let permission_resolver = Arc::new(PermissionResolver::new(permission_ops));
 
         let service = FolderService::new(

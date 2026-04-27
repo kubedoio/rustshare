@@ -226,7 +226,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .metadata_store
             .find_file_by_id(file_id)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FileNotFound(file_id))?;
 
         // Verify user owns the file
@@ -254,7 +254,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         self.metadata_store
             .create_share(&share)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         // Emit ShareCreated event
         let payload = ShareCreatedPayload {
@@ -277,14 +277,14 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             share.id,
             AggregateType::Share,
             serde_json::to_value(&payload)
-                .map_err(|_e| ShareError::Database(sqlx::Error::PoolClosed))?,
+                .map_err(|e| ShareError::Database(e.to_string()))?,
             user_id,
         );
 
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         Ok(share)
     }
@@ -304,7 +304,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .metadata_store
             .find_folder_by_id(folder_id)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FolderNotFound(folder_id))?;
 
         if folder.owner_id != user_id {
@@ -331,7 +331,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         self.metadata_store
             .create_share(&share)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         let payload = ShareCreatedPayload {
             share_id: share.id,
@@ -353,14 +353,14 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             share.id,
             AggregateType::Share,
             serde_json::to_value(&payload)
-                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?,
+                .map_err(|e| ShareError::Database(e.to_string()))?,
             user_id,
         );
 
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         Ok(share)
     }
@@ -385,7 +385,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .metadata_store
             .get_share_by_token(share_token)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or_else(|| ShareError::ShareNotFoundByToken(share_token.to_string()))?;
 
         // Check if revoked
@@ -413,7 +413,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         self.metadata_store
             .update_share(&share)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         let claims = serde_json::json!({
             "sub": format!("share:{}", share.id),
@@ -464,7 +464,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .metadata_store
             .get_share_by_id(share_id)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
         let owner_id = if let Some(file_id) = share.file_id {
@@ -472,7 +472,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .metadata_store
                 .find_file_by_id(file_id)
                 .await
-                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FileNotFound(file_id))?;
             file.owner_id
         } else if let Some(folder_id) = share.folder_id {
@@ -480,11 +480,11 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .metadata_store
                 .find_folder_by_id(folder_id)
                 .await
-                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
             folder.owner_id
         } else {
-            return Err(ShareError::Database(sqlx::Error::PoolClosed));
+            return Err(ShareError::InvalidState("share has no associated resource".to_string()));
         };
 
         if owner_id != user_id {
@@ -498,7 +498,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         self.metadata_store
             .revoke_share(share_id)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         // Emit ShareRevoked event
         let payload = ShareRevokedPayload {
@@ -512,14 +512,14 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             share.id,
             AggregateType::Share,
             serde_json::to_value(&payload)
-                .map_err(|_e| ShareError::Database(sqlx::Error::PoolClosed))?,
+                .map_err(|e| ShareError::Database(e.to_string()))?,
             user_id,
         );
 
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         Ok(())
     }
@@ -544,7 +544,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .metadata_store
             .get_share_by_id(share_id)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
         let owner_id = if let Some(file_id) = share.file_id {
@@ -552,7 +552,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .metadata_store
                 .find_file_by_id(file_id)
                 .await
-                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FileNotFound(file_id))?;
             file.owner_id
         } else if let Some(folder_id) = share.folder_id {
@@ -560,11 +560,11 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .metadata_store
                 .find_folder_by_id(folder_id)
                 .await
-                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
             folder.owner_id
         } else {
-            return Err(ShareError::Database(sqlx::Error::PoolClosed));
+            return Err(ShareError::InvalidState("share has no associated resource".to_string()));
         };
 
         if owner_id != user_id {
@@ -596,7 +596,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         self.metadata_store
             .update_share(&share)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         // Emit ShareUpdated event
         let payload = ShareUpdatedPayload {
@@ -613,14 +613,14 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             share.id,
             AggregateType::Share,
             serde_json::to_value(&payload)
-                .map_err(|_e| ShareError::Database(sqlx::Error::PoolClosed))?,
+                .map_err(|e| ShareError::Database(e.to_string()))?,
             user_id,
         );
 
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         Ok(())
     }
@@ -639,7 +639,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .metadata_store
             .find_file_by_id(file_id)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FileNotFound(file_id))?;
 
         // Check user owns file
@@ -651,7 +651,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         self.metadata_store
             .get_file_shares(file_id)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))
+            .map_err(|e| ShareError::Database(e.to_string()))
     }
 
     /// List all shares for a folder.
@@ -664,7 +664,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .metadata_store
             .find_folder_by_id(folder_id)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FolderNotFound(folder_id))?;
 
         if folder.owner_id != user_id {
@@ -677,7 +677,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         self.metadata_store
             .get_folder_shares(folder_id)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))
+            .map_err(|e| ShareError::Database(e.to_string()))
     }
 
     /// Get public share info for anonymous access.
@@ -695,7 +695,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .metadata_store
             .get_share_by_token(share_token)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or_else(|| ShareError::ShareNotFoundByToken(share_token.to_string()))?;
 
         // Check if revoked
@@ -715,7 +715,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .metadata_store
                 .find_file_by_id(file_id)
                 .await
-                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FileNotFound(file_id))?;
 
             Ok((share, Some(file), None))
@@ -724,12 +724,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .metadata_store
                 .find_folder_by_id(folder_id)
                 .await
-                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
 
             Ok((share, None, Some(folder)))
         } else {
-            Err(ShareError::Database(sqlx::Error::PoolClosed))
+            Err(ShareError::InvalidState("share has no associated resource".to_string()))
         }
     }
 
@@ -740,14 +740,14 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         current_folder_id: Option<uuid::Uuid>,
     ) -> Result<(Share, Folder, Vec<Folder>, Vec<File>), ShareError> {
         let (share, _file, root_folder) = self.get_public_share_info(share_token).await?;
-        let root_folder = root_folder.ok_or(ShareError::Database(sqlx::Error::PoolClosed))?;
+        let root_folder = root_folder.ok_or(ShareError::InvalidState("share is not linked to a folder".to_string()))?;
         let target_folder_id = current_folder_id.unwrap_or(root_folder.id);
 
         let descendants = self
             .metadata_store
             .find_descendant_folders(root_folder.id)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         let target_folder = descendants
             .into_iter()
@@ -758,13 +758,13 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .metadata_store
             .list_folders_by_parent(Some(target_folder.id), target_folder.tenant_id)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         let files = self
             .metadata_store
             .list_files_by_parent(Some(target_folder.id), target_folder.tenant_id)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         Ok((share, target_folder, folders, files))
     }
@@ -797,7 +797,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                     .metadata_store
                     .find_file_by_id(*file_id)
                     .await
-                    .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                    .map_err(|e| ShareError::Database(e.to_string()))?
                     .ok_or(ShareError::FileNotFound(*file_id))?;
                 (file.owner_id, file.tenant_id)
             }
@@ -806,7 +806,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                     .metadata_store
                     .find_folder_by_id(*folder_id)
                     .await
-                    .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                    .map_err(|e| ShareError::Database(e.to_string()))?
                     .ok_or(ShareError::FolderNotFound(*folder_id))?;
                 (folder.owner_id, folder.tenant_id)
             }
@@ -833,7 +833,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .metadata_store
                 .is_user_in_group(created_by, group_id)
                 .await
-                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+                .map_err(|e| ShareError::Database(e.to_string()))?;
             if !is_member {
                 return Err(ShareError::NotGroupMember(group_id));
             }
@@ -844,7 +844,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             Resource::File(file_id) => self.metadata_store.get_file_shares(*file_id).await,
             Resource::Folder(folder_id) => self.metadata_store.get_folder_shares(*folder_id).await,
         }
-        .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+        .map_err(|e| ShareError::Database(e.to_string()))?;
 
         let already_exists = existing_shares
             .iter()
@@ -883,7 +883,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         self.metadata_store
             .create_share(&share)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         // Emit event
         let payload = ShareCreatedPayload {
@@ -901,14 +901,14 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             share.id,
             AggregateType::Share,
             serde_json::to_value(&payload)
-                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?,
+                .map_err(|e| ShareError::Database(e.to_string()))?,
             created_by,
         );
 
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         Ok(share)
     }
@@ -933,7 +933,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .metadata_store
             .get_share_by_id(share_id)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
         // Verify it's a group share
@@ -967,7 +967,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         self.metadata_store
             .revoke_share(share_id)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         // Emit event
         let payload = ShareRevokedPayload {
@@ -981,14 +981,14 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             share_id,
             AggregateType::Share,
             serde_json::to_value(&payload)
-                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?,
+                .map_err(|e| ShareError::Database(e.to_string()))?,
             requesting_user,
         );
 
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         Ok(())
     }
@@ -1015,7 +1015,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .metadata_store
             .get_share_by_id(share_id)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
         // Verify it's a group share
@@ -1050,7 +1050,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         self.metadata_store
             .update_share(&share)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         // Emit event
         let payload = ShareUpdatedPayload {
@@ -1067,14 +1067,14 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             share_id,
             AggregateType::Share,
             serde_json::to_value(&payload)
-                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?,
+                .map_err(|e| ShareError::Database(e.to_string()))?,
             requesting_user,
         );
 
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         Ok(share)
     }
@@ -1096,7 +1096,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                     .metadata_store
                     .find_file_by_id(file_id)
                     .await
-                    .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                    .map_err(|e| ShareError::Database(e.to_string()))?
                 {
                     if file.owner_id == user_id {
                         return Ok(true); // Owner has all permissions
@@ -1108,7 +1108,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                     .metadata_store
                     .get_file_shares(file_id)
                     .await
-                    .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+                    .map_err(|e| ShareError::Database(e.to_string()))?;
 
                 // Check direct user shares
                 let has_direct_share = shares.iter().any(|share| {
@@ -1131,7 +1131,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                             .metadata_store
                             .is_user_in_group(user_id, share.recipient_group_id.unwrap())
                             .await
-                            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+                            .map_err(|e| ShareError::Database(e.to_string()))?;
                         if is_member {
                             return Ok(true);
                         }
@@ -1146,7 +1146,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                     .metadata_store
                     .find_folder_by_id(folder_id)
                     .await
-                    .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                    .map_err(|e| ShareError::Database(e.to_string()))?
                 {
                     if folder.owner_id == user_id {
                         return Ok(true); // Owner has all permissions
@@ -1158,7 +1158,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                     .metadata_store
                     .get_folder_shares(folder_id)
                     .await
-                    .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+                    .map_err(|e| ShareError::Database(e.to_string()))?;
 
                 // Check direct user shares
                 let has_direct_share = shares.iter().any(|share| {
@@ -1181,7 +1181,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                             .metadata_store
                             .is_user_in_group(user_id, share.recipient_group_id.unwrap())
                             .await
-                            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+                            .map_err(|e| ShareError::Database(e.to_string()))?;
                         if is_member {
                             return Ok(true);
                         }
@@ -1225,7 +1225,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .notification_repo
             .was_notified(user_id, share.id)
             .await
-            .map_err(ShareError::Database)?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         if was_notified {
             return Ok(());
@@ -1237,7 +1237,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .metadata_store
                 .find_file_by_id(file_id)
                 .await
-                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FileNotFound(file_id))?;
             (file.name, "file")
         } else if let Some(folder_id) = share.folder_id {
@@ -1245,7 +1245,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .metadata_store
                 .find_folder_by_id(folder_id)
                 .await
-                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+                .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
             (folder.name, "folder")
         } else {
@@ -1259,7 +1259,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .metadata_store
             .find_user_by_id(share.created_by)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or_else(|| ShareError::RecipientNotFound("Sharer not found".to_string()))?;
 
         // Create notification
@@ -1309,20 +1309,20 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             share.id,
             AggregateType::Share,
             serde_json::to_value(&payload)
-                .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?,
+                .map_err(|e| ShareError::Database(e.to_string()))?,
             share.created_by,
         );
 
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|_| ShareError::Database(sqlx::Error::PoolClosed))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         // Record notification sent to prevent duplicates
         self.notification_repo
             .record_notification(user_id, share.id)
             .await
-            .map_err(ShareError::Database)?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         Ok(())
     }
@@ -1545,6 +1545,36 @@ mod tests {
             // Mock implementation - in tests, users are not group members by default
             // Tests can override this by using a custom mock if needed
             Ok(false)
+        }
+
+        async fn list_files_by_parent(
+            &self,
+            parent_id: Option<uuid::Uuid>,
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<File>> {
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|file| file.parent_folder_id == parent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_folders_by_parent(
+            &self,
+            parent_id: Option<uuid::Uuid>,
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<Folder>> {
+            Ok(self
+                .folders
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|folder| folder.parent_folder_id == parent_id)
+                .cloned()
+                .collect())
         }
     }
 

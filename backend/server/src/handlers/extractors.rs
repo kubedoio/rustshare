@@ -38,7 +38,7 @@ impl AuthError {
                 (StatusCode::INTERNAL_SERVER_ERROR, "Authentication failed")
             }
         };
-        (status, Json(serde_json::json!({ "error": message }))).into_response()
+        (status, Json(super::ErrorResponse::new(message))).into_response()
     }
 }
 
@@ -232,7 +232,7 @@ impl FromRequestParts<AppState> for ShareSessionAuth {
             .map_err(|_| {
                 (
                     StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({"error": "Missing or invalid Authorization header"})),
+                    Json(super::ErrorResponse::new("Missing or invalid Authorization header")),
                 )
                     .into_response()
             })?;
@@ -244,7 +244,7 @@ impl FromRequestParts<AppState> for ShareSessionAuth {
             .map_err(|e| {
                 (
                     StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({"error": format!("Invalid token: {}", e)})),
+                    Json(super::ErrorResponse::new(format!("Invalid token: {}", e))),
                 )
                     .into_response()
             })?;
@@ -253,7 +253,7 @@ impl FromRequestParts<AppState> for ShareSessionAuth {
         if claims.is_expired() {
             return Err((
                 StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "Token has expired"})),
+                Json(super::ErrorResponse::new("Token has expired")),
             )
                 .into_response());
         }
@@ -308,7 +308,7 @@ impl FromRequestParts<AppState> for AdminUser {
 fn admin_forbidden_error(msg: &str) -> Response {
     (
         StatusCode::FORBIDDEN,
-        Json(serde_json::json!({ "error": msg })),
+        Json(super::ErrorResponse::new(msg)),
     )
         .into_response()
 }
@@ -316,7 +316,7 @@ fn admin_forbidden_error(msg: &str) -> Response {
 fn admin_internal_error(msg: &str) -> Response {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({ "error": msg })),
+        Json(super::ErrorResponse::new(msg)),
     )
         .into_response()
 }
@@ -324,7 +324,7 @@ fn admin_internal_error(msg: &str) -> Response {
 fn admin_unauthorized_error(msg: &str) -> Response {
     (
         StatusCode::UNAUTHORIZED,
-        Json(serde_json::json!({ "error": msg })),
+        Json(super::ErrorResponse::new(msg)),
     )
         .into_response()
 }
@@ -341,7 +341,7 @@ pub(crate) fn bearer_token_from_headers(headers: &HeaderMap) -> Option<String> {
 fn auth_error(message: &str) -> Response {
     (
         StatusCode::UNAUTHORIZED,
-        Json(serde_json::json!({ "error": message })),
+        Json(super::ErrorResponse::new(message)),
     )
         .into_response()
 }
@@ -349,7 +349,7 @@ fn auth_error(message: &str) -> Response {
 fn session_auth_error(error: String) -> Response {
     (
         StatusCode::UNAUTHORIZED,
-        Json(serde_json::json!({ "error": format!("Session validation failed: {}", error) })),
+        Json(super::ErrorResponse::new(format!("Session validation failed: {}", error))),
     )
         .into_response()
 }

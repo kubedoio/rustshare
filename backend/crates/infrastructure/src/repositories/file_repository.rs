@@ -14,7 +14,7 @@ impl FileRepository {
     }
 
     /// Get a file by ID.
-    pub async fn get_by_id(&self, file_id: FileId) -> Result<Option<File>, sqlx::Error> {
+    pub async fn get_by_id(&self, file_id: FileId) -> anyhow::Result<Option<File>> {
         let file = sqlx::query_as::<_, File>(
             r#"
             SELECT id, name, path, content_hash, size, mime_type,
@@ -38,7 +38,7 @@ impl rustshare_core::services::FileOps for FileRepository {
     async fn get_by_id(
         &self,
         file_id: rustshare_core::domain::FileId,
-    ) -> Result<Option<rustshare_core::domain::File>, sqlx::Error> {
+    ) -> anyhow::Result<Option<rustshare_core::domain::File>> {
         self.get_by_id(file_id).await
     }
 }

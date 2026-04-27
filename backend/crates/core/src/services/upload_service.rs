@@ -4,7 +4,6 @@
 //! handling chunked uploads, and assembling files on completion.
 
 use bytes::Bytes;
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -241,7 +240,7 @@ where
         request: CreateSessionRequest,
     ) -> Result<CreateSessionResponse, UploadError> {
         // Validate file name
-        self.validate_file_name(&request.file_name)?;
+        crate::validation::validate_name(&request.file_name).map_err(|msg| UploadError::InvalidFileName(msg))?;
 
         // Validate parent folder if provided
         if let Some(folder_id) = request.folder_id {
@@ -390,7 +389,7 @@ where
         }
 
         // Calculate chunk hash
-        let chunk_hash = self.calculate_sha256(&data);
+        let chunk_hash = crate::validation::calculate_sha256(&data);
 
         // Verify hash if provided
         if let Some(expected_hash) = provided_hash {
@@ -476,7 +475,7 @@ where
 
         // Assemble chunks and calculate final hash
         let final_content = self.assemble_content(&session).await?;
-        let final_hash = self.calculate_sha256(&final_content);
+        let final_hash = crate::validation::calculate_sha256(&final_content);
 
         // Verify final hash if expected
         if let Some(expected_hash) = &session.file_hash {
@@ -756,54 +755,14 @@ where
         Ok(Bytes::from(content))
     }
 
-    /// Validate file name
-    fn validate_file_name(&self, name: &str) -> Result<(), UploadError> {
-        if name.is_empty() {
-            return Err(UploadError::InvalidFileName(
-                "File name cannot be empty".to_string(),
-            ));
-        }
-
-        if name.contains('/') {
-            return Err(UploadError::InvalidFileName(
-                "File name cannot contain forward slash (/)".to_string(),
-            ));
-        }
-
-        if name.contains('\0') {
-            return Err(UploadError::InvalidFileName(
-                "File name cannot contain null character".to_string(),
-            ));
-        }
-
-        Ok(())
-    }
-
-    /// Calculate SHA256 hash
-    fn calculate_sha256(&self, content: &Bytes) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(content);
-        hex::encode(hasher.finalize())
-    }
-}
-
-mod hex {
-    pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes
-            .as_ref()
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{FileVersion, Folder, ReplicationState};
+    use crate::domain::{FileVersion, Folder};
     use crate::services::file_service::EventStoreOps;
     use bytes::Bytes;
-    use std::collections::{HashMap, HashSet};
     use std::sync::Mutex;
     use chrono::Utc;
 
@@ -902,7 +861,7 @@ mod tests {
         }
 
         async fn get_chunk(&self, _session_id: Uuid, _chunk_index: u32) -> Result<Option<Bytes>, UploadError> {
-            unreachable!()
+            Ok(Some(Bytes::new()))
         }
 
         async fn delete_chunk(&self, _session_id: Uuid, _chunk_index: u32) -> Result<(), UploadError> {
@@ -988,7 +947,6 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
     impl EventStoreOps for MockEventStore {
         async fn append(&self, event: &Event, _broadcaster: &EventBroadcaster) -> anyhow::Result<()> {
             self.events.lock().unwrap().push(event.clone());
@@ -1019,7 +977,7 @@ mod tests {
             None,
         );
         session.status = UploadSessionStatus::InProgress;
-        session.received_chunks = HashSet::from([0]);
+        session.mark_chunk_received(0);
         session.uploaded_bytes = 0;
 
         let existing_file = File {
@@ -1070,6 +1028,6 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, EventType::FileModified);
         let payload = events[0].payload.clone();
-        assert_eq!(payload["file_id"].as_str(), Some(&existing_file.id.to_string()));
+        assert_eq!(payload["file_id"].as_str(), Some(existing_file.id.to_string().as_str()));
     }
 }

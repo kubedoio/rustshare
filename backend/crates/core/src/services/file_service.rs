@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 use crate::domain::{
-    File, FileVersion, Folder, FolderId, ReplicationJob, ReplicationState, UserId,
+    File, FileId, FileVersion, Folder, FolderId, ReplicationJob, ReplicationState, UserId,
 };
 use crate::events::{
     AggregateType, Event, EventBroadcaster, EventType, FileDeletedPayload, FileModifiedPayload,
@@ -181,6 +181,23 @@ where
             permission_resolver,
         }
     }
+    async fn require_file_permission(
+        &self,
+        user_id: UserId,
+        file_id: FileId,
+        required: SharePermissions,
+    ) -> Result<(), FileError> {
+        let has = self
+            .permission_resolver
+            .check_file_permission(user_id, file_id, required)
+            .await
+            .map_err(|e| FileError::Database(e.to_string()))?;
+        if !has {
+            return Err(FileError::PermissionDenied { file_id, user_id });
+        }
+        Ok(())
+    }
+
 
     /// Upload a new file.
     ///
@@ -251,7 +268,7 @@ where
                 .metadata_store
                 .find_folder_by_id(folder_id)
                 .await
-                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+                .map_err(|e| FileError::Database(e.to_string()))?
                 .ok_or(FileError::ParentFolderNotFound(folder_id))?;
 
             // Verify permissions: user must own the folder or have Edit permission
@@ -259,7 +276,7 @@ where
                 .permission_resolver
                 .check_folder_permission(owner_id, folder_id, SharePermissions::Edit)
                 .await
-                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+                .map_err(|e| FileError::Database(e.to_string()))?;
 
             if !has_permission {
                 return Err(FileError::PermissionDenied {
@@ -300,7 +317,7 @@ where
             .metadata_store
             .find_file_by_path(&path, owner_id)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+            .map_err(|e| FileError::Database(e.to_string()))?
         {
             if existing.content_hash == content_hash && existing.size == size {
                 return Ok(existing);
@@ -320,7 +337,7 @@ where
             self.metadata_store
                 .update_file(&existing)
                 .await
-                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+                .map_err(|e| FileError::Database(e.to_string()))?;
 
             let version = FileVersion::new(
                 existing.id,
@@ -335,7 +352,7 @@ where
             self.metadata_store
                 .create_file_version(&version)
                 .await
-                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+                .map_err(|e| FileError::Database(e.to_string()))?;
 
             self.queue_replication_if_needed(existing.id, owner_id, &version)
                 .await?;
@@ -419,7 +436,7 @@ where
         self.metadata_store
             .create_file(&file)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         // Create version 1 entry
         let version = FileVersion::new(
@@ -443,7 +460,7 @@ where
         self.metadata_store
             .create_file_version(&version)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         self.queue_replication_if_needed(file.id, owner_id, &version)
             .await?;
@@ -466,22 +483,14 @@ where
     /// - `FileError::PermissionDenied` if the user doesn't have access
     pub async fn get_file(&self, file_id: uuid::Uuid, user_id: UserId) -> Result<File, FileError> {
         // 1. Check permissions first using the resolver
-        let has_permission = self
-            .permission_resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
-            .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_permission {
-            return Err(FileError::PermissionDenied { file_id, user_id });
-        }
+        self.require_file_permission(user_id, file_id, SharePermissions::View).await?;
 
         // 2. Find file by ID
         let file = self
             .metadata_store
             .find_file_by_id(file_id)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+            .map_err(|e| FileError::Database(e.to_string()))?
             .ok_or(FileError::NotFound(file_id))?;
 
         Ok(file)
@@ -547,15 +556,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        let has_edit_permission = self
-            .permission_resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
-            .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_edit_permission {
-            return Err(FileError::PermissionDenied { file_id, user_id });
-        }
+        self.require_file_permission(user_id, file_id, SharePermissions::Edit).await?;
 
         // 2. Check optimistic lock (current_version == expected_version)
         if file.current_version != expected_version {
@@ -598,7 +599,7 @@ where
         self.metadata_store
             .update_file(&file)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         // 6. Create FileVersion snapshot
         let version = FileVersion::new(
@@ -614,7 +615,7 @@ where
         self.metadata_store
             .create_file_version(&version)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         self.queue_replication_if_needed(file.id, user_id, &version)
             .await?;
@@ -680,7 +681,7 @@ where
             .metadata_store
             .list_file_versions(file_id)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         Ok(versions)
     }
@@ -715,22 +716,14 @@ where
         let old_version = file.current_version;
 
         // 1b. Verify Edit permission
-        let has_edit_permission = self
-            .permission_resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
-            .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_edit_permission {
-            return Err(FileError::PermissionDenied { file_id, user_id });
-        }
+        self.require_file_permission(user_id, file_id, SharePermissions::Edit).await?;
 
         // 2. Find the old version
         let old_file_version = self
             .metadata_store
             .find_file_version(file_id, version_number)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+            .map_err(|e| FileError::Database(e.to_string()))?
             .ok_or(FileError::VersionNotFound(version_number))?;
 
         // 3. Read content from RustFS (using the old version's storage key)
@@ -751,7 +744,7 @@ where
         self.metadata_store
             .update_file(&file)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         // 5. Create FileVersion snapshot
         let version = FileVersion::new(
@@ -767,7 +760,7 @@ where
         self.metadata_store
             .create_file_version(&version)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         self.queue_replication_if_needed(file.id, user_id, &version)
             .await?;
@@ -829,15 +822,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        let has_edit_permission = self
-            .permission_resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
-            .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_edit_permission {
-            return Err(FileError::PermissionDenied { file_id, user_id });
-        }
+        self.require_file_permission(user_id, file_id, SharePermissions::Edit).await?;
 
         // 2. If target folder is specified, verify it exists
         let new_path = if let Some(folder_id) = target_folder_id {
@@ -845,7 +830,7 @@ where
                 .metadata_store
                 .find_folder_by_id(folder_id)
                 .await
-                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+                .map_err(|e| FileError::Database(e.to_string()))?
                 .ok_or(FileError::FolderNotFound(folder_id))?;
             format!("{}/{}", folder.path, file.name)
         } else {
@@ -864,7 +849,7 @@ where
         self.metadata_store
             .update_file(&file)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         // 6. Create FileMoved event
         let payload = FileMovedPayload {
@@ -892,7 +877,7 @@ where
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         Ok(file)
     }
@@ -910,15 +895,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        let has_edit_permission = self
-            .permission_resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
-            .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_edit_permission {
-            return Err(FileError::PermissionDenied { file_id, user_id });
-        }
+        self.require_file_permission(user_id, file_id, SharePermissions::Edit).await?;
 
         if file.name == new_name {
             return Ok(file);
@@ -931,7 +908,7 @@ where
                 .metadata_store
                 .find_folder_by_id(parent_id)
                 .await
-                .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?
+                .map_err(|e| FileError::Database(e.to_string()))?
                 .ok_or(FileError::FolderNotFound(parent_id))?;
 
             if parent.path == "/" {
@@ -950,7 +927,7 @@ where
         self.metadata_store
             .update_file(&file)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         let payload = FileRenamedPayload {
             file_id,
@@ -976,7 +953,7 @@ where
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         Ok(file)
     }
@@ -999,15 +976,7 @@ where
         let file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Admin permission for deletion
-        let has_admin_permission = self
-            .permission_resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Admin)
-            .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_admin_permission {
-            return Err(FileError::PermissionDenied { file_id, user_id });
-        }
+        self.require_file_permission(user_id, file_id, SharePermissions::Admin).await?;
 
         // 2. Create FileDeleted event
         let payload = FileDeletedPayload {
@@ -1032,13 +1001,13 @@ where
         self.event_store
             .append(&event, &self.broadcaster)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         // 4. Delete file from metadata store (CASCADE will handle file_versions)
         self.metadata_store
             .delete_file(file_id)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         // Note: We don't delete from RustFS (blob storage) because of deduplication
         // The same content hash might be used by other files or versions
@@ -1077,15 +1046,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        let has_edit_permission = self
-            .permission_resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
-            .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
-
-        if !has_edit_permission {
-            return Err(FileError::PermissionDenied { file_id, user_id });
-        }
+        self.require_file_permission(user_id, file_id, SharePermissions::Edit).await?;
 
         // 2. Validate file is editable based on mime type and extension
         self.validate_file_editable(&file)?;
@@ -1142,7 +1103,7 @@ where
         self.metadata_store
             .update_file(&file)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         // 7. Create FileVersion snapshot
         let version = FileVersion::new(
@@ -1164,7 +1125,7 @@ where
         self.metadata_store
             .create_file_version(&version)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         self.queue_replication_if_needed(file.id, user_id, &version)
             .await?;
@@ -1338,7 +1299,7 @@ where
             .metadata_store
             .count_enabled_replication_targets()
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         if target_count == 0 {
             return Ok(());
@@ -1349,12 +1310,12 @@ where
         self.metadata_store
             .create_replication_job(&job)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         self.metadata_store
             .update_file_version_replication_state(version.id, ReplicationState::Queued)
             .await
-            .map_err(|e| FileError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| FileError::Database(e.to_string()))?;
 
         self.publish_replication_state_event(ReplicationEventContext {
             file_id,

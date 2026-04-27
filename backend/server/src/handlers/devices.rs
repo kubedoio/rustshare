@@ -10,7 +10,8 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::handlers::AuthenticatedUser;
-use crate::AppState;
+use crate::state::DatabaseState;
+use super::ErrorResponse;
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -62,9 +63,9 @@ impl From<DeviceRow> for DeviceListResponse {
 ///
 /// Returns a list of active (non-revoked) device tokens for the calling user.
 pub async fn list_devices(
-    State(state): State<AppState>,
+    State(db): State<DatabaseState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-) -> Result<Json<ListDevicesResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<ListDevicesResponse>, (StatusCode, Json<ErrorResponse>)> {
     let rows: Vec<DeviceRow> = sqlx::query_as(
         r#"
         SELECT id, device_name, created_at, last_used_at
@@ -74,7 +75,7 @@ pub async fn list_devices(
         "#,
     )
     .bind(user_id)
-    .fetch_all(&state.db_pool)
+    .fetch_all(&db.db_pool)
     .await
     .map_err(db_error)?;
 
@@ -89,10 +90,10 @@ pub async fn list_devices(
 /// Users can only revoke their own devices.
 /// Returns 404 if the device doesn't belong to the user.
 pub async fn revoke_device(
-    State(state): State<AppState>,
+    State(db): State<DatabaseState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Path(device_id): Path<Uuid>,
-) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     // First, verify the device belongs to the user and is not already revoked
     let result = sqlx::query(
         r#"
@@ -103,7 +104,7 @@ pub async fn revoke_device(
     )
     .bind(device_id)
     .bind(user_id)
-    .execute(&state.db_pool)
+    .execute(&db.db_pool)
     .await
     .map_err(db_error)?;
 
@@ -120,18 +121,18 @@ pub async fn revoke_device(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn db_error(e: sqlx::Error) -> (StatusCode, Json<serde_json::Value>) {
+fn db_error(e: sqlx::Error) -> (StatusCode, Json<ErrorResponse>) {
     tracing::error!("Database error: {:?}", e);
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({ "error": "Database error" })),
+        Json(ErrorResponse::new("Database error")),
     )
 }
 
-fn not_found(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+fn not_found(msg: &str) -> (StatusCode, Json<ErrorResponse>) {
     (
         StatusCode::NOT_FOUND,
-        Json(serde_json::json!({ "error": msg })),
+        Json(ErrorResponse::new(msg)),
     )
 }
 

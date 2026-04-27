@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use rustshare_core::domain::SharePermissions;
 
-use super::{share_error_response, AuthenticatedUser};
+use super::{share_error_response, AuthenticatedUser, ErrorResponse, internal_error_response};
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -47,7 +47,7 @@ pub async fn create_public_file_share(
     if req.upload_only {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "Upload-only links are only supported for folders"})),
+            Json(ErrorResponse::new("Upload-only links are only supported for folders")),
         )
             .into_response());
     }
@@ -71,16 +71,12 @@ pub async fn create_public_file_share(
             "Share token is None after create_share for share {}",
             share.id
         );
-        share_error_response(rustshare_core::services::ShareError::Database(
-            sqlx::Error::PoolClosed,
-        ))
+        internal_error_response()
     })?;
 
     let resource_id = share.file_id.ok_or_else(|| {
         tracing::error!("File ID is None after create_share for share {}", share.id);
-        share_error_response(rustshare_core::services::ShareError::Database(
-            sqlx::Error::PoolClosed,
-        ))
+        internal_error_response()
     })?;
 
     Ok((
@@ -125,9 +121,7 @@ pub async fn create_public_folder_share(
             "Share token is None after create_folder_share for share {}",
             share.id
         );
-        share_error_response(rustshare_core::services::ShareError::Database(
-            sqlx::Error::PoolClosed,
-        ))
+        internal_error_response()
     })?;
 
     let resource_id = share.folder_id.ok_or_else(|| {
@@ -135,9 +129,7 @@ pub async fn create_public_folder_share(
             "Folder ID is None after create_folder_share for share {}",
             share.id
         );
-        share_error_response(rustshare_core::services::ShareError::Database(
-            sqlx::Error::PoolClosed,
-        ))
+        internal_error_response()
     })?;
 
     Ok((
@@ -266,16 +258,14 @@ pub struct ShareAccessLogResponse {
 pub async fn list_user_shares(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-) -> Result<Json<Vec<OwnedShareResponse>>, (StatusCode, String)> {
+) -> Result<Json<Vec<OwnedShareResponse>>, Response> {
     let shares = state
         .metadata_store
         .get_user_all_shares(user_id)
         .await
         .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to list shares: {error}"),
-            )
+            tracing::error!("Failed to list shares: {error}");
+            internal_error_response()
         })?;
 
     let response = shares
@@ -307,75 +297,12 @@ pub async fn revoke_share(
     State(state): State<AppState>,
     Path(share_id): Path<uuid::Uuid>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> Result<StatusCode, Response> {
     state
         .share_service
         .revoke_share(share_id, user_id)
         .await
-        .map_err(|error| match error {
-            rustshare_core::services::ShareError::ShareNotFound(_) => {
-                (StatusCode::NOT_FOUND, error.to_string())
-            }
-            rustshare_core::services::ShareError::ShareNotFoundByToken(_) => {
-                (StatusCode::NOT_FOUND, error.to_string())
-            }
-            rustshare_core::services::ShareError::PermissionDenied { .. } => {
-                (StatusCode::FORBIDDEN, error.to_string())
-            }
-            rustshare_core::services::ShareError::FileNotFound(_) => {
-                (StatusCode::NOT_FOUND, error.to_string())
-            }
-            rustshare_core::services::ShareError::FolderNotFound(_) => {
-                (StatusCode::NOT_FOUND, error.to_string())
-            }
-            rustshare_core::services::ShareError::Revoked => (StatusCode::GONE, error.to_string()),
-            rustshare_core::services::ShareError::Expired => (StatusCode::GONE, error.to_string()),
-            rustshare_core::services::ShareError::PasswordRequired => {
-                (StatusCode::UNAUTHORIZED, error.to_string())
-            }
-            rustshare_core::services::ShareError::InvalidPassword => {
-                (StatusCode::UNAUTHORIZED, error.to_string())
-            }
-            rustshare_core::services::ShareError::RecipientNotFound(_) => {
-                (StatusCode::NOT_FOUND, error.to_string())
-            }
-            rustshare_core::services::ShareError::InsufficientPermission { .. } => {
-                (StatusCode::FORBIDDEN, error.to_string())
-            }
-            rustshare_core::services::ShareError::CannotShareWithSelf => {
-                (StatusCode::BAD_REQUEST, error.to_string())
-            }
-            rustshare_core::services::ShareError::ShareAlreadyExists(_) => {
-                (StatusCode::CONFLICT, error.to_string())
-            }
-            rustshare_core::services::ShareError::CannotRemoveOwner => {
-                (StatusCode::FORBIDDEN, error.to_string())
-            }
-            rustshare_core::services::ShareError::InvalidState(_) => {
-                (StatusCode::CONFLICT, error.to_string())
-            }
-            rustshare_core::services::ShareError::GroupNotFound(_) => {
-                (StatusCode::NOT_FOUND, error.to_string())
-            }
-            rustshare_core::services::ShareError::NotGroupMember(_) => {
-                (StatusCode::FORBIDDEN, error.to_string())
-            }
-            rustshare_core::services::ShareError::GroupShareAlreadyExists => {
-                (StatusCode::CONFLICT, error.to_string())
-            }
-            rustshare_core::services::ShareError::InvalidRecipientVisibility(_) => {
-                (StatusCode::BAD_REQUEST, error.to_string())
-            }
-            rustshare_core::services::ShareError::CrossTenantSharingNotAllowed => {
-                (StatusCode::FORBIDDEN, error.to_string())
-            }
-            rustshare_core::services::ShareError::Database(_)
-            | rustshare_core::services::ShareError::PasswordHash(_)
-            | rustshare_core::services::ShareError::Jwt(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Internal server error".to_string(),
-            ),
-        })?;
+        .map_err(share_error_response)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -385,7 +312,7 @@ pub async fn get_share_access_log(
     Path(share_id): Path<uuid::Uuid>,
     Query(query): Query<ShareAccessLogQuery>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-) -> Result<Json<Vec<ShareAccessLogResponse>>, (StatusCode, String)> {
+) -> Result<Json<Vec<ShareAccessLogResponse>>, Response> {
     let requested_limit = query.limit.unwrap_or(50);
     let limit = requested_limit.clamp(1, 200);
 
@@ -394,10 +321,8 @@ pub async fn get_share_access_log(
         .get_public_share_access_log(share_id, user_id, limit)
         .await
         .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to fetch share access log: {error}"),
-            )
+            tracing::error!("Failed to fetch share access log: {error}");
+            internal_error_response()
         })?;
 
     let response = entries

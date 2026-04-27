@@ -40,7 +40,7 @@ impl UserRepository {
     }
 
     /// Find user by email (case-insensitive).
-    pub async fn find_by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error> {
+    pub async fn find_by_email(&self, email: &str) -> anyhow::Result<Option<User>> {
         let email_lower = email.trim().to_lowercase();
 
         let row = sqlx::query(
@@ -55,11 +55,11 @@ impl UserRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        row.map(Self::map_user_row).transpose()
+        row.map(Self::map_user_row).transpose().map_err(|e| e.into())
     }
 
     /// Find a user by ID.
-    pub async fn get_by_id(&self, user_id: UserId) -> Result<Option<User>, sqlx::Error> {
+    pub async fn get_by_id(&self, user_id: UserId) -> anyhow::Result<Option<User>> {
         let row = sqlx::query(
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
@@ -72,11 +72,11 @@ impl UserRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        row.map(Self::map_user_row).transpose()
+        row.map(Self::map_user_row).transpose().map_err(|e| e.into())
     }
 
     /// Update user's theme preference.
-    pub async fn update_theme(&self, user_id: UserId, theme: Theme) -> Result<(), sqlx::Error> {
+    pub async fn update_theme(&self, user_id: UserId, theme: Theme) -> anyhow::Result<()> {
         sqlx::query(
             r#"
             UPDATE users
@@ -96,7 +96,7 @@ impl UserRepository {
     pub async fn get_tenant_id_for_user(
         &self,
         user_id: UserId,
-    ) -> Result<Option<Uuid>, sqlx::Error> {
+    ) -> anyhow::Result<Option<Uuid>> {
         let row = sqlx::query(r#"SELECT tenant_id FROM users WHERE id = $1"#)
             .bind(user_id)
             .fetch_optional(&self.pool)
@@ -114,21 +114,21 @@ impl rustshare_core::services::UserOps for UserRepository {
     async fn find_by_email(
         &self,
         email: &str,
-    ) -> Result<Option<rustshare_core::domain::User>, sqlx::Error> {
+    ) -> anyhow::Result<Option<rustshare_core::domain::User>> {
         self.find_by_email(email).await
     }
 
     async fn get_by_id(
         &self,
         user_id: rustshare_core::domain::UserId,
-    ) -> Result<Option<rustshare_core::domain::User>, sqlx::Error> {
+    ) -> anyhow::Result<Option<rustshare_core::domain::User>> {
         self.get_by_id(user_id).await
     }
 
     async fn get_tenant_id_for_user(
         &self,
         user_id: rustshare_core::domain::UserId,
-    ) -> Result<Option<uuid::Uuid>, sqlx::Error> {
+    ) -> anyhow::Result<Option<uuid::Uuid>> {
         self.get_tenant_id_for_user(user_id).await
     }
 }

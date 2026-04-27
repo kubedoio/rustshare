@@ -252,7 +252,7 @@ impl SearchIndexRepository for RustFsSearchIndexRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
+    use crate::metadata_v2::PutResult;
 
     #[test]
     fn test_extract_terms() {
@@ -279,20 +279,34 @@ mod tests {
 
     #[async_trait]
     impl MetadataDocumentStore for MockDocStore {
-        async fn get<T: serde::de::DeserializeOwned>(
+        async fn get_raw(
             &self,
             _key: &str,
-        ) -> anyhow::Result<Option<(T, crate::metadata_v2::DocumentMetadata)>> {
+        ) -> anyhow::Result<Option<(Vec<u8>, crate::metadata_v2::ObjectMetadata)>> {
             Ok(None)
         }
 
-        async fn put<T: serde::Serialize>(
+        async fn get_multi_raw(
+            &self,
+            _keys: &[&str],
+        ) -> anyhow::Result<Vec<(String, Vec<u8>, crate::metadata_v2::ObjectMetadata)>> {
+            Ok(Vec::new())
+        }
+
+        async fn head(
             &self,
             _key: &str,
-            _value: &T,
+        ) -> anyhow::Result<Option<crate::metadata_v2::ObjectMetadata>> {
+            Ok(None)
+        }
+
+        async fn put_raw(
+            &self,
+            _key: &str,
+            _data: &[u8],
             _opts: PutOptions,
-        ) -> anyhow::Result<()> {
-            Ok(())
+        ) -> anyhow::Result<PutResult> {
+            Ok(PutResult { etag: String::new(), version_id: None })
         }
 
         async fn delete(&self, _key: &str) -> anyhow::Result<()> {

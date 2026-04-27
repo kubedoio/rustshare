@@ -147,7 +147,7 @@
 	<!-- Breadcrumbs -->
 	{#if showBreadcrumbs}
 		<div class="border-b border-base-300/50 bg-base-200/30 px-3 py-1.5 md:px-4 lg:px-5">
-			<Breadcrumbs {folderPath} {rootLabel} on:navigate={onbreadcrumbNavigate} />
+			<Breadcrumbs {folderPath} {rootLabel} onNavigate={(payload) => onbreadcrumbNavigate(new CustomEvent('navigate', { detail: payload }))} />
 		</div>
 	{/if}
 

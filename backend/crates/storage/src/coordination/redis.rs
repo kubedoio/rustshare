@@ -6,21 +6,21 @@
 
 use super::*;
 use chrono::Utc;
-use redis::AsyncCommands;
+use ::redis::AsyncCommands;
 use std::time::Duration;
 
 /// Redis coordination store
 pub struct RedisCoordinationStore {
-    client: redis::Client,
-    connection_manager: redis::aio::ConnectionManager,
+    client: ::redis::Client,
+    connection_manager: ::redis::aio::ConnectionManager,
     key_prefix: String,
 }
 
 impl RedisCoordinationStore {
     /// Create a new Redis coordination store
     pub async fn new(redis_url: &str) -> anyhow::Result<Self> {
-        let client = redis::Client::open(redis_url)?;
-        let connection_manager = redis::aio::ConnectionManager::new(client.clone()).await?;
+        let client = ::redis::Client::open(redis_url)?;
+        let connection_manager = ::redis::aio::ConnectionManager::new(client.clone()).await?;
 
         Ok(Self {
             client,
@@ -31,8 +31,8 @@ impl RedisCoordinationStore {
 
     /// Create with custom key prefix
     pub async fn with_prefix(redis_url: &str, prefix: String) -> anyhow::Result<Self> {
-        let client = redis::Client::open(redis_url)?;
-        let connection_manager = redis::aio::ConnectionManager::new(client.clone()).await?;
+        let client = ::redis::Client::open(redis_url)?;
+        let connection_manager = ::redis::aio::ConnectionManager::new(client.clone()).await?;
 
         Ok(Self {
             client,
@@ -65,12 +65,12 @@ impl CoordinationStore for RedisCoordinationStore {
         let mut conn = self.connection_manager.clone();
 
         // Use SET with NX (only if not exists) and EX (expiration)
-        let result: Option<String> = redis::cmd("SET")
+        let result: Option<String> = ::redis::cmd("SET")
             .arg(&key)
             .arg(&value)
             .arg("NX")
             .arg("EX")
-            .arg(ttl.as_secs() as usize)
+            .arg(ttl.as_secs() as i64)
             .query_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
@@ -106,7 +106,7 @@ impl CoordinationStore for RedisCoordinationStore {
             end
         "#;
 
-        let result: i32 = redis::Script::new(script)
+        let result: i32 = ::redis::Script::new(script)
             .key(&key)
             .arg(&expected_value)
             .invoke_async(&mut conn)
@@ -130,7 +130,7 @@ impl CoordinationStore for RedisCoordinationStore {
     ) -> Result<LockToken, CoordinationError> {
         let key = self.key(&format!("lock:{}", token.resource_id));
         let expected_value = format!("{}:{}", token.lock_id, token.owner);
-        let new_ttl_secs = additional_ttl.as_secs() as usize;
+        let new_ttl_secs = additional_ttl.as_secs() as i64;
 
         let mut conn = self.connection_manager.clone();
 
@@ -143,7 +143,7 @@ impl CoordinationStore for RedisCoordinationStore {
             end
         "#;
 
-        let result: i32 = redis::Script::new(script)
+        let result: i32 = ::redis::Script::new(script)
             .key(&key)
             .arg(&expected_value)
             .arg(new_ttl_secs)
@@ -197,12 +197,12 @@ impl CoordinationStore for RedisCoordinationStore {
 
         let mut conn = self.connection_manager.clone();
 
-        let result: Option<String> = redis::cmd("SET")
+        let result: Option<String> = ::redis::cmd("SET")
             .arg(&key)
             .arg(&value)
             .arg("NX")
             .arg("EX")
-            .arg(ttl.as_secs() as usize)
+            .arg(ttl.as_secs() as i64)
             .query_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
@@ -236,7 +236,7 @@ impl CoordinationStore for RedisCoordinationStore {
             end
         "#;
 
-        let _: i32 = redis::Script::new(script)
+        let _: i32 = ::redis::Script::new(script)
             .key(&key)
             .arg(owner)
             .invoke_async(&mut conn)
@@ -253,7 +253,7 @@ impl CoordinationStore for RedisCoordinationStore {
         additional_ttl: Duration,
     ) -> Result<LeaseInfo, CoordinationError> {
         let key = self.key(&format!("lease:{}", resource_id));
-        let new_ttl_secs = additional_ttl.as_secs() as usize;
+        let new_ttl_secs = additional_ttl.as_secs() as i64;
 
         let mut conn = self.connection_manager.clone();
 
@@ -265,7 +265,7 @@ impl CoordinationStore for RedisCoordinationStore {
             end
         "#;
 
-        let result: i32 = redis::Script::new(script)
+        let result: i32 = ::redis::Script::new(script)
             .key(&key)
             .arg(owner)
             .arg(new_ttl_secs)
@@ -332,12 +332,12 @@ impl CoordinationStore for RedisCoordinationStore {
 
         let mut conn = self.connection_manager.clone();
 
-        let result: Option<String> = redis::cmd("SET")
+        let result: Option<String> = ::redis::cmd("SET")
             .arg(&key)
             .arg(&value)
             .arg("NX")
             .arg("EX")
-            .arg(ttl.as_secs() as usize)
+            .arg(ttl.as_secs() as i64)
             .query_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
@@ -362,7 +362,7 @@ impl CoordinationStore for RedisCoordinationStore {
             end
         "#;
 
-        let _: i32 = redis::Script::new(script)
+        let _: i32 = ::redis::Script::new(script)
             .key(&key)
             .arg(worker_id)
             .invoke_async(&mut conn)
@@ -379,7 +379,7 @@ impl CoordinationStore for RedisCoordinationStore {
         additional_ttl: Duration,
     ) -> Result<bool, CoordinationError> {
         let key = self.key(&format!("job:{}", job_id));
-        let new_ttl_secs = additional_ttl.as_secs() as usize;
+        let new_ttl_secs = additional_ttl.as_secs() as i64;
 
         let mut conn = self.connection_manager.clone();
 
@@ -391,7 +391,7 @@ impl CoordinationStore for RedisCoordinationStore {
             end
         "#;
 
-        let result: i32 = redis::Script::new(script)
+        let result: i32 = ::redis::Script::new(script)
             .key(&key)
             .arg(worker_id)
             .arg(new_ttl_secs)
@@ -453,7 +453,7 @@ impl CoordinationStore for RedisCoordinationStore {
             return {current, ttl}
         "#;
 
-        let result: Vec<i64> = redis::Script::new(script)
+        let result: Vec<i64> = ::redis::Script::new(script)
             .key(&full_key)
             .arg(window_secs)
             .invoke_async(&mut conn)
@@ -509,7 +509,7 @@ impl CoordinationStore for RedisCoordinationStore {
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
         let _: () = conn
-            .expire(&key, ttl.as_secs() as usize)
+            .expire(&key, ttl.as_secs() as i64)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
 
@@ -537,7 +537,7 @@ impl CoordinationStore for RedisCoordinationStore {
                 .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
             // Extend TTL to ensure revocation persists
             let _: () = conn
-                .expire(&key, ttl.as_secs() as usize)
+                .expire(&key, ttl.as_secs() as i64)
                 .await
                 .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
         } else {
@@ -551,7 +551,7 @@ impl CoordinationStore for RedisCoordinationStore {
                 .await
                 .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
             let _: () = conn
-                .expire(&key, ttl.as_secs() as usize)
+                .expire(&key, ttl.as_secs() as i64)
                 .await
                 .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
         }
@@ -636,12 +636,12 @@ impl CoordinationStore for RedisCoordinationStore {
         let full_key = self.key(&format!("idempotency:{}", key));
         let mut conn = self.connection_manager.clone();
 
-        let result: Option<String> = redis::cmd("SET")
+        let result: Option<String> = ::redis::cmd("SET")
             .arg(&full_key)
             .arg("1")
             .arg("NX")
             .arg("EX")
-            .arg(ttl.as_secs() as usize)
+            .arg(ttl.as_secs() as i64)
             .query_async(&mut conn)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
@@ -669,7 +669,7 @@ impl CoordinationStore for RedisCoordinationStore {
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
         let _: () = conn
-            .expire(&key, ttl.as_secs() as usize)
+            .expire(&key, ttl.as_secs() as i64)
             .await
             .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
 

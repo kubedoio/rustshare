@@ -339,6 +339,8 @@ mod tests {
         let generator = Arc::new(SimpleEmbeddingGenerator::new());
         let indexer = ContentIndexer::new(generator);
 
+        let tenant_id = Uuid::new_v4();
+
         // Index some documents
         indexer
             .index_file(
@@ -348,7 +350,7 @@ mod tests {
                 "Rust is a systems programming language with memory safety".to_string(),
                 "text/markdown".to_string(),
                 Uuid::new_v4(),
-                Uuid::new_v4(),
+                tenant_id,
             )
             .await
             .unwrap();
@@ -361,7 +363,7 @@ mod tests {
                 "Python is a high-level programming language".to_string(),
                 "text/markdown".to_string(),
                 Uuid::new_v4(),
-                Uuid::new_v4(),
+                tenant_id,
             )
             .await
             .unwrap();

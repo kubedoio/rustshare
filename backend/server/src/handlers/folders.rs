@@ -201,14 +201,7 @@ pub async fn get_folder_contents(
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|_| {
-        use axum::{http::StatusCode, response::IntoResponse, Json};
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Internal server error")),
-        )
-            .into_response()
-    })?;
+    .map_err(|_| super::internal_error_response())?;
 
     // Get files in this parent with share info
     let files = sqlx::query_as::<_, crate::handlers::files::FileWithShares>(
@@ -244,14 +237,7 @@ pub async fn get_folder_contents(
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|_| {
-        use axum::{http::StatusCode, response::IntoResponse, Json};
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Internal server error")),
-        )
-            .into_response()
-    })?;
+    .map_err(|_| super::internal_error_response())?;
 
     Ok(Json(FolderContentsWithShares {
         folders,
@@ -317,14 +303,7 @@ pub async fn get_root_contents(
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|_| {
-        use axum::{http::StatusCode, response::IntoResponse, Json};
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Internal server error")),
-        )
-            .into_response()
-    })?;
+    .map_err(|_| super::internal_error_response())?;
 
     // Get root files with share info
     let files = sqlx::query_as::<_, crate::handlers::files::FileWithShares>(
@@ -359,14 +338,7 @@ pub async fn get_root_contents(
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|_| {
-        use axum::{http::StatusCode, response::IntoResponse, Json};
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Internal server error")),
-        )
-            .into_response()
-    })?;
+    .map_err(|_| super::internal_error_response())?;
 
     Ok(Json(FolderContentsWithShares {
         folders,
@@ -414,47 +386,40 @@ async fn build_folder_tree_with_shares(
     .bind(tenant_id)
     .fetch_one(state.metadata_store.pool())
     .await
-    .map_err(|_| {
-        use axum::{http::StatusCode, response::IntoResponse, Json};
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Internal server error")),
-        )
-            .into_response()
-    })?;
+    .map_err(|_| super::internal_error_response())?;
 
     let folder_node = FolderTreeNode {
         id: folder_row
             .try_get("id")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         name: folder_row
             .try_get("name")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         path: folder_row
             .try_get("path")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         parent_folder_id: folder_row
             .try_get("parent_folder_id")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         owner_id: folder_row
             .try_get("owner_id")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         created_at: folder_row
             .try_get("created_at")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         updated_at: folder_row
             .try_get("updated_at")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         tenant_id: folder_row
             .try_get("tenant_id")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         ancestor_ids: None, // Not stored in folders table, would need to fetch from folder_documents
         is_shared: folder_row
             .try_get("is_shared")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         share_count: folder_row
             .try_get("share_count")
-            .map_err(|_| internal_error_response())?,
+            .map_err(|_| super::internal_error_response())?,
         share_expires_at: folder_row.try_get("share_expires_at").ok(),
         effective_permission: Some("Admin".to_string()),
     };
@@ -472,11 +437,11 @@ async fn build_folder_tree_with_shares(
     .bind(tenant_id)
     .fetch_all(state.metadata_store.pool())
     .await
-    .map_err(|_| internal_error_response())?;
+    .map_err(|_| super::internal_error_response())?;
 
     let mut subfolders = Vec::new();
     for row in child_rows {
-        let child_id: Uuid = row.try_get("id").map_err(|_| internal_error_response())?;
+        let child_id: Uuid = row.try_get("id").map_err(|_| super::internal_error_response())?;
         let subtree = Box::pin(build_folder_tree_with_shares(
             state, child_id, user_id, tenant_id,
         ))
@@ -488,15 +453,6 @@ async fn build_folder_tree_with_shares(
         folder: folder_node,
         subfolders,
     })
-}
-
-fn internal_error_response() -> Response {
-    use axum::{http::StatusCode, response::IntoResponse, Json};
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(super::ErrorResponse::new("Internal server error")),
-    )
-        .into_response()
 }
 
 /// Get full folder tree (recursive) with share information.
@@ -513,7 +469,7 @@ pub async fn get_folder_tree(
         .metadata_store
         .list_folders_with_shares(None, auth.user_id, auth.tenant_id)
         .await
-        .map_err(|_| internal_error_response())?;
+        .map_err(|_| super::internal_error_response())?;
 
     // Build subtrees for each root folder
     let mut subfolders = Vec::new();
@@ -594,12 +550,14 @@ pub async fn restore_folder_from_trash(
         .await
         .map_err(|e| {
             use axum::response::IntoResponse;
-            let status = if e.to_string().contains("already exists") {
-                StatusCode::CONFLICT
+            let msg = e.to_string();
+            if msg.contains("already exists") {
+                (StatusCode::CONFLICT, Json(super::ErrorResponse::new(msg)))
+                    .into_response()
             } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            };
-            (status, Json(super::ErrorResponse::new(e.to_string()))).into_response()
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(super::ErrorResponse::new(msg)))
+                    .into_response()
+            }
         })?;
 
     if !restored {

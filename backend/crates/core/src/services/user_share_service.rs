@@ -33,7 +33,7 @@ pub trait ShareOps: Send + Sync {
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
         recipient_user_id: UserId,
-    ) -> Result<Option<Share>, sqlx::Error>;
+    ) -> anyhow::Result<Option<Share>>;
 
     async fn create_user_share(
         &self,
@@ -43,53 +43,53 @@ pub trait ShareOps: Send + Sync {
         permissions: SharePermissions,
         created_by: UserId,
         tenant_id: uuid::Uuid,
-    ) -> Result<Share, sqlx::Error>;
+    ) -> anyhow::Result<Share>;
 
     async fn update_share_permission(
         &self,
         share_id: ShareId,
         new_permission: SharePermissions,
-    ) -> Result<Share, sqlx::Error>;
+    ) -> anyhow::Result<Share>;
 
-    async fn get_by_id(&self, share_id: ShareId) -> Result<Option<Share>, sqlx::Error>;
+    async fn get_by_id(&self, share_id: ShareId) -> anyhow::Result<Option<Share>>;
 
     async fn list_received_shares(
         &self,
         user_id: UserId,
         limit: i64,
         offset: i64,
-    ) -> Result<Vec<Share>, sqlx::Error>;
+    ) -> anyhow::Result<Vec<Share>>;
 
     async fn list_share_recipients(
         &self,
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
-    ) -> Result<Vec<Share>, sqlx::Error>;
+    ) -> anyhow::Result<Vec<Share>>;
 
-    async fn revoke_share(&self, share_id: ShareId) -> Result<(), sqlx::Error>;
+    async fn revoke_share(&self, share_id: ShareId) -> anyhow::Result<()>;
 }
 
 /// Trait for user repository operations needed by UserShareService.
 #[allow(async_fn_in_trait)]
 pub trait UserOps: Send + Sync {
-    async fn find_by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error>;
-    async fn get_by_id(&self, user_id: UserId) -> Result<Option<User>, sqlx::Error>;
+    async fn find_by_email(&self, email: &str) -> anyhow::Result<Option<User>>;
+    async fn get_by_id(&self, user_id: UserId) -> anyhow::Result<Option<User>>;
     async fn get_tenant_id_for_user(
         &self,
         user_id: UserId,
-    ) -> Result<Option<uuid::Uuid>, sqlx::Error>;
+    ) -> anyhow::Result<Option<uuid::Uuid>>;
 }
 
 /// Trait for file repository operations needed by UserShareService.
 #[allow(async_fn_in_trait)]
 pub trait FileOps: Send + Sync {
-    async fn get_by_id(&self, file_id: FileId) -> Result<Option<File>, sqlx::Error>;
+    async fn get_by_id(&self, file_id: FileId) -> anyhow::Result<Option<File>>;
 }
 
 /// Trait for folder repository operations needed by UserShareService.
 #[allow(async_fn_in_trait)]
 pub trait FolderOps: Send + Sync {
-    async fn get_by_id(&self, folder_id: FolderId) -> Result<Option<Folder>, sqlx::Error>;
+    async fn get_by_id(&self, folder_id: FolderId) -> anyhow::Result<Option<Folder>>;
 }
 
 /// DEPRECATED: Use ShareService instead
@@ -246,7 +246,7 @@ where
             .file_repo
             .get_by_id(file_id)
             .await
-            .map_err(ShareError::Database)?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FileNotFound(file_id))?;
 
         // Verify creator owns the file
@@ -262,7 +262,7 @@ where
             .user_repo
             .get_tenant_id_for_user(created_by)
             .await
-            .map_err(ShareError::Database)?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         // Find recipient user by email
         let recipient_email_lower = recipient_email.trim().to_lowercase();
@@ -270,7 +270,7 @@ where
             .user_repo
             .find_by_email(&recipient_email_lower)
             .await
-            .map_err(ShareError::Database)?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or_else(|| ShareError::RecipientNotFound(recipient_email.to_string()))?;
 
         // Verify recipient is in the same tenant as the creator
@@ -288,7 +288,7 @@ where
             .share_repo
             .find_user_share(Some(file_id), None, recipient.id)
             .await
-            .map_err(ShareError::Database)?
+            .map_err(|e| ShareError::Database(e.to_string()))?
         {
             if existing_share.revoked_at.is_none() {
                 // Update existing share permission
@@ -303,9 +303,8 @@ where
                             recipient_user_id = %recipient.id,
                             "failed to update existing file share: {error}"
                         );
-                        error
-                    })
-                    .map_err(ShareError::from);
+                        ShareError::Database(error.to_string())
+                    });
             }
         }
 
@@ -328,7 +327,7 @@ where
                     created_by = %created_by,
                     "failed to create file share: {error}"
                 );
-                error
+                ShareError::Database(error.to_string())
             })?;
 
         // Create notification for recipient (ignore errors - notifications are best-effort)
@@ -378,7 +377,7 @@ where
             .folder_repo
             .get_by_id(folder_id)
             .await
-            .map_err(ShareError::Database)?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or_else(|| ShareError::FolderNotFound(folder_id))?;
 
         // Verify creator owns the folder
@@ -394,7 +393,7 @@ where
             .user_repo
             .get_tenant_id_for_user(created_by)
             .await
-            .map_err(ShareError::Database)?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         // Find recipient user by email
         let recipient_email_lower = recipient_email.trim().to_lowercase();
@@ -402,7 +401,7 @@ where
             .user_repo
             .find_by_email(&recipient_email_lower)
             .await
-            .map_err(ShareError::Database)?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or_else(|| ShareError::RecipientNotFound(recipient_email.to_string()))?;
 
         // Verify recipient is in the same tenant as the creator
@@ -420,7 +419,7 @@ where
             .share_repo
             .find_user_share(None, Some(folder_id), recipient.id)
             .await
-            .map_err(ShareError::Database)?
+            .map_err(|e| ShareError::Database(e.to_string()))?
         {
             if existing_share.revoked_at.is_none() {
                 // Update existing share permission
@@ -435,9 +434,8 @@ where
                             recipient_user_id = %recipient.id,
                             "failed to update existing folder share: {error}"
                         );
-                        error
-                    })
-                    .map_err(ShareError::from);
+                        ShareError::Database(error.to_string())
+                    });
             }
         }
 
@@ -460,7 +458,7 @@ where
                     created_by = %created_by,
                     "failed to create folder share: {error}"
                 );
-                error
+                ShareError::Database(error.to_string())
             })?;
 
         // Create notification for recipient
@@ -507,7 +505,8 @@ where
         let shares = self
             .share_repo
             .list_received_shares(user_id, limit, offset)
-            .await?;
+            .await
+            .map_err(|e| ShareError::Database(e.to_string()))?;
         Ok(shares)
     }
 
@@ -546,7 +545,7 @@ where
                 });
             }
             Err(e) => {
-                return Err(ShareError::Database(sqlx::Error::Protocol(e.to_string())));
+                return Err(ShareError::Database(e.to_string()));
             }
         };
 
@@ -561,7 +560,8 @@ where
         let shares = self
             .share_repo
             .list_share_recipients(file_id, folder_id)
-            .await?;
+            .await
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         // Convert to ShareRecipient DTOs
         let mut recipients = Vec::new();
@@ -572,7 +572,7 @@ where
                     .user_repo
                     .get_by_id(recipient_user_id)
                     .await
-                    .map_err(ShareError::Database)?
+                    .map_err(|e| ShareError::Database(e.to_string()))?
                 {
                     recipients.push(ShareRecipient {
                         share_id: share.id,
@@ -606,7 +606,7 @@ where
             .share_repo
             .get_by_id(share_id)
             .await
-            .map_err(ShareError::Database)?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
         // Determine resource for permission check
@@ -625,7 +625,7 @@ where
             .permission_resolver
             .resolve_permission(requesting_user, resource)
             .await
-            .map_err(|e| ShareError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         if permission != Some(SharePermissions::Admin) {
             return Err(ShareError::InsufficientPermission {
@@ -641,7 +641,8 @@ where
         let updated_share = self
             .share_repo
             .update_share_permission(share_id, new_permission)
-            .await?;
+            .await
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         // Create notification for recipient
         if let Some(recipient_id) = updated_share.recipient_user_id {
@@ -713,7 +714,7 @@ where
             .share_repo
             .get_by_id(share_id)
             .await
-            .map_err(ShareError::Database)?
+            .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
         // Determine resource for permission check
@@ -732,7 +733,7 @@ where
             .permission_resolver
             .resolve_permission(requesting_user, resource)
             .await
-            .map_err(|e| ShareError::Database(sqlx::Error::Protocol(e.to_string())))?;
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         if permission != Some(SharePermissions::Admin) {
             return Err(ShareError::InsufficientPermission {
@@ -748,13 +749,13 @@ where
                 self.file_repo
                     .get_by_id(fid)
                     .await
-                    .map_err(ShareError::Database)?
+                    .map_err(|e| ShareError::Database(e.to_string()))?
                     .map(|f| f.owner_id)
             } else if let Some(foid) = share.folder_id {
                 self.folder_repo
                     .get_by_id(foid)
                     .await
-                    .map_err(ShareError::Database)?
+                    .map_err(|e| ShareError::Database(e.to_string()))?
                     .map(|f| f.owner_id)
             } else {
                 None
@@ -768,7 +769,10 @@ where
         }
 
         // Revoke share (soft delete)
-        self.share_repo.revoke_share(share_id).await?;
+        self.share_repo
+            .revoke_share(share_id)
+            .await
+            .map_err(|e| ShareError::Database(e.to_string()))?;
 
         // Create notification for recipient
         if let Some(recipient_id) = share.recipient_user_id {

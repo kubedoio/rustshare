@@ -21,7 +21,7 @@ pub enum NotificationError {
 
     /// Database operation failed.
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(String),
 }
 
 #[cfg(test)]

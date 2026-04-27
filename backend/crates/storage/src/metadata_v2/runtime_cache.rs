@@ -5,8 +5,7 @@
 
 use super::schemas::*;
 use chrono::Utc;
-use std::collections::HashMap;
-use std::sync::RwLock;
+use dashmap::DashMap;
 use uuid::Uuid;
 
 /// Runtime cache for metadata
@@ -15,34 +14,34 @@ use uuid::Uuid;
 /// invalidation and update hooks for maintaining consistency.
 pub struct RuntimeMetadataCache {
     /// Folder children cache: folder_id -> children
-    folder_children: RwLock<HashMap<Uuid, FolderChildrenIndex>>,
+    folder_children: DashMap<Uuid, FolderChildrenIndex>,
 
     /// User roots cache: user_id -> root folder IDs
-    user_roots: RwLock<HashMap<Uuid, UserRootsIndex>>,
+    user_roots: DashMap<Uuid, UserRootsIndex>,
 
     /// Shared with me cache: user_id -> shares
-    shared_with_me: RwLock<HashMap<Uuid, SharedWithMeIndex>>,
+    shared_with_me: DashMap<Uuid, SharedWithMeIndex>,
 
     /// File metadata cache: file_id -> file doc
-    file_cache: RwLock<HashMap<Uuid, FileDocument>>,
+    file_cache: DashMap<Uuid, FileDocument>,
 
     /// Folder metadata cache: folder_id -> folder doc
-    folder_cache: RwLock<HashMap<Uuid, FolderDocument>>,
+    folder_cache: DashMap<Uuid, FolderDocument>,
 
     /// Share metadata cache: share_id -> share doc
-    share_cache: RwLock<HashMap<Uuid, ShareDocument>>,
+    share_cache: DashMap<Uuid, ShareDocument>,
 }
 
 impl RuntimeMetadataCache {
     /// Create a new empty cache
     pub fn new() -> Self {
         Self {
-            folder_children: RwLock::new(HashMap::new()),
-            user_roots: RwLock::new(HashMap::new()),
-            shared_with_me: RwLock::new(HashMap::new()),
-            file_cache: RwLock::new(HashMap::new()),
-            folder_cache: RwLock::new(HashMap::new()),
-            share_cache: RwLock::new(HashMap::new()),
+            folder_children: DashMap::new(),
+            user_roots: DashMap::new(),
+            shared_with_me: DashMap::new(),
+            file_cache: DashMap::new(),
+            folder_cache: DashMap::new(),
+            share_cache: DashMap::new(),
         }
     }
 
@@ -53,31 +52,25 @@ impl RuntimeMetadataCache {
     /// Get cached folder children
     pub fn get_folder_children(&self, folder_id: Uuid) -> Option<FolderChildrenIndex> {
         self.folder_children
-            .read()
-            .unwrap()
             .get(&folder_id)
-            .cloned()
+            .map(|r| r.value().clone())
     }
 
     /// Cache folder children
     pub fn put_folder_children(&self, index: FolderChildrenIndex) {
         self.folder_children
-            .write()
-            .unwrap()
             .insert(index.folder_id, index);
     }
 
     /// Invalidate folder children cache
     pub fn invalidate_folder_children(&self, folder_id: Uuid) {
-        self.folder_children.write().unwrap().remove(&folder_id);
+        self.folder_children.remove(&folder_id);
     }
 
     /// Update folder children after file creation
     pub fn on_file_created(&self, file: &FileDocument) {
         if let Some(parent_id) = file.parent_id {
-            let mut guard = self.folder_children.write().unwrap();
-
-            if let Some(index) = guard.get_mut(&parent_id) {
+            if let Some(mut index) = self.folder_children.get_mut(&parent_id) {
                 index.upsert_child(FolderChildEntry {
                     id: file.id,
                     kind: "file".to_string(),
@@ -96,8 +89,7 @@ impl RuntimeMetadataCache {
         // Remove from old parent if different
         if old_parent_id != file.parent_id {
             if let Some(old_parent) = old_parent_id {
-                let mut guard = self.folder_children.write().unwrap();
-                if let Some(index) = guard.get_mut(&old_parent) {
+                if let Some(mut index) = self.folder_children.get_mut(&old_parent) {
                     index.remove_child(file.id);
                 }
             }
@@ -105,9 +97,7 @@ impl RuntimeMetadataCache {
 
         // Add to new parent
         if let Some(parent_id) = file.parent_id {
-            let mut guard = self.folder_children.write().unwrap();
-
-            if let Some(index) = guard.get_mut(&parent_id) {
+            if let Some(mut index) = self.folder_children.get_mut(&parent_id) {
                 index.upsert_child(FolderChildEntry {
                     id: file.id,
                     kind: "file".to_string(),
@@ -124,15 +114,13 @@ impl RuntimeMetadataCache {
     /// Update folder children after file deletion
     pub fn on_file_deleted(&self, file_id: Uuid, parent_id: Option<Uuid>) {
         if let Some(parent) = parent_id {
-            let mut guard = self.folder_children.write().unwrap();
-
-            if let Some(index) = guard.get_mut(&parent) {
+            if let Some(mut index) = self.folder_children.get_mut(&parent) {
                 index.mark_deleted(file_id);
             }
         }
 
         // Also invalidate file cache
-        self.file_cache.write().unwrap().remove(&file_id);
+        self.file_cache.remove(&file_id);
     }
 
     // ========================================================================
@@ -141,17 +129,17 @@ impl RuntimeMetadataCache {
 
     /// Get cached folder
     pub fn get_folder(&self, folder_id: Uuid) -> Option<FolderDocument> {
-        self.folder_cache.read().unwrap().get(&folder_id).cloned()
+        self.folder_cache.get(&folder_id).map(|r| r.value().clone())
     }
 
     /// Cache folder
     pub fn put_folder(&self, folder: FolderDocument) {
-        self.folder_cache.write().unwrap().insert(folder.id, folder);
+        self.folder_cache.insert(folder.id, folder);
     }
 
     /// Invalidate folder cache
     pub fn invalidate_folder(&self, folder_id: Uuid) {
-        self.folder_cache.write().unwrap().remove(&folder_id);
+        self.folder_cache.remove(&folder_id);
         // Also invalidate children index
         self.invalidate_folder_children(folder_id);
     }
@@ -163,9 +151,7 @@ impl RuntimeMetadataCache {
 
         // Update parent's children if not root
         if let Some(parent_id) = folder.parent_id {
-            let mut guard = self.folder_children.write().unwrap();
-
-            if let Some(index) = guard.get_mut(&parent_id) {
+            if let Some(mut index) = self.folder_children.get_mut(&parent_id) {
                 index.upsert_child(FolderChildEntry {
                     id: folder.id,
                     kind: "folder".to_string(),
@@ -178,9 +164,7 @@ impl RuntimeMetadataCache {
             }
         } else {
             // This is a root folder - update user roots
-            let mut guard = self.user_roots.write().unwrap();
-
-            guard
+            self.user_roots
                 .entry(folder.owner_id)
                 .or_insert_with(|| UserRootsIndex {
                     schema_version: CURRENT_SCHEMA_VERSION,
@@ -189,6 +173,7 @@ impl RuntimeMetadataCache {
                     updated_at: folder.created_at,
                     root_folder_ids: Vec::new(),
                 })
+                .value_mut()
                 .root_folder_ids
                 .push(folder.id);
         }
@@ -206,18 +191,14 @@ impl RuntimeMetadataCache {
 
         // Remove from old parent's children
         if let Some(old_parent) = old_parent_id {
-            let mut guard = self.folder_children.write().unwrap();
-
-            if let Some(index) = guard.get_mut(&old_parent) {
+            if let Some(mut index) = self.folder_children.get_mut(&old_parent) {
                 index.remove_child(folder.id);
             }
         }
 
         // Add to new parent's children
         if let Some(new_parent) = folder.parent_id {
-            let mut guard = self.folder_children.write().unwrap();
-
-            if let Some(index) = guard.get_mut(&new_parent) {
+            if let Some(mut index) = self.folder_children.get_mut(&new_parent) {
                 index.upsert_child(FolderChildEntry {
                     id: folder.id,
                     kind: "folder".to_string(),
@@ -234,13 +215,12 @@ impl RuntimeMetadataCache {
         // This is handled by invalidating affected folder caches
         if old_path != folder.path {
             // Invalidate any folder whose path started with old_path
-            let guard = self.folder_cache.read().unwrap();
-            let to_invalidate: Vec<Uuid> = guard
-                .values()
+            let to_invalidate: Vec<Uuid> = self
+                .folder_cache
+                .iter()
                 .filter(|f| f.path.starts_with(old_path) && f.id != folder.id)
-                .map(|f| f.id)
+                .map(|f| *f.key())
                 .collect();
-            drop(guard);
 
             for id in to_invalidate {
                 self.invalidate_folder(id);
@@ -254,9 +234,7 @@ impl RuntimeMetadataCache {
 
         // Remove from parent's children
         if let Some(parent_id) = folder.parent_id {
-            let mut guard = self.folder_children.write().unwrap();
-
-            if let Some(index) = guard.get_mut(&parent_id) {
+            if let Some(mut index) = self.folder_children.get_mut(&parent_id) {
                 index.mark_deleted(folder_id);
             }
         }
@@ -273,17 +251,17 @@ impl RuntimeMetadataCache {
 
     /// Get cached file
     pub fn get_file(&self, file_id: Uuid) -> Option<FileDocument> {
-        self.file_cache.read().unwrap().get(&file_id).cloned()
+        self.file_cache.get(&file_id).map(|r| r.value().clone())
     }
 
     /// Cache file
     pub fn put_file(&self, file: FileDocument) {
-        self.file_cache.write().unwrap().insert(file.id, file);
+        self.file_cache.insert(file.id, file);
     }
 
     /// Invalidate file cache
     pub fn invalidate_file(&self, file_id: Uuid) {
-        self.file_cache.write().unwrap().remove(&file_id);
+        self.file_cache.remove(&file_id);
     }
 
     /// Update cache after file update
@@ -292,9 +270,7 @@ impl RuntimeMetadataCache {
 
         // Update in parent's children
         if let Some(parent_id) = file.parent_id {
-            let mut guard = self.folder_children.write().unwrap();
-
-            if let Some(index) = guard.get_mut(&parent_id) {
+            if let Some(mut index) = self.folder_children.get_mut(&parent_id) {
                 index.upsert_child(FolderChildEntry {
                     id: file.id,
                     kind: "file".to_string(),
@@ -314,17 +290,17 @@ impl RuntimeMetadataCache {
 
     /// Get cached share
     pub fn get_share(&self, share_id: Uuid) -> Option<ShareDocument> {
-        self.share_cache.read().unwrap().get(&share_id).cloned()
+        self.share_cache.get(&share_id).map(|r| r.value().clone())
     }
 
     /// Cache share
     pub fn put_share(&self, share: ShareDocument) {
-        self.share_cache.write().unwrap().insert(share.id, share);
+        self.share_cache.insert(share.id, share);
     }
 
     /// Invalidate share cache
     pub fn invalidate_share(&self, share_id: Uuid) {
-        self.share_cache.write().unwrap().remove(&share_id);
+        self.share_cache.remove(&share_id);
     }
 
     /// Update cache after share creation
@@ -333,9 +309,7 @@ impl RuntimeMetadataCache {
 
         // If user share, update recipient's shared_with_me
         if let Some(recipient_id) = share.recipient_user_id {
-            let mut guard = self.shared_with_me.write().unwrap();
-
-            guard
+            self.shared_with_me
                 .entry(recipient_id)
                 .and_modify(|index| {
                     // Update existing entry
@@ -377,9 +351,7 @@ impl RuntimeMetadataCache {
 
         // If user share, update recipient's shared_with_me
         if let Some(recipient_id) = share.recipient_user_id {
-            let mut guard = self.shared_with_me.write().unwrap();
-
-            if let Some(index) = guard.get_mut(&recipient_id) {
+            if let Some(mut index) = self.shared_with_me.get_mut(&recipient_id) {
                 index.shares.retain(|e| e.share_id != share.id);
             }
         }
@@ -391,27 +363,25 @@ impl RuntimeMetadataCache {
 
     /// Clear all caches
     pub fn clear_all(&self) {
-        self.folder_children.write().unwrap().clear();
-        self.user_roots.write().unwrap().clear();
-        self.shared_with_me.write().unwrap().clear();
-        self.file_cache.write().unwrap().clear();
-        self.folder_cache.write().unwrap().clear();
-        self.share_cache.write().unwrap().clear();
+        self.folder_children.clear();
+        self.user_roots.clear();
+        self.shared_with_me.clear();
+        self.file_cache.clear();
+        self.folder_cache.clear();
+        self.share_cache.clear();
     }
 
     /// Invalidate all entries for a user
     pub fn invalidate_user(&self, user_id: Uuid) {
-        self.user_roots.write().unwrap().remove(&user_id);
-        self.shared_with_me.write().unwrap().remove(&user_id);
+        self.user_roots.remove(&user_id);
+        self.shared_with_me.remove(&user_id);
 
         // Remove all folders owned by user
         let folder_ids: Vec<Uuid> = self
             .folder_cache
-            .read()
-            .unwrap()
-            .values()
+            .iter()
             .filter(|f| f.owner_id == user_id)
-            .map(|f| f.id)
+            .map(|f| *f.key())
             .collect();
 
         for id in folder_ids {
@@ -421,11 +391,9 @@ impl RuntimeMetadataCache {
         // Remove all files owned by user
         let file_ids: Vec<Uuid> = self
             .file_cache
-            .read()
-            .unwrap()
-            .values()
+            .iter()
             .filter(|f| f.owner_id == user_id)
-            .map(|f| f.id)
+            .map(|f| *f.key())
             .collect();
 
         for id in file_ids {
@@ -436,12 +404,12 @@ impl RuntimeMetadataCache {
     /// Get cache statistics
     pub fn stats(&self) -> CacheStats {
         CacheStats {
-            folder_children_count: self.folder_children.read().unwrap().len(),
-            user_roots_count: self.user_roots.read().unwrap().len(),
-            shared_with_me_count: self.shared_with_me.read().unwrap().len(),
-            file_cache_count: self.file_cache.read().unwrap().len(),
-            folder_cache_count: self.folder_cache.read().unwrap().len(),
-            share_cache_count: self.share_cache.read().unwrap().len(),
+            folder_children_count: self.folder_children.len(),
+            user_roots_count: self.user_roots.len(),
+            shared_with_me_count: self.shared_with_me.len(),
+            file_cache_count: self.file_cache.len(),
+            folder_cache_count: self.folder_cache.len(),
+            share_cache_count: self.share_cache.len(),
         }
     }
 }
@@ -516,6 +484,7 @@ mod tests {
             "/test.txt".to_string(),
             Uuid::new_v4(),
             Uuid::new_v4(),
+            Uuid::new_v4(),
             100,
             "text/plain".to_string(),
             "abc123".to_string(),
@@ -545,6 +514,7 @@ mod tests {
             "/parent/new_file.txt".to_string(),
             Uuid::new_v4(),
             Uuid::new_v4(),
+            Uuid::new_v4(),
             100,
             "text/plain".to_string(),
             "abc123".to_string(),
@@ -563,7 +533,7 @@ mod tests {
 
         // Add some entries
         cache.put_folder_children(FolderChildrenIndex::new(Uuid::new_v4()));
-        cache.put_folder(FolderDocument::new_root(Uuid::new_v4(), Uuid::new_v4()));
+        cache.put_folder(FolderDocument::new_root(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()));
 
         let stats = cache.stats();
         assert_eq!(stats.folder_children_count, 1);
