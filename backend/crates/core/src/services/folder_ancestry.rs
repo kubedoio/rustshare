@@ -423,7 +423,7 @@ mod tests {
         parent_id: Option<FolderId>,
         ancestor_ids: Option<Vec<FolderId>>,
     ) -> Folder {
-        let path = if let Some(parent_id) = parent_id {
+        let path = if parent_id.is_some() {
             format!("/parent/{}", name)
         } else {
             format!("/{}", name)

@@ -484,6 +484,7 @@ mod tests {
             "/test.txt".to_string(),
             Uuid::new_v4(),
             Uuid::new_v4(),
+            Uuid::new_v4(),
             100,
             "text/plain".to_string(),
             "abc123".to_string(),
@@ -513,6 +514,7 @@ mod tests {
             "/parent/new_file.txt".to_string(),
             Uuid::new_v4(),
             Uuid::new_v4(),
+            Uuid::new_v4(),
             100,
             "text/plain".to_string(),
             "abc123".to_string(),
@@ -531,7 +533,7 @@ mod tests {
 
         // Add some entries
         cache.put_folder_children(FolderChildrenIndex::new(Uuid::new_v4()));
-        cache.put_folder(FolderDocument::new_root(Uuid::new_v4(), Uuid::new_v4()));
+        cache.put_folder(FolderDocument::new_root(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()));
 
         let stats = cache.stats();
         assert_eq!(stats.folder_children_count, 1);

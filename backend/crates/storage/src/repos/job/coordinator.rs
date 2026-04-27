@@ -312,6 +312,7 @@ mod tests {
             completed_at: None,
             worker_id: None,
             error_message: None,
+            tenant_id: Uuid::new_v4(),
         }
     }
 
