@@ -262,6 +262,7 @@ impl<R: AncestryFolderRepository> FolderAncestryBuilder<R> {
             // Find where the old folder_id was in the ancestor chain
             // Replace everything up to and including folder_id with the new ancestors
             let mut new_descendant_ancestors = new_ancestor_ids.clone();
+            new_descendant_ancestors.push(folder_id);
 
             // Find the position after folder_id in old ancestors
             if let Some(pos) = old_ancestor_ids.iter().position(|&id| id == folder_id) {
