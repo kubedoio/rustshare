@@ -1,5 +1,6 @@
 //! Integration tests for group sharing functionality
 
+use rustshare_storage::metadata_v2::compat::MetadataStoreCompat;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -217,7 +218,6 @@ async fn test_compat_layer_group_membership_sql() {
 #[tokio::test]
 async fn test_compat_layer_find_user_by_id() {
     use rustshare_core::services::ShareMetadataStoreOps;
-    use rustshare_storage::metadata_v2::compat::MetadataStoreCompat;
 
     let pool = test_pool().await;
 
@@ -530,16 +530,18 @@ async fn create_test_compat(pool: sqlx::PgPool) -> MetadataStoreCompat {
         async fn index_file(&self, _file: &FileDocument) -> Result<(), RepositoryError> {
             Ok(())
         }
-        async fn remove_file(&self, _file_id: FileId) -> Result<(), RepositoryError> {
+        async fn index_folder(&self, _folder: &FolderDocument) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn remove_from_index(&self, _resource_id: Uuid) -> Result<(), RepositoryError> {
             Ok(())
         }
         async fn search(
             &self,
+            _tenant_id: Uuid,
             _query: &str,
-            _tenant_id: uuid::Uuid,
-            _user_id: UserId,
             _limit: usize,
-        ) -> Result<Vec<uuid::Uuid>, RepositoryError> {
+        ) -> Result<Vec<rustshare_storage::metadata_v2::schemas::SearchResult>, RepositoryError> {
             Ok(vec![])
         }
     }
