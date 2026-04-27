@@ -15,6 +15,9 @@ use rustshare_core::services::{FileError, FileService};
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
 use std::sync::Arc;
+use rustshare_core::events::EventBroadcaster;
+use rustshare_core::services::PermissionResolver;
+use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use uuid::Uuid;
 
 /// Setup test environment with database and S3 connections
@@ -41,6 +44,43 @@ async fn setup_test_env() -> (PgPool, Arc<EventStore>, Arc<MetadataStore>, Arc<O
     );
 
     (pool, event_store, metadata_store, object_store)
+}
+
+
+fn create_file_service(
+    event_store: Arc<EventStore>,
+    metadata_store: Arc<MetadataStore>,
+    object_store: Arc<ObjectStore>,
+    pool: &PgPool,
+) -> FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository> {
+    let broadcaster = Arc::new(EventBroadcaster::new(100));
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(pool.clone()),
+    )));
+    FileService::new(
+        event_store,
+        metadata_store,
+        object_store,
+        broadcaster,
+        permission_resolver,
+    )
+}
+
+fn create_folder_service(
+    event_store: Arc<EventStore>,
+    metadata_store: Arc<MetadataStore>,
+    pool: &PgPool,
+) -> FolderService<EventStore, MetadataStore, PermissionResolverRepository> {
+    let broadcaster = Arc::new(EventBroadcaster::new(100));
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(pool.clone()),
+    )));
+    FolderService::new(
+        event_store,
+        metadata_store,
+        broadcaster,
+        permission_resolver,
+    )
 }
 
 /// Create a test user in the database
@@ -82,11 +122,7 @@ async fn test_optimistic_locking_conflict() {
     let user = create_test_user(&metadata_store, "conflict_user", tenant_id).await;
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Step 1: Upload file (v1)
     let initial_content = Bytes::from("Initial version 1 content");
@@ -175,11 +211,7 @@ async fn test_successful_sequential_updates() {
     let user = create_test_user(&metadata_store, "sequential_user", tenant_id).await;
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Upload initial file
     let v1_content = Bytes::from("Version 1");
@@ -245,11 +277,7 @@ async fn test_update_without_version_check() {
     let user = create_test_user(&metadata_store, "noversion_user", tenant_id).await;
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Upload initial file
     let v1_content = Bytes::from("Initial content");
@@ -302,11 +330,7 @@ async fn test_multiple_conflict_scenarios() {
     let user = create_test_user(&metadata_store, "multiconflict_user", tenant_id).await;
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Upload initial file (v1)
     let file = file_service

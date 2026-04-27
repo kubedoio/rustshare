@@ -15,6 +15,9 @@ use rustshare_core::services::{FileService, FolderService};
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
 use std::sync::Arc;
+use rustshare_core::events::EventBroadcaster;
+use rustshare_core::services::PermissionResolver;
+use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use uuid::Uuid;
 
 /// Setup test environment with database and S3 connections
@@ -46,6 +49,43 @@ async fn setup_test_env() -> (
     );
 
     (pool, event_store, metadata_store, object_store)
+}
+
+
+fn create_file_service(
+    event_store: Arc<EventStore>,
+    metadata_store: Arc<MetadataStore>,
+    object_store: Arc<ObjectStore>,
+    pool: &PgPool,
+) -> FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository> {
+    let broadcaster = Arc::new(EventBroadcaster::new(100));
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(pool.clone()),
+    )));
+    FileService::new(
+        event_store,
+        metadata_store,
+        object_store,
+        broadcaster,
+        permission_resolver,
+    )
+}
+
+fn create_folder_service(
+    event_store: Arc<EventStore>,
+    metadata_store: Arc<MetadataStore>,
+    pool: &PgPool,
+) -> FolderService<EventStore, MetadataStore, PermissionResolverRepository> {
+    let broadcaster = Arc::new(EventBroadcaster::new(100));
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(pool.clone()),
+    )));
+    FolderService::new(
+        event_store,
+        metadata_store,
+        broadcaster,
+        permission_resolver,
+    )
 }
 
 /// Create a test user in the database
@@ -88,11 +128,7 @@ async fn test_folder_cascade_delete() {
 
     // Create services
     let folder_service = FolderService::new(event_store.clone(), metadata_store.clone());
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Step 1: Create folder hierarchy: Root → Docs → Work → Projects
     let root = folder_service
@@ -245,11 +281,7 @@ async fn test_deep_hierarchy_cascade_delete() {
 
     // Create services
     let folder_service = FolderService::new(event_store.clone(), metadata_store.clone());
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Create a deeper hierarchy: Root → L1 → L2 → L3 → L4 → L5
     let root = folder_service
@@ -432,11 +464,7 @@ async fn test_leaf_folder_delete() {
 
     // Create services
     let folder_service = FolderService::new(event_store.clone(), metadata_store.clone());
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Create simple hierarchy: Root → Parent → Leaf
     let root = folder_service

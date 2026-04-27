@@ -16,6 +16,9 @@ use rustshare_core::services::FileService;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
 use std::sync::Arc;
+use rustshare_core::events::EventBroadcaster;
+use rustshare_core::services::PermissionResolver;
+use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use uuid::Uuid;
 
 /// Setup test environment with database and S3 connections
@@ -42,6 +45,43 @@ async fn setup_test_env() -> (PgPool, Arc<EventStore>, Arc<MetadataStore>, Arc<O
     );
 
     (pool, event_store, metadata_store, object_store)
+}
+
+
+fn create_file_service(
+    event_store: Arc<EventStore>,
+    metadata_store: Arc<MetadataStore>,
+    object_store: Arc<ObjectStore>,
+    pool: &PgPool,
+) -> FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository> {
+    let broadcaster = Arc::new(EventBroadcaster::new(100));
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(pool.clone()),
+    )));
+    FileService::new(
+        event_store,
+        metadata_store,
+        object_store,
+        broadcaster,
+        permission_resolver,
+    )
+}
+
+fn create_folder_service(
+    event_store: Arc<EventStore>,
+    metadata_store: Arc<MetadataStore>,
+    pool: &PgPool,
+) -> FolderService<EventStore, MetadataStore, PermissionResolverRepository> {
+    let broadcaster = Arc::new(EventBroadcaster::new(100));
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(pool.clone()),
+    )));
+    FolderService::new(
+        event_store,
+        metadata_store,
+        broadcaster,
+        permission_resolver,
+    )
 }
 
 /// Create a test user in the database
@@ -83,11 +123,7 @@ async fn test_version_restore_flow() {
     let user = create_test_user(&metadata_store, "version_restore_user", tenant_id).await;
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Step 1: Upload file (v1)
     let v1_content = Bytes::from("Version 1 content - original");
@@ -198,11 +234,7 @@ async fn test_restore_multiple_versions() {
     let user = create_test_user(&metadata_store, "multi_restore_user", tenant_id).await;
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Upload and create several versions
     let file = file_service
@@ -306,11 +338,7 @@ async fn test_restore_same_version_multiple_times() {
     let user = create_test_user(&metadata_store, "same_restore_user", tenant_id).await;
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Upload initial file
     let file = file_service
@@ -393,11 +421,7 @@ async fn test_get_specific_version() {
     let user = create_test_user(&metadata_store, "get_version_user", tenant_id).await;
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Create file with multiple versions
     let file = file_service
@@ -471,11 +495,7 @@ async fn test_restore_nonexistent_version() {
     let user = create_test_user(&metadata_store, "nonexistent_restore_user", tenant_id).await;
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Upload file (only v1)
     let file = file_service

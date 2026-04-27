@@ -42,6 +42,43 @@ async fn setup_test_env() -> (
     (pool, event_store, metadata_store, object_store)
 }
 
+
+fn create_file_service(
+    event_store: Arc<EventStore>,
+    metadata_store: Arc<MetadataStore>,
+    object_store: Arc<ObjectStore>,
+    pool: &PgPool,
+) -> FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository> {
+    let broadcaster = Arc::new(EventBroadcaster::new(100));
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(pool.clone()),
+    )));
+    FileService::new(
+        event_store,
+        metadata_store,
+        object_store,
+        broadcaster,
+        permission_resolver,
+    )
+}
+
+fn create_folder_service(
+    event_store: Arc<EventStore>,
+    metadata_store: Arc<MetadataStore>,
+    pool: &PgPool,
+) -> FolderService<EventStore, MetadataStore, PermissionResolverRepository> {
+    let broadcaster = Arc::new(EventBroadcaster::new(100));
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(pool.clone()),
+    )));
+    FolderService::new(
+        event_store,
+        metadata_store,
+        broadcaster,
+        permission_resolver,
+    )
+}
+
 async fn create_test_user(metadata_store: &MetadataStore, username: &str, tenant_id: Uuid) -> User {
     let user = User::new(
         username.to_string(),
@@ -75,17 +112,8 @@ fn create_note_service(
     object_store: Arc<ObjectStore>,
 ) -> Arc<NoteService> {
     let broadcaster = Arc::new(EventBroadcaster::new(100));
-    let file_service = Arc::new(FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-        broadcaster.clone(),
-    ));
-    let folder_service = Arc::new(FolderService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        broadcaster.clone(),
-    ));
+    let file_service = Arc::new(create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool));
+    let folder_service = Arc::new(create_folder_service(event_store.clone(), metadata_store.clone(), &pool));
 
     Arc::new(NoteService::new(
         file_service,

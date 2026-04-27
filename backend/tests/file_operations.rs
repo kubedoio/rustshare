@@ -15,6 +15,9 @@ use rustshare_core::services::FileService;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
 use std::sync::Arc;
+use rustshare_core::events::EventBroadcaster;
+use rustshare_core::services::PermissionResolver;
+use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use uuid::Uuid;
 
 /// Setup test environment with database and S3 connections
@@ -41,6 +44,43 @@ async fn setup_test_env() -> (PgPool, Arc<EventStore>, Arc<MetadataStore>, Arc<O
     );
 
     (pool, event_store, metadata_store, object_store)
+}
+
+
+fn create_file_service(
+    event_store: Arc<EventStore>,
+    metadata_store: Arc<MetadataStore>,
+    object_store: Arc<ObjectStore>,
+    pool: &PgPool,
+) -> FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository> {
+    let broadcaster = Arc::new(EventBroadcaster::new(100));
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(pool.clone()),
+    )));
+    FileService::new(
+        event_store,
+        metadata_store,
+        object_store,
+        broadcaster,
+        permission_resolver,
+    )
+}
+
+fn create_folder_service(
+    event_store: Arc<EventStore>,
+    metadata_store: Arc<MetadataStore>,
+    pool: &PgPool,
+) -> FolderService<EventStore, MetadataStore, PermissionResolverRepository> {
+    let broadcaster = Arc::new(EventBroadcaster::new(100));
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(pool.clone()),
+    )));
+    FolderService::new(
+        event_store,
+        metadata_store,
+        broadcaster,
+        permission_resolver,
+    )
 }
 
 /// Create a test user in the database
@@ -82,11 +122,7 @@ async fn test_file_upload_download_flow() {
     let user = create_test_user(&metadata_store, "fileops_user", tenant_id).await;
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Step 1: Upload a file
     let file_content = Bytes::from("Hello, this is test file content!");
@@ -186,11 +222,7 @@ async fn test_file_upload_with_parent_folder() {
         .expect("Failed to create parent folder");
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Upload file to parent folder
     let file_content = Bytes::from("Document content in folder");
@@ -251,11 +283,7 @@ async fn test_file_deduplication() {
     let user = create_test_user(&metadata_store, "fileops_dedup_user", tenant_id).await;
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Upload same content twice with different names
     let file_content = Bytes::from("Identical content for deduplication test");
@@ -335,11 +363,7 @@ async fn test_move_file_to_folder() {
         .expect("Failed to create target folder");
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Upload a file at root (no parent folder)
     let file_content = Bytes::from("File to be moved");
@@ -429,11 +453,7 @@ async fn test_move_file_to_root() {
         .expect("Failed to create source folder");
 
     // Create FileService
-    let file_service = FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-    );
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
 
     // Upload a file in source folder
     let file_content = Bytes::from("File to move to root");
