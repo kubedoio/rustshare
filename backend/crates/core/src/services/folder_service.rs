@@ -356,7 +356,7 @@ where
         folder.updated_at = chrono::Utc::now();
 
         // Update descendants' paths and ancestor_ids
-        self.update_descendant_paths_and_ancestors(folder_id, &old_path, &new_path, user_id)
+        self.update_descendant_paths_and_ancestors(folder_id, &old_path, &new_path, folder.ancestor_ids.clone(), user_id)
             .await?;
 
         // Emit FolderRenamed event
