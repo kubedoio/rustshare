@@ -70,7 +70,7 @@ jobs:
         run: |
           cargo update
           cargo check --all-features
-          cargo test --all-features --lib
+          cargo test --all-features
 
   check-frontend-dependencies:
     name: Check Frontend Dependencies

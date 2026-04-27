@@ -623,11 +623,9 @@ fn forbidden(msg: impl Into<String>) -> Response {
 }
 
 fn internal_error(msg: impl Into<String>) -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(super::ErrorResponse::new(msg)),
-    )
-        .into_response()
+    let msg = msg.into();
+    tracing::error!("Public shares internal error: {}", msg);
+    super::internal_error_response()
 }
 
 #[cfg(test)]

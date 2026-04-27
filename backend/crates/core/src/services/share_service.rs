@@ -484,7 +484,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
             folder.owner_id
         } else {
-            return Err(ShareError::Database("pool closed".to_string()));
+            return Err(ShareError::InvalidState("share has no associated resource".to_string()));
         };
 
         if owner_id != user_id {
@@ -564,7 +564,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
             folder.owner_id
         } else {
-            return Err(ShareError::Database("pool closed".to_string()));
+            return Err(ShareError::InvalidState("share has no associated resource".to_string()));
         };
 
         if owner_id != user_id {
@@ -729,7 +729,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
             Ok((share, None, Some(folder)))
         } else {
-            Err(ShareError::Database("pool closed".to_string()))
+            Err(ShareError::InvalidState("share has no associated resource".to_string()))
         }
     }
 
@@ -740,7 +740,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         current_folder_id: Option<uuid::Uuid>,
     ) -> Result<(Share, Folder, Vec<Folder>, Vec<File>), ShareError> {
         let (share, _file, root_folder) = self.get_public_share_info(share_token).await?;
-        let root_folder = root_folder.ok_or(ShareError::Database("pool closed".to_string()))?;
+        let root_folder = root_folder.ok_or(ShareError::InvalidState("share is not linked to a folder".to_string()))?;
         let target_folder_id = current_folder_id.unwrap_or(root_folder.id);
 
         let descendants = self

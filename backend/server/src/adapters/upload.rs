@@ -39,7 +39,7 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
         match self.inner.get(&key).await {
             Ok(data) => Ok(Some(data)),
-            Err(_) => Ok(None), // Chunk not found
+            Err(e) => Err(UploadError::Storage(e.to_string())),
         }
     }
 
