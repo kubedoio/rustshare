@@ -88,6 +88,14 @@ jobs:
       - name: Install dependencies
         working-directory: ./frontend
         run: npm ci
+
+      - name: Type check frontend
+        working-directory: ./frontend
+        run: npm run check
+
+      - name: Build frontend
+        working-directory: ./frontend
+        run: npm run build
       
       - name: Check for outdated dependencies
         working-directory: ./frontend
