@@ -947,7 +947,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -966,7 +966,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -985,7 +985,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1043,7 +1043,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1067,7 +1067,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1085,7 +1085,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1108,7 +1108,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1131,7 +1131,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1179,7 +1179,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1202,7 +1202,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1227,7 +1227,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1295,7 +1295,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1397,7 +1397,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1421,7 +1421,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store.clone(),
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1454,7 +1454,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store.clone(),
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1493,7 +1493,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1522,7 +1522,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1568,7 +1568,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store.clone(),
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
@@ -1694,7 +1694,7 @@ mod tests {
         let metadata_store = Arc::new(MockMetadataStore::new());
         let service = FolderService::new(
             event_store,
-            metadata_store,
+            metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
             Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
         );
