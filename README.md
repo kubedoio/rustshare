@@ -29,7 +29,7 @@ The current work focuses on:
 
 ## Desktop client status
 
-The current desktop client ships as a CLI plus background daemon under [apps/desktop](/Users/scolak/Projects/x/rustshare/apps/desktop).
+The current desktop client ships as a CLI plus background daemon under [apps/desktop](apps/desktop).
 
 What is real today:
 
@@ -49,9 +49,9 @@ What is not shipped yet:
 
 If you want to build and run the current client, start here:
 
-- [apps/desktop/docs/distribution/macos-client-installation.md](/Users/scolak/Projects/x/rustshare/apps/desktop/docs/distribution/macos-client-installation.md)
-- [apps/desktop/docs/CLI_USAGE.md](/Users/scolak/Projects/x/rustshare/apps/desktop/docs/CLI_USAGE.md)
-- [apps/desktop/docs/architecture/desktop-phase1-architecture.md](/Users/scolak/Projects/x/rustshare/apps/desktop/docs/architecture/desktop-phase1-architecture.md)
+- [apps/desktop/docs/distribution/macos-client-installation.md](apps/desktop/docs/distribution/macos-client-installation.md)
+- [apps/desktop/docs/CLI_USAGE.md](apps/desktop/docs/CLI_USAGE.md)
+- [apps/desktop/docs/architecture/desktop-phase1-architecture.md](apps/desktop/docs/architecture/desktop-phase1-architecture.md)
 
 ---
 

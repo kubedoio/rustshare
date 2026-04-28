@@ -51,6 +51,12 @@ Copy the example environment file and edit it:
 cp .env.example .env
 ```
 
+Or generate secrets automatically with the pre-flight script:
+
+```bash
+./scripts/pre-flight.sh
+```
+
 At minimum, change these values in `.env` for any non-local deployment:
 
 ```bash
@@ -71,7 +77,7 @@ The first build will compile both the frontend and backend, so it may take sever
 ### 4. Verify health
 
 ```bash
-./test-deployment.sh
+./scripts/final-launch-smoke.sh
 ```
 
 Expected output: all containers running, health checks passing, login API responding.
@@ -207,13 +213,13 @@ Before deploying to production:
    - The included nginx config listens on port 80 only
 
 4. **Verify backups and restore**
-   - Run `./scripts/backup.sh`
-   - Run `./scripts/restore-drill.sh`
+   - Run `./scripts/backup-stack.sh`
+   - Run `./scripts/run-restore-drill.sh`
    - Confirm data is recoverable
 
 5. **Run the deployment test**
    ```bash
-   ./test-deployment.sh
+   ./scripts/final-launch-smoke.sh
    ```
 
 See [docs/PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) for the full launch hardening checklist.

@@ -18,7 +18,7 @@ Environment overrides:
 - BASE_URL (default: http://localhost)
 - API_BASE_URL (default: ${BASE_URL}/api/v1)
 - ADMIN_EMAIL (default: admin@localhost)
-- ADMIN_PASSWORD (default: admin123)
+- ADMIN_PASSWORD (default: )
 - PUBLIC_SHARE_TOKEN (optional)
 - PUBLIC_SHARE_PASSWORD (optional, for password-protected public shares)
 - ALLOW_SKIP_PUBLIC_SHARE (default: false)
@@ -138,7 +138,7 @@ require_command python3
 BASE_URL="${BASE_URL:-http://localhost}"
 API_BASE_URL="${API_BASE_URL:-${BASE_URL%/}/api/v1}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@localhost}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin123}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 PUBLIC_SHARE_TOKEN="${PUBLIC_SHARE_TOKEN:-}"
 PUBLIC_SHARE_PASSWORD="${PUBLIC_SHARE_PASSWORD:-}"
 ALLOW_SKIP_PUBLIC_SHARE="${ALLOW_SKIP_PUBLIC_SHARE:-false}"

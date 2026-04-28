@@ -91,7 +91,7 @@ pub async fn create_invite(
 
     let origin = req
         .origin
-        .unwrap_or_else(|| "https://rustshare.io".to_string());
+        .unwrap_or_else(|| "http://localhost:8080".to_string());
     let invite_link = format!("{}/invite/{}", origin.trim_end_matches('/'), token);
 
     let email_service = EmailService::new(state.db_pool.clone(), state.secret_key.clone());

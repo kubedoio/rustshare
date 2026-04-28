@@ -25,7 +25,7 @@ Environment overrides:
 - DRILL_KEEP_STACK (default: false)
 - DRILL_REPORT_DIR (default: ./restore-drill-reports)
 - ADMIN_EMAIL (default: admin@localhost)
-- ADMIN_PASSWORD (default: admin123)
+- ADMIN_PASSWORD (default: )
 - PUBLIC_SHARE_TOKEN (optional)
 - PUBLIC_SHARE_PASSWORD (optional)
 - ALLOW_SKIP_PUBLIC_SHARE (default: true)
@@ -83,6 +83,9 @@ DRILL_API_BASE_URL="${DRILL_API_BASE_URL:-${DRILL_BASE_URL%/}/api/v1}"
 DRILL_KEEP_STACK="${DRILL_KEEP_STACK:-false}"
 DRILL_REPORT_DIR="${DRILL_REPORT_DIR:-${PROJECT_ROOT}/restore-drill-reports}"
 ALLOW_SKIP_PUBLIC_SHARE="${ALLOW_SKIP_PUBLIC_SHARE:-true}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@localhost}"
+export RUSTSHARE_ADMIN_PASSWORD="${ADMIN_PASSWORD}"
 
 DRILL_STARTED_AT="$(timestamp)"
 REPORT_BASENAME="$(date -u +%Y%m%dT%H%M%SZ)-restore-drill.env"
@@ -124,8 +127,8 @@ echo "Running post-restore smoke test..."
 BASE_URL="${DRILL_BASE_URL}" \
 API_BASE_URL="${DRILL_API_BASE_URL}" \
 ALLOW_SKIP_PUBLIC_SHARE="${ALLOW_SKIP_PUBLIC_SHARE}" \
-ADMIN_EMAIL="${ADMIN_EMAIL:-admin@localhost}" \
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin123}" \
+ADMIN_EMAIL="${ADMIN_EMAIL}" \
+ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
 PUBLIC_SHARE_TOKEN="${PUBLIC_SHARE_TOKEN:-}" \
 PUBLIC_SHARE_PASSWORD="${PUBLIC_SHARE_PASSWORD:-}" \
 	"${PROJECT_ROOT}/scripts/post-restore-smoke.sh"

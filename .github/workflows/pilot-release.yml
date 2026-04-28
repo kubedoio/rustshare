@@ -43,14 +43,14 @@ jobs:
           # CI secrets must be configured in repository Settings > Secrets and variables > Actions
           JWT_SECRET: ${{ secrets.CI_JWT_SECRET }}
           RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ secrets.CI_ENCRYPTION_KEY }}
-          # Pilot smoke test credentials (not secrets — these are ephemeral test values)
-          POSTGRES_PASSWORD: pilot-test-db-password
-          DATABASE_URL: postgres://rustshare:pilot-test-db-password@postgres:5432/rustshare
-          RUSTFS_ROOT_USER: pilot-rustfs-user
-          RUSTFS_ROOT_PASSWORD: pilot-rustfs-password
-          AWS_ACCESS_KEY_ID: pilot-rustfs-user
-          AWS_SECRET_ACCESS_KEY: pilot-rustfs-password
-          RUSTSHARE_ADMIN_PASSWORD: pilot-admin-password
+          # Pilot smoke test credentials — ephemeral values generated per-run
+          POSTGRES_PASSWORD: pilot-db-${{ github.run_id }}-${{ github.run_attempt }}
+          DATABASE_URL: postgres://rustshare:pilot-db-${{ github.run_id }}-${{ github.run_attempt }}@postgres:5432/rustshare
+          RUSTFS_ROOT_USER: pilot-rustfs-${{ github.run_id }}
+          RUSTFS_ROOT_PASSWORD: pilot-rustfs-${{ github.run_id }}-${{ github.run_attempt }}
+          AWS_ACCESS_KEY_ID: pilot-rustfs-${{ github.run_id }}
+          AWS_SECRET_ACCESS_KEY: pilot-rustfs-${{ github.run_id }}-${{ github.run_attempt }}
+          RUSTSHARE_ADMIN_PASSWORD: pilot-admin-${{ github.run_id }}-${{ github.run_attempt }}
         run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml up -d postgres rustfs backend nginx
 
       - name: Wait for health endpoint
@@ -81,6 +81,7 @@ jobs:
 
   publish-pilot-image:
     if: github.event_name != 'pull_request'
+    needs: pilot-compose-smoke
     runs-on: ubuntu-latest
     permissions:
       contents: read

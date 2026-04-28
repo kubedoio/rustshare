@@ -207,6 +207,19 @@ for spec in "${SECRET_SPECS[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
+# Auto-construct DATABASE_URL if empty
+# ---------------------------------------------------------------------------
+
+db_url=""
+if env_get "DATABASE_URL" >/dev/null 2>&1; then
+	db_url="$(env_get "DATABASE_URL")"
+fi
+if [[ -z "${db_url}" ]]; then
+	env_set "DATABASE_URL" "postgres://rustshare:${POSTGRES_PASSWORD}@postgres:5432/rustshare"
+	warn "DATABASE_URL was empty — auto-constructed from POSTGRES_PASSWORD"
+fi
+
+# ---------------------------------------------------------------------------
 # Check required non-secrets
 # ---------------------------------------------------------------------------
 
