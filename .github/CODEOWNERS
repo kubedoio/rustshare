@@ -1,0 +1,32 @@
+# RustShare CODEOWNERS
+# Core maintainers: @senolcolak @zoorpha
+#
+# When a pull request modifies files under a path, the corresponding owners
+# will be automatically requested for review.
+
+# Global fallback — core maintainers
+* @senolcolak @zoorpha
+
+# Backend and core crates
+/backend/ @senolcolak @zoorpha
+
+# Frontend
+/frontend/ @senolcolak @zoorpha
+
+# Desktop client
+/apps/desktop/ @senolcolak @zoorpha
+
+# Sync engine crates
+/crates/ @senolcolak @zoorpha
+
+# Docker and deployment
+/docker/ @senolcolak @zoorpha
+/docker-compose*.yml @senolcolak @zoorpha
+/scripts/ @senolcolak @zoorpha
+
+# Documentation
+/docs/ @senolcolak @zoorpha
+/*.md @senolcolak @zoorpha
+
+# CI/CD
+/.github/ @senolcolak @zoorpha
