@@ -15,7 +15,7 @@
 //! Run with: cargo test --test admin_webhooks_test -- --ignored
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use rustshare_crypto::{decrypt_secret, encrypt_secret, SecretEncryptionKey};
 use sha2::Sha256;
 use sqlx::Row;

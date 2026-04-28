@@ -6,7 +6,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use rustshare_crypto::{decrypt_secret, encrypt_secret};
 use serde::{Deserialize, Serialize};
 use serde_json::json;

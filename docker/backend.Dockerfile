@@ -31,7 +31,7 @@ RUN npm run build
 # We use a two-step approach without caching the target directory to ensure
 # the binary is always built from the actual source code.
 # =============================================================================
-FROM rust:bookworm AS builder
+FROM rust:1.95-bookworm AS builder
 
 WORKDIR /app
 

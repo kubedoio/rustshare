@@ -554,7 +554,7 @@ pub async fn upload_avatar(
                 &rgba,
                 resized.width(),
                 resized.height(),
-                image::ColorType::Rgba8,
+                image::ColorType::Rgba8.into(),
             )
             .map_err(|e| format!("WebP encode failed: {}", e))?;
 
