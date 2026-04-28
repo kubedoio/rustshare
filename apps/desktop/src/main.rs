@@ -37,7 +37,7 @@ struct Cli {
     db_name: String,
 
     /// Server URL
-    #[arg(short, long, default_value = "https://app.rustshare.io")]
+    #[arg(short, long, default_value = "http://localhost:8080")]
     server: String,
 
     /// Enable verbose logging
@@ -1142,16 +1142,16 @@ mod tests {
             "http://localhost:8080"
         );
         assert_eq!(
-            normalize_server_url("https://app.rustshare.io"),
-            "https://app.rustshare.io"
+            normalize_server_url("https://localhost:8080"),
+            "https://localhost:8080"
         );
     }
 
     #[test]
     fn normalize_server_url_defaults_to_https() {
         assert_eq!(
-            normalize_server_url("app.rustshare.io"),
-            "https://app.rustshare.io"
+            normalize_server_url("localhost:8080"),
+            "https://localhost:8080"
         );
     }
 
@@ -1164,7 +1164,7 @@ mod tests {
             "--db-name",
             "custom.db",
             "--server",
-            "app.rustshare.io",
+            "localhost:8080",
             "--verbose",
             "daemon",
             "start",
@@ -1184,7 +1184,7 @@ mod tests {
                 "--db-name",
                 "custom.db",
                 "--server",
-                "app.rustshare.io",
+                "localhost:8080",
                 "--verbose",
                 "daemon",
                 "run",

@@ -10,9 +10,15 @@ import { expect, test, type Page } from '@playwright/test';
 
 const BASE = process.env.E2E_BASE_URL ?? 'http://localhost';
 
-// Seed credentials from docker-compose defaults
-const ADMIN_EMAIL = 'admin@localhost';
-const ADMIN_PASSWORD = 'admin123';
+// Seed credentials from environment (must be set before running tests)
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || '';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+if (!ADMIN_EMAIL) {
+	throw new Error('ADMIN_EMAIL environment variable is required for e2e tests');
+}
+if (!ADMIN_PASSWORD) {
+	throw new Error('ADMIN_PASSWORD environment variable is required for e2e tests');
+}
 
 // ---------------------------------------------------------------------------
 // Helpers

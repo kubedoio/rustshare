@@ -6,6 +6,12 @@
 # Don't exit on error - we want to run all tests
 set +e
 
+# Require credentials via environment variables — no hardcoded defaults
+if [ -z "${ADMIN_EMAIL:-}" ] || [ -z "${ADMIN_PASSWORD:-}" ]; then
+    echo "Error: ADMIN_EMAIL and ADMIN_PASSWORD must be set as environment variables." >&2
+    exit 1
+fi
+
 echo "=================================="
 echo "RustShare Deployment Test Suite"
 echo "=================================="
@@ -152,7 +158,7 @@ echo ""
 echo "Test 8: Testing login API..."
 LOGIN_RESPONSE=$(curl -s -X POST http://localhost/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email": "admin@localhost", "password": "admin123"}')
+  -d "{\"email\": \"$ADMIN_EMAIL\", \"password\": \"$ADMIN_PASSWORD\"}")
 
 if echo "$LOGIN_RESPONSE" | jq -e '.token' > /dev/null 2>&1; then
     test_passed "Login API returns JWT token"
@@ -165,10 +171,10 @@ fi
 # Test 9: Token contains user info
 if echo "$LOGIN_RESPONSE" | jq -e '.user.email' > /dev/null 2>&1; then
     USER_EMAIL=$(echo "$LOGIN_RESPONSE" | jq -r '.user.email')
-    if [ "$USER_EMAIL" = "admin@localhost" ]; then
+    if [ "$USER_EMAIL" = "$ADMIN_EMAIL" ]; then
         test_passed "Login API returns correct user info"
     else
-        test_failed "Login API returns wrong user email" "Expected: admin@localhost, Got: $USER_EMAIL"
+        test_failed "Login API returns wrong user email" "Expected: $ADMIN_EMAIL, Got: $USER_EMAIL"
     fi
 else
     test_failed "Login API doesn't return user info" "Missing user object"
@@ -282,9 +288,7 @@ if [ $FAILED_TESTS -eq 0 ]; then
     echo "You can now access RustShare at:"
     echo "  http://localhost"
     echo ""
-    echo "Login credentials:"
-    echo "  Email: admin@localhost"
-    echo "  Password: admin123"
+    echo "Login credentials are provided via ADMIN_EMAIL and ADMIN_PASSWORD environment variables."
     exit 0
 else
     echo -e "${RED}✗ Some tests failed. Please review the errors above.${NC}"
