@@ -39,7 +39,7 @@ toml = "0.8"
 
 # Crypto
 argon2 = "0.5"
-jsonwebtoken = "10"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 rand = "0.8"
 sha2 = "0.11"
 aes-gcm = "0.10"
