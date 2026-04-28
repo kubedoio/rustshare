@@ -7,7 +7,7 @@
 **Architecture:** Event-sourced modular monolith with Cargo workspace structure. Core business logic separated from I/O. PostgreSQL stores events and projections. Axum handles HTTP/WebSocket. S3 client abstracts RustFS access.
 
 **Tech Stack:**
-- Rust 1.75+ with Cargo workspace
+- Rust 1.95.0+ with Cargo workspace
 - Axum 0.7 (web framework)
 - SQLx 0.7 (database with compile-time query checking)
 - PostgreSQL 16
@@ -159,7 +159,7 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.95.0"
 authors = ["RustShare Contributors"]
 license = "Apache-2.0"
 
@@ -2281,7 +2281,7 @@ volumes:
 - [ ] **Step 2: Create backend.Dockerfile**
 
 ```dockerfile
-FROM rust:1.76-alpine AS builder
+FROM rust:1.95-bookworm AS builder
 
 WORKDIR /app
 
@@ -2397,7 +2397,7 @@ Personal/team file synchronization and sharing platform built with Rust.
 ### Prerequisites
 
 - Docker and Docker Compose
-- Rust 1.75+ (for local development)
+- Rust 1.95.0+ (for local development)
 
 ### Run with Docker Compose
 

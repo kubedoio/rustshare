@@ -240,7 +240,7 @@ where
                     &rgba,
                     resized.width(),
                     resized.height(),
-                    image::ColorType::Rgba8,
+                    image::ColorType::Rgba8.into(),
                 )
                 .map_err(|e| {
                     tracing::error!(error = %e, "WebP encoding failed");
@@ -296,7 +296,7 @@ where
             let mut output = Vec::new();
             let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut output);
             encoder
-                .encode(&img, width, height, image::ColorType::Rgba8)
+                .encode(&img, width, height, image::ColorType::Rgba8.into())
                 .map_err(|e| ThumbnailError::Generation(format!("WebP encode failed: {}", e)))?;
 
             Ok::<(Vec<u8>, String), ThumbnailError>((output, "image/webp".to_string()))
@@ -351,7 +351,7 @@ where
             let mut output = Vec::new();
             let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut output);
             encoder
-                .encode(&img, width, height, image::ColorType::Rgba8)
+                .encode(&img, width, height, image::ColorType::Rgba8.into())
                 .map_err(|e| ThumbnailError::Generation(format!("WebP encode failed: {}", e)))?;
 
             Ok::<(Vec<u8>, String), ThumbnailError>((output, "image/webp".to_string()))
@@ -424,7 +424,7 @@ where
             let mut output = Vec::new();
             let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut output);
             encoder
-                .encode(&img, width, height, image::ColorType::Rgba8)
+                .encode(&img, width, height, image::ColorType::Rgba8.into())
                 .map_err(|e| ThumbnailError::Generation(format!("WebP encode failed: {}", e)))?;
 
             Ok::<(Vec<u8>, String), ThumbnailError>((output, "image/webp".to_string()))

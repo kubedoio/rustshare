@@ -14,7 +14,7 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.93.1"
+rust-version = "1.95.0"
 authors = ["RustShare Contributors"]
 license = "Apache-2.0"
 
@@ -36,8 +36,8 @@ serde_json = "1.0"
 
 # Crypto
 argon2 = "0.5"
-jsonwebtoken = "10"
-rand = "0.9"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+rand = "0.8"
 
 # S3 client
 aws-sdk-s3 = "1.17"
