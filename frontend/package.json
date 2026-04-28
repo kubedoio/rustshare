@@ -50,6 +50,7 @@
   },
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.1",
+    "clsx": "^2.1.1",
     "@monaco-editor/react": "^4.6.0",
     "@tanstack/svelte-query": "^6.1.24",
     "date-fns": "^4.1.0",
