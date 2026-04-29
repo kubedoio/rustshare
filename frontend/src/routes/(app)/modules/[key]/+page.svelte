@@ -4,6 +4,8 @@
 	import { listEnabledModules } from '$lib/api/modules';
 	import ModuleIcon from '$lib/components/dashboard/ModuleIcon.svelte';
 	import NotesModuleView from '$lib/components/modules/NotesModuleView.svelte';
+	import KanbanModuleView from '$lib/components/modules/KanbanModuleView.svelte';
+	import MeetingsModuleView from '$lib/components/modules/MeetingsModuleView.svelte';
 	import GenericModuleView from '$lib/components/modules/GenericModuleView.svelte';
 	import { ArrowLeft, AlertCircle } from 'lucide-svelte';
 
@@ -84,6 +86,10 @@
 			<!-- Module Contents -->
 			{#if moduleConfig && moduleConfig.renderer === 'notes'}
 				<NotesModuleView {moduleConfig} />
+			{:else if moduleConfig && moduleConfig.renderer === 'kanban'}
+				<KanbanModuleView {moduleConfig} />
+			{:else if moduleConfig && moduleConfig.renderer === 'meetings'}
+				<MeetingsModuleView {moduleConfig} />
 			{:else if moduleConfig}
 				<GenericModuleView {moduleConfig} />
 			{/if}
