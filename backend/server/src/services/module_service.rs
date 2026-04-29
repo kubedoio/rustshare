@@ -27,6 +27,8 @@ pub enum ModuleError {
     Database(String),
     #[error("Invalid name: {0}")]
     InvalidName(String),
+    #[error("Invalid data: {0}")]
+    InvalidData(String),
 }
 
 impl From<rustshare_core::services::FolderError> for ModuleError {

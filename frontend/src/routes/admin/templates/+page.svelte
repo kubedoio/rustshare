@@ -127,6 +127,7 @@
 									<button
 										class="btn text-base-content/50 btn-ghost btn-xs hover:text-base-content"
 										title="Duplicate"
+										on:click={() => handleDuplicate(template.template_key, template.name)}
 									>
 										<Copy size={14} />
 									</button>

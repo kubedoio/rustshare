@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { createQuery, createMutation } from '$lib/query-compat';
 	import { listAllFiles } from '$lib/api/files';
-	import { listRecentNotes, createNote } from '$lib/api/notes';
 	import { listEnabledModules } from '$lib/api/modules';
 	import { currentUser } from '$lib/stores/auth';
 
@@ -15,10 +14,6 @@
 		ArrowRight,
 		Share2,
 		FileDigit,
-		StickyNote,
-		Lock,
-		Globe,
-		Loader2,
 		Activity,
 		LayoutGrid
 	} from 'lucide-svelte';
@@ -48,22 +43,7 @@
 		queryFn: () => listEnabledModules()
 	});
 
-	// Recent notes from dedicated API (only Notes folder)
-	const recentNotesQuery = createQuery({
-		queryKey: ['recent-notes', 'Notes'],
-		queryFn: () => listRecentNotes('Notes')
-	});
-
-	const createNoteMutation = createMutation({
-		mutationFn: () => createNote({ title: 'Untitled Note', content: '' }),
-		onSuccess: (data) => {
-			window.location.href = `/notes/${data.id}`;
-		}
-	});
-
 	$: enabledModules = $enabledModulesQuery.data ?? [];
-	$: notesModule = enabledModules.find((m) => m.module_key === 'notes');
-	$: noteFiles = ($recentNotesQuery.data?.notes ?? []).slice(0, 8);
 
 	$: sharedFiles = $sharedFilesQuery.data || [];
 
@@ -82,28 +62,14 @@
 		window.location.href = '/files';
 	}
 
-	function handleNoteClick(note: (typeof noteFiles)[0]) {
-		window.location.href = `/notes/${note.id}`;
-	}
 
-	function handleCreateNote() {
-		$createNoteMutation.mutate();
-	}
-
-	function getNoteExcerpt(note: (typeof noteFiles)[0]): string {
-		return note.metadata.excerpt?.trim() || '';
-	}
-
-	function isNotePublic(note: (typeof noteFiles)[0]): boolean {
-		return note.metadata.visibility === 'public';
-	}
 </script>
 
 <svelte:head>
 	<title>Dashboard - RustShare</title>
 </svelte:head>
 
-{#if $allFilesQuery.isLoading && $recentNotesQuery.isLoading && $enabledModulesQuery.isLoading}
+{#if $allFilesQuery.isLoading && $enabledModulesQuery.isLoading}
 	<DashboardSkeleton />
 {:else}
 	<!-- Main dashboard container - aligned with topbar "+ New" button via consistent padding -->
@@ -222,74 +188,6 @@
 
 		<!-- Workspace Modules -->
 		<WorkspaceModules modules={enabledModules} />
-
-		<!-- Notes Panel (shown when Notes module is enabled) -->
-		{#if notesModule}
-			<section class="notes-panel">
-				<div class="notes-panel-header">
-					<div class="notes-panel-title-row">
-						<StickyNote size={16} class="text-brand-500" />
-						<h2 class="notes-panel-title">Notes</h2>
-					</div>
-					<div class="notes-panel-actions">
-						<p class="notes-panel-subtitle">Recent notes from your Library</p>
-						<button
-							class="btn btn-xs btn-primary"
-							on:click={handleCreateNote}
-							disabled={$createNoteMutation.isPending}
-						>
-							{#if $createNoteMutation.isPending}
-								<Loader2 size={12} class="animate-spin" />
-							{:else}
-								<Plus size={12} />
-							{/if}
-							<span>New Note</span>
-						</button>
-					</div>
-				</div>
-
-				{#if $recentNotesQuery.isLoading}
-					<div class="notes-loading">
-						<div class="notes-loading-spinner"></div>
-					</div>
-				{:else if noteFiles.length === 0}
-					<EmptyState
-						icon={StickyNote}
-						title="No notes found"
-						description="Create a new note to get started"
-						actionLabel="Create Note"
-						onAction={handleCreateNote}
-					/>
-				{:else}
-					<div class="notes-grid">
-						{#each noteFiles as note}
-							<button class="note-card" on:click={() => handleNoteClick(note)}>
-								<div class="note-card-header">
-									<div class="note-card-icon">
-										<FileText size={16} />
-									</div>
-									{#if isNotePublic(note)}
-										<Globe size={12} class="text-brand-500" />
-									{:else}
-										<Lock size={12} class="text-base-content/30" />
-									{/if}
-								</div>
-								<h3 class="note-card-title">{note.metadata.title || note.name}</h3>
-								<p class="note-card-meta">
-									{#if getNoteExcerpt(note)}
-										{getNoteExcerpt(note)} • {formatFileSize(note.size)} • {formatDate(
-											note.modified_at
-										)}
-									{:else}
-										{formatFileSize(note.size)} • {formatDate(note.modified_at)}
-									{/if}
-								</p>
-							</button>
-						{/each}
-					</div>
-				{/if}
-			</section>
-		{/if}
 
 		<!-- Shared With Me Section -->
 		{#if sharedFiles.length > 0}
@@ -643,144 +541,6 @@
 	@media (min-width: 640px) {
 		.stat-box-value {
 			font-size: 1.5rem;
-		}
-	}
-
-	/* Notes Panel */
-	.notes-panel {
-		background: var(--base-100);
-		border: 1px solid color-mix(in oklab, var(--base-300) 50%, transparent);
-		border-radius: 1.5rem;
-		padding: 1.25rem;
-		box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
-	}
-
-	@media (min-width: 640px) {
-		.notes-panel {
-			padding: 1.5rem;
-		}
-	}
-
-	.notes-panel-header {
-		margin-bottom: 1rem;
-	}
-
-	.notes-panel-title-row {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		margin-bottom: 0.25rem;
-	}
-
-	.notes-panel-title {
-		font-size: 0.875rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: var(--base-content);
-	}
-
-	.notes-panel-subtitle {
-		font-size: 0.75rem;
-		color: color-mix(in oklab, var(--base-content) 50%, transparent);
-	}
-
-	.notes-panel-actions {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
-		margin-top: 0.25rem;
-	}
-
-	.notes-grid {
-		display: grid;
-		grid-template-columns: repeat(2, 1fr);
-		gap: 0.75rem;
-	}
-
-	@media (min-width: 640px) {
-		.notes-grid {
-			grid-template-columns: repeat(3, 1fr);
-			gap: 1rem;
-		}
-	}
-
-	@media (min-width: 1024px) {
-		.notes-grid {
-			grid-template-columns: repeat(4, 1fr);
-		}
-	}
-
-	.note-card {
-		display: flex;
-		flex-direction: column;
-		padding: 1rem;
-		background: var(--base-100);
-		border: 1px solid color-mix(in oklab, var(--base-300) 50%, transparent);
-		border-radius: 1rem;
-		text-align: left;
-		transition: all 0.2s;
-	}
-
-	.note-card:hover {
-		border-color: var(--brand-500);
-		box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05);
-	}
-
-	.note-card-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		margin-bottom: 0.75rem;
-	}
-
-	.note-card-icon {
-		display: flex;
-		height: 2rem;
-		width: 2rem;
-		align-items: center;
-		justify-content: center;
-		border-radius: 0.5rem;
-		background: color-mix(in oklab, var(--brand-500) 10%, transparent);
-		color: var(--brand-500);
-	}
-
-	.note-card-title {
-		font-size: 0.875rem;
-		font-weight: 600;
-		color: var(--base-content);
-		line-height: 1.4;
-		display: -webkit-box;
-		-webkit-line-clamp: 2;
-		-webkit-box-orient: vertical;
-		overflow: hidden;
-		margin-bottom: 0.375rem;
-	}
-
-	.note-card-meta {
-		font-size: 0.75rem;
-		color: color-mix(in oklab, var(--base-content) 50%, transparent);
-	}
-
-	.notes-loading {
-		display: flex;
-		justify-content: center;
-		padding: 2rem 0;
-	}
-
-	.notes-loading-spinner {
-		height: 1.5rem;
-		width: 1.5rem;
-		border: 2px solid var(--brand-500);
-		border-top-color: transparent;
-		border-radius: 9999px;
-		animation: spin 1s linear infinite;
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
 		}
 	}
 

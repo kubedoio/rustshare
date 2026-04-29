@@ -6,7 +6,19 @@
 	import NotesModuleView from '$lib/components/modules/NotesModuleView.svelte';
 	import KanbanModuleView from '$lib/components/modules/KanbanModuleView.svelte';
 	import MeetingsModuleView from '$lib/components/modules/MeetingsModuleView.svelte';
+	import StandupsModuleView from '$lib/components/modules/StandupsModuleView.svelte';
+	import DecisionsModuleView from '$lib/components/modules/DecisionsModuleView.svelte';
+	import SharesModuleView from '$lib/components/modules/SharesModuleView.svelte';
 	import GenericModuleView from '$lib/components/modules/GenericModuleView.svelte';
+
+	const rendererMap: Record<string, any> = {
+		notes: NotesModuleView,
+		kanban: KanbanModuleView,
+		meetings: MeetingsModuleView,
+		standups: StandupsModuleView,
+		decisions: DecisionsModuleView,
+		shares: SharesModuleView
+	};
 	import { ArrowLeft, AlertCircle } from 'lucide-svelte';
 
 	$: moduleKey = $page.params.key;
@@ -84,14 +96,9 @@
 			</div>
 
 			<!-- Module Contents -->
-			{#if moduleConfig && moduleConfig.renderer === 'notes'}
-				<NotesModuleView {moduleConfig} />
-			{:else if moduleConfig && moduleConfig.renderer === 'kanban'}
-				<KanbanModuleView {moduleConfig} />
-			{:else if moduleConfig && moduleConfig.renderer === 'meetings'}
-				<MeetingsModuleView {moduleConfig} />
-			{:else if moduleConfig}
-				<GenericModuleView {moduleConfig} />
+			{#if moduleConfig}
+				{@const Renderer = rendererMap[moduleConfig.renderer] ?? GenericModuleView}
+				<Renderer {moduleConfig} />
 			{/if}
 		</div>
 	{/if}
