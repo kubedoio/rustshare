@@ -5,17 +5,9 @@
 
 	export let module: ModuleConfig;
 
-	function getActionLabel(renderer: string): string {
-		const labels: Record<string, string> = {
-			notes: 'Open Notes',
-			'meeting-notes': 'New Meeting Note',
-			standups: "Today's Standup",
-			kanban: 'Open Boards',
-			decisions: 'New Decision',
-			shares: 'Manage Shares'
-		};
-		return labels[renderer] || 'Open';
-	}
+	$: cardTitle = module.ui_config?.dashboard?.cardTitle ?? module.display_name;
+	$: cardDescription = module.ui_config?.dashboard?.cardDescription ?? module.description;
+	$: actionLabel = module.ui_config?.dashboard?.primaryAction?.label ?? 'Open';
 </script>
 
 <a
@@ -36,15 +28,15 @@
 	</div>
 
 	<div class="flex flex-col gap-1">
-		<h3 class="text-sm font-semibold text-base-content">{module.display_name}</h3>
-		<p class="text-xs leading-relaxed text-base-content/60">{module.description}</p>
+		<h3 class="text-sm font-semibold text-base-content">{cardTitle}</h3>
+		<p class="text-xs leading-relaxed text-base-content/60">{cardDescription}</p>
 	</div>
 
 	<div class="mt-auto pt-1">
 		<span
 			class="inline-flex items-center gap-1.5 rounded-lg bg-brand-500/5 px-3 py-1.5 text-xs font-medium text-brand-600 transition-colors group-hover:bg-brand-500/10"
 		>
-			{getActionLabel(module.renderer)}
+			{actionLabel}
 			<ArrowRight size={12} class="transition-transform group-hover:translate-x-0.5" />
 		</span>
 	</div>

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { createQuery, createMutation, useQueryClient } from '$lib/query-compat';
-	import { listAdminTemplates, deleteTemplate } from '$lib/api/admin-modules';
+	import { listAdminTemplates, deleteTemplate, duplicateTemplate } from '$lib/api/admin-modules';
 	import { toastStore } from '$lib/stores/toast';
 	import { Plus, Trash2, Edit, Copy } from 'lucide-svelte';
 
@@ -20,12 +20,27 @@
 		onError: (err: Error) => toastStore.show(err.message, 'error')
 	});
 
+	const duplicateMutation = createMutation({
+		mutationFn: ({ key, newKey }: { key: string; newKey: string }) => duplicateTemplate(key, newKey),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['admin-templates'] });
+			toastStore.show('Template duplicated', 'success');
+		},
+		onError: (err: Error) => toastStore.show(err.message, 'error')
+	});
+
 	$: templates = $templatesQuery.data ?? [];
 
 	function handleDelete(key: string, name: string) {
 		if (confirm(`Delete template "${name}"? This cannot be undone.`)) {
 			$deleteMutation.mutate(key);
 		}
+	}
+
+	function handleDuplicate(key: string, name: string) {
+		const newKey = window.prompt(`Duplicate template "${name}". Enter a new template key:`, `${key}_copy`);
+		if (!newKey) return;
+		$duplicateMutation.mutate({ key, newKey });
 	}
 
 	function formatDate(dateStr: string | null): string {
@@ -102,12 +117,13 @@
 							</td>
 							<td class="px-4 py-3 text-right">
 								<div class="flex items-center justify-end gap-1">
-									<button
+									<a
+										href="/admin/templates/{template.template_key}/edit"
 										class="btn text-base-content/50 btn-ghost btn-xs hover:text-base-content"
 										title="Edit"
 									>
 										<Edit size={14} />
-									</button>
+									</a>
 									<button
 										class="btn text-base-content/50 btn-ghost btn-xs hover:text-base-content"
 										title="Duplicate"

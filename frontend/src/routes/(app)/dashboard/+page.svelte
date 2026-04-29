@@ -19,7 +19,8 @@
 		Lock,
 		Globe,
 		Loader2,
-		Activity
+		Activity,
+		LayoutGrid
 	} from 'lucide-svelte';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import DashboardSkeleton from '$lib/components/common/DashboardSkeleton.svelte';
@@ -205,6 +206,16 @@
 							None
 						{/if}
 					</p>
+				</div>
+
+				<div class="stat-box">
+					<div class="stat-box-header">
+						<span class="stat-box-label">Modules</span>
+						<div class="stat-box-icon stat-box-icon-brand">
+							<LayoutGrid size={14} />
+						</div>
+					</div>
+					<p class="stat-box-value">{enabledModules.length}</p>
 				</div>
 			</div>
 		</section>
@@ -534,10 +545,16 @@
 	/* Compact Stats Grid */
 	.workspace-stats {
 		display: grid;
-		grid-template-columns: repeat(3, 1fr);
+		grid-template-columns: repeat(2, 1fr);
 		gap: 0.75rem;
 		padding-top: 1.25rem;
 		border-top: 1px solid color-mix(in oklab, var(--base-300) 50%, transparent);
+	}
+
+	@media (min-width: 640px) {
+		.workspace-stats {
+			grid-template-columns: repeat(4, 1fr);
+		}
 	}
 
 	@media (min-width: 640px) {

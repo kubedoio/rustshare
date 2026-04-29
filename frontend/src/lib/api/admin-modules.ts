@@ -68,3 +68,18 @@ export async function updateTemplate(
 export async function deleteTemplate(key: string): Promise<void> {
 	return apiClient.delete<void>(`/admin/templates/${key}`);
 }
+
+export async function duplicateTemplate(key: string, newKey: string): Promise<TemplateConfig> {
+	const original = await getAdminTemplate(key);
+	return createTemplate({
+		template_key: newKey,
+		name: `${original.name} (Copy)`,
+		module_key: original.module_key,
+		description: original.description,
+		folder_structure: original.folder_structure,
+		default_files: original.default_files,
+		metadata_schema: original.metadata_schema,
+		renderer: original.renderer,
+		visibility_policy: original.visibility_policy
+	});
+}

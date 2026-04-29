@@ -29,6 +29,7 @@ pub struct UpdateModuleRequest {
     pub permissions: Option<serde_json::Value>,
     pub ai_indexing: Option<serde_json::Value>,
     pub audit: Option<serde_json::Value>,
+    pub ui_config: Option<serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +137,7 @@ pub async fn update_module(
                 permissions: body.permissions,
                 ai_indexing: body.ai_indexing,
                 audit: body.audit,
+                ui_config: body.ui_config,
             },
             state.default_tenant_id,
         )

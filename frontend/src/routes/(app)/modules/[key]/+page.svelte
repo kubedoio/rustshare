@@ -1,13 +1,11 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
-	import { listEnabledModules, createFromTemplate } from '$lib/api/modules';
-	import { getFolderContents } from '$lib/api/folders';
-	import { listRecentNotes, createNote } from '$lib/api/notes';
+	import { listEnabledModules } from '$lib/api/modules';
 	import ModuleIcon from '$lib/components/dashboard/ModuleIcon.svelte';
-	import EmptyState from '$lib/components/common/EmptyState.svelte';
-	import { Folder, FileText, ArrowLeft, Plus, AlertCircle, Clock } from 'lucide-svelte';
+	import NotesModuleView from '$lib/components/modules/NotesModuleView.svelte';
+	import GenericModuleView from '$lib/components/modules/GenericModuleView.svelte';
+	import { ArrowLeft, AlertCircle } from 'lucide-svelte';
 
 	$: moduleKey = $page.params.key;
 
@@ -18,68 +16,8 @@
 
 	$: moduleConfig = $enabledModulesQuery.data?.find((m) => m.module_key === moduleKey);
 
-	// Notes module: fetch recent notes for a dedicated landing view
-	$: recentNotesQuery = createQuery({
-		queryKey: ['recent-notes', moduleKey],
-		queryFn: () => listRecentNotes(),
-		enabled: moduleKey === 'notes' && !!moduleConfig?.enabled
-	});
-
-	// Fetch folder contents for the module root (non-notes modules)
-	$: folderContentsQuery = createQuery({
-		queryKey: ['module-folder-contents', moduleKey],
-		queryFn: async () => {
-			if (!moduleConfig) return null;
-			const res = await fetch(`/api/v1/folders/root/contents`);
-			if (!res.ok) throw new Error('Failed to fetch root contents');
-			const data = await res.json();
-			const rootName = moduleConfig.root_path.replace(/^\//, '');
-			const folder = data.folders?.find((f: { name: string }) => f.name === rootName);
-			if (!folder) return { folders: [], files: [], current_folder: null };
-			const contents = await getFolderContents(folder.id);
-			return { ...contents, current_folder: folder };
-		},
-		enabled: !!moduleConfig && moduleKey !== 'notes'
-	});
-
-	$: contents = $folderContentsQuery.data;
-	$: recentNotes = $recentNotesQuery.data?.notes ?? [];
 	$: isAvailable = moduleConfig?.enabled ?? false;
 	$: isLoading = $enabledModulesQuery.isLoading;
-
-	async function handleNewNote() {
-		try {
-			const data = await createNote({ title: 'Untitled Note' });
-			goto(`/notes/${data.id}`);
-		} catch (err) {
-			console.error('Failed to create note:', err);
-		}
-	}
-
-	async function handleCreateFromTemplate() {
-		if (!moduleConfig?.default_template) {
-			alert('No default template configured for this module.');
-			return;
-		}
-		const name = window.prompt('Enter a name for the new item:');
-		if (!name) return;
-		try {
-			const result = await createFromTemplate({
-				template_key: moduleConfig.default_template,
-				name,
-				parent_folder_id: null
-			});
-			// Navigate to the newly created item
-			if (result.object_type === 'folder') {
-				goto(`/files?folder=${result.object_id}`);
-			} else {
-				goto(`/files?preview=${result.object_id}`);
-			}
-		} catch (err) {
-			console.error('Failed to create from template:', err);
-			alert(err instanceof Error ? err.message : 'Failed to create item');
-		}
-	}
 </script>
 
 <svelte:head>
@@ -144,133 +82,10 @@
 			</div>
 
 			<!-- Module Contents -->
-			{#if moduleKey === 'notes'}
-				<!-- Notes module: show recent notes landing -->
-				<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6">
-					<div class="mb-4 flex items-center justify-between">
-						<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">
-							Recent Notes
-						</h2>
-						<button class="btn btn-sm btn-primary" on:click={handleNewNote}>
-							<Plus size={14} />
-							<span>New Note</span>
-						</button>
-					</div>
-
-					{#if $recentNotesQuery.isLoading}
-						<div class="flex h-32 items-center justify-center">
-							<div class="loading loading-md loading-spinner text-brand-500"></div>
-						</div>
-					{:else if recentNotes.length === 0}
-						<EmptyState
-							icon={FileText}
-							title="No notes yet"
-							description="Create your first note to get started."
-							actionLabel="New Note"
-							onAction={handleNewNote}
-						/>
-					{:else}
-						<div class="flex flex-col gap-2">
-							{#each recentNotes as note}
-								<a
-									href="/notes/{note.id}"
-									class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
-								>
-									<div
-										class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
-									>
-										<FileText size={16} />
-									</div>
-									<div class="flex flex-col">
-										<span class="text-sm font-medium text-base-content"
-											>{note.metadata?.title || 'Untitled Note'}</span
-										>
-										<span class="flex items-center gap-1 text-xs text-base-content/40">
-											<Clock size={12} />
-											{note.modified_at ? new Date(note.modified_at).toLocaleDateString() : ''}
-										</span>
-									</div>
-								</a>
-							{/each}
-						</div>
-					{/if}
-				</div>
-			{:else}
-				<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6">
-					<div class="mb-4 flex items-center justify-between">
-						<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">
-							Contents
-						</h2>
-						<button class="btn btn-sm btn-primary" on:click={handleCreateFromTemplate}>
-							<Plus size={14} />
-							<span>Create from Template</span>
-						</button>
-					</div>
-
-					{#if $folderContentsQuery.isLoading}
-						<div class="flex h-32 items-center justify-center">
-							<div class="loading loading-md loading-spinner text-brand-500"></div>
-						</div>
-					{:else if !contents || (contents.folders?.length === 0 && contents.files?.length === 0)}
-						<EmptyState
-							icon={Folder}
-							title="No items yet"
-							description="Create your first item from a template to get started."
-							actionLabel="Create from Template"
-							onAction={handleCreateFromTemplate}
-						/>
-					{:else}
-						<div class="flex flex-col gap-2">
-							{#if contents.folders?.length > 0}
-								<div
-									class="mb-2 text-xs font-semibold tracking-wider text-base-content/40 uppercase"
-								>
-									Folders
-								</div>
-								{#each contents.folders as folder}
-									<a
-										href="/files?folder={folder.id}"
-										class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
-									>
-										<div
-											class="flex h-9 w-9 items-center justify-center rounded-lg bg-info/10 text-info"
-										>
-											<Folder size={16} />
-										</div>
-										<div class="flex flex-col">
-											<span class="text-sm font-medium text-base-content">{folder.name}</span>
-											<span class="text-xs text-base-content/40">{folder.path}</span>
-										</div>
-									</a>
-								{/each}
-							{/if}
-
-							{#if contents.files?.length > 0}
-								<div
-									class="mt-4 mb-2 text-xs font-semibold tracking-wider text-base-content/40 uppercase"
-								>
-									Files
-								</div>
-								{#each contents.files as file}
-									<a
-										href="/files?preview={file.id}"
-										class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
-									>
-										<div
-											class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
-										>
-											<FileText size={16} />
-										</div>
-										<div class="flex flex-col">
-											<span class="text-sm font-medium text-base-content">{file.name}</span>
-											<span class="text-xs text-base-content/40">{file.path}</span>
-										</div>
-									</a>
-								{/each}
-							{/if}
-						</div>
-					{/if}
-				</div>
+			{#if moduleConfig && moduleConfig.renderer === 'notes'}
+				<NotesModuleView {moduleConfig} />
+			{:else if moduleConfig}
+				<GenericModuleView {moduleConfig} />
 			{/if}
 		</div>
 	{/if}

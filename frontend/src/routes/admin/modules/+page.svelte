@@ -3,7 +3,7 @@
 	import { listAdminModules, enableModule, disableModule } from '$lib/api/admin-modules';
 	import ModuleIcon from '$lib/components/dashboard/ModuleIcon.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { ToggleLeft, ToggleRight } from 'lucide-svelte';
+	import { ToggleLeft, ToggleRight, Edit } from 'lucide-svelte';
 
 	const queryClient = useQueryClient();
 
@@ -121,20 +121,29 @@
 								{/if}
 							</td>
 							<td class="px-4 py-3">
-								<button
-									class={`flex items-center gap-1.5 text-sm transition-colors ${module.enabled ? 'text-success' : 'text-base-content/40'}`}
-									on:click={() => handleToggle(module)}
-									disabled={$enableMutation.isPending || $disableMutation.isPending}
-								>
-									{#if module.enabled}
-										<ToggleRight size={20} />
-									{:else}
-										<ToggleLeft size={20} />
-									{/if}
-									<span class="text-xs font-medium">
-										{module.enabled ? 'On' : 'Off'}
-									</span>
-								</button>
+								<div class="flex items-center gap-2">
+									<button
+										class={`flex items-center gap-1.5 text-sm transition-colors ${module.enabled ? 'text-success' : 'text-base-content/40'}`}
+										on:click={() => handleToggle(module)}
+										disabled={$enableMutation.isPending || $disableMutation.isPending}
+									>
+										{#if module.enabled}
+											<ToggleRight size={20} />
+										{:else}
+											<ToggleLeft size={20} />
+										{/if}
+										<span class="text-xs font-medium">
+											{module.enabled ? 'On' : 'Off'}
+										</span>
+									</button>
+									<a
+										href="/admin/modules/{module.module_key}/edit"
+										class="btn text-base-content/50 btn-ghost btn-xs hover:text-base-content"
+										title="Edit"
+									>
+										<Edit size={14} />
+									</a>
+								</div>
 							</td>
 						</tr>
 					{/each}

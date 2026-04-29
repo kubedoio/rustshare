@@ -39,6 +39,20 @@ pub async fn list_templates(
     Ok(Json(TemplateListResponse { templates }))
 }
 
+pub async fn list_templates_by_module(
+    AdminUser { user_id: _ }: AdminUser,
+    State(state): State<AppState>,
+    Path(module_key): Path<String>,
+) -> Result<Json<TemplateListResponse>, axum::response::Response> {
+    let templates = state
+        .template_service
+        .list_templates_by_module(&module_key, state.default_tenant_id)
+        .await
+        .map_err(|e| admin_internal_error(e.to_string()))?;
+
+    Ok(Json(TemplateListResponse { templates }))
+}
+
 pub async fn get_template(
     AdminUser { user_id: _ }: AdminUser,
     State(state): State<AppState>,

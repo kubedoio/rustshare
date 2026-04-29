@@ -233,8 +233,45 @@ export interface ModuleConfig {
 	permissions: ModulePermissions;
 	ai_indexing: AiIndexingPolicy;
 	audit: AuditPolicy;
+	ui_config?: ModuleUiConfig;
 	created_at: string;
 	updated_at: string;
+}
+
+export interface ModuleUiConfig {
+	sidebar?: SidebarConfig;
+	dashboard?: DashboardConfig;
+	modulePage?: ModulePageConfig;
+}
+
+export interface SidebarConfig {
+	enabled: boolean;
+	order: number;
+	icon: string;
+	label: string;
+}
+
+export interface DashboardConfig {
+	enabled: boolean;
+	order: number;
+	cardTitle: string;
+	cardDescription: string;
+	summaryMode: string;
+	maxItems: number;
+	primaryAction?: PrimaryActionConfig;
+}
+
+export interface PrimaryActionConfig {
+	label: string;
+	action: string;
+	template?: string;
+}
+
+export interface ModulePageConfig {
+	layout: string;
+	emptyStateTitle: string;
+	emptyStateDescription: string;
+	emptyStateAction: string;
 }
 
 export interface ModulePermissions {

@@ -4,6 +4,10 @@
 	import { LayoutGrid } from 'lucide-svelte';
 
 	export let modules: ModuleConfig[];
+
+	$: sortedModules = modules
+		.filter((m) => m.ui_config?.dashboard?.enabled !== false)
+		.sort((a, b) => (a.ui_config?.dashboard?.order ?? 99) - (b.ui_config?.dashboard?.order ?? 99));
 </script>
 
 <section class="modules-panel">
@@ -15,7 +19,7 @@
 		<p class="modules-panel-subtitle">Enabled file-backed work areas in this workspace.</p>
 	</div>
 
-	{#if modules.length === 0}
+	{#if sortedModules.length === 0}
 		<div class="modules-empty">
 			<p class="text-sm text-base-content/50">
 				No modules enabled. Ask an admin to enable modules in the Admin Dashboard.
@@ -23,7 +27,7 @@
 		</div>
 	{:else}
 		<div class="modules-grid">
-			{#each modules as module (module.id)}
+			{#each sortedModules as module (module.id)}
 				<ModuleCard {module} />
 			{/each}
 		</div>

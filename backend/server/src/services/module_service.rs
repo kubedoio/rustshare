@@ -90,6 +90,7 @@ pub struct UpdateModuleInput {
     pub permissions: Option<serde_json::Value>,
     pub ai_indexing: Option<serde_json::Value>,
     pub audit: Option<serde_json::Value>,
+    pub ui_config: Option<serde_json::Value>,
 }
 
 impl ModuleService {
@@ -121,6 +122,11 @@ impl ModuleService {
                 "template_default_note",
                 "file-text",
                 true,
+                json!({
+                    "sidebar": { "enabled": true, "order": 30, "icon": "file-text", "label": "Notes" },
+                    "dashboard": { "enabled": true, "order": 10, "cardTitle": "Notes", "cardDescription": "Recent file-backed notes.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New Note", "action": "create-from-template", "template": "template_default_note" } },
+                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first file-backed note.", "emptyStateAction": "New Note" }
+                }),
             ),
             (
                 "meetings",
@@ -131,6 +137,11 @@ impl ModuleService {
                 "template_default_meeting",
                 "users",
                 false,
+                json!({
+                    "sidebar": { "enabled": true, "order": 40, "icon": "users", "label": "Meetings" },
+                    "dashboard": { "enabled": true, "order": 20, "cardTitle": "Meeting Notes", "cardDescription": "Structured meeting records.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New Meeting", "action": "create-from-template", "template": "template_default_meeting" } },
+                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No meetings yet", "emptyStateDescription": "Create your first meeting note.", "emptyStateAction": "New Meeting" }
+                }),
             ),
             (
                 "standups",
@@ -141,6 +152,11 @@ impl ModuleService {
                 "template_default_standup",
                 "activity",
                 false,
+                json!({
+                    "sidebar": { "enabled": true, "order": 50, "icon": "activity", "label": "Standups" },
+                    "dashboard": { "enabled": true, "order": 30, "cardTitle": "Standup Records", "cardDescription": "Daily team updates and blockers.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New Standup", "action": "create-from-template", "template": "template_default_standup" } },
+                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No standups yet", "emptyStateDescription": "Create your first standup record.", "emptyStateAction": "New Standup" }
+                }),
             ),
             (
                 "kanban",
@@ -151,6 +167,11 @@ impl ModuleService {
                 "template_default_kanban",
                 "columns",
                 false,
+                json!({
+                    "sidebar": { "enabled": true, "order": 60, "icon": "columns", "label": "Kanban" },
+                    "dashboard": { "enabled": true, "order": 40, "cardTitle": "Kanban Dashboard", "cardDescription": "Board cards as folders and files.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New Board", "action": "create-from-template", "template": "template_default_kanban" } },
+                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No boards yet", "emptyStateDescription": "Create your first kanban board.", "emptyStateAction": "New Board" }
+                }),
             ),
             (
                 "decisions",
@@ -161,6 +182,11 @@ impl ModuleService {
                 "template_default_decision",
                 "git-branch",
                 false,
+                json!({
+                    "sidebar": { "enabled": true, "order": 70, "icon": "git-branch", "label": "Decisions" },
+                    "dashboard": { "enabled": true, "order": 50, "cardTitle": "Decisions", "cardDescription": "Architectural and business decisions.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New Decision", "action": "create-from-template", "template": "template_default_decision" } },
+                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No decisions yet", "emptyStateDescription": "Record your first decision.", "emptyStateAction": "New Decision" }
+                }),
             ),
             (
                 "shares",
@@ -171,6 +197,11 @@ impl ModuleService {
                 "template_default_share",
                 "share-2",
                 false,
+                json!({
+                    "sidebar": { "enabled": true, "order": 80, "icon": "share-2", "label": "Shares" },
+                    "dashboard": { "enabled": true, "order": 60, "cardTitle": "Shares", "cardDescription": "Public and internal share packages.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New Share", "action": "create-from-template", "template": "template_default_share" } },
+                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No shares yet", "emptyStateDescription": "Create your first share package.", "emptyStateAction": "New Share" }
+                }),
             ),
         ];
 
@@ -183,6 +214,7 @@ impl ModuleService {
             default_template,
             icon,
             enabled,
+            ui_config,
         ) in defaults
         {
             let exists: bool = sqlx::query_scalar(
@@ -213,6 +245,7 @@ impl ModuleService {
                     }),
                     ai_indexing: json!({"enabled": true}),
                     audit: json!({"enabled": true}),
+                    ui_config,
                     created_at: Utc::now(),
                     updated_at: Utc::now(),
                     tenant_id,
@@ -223,8 +256,8 @@ impl ModuleService {
                     INSERT INTO modules (
                         id, module_key, display_name, description, enabled, root_path, renderer,
                         default_template, icon, schema_version, permissions, ai_indexing, audit,
-                        created_at, updated_at, tenant_id
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                        ui_config, created_at, updated_at, tenant_id
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
                     "#,
                 )
                 .bind(module.id)
@@ -240,6 +273,7 @@ impl ModuleService {
                 .bind(&module.permissions)
                 .bind(&module.ai_indexing)
                 .bind(&module.audit)
+                .bind(&module.ui_config)
                 .bind(module.created_at)
                 .bind(module.updated_at)
                 .bind(module.tenant_id)
@@ -356,13 +390,14 @@ impl ModuleService {
         let permissions = input.permissions.unwrap_or(module.permissions);
         let ai_indexing = input.ai_indexing.unwrap_or(module.ai_indexing);
         let audit = input.audit.unwrap_or(module.audit);
+        let ui_config = input.ui_config.unwrap_or(module.ui_config);
 
         sqlx::query(
             r#"
             UPDATE modules
             SET display_name = $1, description = $2, icon = $3,
-                permissions = $4, ai_indexing = $5, audit = $6, updated_at = now()
-            WHERE module_key = $7 AND tenant_id = $8
+                permissions = $4, ai_indexing = $5, audit = $6, ui_config = $7, updated_at = now()
+            WHERE module_key = $8 AND tenant_id = $9
             "#,
         )
         .bind(display_name)
@@ -371,6 +406,7 @@ impl ModuleService {
         .bind(permissions)
         .bind(ai_indexing)
         .bind(audit)
+        .bind(ui_config)
         .bind(key)
         .bind(tenant_id)
         .execute(self.metadata_store.pool())

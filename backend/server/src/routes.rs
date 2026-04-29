@@ -261,6 +261,10 @@ pub fn admin_routes() -> Router<AppState> {
             patch(crate::handlers::admin::modules::update_module),
         )
         .route(
+            "/api/v1/admin/modules/{key}/templates",
+            get(crate::handlers::admin::templates::list_templates_by_module),
+        )
+        .route(
             "/api/v1/admin/templates",
             get(crate::handlers::admin::templates::list_templates),
         )
