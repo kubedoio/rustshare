@@ -1,3 +1,7 @@
+# Base Docker Compose file for RustShare.
+# For production deployments, use this file together with docker-compose.prod.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -9,7 +13,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rustshare"]
       interval: 10s
@@ -28,8 +32,8 @@ services:
       - rustfs_data:/data
       - rustfs_logs:/logs
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     healthcheck:
       test: ["CMD", "sh", "-c", "nc -z localhost 9000 && nc -z localhost 9001"]
       interval: 10s
@@ -43,8 +47,6 @@ services:
       args:
         VITE_API_URL: /api/v1
         VITE_WS_URL: /api/ws
-    ports:
-      - "8080:8080"
     # Increase file descriptor limits to handle many concurrent WebSocket connections
     ulimits:
       nofile:
@@ -53,7 +55,7 @@ services:
     environment:
       # Must be set via env var or .env file — see .env.example
       DATABASE_URL: ${DATABASE_URL}
-      RUST_LOG: debug
+      RUST_LOG: info,rustshare=debug
       RUSTFS_ENDPOINT: http://rustfs:9000
       RUSTFS_PUBLIC_ENDPOINT: http://localhost:9000
       RUSTFS_REGION: us-east-1

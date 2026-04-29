@@ -40,7 +40,7 @@ Open: http://localhost
 - Login button
 
 **Test:**
-- Enter: admin@localhost / admin123
+- Enter: admin@localhost / `<password from RUSTSHARE_ADMIN_PASSWORD in .env>`
 - Click Login
 
 **Expected:**
