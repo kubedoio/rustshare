@@ -99,6 +99,14 @@ async fn create_test_user(metadata_store: &MetadataStore, username: &str, tenant
 }
 
 async fn cleanup_user(pool: &PgPool, user_id: Uuid) {
+    // Notes create file_versions rows whose created_by FK does not cascade on user delete.
+    // Removing owned files first clears the dependent version rows before deleting the user.
+    sqlx::query("DELETE FROM files WHERE owner_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .expect("Failed to cleanup test files");
+
     sqlx::query("DELETE FROM users WHERE id = $1")
         .bind(user_id)
         .execute(pool)

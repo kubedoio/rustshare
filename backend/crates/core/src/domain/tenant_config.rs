@@ -3,21 +3,16 @@
 use serde::{Deserialize, Serialize};
 
 /// Who can see share recipients
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, Default)]
 #[sqlx(type_name = "TEXT")]
 pub enum RecipientVisibility {
     /// Only admins see full recipient list (privacy-preserving, default)
+    #[default]
     AdminOnly,
     /// Everyone sees all recipients (transparent)
     AllRecipients,
     /// Users see self + same-group members
     SameGroupOnly,
-}
-
-impl Default for RecipientVisibility {
-    fn default() -> Self {
-        RecipientVisibility::AdminOnly
-    }
 }
 
 impl std::str::FromStr for RecipientVisibility {

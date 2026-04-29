@@ -1,5 +1,4 @@
 //! DEPRECATED: Use ShareService instead
-#![allow(deprecated)]
 //!
 //! This module is being phased out in favor of the unified ShareService.
 //! New code should use ShareService for all share operations.
