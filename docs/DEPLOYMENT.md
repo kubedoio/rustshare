@@ -87,8 +87,85 @@ Expected output: all containers running, health checks passing, login API respon
 Open http://localhost in your browser.
 
 Default accounts (when `PASSWORD_LOGIN_ENABLED=true`):
-- Admin: `admin@localhost` / `admin123`
-- Demo viewer: `viewer@localhost` / `viewer123`
+- Admin: `admin@localhost` — password from `RUSTSHARE_ADMIN_PASSWORD` in `.env`
+- Demo viewer: `viewer@localhost` — password from `RUSTSHARE_DEMO_VIEWER_PASSWORD` in `.env`
+
+> If you ran `./scripts/pre-flight.sh`, passwords were auto-generated. Retrieve them from the backend container logs: `docker logs rustshare-backend-1 | grep "Bootstrap admin password"`
+
+---
+
+## TLS / HTTPS Setup
+
+RustShare requires HTTPS in production. TLS is terminated at the nginx reverse proxy.
+
+### Option A: Let's Encrypt with Certbot (Recommended)
+
+1. **Install certbot** on the Docker host:
+   ```bash
+   # Debian/Ubuntu
+   sudo apt update && sudo apt install -y certbot
+   # macOS
+   brew install certbot
+   ```
+
+2. **Obtain certificates**:
+   ```bash
+   sudo certbot certonly --standalone -d yourdomain.com -d www.yourdomain.com
+   ```
+
+3. **Mount certificates** into the nginx container via `docker-compose.prod.yml`:
+   ```yaml
+   services:
+     nginx:
+       volumes:
+         - /etc/letsencrypt/live/yourdomain.com/fullchain.pem:/etc/nginx/ssl/cert.pem:ro
+         - /etc/letsencrypt/live/yourdomain.com/privkey.pem:/etc/nginx/ssl/key.pem:ro
+   ```
+
+4. **Enable the 443 server block** in `docker/nginx.conf` by uncommenting the SSL configuration and setting `server_name yourdomain.com;`.
+
+5. **Set up auto-renewal** with a cron job:
+   ```bash
+   echo "0 3 * * * root certbot renew --quiet && docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T nginx nginx -s reload" | sudo tee /etc/cron.d/rustshare-certbot
+   ```
+
+### Option B: Manual Certificates
+
+1. Place your certificate and private key in `./certs/`:
+   ```bash
+   mkdir -p certs
+   cp your-cert.pem certs/cert.pem
+   cp your-key.pem certs/key.pem
+   ```
+
+2. Mount them in `docker-compose.prod.yml`:
+   ```yaml
+   services:
+     nginx:
+       volumes:
+         - ./certs/cert.pem:/etc/nginx/ssl/cert.pem:ro
+         - ./certs/key.pem:/etc/nginx/ssl/key.pem:ro
+   ```
+
+3. Enable the 443 server block in `docker/nginx.conf` and set `server_name` to your domain.
+
+### Option C: External TLS Termination (Cloudflare, AWS ALB, etc.)
+
+If TLS is terminated at a CDN or load balancer upstream of RustShare:
+
+1. **Forward plain HTTP** from the edge to nginx. Ensure the nginx port is not exposed to the public internet directly (bind to `127.0.0.1:80` in `docker-compose.prod.yml`).
+
+2. **Set the `X-Forwarded-Proto` header** at your edge proxy:
+   ```
+   X-Forwarded-Proto: https
+   ```
+
+3. **Update `ORIGIN`** in `.env` to your HTTPS URL:
+   ```bash
+   ORIGIN=https://yourdomain.com
+   ```
+
+4. The included nginx config already passes `X-Forwarded-Proto` to the backend via proxy headers.
 
 ---
 
@@ -168,9 +245,9 @@ docker compose up -d --build
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `JWT_SECRET` | `dev-secret-change-in-production` | Signing key for session tokens |
-| `RUSTSHARE_SECRET_ENCRYPTION_KEY` | `AAAAAAAA...` | Encryption key for sensitive data |
-| `DATABASE_URL` | `postgres://rustshare:changeme@postgres:5432/rustshare` | PostgreSQL connection |
+| `JWT_SECRET` | *(empty — must be set)* | Signing key for session tokens |
+| `RUSTSHARE_SECRET_ENCRYPTION_KEY` | *(empty — must be set)* | Encryption key for sensitive data |
+| `DATABASE_URL` | *(empty — must be set)* | PostgreSQL connection |
 | `RUSTFS_ENDPOINT` | `http://rustfs:9000` | Internal S3-compatible object storage |
 | `RUSTFS_PUBLIC_ENDPOINT` | `http://localhost:9000` | Public-facing object storage URL |
 | `RUSTFS_BUCKET` | `rustshare-files` | Object storage bucket |
@@ -192,7 +269,62 @@ These are passed as `ARG` values in `docker/backend.Dockerfile`:
 
 ---
 
-## Production Checklist
+## Production Hardening
+
+The `docker-compose.prod.yml` override applies production-hardened settings. Use it with the base compose file:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+### Restart Policies
+
+All services are configured with `restart: unless-stopped` so the stack recovers automatically after host reboots or container crashes.
+
+### Resource Limits
+
+CPU and memory limits prevent a single container from consuming all host resources. Default limits are defined in `docker-compose.prod.yml`; adjust them based on your workload and host capacity.
+
+### Log Rotation
+
+Docker logging drivers are configured with `max-size` and `max-file` limits to prevent unbounded log growth:
+
+```yaml
+logging:
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+```
+
+### Internal Port Binding
+
+Internal service ports (backend 8080, postgres 5432, rustfs 9000/9001) are bound to `127.0.0.1` so they are not reachable from outside the host. Only nginx ports 80 and 443 are exposed publicly.
+
+### Non-Root Containers
+
+The backend Dockerfile runs as an unprivileged `appuser`. Nginx already runs as a non-root user in the official `nginx:alpine` image.
+
+---
+
+## Security Headers
+
+The nginx configuration includes several security headers. Verify they are present and understand what each does:
+
+| Header | Value | Purpose |
+|--------|-------|---------|
+| `Content-Security-Policy` | `default-src 'self'; ...` | Prevents XSS and data injection by controlling resource sources |
+| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains; preload` | Enforces HTTPS for 2 years (HSTS) |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Limits referrer information leaked to third parties |
+| `X-Frame-Options` | `SAMEORIGIN` | Prevents clickjacking by restricting iframe embedding |
+| `X-Content-Type-Options` | `nosniff` | Prevents MIME-type sniffing |
+| `X-XSS-Protection` | `1; mode=block` | Legacy XSS filter (defense in depth) |
+
+These headers are configured in the server block of `docker/nginx.conf`. If you use external TLS termination, ensure your edge proxy also sets equivalent headers.
+
+---
+
+## Production Deployment Checklist
 
 Before deploying to production:
 
@@ -208,16 +340,27 @@ Before deploying to production:
    - `OIDC_CLIENT_SECRET`
    - `OIDC_REDIRECT_URL`
 
-3. **Set up TLS**
-   - Terminate TLS at your reverse proxy or load balancer
-   - The included nginx config listens on port 80 only
+3. **Configure TLS**
+   - [ ] Choose a TLS option (Let's Encrypt, manual certs, or external termination)
+   - [ ] Enable the 443 server block in `docker/nginx.conf`
+   - [ ] Verify HTTPS is working and redirects from HTTP to HTTPS are active
+   - [ ] Set `ORIGIN` in `.env` to your HTTPS URL
 
-4. **Verify backups and restore**
+4. **Use `docker-compose.prod.yml`**
+   - [ ] Start the stack with `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`
+   - [ ] Verify restart policies, resource limits, and log rotation are active
+   - [ ] Confirm internal ports are bound to `127.0.0.1`
+
+5. **Verify security headers**
+   - [ ] Check `Content-Security-Policy`, `Strict-Transport-Security`, and `Referrer-Policy` are present
+   - [ ] Run `curl -I https://yourdomain.com` and inspect response headers
+
+6. **Verify backups and restore**
    - Run `./scripts/backup-stack.sh`
    - Run `./scripts/run-restore-drill.sh`
    - Confirm data is recoverable
 
-5. **Run the deployment test**
+7. **Run the deployment test**
    ```bash
    ./scripts/final-launch-smoke.sh
    ```
@@ -268,7 +411,7 @@ Ensure RustFS is running and reachable:
 curl http://localhost:9000
 ```
 
-Check the RustFS console at http://localhost:9001 (credentials: `rustfsadmin` / `rustfsadmin`).
+Check the RustFS console at http://localhost:9001 (credentials are `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` from your `.env` file).
 
 ---
 
