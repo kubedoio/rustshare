@@ -535,7 +535,7 @@ async fn event_to_sync_message(
 mod tests {
     use super::*;
     use chrono::Utc;
-    use rustshare_core::domain::{File, SharePermissions};
+    use rustshare_core::domain::{File, SharePermissions, User};
     use rustshare_core::events::{
         AggregateType, Event, EventType, FileModifiedPayload, ShareCreatedPayload,
         ShareRevokedPayload, ShareUpdatedPayload,
@@ -558,6 +558,25 @@ mod tests {
         Ok((metadata_store, pool))
     }
 
+    async fn create_test_user(
+        metadata_store: &MetadataStore,
+        owner_id: Uuid,
+        tenant_id: Uuid,
+    ) -> anyhow::Result<User> {
+        let mut user = User::new(
+            format!("sync_owner_{}", &owner_id.to_string()[..8]),
+            "Sync Owner".to_string(),
+            "test_password_hash".to_string(),
+            format!("sync_owner_{}@test.local", &owner_id.to_string()[..8]),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        user.id = owner_id;
+        metadata_store.create_user(&user).await?;
+        Ok(user)
+    }
+
     #[tokio::test]
     #[ignore] // Requires database
     async fn test_should_send_share_created_to_file_owner() {
@@ -569,6 +588,10 @@ mod tests {
         let tenant_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
         let share_id = Uuid::new_v4();
+
+        create_test_user(&metadata_store, owner_id, tenant_id)
+            .await
+            .expect("Failed to create test user");
 
         // Create a file
         let file = File::new(
@@ -631,6 +654,10 @@ mod tests {
         let file_id = Uuid::new_v4();
         let share_id = Uuid::new_v4();
 
+        create_test_user(&metadata_store, owner_id, tenant_id)
+            .await
+            .expect("Failed to create test user");
+
         // Create a file
         let file = File::new(
             "test.txt".to_string(),
@@ -687,6 +714,10 @@ mod tests {
         let tenant_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
         let share_id = Uuid::new_v4();
+
+        create_test_user(&metadata_store, owner_id, tenant_id)
+            .await
+            .expect("Failed to create test user");
 
         // Create a file
         let file = File::new(

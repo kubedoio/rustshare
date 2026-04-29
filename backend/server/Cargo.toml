@@ -32,7 +32,7 @@ bytes.workspace = true
 aws-config.workspace = true
 aws-sdk-s3.workspace = true
 futures-util = "0.3"
-dotenv = "0.15"
+dotenvy = "0.15"
 hmac = { workspace = true }
 hex = { workspace = true }
 sha2.workspace = true

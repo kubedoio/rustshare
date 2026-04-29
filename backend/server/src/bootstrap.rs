@@ -33,7 +33,7 @@ use std::time::Instant;
 
 pub async fn init_app() -> Result<AppState> {
     // Load environment variables
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
 
     // Initialize tracing
     tracing_subscriber::fmt()
