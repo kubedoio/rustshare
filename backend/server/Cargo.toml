@@ -39,7 +39,7 @@ hex = { workspace = true }
 sha2.workspace = true
 reqwest = { workspace = true }
 async-trait = "0.1"
-governor = "0.6"
+governor = "0.10"
 constant_time_eq = "0.5"
 nonzero_ext = "0.3"
 openidconnect = "4.0.1"
