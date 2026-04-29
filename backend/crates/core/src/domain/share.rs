@@ -238,7 +238,7 @@ mod tests {
             id: Uuid::new_v4(),
             file_id: Some(Uuid::new_v4()),
             folder_id: None,
-            share_token: Some("abc123".to_string()),
+            share_token: Some(Uuid::new_v4().to_string()),
             permissions: SharePermissions::View,
             password_hash: None,
             expires_at: Some(Utc::now() + Duration::hours(1)),
@@ -261,7 +261,7 @@ mod tests {
             id: Uuid::new_v4(),
             file_id: Some(Uuid::new_v4()),
             folder_id: None,
-            share_token: Some("abc123".to_string()),
+            share_token: Some(Uuid::new_v4().to_string()),
             permissions: SharePermissions::View,
             password_hash: None,
             expires_at: Some(Utc::now() - Duration::hours(1)),
@@ -284,7 +284,7 @@ mod tests {
             id: Uuid::new_v4(),
             file_id: Some(Uuid::new_v4()),
             folder_id: None,
-            share_token: Some("abc123".to_string()),
+            share_token: Some(Uuid::new_v4().to_string()),
             permissions: SharePermissions::Edit,
             password_hash: None,
             expires_at: None,
@@ -307,7 +307,7 @@ mod tests {
             id: Uuid::new_v4(),
             file_id: Some(Uuid::new_v4()),
             folder_id: None,
-            share_token: Some("abc123".to_string()),
+            share_token: Some(Uuid::new_v4().to_string()),
             permissions: SharePermissions::View,
             password_hash: Some("hashed_password".to_string()),
             expires_at: None,
@@ -330,9 +330,10 @@ mod tests {
         let created_by = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
 
+        let share_token = Uuid::new_v4().to_string();
         let share = Share::new(
             file_id,
-            "abc123".to_string(),
+            share_token.clone(),
             created_by,
             SharePermissions::View,
             Some("hashed_password".to_string()),
@@ -341,7 +342,7 @@ mod tests {
         );
 
         assert_eq!(share.file_id, Some(file_id));
-        assert_eq!(share.share_token, Some("abc123".to_string()));
+        assert_eq!(share.share_token, Some(share_token));
         assert_eq!(share.created_by, created_by);
         assert_eq!(share.permissions, SharePermissions::View);
         assert_eq!(share.password_hash, Some("hashed_password".to_string()));
@@ -453,7 +454,7 @@ mod tests {
             id: Uuid::new_v4(),
             file_id: Some(Uuid::new_v4()),
             folder_id: None,
-            share_token: Some("token123".to_string()),
+            share_token: Some(Uuid::new_v4().to_string()),
             permissions: SharePermissions::View,
             password_hash: None,
             expires_at: None,
@@ -545,7 +546,7 @@ mod tests {
             id: Uuid::new_v4(),
             file_id: Some(Uuid::new_v4()),
             folder_id: None,
-            share_token: Some("token123".to_string()),
+            share_token: Some(Uuid::new_v4().to_string()),
             permissions: SharePermissions::View,
             password_hash: None,
             expires_at: None,

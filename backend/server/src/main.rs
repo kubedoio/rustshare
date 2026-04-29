@@ -43,17 +43,12 @@ use rustshare_server::{
 };
 
 pub use rustshare_server::{
-    AppAiService, AppState, AppUploadService, AppUserShareService,
-    default_storage_quota_bytes,
+    default_storage_quota_bytes, AppAiService, AppState, AppUploadService, AppUserShareService,
 };
 
 use anyhow::Result;
 use axum::{
-    extract::DefaultBodyLimit,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::{any},
-    Json, Router,
+    extract::DefaultBodyLimit, http::StatusCode, response::IntoResponse, routing::any, Json, Router,
 };
 use std::path::PathBuf;
 use tower_http::services::{ServeDir, ServeFile};
@@ -114,7 +109,7 @@ async fn main() -> Result<()> {
         .fallback_service(frontend_service());
 
     // Start server
-    let host = std::env::var("SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let host = std::env::var("SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port = std::env::var("SERVER_PORT").unwrap_or_else(|_| "8080".to_string());
     let addr = format!("{}:{}", host, port);
 

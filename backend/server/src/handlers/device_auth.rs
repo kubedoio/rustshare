@@ -18,10 +18,10 @@ use sqlx::Row;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+use super::ErrorResponse;
 use crate::handlers::AuthenticatedUser;
 use crate::oidc_runtime::load_oidc_runtime_settings;
 use crate::state::{AppConfigState, DatabaseState};
-use super::ErrorResponse;
 
 /// User code alphabet - excludes ambiguous characters: 0, O, 1, I, L
 const USER_CODE_ALPHABET: &[char] = &[
@@ -234,15 +234,21 @@ fn validate_device_approval_request(
         }
         (Some(_), Some(_)) => Err((
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new("approve_request_accepts_only_one_identifier")),
+            Json(ErrorResponse::new(
+                "approve_request_accepts_only_one_identifier",
+            )),
         )),
         (None, None) => Err((
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new("approve_request_requires_user_code_or_device_code")),
+            Json(ErrorResponse::new(
+                "approve_request_requires_user_code_or_device_code",
+            )),
         )),
         _ => Err((
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new("approve_request_identifier_must_not_be_empty")),
+            Json(ErrorResponse::new(
+                "approve_request_identifier_must_not_be_empty",
+            )),
         )),
     }
 }
@@ -521,6 +527,10 @@ mod tests {
     use std::sync::Mutex;
     use tokio::sync::Mutex as AsyncMutex;
 
+    const TEST_DATABASE_URL: &str = "postgres://rustshare:changeme@localhost:5432/rustshare";
+    const TEST_TOKEN: &str = "test-token-123";
+    const TEST_TOKEN_2: &str = "my-test-token";
+
     // Static mutex to ensure env var tests run serially
     static ENV_VAR_MUTEX: Mutex<()> = Mutex::new(());
 
@@ -569,7 +579,7 @@ mod tests {
 
     #[test]
     fn hash_token_is_hex_sha256() {
-        let token = "test_token_123";
+        let token = TEST_TOKEN;
         let hash = hash_token(token);
 
         // SHA-256 produces 32 bytes = 64 hex chars
@@ -583,7 +593,7 @@ mod tests {
 
     #[test]
     fn hash_token_is_deterministic() {
-        let token = "my_test_token";
+        let token = TEST_TOKEN_2;
         let hash1 = hash_token(token);
         let hash2 = hash_token(token);
         assert_eq!(hash1, hash2);
@@ -777,9 +787,8 @@ mod tests {
     }
 
     async fn test_db_pool() -> sqlx::PgPool {
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:changeme@localhost:5432/rustshare".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         sqlx::PgPool::connect(&database_url)
             .await

@@ -232,7 +232,9 @@ impl FromRequestParts<AppState> for ShareSessionAuth {
             .map_err(|_| {
                 (
                     StatusCode::UNAUTHORIZED,
-                    Json(super::ErrorResponse::new("Missing or invalid Authorization header")),
+                    Json(super::ErrorResponse::new(
+                        "Missing or invalid Authorization header",
+                    )),
                 )
                     .into_response()
             })?;
@@ -306,11 +308,7 @@ impl FromRequestParts<AppState> for AdminUser {
 }
 
 fn admin_forbidden_error(msg: &str) -> Response {
-    (
-        StatusCode::FORBIDDEN,
-        Json(super::ErrorResponse::new(msg)),
-    )
-        .into_response()
+    (StatusCode::FORBIDDEN, Json(super::ErrorResponse::new(msg))).into_response()
 }
 
 fn admin_internal_error(msg: &str) -> Response {
@@ -349,7 +347,10 @@ fn auth_error(message: &str) -> Response {
 fn session_auth_error(error: String) -> Response {
     (
         StatusCode::UNAUTHORIZED,
-        Json(super::ErrorResponse::new(format!("Session validation failed: {}", error))),
+        Json(super::ErrorResponse::new(format!(
+            "Session validation failed: {}",
+            error
+        ))),
     )
         .into_response()
 }
@@ -358,9 +359,12 @@ fn session_auth_error(error: String) -> Response {
 mod tests {
     use super::*;
 
+    const TEST_TOKEN: &str = "test-token-123";
+    const TEST_TOKEN_2: &str = "my-test-token";
+
     #[test]
     fn hash_token_produces_sha256_hex() {
-        let token = "test_token_123";
+        let token = TEST_TOKEN;
         let hash = hash_token(token);
 
         // SHA-256 produces 32 bytes = 64 hex chars
@@ -374,7 +378,7 @@ mod tests {
 
     #[test]
     fn hash_token_is_deterministic() {
-        let token = "my_test_token";
+        let token = TEST_TOKEN_2;
         let hash1 = hash_token(token);
         let hash2 = hash_token(token);
         assert_eq!(hash1, hash2);
