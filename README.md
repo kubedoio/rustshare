@@ -334,6 +334,45 @@ The priority is to make the existing MVP converge toward:
 - a maintainable architecture
 - an implementation that can be safely improved by human engineers and LLM-assisted development
 
+## Template Modules Architecture
+
+RustShare includes a **Template Modules** system that turns the file-sharing UI into a file-backed workspace system. Notes, Meeting Notes, Standup Records, Kanban Boards, Decisions, and Shares are all represented as durable folders/files/metadata and rendered through module-specific WebUI views.
+
+### Core product rule
+
+```text
+Module registry decides what appears.
+Template registry decides what gets created.
+Renderer decides how it looks.
+Files and folders store the real object.
+Metadata stores machine state.
+Event log stores history.
+Index stores fast searchable projections.
+```
+
+### Documentation
+
+- `docs/adr/0016-file-backed-template-modules.md` — File-backed module architecture
+- `docs/adr/0017-template-registry-and-admin-governance.md` — Template registry and admin governance
+- `docs/adr/0018-webui-module-navigation-and-dashboard-integration.md` — WebUI module navigation and dashboard integration
+- `docs/specs/template-modules-system.md` — Template modules system specification
+- `docs/specs/admin-modules-and-templates.md` — Admin modules and templates specification
+- `docs/specs/module-renderers-and-file-layouts.md` — Module renderers and file layouts specification
+- `docs/specs/webui-dashboard-sidebar-integration.md` — WebUI dashboard and sidebar integration specification
+- `docs/contracts/template-module-contract.md` — Template module contract
+- `docs/contracts/module-ui-contract.md` — Module UI contract
+- `docs/tests/template-modules-test-plan.md` — Template modules test plan
+- `docs/tests/webui-module-integration-test-plan.md` — WebUI module integration test plan
+
+### Permanent RustShare concepts
+
+- Modules are permanent product capabilities.
+- Templates are reusable creation patterns inside modules.
+- UI definitions are stored in module and template manifests.
+- Sidebar and dashboard must be rendered from enabled module definitions, not hardcoded UI.
+- Disabled modules hide from navigation and dashboard but do not delete user data.
+- Public shares must never expose hidden RustShare metadata by default.
+
 ## Community
 
 - [Contributing](CONTRIBUTING.md) — How to set up your dev environment, run tests, and submit PRs
