@@ -340,4 +340,7 @@ The priority is to make the existing MVP converge toward:
 - [Code of Conduct](CODE_OF_CONDUCT.md) — Expected behavior in the community
 - [Governance](GOVERNANCE.md) — How the project is run
 - [Roadmap](ROADMAP.md) — What's planned and when
+- [Changelog](CHANGELOG.md) — Release history and what's new
+- [Release Process](docs/release-process.md) — How releases are cut and published
+- [Upgrading](docs/upgrading.md) — How to upgrade a running deployment
 - [License](LICENSE) — Apache 2.0
