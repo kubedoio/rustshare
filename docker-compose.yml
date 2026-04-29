@@ -95,6 +95,7 @@ services:
       RUSTSHARE_METADATA_PREFIX: ${RUSTSHARE_METADATA_PREFIX:-apps/rustshare}
       RUSTSHARE_METADATA_NAMESPACE: ${RUSTSHARE_METADATA_NAMESPACE:-default}
       RUSTSHARE_METADATA_CACHE: ${RUSTSHARE_METADATA_CACHE:-true}
+      SERVER_HOST: 0.0.0.0
       FRONTEND_DIST_DIR: /app/frontend-build
     depends_on:
       postgres:

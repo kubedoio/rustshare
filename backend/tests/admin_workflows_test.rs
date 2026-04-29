@@ -34,7 +34,7 @@ async fn get_invite_workflow_id(pool: &sqlx::PgPool) -> Uuid {
 
 async fn seed_smtp_config(pool: &sqlx::PgPool) {
     sqlx::query(
-        "UPDATE smtp_config SET enabled = true, host = 'smtp.test.local', port = 587, from_address = 'test@rustshare.io' WHERE id = '00000000-0000-0000-0000-000000000002'"
+        "UPDATE smtp_config SET enabled = true, host = 'smtp.test.local', port = 587, from_address = 'test@example.com' WHERE id = '00000000-0000-0000-0000-000000000002'"
     )
     .execute(pool)
     .await

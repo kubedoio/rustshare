@@ -544,11 +544,13 @@ mod tests {
     use sqlx::PgPool;
     use uuid::Uuid;
 
+    const TEST_DATABASE_URL: &str = "postgres://rustshare:rustshare@localhost/rustshare_test";
+    const TEST_SHARE_TOKEN: &str = "test-share-token";
+
     /// Helper to create a test metadata store
     async fn create_test_metadata_store() -> Result<(MetadataStore, PgPool), sqlx::Error> {
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         let pool = PgPool::connect(&database_url).await?;
 
@@ -585,7 +587,7 @@ mod tests {
         let payload = ShareCreatedPayload {
             share_id,
             file_id,
-            share_token: "token123".to_string(),
+            share_token: TEST_SHARE_TOKEN.to_string(),
             permissions: SharePermissions::View,
             password_protected: false,
             expires_at: None,
@@ -743,7 +745,7 @@ mod tests {
         let payload = ShareCreatedPayload {
             share_id,
             file_id,
-            share_token: "token123".to_string(),
+            share_token: TEST_SHARE_TOKEN.to_string(),
             permissions: SharePermissions::View,
             password_protected: false,
             expires_at: None,
@@ -760,9 +762,8 @@ mod tests {
 
         // We don't need actual database connection for this test
         // as event_to_sync_message doesn't use metadata_store for ShareCreated events
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         // Skip test if database is not available
         let Ok(pool) = PgPool::connect(&database_url).await else {
@@ -786,7 +787,7 @@ mod tests {
             } => {
                 assert_eq!(msg_share_id, share_id);
                 assert_eq!(msg_file_id, file_id);
-                assert_eq!(share_token, "token123");
+                assert_eq!(share_token, TEST_SHARE_TOKEN);
                 assert_eq!(permissions, SharePermissions::View);
                 assert!(!password_protected);
                 assert!(expires_at.is_none());
@@ -815,9 +816,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         // Skip test if database is not available
         let Ok(pool) = PgPool::connect(&database_url).await else {
@@ -866,9 +866,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         // Skip test if database is not available
         let Ok(pool) = PgPool::connect(&database_url).await else {
@@ -917,9 +916,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         // Skip test if database is not available
         let Ok(pool) = PgPool::connect(&database_url).await else {
@@ -954,7 +952,7 @@ mod tests {
         let msg = SyncMessage::ShareCreated {
             share_id,
             file_id,
-            share_token: "token123".to_string(),
+            share_token: TEST_SHARE_TOKEN.to_string(),
             permissions: SharePermissions::View,
             password_protected: false,
             expires_at: None,
@@ -962,7 +960,7 @@ mod tests {
 
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"ShareCreated\""));
-        assert!(json.contains("token123"));
+        assert!(json.contains(TEST_SHARE_TOKEN));
 
         // Test ShareRevoked serialization
         let msg = SyncMessage::ShareRevoked { share_id, file_id };
@@ -1011,9 +1009,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -1061,9 +1058,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -1114,9 +1110,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -1168,9 +1163,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -1216,9 +1210,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -1262,9 +1255,8 @@ mod tests {
             user_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");

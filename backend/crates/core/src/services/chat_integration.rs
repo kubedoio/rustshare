@@ -598,9 +598,9 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
     /// Extract share token from a RustShare URL.
     fn extract_share_token(&self, url: &str) -> Result<String, ChatIntegrationError> {
         // Expected formats:
-        // - https://rustshare.io/share/TOKEN
-        // - https://rustshare.io/s/TOKEN
-        // - https://rustshare.io/public/share/TOKEN
+        // - https://example.com/share/TOKEN
+        // - https://example.com/s/TOKEN
+        // - https://example.com/public/share/TOKEN
 
         let parsed = url::Url::parse(url)
             .map_err(|_| ChatIntegrationError::InvalidWebhookUrl(url.to_string()))?;
@@ -793,15 +793,15 @@ mod tests {
         );
 
         assert_eq!(
-            service.extract_share_token("https://rustshare.io/share/abc123").unwrap(),
+            service.extract_share_token("https://example.com/share/abc123").unwrap(),
             "abc123"
         );
         assert_eq!(
-            service.extract_share_token("https://rustshare.io/s/xyz789").unwrap(),
+            service.extract_share_token("https://example.com/s/xyz789").unwrap(),
             "xyz789"
         );
         assert_eq!(
-            service.extract_share_token("https://rustshare.io/public/share/token456").unwrap(),
+            service.extract_share_token("https://example.com/public/share/token456").unwrap(),
             "token456"
         );
     }
@@ -821,7 +821,7 @@ mod tests {
             dispatcher,
         );
 
-        assert!(service.extract_share_token("https://rustshare.io/other/path").is_err());
+        assert!(service.extract_share_token("https://example.com/other/path").is_err());
         assert!(service.extract_share_token("not_a_url").is_err());
     }
 

@@ -151,10 +151,11 @@ mod tests {
     use rustshare_core::events::{AggregateType, Event, EventType};
     use serde_json::json;
 
+    const TEST_DATABASE_URL: &str = "postgres://rustshare:changeme@localhost:5432/rustshare";
+
     async fn setup_test_db() -> PgPool {
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:changeme@localhost:5432/rustshare".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         PgPool::connect(&database_url).await.unwrap()
     }
