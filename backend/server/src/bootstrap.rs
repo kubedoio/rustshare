@@ -132,6 +132,17 @@ pub async fn init_app() -> Result<AppState> {
         Arc::clone(&metadata_store),
         Arc::clone(&object_store),
     ));
+    let module_service = Arc::new(crate::services::module_service::ModuleService::new(
+        Arc::clone(&file_service),
+        Arc::clone(&folder_service),
+        Arc::clone(&metadata_store),
+    ));
+    let template_service = Arc::new(crate::services::template_service::TemplateService::new(
+        Arc::clone(&file_service),
+        Arc::clone(&folder_service),
+        Arc::clone(&metadata_store),
+        Arc::clone(&object_store),
+    ));
     let thumbnail_service = Arc::new(ThumbnailService::new(
         db_pool.clone(),
         Arc::clone(&object_store),
@@ -294,6 +305,13 @@ pub async fn init_app() -> Result<AppState> {
     )
     .await?;
 
+    // Seed default modules and templates
+    module_service.ensure_default_modules(default_tenant_id).await
+        .map_err(|e| anyhow::anyhow!("Failed to seed default modules: {}", e))?;
+    template_service.ensure_default_templates(default_tenant_id).await
+        .map_err(|e| anyhow::anyhow!("Failed to seed default templates: {}", e))?;
+    info!("Default modules and templates seeded");
+
     // Load secret encryption key
     let encryption_key = std::env::var("RUSTSHARE_SECRET_ENCRYPTION_KEY").unwrap_or_default();
     if encryption_key == "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" {
@@ -335,6 +353,8 @@ pub async fn init_app() -> Result<AppState> {
         poll_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
         default_tenant_id,
         note_service,
+        module_service,
+        template_service,
         public_base_url,
     };
 

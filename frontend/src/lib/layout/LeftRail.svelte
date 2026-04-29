@@ -4,7 +4,6 @@
 	import {
 		Hop as Home,
 		FolderOpen,
-		Bell,
 		Settings,
 		Users,
 		Clock,
@@ -32,12 +31,7 @@
 			href: '/files',
 			active: (path) => path === '/files' || path.startsWith('/files')
 		},
-		{
-			icon: Bell,
-			label: 'Activity',
-			href: '/notifications',
-			active: (path) => path === '/notifications' || path.startsWith('/notifications')
-		}
+
 	];
 
 	const secondaryItems: RailItem[] = [

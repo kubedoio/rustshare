@@ -286,6 +286,12 @@ pub async fn download_shared_file(
             super::share_error_response(rustshare_core::services::ShareError::FileNotFound(file_id))
         })?;
 
+    if file.name.ends_with(".rustshare") {
+        return Err(super::share_error_response(
+            rustshare_core::services::ShareError::FileNotFound(file_id),
+        ));
+    }
+
     // Get file content from storage
     let content = state
         .object_store
@@ -378,13 +384,16 @@ pub async fn get_shared_folder_contents(
         .folder_id
         .ok_or_else(|| internal_error("Invalid share: missing folder_id"))?;
 
+    // Hide module metadata sidecar files from public share listings
+    let visible_files: Vec<_> = files.into_iter().filter(|f| !f.name.ends_with(".rustshare")).collect();
+
     Ok(Json(SharedFolderContentsResponse {
         root_folder_id,
         current_folder_id: current_folder.id,
         current_folder_name: current_folder.name,
         path: current_folder.path,
         folders,
-        files,
+        files: visible_files,
     })
     .into_response())
 }
@@ -432,6 +441,12 @@ pub async fn download_shared_folder_file(
         .ok_or_else(|| {
             super::share_error_response(rustshare_core::services::ShareError::FileNotFound(file_id))
         })?;
+
+    if file.name.ends_with(".rustshare") {
+        return Err(super::share_error_response(
+            rustshare_core::services::ShareError::FileNotFound(file_id),
+        ));
+    }
 
     let allowed_folder_ids: Vec<Uuid> = descendants.into_iter().map(|folder| folder.id).collect();
     if !allowed_folder_ids.contains(&file.parent_folder_id.unwrap_or(Uuid::nil())) {

@@ -2,6 +2,7 @@
 	import { createQuery, createMutation } from '$lib/query-compat';
 	import { listAllFiles } from '$lib/api/files';
 	import { listRecentNotes, createNote } from '$lib/api/notes';
+	import { listEnabledModules } from '$lib/api/modules';
 	import { currentUser } from '$lib/stores/auth';
 
 	import { formatFileSize, formatDate } from '$lib/utils/format';
@@ -22,6 +23,7 @@
 	} from 'lucide-svelte';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import DashboardSkeleton from '$lib/components/common/DashboardSkeleton.svelte';
+	import WorkspaceModules from '$lib/components/dashboard/WorkspaceModules.svelte';
 
 	// Specific query for all user files to get accurate totals
 	const allFilesQuery = createQuery({
@@ -39,6 +41,12 @@
 		}
 	});
 
+	// Enabled modules for Workspace Modules section
+	const enabledModulesQuery = createQuery({
+		queryKey: ['enabled-modules'],
+		queryFn: () => listEnabledModules()
+	});
+
 	// Recent notes from dedicated API (only Notes folder)
 	const recentNotesQuery = createQuery({
 		queryKey: ['recent-notes', 'Notes'],
@@ -52,6 +60,8 @@
 		}
 	});
 
+	$: enabledModules = $enabledModulesQuery.data ?? [];
+	$: notesModule = enabledModules.find((m) => m.module_key === 'notes');
 	$: noteFiles = ($recentNotesQuery.data?.notes ?? []).slice(0, 8);
 
 	$: sharedFiles = $sharedFilesQuery.data || [];
@@ -92,7 +102,7 @@
 	<title>Dashboard - RustShare</title>
 </svelte:head>
 
-{#if $allFilesQuery.isLoading && $recentNotesQuery.isLoading}
+{#if $allFilesQuery.isLoading && $recentNotesQuery.isLoading && $enabledModulesQuery.isLoading}
 	<DashboardSkeleton />
 {:else}
 	<!-- Main dashboard container - aligned with topbar "+ New" button via consistent padding -->
@@ -199,7 +209,11 @@
 			</div>
 		</section>
 
-		<!-- Notes Panel -->
+		<!-- Workspace Modules -->
+		<WorkspaceModules modules={enabledModules} />
+
+		<!-- Notes Panel (shown when Notes module is enabled) -->
+		{#if notesModule}
 		<section class="notes-panel">
 			<div class="notes-panel-header">
 				<div class="notes-panel-title-row">
@@ -264,6 +278,7 @@
 				</div>
 			{/if}
 		</section>
+		{/if}
 
 		<!-- Shared With Me Section -->
 		{#if sharedFiles.length > 0}

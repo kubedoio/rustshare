@@ -214,3 +214,76 @@ export class ApiError extends Error {
 		this.name = 'ApiError';
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Module & Template Types
+// ---------------------------------------------------------------------------
+
+export interface ModuleConfig {
+	id: string;
+	module_key: string;
+	display_name: string;
+	description: string;
+	enabled: boolean;
+	root_path: string;
+	renderer: string;
+	default_template: string | null;
+	icon: string;
+	schema_version: string;
+	permissions: ModulePermissions;
+	ai_indexing: AiIndexingPolicy;
+	audit: AuditPolicy;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface ModulePermissions {
+	admin_can_configure: boolean;
+	workspace_members_can_use: boolean;
+	allow_public_share: boolean;
+	allow_internal_share: boolean;
+}
+
+export interface AiIndexingPolicy {
+	enabled: boolean;
+}
+
+export interface AuditPolicy {
+	enabled: boolean;
+}
+
+export interface TemplateConfig {
+	id: string;
+	template_key: string;
+	name: string;
+	module_key: string;
+	version: string;
+	description: string;
+	folder_structure: string[];
+	default_files: TemplateDefaultFile[];
+	metadata_schema: Record<string, unknown>;
+	renderer: string | null;
+	visibility_policy: string;
+	enabled: boolean;
+	created_by: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface TemplateDefaultFile {
+	path: string;
+	content?: string;
+	content_type?: string;
+}
+
+export interface CreateFromTemplateRequest {
+	template_key: string;
+	name: string;
+	parent_folder_id?: string | null;
+}
+
+export interface CreateFromTemplateResponse {
+	object_id: string;
+	object_type: 'file' | 'folder';
+	path: string;
+}
