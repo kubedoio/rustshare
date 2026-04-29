@@ -70,11 +70,17 @@ pub async fn get_module(
             (status, Json(ErrorResponse::new(e.to_string()))).into_response()
         })?;
 
-    let available = module.enabled;
+    if !module.enabled {
+        return Err((
+            axum::http::StatusCode::NOT_FOUND,
+            Json(ErrorResponse::new("Module not found".to_string())),
+        )
+            .into_response());
+    }
 
     Ok(Json(ModuleDetailResponse {
         module,
-        available,
+        available: true,
     }))
 }
 

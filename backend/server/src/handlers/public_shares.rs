@@ -286,7 +286,7 @@ pub async fn download_shared_file(
             super::share_error_response(rustshare_core::services::ShareError::FileNotFound(file_id))
         })?;
 
-    if file.name.ends_with(".rustshare") {
+    if file.name.starts_with(".rustshare") {
         return Err(super::share_error_response(
             rustshare_core::services::ShareError::FileNotFound(file_id),
         ));
@@ -385,7 +385,7 @@ pub async fn get_shared_folder_contents(
         .ok_or_else(|| internal_error("Invalid share: missing folder_id"))?;
 
     // Hide module metadata sidecar files from public share listings
-    let visible_files: Vec<_> = files.into_iter().filter(|f| !f.name.ends_with(".rustshare")).collect();
+    let visible_files: Vec<_> = files.into_iter().filter(|f| !f.name.starts_with(".rustshare")).collect();
 
     Ok(Json(SharedFolderContentsResponse {
         root_folder_id,
@@ -442,7 +442,7 @@ pub async fn download_shared_folder_file(
             super::share_error_response(rustshare_core::services::ShareError::FileNotFound(file_id))
         })?;
 
-    if file.name.ends_with(".rustshare") {
+    if file.name.starts_with(".rustshare") {
         return Err(super::share_error_response(
             rustshare_core::services::ShareError::FileNotFound(file_id),
         ));

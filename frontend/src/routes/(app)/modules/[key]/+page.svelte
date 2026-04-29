@@ -2,7 +2,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
-	import { listEnabledModules } from '$lib/api/modules';
+	import { listEnabledModules, createFromTemplate } from '$lib/api/modules';
 	import { getFolderContents } from '$lib/api/folders';
 	import { listRecentNotes, createNote } from '$lib/api/notes';
 	import ModuleIcon from '$lib/components/dashboard/ModuleIcon.svelte';
@@ -53,6 +53,27 @@
 			goto(`/notes/${data.id}`);
 		} catch (err) {
 			console.error('Failed to create note:', err);
+		}
+	}
+
+	async function handleCreateFromTemplate() {
+		if (!moduleConfig?.default_template) {
+			alert('No default template configured for this module.');
+			return;
+		}
+		const name = window.prompt('Enter a name for the new item:');
+		if (!name) return;
+		try {
+			const result = await createFromTemplate({
+				template_key: moduleConfig.default_template,
+				name,
+				parent_folder_id: null
+			});
+			// Refresh folder contents
+			$folderContentsQuery.refetch();
+		} catch (err) {
+			console.error('Failed to create from template:', err);
+			alert(err instanceof Error ? err.message : 'Failed to create item');
 		}
 	}
 </script>
@@ -168,7 +189,7 @@
 						<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content">
 							Contents
 						</h2>
-						<button class="btn btn-primary btn-sm">
+						<button class="btn btn-primary btn-sm" on:click={handleCreateFromTemplate}>
 							<Plus size={14} />
 							<span>Create from Template</span>
 						</button>
@@ -184,7 +205,7 @@
 							title="No items yet"
 							description="Create your first item from a template to get started."
 							actionLabel="Create from Template"
-							onAction={() => {}}
+							onAction={handleCreateFromTemplate}
 						/>
 					{:else}
 						<div class="flex flex-col gap-2">

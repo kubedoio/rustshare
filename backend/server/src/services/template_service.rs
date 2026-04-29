@@ -431,7 +431,11 @@ impl TemplateService {
 
         // Validate default files
         for file in &request.default_files {
-            if file.path.is_empty() || file.path.starts_with('/') {
+            if file.path.is_empty()
+                || file.path.starts_with('/')
+                || file.path.contains('/')
+                || file.path.contains('\\')
+            {
                 return Err(TemplateError::InvalidData(format!(
                     "Invalid file path: {}",
                     file.path
@@ -652,16 +656,17 @@ impl TemplateService {
         let parent_id = if let Some(id) = parent_folder_id {
             Some(id)
         } else {
-            // Find or create module root folder
-            let root_name = match template.module_key.as_str() {
-                "notes" => "Notes",
-                "meetings" => "Meetings",
-                "standups" => "Standups",
-                "kanban" => "Kanban",
-                "decisions" => "Decisions",
-                "shares" => "Shares",
-                _ => &template.module_key,
-            };
+            // Fetch module root_path from modules table
+            let root_path: String = sqlx::query_scalar(
+                "SELECT root_path FROM modules WHERE module_key = $1 AND tenant_id = $2",
+            )
+            .bind(&template.module_key)
+            .bind(tenant_id)
+            .fetch_one(self.metadata_store.pool())
+            .await
+            .map_err(|e| TemplateError::Database(format!("Failed to resolve module root: {}", e)))?;
+
+            let root_name = root_path.trim_start_matches('/');
 
             let folders = self
                 .metadata_store
