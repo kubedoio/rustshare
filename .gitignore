@@ -41,9 +41,11 @@ launch-smoke-reports/
 
 # Workspace helpers
 .agents/
+.jules/
 .worktrees/
 .gstack/
 .superpowers
+skills-lock.json
 # Desktop Distributables
 dist/
 *.dmg
@@ -51,7 +53,9 @@ dist/
 *.msi
 bin/
 
+# Backup files
+*.bak
+
 # Local Dev Databases
 rustshare.db
 device_id
-.worktrees/

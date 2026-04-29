@@ -75,7 +75,9 @@
 		createQuery({
 			queryKey: ['share-recipients', resourceType, resourceId],
 			queryFn: () =>
-				resourceType === 'folder' ? listFolderRecipients(resourceId) : listFileRecipients(resourceId),
+				resourceType === 'folder'
+					? listFolderRecipients(resourceId)
+					: listFileRecipients(resourceId),
 			enabled: open
 		})
 	);
@@ -321,9 +323,10 @@
 	}
 
 	function handleRevoke(shareId: string, type: 'public' | 'group') {
-		const message = type === 'public'
-			? 'Are you sure you want to revoke this share link?'
-			: 'Are you sure you want to remove this group\'s access?';
+		const message =
+			type === 'public'
+				? 'Are you sure you want to revoke this share link?'
+				: "Are you sure you want to remove this group's access?";
 		if (confirm(message)) {
 			$revokeShareMutation.mutate(shareId);
 		}
@@ -416,26 +419,26 @@
 
 	let isLoading = $derived(
 		$createShareMutation.isPending ||
-		$revokeShareMutation.isPending ||
-		$createUserShareMutation.isPending ||
-		$createGroupShareMutation.isPending ||
-		$updateRecipientPermissionMutation.isPending ||
-		$removeRecipientMutation.isPending
+			$revokeShareMutation.isPending ||
+			$createUserShareMutation.isPending ||
+			$createGroupShareMutation.isPending ||
+			$updateRecipientPermissionMutation.isPending ||
+			$removeRecipientMutation.isPending
 	);
 </script>
 
 <dialog class="modal" class:modal-open={open}>
 	<div class="modal-box max-w-2xl">
-		<h3 class="font-bold text-lg mb-4">Share "{resourceName}"</h3>
+		<h3 class="mb-4 text-lg font-bold">Share "{resourceName}"</h3>
 
-		<div class="tabs tabs-boxed mb-6">
+		<div class="tabs-boxed mb-6 tabs">
 			<button
 				type="button"
 				class:tab-active={activeTab === 'public'}
 				class="tab"
 				onclick={() => (activeTab = 'public')}
 			>
-				<Link class="w-4 h-4 mr-1" />
+				<Link class="mr-1 h-4 w-4" />
 				Link
 			</button>
 			<button
@@ -444,7 +447,7 @@
 				class="tab"
 				onclick={() => (activeTab = 'share')}
 			>
-				<UserPlus class="w-4 h-4 mr-1" />
+				<UserPlus class="mr-1 h-4 w-4" />
 				Share
 			</button>
 		</div>
@@ -453,9 +456,15 @@
 			<!-- Create new share form -->
 			<div class="mb-6">
 				<div class="card bg-base-200 p-4">
-					<h4 class="font-semibold mb-3">Create Public Share Link</h4>
+					<h4 class="mb-3 font-semibold">Create Public Share Link</h4>
 
-					<form onsubmit={(e) => { e.preventDefault(); handleCreateShare(); }} class="space-y-4">
+					<form
+						onsubmit={(e) => {
+							e.preventDefault();
+							handleCreateShare();
+						}}
+						class="space-y-4"
+					>
 						<!-- Permission selector -->
 						<div class="form-control">
 							<label class="label" for="permissions">
@@ -463,14 +472,12 @@
 							</label>
 							<select
 								id="permissions"
-								class="select select-bordered"
+								class="select-bordered select"
 								bind:value={permissions}
 								disabled={isLoading || (resourceType === 'folder' && uploadOnly)}
 							>
 								<option value="View">
-									{resourceType === 'folder'
-										? 'View & Download'
-										: 'View Only (Read, No Download)'}
+									{resourceType === 'folder' ? 'View & Download' : 'View Only (Read, No Download)'}
 								</option>
 								<option value="Edit">
 									{resourceType === 'folder' ? 'View & Upload' : 'View & Download'}
@@ -478,7 +485,7 @@
 								<option value="Admin">Full Access (View, Download, Manage)</option>
 							</select>
 							{#if resourceType === 'folder'}
-								<label class="label gap-3 mt-2 cursor-pointer justify-start">
+								<label class="label mt-2 cursor-pointer justify-start gap-3">
 									<input
 										type="checkbox"
 										class="checkbox checkbox-sm"
@@ -490,7 +497,7 @@
 									</span>
 								</label>
 								{#if uploadOnly}
-									<p class="text-xs text-base-content/60 mt-1">
+									<p class="mt-1 text-xs text-base-content/60">
 										Upload-only links are restricted drop points. They always hide folder contents
 										and file downloads from recipients.
 									</p>
@@ -507,7 +514,7 @@
 								id="password"
 								type="password"
 								placeholder="Leave empty for no password"
-								class="input input-bordered"
+								class="input-bordered input"
 								bind:value={password}
 								disabled={isLoading}
 							/>
@@ -521,7 +528,7 @@
 							<input
 								id="expires-at"
 								type="datetime-local"
-								class="input input-bordered"
+								class="input-bordered input"
 								bind:value={expiresAt}
 								disabled={isLoading}
 							/>
@@ -530,7 +537,7 @@
 						<div class="flex justify-end">
 							<button type="submit" class="btn btn-primary" disabled={isLoading}>
 								{#if $createShareMutation.isPending}
-									<span class="loading loading-spinner loading-sm mr-2"></span>
+									<span class="loading mr-2 loading-sm loading-spinner"></span>
 								{/if}
 								Generate Link
 							</button>
@@ -541,11 +548,11 @@
 
 			<!-- List existing public shares -->
 			<div>
-				<h4 class="font-semibold mb-3">Existing Share Links</h4>
+				<h4 class="mb-3 font-semibold">Existing Share Links</h4>
 
 				{#if $sharesQuery.isLoading}
-					<div class="py-8 flex justify-center">
-						<span class="loading loading-spinner loading-md"></span>
+					<div class="flex justify-center py-8">
+						<span class="loading loading-md loading-spinner"></span>
 					</div>
 				{:else if $sharesQuery.isError}
 					<div class="alert alert-error">
@@ -556,44 +563,43 @@
 						{#each $sharesQuery.data as share}
 							<div class="card bg-base-200">
 								<div class="card-body p-4">
-									<div class="gap-4 flex items-start justify-between">
+									<div class="flex items-start justify-between gap-4">
 										<div class="min-w-0 flex-1">
-												{#if share.share_token}
-											<!-- Share URL -->
-											<div class="gap-2 mb-2 flex items-center">
-												<input
-													type="text"
-													class="input input-bordered input-sm font-mono text-sm flex-1"
-													value={getShareUrl(share.share_token)}
-													readonly
-												/>
-												<button
-													type="button"
-													class="btn btn-sm btn-ghost"
-													onclick={() => handleCopyLink(getShareUrl(share.share_token)!)}
-													title="Copy to clipboard"
-												>
-													<svg
-														xmlns="http://www.w3.org/2000/svg"
-														fill="none"
-														viewBox="0 0 24 24"
-														stroke-width="1.5"
-														stroke="currentColor"
-														class="w-4 h-4"
+											{#if share.share_token}
+												<!-- Share URL -->
+												<div class="mb-2 flex items-center gap-2">
+													<input
+														type="text"
+														class="input-bordered input input-sm flex-1 font-mono text-sm"
+														value={getShareUrl(share.share_token)}
+														readonly
+													/>
+													<button
+														type="button"
+														class="btn btn-ghost btn-sm"
+														onclick={() => handleCopyLink(getShareUrl(share.share_token)!)}
+														title="Copy to clipboard"
 													>
-														<path
-															stroke-linecap="round"
-															stroke-linejoin="round"
-															d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"
-														/>
-													</svg>
-												</button>
-											</div>
-
+														<svg
+															xmlns="http://www.w3.org/2000/svg"
+															fill="none"
+															viewBox="0 0 24 24"
+															stroke-width="1.5"
+															stroke="currentColor"
+															class="h-4 w-4"
+														>
+															<path
+																stroke-linecap="round"
+																stroke-linejoin="round"
+																d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"
+															/>
+														</svg>
+													</button>
+												</div>
 											{/if}
 											<!-- Share details -->
-											<div class="text-sm text-base-content/70 space-y-1">
-												<div class="gap-4 flex flex-wrap">
+											<div class="space-y-1 text-sm text-base-content/70">
+												<div class="flex flex-wrap gap-4">
 													<span class="badge badge-sm">
 														{share.permissions === 'View'
 															? 'View Only'
@@ -627,7 +633,7 @@
 											disabled={isLoading}
 										>
 											{#if $revokeShareMutation.isPending}
-												<span class="loading loading-spinner loading-xs"></span>
+												<span class="loading loading-xs loading-spinner"></span>
 											{/if}
 											Revoke
 										</button>
@@ -637,7 +643,7 @@
 						{/each}
 					</div>
 				{:else}
-					<div class="py-8 text-base-content/60 text-center">
+					<div class="py-8 text-center text-base-content/60">
 						<p>No active share links for this {resourceType}</p>
 					</div>
 				{/if}
@@ -647,21 +653,27 @@
 			<div class="space-y-6">
 				<!-- Share with User Section -->
 				<div class="card bg-base-200 p-4">
-					<h4 class="font-semibold mb-3 flex items-center gap-2">
-						<Mail class="w-4 h-4" />
+					<h4 class="mb-3 flex items-center gap-2 font-semibold">
+						<Mail class="h-4 w-4" />
 						Share with a Person
 					</h4>
-					<form onsubmit={(e) => { e.preventDefault(); handleShareWithUser(); }} class="space-y-3">
+					<form
+						onsubmit={(e) => {
+							e.preventDefault();
+							handleShareWithUser();
+						}}
+						class="space-y-3"
+					>
 						<div class="flex gap-2">
 							<input
 								type="email"
-								class="input input-bordered flex-1"
+								class="input-bordered input flex-1"
 								placeholder="email@example.com"
 								bind:value={recipientEmail}
 								disabled={isLoading}
 							/>
 							<select
-								class="select select-bordered w-28"
+								class="select-bordered select w-28"
 								bind:value={userPermission}
 								disabled={isLoading}
 							>
@@ -675,7 +687,7 @@
 								disabled={isLoading || !recipientEmail.trim()}
 							>
 								{#if $createUserShareMutation.isPending}
-									<Loader2 class="w-4 h-4 animate-spin" />
+									<Loader2 class="h-4 w-4 animate-spin" />
 								{:else}
 									Share
 								{/if}
@@ -686,24 +698,30 @@
 
 				<!-- Share with Group Section -->
 				<div class="card bg-base-200 p-4">
-					<h4 class="font-semibold mb-3 flex items-center gap-2">
-						<Users class="w-4 h-4" />
+					<h4 class="mb-3 flex items-center gap-2 font-semibold">
+						<Users class="h-4 w-4" />
 						Share with a Group
 					</h4>
-					<form onsubmit={(e) => { e.preventDefault(); handleShareWithGroup(); }} class="space-y-3">
+					<form
+						onsubmit={(e) => {
+							e.preventDefault();
+							handleShareWithGroup();
+						}}
+						class="space-y-3"
+					>
 						{#if $groupsQuery.isLoading}
 							<div class="flex items-center gap-2 py-2 text-base-content/60">
-								<Loader2 class="w-4 h-4 animate-spin" />
+								<Loader2 class="h-4 w-4 animate-spin" />
 								<span>Loading groups...</span>
 							</div>
 						{:else if $groupsQuery.isError}
-							<div class="alert alert-error alert-sm">
+							<div class="alert-sm alert alert-error">
 								<span>Failed to load groups</span>
 							</div>
 						{:else if $groupsQuery.data && $groupsQuery.data.length > 0}
 							<div class="flex gap-2">
 								<select
-									class="select select-bordered flex-1"
+									class="select-bordered select flex-1"
 									bind:value={selectedGroupId}
 									disabled={isLoading}
 								>
@@ -715,7 +733,7 @@
 									{/each}
 								</select>
 								<select
-									class="select select-bordered w-28"
+									class="select-bordered select w-28"
 									bind:value={groupPermission}
 									disabled={isLoading}
 								>
@@ -729,14 +747,14 @@
 									disabled={isLoading || !selectedGroupId}
 								>
 									{#if $createGroupShareMutation.isPending}
-										<Loader2 class="w-4 h-4 animate-spin" />
+										<Loader2 class="h-4 w-4 animate-spin" />
 									{:else}
 										Share
 									{/if}
 								</button>
 							</div>
 						{:else}
-							<div class="alert alert-info alert-sm">
+							<div class="alert-sm alert alert-info">
 								<span>You are not a member of any groups yet.</span>
 							</div>
 						{/if}
@@ -745,25 +763,27 @@
 
 				<!-- Recipients and Group Shares List -->
 				<div>
-					<h4 class="font-semibold mb-3">People with Access</h4>
+					<h4 class="mb-3 font-semibold">People with Access</h4>
 					{#if $recipientsQuery.isLoading}
-						<div class="py-8 flex justify-center">
-							<Loader2 class="w-6 h-6 animate-spin text-brand-500" />
+						<div class="flex justify-center py-8">
+							<Loader2 class="h-6 w-6 animate-spin text-brand-500" />
 						</div>
 					{:else if $recipientsQuery.isError}
 						<div class="alert alert-error">
 							<span>Failed to load recipients: {$recipientsQuery.error?.message}</span>
 						</div>
 					{:else if $recipientsQuery.data && $recipientsQuery.data.length > 0}
-						<div class="space-y-2 mb-6">
+						<div class="mb-6 space-y-2">
 							{#each $recipientsQuery.data as recipient}
-								<div class="flex items-center justify-between p-3 bg-base-200 rounded-lg">
-									<div class="flex items-center gap-3 min-w-0">
-										<div class="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center flex-shrink-0">
-											<User class="w-4 h-4 text-brand-600" />
+								<div class="flex items-center justify-between rounded-lg bg-base-200 p-3">
+									<div class="flex min-w-0 items-center gap-3">
+										<div
+											class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-brand-100"
+										>
+											<User class="h-4 w-4 text-brand-600" />
 										</div>
 										<div class="min-w-0">
-											<div class="font-medium truncate">{recipient.email}</div>
+											<div class="truncate font-medium">{recipient.email}</div>
 											<div class="text-xs text-base-content/60">
 												Added {formatDate(recipient.added_at)}
 											</div>
@@ -771,7 +791,7 @@
 									</div>
 									<div class="flex items-center gap-2">
 										<select
-											class="select select-bordered select-sm"
+											class="select-bordered select select-sm"
 											value={currentRecipientPermission(recipient)}
 											disabled={isLoading}
 											onchange={(event) =>
@@ -783,7 +803,7 @@
 										</select>
 										<button
 											type="button"
-											class="btn btn-sm btn-ghost"
+											class="btn btn-ghost btn-sm"
 											onclick={() => handleSaveRecipientPermission(recipient)}
 											disabled={isLoading ||
 												currentRecipientPermission(recipient) === recipient.permission}
@@ -792,25 +812,25 @@
 										</button>
 										<button
 											type="button"
-											class="btn btn-sm btn-error btn-ghost"
+											class="btn btn-ghost btn-sm btn-error"
 											onclick={() => handleRemoveRecipient(recipient)}
 											disabled={isLoading}
 											title="Remove access"
 										>
-											<Trash2 class="w-4 h-4" />
+											<Trash2 class="h-4 w-4" />
 										</button>
 									</div>
 								</div>
 							{/each}
 						</div>
 					{:else}
-						<p class="text-base-content/60 text-sm mb-6">No individual users have access yet.</p>
+						<p class="mb-6 text-sm text-base-content/60">No individual users have access yet.</p>
 					{/if}
 
-					<h4 class="font-semibold mb-3">Groups with Access</h4>
+					<h4 class="mb-3 font-semibold">Groups with Access</h4>
 					{#if $groupSharesQuery.isLoading}
-						<div class="py-8 flex justify-center">
-							<Loader2 class="w-6 h-6 animate-spin text-brand-500" />
+						<div class="flex justify-center py-8">
+							<Loader2 class="h-6 w-6 animate-spin text-brand-500" />
 						</div>
 					{:else if $groupSharesQuery.isError}
 						<div class="alert alert-error">
@@ -819,13 +839,15 @@
 					{:else if $groupSharesQuery.data && $groupSharesQuery.data.length > 0}
 						<div class="space-y-2">
 							{#each $groupSharesQuery.data as groupShare}
-								<div class="flex items-center justify-between p-3 bg-base-200 rounded-lg">
-									<div class="flex items-center gap-3 min-w-0">
-										<div class="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center flex-shrink-0">
-											<Users class="w-4 h-4 text-brand-600" />
+								<div class="flex items-center justify-between rounded-lg bg-base-200 p-3">
+									<div class="flex min-w-0 items-center gap-3">
+										<div
+											class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-brand-100"
+										>
+											<Users class="h-4 w-4 text-brand-600" />
 										</div>
 										<div class="min-w-0">
-											<div class="font-medium truncate">{groupShare.group_name}</div>
+											<div class="truncate font-medium">{groupShare.group_name}</div>
 											<div class="text-xs text-base-content/60">
 												<span class="badge badge-xs">{groupShare.permission}</span>
 												<span class="ml-2">Shared {formatDate(groupShare.created_at)}</span>
@@ -834,18 +856,18 @@
 									</div>
 									<button
 										type="button"
-										class="btn btn-sm btn-error btn-ghost"
+										class="btn btn-ghost btn-sm btn-error"
 										onclick={() => handleRevoke(groupShare.share_id, 'group')}
 										disabled={isLoading}
 										title="Remove group access"
 									>
-										<Trash2 class="w-4 h-4" />
+										<Trash2 class="h-4 w-4" />
 									</button>
 								</div>
 							{/each}
 						</div>
 					{:else}
-						<p class="text-base-content/60 text-sm">No groups have access yet.</p>
+						<p class="text-sm text-base-content/60">No groups have access yet.</p>
 					{/if}
 				</div>
 			</div>

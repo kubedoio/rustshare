@@ -25,13 +25,13 @@
 
 	function handleFileToggle(file: File, event?: MouseEvent) {
 		const isShiftKey = event?.shiftKey ?? false;
-		const allFileIds = files.map(f => f.id);
+		const allFileIds = files.map((f) => f.id);
 		selectionStore.toggleFile(file.id, isShiftKey, allFileIds);
 	}
 
 	function handleFolderToggle(folder: Folder, event?: MouseEvent) {
 		const isShiftKey = event?.shiftKey ?? false;
-		const allFolderIds = folders.map(f => f.id);
+		const allFolderIds = folders.map((f) => f.id);
 		selectionStore.toggleFolder(folder.id, isShiftKey, allFolderIds);
 	}
 
@@ -41,14 +41,14 @@
 </script>
 
 {#if folders.length === 0 && files.length === 0}
-	<div class="py-16 lg:py-24 text-center">
+	<div class="py-16 text-center lg:py-24">
 		<svg
 			xmlns="http://www.w3.org/2000/svg"
 			fill="none"
 			viewBox="0 0 24 24"
 			stroke-width="1.5"
 			stroke="currentColor"
-			class="w-20 h-20 lg:w-24 lg:h-24 text-base-content/20 mb-4 mx-auto"
+			class="mx-auto mb-4 h-20 w-20 text-base-content/20 lg:h-24 lg:w-24"
 		>
 			<path
 				stroke-linecap="round"
@@ -56,11 +56,11 @@
 				d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"
 			/>
 		</svg>
-		<p class="text-lg lg:text-xl text-base-content/60 mb-2">This folder is empty</p>
+		<p class="mb-2 text-lg text-base-content/60 lg:text-xl">This folder is empty</p>
 		<p class="text-sm text-base-content/40">Upload files or create folders to get started</p>
 	</div>
 {:else}
-	<div class="md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 grid grid-cols-1">
+	<div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
 		{#each folders as folder}
 			<FileListItem
 				item={folder}
@@ -90,7 +90,7 @@
 				onMove={() => onMoveFile(file)}
 				onDownload={() => onDownloadFile(file)}
 				onReplace={() => onReplaceFile(file)}
-				onEditFile={onEditFile}
+				{onEditFile}
 			/>
 		{/each}
 	</div>

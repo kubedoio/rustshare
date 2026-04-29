@@ -47,7 +47,9 @@
 		onPermanentDeleteFile: (file: FileType) => void;
 		onShareFile: (file: FileType) => void;
 		onVersionHistory: (file: FileType) => void;
-		onMoveFile: ((file: FileType) => void) | ((file: FileType, targetFolderId: string | null) => void);
+		onMoveFile:
+			| ((file: FileType) => void)
+			| ((file: FileType, targetFolderId: string | null) => void);
 		onDownloadFile: (file: FileType) => void;
 		onReplaceFile: (file: FileType) => void;
 		onRenameFolder: ((folder: Folder) => void) | ((folder: Folder, newName: string) => void);
@@ -56,7 +58,9 @@
 		onRestoreFolder: (folder: Folder) => void;
 		onPermanentDeleteFolder: (folder: Folder) => void;
 		onShareFolder: (folder: Folder) => void;
-		onMoveFolder: ((folder: Folder) => void) | ((folder: Folder, targetFolderId: string | null) => void);
+		onMoveFolder:
+			| ((folder: Folder) => void)
+			| ((folder: Folder, targetFolderId: string | null) => void);
 		onEditFile: (file: FileType) => void;
 		onbreadcrumbNavigate?: (event: CustomEvent<{ folderId: string | null }>) => void;
 	}
@@ -120,7 +124,7 @@
 
 <div class="flex h-full min-h-0 bg-base-100">
 	<!-- File Browser Pane -->
-	<div class="flex-1 flex min-h-0 min-w-0 flex-col overflow-hidden">
+	<div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 		<FileBrowserPane
 			{folders}
 			{files}
@@ -174,7 +178,7 @@
 			{onPermanentDeleteFolder}
 			{onShareFolder}
 			{onMoveFolder}
-			onbreadcrumbNavigate={onbreadcrumbNavigate}
+			{onbreadcrumbNavigate}
 		>
 			<div slot="pagination">
 				<slot name="pagination" />

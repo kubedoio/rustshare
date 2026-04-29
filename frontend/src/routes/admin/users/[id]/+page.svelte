@@ -26,8 +26,19 @@
 <div class="space-y-4">
 	<div class="flex items-center gap-2">
 		<a href="/admin/users" class="btn btn-ghost btn-sm">
-			<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-				<path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+			<svg
+				xmlns="http://www.w3.org/2000/svg"
+				class="h-4 w-4"
+				fill="none"
+				viewBox="0 0 24 24"
+				stroke="currentColor"
+				stroke-width="1.5"
+			>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"
+				/>
 			</svg>
 			Users
 		</a>
@@ -36,10 +47,14 @@
 	</div>
 
 	{#if $userQuery.isLoading}
-		<div class="flex justify-center py-16"><span class="loading loading-spinner loading-lg"></span></div>
+		<div class="flex justify-center py-16">
+			<span class="loading loading-lg loading-spinner"></span>
+		</div>
 	{:else if $userQuery.isError}
 		<div class="alert alert-error">
-			Failed to load user: {$userQuery.error instanceof Error ? $userQuery.error.message : 'Unknown error'}
+			Failed to load user: {$userQuery.error instanceof Error
+				? $userQuery.error.message
+				: 'Unknown error'}
 		</div>
 	{:else if $userQuery.data}
 		<UserDetailForm user={$userQuery.data} onRefresh={handleRefresh} />

@@ -1,5 +1,4 @@
 use std::os::raw::c_void;
-use std::ptr;
 use tracing::info;
 
 #[no_mangle]
@@ -62,6 +61,7 @@ pub struct SCNotification {
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn beNotified(notification: *mut SCNotification) {
     if notification.is_null() {
         return;

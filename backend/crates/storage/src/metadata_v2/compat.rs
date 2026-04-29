@@ -5,8 +5,8 @@
 //! rewriting all services at once.
 
 use rustshare_core::domain::{File, FileVersion, Folder, ReplicationJob, ReplicationState, Share};
-use std::sync::Arc;
 use sqlx::Row;
+use std::sync::Arc;
 
 use crate::repos::*;
 
@@ -32,7 +32,11 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
         self.repo.files().create(&doc).await.map_err(|e| e.into())
     }
 
-    async fn find_file_by_path(&self, path: &str, owner_id: uuid::Uuid) -> anyhow::Result<Option<File>> {
+    async fn find_file_by_path(
+        &self,
+        path: &str,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<File>> {
         let row = sqlx::query(
             r#"
             SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id

@@ -198,8 +198,7 @@ export function getWebSocketClient(): WebSocketClient {
 }
 
 function resolveCanonicalWebSocketUrl(rawWsUrl?: string, rawApiUrl?: string): string {
-	const base =
-		typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080';
+	const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080';
 	const fallback = new URL('/api/ws', base);
 	fallback.protocol = fallback.protocol === 'https:' ? 'wss:' : 'ws:';
 

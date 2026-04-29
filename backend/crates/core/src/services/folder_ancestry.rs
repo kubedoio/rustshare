@@ -275,7 +275,8 @@ impl<R: AncestryFolderRepository> FolderAncestryBuilder<R> {
             self.repo.update_folder(&descendant).await?;
 
             // Update cache
-            self.put_in_cache(descendant.id, new_descendant_ancestors).await;
+            self.put_in_cache(descendant.id, new_descendant_ancestors)
+                .await;
 
             updated_count += 1;
         }
@@ -410,10 +411,7 @@ mod tests {
         }
 
         async fn update_folder(&self, folder: &Folder) -> Result<()> {
-            self.folders
-                .lock()
-                .await
-                .insert(folder.id, folder.clone());
+            self.folders.lock().await.insert(folder.id, folder.clone());
             Ok(())
         }
     }

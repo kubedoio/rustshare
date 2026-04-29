@@ -1,12 +1,10 @@
 use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use serde::{Deserialize, Serialize};
 use sync_protocol::{
     CompleteUploadResponse, CreateFolderRequest, CreateUploadSessionRequest,
     CreateUploadSessionResponse, DeltaRequest, DeltaResponse, DeviceRegistrationRequest,
     DeviceRegistrationResponse, RemoteFile, RemoteFolder, RemoteFolderTree, UploadChunkResponse,
 };
-use chrono::{DateTime, Utc};
 use url::Url;
 use uuid::Uuid;
 
@@ -124,8 +122,8 @@ impl ApiClient {
             .error_for_status()
             .context("Server returned error when creating upload session")?;
 
-        Ok(response.json().await
-            .context("Failed to parse create session response")?)
+        response.json().await
+            .context("Failed to parse create session response")
     }
 
     pub async fn upload_chunk(
@@ -157,8 +155,8 @@ impl ApiClient {
             .error_for_status()
             .with_context(|| format!("Server returned error for chunk {}", chunk_index))?;
 
-        Ok(response.json().await
-            .with_context(|| format!("Failed to parse chunk {} response", chunk_index))?)
+        response.json().await
+            .with_context(|| format!("Failed to parse chunk {} response", chunk_index))
     }
 
     pub async fn complete_upload_session(
@@ -178,8 +176,8 @@ impl ApiClient {
             .error_for_status()
             .context("Server returned error when completing upload")?;
 
-        Ok(response.json().await
-            .context("Failed to parse complete upload response")?)
+        response.json().await
+            .context("Failed to parse complete upload response")
     }
 
     /// List files from the server
@@ -215,10 +213,10 @@ impl ApiClient {
             .error_for_status()
             .context("Server returned error when fetching folder tree")?;
 
-        Ok(response
+        response
             .json()
             .await
-            .context("Failed to parse folder tree response")?)
+            .context("Failed to parse folder tree response")
     }
 
     pub async fn create_folder(
@@ -241,10 +239,10 @@ impl ApiClient {
             .error_for_status()
             .context("Server returned error when creating folder")?;
 
-        Ok(response
+        response
             .json()
             .await
-            .context("Failed to parse create folder response")?)
+            .context("Failed to parse create folder response")
     }
 
     pub async fn delete_folder(&self, folder_id: Uuid) -> Result<()> {

@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use std::fs::File;
 use std::path::{Path, PathBuf};
 use tracing::{debug, trace, warn};
 use walkdir::WalkDir;
@@ -166,6 +165,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
     use std::io::Write;
     use tempfile::TempDir;
 

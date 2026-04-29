@@ -14,7 +14,9 @@
 	let { label, field, activeField, activeOrder, onSort, class: className = '' }: Props = $props();
 
 	let isActive = $derived(field === activeField);
-	let ariaSort: 'ascending' | 'descending' | 'none' = $derived(isActive ? (activeOrder === 'asc' ? 'ascending' : 'descending') : 'none');
+	let ariaSort: 'ascending' | 'descending' | 'none' = $derived(
+		isActive ? (activeOrder === 'asc' ? 'ascending' : 'descending') : 'none'
+	);
 
 	function handleClick() {
 		onSort(field);
@@ -22,12 +24,12 @@
 </script>
 
 <th
-	class="px-4 py-2 text-left text-meta font-semibold text-base-content/60 uppercase tracking-wider font-data select-none {className}"
+	class="px-4 py-2 text-left font-data text-meta font-semibold tracking-wider text-base-content/60 uppercase select-none {className}"
 	aria-sort={ariaSort}
 >
 	<button
 		type="button"
-		class="flex items-center gap-1 w-full text-left hover:text-base-content transition-colors cursor-pointer"
+		class="flex w-full cursor-pointer items-center gap-1 text-left transition-colors hover:text-base-content"
 		onclick={handleClick}
 	>
 		<span>{label}</span>

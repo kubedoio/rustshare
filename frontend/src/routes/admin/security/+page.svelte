@@ -42,7 +42,7 @@
 	<title>Security — Admin | RustShare</title>
 </svelte:head>
 
-<div class="space-y-4 max-w-3xl">
+<div class="max-w-3xl space-y-4">
 	<h2 class="text-2xl font-bold">Security</h2>
 
 	<div class="card border border-base-300/80 bg-base-100 shadow">
@@ -50,15 +50,15 @@
 			<div>
 				<h3 class="card-title text-xl">Login Protection</h3>
 				<p class="mt-2 text-sm leading-6 text-base-content/70">
-					Configure brute-force attack protection for the login page.
-					After the configured number of consecutive failed attempts from a single IP address,
-					that IP will be temporarily blocked from logging in.
+					Configure brute-force attack protection for the login page. After the configured number of
+					consecutive failed attempts from a single IP address, that IP will be temporarily blocked
+					from logging in.
 				</p>
 			</div>
 
 			{#if $query.isLoading}
 				<div class="flex justify-center py-10" aria-live="polite">
-					<span class="loading loading-spinner loading-md"></span>
+					<span class="loading loading-md loading-spinner"></span>
 				</div>
 			{:else if $query.isError}
 				<div class="alert alert-error" role="alert">
@@ -86,7 +86,7 @@
 
 					<section class="grid gap-4 md:grid-cols-2">
 						<div class="rounded-[1.4rem] border border-base-300/80 bg-base-100 p-5">
-							<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+							<p class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase">
 								Max Failed Attempts
 							</p>
 							<p class="mt-2 text-sm text-base-content/70">
@@ -97,7 +97,7 @@
 									type="number"
 									min="1"
 									max="100"
-									class="input input-bordered w-full"
+									class="input-bordered input w-full"
 									bind:value={maxLoginAttempts}
 									disabled={!loginProtectionEnabled}
 								/>
@@ -105,7 +105,7 @@
 						</div>
 
 						<div class="rounded-[1.4rem] border border-base-300/80 bg-base-100 p-5">
-							<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+							<p class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase">
 								Block Duration
 							</p>
 							<p class="mt-2 text-sm text-base-content/70">
@@ -116,7 +116,7 @@
 									type="number"
 									min="1"
 									max="10080"
-									class="input input-bordered w-full"
+									class="input-bordered input w-full"
 									bind:value={blockDurationMinutes}
 									disabled={!loginProtectionEnabled}
 								/>
@@ -125,7 +125,7 @@
 					</section>
 
 					{#if $saveMutation.isError}
-						<div class="alert alert-error text-sm" role="alert">
+						<div class="alert text-sm alert-error" role="alert">
 							{$saveMutation.error instanceof Error
 								? $saveMutation.error.message
 								: 'Failed to save security configuration'}
@@ -133,7 +133,7 @@
 					{/if}
 
 					{#if $saveMutation.isSuccess}
-						<div class="alert alert-success text-sm" role="status">
+						<div class="alert text-sm alert-success" role="status">
 							Security settings saved successfully.
 						</div>
 					{/if}

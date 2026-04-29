@@ -1,0 +1,75 @@
+# Production Docker Compose override
+# =============================================================================
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# This file adds production hardening on top of docker-compose.yml.
+# Do NOT use this file directly — always combine it with the base compose file.
+# =============================================================================
+
+services:
+  postgres:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rustshare -d rustshare"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  rustfs:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      SERVER_HOST: 0.0.0.0
+      RUST_LOG: info
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  nginx:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "80:80"
+      # Uncomment the line below to enable HTTPS on port 443:
+      # - "443:443"
+    # WARNING: When enabling TLS volumes, you MUST also include the base nginx.conf
+    # mount or the configuration will be lost. Full example:
+    # volumes:
+    #   - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+    #   - ./certs/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro
+    #   - ./certs/privkey.pem:/etc/nginx/ssl/privkey.pem:ro

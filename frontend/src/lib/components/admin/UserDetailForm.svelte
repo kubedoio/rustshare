@@ -26,9 +26,10 @@
 		email = user.email;
 		display_name = user.display_name;
 		is_admin = user.is_admin;
-		quota_gb = user.storage_quota_bytes > 0
-			? String(Math.round(user.storage_quota_bytes / (1024 * 1024 * 1024)))
-			: '';
+		quota_gb =
+			user.storage_quota_bytes > 0
+				? String(Math.round(user.storage_quota_bytes / (1024 * 1024 * 1024)))
+				: '';
 		password = '';
 		confirm_password = '';
 	}
@@ -109,11 +110,11 @@
 	<!-- User info header -->
 	<div class="card bg-base-100 shadow">
 		<div class="card-body">
-			<div class="flex items-start justify-between flex-wrap gap-3">
+			<div class="flex flex-wrap items-start justify-between gap-3">
 				<div>
 					<h2 class="text-xl font-bold">{user.username}</h2>
-					<p class="text-base-content/60 text-sm">{user.email}</p>
-					<div class="flex gap-2 mt-2">
+					<p class="text-sm text-base-content/60">{user.email}</p>
+					<div class="mt-2 flex gap-2">
 						{#if user.disabled_at}
 							<span class="badge badge-error">Disabled</span>
 						{:else}
@@ -136,17 +137,17 @@
 	<div class="card bg-base-100 shadow">
 		<div class="card-body">
 			<h3 class="card-title text-base">Edit Details</h3>
-			<form on:submit|preventDefault={handleSubmit} class="space-y-4 mt-2">
+			<form on:submit|preventDefault={handleSubmit} class="mt-2 space-y-4">
 				<div class="form-control">
 					<label class="label" for="edit-email"><span class="label-text">Email</span></label>
 					<input
 						id="edit-email"
 						type="email"
-						class="input input-bordered"
+						class="input-bordered input"
 						class:input-error={errors.email}
 						bind:value={email}
 					/>
-					{#if errors.email}<p class="text-error text-xs mt-1">{errors.email}</p>{/if}
+					{#if errors.email}<p class="mt-1 text-xs text-error">{errors.email}</p>{/if}
 				</div>
 
 				<div class="form-control">
@@ -156,7 +157,7 @@
 					<input
 						id="edit-display-name"
 						type="text"
-						class="input input-bordered"
+						class="input-bordered input"
 						bind:value={display_name}
 					/>
 				</div>
@@ -170,12 +171,12 @@
 						type="number"
 						min="0"
 						step="0.1"
-						class="input input-bordered"
+						class="input-bordered input"
 						class:input-error={errors.quota}
 						bind:value={quota_gb}
 						placeholder="Unlimited"
 					/>
-					{#if errors.quota}<p class="text-error text-xs mt-1">{errors.quota}</p>{/if}
+					{#if errors.quota}<p class="mt-1 text-xs text-error">{errors.quota}</p>{/if}
 				</div>
 
 				<div class="form-control">
@@ -199,12 +200,12 @@
 					<input
 						id="edit-password"
 						type="password"
-						class="input input-bordered"
+						class="input-bordered input"
 						class:input-error={errors.password}
 						bind:value={password}
 						placeholder="••••••••"
 					/>
-					{#if errors.password}<p class="text-error text-xs mt-1">{errors.password}</p>{/if}
+					{#if errors.password}<p class="mt-1 text-xs text-error">{errors.password}</p>{/if}
 				</div>
 
 				<div class="form-control">
@@ -214,23 +215,25 @@
 					<input
 						id="edit-confirm-password"
 						type="password"
-						class="input input-bordered"
+						class="input-bordered input"
 						class:input-error={errors.confirm_password}
 						bind:value={confirm_password}
 						placeholder="••••••••"
 					/>
-					{#if errors.confirm_password}<p class="text-error text-xs mt-1">{errors.confirm_password}</p>{/if}
+					{#if errors.confirm_password}<p class="mt-1 text-xs text-error">
+							{errors.confirm_password}
+						</p>{/if}
 				</div>
 
 				{#if $updateMutation.isError}
-					<div class="alert alert-error text-sm">
+					<div class="alert text-sm alert-error">
 						{$updateMutation.error instanceof Error
 							? $updateMutation.error.message
 							: 'Failed to update user'}
 					</div>
 				{/if}
 				{#if $updateMutation.isSuccess}
-					<div class="alert alert-success text-sm">User updated successfully.</div>
+					<div class="alert text-sm alert-success">User updated successfully.</div>
 				{/if}
 
 				<div class="flex gap-2">
@@ -243,13 +246,13 @@
 	</div>
 
 	<!-- Danger zone -->
-	<div class="card bg-base-100 shadow border border-error/30">
+	<div class="card border border-error/30 bg-base-100 shadow">
 		<div class="card-body">
 			<h3 class="card-title text-base text-error">Danger Zone</h3>
-			<div class="flex flex-wrap gap-3 mt-2">
+			<div class="mt-2 flex flex-wrap gap-3">
 				{#if user.disabled_at}
 					<button
-						class="btn btn-success btn-outline btn-sm"
+						class="btn btn-outline btn-sm btn-success"
 						on:click={() => $enableMutation.mutate()}
 						disabled={$enableMutation.isPending}
 					>
@@ -257,13 +260,13 @@
 					</button>
 				{:else}
 					<button
-						class="btn btn-warning btn-outline btn-sm"
+						class="btn btn-outline btn-sm btn-warning"
 						on:click={() => (confirmDisable = true)}
 					>
 						Disable Account
 					</button>
 				{/if}
-				<button class="btn btn-error btn-outline btn-sm" on:click={() => (confirmDelete = true)}>
+				<button class="btn btn-outline btn-sm btn-error" on:click={() => (confirmDelete = true)}>
 					Delete User
 				</button>
 			</div>
@@ -273,9 +276,9 @@
 
 <!-- Disable confirmation -->
 {#if confirmDisable}
-	<div class="modal modal-open">
+	<div class="modal-open modal">
 		<div class="modal-box">
-			<h3 class="font-bold text-lg">Disable Account</h3>
+			<h3 class="text-lg font-bold">Disable Account</h3>
 			<p class="py-4">
 				Are you sure you want to disable <strong>{user.username}</strong>? They will be unable to
 				log in.
@@ -291,19 +294,15 @@
 				</button>
 			</div>
 		</div>
-		<div
-			class="modal-backdrop"
-			on:click={() => (confirmDisable = false)}
-			role="presentation"
-		></div>
+		<div class="modal-backdrop" on:click={() => (confirmDisable = false)} role="presentation"></div>
 	</div>
 {/if}
 
 <!-- Delete confirmation -->
 {#if confirmDelete}
-	<div class="modal modal-open">
+	<div class="modal-open modal">
 		<div class="modal-box">
-			<h3 class="font-bold text-lg">Delete User</h3>
+			<h3 class="text-lg font-bold">Delete User</h3>
 			<p class="py-4">
 				Are you sure you want to permanently delete <strong>{user.username}</strong>? This action
 				cannot be undone.
@@ -319,10 +318,6 @@
 				</button>
 			</div>
 		</div>
-		<div
-			class="modal-backdrop"
-			on:click={() => (confirmDelete = false)}
-			role="presentation"
-		></div>
+		<div class="modal-backdrop" on:click={() => (confirmDelete = false)} role="presentation"></div>
 	</div>
 {/if}

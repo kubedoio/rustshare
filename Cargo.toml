@@ -17,6 +17,13 @@ edition = "2021"
 rust-version = "1.95.0"
 authors = ["RustShare Contributors"]
 license = "Apache-2.0"
+description = "A modern file-sharing and sync platform for technical teams"
+repository = "https://github.com/kubedoio/rustshare"
+homepage = "https://github.com/kubedoio/rustshare"
+documentation = "https://github.com/kubedoio/rustshare/docs"
+readme = "README.md"
+keywords = ["file-sharing", "sync", "self-hosted", "rust", "storage"]
+categories = ["filesystem", "web-programming"]
 
 [workspace.dependencies]
 # Async runtime

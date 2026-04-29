@@ -535,7 +535,7 @@ async fn event_to_sync_message(
 mod tests {
     use super::*;
     use chrono::Utc;
-    use rustshare_core::domain::{File, SharePermissions};
+    use rustshare_core::domain::{File, SharePermissions, User};
     use rustshare_core::events::{
         AggregateType, Event, EventType, FileModifiedPayload, ShareCreatedPayload,
         ShareRevokedPayload, ShareUpdatedPayload,
@@ -544,16 +544,37 @@ mod tests {
     use sqlx::PgPool;
     use uuid::Uuid;
 
+    const TEST_DATABASE_URL: &str = "postgres://rustshare:rustshare@localhost/rustshare_test";
+    const TEST_SHARE_TOKEN: &str = "test-share-token";
+
     /// Helper to create a test metadata store
     async fn create_test_metadata_store() -> Result<(MetadataStore, PgPool), sqlx::Error> {
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         let pool = PgPool::connect(&database_url).await?;
 
         let metadata_store = MetadataStore::new(pool.clone());
         Ok((metadata_store, pool))
+    }
+
+    async fn create_test_user(
+        metadata_store: &MetadataStore,
+        owner_id: Uuid,
+        tenant_id: Uuid,
+    ) -> anyhow::Result<User> {
+        let mut user = User::new(
+            format!("sync_owner_{}", &owner_id.to_string()[..8]),
+            "Sync Owner".to_string(),
+            "test_password_hash".to_string(),
+            format!("sync_owner_{}@test.local", &owner_id.to_string()[..8]),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        user.id = owner_id;
+        metadata_store.create_user(&user).await?;
+        Ok(user)
     }
 
     #[tokio::test]
@@ -567,6 +588,10 @@ mod tests {
         let tenant_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
         let share_id = Uuid::new_v4();
+
+        create_test_user(&metadata_store, owner_id, tenant_id)
+            .await
+            .expect("Failed to create test user");
 
         // Create a file
         let file = File::new(
@@ -585,7 +610,7 @@ mod tests {
         let payload = ShareCreatedPayload {
             share_id,
             file_id,
-            share_token: "token123".to_string(),
+            share_token: TEST_SHARE_TOKEN.to_string(),
             permissions: SharePermissions::View,
             password_protected: false,
             expires_at: None,
@@ -628,6 +653,10 @@ mod tests {
         let tenant_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
         let share_id = Uuid::new_v4();
+
+        create_test_user(&metadata_store, owner_id, tenant_id)
+            .await
+            .expect("Failed to create test user");
 
         // Create a file
         let file = File::new(
@@ -686,6 +715,10 @@ mod tests {
         let file_id = Uuid::new_v4();
         let share_id = Uuid::new_v4();
 
+        create_test_user(&metadata_store, owner_id, tenant_id)
+            .await
+            .expect("Failed to create test user");
+
         // Create a file
         let file = File::new(
             "test.txt".to_string(),
@@ -743,7 +776,7 @@ mod tests {
         let payload = ShareCreatedPayload {
             share_id,
             file_id,
-            share_token: "token123".to_string(),
+            share_token: TEST_SHARE_TOKEN.to_string(),
             permissions: SharePermissions::View,
             password_protected: false,
             expires_at: None,
@@ -760,9 +793,8 @@ mod tests {
 
         // We don't need actual database connection for this test
         // as event_to_sync_message doesn't use metadata_store for ShareCreated events
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         // Skip test if database is not available
         let Ok(pool) = PgPool::connect(&database_url).await else {
@@ -786,7 +818,7 @@ mod tests {
             } => {
                 assert_eq!(msg_share_id, share_id);
                 assert_eq!(msg_file_id, file_id);
-                assert_eq!(share_token, "token123");
+                assert_eq!(share_token, TEST_SHARE_TOKEN);
                 assert_eq!(permissions, SharePermissions::View);
                 assert!(!password_protected);
                 assert!(expires_at.is_none());
@@ -815,9 +847,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         // Skip test if database is not available
         let Ok(pool) = PgPool::connect(&database_url).await else {
@@ -866,9 +897,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         // Skip test if database is not available
         let Ok(pool) = PgPool::connect(&database_url).await else {
@@ -917,9 +947,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         // Skip test if database is not available
         let Ok(pool) = PgPool::connect(&database_url).await else {
@@ -954,7 +983,7 @@ mod tests {
         let msg = SyncMessage::ShareCreated {
             share_id,
             file_id,
-            share_token: "token123".to_string(),
+            share_token: TEST_SHARE_TOKEN.to_string(),
             permissions: SharePermissions::View,
             password_protected: false,
             expires_at: None,
@@ -962,7 +991,7 @@ mod tests {
 
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"ShareCreated\""));
-        assert!(json.contains("token123"));
+        assert!(json.contains(TEST_SHARE_TOKEN));
 
         // Test ShareRevoked serialization
         let msg = SyncMessage::ShareRevoked { share_id, file_id };
@@ -1011,9 +1040,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -1061,9 +1089,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -1114,9 +1141,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -1168,9 +1194,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -1216,9 +1241,8 @@ mod tests {
             owner_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -1262,9 +1286,8 @@ mod tests {
             user_id,
         );
 
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:rustshare@localhost/rustshare_test".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         let Ok(pool) = sqlx::PgPool::connect(&database_url).await else {
             println!("Skipping test - database not available");
@@ -1378,7 +1401,7 @@ pub async fn get_sync_delta(
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Query(query): Query<DeltaQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let limit = query.limit.unwrap_or(100).min(1000).max(1);
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
 
     // Get delta from the event store
     let delta_result = match get_delta_impl(&state, user_id, &query.cursor, limit).await {

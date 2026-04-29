@@ -1,5 +1,5 @@
-use axum::Router;
 use crate::state::AppState;
+use axum::Router;
 
 pub fn health_routes() -> Router<AppState> {
     use axum::routing::get;
@@ -13,7 +13,10 @@ pub fn auth_routes() -> Router<AppState> {
         .route("/api/v1/auth/login", post(crate::handlers::login))
         .route("/api/v1/auth/logout", post(crate::handlers::logout))
         .route("/api/v1/auth/oidc/login", get(crate::oidc::oidc_login))
-        .route("/api/v1/auth/oidc/callback", get(crate::oidc::oidc_callback))
+        .route(
+            "/api/v1/auth/oidc/callback",
+            get(crate::oidc::oidc_callback),
+        )
         .route(
             "/api/v1/auth/oidc/mobile/authorize",
             post(crate::oidc::mobile_oidc_authorize),
@@ -48,7 +51,10 @@ pub fn device_auth_routes() -> Router<AppState> {
 pub fn device_management_routes() -> Router<AppState> {
     use axum::routing::{delete, get};
     Router::new()
-        .route("/api/v1/user/devices", get(crate::handlers::devices::list_devices))
+        .route(
+            "/api/v1/user/devices",
+            get(crate::handlers::devices::list_devices),
+        )
         .route(
             "/api/v1/user/devices/{id}",
             delete(crate::handlers::devices::revoke_device),
@@ -61,12 +67,18 @@ pub fn feature_routes() -> Router<AppState> {
 }
 
 pub fn file_routes() -> Router<AppState> {
-    use axum::routing::{delete, get, patch, post, put};
     use axum::extract::DefaultBodyLimit;
+    use axum::routing::{delete, get, patch, post, put};
     Router::new()
         .route("/api/v1/files", get(crate::handlers::list_files))
-        .route("/api/v1/files/starred", get(crate::handlers::list_starred_items))
-        .route("/api/v1/files/deleted", get(crate::handlers::list_deleted_items))
+        .route(
+            "/api/v1/files/starred",
+            get(crate::handlers::list_starred_items),
+        )
+        .route(
+            "/api/v1/files/deleted",
+            get(crate::handlers::list_deleted_items),
+        )
         .route(
             "/api/v1/files/upload",
             post(crate::handlers::upload_file).layer(DefaultBodyLimit::disable()),
@@ -74,7 +86,10 @@ pub fn file_routes() -> Router<AppState> {
         .route("/api/v1/files/{id}", get(crate::handlers::get_file))
         .route("/api/v1/files/{id}", put(crate::handlers::update_file))
         .route("/api/v1/files/{id}", delete(crate::handlers::delete_file))
-        .route("/api/v1/files/{id}/star", patch(crate::handlers::toggle_file_star))
+        .route(
+            "/api/v1/files/{id}/star",
+            patch(crate::handlers::toggle_file_star),
+        )
         .route(
             "/api/v1/files/{id}/restore-from-trash",
             post(crate::handlers::restore_file_from_trash),
@@ -83,12 +98,18 @@ pub fn file_routes() -> Router<AppState> {
             "/api/v1/files/{id}/permanent",
             delete(crate::handlers::permanently_delete_file),
         )
-        .route("/api/v1/files/{id}/download", get(crate::handlers::download_file))
+        .route(
+            "/api/v1/files/{id}/download",
+            get(crate::handlers::download_file),
+        )
         .route(
             "/api/v1/files/{id}/content",
             get(crate::handlers::download_file_content),
         )
-        .route("/api/v1/files/{id}/preview", get(crate::handlers::preview_file))
+        .route(
+            "/api/v1/files/{id}/preview",
+            get(crate::handlers::preview_file),
+        )
         .route(
             "/api/v1/files/{id}/versions",
             get(crate::handlers::get_file_versions),
@@ -98,7 +119,10 @@ pub fn file_routes() -> Router<AppState> {
             post(crate::handlers::restore_file_version),
         )
         .route("/api/v1/files/{id}/move", post(crate::handlers::move_file))
-        .route("/api/v1/files/{id}/rename", post(crate::handlers::rename_file))
+        .route(
+            "/api/v1/files/{id}/rename",
+            post(crate::handlers::rename_file),
+        )
         .route(
             "/api/v1/files/{id}/thumbnail",
             get(crate::handlers::get_file_thumbnail),
@@ -140,10 +164,16 @@ pub fn note_routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/notes", post(crate::handlers::create_note))
         .route("/api/v1/notes", get(crate::handlers::list_notes))
-        .route("/api/v1/notes/recent", get(crate::handlers::list_recent_notes))
+        .route(
+            "/api/v1/notes/recent",
+            get(crate::handlers::list_recent_notes),
+        )
         .route("/api/v1/notes/{id}", get(crate::handlers::get_note))
         .route("/api/v1/notes/{id}", put(crate::handlers::save_note))
-        .route("/api/v1/notes/{id}/rename", post(crate::handlers::rename_note))
+        .route(
+            "/api/v1/notes/{id}/rename",
+            post(crate::handlers::rename_note),
+        )
         .route("/api/v1/notes/{id}/move", post(crate::handlers::move_note))
         .route(
             "/api/v1/notes/{id}/visibility",
@@ -154,7 +184,10 @@ pub fn note_routes() -> Router<AppState> {
 
 pub fn note_public_routes() -> Router<AppState> {
     use axum::routing::get;
-    Router::new().route("/api/v1/public/notes/{share_id}", get(crate::handlers::get_public_note))
+    Router::new().route(
+        "/api/v1/public/notes/{share_id}",
+        get(crate::handlers::get_public_note),
+    )
 }
 
 pub fn replication_routes() -> Router<AppState> {
@@ -328,14 +361,20 @@ pub fn admin_routes() -> Router<AppState> {
 }
 
 pub fn scim_routes() -> Router<AppState> {
-    use axum::routing::{delete, get, patch, post, put};
+    use axum::routing::{delete, get, post};
     Router::new()
-        .route("/api/v1/scim/users", post(crate::handlers::scim::provision_user))
+        .route(
+            "/api/v1/scim/users",
+            post(crate::handlers::scim::provision_user),
+        )
         .route(
             "/api/v1/scim/users/{external_id}",
             delete(crate::handlers::scim::deprovision_user),
         )
-        .route("/api/v1/scim/groups", post(crate::handlers::scim::provision_group))
+        .route(
+            "/api/v1/scim/groups",
+            post(crate::handlers::scim::provision_group),
+        )
         .route(
             "/api/v1/scim/groups/{external_id}",
             delete(crate::handlers::scim::delete_group),
@@ -370,7 +409,10 @@ pub fn scim_routes() -> Router<AppState> {
             "/scim/v2/ResourceTypes",
             get(crate::handlers::scim_v2::get_resource_types),
         )
-        .route("/scim/v2/Schemas", get(crate::handlers::scim_v2::get_schemas))
+        .route(
+            "/scim/v2/Schemas",
+            get(crate::handlers::scim_v2::get_schemas),
+        )
 }
 
 pub fn folder_routes() -> Router<AppState> {
@@ -381,7 +423,10 @@ pub fn folder_routes() -> Router<AppState> {
             "/api/v1/folders/root/contents",
             get(crate::handlers::get_root_contents),
         )
-        .route("/api/v1/folders/tree", get(crate::handlers::get_folder_tree))
+        .route(
+            "/api/v1/folders/tree",
+            get(crate::handlers::get_folder_tree),
+        )
         .route(
             "/api/v1/folders/{id}/contents",
             get(crate::handlers::get_folder_contents),
@@ -398,10 +443,19 @@ pub fn folder_routes() -> Router<AppState> {
             "/api/v1/folders/{id}/permanent",
             delete(crate::handlers::permanently_delete_folder),
         )
-        .route("/api/v1/folders/{id}/move", post(crate::handlers::move_folder))
-        .route("/api/v1/folders/{id}/rename", post(crate::handlers::rename_folder))
+        .route(
+            "/api/v1/folders/{id}/move",
+            post(crate::handlers::move_folder),
+        )
+        .route(
+            "/api/v1/folders/{id}/rename",
+            post(crate::handlers::rename_folder),
+        )
         .route("/api/v1/folders/{id}", get(crate::handlers::get_folder))
-        .route("/api/v1/folders/{id}", delete(crate::handlers::delete_folder))
+        .route(
+            "/api/v1/folders/{id}",
+            delete(crate::handlers::delete_folder),
+        )
 }
 
 pub fn share_routes() -> Router<AppState> {
@@ -500,15 +554,30 @@ pub fn user_routes() -> Router<AppState> {
         .route("/api/users/me", get(crate::handlers::get_user_profile))
         .route("/api/v1/users/me", get(crate::handlers::get_user_profile))
         .route("/api/v1/me", get(crate::handlers::get_user_profile))
-        .route("/api/users/me/theme", patch(crate::handlers::update_user_theme))
-        .route("/api/v1/users/me/theme", patch(crate::handlers::update_user_theme))
-        .route("/api/v1/me/theme", patch(crate::handlers::update_user_theme))
-        .route("/api/users/me/sessions", get(crate::handlers::list_user_sessions))
+        .route(
+            "/api/users/me/theme",
+            patch(crate::handlers::update_user_theme),
+        )
+        .route(
+            "/api/v1/users/me/theme",
+            patch(crate::handlers::update_user_theme),
+        )
+        .route(
+            "/api/v1/me/theme",
+            patch(crate::handlers::update_user_theme),
+        )
+        .route(
+            "/api/users/me/sessions",
+            get(crate::handlers::list_user_sessions),
+        )
         .route(
             "/api/v1/users/me/sessions",
             get(crate::handlers::list_user_sessions),
         )
-        .route("/api/v1/me/sessions", get(crate::handlers::list_user_sessions))
+        .route(
+            "/api/v1/me/sessions",
+            get(crate::handlers::list_user_sessions),
+        )
         .route(
             "/api/users/me/security-events",
             get(crate::handlers::list_user_security_events),
@@ -541,9 +610,18 @@ pub fn user_routes() -> Router<AppState> {
             "/api/v1/users/me/password",
             patch(crate::handlers::update_user_password),
         )
-        .route("/api/v1/me/password", patch(crate::handlers::update_user_password))
-        .route("/api/v1/users/me/profile", get(crate::handlers::get_profile))
-        .route("/api/v1/users/me/profile", patch(crate::handlers::update_profile))
+        .route(
+            "/api/v1/me/password",
+            patch(crate::handlers::update_user_password),
+        )
+        .route(
+            "/api/v1/users/me/profile",
+            get(crate::handlers::get_profile),
+        )
+        .route(
+            "/api/v1/users/me/profile",
+            patch(crate::handlers::update_profile),
+        )
         .route(
             "/api/v1/users/me/trash-retention",
             patch(crate::handlers::update_trash_retention),
@@ -552,7 +630,10 @@ pub fn user_routes() -> Router<AppState> {
             "/api/v1/users/me/avatar",
             post(crate::handlers::upload_avatar).delete(crate::handlers::delete_avatar),
         )
-        .route("/api/v1/users/{id}/avatar", get(crate::handlers::get_avatar))
+        .route(
+            "/api/v1/users/{id}/avatar",
+            get(crate::handlers::get_avatar),
+        )
 }
 
 pub fn group_routes() -> Router<AppState> {
@@ -565,7 +646,10 @@ pub fn group_routes() -> Router<AppState> {
 pub fn notification_routes() -> Router<AppState> {
     use axum::routing::{delete, get, put};
     Router::new()
-        .route("/api/v1/notifications", get(crate::handlers::list_notifications))
+        .route(
+            "/api/v1/notifications",
+            get(crate::handlers::list_notifications),
+        )
         .route(
             "/api/v1/notifications/unread-count",
             get(crate::handlers::count_unread_notifications),
@@ -595,14 +679,20 @@ pub fn ai_routes() -> Router<AppState> {
     use axum::routing::post;
     Router::new()
         .route("/api/v1/ai/search", post(crate::handlers::semantic_search))
-        .route("/api/v1/ai/summarize", post(crate::handlers::summarize_file))
+        .route(
+            "/api/v1/ai/summarize",
+            post(crate::handlers::summarize_file),
+        )
         .route("/api/v1/ai/ask", post(crate::handlers::ask_question))
 }
 
 pub fn trash_routes() -> Router<AppState> {
     use axum::routing::{delete, get};
     Router::new()
-        .route("/api/v1/trash/summary", get(crate::handlers::get_trash_summary))
+        .route(
+            "/api/v1/trash/summary",
+            get(crate::handlers::get_trash_summary),
+        )
         .route("/api/v1/trash/empty", delete(crate::handlers::empty_trash))
 }
 

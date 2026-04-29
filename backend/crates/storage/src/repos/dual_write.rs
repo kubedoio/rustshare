@@ -71,6 +71,7 @@ impl DualWriteFolderRepository {
 
 #[async_trait]
 impl FolderRepository for DualWriteFolderRepository {
+    #[allow(clippy::collapsible_match)]
     async fn get(&self, id: FolderId) -> Result<Option<FolderDocument>, RepositoryError> {
         if self.config.verify_reads {
             // Read from both and compare

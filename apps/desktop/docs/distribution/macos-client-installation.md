@@ -142,7 +142,7 @@ Waiting for approval...
 
 Notes:
 
-- The compiled client defaults to `https://app.rustshare.io` if you do not pass `--server`.
+- The compiled client defaults to `https://your-domain.com` if you do not pass `--server`.
 - For local development, you will usually want to override `--server`.
 - The approval link is not the final device token. It is only a short-lived pairing token.
 - After approval, the server issues the real device token and the desktop stores it in macOS Keychain automatically.
@@ -283,7 +283,7 @@ Your shell cannot find the installed binary. Confirm that:
 The current CLI default is:
 
 ```text
-https://app.rustshare.io
+https://your-domain.com
 ```
 
 If you are working against local or staging infrastructure, always pass `--server`.

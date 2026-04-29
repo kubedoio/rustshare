@@ -31,7 +31,6 @@ export interface AcceptInviteRequest {
 
 export const createInvite = (data: CreateInviteRequest) =>
 	apiClient.post<CreateInviteResponse>('/invites', data);
-export const getInvite = (token: string) =>
-	apiClient.get<InviteDetail>(`/invites/${token}`);
+export const getInvite = (token: string) => apiClient.get<InviteDetail>(`/invites/${token}`);
 export const acceptInvite = (token: string, data: AcceptInviteRequest) =>
 	apiClient.post<User>(`/invites/${token}/accept`, data);

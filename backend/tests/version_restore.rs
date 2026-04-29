@@ -34,9 +34,14 @@ async fn setup_test_env() -> (PgPool, Arc<EventStore>, Arc<MetadataStore>, Arc<O
     let metadata_store = Arc::new(MetadataStore::new(pool.clone()));
 
     let s3_endpoint = std::env::var("S3_ENDPOINT")
+        .or_else(|_| std::env::var("RUSTFS_ENDPOINT"))
         .unwrap_or_else(|_| "http://localhost:9000".to_string());
-    let s3_region = std::env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".to_string());
-    let s3_bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "rustshare".to_string());
+    let s3_region = std::env::var("S3_REGION")
+        .or_else(|_| std::env::var("RUSTFS_REGION"))
+        .unwrap_or_else(|_| "us-east-1".to_string());
+    let s3_bucket = std::env::var("S3_BUCKET")
+        .or_else(|_| std::env::var("RUSTFS_BUCKET"))
+        .unwrap_or_else(|_| "rustshare".to_string());
 
     let object_store = Arc::new(
         ObjectStore::new(s3_endpoint, s3_region, s3_bucket)

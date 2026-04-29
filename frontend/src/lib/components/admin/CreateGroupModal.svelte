@@ -47,9 +47,9 @@
 </script>
 
 {#if open}
-	<div class="modal modal-open">
+	<div class="modal-open modal">
 		<div class="modal-box w-full max-w-md">
-			<h3 class="font-bold text-lg mb-4">Create Group</h3>
+			<h3 class="mb-4 text-lg font-bold">Create Group</h3>
 
 			<form on:submit|preventDefault={handleSubmit} class="space-y-4">
 				<div class="form-control">
@@ -57,11 +57,11 @@
 					<input
 						id="group-name"
 						type="text"
-						class="input input-bordered"
+						class="input-bordered input"
 						class:input-error={errors.name}
 						bind:value={name}
 					/>
-					{#if errors.name}<p class="text-error text-xs mt-1">{errors.name}</p>{/if}
+					{#if errors.name}<p class="mt-1 text-xs text-error">{errors.name}</p>{/if}
 				</div>
 
 				<div class="form-control">
@@ -70,7 +70,7 @@
 					</label>
 					<textarea
 						id="group-description"
-						class="textarea textarea-bordered"
+						class="textarea-bordered textarea"
 						rows="3"
 						bind:value={description}
 						placeholder="Optional description..."
@@ -78,7 +78,7 @@
 				</div>
 
 				{#if $mutation.isError}
-					<div class="alert alert-error text-sm">
+					<div class="alert text-sm alert-error">
 						{$mutation.error instanceof Error ? $mutation.error.message : 'Failed to create group'}
 					</div>
 				{/if}

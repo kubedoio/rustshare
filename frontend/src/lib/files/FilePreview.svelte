@@ -94,12 +94,28 @@
 	});
 </script>
 
-<div class="{sizeClass} flex items-center justify-center rounded-lg overflow-hidden flex-shrink-0 {isFolder ? 'bg-brand-500/10' : 'bg-base-200'}">
+<div
+	class="{sizeClass} flex flex-shrink-0 items-center justify-center overflow-hidden rounded-lg {isFolder
+		? 'bg-brand-500/10'
+		: 'bg-base-200'}"
+>
 	{#if isFolder}
 		{#if isSharedRoot || item.is_shared}
 			<!-- Shared Folder Icon -->
-			<svg xmlns="http://www.w3.org/2000/svg" width={iconSize} height={iconSize} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400">
-				<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+			<svg
+				xmlns="http://www.w3.org/2000/svg"
+				width={iconSize}
+				height={iconSize}
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				class="text-brand-400"
+			>
+				<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+				></path>
 				<circle cx="10" cy="13" r="2"></circle>
 				<path d="M14 19v-1a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v1"></path>
 				<circle cx="16" cy="13" r="2"></circle>
@@ -109,14 +125,10 @@
 			<FolderIcon size={iconSize} class="text-brand-400" />
 		{/if}
 	{:else if loading}
-		<div class="animate-pulse bg-base-300 w-full h-full"></div>
+		<div class="h-full w-full animate-pulse bg-base-300"></div>
 	{:else if thumbnailUrl && !error}
-		<img
-			src={thumbnailUrl}
-			alt={fileName}
-			class="w-full h-full object-cover"
-		/>
+		<img src={thumbnailUrl} alt={fileName} class="h-full w-full object-cover" />
 	{:else}
-		<FileTypeIcon {mimeType} {fileName} size={size === "xs" ? "sm" : size === "xl" ? "lg" : size} />
+		<FileTypeIcon {mimeType} {fileName} size={size === 'xs' ? 'sm' : size === 'xl' ? 'lg' : size} />
 	{/if}
 </div>

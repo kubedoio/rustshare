@@ -379,6 +379,7 @@ where
     ///
     /// # Returns
     /// Ok(()) if successfully indexed
+    #[allow(clippy::too_many_arguments)]
     pub async fn index_file(
         &self,
         file_id: FileId,
@@ -462,7 +463,7 @@ fn extract_key_topics(content: &str) -> Vec<String> {
     }
 
     let mut topics: Vec<(String, u32)> = frequencies.into_iter().collect();
-    topics.sort_by(|a, b| b.1.cmp(&a.1));
+    topics.sort_by_key(|topic| std::cmp::Reverse(topic.1));
     topics.truncate(5);
 
     topics.into_iter().map(|(word, _)| word).collect()

@@ -79,7 +79,10 @@ impl ShareRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        result.map(Self::map_share_row).transpose().map_err(|e| e.into())
+        result
+            .map(Self::map_share_row)
+            .transpose()
+            .map_err(|e| e.into())
     }
 
     /// List all shares received by a user (paginated).
@@ -242,7 +245,10 @@ impl ShareRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        result.map(Self::map_share_row).transpose().map_err(|e| e.into())
+        result
+            .map(Self::map_share_row)
+            .transpose()
+            .map_err(|e| e.into())
     }
 
     /// Get a share by ID (alias for find_share_by_id).
@@ -320,10 +326,7 @@ impl rustshare_core::services::ShareOps for ShareRepository {
         self.list_share_recipients(file_id, folder_id).await
     }
 
-    async fn revoke_share(
-        &self,
-        share_id: rustshare_core::domain::ShareId,
-    ) -> anyhow::Result<()> {
+    async fn revoke_share(&self, share_id: rustshare_core::domain::ShareId) -> anyhow::Result<()> {
         self.revoke_share(share_id).await
     }
 }

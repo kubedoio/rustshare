@@ -8,7 +8,7 @@ Today it is a CLI plus background daemon, not a finished GUI shell. The CLI hand
 
 Current implementation notes:
 
-- default server: `https://app.rustshare.io`
+- default server: `https://your-domain.com`
 - default workspace: `~/RustShare`
 - macOS runtime state: `~/Library/Application Support/io.rustshare.RustShare/`
 - live sync engine: the shared crate in `crates/sync-engine`

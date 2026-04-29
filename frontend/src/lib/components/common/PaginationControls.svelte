@@ -62,23 +62,23 @@
 	}
 </script>
 
-<div class="flex items-center gap-3 h-10" data-testid="pagination-controls">
+<div class="flex h-10 items-center gap-3" data-testid="pagination-controls">
 	<button
 		type="button"
-		class="btn btn-sm btn-ghost flex items-center gap-1 px-2"
+		class="btn flex items-center gap-1 px-2 btn-ghost btn-sm"
 		disabled={currentPage <= 1}
 		aria-label="Previous page"
 		onclick={handlePrevious}
 	>
-		<ChevronLeft class="w-4 h-4" />
-		<span class="text-meta hidden sm:inline">Previous</span>
+		<ChevronLeft class="h-4 w-4" />
+		<span class="hidden text-meta sm:inline">Previous</span>
 	</button>
 
 	<div class="flex items-center gap-1">
 		{#each getVisiblePages(currentPage, totalPages) as item}
 			{#if item === '...'}
 				<span
-					class="min-w-[2rem] px-2 font-data text-sm text-ink-muted flex items-center justify-center select-none"
+					class="text-ink-muted flex min-w-[2rem] items-center justify-center px-2 font-data text-sm select-none"
 					aria-hidden="true"
 				>
 					...
@@ -86,7 +86,7 @@
 			{:else}
 				<button
 					type="button"
-					class="btn btn-sm min-w-[2rem] px-2 font-data text-sm transition-colors"
+					class="btn min-w-[2rem] px-2 font-data text-sm transition-colors btn-sm"
 					class:bg-brand-500={item === currentPage}
 					class:text-white={item === currentPage}
 					class:hover:bg-brand-600={item === currentPage}
@@ -103,20 +103,20 @@
 
 	<button
 		type="button"
-		class="btn btn-sm btn-ghost flex items-center gap-1 px-2"
+		class="btn flex items-center gap-1 px-2 btn-ghost btn-sm"
 		disabled={currentPage >= totalPages}
 		aria-label="Next page"
 		onclick={handleNext}
 	>
-		<span class="text-meta hidden sm:inline">Next</span>
-		<ChevronRight class="w-4 h-4" />
+		<span class="hidden text-meta sm:inline">Next</span>
+		<ChevronRight class="h-4 w-4" />
 	</button>
 
-	<div class="flex items-center gap-2 ml-2">
-		<label for="page-size" class="text-meta text-ink-muted">Items per page</label>
+	<div class="ml-2 flex items-center gap-2">
+		<label for="page-size" class="text-ink-muted text-meta">Items per page</label>
 		<select
 			id="page-size"
-			class="select select-sm select-bordered font-data text-sm"
+			class="select-bordered select select-sm font-data text-sm"
 			value={pageSize}
 			onchange={handlePageSizeChange}
 		>

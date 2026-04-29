@@ -198,7 +198,6 @@ where
         Ok(())
     }
 
-
     /// Upload a new file.
     ///
     /// # Arguments
@@ -246,6 +245,7 @@ where
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn upload_file_with_actor(
         &self,
         owner_id: UserId,
@@ -483,7 +483,8 @@ where
     /// - `FileError::PermissionDenied` if the user doesn't have access
     pub async fn get_file(&self, file_id: uuid::Uuid, user_id: UserId) -> Result<File, FileError> {
         // 1. Check permissions first using the resolver
-        self.require_file_permission(user_id, file_id, SharePermissions::View).await?;
+        self.require_file_permission(user_id, file_id, SharePermissions::View)
+            .await?;
 
         // 2. Find file by ID
         let file = self
@@ -556,7 +557,8 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        self.require_file_permission(user_id, file_id, SharePermissions::Edit).await?;
+        self.require_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await?;
 
         // 2. Check optimistic lock (current_version == expected_version)
         if file.current_version != expected_version {
@@ -716,7 +718,8 @@ where
         let old_version = file.current_version;
 
         // 1b. Verify Edit permission
-        self.require_file_permission(user_id, file_id, SharePermissions::Edit).await?;
+        self.require_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await?;
 
         // 2. Find the old version
         let old_file_version = self
@@ -822,7 +825,8 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        self.require_file_permission(user_id, file_id, SharePermissions::Edit).await?;
+        self.require_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await?;
 
         // 2. If target folder is specified, verify it exists
         let new_path = if let Some(folder_id) = target_folder_id {
@@ -895,7 +899,8 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        self.require_file_permission(user_id, file_id, SharePermissions::Edit).await?;
+        self.require_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await?;
 
         if file.name == new_name {
             return Ok(file);
@@ -976,7 +981,8 @@ where
         let file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Admin permission for deletion
-        self.require_file_permission(user_id, file_id, SharePermissions::Admin).await?;
+        self.require_file_permission(user_id, file_id, SharePermissions::Admin)
+            .await?;
 
         // 2. Create FileDeleted event
         let payload = FileDeletedPayload {
@@ -1046,7 +1052,8 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        self.require_file_permission(user_id, file_id, SharePermissions::Edit).await?;
+        self.require_file_permission(user_id, file_id, SharePermissions::Edit)
+            .await?;
 
         // 2. Validate file is editable based on mime type and extension
         self.validate_file_editable(&file)?;
@@ -1084,16 +1091,14 @@ where
 
         // 6. Handle based on save mode
         let old_version = file.current_version;
-        let saved_as_new_version: bool;
-
-        if save_mode == "new_version" {
+        let saved_as_new_version = if save_mode == "new_version" {
             // Create new version
             file.current_version += 1;
-            saved_as_new_version = true;
+            true
         } else {
             // Overwrite mode - keep same version number
-            saved_as_new_version = false;
-        }
+            false
+        };
 
         // Update file record
         file.content_hash = new_content_hash.clone();

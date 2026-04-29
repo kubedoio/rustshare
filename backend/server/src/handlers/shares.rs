@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use rustshare_core::domain::SharePermissions;
 
-use super::{share_error_response, AuthenticatedUser, ErrorResponse, internal_error_response};
+use super::{internal_error_response, share_error_response, AuthenticatedUser, ErrorResponse};
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -47,7 +47,9 @@ pub async fn create_public_file_share(
     if req.upload_only {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new("Upload-only links are only supported for folders")),
+            Json(ErrorResponse::new(
+                "Upload-only links are only supported for folders",
+            )),
         )
             .into_response());
     }

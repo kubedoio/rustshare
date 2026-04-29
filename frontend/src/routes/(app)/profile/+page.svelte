@@ -29,9 +29,11 @@
 	let selectedFile: File | null = $state(null);
 	let previewUrl: string | null = $state(null);
 	let avatarTimestamp = $state(Date.now());
-	let avatarUrl = $derived(profile && profile.avatar_path ? `${getAvatarUrl(profile.id)}?t=${avatarTimestamp}` : null);
+	let avatarUrl = $derived(
+		profile && profile.avatar_path ? `${getAvatarUrl(profile.id)}?t=${avatarTimestamp}` : null
+	);
 	let avatarError = $state(false);
-	
+
 	// Reset avatar error when URL changes
 	$effect(() => {
 		if (avatarUrl) {
@@ -191,46 +193,48 @@
 <div class="container mx-auto max-w-2xl p-4">
 	<div class="card bg-base-100 shadow-xl">
 		<div class="card-body">
-			<h1 class="card-title text-2xl mb-6">Profile</h1>
+			<h1 class="mb-6 card-title text-2xl">Profile</h1>
 
 			{#if loading}
 				<div class="flex justify-center py-8">
-					<span class="loading loading-spinner loading-lg text-primary"></span>
+					<span class="loading loading-lg loading-spinner text-primary"></span>
 				</div>
 			{:else if profile}
 				<!-- Avatar Section -->
-				<div class="flex flex-col items-center gap-4 mb-8">
+				<div class="mb-8 flex flex-col items-center gap-4">
 					<div class="avatar">
-						<div class="w-24 rounded-full ring-3 ring-primary ring-offset-base-100 ring-offset-2">
+						<div class="w-24 rounded-full ring-3 ring-primary ring-offset-2 ring-offset-base-100">
 							{#if previewUrl}
 								<img src={previewUrl} alt="Avatar preview" />
 							{:else if avatarUrl && !avatarError}
-								<img src={avatarUrl} alt="Avatar" onerror={() => avatarError = true} />
+								<img src={avatarUrl} alt="Avatar" onerror={() => (avatarError = true)} />
 							{:else}
-								<div class="bg-neutral text-neutral-content w-full h-full flex items-center justify-center text-2xl font-bold">
+								<div
+									class="flex h-full w-full items-center justify-center bg-neutral text-2xl font-bold text-neutral-content"
+								>
 									{getInitials()}
 								</div>
 							{/if}
 						</div>
 					</div>
 
-					<div class="flex flex-col items-center gap-2 w-full max-w-xs">
+					<div class="flex w-full max-w-xs flex-col items-center gap-2">
 						<input
 							id="avatar-input"
 							type="file"
 							accept="image/*"
-							class="file-input file-input-bordered w-full"
+							class="file-input-bordered file-input w-full"
 							onchange={handleFileSelect}
 						/>
 
 						{#if selectedFile}
 							<button
-								class="btn btn-primary btn-sm w-full"
+								class="btn w-full btn-sm btn-primary"
 								onclick={handleAvatarUpload}
 								disabled={uploadingAvatar}
 							>
 								{#if uploadingAvatar}
-									<span class="loading loading-spinner loading-sm"></span>
+									<span class="loading loading-sm loading-spinner"></span>
 								{/if}
 								Upload Avatar
 							</button>
@@ -238,12 +242,12 @@
 
 						{#if profile.avatar_path}
 							<button
-								class="btn btn-error btn-outline btn-sm w-full"
+								class="btn w-full btn-outline btn-sm btn-error"
 								onclick={handleAvatarDelete}
 								disabled={deletingAvatar}
 							>
 								{#if deletingAvatar}
-									<span class="loading loading-spinner loading-sm"></span>
+									<span class="loading loading-sm loading-spinner"></span>
 								{/if}
 								Delete Avatar
 							</button>
@@ -263,7 +267,7 @@
 						<input
 							id="username"
 							type="text"
-							class="input input-bordered"
+							class="input-bordered input"
 							value={profile.username}
 							disabled
 						/>
@@ -282,7 +286,7 @@
 						<input
 							id="email"
 							type="email"
-							class="input input-bordered"
+							class="input-bordered input"
 							value={profile.email}
 							disabled
 						/>
@@ -296,7 +300,7 @@
 						<input
 							id="first-name"
 							type="text"
-							class="input input-bordered"
+							class="input-bordered input"
 							placeholder="Enter your first name"
 							maxlength="255"
 							bind:value={name}
@@ -311,7 +315,7 @@
 						<input
 							id="last-name"
 							type="text"
-							class="input input-bordered"
+							class="input-bordered input"
 							placeholder="Enter your last name"
 							maxlength="255"
 							bind:value={surname}
@@ -326,7 +330,7 @@
 						<input
 							id="display-name"
 							type="text"
-							class="input input-bordered"
+							class="input-bordered input"
 							placeholder="How you want to be called"
 							maxlength="255"
 							bind:value={displayName}
@@ -359,7 +363,7 @@
 						<input
 							id="member-since"
 							type="text"
-							class="input input-bordered"
+							class="input-bordered input"
 							value={formatDate(profile.created_at)}
 							disabled
 						/>
@@ -367,13 +371,9 @@
 
 					<!-- Save Button -->
 					<div class="pt-4">
-						<button
-							class="btn btn-primary w-full"
-							onclick={handleSave}
-							disabled={saving}
-						>
+						<button class="btn w-full btn-primary" onclick={handleSave} disabled={saving}>
 							{#if saving}
-								<span class="loading loading-spinner loading-sm mr-2"></span>
+								<span class="loading mr-2 loading-sm loading-spinner"></span>
 							{/if}
 							Save Changes
 						</button>

@@ -70,6 +70,17 @@ COPY --from=frontend-builder /app/frontend/build /app/frontend-build
 
 ENV FRONTEND_DIST_DIR=/app/frontend-build
 
+ARG VERSION=dev
+ARG REVISION=unknown
+
+LABEL org.opencontainers.image.title="RustShare Backend"
+LABEL org.opencontainers.image.description="Self-hosted file sharing platform backend"
+LABEL org.opencontainers.image.url="https://github.com/kubedoio/rustshare"
+LABEL org.opencontainers.image.source="https://github.com/kubedoio/rustshare"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.revision="${REVISION}"
+
 # Use non-root user for security
 RUN useradd -m -s /bin/sh appuser \
     && chown -R appuser:appuser /app

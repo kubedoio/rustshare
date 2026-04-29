@@ -304,7 +304,9 @@ pub async fn create_file_group_share(
             tracing::error!("Failed to create group share: {}", e);
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new("Failed to process share operation")),
+                Json(super::ErrorResponse::new(
+                    "Failed to process share operation",
+                )),
             )
                 .into_response());
         }
@@ -396,7 +398,9 @@ pub async fn create_folder_group_share(
             tracing::error!("Failed to create group share: {}", e);
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new("Failed to process share operation")),
+                Json(super::ErrorResponse::new(
+                    "Failed to process share operation",
+                )),
             )
                 .into_response());
         }
@@ -447,7 +451,9 @@ pub async fn revoke_group_share(
             tracing::error!("Failed to revoke group share: {}", e);
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new("Failed to process share operation")),
+                Json(super::ErrorResponse::new(
+                    "Failed to process share operation",
+                )),
             )
                 .into_response());
         }
@@ -493,7 +499,9 @@ pub async fn update_group_share_permission(
             tracing::error!("Failed to update group share: {}", e);
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new("Failed to process share operation")),
+                Json(super::ErrorResponse::new(
+                    "Failed to process share operation",
+                )),
             )
                 .into_response());
         }
@@ -717,25 +725,13 @@ fn bad_request(msg: impl Into<String>) -> Response {
 }
 
 fn forbidden(msg: impl Into<String>) -> Response {
-    (
-        StatusCode::FORBIDDEN,
-        Json(super::ErrorResponse::new(msg)),
-    )
-        .into_response()
+    (StatusCode::FORBIDDEN, Json(super::ErrorResponse::new(msg))).into_response()
 }
 
 fn not_found(msg: impl Into<String>) -> Response {
-    (
-        StatusCode::NOT_FOUND,
-        Json(super::ErrorResponse::new(msg)),
-    )
-        .into_response()
+    (StatusCode::NOT_FOUND, Json(super::ErrorResponse::new(msg))).into_response()
 }
 
 fn conflict(msg: impl Into<String>) -> Response {
-    (
-        StatusCode::CONFLICT,
-        Json(super::ErrorResponse::new(msg)),
-    )
-        .into_response()
+    (StatusCode::CONFLICT, Json(super::ErrorResponse::new(msg))).into_response()
 }

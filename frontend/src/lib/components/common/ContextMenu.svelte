@@ -28,7 +28,7 @@
 		const rect = menuRef.getBoundingClientRect();
 		const viewportWidth = window.innerWidth;
 		const viewportHeight = window.innerHeight;
-		
+
 		if (x + rect.width > viewportWidth) {
 			adjustedX = viewportWidth - rect.width - 8;
 		}
@@ -81,7 +81,8 @@
 					disabled={item.disabled}
 					on:click={() => {
 						if (!item.disabled) {
-							console.log("[ContextMenu] clicked item:", item.id, item.label); item.onClick();
+							console.log('[ContextMenu] clicked item:', item.id, item.label);
+							item.onClick();
 							onClose();
 						}
 					}}

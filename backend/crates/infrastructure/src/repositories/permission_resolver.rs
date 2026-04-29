@@ -88,7 +88,7 @@ impl PermissionResolverOps for PermissionResolverRepository {
         .await?;
 
         rows.into_iter()
-            .map(|row| map_share_row(row))
+            .map(map_share_row)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| anyhow::anyhow!(e))
     }
@@ -115,7 +115,7 @@ impl PermissionResolverOps for PermissionResolverRepository {
         .await?;
 
         rows.into_iter()
-            .map(|row| map_share_row(row))
+            .map(map_share_row)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| anyhow::anyhow!(e))
     }
@@ -142,7 +142,7 @@ impl PermissionResolverOps for PermissionResolverRepository {
         .await?;
 
         rows.into_iter()
-            .map(|row| map_share_row(row))
+            .map(map_share_row)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| anyhow::anyhow!(e))
     }

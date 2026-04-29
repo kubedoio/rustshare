@@ -67,9 +67,9 @@
 </script>
 
 {#if open}
-	<div class="modal modal-open">
+	<div class="modal-open modal">
 		<div class="modal-box w-full max-w-md">
-			<h3 class="font-bold text-lg mb-4">Create User</h3>
+			<h3 class="mb-4 text-lg font-bold">Create User</h3>
 
 			<form on:submit|preventDefault={handleSubmit} class="space-y-4">
 				<div class="form-control">
@@ -77,12 +77,12 @@
 					<input
 						id="username"
 						type="text"
-						class="input input-bordered"
+						class="input-bordered input"
 						class:input-error={errors.username}
 						bind:value={username}
 						autocomplete="off"
 					/>
-					{#if errors.username}<p class="text-error text-xs mt-1">{errors.username}</p>{/if}
+					{#if errors.username}<p class="mt-1 text-xs text-error">{errors.username}</p>{/if}
 				</div>
 
 				<div class="form-control">
@@ -90,12 +90,12 @@
 					<input
 						id="email"
 						type="email"
-						class="input input-bordered"
+						class="input-bordered input"
 						class:input-error={errors.email}
 						bind:value={email}
 						autocomplete="off"
 					/>
-					{#if errors.email}<p class="text-error text-xs mt-1">{errors.email}</p>{/if}
+					{#if errors.email}<p class="mt-1 text-xs text-error">{errors.email}</p>{/if}
 				</div>
 
 				<div class="form-control">
@@ -103,20 +103,22 @@
 					<input
 						id="password"
 						type="password"
-						class="input input-bordered"
+						class="input-bordered input"
 						class:input-error={errors.password}
 						bind:value={password}
 						autocomplete="new-password"
 					/>
-					{#if errors.password}<p class="text-error text-xs mt-1">{errors.password}</p>{/if}
+					{#if errors.password}<p class="mt-1 text-xs text-error">{errors.password}</p>{/if}
 				</div>
 
 				<div class="form-control">
-					<label class="label" for="display_name"><span class="label-text">Display Name</span></label>
+					<label class="label" for="display_name"
+						><span class="label-text">Display Name</span></label
+					>
 					<input
 						id="display_name"
 						type="text"
-						class="input input-bordered"
+						class="input-bordered input"
 						bind:value={display_name}
 					/>
 				</div>
@@ -130,12 +132,12 @@
 						type="number"
 						min="0"
 						step="0.1"
-						class="input input-bordered"
+						class="input-bordered input"
 						class:input-error={errors.quota}
 						bind:value={quota_gb}
 						placeholder="e.g. 10"
 					/>
-					{#if errors.quota}<p class="text-error text-xs mt-1">{errors.quota}</p>{/if}
+					{#if errors.quota}<p class="mt-1 text-xs text-error">{errors.quota}</p>{/if}
 				</div>
 
 				<div class="form-control">
@@ -146,7 +148,7 @@
 				</div>
 
 				{#if $mutation.isError}
-					<div class="alert alert-error text-sm">
+					<div class="alert text-sm alert-error">
 						{$mutation.error instanceof Error ? $mutation.error.message : 'Failed to create user'}
 					</div>
 				{/if}

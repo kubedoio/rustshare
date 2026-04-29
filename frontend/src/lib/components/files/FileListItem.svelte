@@ -48,13 +48,13 @@
 	let fileItem = $derived(isFolder ? undefined : (item as File));
 	let displaySize = $derived(
 		isFolder
-			? (typeof (item as Folder).size === 'number' ? formatFileSize((item as Folder).size as number) : '-')
+			? typeof (item as Folder).size === 'number'
+				? formatFileSize((item as Folder).size as number)
+				: '-'
 			: formatFileSize(fileItem?.size ?? 0)
 	);
 	let displayDate = $derived(
-		formatDate(
-			isFolder ? (item as Folder).updated_at : (item as File).modified_at
-		)
+		formatDate(isFolder ? (item as Folder).updated_at : (item as File).modified_at)
 	);
 
 	function getFileItem(): File {
@@ -122,7 +122,7 @@
 </script>
 
 <div
-	class="card bg-base-100 shadow-sm hover:shadow-md group relative touch-manipulation transition-shadow"
+	class="group card relative touch-manipulation bg-base-100 shadow-sm transition-shadow hover:shadow-md"
 	class:ring-2={selectionMode && selected}
 	class:ring-primary={selectionMode && selected}
 	onclick={handleCardActivate}
@@ -131,27 +131,47 @@
 	tabindex="0"
 >
 	<div class="card-body p-3 lg:p-4">
-		<div class="gap-2 lg:gap-3 flex items-center">
+		<div class="flex items-center gap-2 lg:gap-3">
 			{#if selectionMode}
 				<input
 					type="checkbox"
 					class="checkbox checkbox-sm"
 					checked={selected}
-					onclick={(e) => { e.stopPropagation(); onSelect(e); }}
+					onclick={(e) => {
+						e.stopPropagation();
+						onSelect(e);
+					}}
 				/>
 			{/if}
 
 			<!-- Thumbnail or icon -->
 			{#if isFolder}
 				<div
-					class="cursor-pointer text-brand-500 flex items-center justify-center"
-					onclick={(e) => { e.stopPropagation(); onSelect(); }}
-					onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onSelect(); } }}
+					class="flex cursor-pointer items-center justify-center text-brand-500"
+					onclick={(e) => {
+						e.stopPropagation();
+						onSelect();
+					}}
+					onkeydown={(e) => {
+						if (e.key === 'Enter') {
+							e.stopPropagation();
+							onSelect();
+						}
+					}}
 					role="button"
 					tabindex="0"
 				>
-					<svg class="w-10 h-10 lg:w-12 lg:h-12" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-						<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+					<svg
+						class="h-10 w-10 lg:h-12 lg:w-12"
+						xmlns="http://www.w3.org/2000/svg"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
 					</svg>
 				</div>
 			{:else}
@@ -159,9 +179,16 @@
 			{/if}
 
 			<div class="min-w-0 flex-1">
-				<button type="button" class="w-full text-left" onclick={(e) => { e.stopPropagation(); onSelect(); }}>
+				<button
+					type="button"
+					class="w-full text-left"
+					onclick={(e) => {
+						e.stopPropagation();
+						onSelect();
+					}}
+				>
 					<h3
-						class="font-semibold text-sm lg:text-base hover:text-primary cursor-pointer truncate flex items-center gap-2"
+						class="flex cursor-pointer items-center gap-2 truncate text-sm font-semibold hover:text-primary lg:text-base"
 					>
 						{item.name}
 						{#if item.is_shared}
@@ -174,9 +201,9 @@
 						{/if}
 					</h3>
 				</button>
-				<div class="text-xs lg:text-sm text-base-content/60 flex items-center justify-between mt-1">
+				<div class="mt-1 flex items-center justify-between text-xs text-base-content/60 lg:text-sm">
 					<span>{displaySize}</span>
-					<span class="sm:inline hidden">{displayDate}</span>
+					<span class="hidden sm:inline">{displayDate}</span>
 				</div>
 				{#if !isFolder && replicationStatus}
 					<div class="mt-1">
@@ -193,7 +220,7 @@
 			<div class="dropdown dropdown-end dropdown-top">
 				<button
 					type="button"
-					class="btn btn-ghost btn-sm btn-circle lg:opacity-0 lg:group-hover:opacity-100 lg:min-h-0 lg:min-w-0 min-h-[44px] min-w-[44px] opacity-100 transition-opacity"
+					class="btn btn-circle min-h-[44px] min-w-[44px] opacity-100 btn-ghost transition-opacity btn-sm lg:min-h-0 lg:min-w-0 lg:opacity-0 lg:group-hover:opacity-100"
 					aria-label={`Open actions for ${item.name}`}
 					onclick={(e) => e.stopPropagation()}
 				>
@@ -203,7 +230,7 @@
 						viewBox="0 0 24 24"
 						stroke-width="1.5"
 						stroke="currentColor"
-						class="w-5 h-5"
+						class="h-5 w-5"
 					>
 						<path
 							stroke-linecap="round"
@@ -212,16 +239,22 @@
 						/>
 					</svg>
 				</button>
-				<ul class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-[1]">
+				<ul class="dropdown-content menu z-[1] w-52 rounded-box bg-base-100 p-2 shadow">
 					<li>
-						<button type="button" onclick={(e) => { e.stopPropagation(); handleRename(e); }}>
+						<button
+							type="button"
+							onclick={(e) => {
+								e.stopPropagation();
+								handleRename(e);
+							}}
+						>
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
 								fill="none"
 								viewBox="0 0 24 24"
 								stroke-width="1.5"
 								stroke="currentColor"
-								class="w-4 h-4"
+								class="h-4 w-4"
 							>
 								<path
 									stroke-linecap="round"
@@ -233,14 +266,20 @@
 						</button>
 					</li>
 					<li>
-						<button type="button" onclick={(e) => { e.stopPropagation(); handleShare(e); }}>
+						<button
+							type="button"
+							onclick={(e) => {
+								e.stopPropagation();
+								handleShare(e);
+							}}
+						>
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
 								fill="none"
 								viewBox="0 0 24 24"
 								stroke-width="1.5"
 								stroke="currentColor"
-								class="w-4 h-4"
+								class="h-4 w-4"
 							>
 								<path
 									stroke-linecap="round"
@@ -253,14 +292,20 @@
 					</li>
 					{#if !isFolder}
 						<li>
-							<button type="button" onclick={(e) => { e.stopPropagation(); handleDownload(e); }}>
+							<button
+								type="button"
+								onclick={(e) => {
+									e.stopPropagation();
+									handleDownload(e);
+								}}
+							>
 								<svg
 									xmlns="http://www.w3.org/2000/svg"
 									fill="none"
 									viewBox="0 0 24 24"
 									stroke-width="1.5"
 									stroke="currentColor"
-									class="w-4 h-4"
+									class="h-4 w-4"
 								>
 									<path
 										stroke-linecap="round"
@@ -272,14 +317,20 @@
 							</button>
 						</li>
 						<li>
-							<button type="button" onclick={(e) => { e.stopPropagation(); handleReplace(e); }}>
+							<button
+								type="button"
+								onclick={(e) => {
+									e.stopPropagation();
+									handleReplace(e);
+								}}
+							>
 								<svg
 									xmlns="http://www.w3.org/2000/svg"
 									fill="none"
 									viewBox="0 0 24 24"
 									stroke-width="1.5"
 									stroke="currentColor"
-									class="w-4 h-4"
+									class="h-4 w-4"
 								>
 									<path
 										stroke-linecap="round"
@@ -292,14 +343,20 @@
 						</li>
 						{#if detectEditorType(getFileItem().name, getFileItem().mime_type) !== 'none'}
 							<li>
-								<button type="button" onclick={(e) => { e.stopPropagation(); handleEdit(e); }}>
+								<button
+									type="button"
+									onclick={(e) => {
+										e.stopPropagation();
+										handleEdit(e);
+									}}
+								>
 									<svg
 										xmlns="http://www.w3.org/2000/svg"
 										fill="none"
 										viewBox="0 0 24 24"
 										stroke-width="1.5"
 										stroke="currentColor"
-										class="w-4 h-4"
+										class="h-4 w-4"
 									>
 										<path
 											stroke-linecap="round"
@@ -312,14 +369,20 @@
 							</li>
 						{/if}
 						<li>
-							<button type="button" onclick={(e) => { e.stopPropagation(); handleVersionHistory(e); }}>
+							<button
+								type="button"
+								onclick={(e) => {
+									e.stopPropagation();
+									handleVersionHistory(e);
+								}}
+							>
 								<svg
 									xmlns="http://www.w3.org/2000/svg"
 									fill="none"
 									viewBox="0 0 24 24"
 									stroke-width="1.5"
 									stroke="currentColor"
-									class="w-4 h-4"
+									class="h-4 w-4"
 								>
 									<path
 										stroke-linecap="round"
@@ -332,14 +395,20 @@
 						</li>
 					{/if}
 					<li>
-						<button type="button" onclick={(e) => { e.stopPropagation(); handleMove(e); }}>
+						<button
+							type="button"
+							onclick={(e) => {
+								e.stopPropagation();
+								handleMove(e);
+							}}
+						>
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
 								fill="none"
 								viewBox="0 0 24 24"
 								stroke-width="1.5"
 								stroke="currentColor"
-								class="w-4 h-4"
+								class="h-4 w-4"
 							>
 								<path
 									stroke-linecap="round"
@@ -351,14 +420,21 @@
 						</button>
 					</li>
 					<li>
-						<button type="button" onclick={(e) => { e.stopPropagation(); handleDelete(e); }} class="text-error">
+						<button
+							type="button"
+							onclick={(e) => {
+								e.stopPropagation();
+								handleDelete(e);
+							}}
+							class="text-error"
+						>
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
 								fill="none"
 								viewBox="0 0 24 24"
 								stroke-width="1.5"
 								stroke="currentColor"
-								class="w-4 h-4"
+								class="h-4 w-4"
 							>
 								<path
 									stroke-linecap="round"

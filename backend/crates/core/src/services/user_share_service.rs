@@ -1,5 +1,4 @@
 //! DEPRECATED: Use ShareService instead
-#![allow(deprecated)]
 //!
 //! This module is being phased out in favor of the unified ShareService.
 //! New code should use ShareService for all share operations.
@@ -74,10 +73,7 @@ pub trait ShareOps: Send + Sync {
 pub trait UserOps: Send + Sync {
     async fn find_by_email(&self, email: &str) -> anyhow::Result<Option<User>>;
     async fn get_by_id(&self, user_id: UserId) -> anyhow::Result<Option<User>>;
-    async fn get_tenant_id_for_user(
-        &self,
-        user_id: UserId,
-    ) -> anyhow::Result<Option<uuid::Uuid>>;
+    async fn get_tenant_id_for_user(&self, user_id: UserId) -> anyhow::Result<Option<uuid::Uuid>>;
 }
 
 /// Trait for file repository operations needed by UserShareService.
@@ -317,7 +313,7 @@ where
                 recipient.id,
                 permission,
                 created_by,
-                creator_tenant_id.unwrap_or_else(|| uuid::Uuid::nil()),
+                creator_tenant_id.unwrap_or_else(uuid::Uuid::nil),
             )
             .await
             .map_err(|error| {
@@ -378,7 +374,7 @@ where
             .get_by_id(folder_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
-            .ok_or_else(|| ShareError::FolderNotFound(folder_id))?;
+            .ok_or(ShareError::FolderNotFound(folder_id))?;
 
         // Verify creator owns the folder
         if folder.owner_id != created_by {
@@ -448,7 +444,7 @@ where
                 recipient.id,
                 permission,
                 created_by,
-                creator_tenant_id.unwrap_or_else(|| uuid::Uuid::nil()),
+                creator_tenant_id.unwrap_or_else(uuid::Uuid::nil),
             )
             .await
             .map_err(|error| {

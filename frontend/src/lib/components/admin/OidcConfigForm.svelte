@@ -110,20 +110,24 @@
 			<div class="max-w-2xl">
 				<h3 class="card-title text-2xl">OIDC / SSO Configuration</h3>
 				<p class="mt-2 text-sm leading-6 text-base-content/70">
-					Bootstrap can seed these fields once from environment variables, but the saved
-					admin settings are the runtime source of truth after that. Treat this page as the
-					operator control plane for SSO.
+					Bootstrap can seed these fields once from environment variables, but the saved admin
+					settings are the runtime source of truth after that. Treat this page as the operator
+					control plane for SSO.
 				</p>
 			</div>
-			<div class="rounded-2xl border border-base-300/80 bg-base-200/50 px-4 py-3 text-sm text-base-content/70">
+			<div
+				class="rounded-2xl border border-base-300/80 bg-base-200/50 px-4 py-3 text-sm text-base-content/70"
+			>
 				<p class="font-semibold text-base-content">Pilot setup path</p>
-				<p class="mt-1">Fill provider details, save once, test discovery, then verify the login screen.</p>
+				<p class="mt-1">
+					Fill provider details, save once, test discovery, then verify the login screen.
+				</p>
 			</div>
 		</div>
 
 		{#if $query.isLoading}
 			<div class="flex justify-center py-10" aria-live="polite">
-				<span class="loading loading-spinner loading-md"></span>
+				<span class="loading loading-md loading-spinner"></span>
 			</div>
 		{:else if $query.isError}
 			<div class="alert alert-error" role="alert">
@@ -134,15 +138,17 @@
 				<section class="rounded-[1.4rem] border border-base-300/80 bg-base-200/35 p-5">
 					<div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
 						<div class="max-w-2xl">
-							<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+							<p class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase">
 								Setup Status
 							</p>
 							<p class="mt-2 text-sm leading-6 text-base-content/70">
-								This keeps the existing settings page, but shows the same sequence an operator
-								will actually follow during a pilot.
+								This keeps the existing settings page, but shows the same sequence an operator will
+								actually follow during a pilot.
 							</p>
 						</div>
-						<label class="label cursor-pointer justify-start gap-3 rounded-xl border border-base-300/80 bg-base-100 px-4 py-3">
+						<label
+							class="label cursor-pointer justify-start gap-3 rounded-xl border border-base-300/80 bg-base-100 px-4 py-3"
+						>
 							<input type="checkbox" class="toggle toggle-primary" bind:checked={enabled} />
 							<span class="label-text font-medium">Enable OIDC / SSO</span>
 						</label>
@@ -151,11 +157,15 @@
 					<div class="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
 						{#each setupSteps as step}
 							<div class="rounded-xl border border-base-300/80 bg-base-100 px-4 py-3">
-								<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+								<p class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase">
 									{step.key}
 								</p>
 								<p class="mt-2 text-sm font-medium text-base-content">{step.label}</p>
-								<p class="mt-2 text-xs font-semibold {step.done ? 'text-success' : 'text-base-content/45'}">
+								<p
+									class="mt-2 text-xs font-semibold {step.done
+										? 'text-success'
+										: 'text-base-content/45'}"
+								>
 									{step.done ? 'Ready' : 'Pending'}
 								</p>
 							</div>
@@ -165,7 +175,7 @@
 
 				<section class="grid gap-4 lg:grid-cols-2">
 					<div class="rounded-[1.4rem] border border-base-300/80 bg-base-100 p-5">
-						<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+						<p class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase">
 							Step 1
 						</p>
 						<h4 class="mt-2 text-lg font-semibold text-base-content">Identity provider details</h4>
@@ -182,7 +192,7 @@
 								<input
 									id="provider-name"
 									type="text"
-									class="input input-bordered"
+									class="input-bordered input"
 									bind:value={provider_name}
 									placeholder="Keycloak, Microsoft Entra, Okta"
 									disabled={!enabled}
@@ -196,7 +206,7 @@
 								<input
 									id="issuer-url"
 									type="url"
-									class="input input-bordered"
+									class="input-bordered input"
 									bind:value={issuer_url}
 									placeholder="https://accounts.example.com/realms/team"
 									aria-describedby="issuer-help"
@@ -211,7 +221,7 @@
 					</div>
 
 					<div class="rounded-[1.4rem] border border-base-300/80 bg-base-100 p-5">
-						<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+						<p class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase">
 							Step 2
 						</p>
 						<h4 class="mt-2 text-lg font-semibold text-base-content">Application credentials</h4>
@@ -228,7 +238,7 @@
 								<input
 									id="client-id"
 									type="text"
-									class="input input-bordered"
+									class="input-bordered input"
 									bind:value={client_id}
 									disabled={!enabled}
 								/>
@@ -239,7 +249,9 @@
 									<span class="label-text">
 										Client secret
 										{#if storedSecretExists}
-											<span class="ml-1 text-xs text-base-content/50">(stored - leave blank to keep)</span>
+											<span class="ml-1 text-xs text-base-content/50"
+												>(stored - leave blank to keep)</span
+											>
 										{/if}
 									</span>
 								</label>
@@ -247,14 +259,14 @@
 									<input
 										id="client-secret"
 										type={showSecret ? 'text' : 'password'}
-										class="input input-bordered w-full pr-14"
+										class="input-bordered input w-full pr-14"
 										bind:value={client_secret}
 										placeholder={storedSecretExists ? '••••••••' : 'Enter secret'}
 										disabled={!enabled}
 									/>
 									<button
 										type="button"
-										class="btn btn-ghost btn-xs absolute right-2 top-1/2 -translate-y-1/2"
+										class="btn absolute top-1/2 right-2 -translate-y-1/2 btn-ghost btn-xs"
 										on:click={() => (showSecret = !showSecret)}
 									>
 										{showSecret ? 'Hide' : 'Show'}
@@ -269,7 +281,7 @@
 								<input
 									id="scopes"
 									type="text"
-									class="input input-bordered"
+									class="input-bordered input"
 									bind:value={scopes_str}
 									placeholder="openid email profile"
 									disabled={!enabled}
@@ -281,13 +293,13 @@
 
 				<section class="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
 					<div class="rounded-[1.4rem] border border-base-300/80 bg-base-100 p-5">
-						<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+						<p class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase">
 							Step 3
 						</p>
 						<h4 class="mt-2 text-lg font-semibold text-base-content">RustShare runtime settings</h4>
 						<p class="mt-2 text-sm leading-6 text-base-content/68">
-							These are the values the live login screen uses. Save them here once so the
-							operator view and runtime behavior stay aligned.
+							These are the values the live login screen uses. Save them here once so the operator
+							view and runtime behavior stay aligned.
 						</p>
 
 						<div class="mt-5 grid gap-4 md:grid-cols-2">
@@ -298,7 +310,7 @@
 								<input
 									id="redirect-url"
 									type="url"
-									class="input input-bordered"
+									class="input-bordered input"
 									bind:value={redirect_url}
 									placeholder="https://files.example.edu/api/v1/auth/oidc/callback"
 									aria-describedby="redirect-help"
@@ -316,7 +328,7 @@
 								<input
 									id="login-label"
 									type="text"
-									class="input input-bordered"
+									class="input-bordered input"
 									bind:value={login_label}
 									placeholder="Continue with SSO"
 									disabled={!enabled}
@@ -326,28 +338,30 @@
 					</div>
 
 					<div class="rounded-[1.4rem] border border-base-300/80 bg-base-100 p-5">
-						<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+						<p class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase">
 							Step 4
 						</p>
 						<h4 class="mt-2 text-lg font-semibold text-base-content">Pilot guardrails</h4>
 						<p class="mt-2 text-sm leading-6 text-base-content/68">
-							Keep provisioning intentional for the first pilot and verify discovery
-							before asking anyone else to use the login page.
+							Keep provisioning intentional for the first pilot and verify discovery before asking
+							anyone else to use the login page.
 						</p>
 
-						<label class="label mt-5 cursor-pointer justify-start gap-3 rounded-xl border border-base-300/80 bg-base-200/40 px-4 py-3">
+						<label
+							class="label mt-5 cursor-pointer justify-start gap-3 rounded-xl border border-base-300/80 bg-base-200/40 px-4 py-3"
+						>
 							<input
 								type="checkbox"
 								class="checkbox"
 								bind:checked={auto_provision_users}
 								disabled={!enabled}
 							/>
-							<span class="label-text leading-6">
-								Auto-provision new users on first login
-							</span>
+							<span class="label-text leading-6"> Auto-provision new users on first login </span>
 						</label>
 
-						<div class="mt-5 rounded-xl border border-base-300/80 bg-base-200/40 px-4 py-3 text-sm leading-6 text-base-content/68">
+						<div
+							class="mt-5 rounded-xl border border-base-300/80 bg-base-200/40 px-4 py-3 text-sm leading-6 text-base-content/68"
+						>
 							<p class="font-semibold text-base-content">What the operator sees next</p>
 							<p class="mt-2">
 								1. Save the config here.
@@ -361,7 +375,7 @@
 				</section>
 
 				{#if $saveMutation.isError}
-					<div class="alert alert-error text-sm" role="alert">
+					<div class="alert text-sm alert-error" role="alert">
 						{$saveMutation.error instanceof Error
 							? $saveMutation.error.message
 							: 'Failed to save OIDC configuration'}
@@ -369,7 +383,7 @@
 				{/if}
 
 				{#if hasSaveSuccess}
-					<div class="alert alert-success text-sm" role="status">
+					<div class="alert text-sm alert-success" role="status">
 						Runtime OIDC settings saved. The login page will read these values from the database.
 					</div>
 				{/if}
@@ -382,7 +396,9 @@
 						role="status"
 					>
 						{testResult.message ??
-							(testResult.success ? 'Discovery document fetched successfully' : 'Connection failed')}
+							(testResult.success
+								? 'Discovery document fetched successfully'
+								: 'Connection failed')}
 					</div>
 				{/if}
 

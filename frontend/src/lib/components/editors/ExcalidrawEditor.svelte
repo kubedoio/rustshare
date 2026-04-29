@@ -11,7 +11,7 @@
 	type DispatchEvents = {
 		close: void;
 		saved: { file: File };
-	}
+	};
 	const dispatch = createEventDispatcher<DispatchEvents>();
 
 	let content = '';
@@ -27,7 +27,7 @@
 	// Load Excalidraw dynamically
 	async function loadExcalidraw() {
 		if (typeof window === 'undefined') return null;
-		
+
 		try {
 			const excalidrawModule = await import('@excalidraw/excalidraw');
 			return excalidrawModule;
@@ -58,14 +58,16 @@
 
 		// Create Excalidraw element
 		const { Excalidraw } = excalidraw;
-		
+
 		// Since Excalidraw is a React component, we need to mount it differently
 		// For now, we'll use a simple approach with the Excalidraw component
 		const React = await import('react');
 		const ReactDOM = await import('react-dom/client');
 
 		// Use a setter so React onChange callbacks can update Svelte's hasChanges reactively
-		const setHasChanges = (val: boolean) => { hasChanges = val; };
+		const setHasChanges = (val: boolean) => {
+			hasChanges = val;
+		};
 
 		const App = () => {
 			return React.createElement(Excalidraw, {
@@ -105,7 +107,9 @@
 		}
 	}
 
-	async function handleSave(event: CustomEvent<{ saveMode: 'overwrite' | 'new_version'; changeDescription?: string }>) {
+	async function handleSave(
+		event: CustomEvent<{ saveMode: 'overwrite' | 'new_version'; changeDescription?: string }>
+	) {
 		if (!file) return;
 
 		// Get current content from Excalidraw
@@ -120,7 +124,7 @@
 		try {
 			const elements = excalidrawInstance.getSceneElements();
 			const appState = excalidrawInstance.getAppState();
-			
+
 			const exportData = {
 				type: 'excalidraw',
 				version: 2,
@@ -194,7 +198,7 @@
 	on:close={handleClose}
 	on:save={handleSave}
 >
-	<div bind:this={excalidrawContainer} class="w-full h-full bg-white"></div>
+	<div bind:this={excalidrawContainer} class="h-full w-full bg-white"></div>
 </BaseEditor>
 
 <style>

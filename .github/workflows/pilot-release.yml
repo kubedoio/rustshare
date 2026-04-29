@@ -9,11 +9,14 @@ on:
       - 'docker/backend.Dockerfile'
       - 'backend/**'
       - 'frontend/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'apps/**'
+      - 'rust-toolchain.toml'
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 env:
@@ -43,14 +46,14 @@ jobs:
           # CI secrets must be configured in repository Settings > Secrets and variables > Actions
           JWT_SECRET: ${{ secrets.CI_JWT_SECRET }}
           RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ secrets.CI_ENCRYPTION_KEY }}
-          # Pilot smoke test credentials (not secrets — these are ephemeral test values)
-          POSTGRES_PASSWORD: pilot-test-db-password
-          DATABASE_URL: postgres://rustshare:pilot-test-db-password@postgres:5432/rustshare
-          RUSTFS_ROOT_USER: pilot-rustfs-user
-          RUSTFS_ROOT_PASSWORD: pilot-rustfs-password
-          AWS_ACCESS_KEY_ID: pilot-rustfs-user
-          AWS_SECRET_ACCESS_KEY: pilot-rustfs-password
-          RUSTSHARE_ADMIN_PASSWORD: pilot-admin-password
+          # Pilot smoke test credentials — ephemeral values generated per-run
+          POSTGRES_PASSWORD: pilot-db-${{ github.run_id }}-${{ github.run_attempt }}
+          DATABASE_URL: postgres://rustshare:pilot-db-${{ github.run_id }}-${{ github.run_attempt }}@postgres:5432/rustshare
+          RUSTFS_ROOT_USER: pilot-rustfs-${{ github.run_id }}
+          RUSTFS_ROOT_PASSWORD: pilot-rustfs-${{ github.run_id }}-${{ github.run_attempt }}
+          AWS_ACCESS_KEY_ID: pilot-rustfs-${{ github.run_id }}
+          AWS_SECRET_ACCESS_KEY: pilot-rustfs-${{ github.run_id }}-${{ github.run_attempt }}
+          RUSTSHARE_ADMIN_PASSWORD: pilot-admin-${{ github.run_id }}-${{ github.run_attempt }}
         run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml up -d postgres rustfs backend nginx
 
       - name: Wait for health endpoint
@@ -81,10 +84,12 @@ jobs:
 
   publish-pilot-image:
     if: github.event_name != 'pull_request'
+    needs: pilot-compose-smoke
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+      security-events: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -96,11 +101,56 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push tagged pilot image
+      - name: Compute Docker tags
+        id: tags
         run: |
-          docker build -f docker/backend.Dockerfile \
-            -t $IMAGE_NAME:${GITHUB_SHA} \
-            -t $IMAGE_NAME:latest \
-            .
-          docker push $IMAGE_NAME:${GITHUB_SHA}
-          docker push $IMAGE_NAME:latest
+          SHA_TAG="sha-${GITHUB_SHA}"
+          TAGS="$SHA_TAG"
+
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            TAGS="$TAGS edge nightly-$(date +%Y-%m-%d)"
+          fi
+
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+          echo "sha=$SHA_TAG" >> $GITHUB_OUTPUT
+
+      - name: Build image
+        run: |
+          TAGS="${{ steps.tags.outputs.tags }}"
+          TAG_ARGS=""
+          for tag in $TAGS; do
+            TAG_ARGS="$TAG_ARGS -t $IMAGE_NAME:$tag"
+          done
+          docker build -f docker/backend.Dockerfile $TAG_ARGS .
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@v0.29.0
+        with:
+          image-ref: '${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.sha }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Fail on Trivy findings
+        run: |
+          if [ -f trivy-results.sarif ]; then
+            COUNT=$(jq '.runs[0].results | length' trivy-results.sarif)
+            if [ "$COUNT" -gt 0 ]; then
+              echo "Found $COUNT HIGH/CRITICAL vulnerabilities"
+              exit 1
+            fi
+          fi
+
+      - name: Push image
+        run: |
+          TAGS="${{ steps.tags.outputs.tags }}"
+          for tag in $TAGS; do
+            docker push $IMAGE_NAME:$tag
+          done

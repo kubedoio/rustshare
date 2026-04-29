@@ -1,111 +1,111 @@
 <script lang="ts">
-  import { collectFilesFromDataTransfer } from '$lib/utils/directoryUpload';
+	import { collectFilesFromDataTransfer } from '$lib/utils/directoryUpload';
 
-  interface Props {
-    disabled?: boolean;
-    onFilesDropped?: (files: globalThis.File[]) => void;
-    onDirectoryDropped?: (files: globalThis.File[]) => void;
-  }
+	interface Props {
+		disabled?: boolean;
+		onFilesDropped?: (files: globalThis.File[]) => void;
+		onDirectoryDropped?: (files: globalThis.File[]) => void;
+	}
 
-  let {
-    disabled = false,
-    onFilesDropped = () => {},
-    onDirectoryDropped = () => {}
-  }: Props = $props();
+	let {
+		disabled = false,
+		onFilesDropped = () => {},
+		onDirectoryDropped = () => {}
+	}: Props = $props();
 
-  let isDragging = $state(false);
-  let dragCounter = $state(0);
+	let isDragging = $state(false);
+	let dragCounter = $state(0);
 
-  function isFileDrag(event: DragEvent) {
-    return event.dataTransfer?.types?.includes('Files') ?? false;
-  }
+	function isFileDrag(event: DragEvent) {
+		return event.dataTransfer?.types?.includes('Files') ?? false;
+	}
 
-  function containsDirectories(event: DragEvent): boolean {
-    if (!event.dataTransfer?.items) return false;
-    for (let i = 0; i < event.dataTransfer.items.length; i++) {
-      const entry = (event.dataTransfer.items[i] as any).webkitGetAsEntry?.();
-      if (entry?.isDirectory) return true;
-    }
-    return false;
-  }
+	function containsDirectories(event: DragEvent): boolean {
+		if (!event.dataTransfer?.items) return false;
+		for (let i = 0; i < event.dataTransfer.items.length; i++) {
+			const entry = (event.dataTransfer.items[i] as any).webkitGetAsEntry?.();
+			if (entry?.isDirectory) return true;
+		}
+		return false;
+	}
 
-  function handleDragEnter(event: DragEvent) {
-    dragCounter++;
-    if (isFileDrag(event)) {
-      isDragging = true;
-    }
-  }
+	function handleDragEnter(event: DragEvent) {
+		dragCounter++;
+		if (isFileDrag(event)) {
+			isDragging = true;
+		}
+	}
 
-  function handleDragLeave(event: DragEvent) {
-    dragCounter--;
-    if (dragCounter === 0) {
-      isDragging = false;
-    }
-  }
+	function handleDragLeave(event: DragEvent) {
+		dragCounter--;
+		if (dragCounter === 0) {
+			isDragging = false;
+		}
+	}
 
-  function handleDragOver(event: DragEvent) {
-    if (!isFileDrag(event)) return;
-    event.preventDefault();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = disabled ? 'none' : 'copy';
-    }
-  }
+	function handleDragOver(event: DragEvent) {
+		if (!isFileDrag(event)) return;
+		event.preventDefault();
+		if (event.dataTransfer) {
+			event.dataTransfer.dropEffect = disabled ? 'none' : 'copy';
+		}
+	}
 
-  async function handleDrop(event: DragEvent) {
-    isDragging = false;
-    dragCounter = 0;
+	async function handleDrop(event: DragEvent) {
+		isDragging = false;
+		dragCounter = 0;
 
-    if (!isFileDrag(event) || disabled) return;
-    event.preventDefault();
+		if (!isFileDrag(event) || disabled) return;
+		event.preventDefault();
 
-    if (containsDirectories(event) && event.dataTransfer?.items) {
-      const items = await collectFilesFromDataTransfer(event.dataTransfer.items);
-      if (items.length > 0) {
-        const files = items.map((i) => i.file);
-        onDirectoryDropped(files);
-      }
-      return;
-    }
+		if (containsDirectories(event) && event.dataTransfer?.items) {
+			const items = await collectFilesFromDataTransfer(event.dataTransfer.items);
+			if (items.length > 0) {
+				const files = items.map((i) => i.file);
+				onDirectoryDropped(files);
+			}
+			return;
+		}
 
-    const files = event.dataTransfer?.files;
-    if (files && files.length > 0) {
-      onFilesDropped(Array.from(files));
-    }
-  }
+		const files = event.dataTransfer?.files;
+		if (files && files.length > 0) {
+			onFilesDropped(Array.from(files));
+		}
+	}
 </script>
 
 <div
-  class="relative"
-  ondragenter={handleDragEnter}
-  ondragleave={handleDragLeave}
-  ondragover={handleDragOver}
-  ondrop={handleDrop}
-  role="region"
-  aria-label="File drop zone"
+	class="relative"
+	ondragenter={handleDragEnter}
+	ondragleave={handleDragLeave}
+	ondragover={handleDragOver}
+	ondrop={handleDrop}
+	role="region"
+	aria-label="File drop zone"
 >
-  <slot />
+	<slot />
 
-  {#if isDragging && !disabled}
-    <div
-      class="absolute inset-0 bg-primary/10 border-4 border-dashed border-primary rounded-lg flex items-center justify-center z-40"
-    >
-      <div class="text-center pointer-events-none">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke-width="1.5"
-          stroke="currentColor"
-          class="w-16 h-16 mx-auto text-primary"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"
-          />
-        </svg>
-        <p class="mt-4 text-lg font-semibold text-primary">Drop files to upload</p>
-      </div>
-    </div>
-  {/if}
+	{#if isDragging && !disabled}
+		<div
+			class="absolute inset-0 z-40 flex items-center justify-center rounded-lg border-4 border-dashed border-primary bg-primary/10"
+		>
+			<div class="pointer-events-none text-center">
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					fill="none"
+					viewBox="0 0 24 24"
+					stroke-width="1.5"
+					stroke="currentColor"
+					class="mx-auto h-16 w-16 text-primary"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"
+					/>
+				</svg>
+				<p class="mt-4 text-lg font-semibold text-primary">Drop files to upload</p>
+			</div>
+		</div>
+	{/if}
 </div>

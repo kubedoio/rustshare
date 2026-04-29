@@ -1,8 +1,5 @@
 import { readable, type Readable } from 'svelte/store';
-import {
-	QueryClientProvider,
-	QueryClient
-} from '@tanstack/svelte-query';
+import { QueryClientProvider, QueryClient } from '@tanstack/svelte-query';
 import {
 	QueryObserver,
 	MutationObserver,
@@ -15,13 +12,7 @@ import {
 } from '@tanstack/query-core';
 import { queryClient } from '$lib/query-client';
 
-type QueryMethods<
-	TQueryFnData,
-	TError,
-	TData,
-	TQueryData,
-	TQueryKey extends QueryKey
-> = {
+type QueryMethods<TQueryFnData, TError, TData, TQueryData, TQueryKey extends QueryKey> = {
 	refetch: QueryObserver<TQueryFnData, TError, TData, TQueryData, TQueryKey>['refetch'];
 	remove: () => void;
 };
@@ -47,8 +38,12 @@ type QueryStoreValue<
 > = QueryObserverResult<TData, TError> &
 	QueryMethods<TQueryFnData, TError, TData, TQueryData, TQueryKey>;
 
-type MutationStoreValue<TData, TError, TVariables, TContext> =
-	MutationObserverResult<TData, TError, TVariables, TContext> &
+type MutationStoreValue<TData, TError, TVariables, TContext> = MutationObserverResult<
+	TData,
+	TError,
+	TVariables,
+	TContext
+> &
 	MutationMethods<TData, TError, TVariables, TContext>;
 
 type QueryStoreResult<
@@ -60,8 +55,9 @@ type QueryStoreResult<
 > = Readable<QueryStoreValue<TQueryFnData, TError, TData, TQueryData, TQueryKey>> &
 	QueryMethods<TQueryFnData, TError, TData, TQueryData, TQueryKey>;
 
-type MutationStoreResult<TData, TError, TVariables, TContext> =
-	Readable<MutationStoreValue<TData, TError, TVariables, TContext>> &
+type MutationStoreResult<TData, TError, TVariables, TContext> = Readable<
+	MutationStoreValue<TData, TError, TVariables, TContext>
+> &
 	MutationMethods<TData, TError, TVariables, TContext>;
 
 export { QueryClientProvider, QueryClient };
@@ -92,13 +88,7 @@ export function createQuery<
 		}
 	};
 
-	const makeResult = (): QueryStoreValue<
-		TQueryFnData,
-		TError,
-		TData,
-		TQueryData,
-		TQueryKey
-	> => ({
+	const makeResult = (): QueryStoreValue<TQueryFnData, TError, TData, TQueryData, TQueryKey> => ({
 		...observer.getOptimisticResult(queryClient.defaultQueryOptions(options)),
 		...methods
 	});
@@ -106,11 +96,11 @@ export function createQuery<
 	const store = readable<QueryStoreValue<TQueryFnData, TError, TData, TQueryData, TQueryKey>>(
 		makeResult(),
 		(set) => {
-		observer.setOptions(options);
-		set(makeResult());
-		return observer.subscribe((result) => {
-			set({ ...result, ...methods });
-		});
+			observer.setOptions(options);
+			set(makeResult());
+			return observer.subscribe((result) => {
+				set({ ...result, ...methods });
+			});
 		}
 	);
 

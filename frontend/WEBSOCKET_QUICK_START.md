@@ -19,6 +19,7 @@ VITE_WS_URL=ws://localhost/api/ws
 ```
 
 For production with SSL:
+
 ```bash
 VITE_API_URL=https://yourapp.com/api/v1
 VITE_WS_URL=wss://yourapp.com/api/ws
@@ -69,6 +70,7 @@ npm run dev
 ### Console Verification
 
 Open browser console and look for:
+
 ```
 [WebSocket] Connected
 [Auth] WebSocket initialized
@@ -88,6 +90,7 @@ Open browser console and look for:
 ### Option B: Manual Event Test
 
 In browser console:
+
 ```javascript
 // Trigger test notification
 import { toastStore } from '$lib/stores/toast';
@@ -101,6 +104,7 @@ console.log(websocketStore);
 ## Common Scenarios
 
 ### Scenario 1: File Upload
+
 ```
 User A uploads "report.pdf"
 → User A sees file in list (no notification)
@@ -108,6 +112,7 @@ User A uploads "report.pdf"
 ```
 
 ### Scenario 2: File Rename
+
 ```
 User A renames "old.txt" to "new.txt"
 → User A sees updated name (no notification)
@@ -115,6 +120,7 @@ User A renames "old.txt" to "new.txt"
 ```
 
 ### Scenario 3: Network Loss
+
 ```
 User disconnects network
 → Status shows "Reconnecting (1)..."
@@ -128,12 +134,14 @@ User disconnects network
 ### WebSocket Not Connecting
 
 **Check 1**: Backend WebSocket server running?
+
 ```bash
 # Verify backend is running and WebSocket endpoint is available
 curl -I http://localhost/api/health
 ```
 
 **Check 2**: Console errors?
+
 ```javascript
 // In browser console
 [WebSocket] Authentication failed
@@ -147,6 +155,7 @@ Network Error
 ```
 
 **Check 3**: Network tab
+
 - Open DevTools → Network → WS filter
 - Should see connection attempt
 - Status should be 101 (Switching Protocols)
@@ -156,12 +165,14 @@ Network Error
 ### Events Not Working
 
 **Check 1**: Is WebSocket connected?
+
 ```javascript
 import { isWebSocketConnected } from '$lib/stores/websocket';
 console.log('Connected:', $isWebSocketConnected);
 ```
 
 **Check 2**: Are events being received?
+
 ```javascript
 // Monitor WebSocket messages in DevTools
 // Network → WS → Frames tab
@@ -169,6 +180,7 @@ console.log('Connected:', $isWebSocketConnected);
 ```
 
 **Check 3**: Are handlers registered?
+
 ```javascript
 // Check manager.ts
 // All event types should have handlers registered
@@ -177,21 +189,26 @@ console.log('Connected:', $isWebSocketConnected);
 ### Notifications Not Showing
 
 **Check 1**: Is ToastContainer in layout?
+
 ```svelte
 <!-- frontend/src/routes/(app)/+layout.svelte -->
 <ToastContainer />
 ```
 
 **Check 2**: Is event from different user?
+
 ```javascript
 // Notifications only show for other users' events
 // Check event.user_id !== currentUserId
 ```
 
 **Check 3**: Z-index issue?
+
 ```css
 /* ToastContainer should have z-50 */
-.toast { z-index: 50; }
+.toast {
+	z-index: 50;
+}
 ```
 
 ## Backend Requirements
@@ -199,25 +216,27 @@ console.log('Connected:', $isWebSocketConnected);
 Your backend WebSocket endpoint must:
 
 1. **Accept token in query parameter**
+
    ```
    ws://localhost/api/ws?token=<JWT>
    ```
 
 2. **Send events in correct format**
+
    ```json
    {
-     "event_id": "uuid",
-     "type": "FileUploaded",
-     "aggregate_id": "file-123",
-     "user_id": "user-456",
-     "timestamp": "2026-03-19T13:45:30.123Z",
-     "payload": {
-       "file_id": "file-123",
-       "file_name": "document.pdf",
-       "folder_id": null,
-       "size": 1024,
-       "mime_type": "application/pdf"
-     }
+   	"event_id": "uuid",
+   	"type": "FileUploaded",
+   	"aggregate_id": "file-123",
+   	"user_id": "user-456",
+   	"timestamp": "2026-03-19T13:45:30.123Z",
+   	"payload": {
+   		"file_id": "file-123",
+   		"file_name": "document.pdf",
+   		"folder_id": null,
+   		"size": 1024,
+   		"mime_type": "application/pdf"
+   	}
    }
    ```
 
@@ -235,17 +254,19 @@ Your backend WebSocket endpoint must:
 ### Customization
 
 **Add custom event handlers:**
+
 ```typescript
 // In your component
 import { getWebSocketClient } from '$lib/websocket';
 
 const wsClient = getWebSocketClient();
 wsClient.on('FileUploaded', (event) => {
-  // Your custom logic
+	// Your custom logic
 });
 ```
 
 **Customize notifications:**
+
 ```typescript
 import { toastStore } from '$lib/stores/toast';
 
@@ -260,14 +281,15 @@ toastStore.show('Processing...', 'info', 5000);
 ```
 
 **Monitor connection state:**
+
 ```svelte
 <script>
-  import { websocketStore } from '$lib/stores/websocket';
-  $: state = $websocketStore.state;
+	import { websocketStore } from '$lib/stores/websocket';
+	$: state = $websocketStore.state;
 </script>
 
 {#if state === 'disconnected'}
-  <div class="alert alert-warning">Offline</div>
+	<div class="alert alert-warning">Offline</div>
 {/if}
 ```
 

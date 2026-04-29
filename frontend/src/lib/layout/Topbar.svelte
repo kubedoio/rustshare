@@ -54,7 +54,9 @@
 		enabled: !!$currentUser
 	});
 
-	function flattenFolderTree(node: FolderTree | undefined): Array<{ id: string; name: string; path: string }> {
+	function flattenFolderTree(
+		node: FolderTree | undefined
+	): Array<{ id: string; name: string; path: string }> {
 		if (!node) return [];
 		const result = [];
 		if (node.folder) {
@@ -75,8 +77,10 @@
 		const allFiles = $allFilesQuery.data || [];
 		const allFolders = flattenFolderTree($folderTreeQuery.data);
 
-		const files = allFiles.filter(f => f.name.toLowerCase().includes(q) && !f.deleted_at).slice(0, 10);
-		const folders = allFolders.filter(f => f.name.toLowerCase().includes(q)).slice(0, 5);
+		const files = allFiles
+			.filter((f) => f.name.toLowerCase().includes(q) && !f.deleted_at)
+			.slice(0, 10);
+		const folders = allFolders.filter((f) => f.name.toLowerCase().includes(q)).slice(0, 5);
 
 		return { files, folders };
 	})();
@@ -124,14 +128,30 @@
 	class="relative z-[95] flex h-16 items-center border-b border-base-300/60 bg-base-100/80 px-4 backdrop-blur-xl lg:px-6"
 >
 	<!-- Left Side: Toggle & [+ New] -->
-	<div class="flex items-center gap-4 min-w-[240px]">
+	<div class="flex min-w-[240px] items-center gap-4">
 		<button
 			type="button"
 			class="-ml-2 flex items-center justify-center rounded-xl border border-transparent p-2 text-base-content/60 transition-colors hover:border-base-300/80 hover:bg-base-200/80 hover:text-base-content lg:hidden"
 			on:click={onMenuClick}
 			aria-label="Open menu"
 		>
-			<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+			<svg
+				xmlns="http://www.w3.org/2000/svg"
+				width="20"
+				height="20"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line
+					x1="3"
+					y1="18"
+					x2="21"
+					y2="18"
+				></line></svg
+			>
 		</button>
 
 		<div class="new-menu-container relative">
@@ -141,7 +161,7 @@
 
 	<!-- Center: Global Search -->
 	<div class="flex flex-1 justify-center px-4">
-		<div class="w-full max-w-xl global-search-container">
+		<div class="global-search-container w-full max-w-xl">
 			<GlobalSearch
 				value={$globalSearchQuery}
 				results={searchResults}
@@ -153,25 +173,27 @@
 	</div>
 
 	<!-- Right Side: User, Theme, Invite -->
-	<div class="flex items-center gap-2 min-w-[240px] justify-end">
+	<div class="flex min-w-[240px] items-center justify-end gap-2">
 		{#if inviteEnabled}
 			<div class="invite-container relative">
 				<InvitePopover enabled={inviteEnabled} bind:open={inviteOpen} />
 			</div>
 
-			<div class="h-6 w-px bg-base-300/60 mx-1 hidden sm:block"></div>
+			<div class="mx-1 hidden h-6 w-px bg-base-300/60 sm:block"></div>
 		{/if}
 
 		<a
 			href="/notifications"
-			class="relative flex items-center justify-center p-2 rounded-xl text-base-content/60 hover:bg-base-200 hover:text-base-content transition-colors"
+			class="relative flex items-center justify-center rounded-xl p-2 text-base-content/60 transition-colors hover:bg-base-200 hover:text-base-content"
 			aria-label="Notifications"
 		>
 			<Bell size={18} />
 			{#if $unreadCountQuery.data && $unreadCountQuery.data.count > 0}
 				<span class="absolute top-[6px] right-[6px] flex h-[8px] w-[8px]">
-					<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-error opacity-75"></span>
-					<span class="relative inline-flex rounded-full h-[8px] w-[8px] bg-error"></span>
+					<span
+						class="absolute inline-flex h-full w-full animate-ping rounded-full bg-error opacity-75"
+					></span>
+					<span class="relative inline-flex h-[8px] w-[8px] rounded-full bg-error"></span>
 				</span>
 			{/if}
 		</a>

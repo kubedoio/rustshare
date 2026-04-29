@@ -1,0 +1,369 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.2.3)'
+        required: true
+        type: string
+  workflow_run:
+    workflows: ["CI", "Frontend CI", "Integration Tests"]
+    types: [completed]
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/kubedoio/rustshare-backend
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate-tag:
+    name: Validate tag and CI gate
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      version_major_minor: ${{ steps.resolve.outputs.version_major_minor }}
+      version_major: ${{ steps.resolve.outputs.version_major }}
+      commit: ${{ steps.resolve.outputs.commit }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      should_release: ${{ steps.resolve.outputs.should_release }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Resolve version and commit
+        id: resolve
+        run: |
+          SHOULD_RELEASE="true"
+          COMMIT="${{ github.event.workflow_run.head_sha || github.sha }}"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+            if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Invalid version format: $VERSION. Expected semver (e.g., 1.2.3)."
+              exit 1
+            fi
+            TAG="v$VERSION"
+
+          elif [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            # Only proceed for push events (not pull requests)
+            if [[ "${{ github.event.workflow_run.event }}" != "push" ]]; then
+              echo "Skipping: workflow_run triggered by ${{ github.event.workflow_run.event }}, not push."
+              SHOULD_RELEASE="false"
+              VERSION=""
+              TAG=""
+            else
+              # Find the newest semver tag on this commit
+              TAG=$(git tag --points-at "$COMMIT" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+              if [[ -z "$TAG" ]]; then
+                echo "No semver tag found on commit $COMMIT. Skipping release."
+                SHOULD_RELEASE="false"
+                VERSION=""
+              else
+                VERSION="${TAG#v}"
+              fi
+            fi
+
+          else
+            # push: tags:
+            REF="${{ github.ref_name }}"
+            if ! [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Invalid tag format: $REF. Expected vX.Y.Z."
+              exit 1
+            fi
+            VERSION="${REF#v}"
+            TAG="$REF"
+          fi
+
+          if [[ "$SHOULD_RELEASE" == "true" ]]; then
+            VERSION_MAJOR_MINOR="${VERSION%.*}"
+            VERSION_MAJOR="${VERSION%%.*}"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "version_major_minor=$VERSION_MAJOR_MINOR" >> "$GITHUB_OUTPUT"
+            echo "version_major=$VERSION_MAJOR" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "Resolved: version=$VERSION, commit=$COMMIT, tag=$TAG, release=$SHOULD_RELEASE"
+
+      - name: Check CI gate
+        if: steps.resolve.outputs.should_release == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const requiredWorkflows = ['CI', 'Frontend CI', 'Integration Tests'];
+            const sha = '${{ steps.resolve.outputs.commit }}';
+
+            const { data: { workflow_runs: runs } } = await github.rest.actions.listWorkflowRunsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head_sha: sha,
+              per_page: 100
+            });
+
+            for (const name of requiredWorkflows) {
+              const matching = runs
+                .filter(r => r.name === name && r.head_sha === sha)
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+              if (matching.length === 0) {
+                core.setFailed(`Workflow "${name}" not found for commit ${sha}`);
+                return;
+              }
+
+              const latest = matching[0];
+              if (latest.conclusion !== 'success') {
+                core.setFailed(`Workflow "${name}" conclusion was "${latest.conclusion}" for commit ${sha}`);
+                return;
+              }
+
+              console.log(`✓ Workflow "${name}" passed (run ${latest.id})`);
+            }
+
+  build-binaries:
+    name: Build release binaries
+    needs: validate-tag
+    if: needs.validate-tag.outputs.should_release == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-gnu
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.95.0'
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cross-compilation toolchain
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          mkdir -p .cargo
+          cat > .cargo/config.toml <<'EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }} --bin rustshare-server
+        env:
+          CARGO_NET_RETRY: 10
+
+      - name: Stage binary artifact
+        run: |
+          cp "target/${{ matrix.target }}/release/rustshare-server" "rustshare-server-${{ matrix.target }}"
+          chmod +x "rustshare-server-${{ matrix.target }}"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: rustshare-server-${{ matrix.target }}
+          if-no-files-found: error
+
+  build-and-push-image:
+    name: Build and push Docker image
+    needs: validate-tag
+    if: needs.validate-tag.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ needs.validate-tag.outputs.version }}
+            type=raw,value=${{ needs.validate-tag.outputs.version_major_minor }}
+            type=raw,value=${{ needs.validate-tag.outputs.version_major }}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/backend.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  generate-sbom:
+    name: Generate SBOMs
+    needs: [build-binaries, build-and-push-image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: Generate SBOM for x86_64 binary
+        uses: anchore/sbom-action@v0.17.9
+        with:
+          path: ./artifacts/rustshare-server-x86_64-unknown-linux-gnu
+          format: spdx-json
+          output-file: sbom-x86_64.spdx.json
+          upload-artifact: true
+          artifact-name: sbom-x86_64
+
+      - name: Generate SBOM for aarch64 binary
+        uses: anchore/sbom-action@v0.17.9
+        with:
+          path: ./artifacts/rustshare-server-aarch64-unknown-linux-gnu
+          format: spdx-json
+          output-file: sbom-aarch64.spdx.json
+          upload-artifact: true
+          artifact-name: sbom-aarch64
+
+      - name: Generate SBOM for Docker image
+        uses: anchore/sbom-action@v0.17.9
+        with:
+          image: ${{ env.IMAGE_NAME }}@${{ needs.build-and-push-image.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-docker.spdx.json
+          upload-artifact: true
+          artifact-name: sbom-docker
+
+  attest-artifacts:
+    name: Attest artifacts
+    needs: [build-binaries, build-and-push-image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      packages: write
+    steps:
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: Attest binaries
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: './artifacts/rustshare-server-*'
+
+      - name: Attest Docker image
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ needs.build-and-push-image.outputs.digest }}
+          push-to-registry: true
+
+  create-release:
+    name: Create GitHub Release
+    needs: [generate-sbom, attest-artifacts]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: Download SBOM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+          pattern: sbom-*
+          merge-multiple: true
+
+      - name: Check if release already exists
+        id: check_release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = 'v${{ needs.validate-tag.outputs.version }}';
+            try {
+              await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: tag
+              });
+              core.setOutput('exists', 'true');
+              console.log(`Release for ${tag} already exists. Skipping.`);
+            } catch (e) {
+              if (e.status === 404) {
+                core.setOutput('exists', 'false');
+              } else {
+                throw e;
+              }
+            }
+
+      - name: Create GitHub Release
+        if: steps.check_release.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.validate-tag.outputs.version }}
+          name: RustShare v${{ needs.validate-tag.outputs.version }}
+          generate_release_notes: true
+          files: |
+            ./artifacts/rustshare-server-*
+            ./artifacts/sbom-*.spdx.json

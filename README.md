@@ -14,6 +14,10 @@ It is being designed as a serious alternative in the category of Nextcloud, Seaf
 RustShare is not meant to be “just another sync tool.”
 The product direction is to make files, sharing, governance, and collaboration work together without collapsing everything into one oversized platform.
 
+![CI](https://github.com/kubedoio/rustshare/actions/workflows/ci.yml/badge.svg)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.95.0-orange.svg)](rust-toolchain.toml)
+
 ---
 
 ## Project status
@@ -27,9 +31,32 @@ The current work focuses on:
 - enforcing clearer architecture and behavior contracts
 - converging on a secure, multi-tenant, integration-friendly design
 
+We welcome contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+
+## Getting Started
+
+### Quick Start (Docker Compose)
+
+```bash
+git clone https://github.com/kubedoio/rustshare.git
+cd rustshare
+cp .env.example .env
+# Or generate strong secrets:
+# ./scripts/pre-flight.sh
+docker compose up -d
+```
+
+Then visit `http://localhost`.
+
+> For validation, run `./scripts/final-launch-smoke.sh`. For production deployment details, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+### Development Setup
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full development setup, test commands, and contribution guidelines.
+
 ## Desktop client status
 
-The current desktop client ships as a CLI plus background daemon under [apps/desktop](/Users/scolak/Projects/x/rustshare/apps/desktop).
+The current desktop client ships as a CLI plus background daemon under [apps/desktop](apps/desktop).
 
 What is real today:
 
@@ -49,9 +76,9 @@ What is not shipped yet:
 
 If you want to build and run the current client, start here:
 
-- [apps/desktop/docs/distribution/macos-client-installation.md](/Users/scolak/Projects/x/rustshare/apps/desktop/docs/distribution/macos-client-installation.md)
-- [apps/desktop/docs/CLI_USAGE.md](/Users/scolak/Projects/x/rustshare/apps/desktop/docs/CLI_USAGE.md)
-- [apps/desktop/docs/architecture/desktop-phase1-architecture.md](/Users/scolak/Projects/x/rustshare/apps/desktop/docs/architecture/desktop-phase1-architecture.md)
+- [apps/desktop/docs/distribution/macos-client-installation.md](apps/desktop/docs/distribution/macos-client-installation.md)
+- [apps/desktop/docs/CLI_USAGE.md](apps/desktop/docs/CLI_USAGE.md)
+- [apps/desktop/docs/architecture/desktop-phase1-architecture.md](apps/desktop/docs/architecture/desktop-phase1-architecture.md)
 
 ---
 
@@ -290,16 +317,7 @@ RustShare succeeds when it becomes:
 
 ## Deployment
 
-RustShare deploys via Docker Compose. The frontend is built into the backend image and served by Axum, with nginx as the reverse proxy.
-
-Quick start:
-
-```bash
-docker compose up -d
-./test-deployment.sh
-```
-
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full deployment guide, including environment variables, compose profiles, and the production checklist.
+For production deployment guides, TLS setup, backup/restore procedures, and troubleshooting, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ---
 
@@ -315,3 +333,16 @@ The priority is to make the existing MVP converge toward:
 - a dependable file workflow
 - a maintainable architecture
 - an implementation that can be safely improved by human engineers and LLM-assisted development
+
+## Community
+
+- [Contributing](CONTRIBUTING.md) — How to set up your dev environment, run tests, and submit PRs
+- [Support](SUPPORT.md) — Where to ask questions and report bugs
+- [Security Policy](SECURITY.md) — How to report vulnerabilities
+- [Code of Conduct](CODE_OF_CONDUCT.md) — Expected behavior in the community
+- [Governance](GOVERNANCE.md) — How the project is run
+- [Roadmap](ROADMAP.md) — What's planned and when
+- [Changelog](CHANGELOG.md) — Release history and what's new
+- [Release Process](docs/release-process.md) — How releases are cut and published
+- [Upgrading](docs/upgrading.md) — How to upgrade a running deployment
+- [License](LICENSE) — Apache 2.0

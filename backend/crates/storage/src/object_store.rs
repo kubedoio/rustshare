@@ -25,7 +25,7 @@ impl ObjectStore {
             .load()
             .await;
 
-        // Use path-style addressing for MinIO compatibility
+        // Use path-style addressing for RustFS/S3-compatible object storage
         let s3_config = aws_sdk_s3::config::Builder::from(&config)
             .force_path_style(true)
             .build();
@@ -111,7 +111,8 @@ impl ObjectStore {
 
     /// Generate a presigned URL for downloading an object
     pub async fn get_presigned_url(&self, key: &str, expires_in_secs: u64) -> Result<String> {
-        self.get_presigned_url_with_disposition(key, expires_in_secs, None).await
+        self.get_presigned_url_with_disposition(key, expires_in_secs, None)
+            .await
     }
 
     /// Generate a presigned URL with optional response-content-disposition
@@ -154,14 +155,35 @@ async fn ensure_bucket_exists(client: &S3Client, bucket: &str) -> Result<()> {
                 "Object storage bucket missing or inaccessible, attempting to create it"
             );
 
-            client
-                .create_bucket()
-                .bucket(bucket)
-                .send()
-                .await
-                .with_context(|| format!("failed to create object storage bucket `{bucket}`"))?;
+            match client.create_bucket().bucket(bucket).send().await {
+                Ok(_) => {
+                    tracing::info!(bucket = %bucket, "Created object storage bucket");
+                    Ok(())
+                }
+                Err(create_error) => {
+                    let service_error = create_error.as_service_error();
+                    let error_code = service_error.and_then(|error| error.meta().code());
 
-            tracing::info!(bucket = %bucket, "Created object storage bucket");
+                    if service_error.is_some_and(|error| {
+                        error.is_bucket_already_owned_by_you() || error.is_bucket_already_exists()
+                    }) || matches!(
+                        error_code,
+                        Some("BucketAlreadyOwnedByYou") | Some("BucketAlreadyExists")
+                    ) {
+                        tracing::info!(
+                            bucket = %bucket,
+                            code = ?error_code,
+                            "Object storage bucket already exists after concurrent creation"
+                        );
+                        Ok(())
+                    } else {
+                        Err(create_error).with_context(|| {
+                            format!("failed to create object storage bucket `{bucket}`")
+                        })
+                    }
+                }
+            }?;
+
             Ok(())
         }
     }

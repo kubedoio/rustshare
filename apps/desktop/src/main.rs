@@ -37,7 +37,7 @@ struct Cli {
     db_name: String,
 
     /// Server URL
-    #[arg(short, long, default_value = "https://app.rustshare.io")]
+    #[arg(short, long, default_value = "http://localhost:8080")]
     server: String,
 
     /// Enable verbose logging
@@ -273,7 +273,7 @@ fn run_daemon_start(cli: &Cli) -> Result<()> {
         command.pre_exec(|| {
             nix::unistd::setsid()
                 .map(|_| ())
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                .map_err(std::io::Error::other)
         });
     }
 
@@ -575,7 +575,7 @@ async fn async_main(cli: Cli) -> Result<()> {
                                                     root.id,
                                                     &entry.relative_path,
                                                 )?;
-                                                let _ = db.mark_file_tombstone(
+                                                db.mark_file_tombstone(
                                                     root.id,
                                                     &entry.relative_path,
                                                     "local",
@@ -1056,10 +1056,10 @@ async fn run_daemon(mut core: SyncCore, handle: DaemonHandle) -> anyhow::Result<
     Ok(())
 }
 
-async fn notify_daemon_config_change(app_data_dir: &PathBuf, root_id: Uuid) -> Result<()> {
+async fn notify_daemon_config_change(app_data_dir: &std::path::Path, root_id: Uuid) -> Result<()> {
     use sync_engine::SocketClient;
 
-    let daemon_handle = DaemonHandle::new(app_data_dir.clone());
+    let daemon_handle = DaemonHandle::new(app_data_dir.to_path_buf());
 
     if daemon_handle.is_running() {
         let mut client = SocketClient::new(daemon_handle.socket_path());
@@ -1142,16 +1142,16 @@ mod tests {
             "http://localhost:8080"
         );
         assert_eq!(
-            normalize_server_url("https://app.rustshare.io"),
-            "https://app.rustshare.io"
+            normalize_server_url("https://localhost:8080"),
+            "https://localhost:8080"
         );
     }
 
     #[test]
     fn normalize_server_url_defaults_to_https() {
         assert_eq!(
-            normalize_server_url("app.rustshare.io"),
-            "https://app.rustshare.io"
+            normalize_server_url("localhost:8080"),
+            "https://localhost:8080"
         );
     }
 
@@ -1164,7 +1164,7 @@ mod tests {
             "--db-name",
             "custom.db",
             "--server",
-            "app.rustshare.io",
+            "localhost:8080",
             "--verbose",
             "daemon",
             "start",
@@ -1184,7 +1184,7 @@ mod tests {
                 "--db-name",
                 "custom.db",
                 "--server",
-                "app.rustshare.io",
+                "localhost:8080",
                 "--verbose",
                 "daemon",
                 "run",

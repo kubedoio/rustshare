@@ -633,10 +633,7 @@ async fn load_file_share_summary(
     })
 }
 
-async fn load_folder_size(
-    pool: &sqlx::PgPool,
-    folder_id: Uuid,
-) -> Result<i64, Response> {
+async fn load_folder_size(pool: &sqlx::PgPool, folder_id: Uuid) -> Result<i64, Response> {
     let size: i64 = sqlx::query_scalar(
         r#"
         WITH RECURSIVE folder_tree AS (
@@ -655,7 +652,11 @@ async fn load_folder_size(
     .fetch_one(pool)
     .await
     .map_err(|error| {
-        tracing::error!("database error fetching size for folder {}: {}", folder_id, error);
+        tracing::error!(
+            "database error fetching size for folder {}: {}",
+            folder_id,
+            error
+        );
         crate::handlers::internal_error_response()
     })?;
     Ok(size)

@@ -82,9 +82,9 @@
 </script>
 
 {#if open}
-	<div class="modal modal-open">
+	<div class="modal-open modal">
 		<div class="modal-box w-full max-w-md">
-			<h3 class="font-bold text-lg mb-4">Add Webhook</h3>
+			<h3 class="mb-4 text-lg font-bold">Add Webhook</h3>
 
 			<form on:submit|preventDefault={handleSubmit} class="space-y-4">
 				<div class="form-control">
@@ -92,12 +92,12 @@
 					<input
 						id="wh-name"
 						type="text"
-						class="input input-bordered"
+						class="input-bordered input"
 						class:input-error={errors.name}
 						bind:value={name}
 						placeholder="My Webhook"
 					/>
-					{#if errors.name}<p class="text-error text-xs mt-1">{errors.name}</p>{/if}
+					{#if errors.name}<p class="mt-1 text-xs text-error">{errors.name}</p>{/if}
 				</div>
 
 				<div class="form-control">
@@ -105,12 +105,12 @@
 					<input
 						id="wh-url"
 						type="url"
-						class="input input-bordered"
+						class="input-bordered input"
 						class:input-error={errors.url}
 						bind:value={url}
 						placeholder="https://example.com/webhook"
 					/>
-					{#if errors.url}<p class="text-error text-xs mt-1">{errors.url}</p>{/if}
+					{#if errors.url}<p class="mt-1 text-xs text-error">{errors.url}</p>{/if}
 				</div>
 
 				<div class="form-control">
@@ -120,14 +120,14 @@
 					<input
 						id="wh-secret"
 						type="text"
-						class="input input-bordered"
+						class="input-bordered input"
 						bind:value={secret}
 						placeholder="Leave blank to skip signing"
 					/>
 				</div>
 
 				<div class="form-control">
-					<span class="label-text font-medium mb-2 block">Events *</span>
+					<span class="label-text mb-2 block font-medium">Events *</span>
 					<div class="space-y-2">
 						{#each ALL_EVENTS as event}
 							<label class="label cursor-pointer justify-start gap-3">
@@ -141,12 +141,14 @@
 							</label>
 						{/each}
 					</div>
-					{#if errors.events}<p class="text-error text-xs mt-1">{errors.events}</p>{/if}
+					{#if errors.events}<p class="mt-1 text-xs text-error">{errors.events}</p>{/if}
 				</div>
 
 				{#if $mutation.isError}
-					<div class="alert alert-error text-sm">
-						{$mutation.error instanceof Error ? $mutation.error.message : 'Failed to create webhook'}
+					<div class="alert text-sm alert-error">
+						{$mutation.error instanceof Error
+							? $mutation.error.message
+							: 'Failed to create webhook'}
 					</div>
 				{/if}
 

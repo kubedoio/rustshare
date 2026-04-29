@@ -1,5 +1,5 @@
 services:
   backend:
-    image: ${RUSTSHARE_BACKEND_IMAGE:-ghcr.io/scolak/rustshare-backend:latest}
+    image: ${RUSTSHARE_BACKEND_IMAGE:-ghcr.io/rustshare/rustshare-backend:latest}
     pull_policy: always
     build: null
