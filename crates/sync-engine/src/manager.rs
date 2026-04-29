@@ -1,5 +1,5 @@
 use crate::client::ApiClient;
-use sync_protocol::RemoteFolderTree;
+
 use crate::planner::{generate_plan_with_db_files, DbFileState, RemoteFileInfo, RemoteFolderInfo, SyncPlan};
 use crate::scanner::{scan_local_root, FileScanResult};
 use crate::socket::SocketServer;
@@ -221,16 +221,15 @@ impl SyncManager {
             // Convert FS event to sync event - notify uses `paths` (plural)
             for path in event.paths {
                 let relative_path = path.strip_prefix(&workspace_root).unwrap_or(&path);
-                if !relative_path.as_os_str().is_empty() {
-                    if event_tx
+                if !relative_path.as_os_str().is_empty()
+                    && event_tx
                         .send(SyncEvent::LocalChange {
                             path: relative_path.to_path_buf(),
                         })
                         .await
                         .is_err()
-                    {
-                        return Ok(());
-                    }
+                {
+                    return Ok(());
                 }
             }
         }
@@ -605,86 +604,80 @@ impl SyncManager {
 
         // Execute uploads
         for op in &plan.uploads {
-            match op {
-                crate::planner::SyncOp::Upload { relative_path, local_path, .. } => {
-                    if let Some(local) = local_map.get(relative_path) {
-                        let local_entry = LocalEntry {
-                            path: local_path.clone(),
-                            entry_type: if local.is_directory { EntryType::Directory } else { EntryType::File },
-                            size: local.size,
-                            hash: local.hash.clone(),
-                            mtime: chrono::DateTime::from_timestamp(local.modified_at as i64, 0)
-                                .unwrap_or_else(|| chrono::Utc::now()),
-                            last_synced_version: None,
-                            hydration_state: HydrationState::Materialized,
-                        };
+            if let crate::planner::SyncOp::Upload { relative_path, local_path, .. } = op {
+                if let Some(local) = local_map.get(relative_path) {
+                    let local_entry = LocalEntry {
+                        path: local_path.clone(),
+                        entry_type: if local.is_directory { EntryType::Directory } else { EntryType::File },
+                        size: local.size,
+                        hash: local.hash.clone(),
+                        mtime: chrono::DateTime::from_timestamp(local.modified_at as i64, 0)
+                            .unwrap_or_else(chrono::Utc::now),
+                        last_synced_version: None,
+                        hydration_state: HydrationState::Materialized,
+                    };
 
-                        let parent_folder_id = self
-                            .resolve_remote_parent_folder_id(root, relative_path, &mut absolute_folder_ids)
-                            .await?;
+                    let parent_folder_id = self
+                        .resolve_remote_parent_folder_id(root, relative_path, &mut absolute_folder_ids)
+                        .await?;
 
-                        if let Err(e) = self
-                            .worker
-                            .upload(&local_entry, root.id, relative_path, parent_folder_id)
-                            .await
-                        {
-                            error!("Failed to upload {}: {:#}", relative_path.display(), e);
-                        } else {
-                            self.clear_broken_remote_file(root.id, relative_path).await;
-                            info!("Successfully uploaded {}", relative_path.display());
-                        }
+                    if let Err(e) = self
+                        .worker
+                        .upload(&local_entry, root.id, relative_path, parent_folder_id)
+                        .await
+                    {
+                        error!("Failed to upload {}: {:#}", relative_path.display(), e);
+                    } else {
+                        self.clear_broken_remote_file(root.id, relative_path).await;
+                        info!("Successfully uploaded {}", relative_path.display());
                     }
                 }
-                _ => {}
             }
         }
 
         // Execute downloads
         for op in &plan.downloads {
-            match op {
-                crate::planner::SyncOp::Download { relative_path, remote_file_id, remote_hash, size, .. } => {
-                    if let Some(remote) = remote_map.get(relative_path) {
-                        let remote_entry = RemoteEntry {
-                            id: *remote_file_id,
-                            parent_id: None,
-                            name: relative_path.file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("unknown")
-                                .to_string(),
-                            entry_type: EntryType::File,
-                            size: *size,
-                            hash: remote_hash.clone(),
-                            version: "1".to_string(),
-                            modified_at: chrono::DateTime::from_timestamp(remote.modified_at as i64, 0)
-                                .unwrap_or_else(|| chrono::Utc::now()),
-                        };
+            if let crate::planner::SyncOp::Download { relative_path, remote_file_id, remote_hash, size, .. } = op {
+                if let Some(remote) = remote_map.get(relative_path) {
+                    let remote_entry = RemoteEntry {
+                        id: *remote_file_id,
+                        parent_id: None,
+                        name: relative_path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown")
+                            .to_string(),
+                        entry_type: EntryType::File,
+                        size: *size,
+                        hash: remote_hash.clone(),
+                        version: "1".to_string(),
+                        modified_at: chrono::DateTime::from_timestamp(remote.modified_at as i64, 0)
+                            .unwrap_or_else(chrono::Utc::now),
+                    };
 
-                        let local_dest = root.local_path.join(relative_path);
+                    let local_dest = root.local_path.join(relative_path);
 
-                        if let Err(e) = self.worker.download(
-                            &remote_entry,
-                            &local_dest,
-                            remote_hash,
-                            root.id,
-                            relative_path,
-                        ).await {
-                            error!("Failed to download {}: {}", relative_path.display(), e);
-                            if is_missing_remote_error(&e.to_string()) {
-                                self.quarantine_broken_remote_file(
-                                    root.id,
-                                    relative_path,
-                                    *remote_file_id,
-                                    &e.to_string(),
-                                )
-                                .await;
-                            }
-                        } else {
-                            self.clear_broken_remote_file(root.id, relative_path).await;
-                            info!("Successfully downloaded {}", relative_path.display());
+                    if let Err(e) = self.worker.download(
+                        &remote_entry,
+                        &local_dest,
+                        remote_hash,
+                        root.id,
+                        relative_path,
+                    ).await {
+                        error!("Failed to download {}: {}", relative_path.display(), e);
+                        if is_missing_remote_error(&e.to_string()) {
+                            self.quarantine_broken_remote_file(
+                                root.id,
+                                relative_path,
+                                *remote_file_id,
+                                &e.to_string(),
+                            )
+                            .await;
                         }
+                    } else {
+                        self.clear_broken_remote_file(root.id, relative_path).await;
+                        info!("Successfully downloaded {}", relative_path.display());
                     }
                 }
-                _ => {}
             }
         }
 

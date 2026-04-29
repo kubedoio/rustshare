@@ -53,6 +53,7 @@ pub struct FolderDocument {
 
 impl FolderDocument {
     /// Create a new folder document
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: Uuid,
         namespace_id: Uuid,
@@ -194,6 +195,7 @@ pub struct FileDocument {
 
 impl FileDocument {
     /// Create a new file document
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: Uuid,
         namespace_id: Uuid,
@@ -330,6 +332,7 @@ pub struct FileVersionDocument {
 
 impl FileVersionDocument {
     /// Create a new file version
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: Uuid,
         file_id: Uuid,
@@ -368,18 +371,13 @@ impl FileVersionDocument {
 // ============================================================================
 
 /// Share scope (public link vs user share)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ShareScope {
+    #[default]
     Public,
     User,
     Group,
-}
-
-impl Default for ShareScope {
-    fn default() -> Self {
-        Self::Public
-    }
 }
 
 /// Share document (canonical)
@@ -427,6 +425,7 @@ pub struct ShareDocument {
 
 impl ShareDocument {
     /// Create a new public share
+    #[allow(clippy::too_many_arguments)]
     pub fn new_public(
         id: Uuid,
         resource_type: String,
@@ -820,6 +819,7 @@ impl FolderChildrenIndex {
         } else {
             self.children.push(entry);
         }
+        #[allow(clippy::stable_sort_primitive)]
         self.children.sort_by(|a, b| a.name.cmp(&b.name));
         self.version += 1;
         self.updated_at = Utc::now();
@@ -966,6 +966,7 @@ pub struct UserDocument {
 
 impl UserDocument {
     /// Create a new user document
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: Uuid,
         username: String,
@@ -1075,6 +1076,7 @@ pub struct NotificationDocument {
 
 impl NotificationDocument {
     /// Create a new notification
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: Uuid,
         user_id: Uuid,
@@ -1165,7 +1167,7 @@ impl UserNotificationIndex {
         }
         // Sort by created_at descending
         self.notifications
-            .sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            .sort_by_key(|a| std::cmp::Reverse(a.created_at));
         self.version += 1;
         self.updated_at = Utc::now();
     }
@@ -1179,7 +1181,7 @@ impl UserNotificationIndex {
         {
             if !notif.read {
                 notif.read = true;
-                self.unread_count = (self.unread_count - 1).max(0);
+                self.unread_count = self.unread_count.saturating_sub(1);
                 self.version += 1;
                 self.updated_at = Utc::now();
             }
@@ -1195,7 +1197,7 @@ impl UserNotificationIndex {
         {
             let notif = &self.notifications[pos];
             if !notif.read {
-                self.unread_count = (self.unread_count - 1).max(0);
+                self.unread_count = self.unread_count.saturating_sub(1);
             }
             self.notifications.remove(pos);
             self.version += 1;
@@ -1220,19 +1222,14 @@ pub enum JobStatus {
 }
 
 /// Job priority
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum JobPriority {
     Low,
+    #[default]
     Normal,
     High,
     Critical,
-}
-
-impl Default for JobPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 /// Job reference (for queue index)

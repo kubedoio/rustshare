@@ -646,7 +646,7 @@ impl FileVersionRepository for RustFsFileVersionRepository {
         }
 
         // Sort by version number descending
-        versions.sort_by(|a, b| b.version_number.cmp(&a.version_number));
+        versions.sort_by_key(|a| std::cmp::Reverse(a.version_number));
 
         Ok(versions)
     }

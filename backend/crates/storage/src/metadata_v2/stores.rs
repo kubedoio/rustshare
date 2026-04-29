@@ -645,7 +645,7 @@ impl EventLogStore for RustFsEventStore {
         }
 
         // Sort by occurred_at
-        events.sort_by(|a, b| a.occurred_at.cmp(&b.occurred_at));
+        events.sort_by_key(|a| a.occurred_at);
         events.truncate(limit);
 
         Ok(events)

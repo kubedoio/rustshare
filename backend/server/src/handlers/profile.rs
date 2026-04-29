@@ -305,7 +305,7 @@ pub async fn update_trash_retention(
 ) -> Response {
     // Validate
     if let Some(days) = req.days {
-        if days < 1 || days > 365 {
+        if !(1..=365).contains(&days) {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse::new(

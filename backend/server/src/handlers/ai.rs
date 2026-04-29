@@ -133,7 +133,7 @@ pub async fn semantic_search(
         ));
     }
 
-    let limit = request.limit.min(50).max(1);
+    let limit = request.limit.clamp(1, 50);
 
     // Get AI service from state or return not implemented
     // Note: AI service needs to be added to AppState

@@ -338,7 +338,7 @@ pub async fn test_oidc_config(
     let client = openidconnect::reqwest::ClientBuilder::new()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|e| admin_internal_error(&format!("Failed to build HTTP client: {}", e)))?;
+        .map_err(|e| admin_internal_error(format!("Failed to build HTTP client: {}", e)))?;
 
     match client.get(&discovery_url).send().await {
         Ok(resp) => {
@@ -546,7 +546,7 @@ pub async fn update_security_config(
     Json(req): Json<UpdateSecurityConfigRequest>,
 ) -> Result<Json<SecurityConfigResponse>, axum::response::Response> {
     if let Some(max) = req.max_login_attempts {
-        if max < 1 || max > 100 {
+        if !(1..=100).contains(&max) {
             return Err(admin_bad_request(
                 "max_login_attempts must be between 1 and 100",
             ));
@@ -554,7 +554,7 @@ pub async fn update_security_config(
     }
 
     if let Some(duration) = req.login_block_duration_minutes {
-        if duration < 1 || duration > 10080 {
+        if !(1..=10080).contains(&duration) {
             return Err(admin_bad_request(
                 "login_block_duration_minutes must be between 1 and 10080 (7 days)",
             ));

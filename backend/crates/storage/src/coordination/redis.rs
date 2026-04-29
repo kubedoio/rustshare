@@ -11,6 +11,7 @@ use std::time::Duration;
 
 /// Redis coordination store
 pub struct RedisCoordinationStore {
+    #[allow(dead_code)]
     client: ::redis::Client,
     connection_manager: ::redis::aio::ConnectionManager,
     key_prefix: String,
@@ -193,7 +194,7 @@ impl CoordinationStore for RedisCoordinationStore {
     ) -> Result<LeaseInfo, CoordinationError> {
         // Leases use the same underlying mechanism as locks but with different semantics
         let key = self.key(&format!("lease:{}", resource_id));
-        let value = format!("{}", owner);
+        let value = owner.to_string();
 
         let mut conn = self.connection_manager.clone();
 
@@ -328,7 +329,7 @@ impl CoordinationStore for RedisCoordinationStore {
         ttl: Duration,
     ) -> Result<bool, CoordinationError> {
         let key = self.key(&format!("job:{}", job_id));
-        let value = format!("{}", worker_id);
+        let value = worker_id.to_string();
 
         let mut conn = self.connection_manager.clone();
 

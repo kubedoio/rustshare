@@ -204,7 +204,7 @@ impl RustFsUploadSessionRepository {
     async fn get_required(&self, id: Uuid) -> Result<UploadSession, UploadError> {
         self.get_session(id)
             .await?
-            .ok_or_else(|| UploadError::SessionNotFound(id))
+            .ok_or(UploadError::SessionNotFound(id))
     }
 
     /// Get all chunks for a session (helper method)
@@ -381,7 +381,7 @@ impl UploadSessionRepository for RustFsUploadSessionRepository {
         }
 
         // Sort by created_at descending
-        sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        sessions.sort_by_key(|b| std::cmp::Reverse(b.created_at));
         Ok(sessions)
     }
 }

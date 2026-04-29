@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
 use std::path::Path;
-use tracing::{error, info};
 #[cfg(windows)]
 use windows::{core::*, Win32::Foundation::*, Win32::Storage::CloudFilters::*};
 
 pub struct VfsManagerWin {
+    #[allow(dead_code)]
     sync_root_id: String,
 }
 

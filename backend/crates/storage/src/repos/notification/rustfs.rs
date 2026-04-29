@@ -151,7 +151,7 @@ impl NotificationRepository for RustFsNotificationRepository {
         let refs: Vec<NotificationRef> = index
             .notifications
             .into_iter()
-            .filter(|n| query.read.map_or(true, |r| n.read == r))
+            .filter(|n| query.read.is_none_or(|r| n.read == r))
             .skip(query.offset.unwrap_or(0))
             .take(query.limit.unwrap_or(usize::MAX))
             .collect();

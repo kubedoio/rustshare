@@ -1401,7 +1401,7 @@ pub async fn get_sync_delta(
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Query(query): Query<DeltaQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let limit = query.limit.unwrap_or(100).min(1000).max(1);
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
 
     // Get delta from the event store
     let delta_result = match get_delta_impl(&state, user_id, &query.cursor, limit).await {

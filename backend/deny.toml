@@ -15,6 +15,10 @@ allow = [
     "Unicode-DFS-2016",
     "MPL-2.0",
     "OpenSSL",
+    "Zlib",
+    "Unicode-3.0",
+    "0BSD",
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 
@@ -26,3 +30,16 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 [advisories]
 version = 2
 yanked = "deny"
+# Temporarily ignored advisories — these require upstream dependency updates
+# that are out of scope for the open-source-readiness PR. Track removal in a follow-up issue.
+ignore = [
+    # aws-lc-sys v0.38.0 — AWS SDK constrains this version; upgrade requires AWS SDK bump
+    { id = "RUSTSEC-2026-0044", reason = "aws-lc-sys upgrade blocked by AWS SDK dependencies" },
+    { id = "RUSTSEC-2026-0048", reason = "aws-lc-sys upgrade blocked by AWS SDK dependencies" },
+    # rustls-webpki v0.101.7 — pulled in by rustls v0.21.12 via AWS SDK; fixed in v0.103+
+    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki v0.101.7 blocked by AWS SDK rustls 0.21 dependency" },
+    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki v0.101.7 blocked by AWS SDK rustls 0.21 dependency" },
+    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki v0.101.7 blocked by AWS SDK rustls 0.21 dependency" },
+    # rsa crate — no patch available yet (Marvin Attack timing sidechannel)
+    { id = "RUSTSEC-2023-0071", reason = "No patched version of rsa crate available yet" },
+]
