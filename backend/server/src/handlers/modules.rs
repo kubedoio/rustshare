@@ -26,7 +26,6 @@ pub struct EnabledModulesResponse {
 pub struct ModuleDetailResponse {
     #[serde(flatten)]
     pub module: Module,
-    pub available: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -80,7 +79,6 @@ pub async fn get_module(
 
     Ok(Json(ModuleDetailResponse {
         module,
-        available: true,
     }))
 }
 
@@ -110,7 +108,7 @@ pub async fn create_from_template(
             (status, Json(ErrorResponse::new(e.to_string()))).into_response()
         })?;
 
-    // Log admin action if audit is enabled for the module
+    // Log object creation from template (audit trail)
     log_admin_action(
         &state.db_pool,
         user_id,

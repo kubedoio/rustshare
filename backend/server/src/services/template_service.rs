@@ -428,9 +428,10 @@ impl TemplateService {
         // Validate default files
         for file in &request.default_files {
             if file.path.is_empty()
-                || file.path.starts_with('/')
                 || file.path.contains('/')
                 || file.path.contains('\\')
+                || file.path == "."
+                || file.path == ".."
             {
                 return Err(TemplateError::InvalidData(format!(
                     "Invalid file path: {}",

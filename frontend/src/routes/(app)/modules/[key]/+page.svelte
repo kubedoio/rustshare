@@ -69,8 +69,12 @@
 				name,
 				parent_folder_id: null
 			});
-			// Refresh folder contents
-			$folderContentsQuery.refetch();
+			// Navigate to the newly created item
+			if (result.object_type === 'folder') {
+				goto(`/files?folder=${result.object_id}`);
+			} else {
+				goto(`/files?preview=${result.object_id}`);
+			}
 		} catch (err) {
 			console.error('Failed to create from template:', err);
 			alert(err instanceof Error ? err.message : 'Failed to create item');
