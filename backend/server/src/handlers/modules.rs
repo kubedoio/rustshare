@@ -87,6 +87,35 @@ pub async fn get_module(
     Ok(Json(ModuleDetailResponse { module }))
 }
 
+#[derive(Debug, Serialize)]
+pub struct ModuleSummaryResponse {
+    pub summary: crate::services::module_service::ModuleSummary,
+}
+
+pub async fn get_module_summary(
+    AuthenticatedUser {
+        user_id: _,
+        tenant_id,
+    }: AuthenticatedUser,
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+) -> Result<Json<ModuleSummaryResponse>, axum::response::Response> {
+    let summary = state
+        .module_service
+        .get_module_summary(&key, tenant_id)
+        .await
+        .map_err(|e| {
+            let status = if e.to_string().contains("not found") {
+                axum::http::StatusCode::NOT_FOUND
+            } else {
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(ErrorResponse::new(e.to_string()))).into_response()
+        })?;
+
+    Ok(Json(ModuleSummaryResponse { summary }))
+}
+
 pub async fn create_from_template(
     AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
     State(state): State<AppState>,

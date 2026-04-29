@@ -232,6 +232,10 @@ pub fn module_routes() -> Router<AppState> {
         )
         .route("/api/v1/modules/{key}", get(crate::handlers::get_module))
         .route(
+            "/api/v1/modules/{key}/summary",
+            get(crate::handlers::modules::get_module_summary),
+        )
+        .route(
             "/api/v1/modules/from-template",
             post(crate::handlers::create_from_template),
         )

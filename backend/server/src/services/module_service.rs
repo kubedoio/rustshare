@@ -82,6 +82,22 @@ pub struct ModuleService {
     metadata_store: Arc<MetadataStore>,
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct ModuleSummary {
+    pub module_key: String,
+    pub mode: String,
+    pub total_items: i64,
+    pub recent_items: Vec<SummaryItem>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct SummaryItem {
+    pub id: String,
+    pub name: String,
+    pub item_type: String,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Debug)]
 pub struct UpdateModuleInput {
     pub display_name: Option<String>,
@@ -413,6 +429,114 @@ impl ModuleService {
         .await?;
 
         self.get_module(key, tenant_id).await
+    }
+
+    /// Get a summary of module contents for dashboard cards.
+    pub async fn get_module_summary(
+        &self,
+        key: &str,
+        tenant_id: Uuid,
+    ) -> Result<ModuleSummary, ModuleError> {
+        let module = self.get_module(key, tenant_id).await?;
+
+        let ui_config = module.ui_config.as_object().ok_or_else(|| {
+            ModuleError::InvalidData("ui_config is not an object".to_string())
+        })?;
+
+        let dashboard = ui_config.get("dashboard").and_then(|v| v.as_object());
+        let summary_mode = dashboard
+            .and_then(|d| d.get("summaryMode"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("none");
+        let max_items = dashboard
+            .and_then(|d| d.get("maxItems"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(4) as i64;
+
+        let root_name = module.root_path.trim_start_matches('/');
+
+        // Find root folder
+        let folder_id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM folders WHERE name = $1 AND parent_id IS NULL AND tenant_id = $2 LIMIT 1"
+        )
+        .bind(root_name)
+        .bind(tenant_id)
+        .fetch_optional(self.metadata_store.pool())
+        .await?;
+
+        let mut recent_items = Vec::new();
+        let mut total_items = 0i64;
+
+        if let Some(fid) = folder_id {
+            // Count files and subfolders
+            let file_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM files WHERE folder_id = $1 AND tenant_id = $2"
+            )
+            .bind(fid)
+            .bind(tenant_id)
+            .fetch_one(self.metadata_store.pool())
+            .await?;
+
+            let folder_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM folders WHERE parent_id = $1 AND tenant_id = $2"
+            )
+            .bind(fid)
+            .bind(tenant_id)
+            .fetch_one(self.metadata_store.pool())
+            .await?;
+
+            total_items = file_count + folder_count;
+
+            if summary_mode == "recent-items" {
+                // Recent files
+                let files = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
+                    "SELECT id, name, updated_at FROM files WHERE folder_id = $1 AND tenant_id = $2 ORDER BY updated_at DESC LIMIT $3"
+                )
+                .bind(fid)
+                .bind(tenant_id)
+                .bind(max_items)
+                .fetch_all(self.metadata_store.pool())
+                .await?;
+
+                for (id, name, updated_at) in files {
+                    recent_items.push(SummaryItem {
+                        id: id.to_string(),
+                        name,
+                        item_type: "file".to_string(),
+                        updated_at,
+                    });
+                }
+
+                // Recent subfolders (fill remaining slots)
+                let remaining = max_items - recent_items.len() as i64;
+                if remaining > 0 {
+                    let folders = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
+                        "SELECT id, name, updated_at FROM folders WHERE parent_id = $1 AND tenant_id = $2 ORDER BY updated_at DESC LIMIT $3"
+                    )
+                    .bind(fid)
+                    .bind(tenant_id)
+                    .bind(remaining)
+                    .fetch_all(self.metadata_store.pool())
+                    .await?;
+
+                    for (id, name, updated_at) in folders {
+                        recent_items.push(SummaryItem {
+                            id: id.to_string(),
+                            name,
+                            item_type: "folder".to_string(),
+                            updated_at,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(ModuleSummary {
+            module_key: key.to_string(),
+            mode: summary_mode.to_string(),
+            total_items,
+            recent_items,
+        })
     }
 
     /// Ensure the module root folder exists.
