@@ -28,12 +28,15 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="origin/${{ github.base_ref }}"
+            HEAD_COMMIT="${{ github.event.pull_request.head.sha }}"
           elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
             BASE="origin/main"
+            HEAD_COMMIT="HEAD"
           else
             BASE="${{ github.event.before }}"
+            HEAD_COMMIT="HEAD"
           fi
-          COMMITS=$(git log --format='%H' "${BASE}..HEAD")
+          COMMITS=$(git log --format='%H' "${BASE}..${HEAD_COMMIT}")
           MISSING=0
           for COMMIT in $COMMITS; do
             if ! git log -1 --format='%B' "$COMMIT" | grep -q 'Signed-off-by:'; then
