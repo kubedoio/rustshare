@@ -1,0 +1,77 @@
+name: CI
+
+# NOTE: This workflow currently covers the backend workspace only.
+# Root workspace coverage should be added once `apps/desktop` and root `crates/` are ready for CI.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+        working-directory: ./backend
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-features -- -D warnings
+        working-directory: ./backend
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-features --lib
+        working-directory: ./backend
+
+  # Validates that the project compiles in release mode (expensive but required by audit).
+  build-release:
+    name: Build Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --all-features
+        working-directory: ./backend
+
+  cargo-deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          manifest-path: backend/Cargo.toml
+
+# TODO: Add sqlx-check job once `.sqlx/` query metadata is committed.
+# Run: docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
+#       cd backend && cargo install sqlx-cli --features postgres && sqlx migrate run && sqlx prepare --workspace
+# Then commit the generated `backend/.sqlx/` directory and add the job back.

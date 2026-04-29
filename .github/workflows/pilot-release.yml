@@ -9,6 +9,11 @@ on:
       - 'docker/backend.Dockerfile'
       - 'backend/**'
       - 'frontend/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'apps/**'
+      - 'rust-toolchain.toml'
   push:
     branches:
       - main
@@ -86,6 +91,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      security-events: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -97,11 +103,66 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push tagged pilot image
+      - name: Compute Docker tags
+        id: tags
         run: |
-          docker build -f docker/backend.Dockerfile \
-            -t $IMAGE_NAME:${GITHUB_SHA} \
-            -t $IMAGE_NAME:latest \
-            .
-          docker push $IMAGE_NAME:${GITHUB_SHA}
-          docker push $IMAGE_NAME:latest
+          SHA_TAG="sha-${GITHUB_SHA}"
+          TAGS="$SHA_TAG"
+
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            TAGS="$TAGS edge nightly-$(date +%Y-%m-%d)"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            # Validate semver format (e.g., 1.2.3)
+            if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Invalid version tag format: $VERSION. Expected semver (e.g., v1.2.3)." >&2
+              exit 1
+            fi
+            MAJOR_MINOR="${VERSION%.*}"
+            MAJOR="${VERSION%%.*}"
+            TAGS="$TAGS $VERSION $MAJOR_MINOR $MAJOR latest"
+          fi
+
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+          echo "sha=$SHA_TAG" >> $GITHUB_OUTPUT
+
+      - name: Build image
+        run: |
+          TAGS="${{ steps.tags.outputs.tags }}"
+          TAG_ARGS=""
+          for tag in $TAGS; do
+            TAG_ARGS="$TAG_ARGS -t $IMAGE_NAME:$tag"
+          done
+          docker build -f docker/backend.Dockerfile $TAG_ARGS .
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@v0.29.0
+        with:
+          image-ref: '${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.sha }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Fail on Trivy findings
+        run: |
+          if [ -f trivy-results.sarif ]; then
+            COUNT=$(jq '.runs[0].results | length' trivy-results.sarif)
+            if [ "$COUNT" -gt 0 ]; then
+              echo "Found $COUNT HIGH/CRITICAL vulnerabilities"
+              exit 1
+            fi
+          fi
+
+      - name: Push image
+        run: |
+          TAGS="${{ steps.tags.outputs.tags }}"
+          for tag in $TAGS; do
+            docker push $IMAGE_NAME:$tag
+          done

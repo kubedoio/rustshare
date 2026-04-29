@@ -92,14 +92,12 @@ jobs:
         run: |
           echo "## Outdated NPM Dependencies" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
           npm outdated || true
-          
-          # Also check with npm audit
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Security Audit" >> $GITHUB_STEP_SUMMARY
-          npm audit --audit-level=high || true
         continue-on-error: true
+
+      - name: Run security audit
+        working-directory: ./frontend
+        run: npm audit --audit-level=high
 
   security-audit:
     name: Security Audit
@@ -125,4 +123,3 @@ jobs:
       - name: Run security audit
         working-directory: ./backend
         run: cargo audit
-        continue-on-error: true
