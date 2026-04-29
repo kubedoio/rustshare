@@ -17,8 +17,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 env:
@@ -111,16 +109,6 @@ jobs:
 
           if [[ "$GITHUB_REF" == refs/heads/main ]]; then
             TAGS="$TAGS edge nightly-$(date +%Y-%m-%d)"
-          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
-            # Validate semver format (e.g., 1.2.3)
-            if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "Invalid version tag format: $VERSION. Expected semver (e.g., v1.2.3)." >&2
-              exit 1
-            fi
-            MAJOR_MINOR="${VERSION%.*}"
-            MAJOR="${VERSION%%.*}"
-            TAGS="$TAGS $VERSION $MAJOR_MINOR $MAJOR latest"
           fi
 
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
