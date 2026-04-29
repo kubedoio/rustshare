@@ -9,7 +9,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::{
-    handlers::{extractors::AuthenticatedUser, ErrorResponse},
+    handlers::{admin::log_admin_action, extractors::AuthenticatedUser, ErrorResponse},
     state::AppState,
 };
 
@@ -128,37 +128,4 @@ pub async fn create_from_template(
     Ok(Json(object))
 }
 
-/// Helper to log admin action for object creation.
-/// Errors are logged as warnings — audit failures must not block the operation.
-async fn log_admin_action(
-    pool: &sqlx::PgPool,
-    actor_id: uuid::Uuid,
-    action_type: &str,
-    target_type: Option<&str>,
-    target_id: Option<uuid::Uuid>,
-    detail: serde_json::Value,
-) {
-    let result = sqlx::query(
-        r#"
-        INSERT INTO admin_actions (actor_id, action_type, target_type, target_id, detail)
-        VALUES ($1, $2, $3, $4, $5)
-        "#,
-    )
-    .bind(actor_id)
-    .bind(action_type)
-    .bind(target_type)
-    .bind(target_id)
-    .bind(detail)
-    .execute(pool)
-    .await;
 
-    if let Err(e) = result {
-        tracing::warn!(
-            actor_id = %actor_id,
-            action_type = action_type,
-            target_id = ?target_id,
-            "Failed to log admin action: {:?}",
-            e
-        );
-    }
-}

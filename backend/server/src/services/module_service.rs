@@ -1,6 +1,5 @@
 //! Module service for workspace module registry management.
 
-use anyhow::Result;
 use chrono::Utc;
 use rustshare_core::{
     domain::{Module, UserId},

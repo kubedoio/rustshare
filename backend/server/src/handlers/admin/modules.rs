@@ -121,7 +121,7 @@ pub async fn disable_module(
 }
 
 pub async fn update_module(
-    AdminUser { user_id: _ }: AdminUser,
+    AdminUser { user_id }: AdminUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
     Json(body): Json<UpdateModuleRequest>,
@@ -143,6 +143,16 @@ pub async fn update_module(
             true => admin_not_found(e.to_string()),
             false => admin_bad_request(e.to_string()),
         })?;
+
+    log_admin_action(
+        &state.db_pool,
+        user_id,
+        "module.updated",
+        Some("module"),
+        Some(module.id),
+        json!({"module_key": key}),
+    )
+    .await;
 
     Ok(Json(module))
 }

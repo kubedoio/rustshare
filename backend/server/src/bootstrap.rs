@@ -141,7 +141,6 @@ pub async fn init_app() -> Result<AppState> {
         Arc::clone(&file_service),
         Arc::clone(&folder_service),
         Arc::clone(&metadata_store),
-        Arc::clone(&object_store),
     ));
     let thumbnail_service = Arc::new(ThumbnailService::new(
         db_pool.clone(),

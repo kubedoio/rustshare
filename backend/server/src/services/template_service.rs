@@ -1,6 +1,5 @@
 //! Template service for creating and managing module templates.
 
-use anyhow::Result;
 use bytes::Bytes;
 use chrono::Utc;
 use rustshare_core::{
@@ -125,7 +124,6 @@ pub struct TemplateService {
         FolderService<rustshare_storage::EventStore, MetadataStore, PermissionResolverRepository>,
     >,
     metadata_store: Arc<MetadataStore>,
-    object_store: Arc<ObjectStore>,
 }
 
 impl TemplateService {
@@ -146,13 +144,11 @@ impl TemplateService {
             >,
         >,
         metadata_store: Arc<MetadataStore>,
-        object_store: Arc<ObjectStore>,
     ) -> Self {
         Self {
             file_service,
             folder_service,
             metadata_store,
-            object_store,
         }
     }
 

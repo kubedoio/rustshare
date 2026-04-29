@@ -90,7 +90,7 @@ pub async fn create_template(
 }
 
 pub async fn update_template(
-    AdminUser { user_id: _ }: AdminUser,
+    AdminUser { user_id }: AdminUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
     Json(body): Json<UpdateTemplateRequest>,
@@ -103,6 +103,16 @@ pub async fn update_template(
             true => admin_not_found(e.to_string()),
             false => admin_bad_request(e.to_string()),
         })?;
+
+    log_admin_action(
+        &state.db_pool,
+        user_id,
+        "template.updated",
+        Some("template"),
+        Some(template.id),
+        json!({"template_key": template.template_key, "name": template.name}),
+    )
+    .await;
 
     Ok(Json(template))
 }
