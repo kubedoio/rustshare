@@ -722,15 +722,25 @@ impl CoordinationStore for RedisCoordinationStore {
 mod tests {
     use super::*;
 
+    async fn redis_store_or_skip() -> Option<RedisCoordinationStore> {
+        match RedisCoordinationStore::new("redis://127.0.0.1:6379").await {
+            Ok(store) => Some(store),
+            Err(err) => {
+                eprintln!("skipping Redis test: {err}");
+                None
+            }
+        }
+    }
+
     // Note: These tests require a running Redis instance
     // They are marked as ignored by default to avoid CI failures
 
     #[tokio::test]
     #[ignore = "requires Redis"]
     async fn test_redis_lock_operations() {
-        let store = RedisCoordinationStore::new("redis://127.0.0.1:6379")
-            .await
-            .expect("Failed to connect to Redis");
+        let Some(store) = redis_store_or_skip().await else {
+            return;
+        };
 
         // Acquire lock
         let lock = store
@@ -762,9 +772,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires Redis"]
     async fn test_redis_job_claiming() {
-        let store = RedisCoordinationStore::new("redis://127.0.0.1:6379")
-            .await
-            .expect("Failed to connect to Redis");
+        let Some(store) = redis_store_or_skip().await else {
+            return;
+        };
 
         // Claim job
         let claimed = store

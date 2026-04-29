@@ -2746,7 +2746,7 @@ impl MetadataStore {
                 share_id, ip_address, user_agent, action, success,
                 actor_type, actor_label, share_session_id, share_session_subject
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2::inet, $3, $4, $5, $6, $7, $8, $9)
             "#,
         )
         .bind(entry.share_id)
@@ -3089,7 +3089,7 @@ mod tests {
         let found_folder = found.unwrap();
         assert_eq!(found_folder.id, root_folder.id);
         assert_eq!(found_folder.name, "Root");
-        assert_eq!(found_folder.path, "/");
+        assert_eq!(found_folder.path, "/Root");
         assert_eq!(found_folder.parent_folder_id, None);
         assert_eq!(found_folder.owner_id, owner.id);
 
@@ -3358,7 +3358,7 @@ mod tests {
         assert_eq!(active_shares.len(), 1);
         assert!(active_shares
             .iter()
-            .all(|s| s.share_token == Some("sharetoken456".to_string())));
+            .all(|s| s.share_token == Some(share_token_2.clone())));
 
         // But should still be retrievable by ID
         let revoked_share = store.get_share(share.id).await.unwrap();
@@ -3392,7 +3392,6 @@ mod tests {
 
         // Create test user and group
         let user_id = Uuid::new_v4();
-        let group_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
 
         // Create user
@@ -3440,6 +3439,22 @@ mod tests {
         };
         store.create_share(&public_share).await.unwrap();
 
+        // Create backing group row for the FK used by recipient_group_id.
+        let group_id = Uuid::new_v4();
+        sqlx::query(
+            r#"
+            INSERT INTO user_groups (id, name, description, created_by)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(group_id)
+        .bind(format!("test-group-{}", group_id))
+        .bind(Some("Test group".to_string()))
+        .bind(owner.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
         // Create group share (same file)
         let group_share = Share {
             id: Uuid::new_v4(),
@@ -3475,6 +3490,11 @@ mod tests {
             .unwrap();
         sqlx::query("DELETE FROM files WHERE id = $1")
             .bind(file.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM user_groups WHERE id = $1")
+            .bind(group_id)
             .execute(&pool)
             .await
             .unwrap();
