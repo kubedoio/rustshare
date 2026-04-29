@@ -14,6 +14,7 @@ It is being designed as a serious alternative in the category of Nextcloud, Seaf
 RustShare is not meant to be “just another sync tool.”
 The product direction is to make files, sharing, governance, and collaboration work together without collapsing everything into one oversized platform.
 
+![CI](https://github.com/kubedoio/rustshare/actions/workflows/ci.yml/badge.svg)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.95.0-orange.svg)](rust-toolchain.toml)
 
@@ -336,6 +337,7 @@ The priority is to make the existing MVP converge toward:
 ## Community
 
 - [Contributing](CONTRIBUTING.md) — How to set up your dev environment, run tests, and submit PRs
+- [Support](SUPPORT.md) — Where to ask questions and report bugs
 - [Security Policy](SECURITY.md) — How to report vulnerabilities
 - [Code of Conduct](CODE_OF_CONDUCT.md) — Expected behavior in the community
 - [Governance](GOVERNANCE.md) — How the project is run

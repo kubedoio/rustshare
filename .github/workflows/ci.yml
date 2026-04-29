@@ -1,7 +1,6 @@
 name: CI
 
-# NOTE: This workflow currently covers the backend workspace only.
-# Root workspace coverage should be added once `apps/desktop` and root `crates/` are ready for CI.
+# Covers the backend workspace and the root workspace (including apps/desktop and crates/).
 
 on:
   pull_request:
@@ -17,6 +16,39 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  dco-check:
+    name: DCO Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify DCO sign-off
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            BASE="origin/main"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          COMMITS=$(git log --format='%H' "${BASE}..HEAD")
+          MISSING=0
+          for COMMIT in $COMMITS; do
+            if ! git log -1 --format='%B' "$COMMIT" | grep -q 'Signed-off-by:'; then
+              echo "ERROR: Commit $COMMIT is missing DCO sign-off"
+              git log -1 --format='  %H %s' "$COMMIT"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -ne 0 ]; then
+            echo ""
+            echo "Every commit must include a DCO sign-off. Use: git commit -s"
+            exit 1
+          fi
+          echo "All commits have DCO sign-off"
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
@@ -71,7 +103,22 @@ jobs:
           command: check
           manifest-path: backend/Cargo.toml
 
-# TODO: Add sqlx-check job once `.sqlx/` query metadata is committed.
-# Run: docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
-#       cd backend && cargo install sqlx-cli --features postgres && sqlx migrate run && sqlx prepare --workspace
-# Then commit the generated `backend/.sqlx/` directory and add the job back.
+  root-workspace:
+    name: Root Workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace
+      - run: cargo test --workspace --lib
+
+# BLOCKED: sqlx prepare --check
+# This job is intentionally disabled because `backend/.sqlx/` does not exist yet.
+# Before enabling this job, you MUST:
+#   1. Start Postgres: docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
+#   2. Install sqlx-cli: cargo install sqlx-cli --features postgres
+#   3. Run migrations: cd backend && sqlx migrate run
+#   4. Generate query metadata: sqlx prepare --workspace
+#   5. Commit the generated `backend/.sqlx/` directory to the repository
+# Only after `backend/.sqlx/` is committed can the sqlx-check job be re-enabled.
