@@ -43,13 +43,13 @@ impl RetryConfig {
 pub fn calculate_backoff_delay(retry_count: u32, base_seconds: u64, max_seconds: u64) -> Duration {
     // Calculate 2^retry_count, capping at u64::MAX to prevent overflow
     let exponential_factor = 2_u64.saturating_pow(retry_count);
-    
+
     // Calculate base * 2^retry_count, saturating at u64::MAX
     let delay_seconds = base_seconds.saturating_mul(exponential_factor);
-    
+
     // Take the minimum of calculated delay and max delay
     let final_delay = delay_seconds.min(max_seconds);
-    
+
     Duration::from_secs(final_delay)
 }
 
@@ -75,19 +75,19 @@ pub fn is_retryable_error(error: &SyncError) -> ErrorCategory {
     match error {
         // Network errors are typically retryable
         SyncError::Network(_) => ErrorCategory::Retryable,
-        
+
         // IO errors may be retryable depending on the error kind
         SyncError::Io(io_err) => is_retryable_io_error(io_err),
-        
+
         // Auth errors are generally not retryable (credentials need to be fixed)
         SyncError::Auth(_) => ErrorCategory::NotRetryable,
-        
+
         // Database errors - some may be retryable (lock contention), others not
         SyncError::Database(msg) => is_retryable_database_error(msg),
-        
+
         // Conflicts need user intervention, not retries
         SyncError::Conflict(_) => ErrorCategory::NotRetryable,
-        
+
         // Other errors - check the message for retryable patterns
         SyncError::Other(msg) => is_retryable_from_message(msg),
     }
@@ -104,10 +104,10 @@ fn is_retryable_io_error(error: &io::Error) -> ErrorCategory {
         | io::ErrorKind::BrokenPipe
         | io::ErrorKind::TimedOut
         | io::ErrorKind::Interrupted => ErrorCategory::Retryable,
-        
+
         // Resource exhaustion might be temporary
         io::ErrorKind::WouldBlock => ErrorCategory::Retryable,
-        
+
         // Permission and existence errors are not retryable
         io::ErrorKind::PermissionDenied
         | io::ErrorKind::NotFound
@@ -116,7 +116,7 @@ fn is_retryable_io_error(error: &io::Error) -> ErrorCategory {
         | io::ErrorKind::InvalidData
         | io::ErrorKind::UnexpectedEof
         | io::ErrorKind::OutOfMemory => ErrorCategory::NotRetryable,
-        
+
         // Other/Uncategorized - check the error message
         _ => ErrorCategory::Retryable, // Conservative default for network-related uncategorized errors
     }
@@ -125,7 +125,7 @@ fn is_retryable_io_error(error: &io::Error) -> ErrorCategory {
 /// Check database error message for retryable patterns
 fn is_retryable_database_error(msg: &str) -> ErrorCategory {
     let lower_msg = msg.to_lowercase();
-    
+
     // Lock contention and busy errors are retryable
     if lower_msg.contains("busy")
         || lower_msg.contains("locked")
@@ -135,7 +135,7 @@ fn is_retryable_database_error(msg: &str) -> ErrorCategory {
     {
         return ErrorCategory::Retryable;
     }
-    
+
     // Corruption and constraint errors are not retryable
     if lower_msg.contains("corrupt")
         || lower_msg.contains("constraint")
@@ -143,7 +143,7 @@ fn is_retryable_database_error(msg: &str) -> ErrorCategory {
     {
         return ErrorCategory::NotRetryable;
     }
-    
+
     // Default to retryable for transient database issues
     ErrorCategory::Retryable
 }
@@ -151,7 +151,7 @@ fn is_retryable_database_error(msg: &str) -> ErrorCategory {
 /// Check error message for retryable patterns (HTTP status codes, etc.)
 fn is_retryable_from_message(msg: &str) -> ErrorCategory {
     let lower_msg = msg.to_lowercase();
-    
+
     // 5xx server errors are retryable
     if lower_msg.contains("500")
         || lower_msg.contains("502")
@@ -164,7 +164,7 @@ fn is_retryable_from_message(msg: &str) -> ErrorCategory {
     {
         return ErrorCategory::Retryable;
     }
-    
+
     // 4xx client errors are not retryable (except 408 timeout, 429 rate limit)
     if lower_msg.contains("400")
         || lower_msg.contains("401")
@@ -180,7 +180,7 @@ fn is_retryable_from_message(msg: &str) -> ErrorCategory {
     {
         return ErrorCategory::NotRetryable;
     }
-    
+
     // Rate limiting and timeouts are retryable
     if lower_msg.contains("429")
         || lower_msg.contains("408")
@@ -190,7 +190,7 @@ fn is_retryable_from_message(msg: &str) -> ErrorCategory {
     {
         return ErrorCategory::Retryable;
     }
-    
+
     // DNS and resolution errors are retryable
     if lower_msg.contains("dns")
         || lower_msg.contains("resolve")
@@ -199,7 +199,7 @@ fn is_retryable_from_message(msg: &str) -> ErrorCategory {
     {
         return ErrorCategory::Retryable;
     }
-    
+
     // Disk full is not retryable
     if lower_msg.contains("disk full")
         || lower_msg.contains("no space")
@@ -207,7 +207,7 @@ fn is_retryable_from_message(msg: &str) -> ErrorCategory {
     {
         return ErrorCategory::NotRetryable;
     }
-    
+
     // Network/connection related messages are retryable
     if lower_msg.contains("timeout")
         || lower_msg.contains("connection")
@@ -216,26 +216,26 @@ fn is_retryable_from_message(msg: &str) -> ErrorCategory {
     {
         return ErrorCategory::Retryable;
     }
-    
+
     // Default to retryable for unknown errors
     ErrorCategory::Retryable
 }
 
 /// Execute an operation with retry logic
-/// 
+///
 /// # Arguments
 /// * `config` - Retry configuration
 /// * `operation_name` - Name of the operation for logging
 /// * `operation` - Async closure that performs the operation
-/// 
+///
 /// # Returns
 /// * `Ok(T)` if the operation succeeds
 /// * `Err(E)` if all retries are exhausted
-/// 
+///
 /// # Example
 /// ```rust
 /// use sync_engine::retry::{RetryConfig, with_retry};
-/// 
+///
 /// let config = RetryConfig::default();
 /// let result = with_retry(&config, "upload file", || async {
 ///     // Your async operation here
@@ -253,7 +253,7 @@ where
     E: std::fmt::Display,
 {
     let mut last_error: Option<E> = None;
-    
+
     for attempt in 0..=config.max_retries {
         match operation().await {
             Ok(result) => {
@@ -264,13 +264,13 @@ where
             }
             Err(error) => {
                 let error_msg = error.to_string();
-                
+
                 // Check if we should retry this error
                 // Note: We need to convert the error to check retryability
                 // For SyncError, we can check directly. For other errors,
                 // we treat them as retryable by default.
                 let should_retry = attempt < config.max_retries;
-                
+
                 if !should_retry {
                     warn!(
                         "{} failed after {} attempts. Last error: {}",
@@ -280,9 +280,13 @@ where
                     );
                     return Err(error);
                 }
-                
-                let delay = calculate_backoff_delay(attempt, config.base_delay_seconds, config.max_delay_seconds);
-                
+
+                let delay = calculate_backoff_delay(
+                    attempt,
+                    config.base_delay_seconds,
+                    config.max_delay_seconds,
+                );
+
                 warn!(
                     "{} failed (attempt {}/{}): {}. Retrying in {:?}...",
                     operation_name,
@@ -291,13 +295,13 @@ where
                     error_msg,
                     delay
                 );
-                
+
                 tokio::time::sleep(delay).await;
                 last_error = Some(error);
             }
         }
     }
-    
+
     // This should not be reached, but just in case
     Err(last_error.expect("Last error should be set if all retries exhausted"))
 }
@@ -314,7 +318,7 @@ where
     Fut: Future<Output = Result<T, SyncError>>,
 {
     let mut last_error: Option<SyncError> = None;
-    
+
     for attempt in 0..=config.max_retries {
         match operation().await {
             Ok(result) => {
@@ -328,7 +332,7 @@ where
                     ErrorCategory::Retryable => attempt < config.max_retries,
                     ErrorCategory::NotRetryable => false,
                 };
-                
+
                 if !should_retry {
                     if attempt >= config.max_retries {
                         warn!(
@@ -345,9 +349,13 @@ where
                     }
                     return Err(error);
                 }
-                
-                let delay = calculate_backoff_delay(attempt, config.base_delay_seconds, config.max_delay_seconds);
-                
+
+                let delay = calculate_backoff_delay(
+                    attempt,
+                    config.base_delay_seconds,
+                    config.max_delay_seconds,
+                );
+
                 warn!(
                     "{} failed (attempt {}/{}): {}. Retrying in {:?}...",
                     operation_name,
@@ -356,13 +364,13 @@ where
                     error,
                     delay
                 );
-                
+
                 tokio::time::sleep(delay).await;
                 last_error = Some(error);
             }
         }
     }
-    
+
     // This should not be reached, but just in case
     Err(last_error.expect("Last error should be set if all retries exhausted"))
 }
@@ -374,47 +382,23 @@ mod tests {
     #[test]
     fn test_backoff_calculation() {
         // Test exponential growth
-        assert_eq!(
-            calculate_backoff_delay(0, 1, 300),
-            Duration::from_secs(1)
-        );
-        assert_eq!(
-            calculate_backoff_delay(1, 1, 300),
-            Duration::from_secs(2)
-        );
-        assert_eq!(
-            calculate_backoff_delay(2, 1, 300),
-            Duration::from_secs(4)
-        );
-        assert_eq!(
-            calculate_backoff_delay(3, 1, 300),
-            Duration::from_secs(8)
-        );
-        assert_eq!(
-            calculate_backoff_delay(4, 1, 300),
-            Duration::from_secs(16)
-        );
-        
+        assert_eq!(calculate_backoff_delay(0, 1, 300), Duration::from_secs(1));
+        assert_eq!(calculate_backoff_delay(1, 1, 300), Duration::from_secs(2));
+        assert_eq!(calculate_backoff_delay(2, 1, 300), Duration::from_secs(4));
+        assert_eq!(calculate_backoff_delay(3, 1, 300), Duration::from_secs(8));
+        assert_eq!(calculate_backoff_delay(4, 1, 300), Duration::from_secs(16));
+
         // Test max delay cap
         assert_eq!(
             calculate_backoff_delay(10, 1, 300),
             Duration::from_secs(300) // Would be 1024, but capped at 300
         );
-        
+
         // Test with different base
-        assert_eq!(
-            calculate_backoff_delay(0, 5, 100),
-            Duration::from_secs(5)
-        );
-        assert_eq!(
-            calculate_backoff_delay(1, 5, 100),
-            Duration::from_secs(10)
-        );
-        assert_eq!(
-            calculate_backoff_delay(2, 5, 100),
-            Duration::from_secs(20)
-        );
-        
+        assert_eq!(calculate_backoff_delay(0, 5, 100), Duration::from_secs(5));
+        assert_eq!(calculate_backoff_delay(1, 5, 100), Duration::from_secs(10));
+        assert_eq!(calculate_backoff_delay(2, 5, 100), Duration::from_secs(20));
+
         // Test max delay with higher base
         assert_eq!(
             calculate_backoff_delay(5, 10, 100),
@@ -427,14 +411,17 @@ mod tests {
         // Network errors should be retryable
         let network_error = SyncError::Network("connection failed".to_string());
         assert_eq!(is_retryable_error(&network_error), ErrorCategory::Retryable);
-        
+
         // Auth errors should not be retryable
         let auth_error = SyncError::Auth("invalid token".to_string());
         assert_eq!(is_retryable_error(&auth_error), ErrorCategory::NotRetryable);
-        
+
         // Conflict errors should not be retryable
         let conflict_error = SyncError::Conflict(std::path::PathBuf::from("/test"));
-        assert_eq!(is_retryable_error(&conflict_error), ErrorCategory::NotRetryable);
+        assert_eq!(
+            is_retryable_error(&conflict_error),
+            ErrorCategory::NotRetryable
+        );
     }
 
     #[test]
@@ -443,16 +430,16 @@ mod tests {
         let timeout_error = io::Error::new(io::ErrorKind::TimedOut, "timeout");
         let sync_error = SyncError::Io(timeout_error);
         assert_eq!(is_retryable_error(&sync_error), ErrorCategory::Retryable);
-        
+
         let conn_refused = io::Error::new(io::ErrorKind::ConnectionRefused, "refused");
         let sync_error = SyncError::Io(conn_refused);
         assert_eq!(is_retryable_error(&sync_error), ErrorCategory::Retryable);
-        
+
         // Non-retryable IO errors
         let not_found = io::Error::new(io::ErrorKind::NotFound, "file not found");
         let sync_error = SyncError::Io(not_found);
         assert_eq!(is_retryable_error(&sync_error), ErrorCategory::NotRetryable);
-        
+
         let perm_denied = io::Error::new(io::ErrorKind::PermissionDenied, "access denied");
         let sync_error = SyncError::Io(perm_denied);
         assert_eq!(is_retryable_error(&sync_error), ErrorCategory::NotRetryable);
@@ -463,16 +450,25 @@ mod tests {
         // Retryable database errors
         let busy_error = SyncError::Database("database is locked".to_string());
         assert_eq!(is_retryable_error(&busy_error), ErrorCategory::Retryable);
-        
+
         let deadlock_error = SyncError::Database("deadlock detected".to_string());
-        assert_eq!(is_retryable_error(&deadlock_error), ErrorCategory::Retryable);
-        
+        assert_eq!(
+            is_retryable_error(&deadlock_error),
+            ErrorCategory::Retryable
+        );
+
         // Non-retryable database errors
         let corrupt_error = SyncError::Database("database corrupt".to_string());
-        assert_eq!(is_retryable_error(&corrupt_error), ErrorCategory::NotRetryable);
-        
+        assert_eq!(
+            is_retryable_error(&corrupt_error),
+            ErrorCategory::NotRetryable
+        );
+
         let constraint_error = SyncError::Database("constraint failed".to_string());
-        assert_eq!(is_retryable_error(&constraint_error), ErrorCategory::NotRetryable);
+        assert_eq!(
+            is_retryable_error(&constraint_error),
+            ErrorCategory::NotRetryable
+        );
     }
 
     #[test]
@@ -480,24 +476,27 @@ mod tests {
         // 5xx errors should be retryable
         let server_error = SyncError::Other("HTTP 503 Service Unavailable".to_string());
         assert_eq!(is_retryable_error(&server_error), ErrorCategory::Retryable);
-        
+
         let bad_gateway = SyncError::Other("502 Bad Gateway".to_string());
         assert_eq!(is_retryable_error(&bad_gateway), ErrorCategory::Retryable);
-        
+
         // 4xx errors should not be retryable
         let bad_request = SyncError::Other("HTTP 400 Bad Request".to_string());
-        assert_eq!(is_retryable_error(&bad_request), ErrorCategory::NotRetryable);
-        
+        assert_eq!(
+            is_retryable_error(&bad_request),
+            ErrorCategory::NotRetryable
+        );
+
         let not_found = SyncError::Other("404 Not Found".to_string());
         assert_eq!(is_retryable_error(&not_found), ErrorCategory::NotRetryable);
-        
+
         let forbidden = SyncError::Other("403 Forbidden".to_string());
         assert_eq!(is_retryable_error(&forbidden), ErrorCategory::NotRetryable);
-        
+
         // 408 and 429 should be retryable
         let timeout = SyncError::Other("408 Request Timeout".to_string());
         assert_eq!(is_retryable_error(&timeout), ErrorCategory::Retryable);
-        
+
         let rate_limit = SyncError::Other("429 Rate Limit Exceeded".to_string());
         assert_eq!(is_retryable_error(&rate_limit), ErrorCategory::Retryable);
     }
@@ -507,11 +506,11 @@ mod tests {
         // DNS errors should be retryable
         let dns_error = SyncError::Other("DNS lookup failed".to_string());
         assert_eq!(is_retryable_error(&dns_error), ErrorCategory::Retryable);
-        
+
         // Connection errors should be retryable
         let conn_error = SyncError::Other("connection timeout".to_string());
         assert_eq!(is_retryable_error(&conn_error), ErrorCategory::Retryable);
-        
+
         // Disk full should not be retryable
         let disk_full = SyncError::Other("disk full".to_string());
         assert_eq!(is_retryable_error(&disk_full), ErrorCategory::NotRetryable);
@@ -524,7 +523,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         // Should be very close (within 1 second)
         assert!(now.abs_diff(system_now) <= 1);
     }

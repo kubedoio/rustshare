@@ -11,6 +11,7 @@ mod files;
 mod folders;
 mod groups;
 pub mod invites;
+mod modules;
 mod notes;
 mod notifications;
 mod profile;
@@ -59,6 +60,7 @@ pub use groups::{
     list_folder_group_shares, list_my_groups, revoke_group_share, update_group_share_permission,
 };
 pub use invites::{accept_invite, create_invite, get_invite};
+pub use modules::{create_from_template, get_module, list_enabled_modules};
 pub use notes::{
     create_note, delete_note, get_note, get_public_note, list_notes, list_recent_notes, move_note,
     rename_note, save_note, toggle_visibility,

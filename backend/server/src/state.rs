@@ -93,6 +93,8 @@ pub struct ServiceState {
     pub ai_service: Option<Arc<AppAiService>>,
     pub upload_service: Option<Arc<AppUploadService>>,
     pub note_service: Arc<services::note_service::NoteService>,
+    pub module_service: Arc<services::module_service::ModuleService>,
+    pub template_service: Arc<services::template_service::TemplateService>,
 }
 
 /// Application configuration and runtime state.
@@ -164,6 +166,8 @@ pub struct AppState {
     pub poll_rate_limiter: Arc<Mutex<HashMap<String, Instant>>>,
     pub default_tenant_id: Uuid,
     pub note_service: Arc<services::note_service::NoteService>,
+    pub module_service: Arc<services::module_service::ModuleService>,
+    pub template_service: Arc<services::template_service::TemplateService>,
     pub public_base_url: String,
 }
 
@@ -191,6 +195,8 @@ impl FromRef<AppState> for ServiceState {
             ai_service: state.ai_service.clone(),
             upload_service: state.upload_service.clone(),
             note_service: state.note_service.clone(),
+            module_service: state.module_service.clone(),
+            template_service: state.template_service.clone(),
         }
     }
 }

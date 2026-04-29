@@ -1,6 +1,8 @@
 use crate::client::ApiClient;
 
-use crate::planner::{generate_plan_with_db_files, DbFileState, RemoteFileInfo, RemoteFolderInfo, SyncPlan};
+use crate::planner::{
+    generate_plan_with_db_files, DbFileState, RemoteFileInfo, RemoteFolderInfo, SyncPlan,
+};
 use crate::scanner::{scan_local_root, FileScanResult};
 use crate::socket::SocketServer;
 use crate::websocket::{RemoteChangeEvent, WebSocketClient};
@@ -75,11 +77,7 @@ struct RemoteState {
 }
 
 impl SyncManager {
-    pub fn new(
-        database: Database,
-        client: ApiClient,
-        workspace_root: PathBuf,
-    ) -> Self {
+    pub fn new(database: Database, client: ApiClient, workspace_root: PathBuf) -> Self {
         let database = Arc::new(Mutex::new(database));
         let worker = SyncWorker::new(client.clone(), database.clone());
 
@@ -141,13 +139,7 @@ impl SyncManager {
             let ws_shutdown = shutdown_tx.subscribe();
 
             tokio::spawn(async move {
-                Self::run_websocket_client(
-                    ws_server_url,
-                    ws_token,
-                    ws_event_tx,
-                    ws_shutdown,
-                )
-                .await;
+                Self::run_websocket_client(ws_server_url, ws_token, ws_event_tx, ws_shutdown).await;
             });
         }
 
@@ -213,7 +205,10 @@ impl SyncManager {
         let mut watcher = FsWatcher::new(fs_tx)?;
         watcher.watch(&workspace_root)?;
 
-        info!("Filesystem watcher started for: {}", workspace_root.display());
+        info!(
+            "Filesystem watcher started for: {}",
+            workspace_root.display()
+        );
 
         while let Some(event) = fs_rx.recv().await {
             debug!("Raw FS event: {:?}", event);
@@ -342,7 +337,7 @@ impl SyncManager {
     }
 
     /// Run a complete sync cycle: scan → plan → execute
-    /// 
+    ///
     /// State transitions: Idle → Scanning → Planning → Executing → Idle
     pub async fn run_full_sync(&self) -> Result<()> {
         // Only one sync at a time - check and transition to Scanning
@@ -460,14 +455,18 @@ impl SyncManager {
             info!("State: executing");
         }
 
-        self.execute_plan(&plan, &local_files, &remote_state, root).await
+        self.execute_plan(&plan, &local_files, &remote_state, root)
+            .await
     }
 
     /// Get file state from database for a specific root
-    async fn get_database_files(&self, root_id: Uuid) -> Result<std::collections::HashMap<PathBuf, DbFileState>> {
+    async fn get_database_files(
+        &self,
+        root_id: Uuid,
+    ) -> Result<std::collections::HashMap<PathBuf, DbFileState>> {
         let db = self.database.lock().await;
         let file_states = db.get_all_file_states(root_id)?;
-        
+
         let mut result = std::collections::HashMap::new();
         for state in &file_states {
             let hash = state
@@ -478,7 +477,8 @@ impl SyncManager {
             let modified_at = state
                 .remote_modified_at
                 .or(state.local_modified_at)
-                .unwrap_or_else(|| state.last_sync_at.unwrap_or_default()) as u64;
+                .unwrap_or_else(|| state.last_sync_at.unwrap_or_default())
+                as u64;
             result.insert(
                 state.relative_path.clone(),
                 DbFileState {
@@ -486,14 +486,21 @@ impl SyncManager {
                     modified_at,
                     _remote_id: state.remote_file_id,
                     is_directory: state.is_directory.unwrap_or(false),
-                    sync_status: state.sync_status.clone().unwrap_or_else(|| "synced".to_string()),
+                    sync_status: state
+                        .sync_status
+                        .clone()
+                        .unwrap_or_else(|| "synced".to_string()),
                     tombstone_side: state.tombstone_side.clone(),
                     tombstone_at: state.tombstone_at.map(|value| value as u64),
                 },
             );
         }
-        
-        info!("Loaded {} file states from database for root {}", result.len(), root_id);
+
+        info!(
+            "Loaded {} file states from database for root {}",
+            result.len(),
+            root_id
+        );
         Ok(result)
     }
 
@@ -515,7 +522,11 @@ impl SyncManager {
         let all_remote_files = match self.client.list_files().await {
             Ok(files) => files,
             Err(e) => {
-                tracing::warn!("Failed to fetch remote files for {}: {}. Treating remote file state as empty.", root.remote_path, e);
+                tracing::warn!(
+                    "Failed to fetch remote files for {}: {}. Treating remote file state as empty.",
+                    root.remote_path,
+                    e
+                );
                 Vec::new()
             }
         };
@@ -524,10 +535,9 @@ impl SyncManager {
         let mut files = Vec::new();
         for file in all_remote_files {
             if let Some(relative_path) = strip_remote_prefix(&file.path, &prefix) {
-                if quarantined_remote_files
-                    .iter()
-                    .any(|entry| entry.relative_path == relative_path && entry.remote_file_id == file.id)
-                {
+                if quarantined_remote_files.iter().any(|entry| {
+                    entry.relative_path == relative_path && entry.remote_file_id == file.id
+                }) {
                     warn!(
                         "Skipping quarantined remote file {} ({}) for root {}",
                         relative_path.display(),
@@ -556,7 +566,10 @@ impl SyncManager {
         if let Ok(tree) = self.client.get_folder_tree().await {
             collect_remote_folders(&tree, &prefix, &mut dirs, &mut absolute_folder_ids);
         } else {
-            tracing::warn!("Failed to fetch remote folder tree for {}. Treating remote folder state as empty.", root.remote_path);
+            tracing::warn!(
+                "Failed to fetch remote folder tree for {}. Treating remote folder state as empty.",
+                root.remote_path
+            );
         }
 
         Ok(RemoteState {
@@ -574,12 +587,11 @@ impl SyncManager {
         remote_state: &RemoteState,
         root: &SyncRoot,
     ) -> Result<()> {
-        let local_map: std::collections::HashMap<&PathBuf, &FileScanResult> = local_files
-            .iter()
-            .map(|f| (&f.relative_path, f))
-            .collect();
+        let local_map: std::collections::HashMap<&PathBuf, &FileScanResult> =
+            local_files.iter().map(|f| (&f.relative_path, f)).collect();
 
-        let remote_map: std::collections::HashMap<&PathBuf, &RemoteFileInfo> = remote_state.files
+        let remote_map: std::collections::HashMap<&PathBuf, &RemoteFileInfo> = remote_state
+            .files
             .iter()
             .map(|f| (&f.relative_path, f))
             .collect();
@@ -591,7 +603,9 @@ impl SyncManager {
                 let local_dir = root.local_path.join(relative_path);
                 tokio::fs::create_dir_all(&local_dir)
                     .await
-                    .with_context(|| format!("Failed to create local directory {}", local_dir.display()))?;
+                    .with_context(|| {
+                        format!("Failed to create local directory {}", local_dir.display())
+                    })?;
             }
         }
 
@@ -604,11 +618,20 @@ impl SyncManager {
 
         // Execute uploads
         for op in &plan.uploads {
-            if let crate::planner::SyncOp::Upload { relative_path, local_path, .. } = op {
+            if let crate::planner::SyncOp::Upload {
+                relative_path,
+                local_path,
+                ..
+            } = op
+            {
                 if let Some(local) = local_map.get(relative_path) {
                     let local_entry = LocalEntry {
                         path: local_path.clone(),
-                        entry_type: if local.is_directory { EntryType::Directory } else { EntryType::File },
+                        entry_type: if local.is_directory {
+                            EntryType::Directory
+                        } else {
+                            EntryType::File
+                        },
                         size: local.size,
                         hash: local.hash.clone(),
                         mtime: chrono::DateTime::from_timestamp(local.modified_at as i64, 0)
@@ -618,7 +641,11 @@ impl SyncManager {
                     };
 
                     let parent_folder_id = self
-                        .resolve_remote_parent_folder_id(root, relative_path, &mut absolute_folder_ids)
+                        .resolve_remote_parent_folder_id(
+                            root,
+                            relative_path,
+                            &mut absolute_folder_ids,
+                        )
                         .await?;
 
                     if let Err(e) = self
@@ -637,12 +664,20 @@ impl SyncManager {
 
         // Execute downloads
         for op in &plan.downloads {
-            if let crate::planner::SyncOp::Download { relative_path, remote_file_id, remote_hash, size, .. } = op {
+            if let crate::planner::SyncOp::Download {
+                relative_path,
+                remote_file_id,
+                remote_hash,
+                size,
+                ..
+            } = op
+            {
                 if let Some(remote) = remote_map.get(relative_path) {
                     let remote_entry = RemoteEntry {
                         id: *remote_file_id,
                         parent_id: None,
-                        name: relative_path.file_name()
+                        name: relative_path
+                            .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or("unknown")
                             .to_string(),
@@ -656,13 +691,17 @@ impl SyncManager {
 
                     let local_dest = root.local_path.join(relative_path);
 
-                    if let Err(e) = self.worker.download(
-                        &remote_entry,
-                        &local_dest,
-                        remote_hash,
-                        root.id,
-                        relative_path,
-                    ).await {
+                    if let Err(e) = self
+                        .worker
+                        .download(
+                            &remote_entry,
+                            &local_dest,
+                            remote_hash,
+                            root.id,
+                            relative_path,
+                        )
+                        .await
+                    {
                         error!("Failed to download {}: {}", relative_path.display(), e);
                         if is_missing_remote_error(&e.to_string()) {
                             self.quarantine_broken_remote_file(
@@ -688,41 +727,56 @@ impl SyncManager {
                     let local_path = root.local_path.join(relative_path);
                     match tokio::fs::remove_file(&local_path).await {
                         Ok(_) => {
-                            self.mark_delete_tombstone(root.id, relative_path, "remote").await;
+                            self.mark_delete_tombstone(root.id, relative_path, "remote")
+                                .await;
                             self.clear_broken_remote_file(root.id, relative_path).await;
                             info!("Deleted local file {}", relative_path.display());
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                            self.mark_delete_tombstone(root.id, relative_path, "remote").await;
+                            self.mark_delete_tombstone(root.id, relative_path, "remote")
+                                .await;
                             self.clear_broken_remote_file(root.id, relative_path).await;
                             info!("Local file {} was already absent", relative_path.display());
                         }
                         Err(e) => {
-                            warn!("Failed to delete local file {}: {}", local_path.display(), e);
-                        }
-                    }
-                }
-                crate::planner::SyncOp::DeleteRemote { relative_path, remote_file_id, .. } => {
-                    match self.client.delete_file(*remote_file_id).await {
-                        Ok(_) => {
-                            self.mark_delete_tombstone(root.id, relative_path, "local").await;
-                            self.clear_broken_remote_file(root.id, relative_path).await;
-                            info!("Deleted remote file {}", relative_path.display());
-                        }
-                        Err(e) if is_missing_remote_error(&e.to_string()) => {
-                            self.mark_delete_tombstone(root.id, relative_path, "local").await;
-                            self.clear_broken_remote_file(root.id, relative_path).await;
-                            info!(
-                                "Remote file {} ({}) was already absent",
-                                relative_path.display(),
-                                remote_file_id
+                            warn!(
+                                "Failed to delete local file {}: {}",
+                                local_path.display(),
+                                e
                             );
                         }
-                        Err(e) => {
-                            warn!("Failed to delete remote file {} ({}): {}", relative_path.display(), remote_file_id, e);
-                        }
                     }
                 }
+                crate::planner::SyncOp::DeleteRemote {
+                    relative_path,
+                    remote_file_id,
+                    ..
+                } => match self.client.delete_file(*remote_file_id).await {
+                    Ok(_) => {
+                        self.mark_delete_tombstone(root.id, relative_path, "local")
+                            .await;
+                        self.clear_broken_remote_file(root.id, relative_path).await;
+                        info!("Deleted remote file {}", relative_path.display());
+                    }
+                    Err(e) if is_missing_remote_error(&e.to_string()) => {
+                        self.mark_delete_tombstone(root.id, relative_path, "local")
+                            .await;
+                        self.clear_broken_remote_file(root.id, relative_path).await;
+                        info!(
+                            "Remote file {} ({}) was already absent",
+                            relative_path.display(),
+                            remote_file_id
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to delete remote file {} ({}): {}",
+                            relative_path.display(),
+                            remote_file_id,
+                            e
+                        );
+                    }
+                },
                 _ => {}
             }
         }
@@ -732,15 +786,24 @@ impl SyncManager {
                 let local_dir = root.local_path.join(relative_path);
                 match tokio::fs::remove_dir(&local_dir).await {
                     Ok(_) => {
-                        self.mark_delete_tombstone(root.id, relative_path, "remote").await;
+                        self.mark_delete_tombstone(root.id, relative_path, "remote")
+                            .await;
                         info!("Deleted local directory {}", relative_path.display());
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        self.mark_delete_tombstone(root.id, relative_path, "remote").await;
-                        info!("Local directory {} was already absent", relative_path.display());
+                        self.mark_delete_tombstone(root.id, relative_path, "remote")
+                            .await;
+                        info!(
+                            "Local directory {} was already absent",
+                            relative_path.display()
+                        );
                     }
                     Err(e) => {
-                        warn!("Failed to delete local directory {}: {}", local_dir.display(), e);
+                        warn!(
+                            "Failed to delete local directory {}: {}",
+                            local_dir.display(),
+                            e
+                        );
                     }
                 }
             }
@@ -755,11 +818,13 @@ impl SyncManager {
             {
                 match self.client.delete_folder(*remote_folder_id).await {
                     Ok(_) => {
-                        self.mark_delete_tombstone(root.id, relative_path, "local").await;
+                        self.mark_delete_tombstone(root.id, relative_path, "local")
+                            .await;
                         info!("Deleted remote directory {}", relative_path.display());
                     }
                     Err(e) if is_missing_remote_error(&e.to_string()) => {
-                        self.mark_delete_tombstone(root.id, relative_path, "local").await;
+                        self.mark_delete_tombstone(root.id, relative_path, "local")
+                            .await;
                         info!(
                             "Remote directory {} ({}) was already absent",
                             relative_path.display(),
@@ -767,7 +832,12 @@ impl SyncManager {
                         );
                     }
                     Err(e) => {
-                        warn!("Failed to delete remote directory {} ({}): {}", relative_path.display(), remote_folder_id, e);
+                        warn!(
+                            "Failed to delete remote directory {} ({}): {}",
+                            relative_path.display(),
+                            remote_folder_id,
+                            e
+                        );
                     }
                 }
             }
@@ -785,8 +855,12 @@ impl SyncManager {
         let parent = relative_path
             .parent()
             .filter(|path| !path.as_os_str().is_empty());
-        self.ensure_remote_directory(root, parent.unwrap_or_else(|| Path::new("")), absolute_folder_ids)
-            .await
+        self.ensure_remote_directory(
+            root,
+            parent.unwrap_or_else(|| Path::new("")),
+            absolute_folder_ids,
+        )
+        .await
     }
 
     async fn ensure_remote_directory(
@@ -799,12 +873,9 @@ impl SyncManager {
         let mut current_absolute = normalize_remote_path(&root.remote_path);
 
         if current_absolute != "/" {
-            current_parent = ensure_absolute_folder_path(
-                &self.client,
-                &current_absolute,
-                absolute_folder_ids,
-            )
-            .await?;
+            current_parent =
+                ensure_absolute_folder_path(&self.client, &current_absolute, absolute_folder_ids)
+                    .await?;
         }
 
         for component in relative_path.components() {
@@ -1052,9 +1123,7 @@ fn strip_remote_prefix(path: &str, prefix: &str) -> Option<PathBuf> {
     let normalized_prefix = normalize_remote_path(prefix);
 
     if normalized_prefix == "/" {
-        return Some(PathBuf::from(
-            normalized_path.trim_start_matches('/'),
-        ));
+        return Some(PathBuf::from(normalized_path.trim_start_matches('/')));
     }
 
     if normalized_path == normalized_prefix {

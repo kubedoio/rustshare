@@ -2,6 +2,7 @@
 	import { createQuery, createMutation } from '$lib/query-compat';
 	import { listAllFiles } from '$lib/api/files';
 	import { listRecentNotes, createNote } from '$lib/api/notes';
+	import { listEnabledModules } from '$lib/api/modules';
 	import { currentUser } from '$lib/stores/auth';
 
 	import { formatFileSize, formatDate } from '$lib/utils/format';
@@ -22,6 +23,7 @@
 	} from 'lucide-svelte';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import DashboardSkeleton from '$lib/components/common/DashboardSkeleton.svelte';
+	import WorkspaceModules from '$lib/components/dashboard/WorkspaceModules.svelte';
 
 	// Specific query for all user files to get accurate totals
 	const allFilesQuery = createQuery({
@@ -39,6 +41,12 @@
 		}
 	});
 
+	// Enabled modules for Workspace Modules section
+	const enabledModulesQuery = createQuery({
+		queryKey: ['enabled-modules'],
+		queryFn: () => listEnabledModules()
+	});
+
 	// Recent notes from dedicated API (only Notes folder)
 	const recentNotesQuery = createQuery({
 		queryKey: ['recent-notes', 'Notes'],
@@ -52,6 +60,8 @@
 		}
 	});
 
+	$: enabledModules = $enabledModulesQuery.data ?? [];
+	$: notesModule = enabledModules.find((m) => m.module_key === 'notes');
 	$: noteFiles = ($recentNotesQuery.data?.notes ?? []).slice(0, 8);
 
 	$: sharedFiles = $sharedFilesQuery.data || [];
@@ -92,7 +102,7 @@
 	<title>Dashboard - RustShare</title>
 </svelte:head>
 
-{#if $allFilesQuery.isLoading && $recentNotesQuery.isLoading}
+{#if $allFilesQuery.isLoading && $recentNotesQuery.isLoading && $enabledModulesQuery.isLoading}
 	<DashboardSkeleton />
 {:else}
 	<!-- Main dashboard container - aligned with topbar "+ New" button via consistent padding -->
@@ -199,71 +209,76 @@
 			</div>
 		</section>
 
-		<!-- Notes Panel -->
-		<section class="notes-panel">
-			<div class="notes-panel-header">
-				<div class="notes-panel-title-row">
-					<StickyNote size={16} class="text-brand-500" />
-					<h2 class="notes-panel-title">Notes</h2>
-				</div>
-				<div class="notes-panel-actions">
-					<p class="notes-panel-subtitle">Recent notes from your Library</p>
-					<button
-						class="btn btn-xs btn-primary"
-						on:click={handleCreateNote}
-						disabled={$createNoteMutation.isPending}
-					>
-						{#if $createNoteMutation.isPending}
-							<Loader2 size={12} class="animate-spin" />
-						{:else}
-							<Plus size={12} />
-						{/if}
-						<span>New Note</span>
-					</button>
-				</div>
-			</div>
+		<!-- Workspace Modules -->
+		<WorkspaceModules modules={enabledModules} />
 
-			{#if $recentNotesQuery.isLoading}
-				<div class="notes-loading">
-					<div class="notes-loading-spinner"></div>
-				</div>
-			{:else if noteFiles.length === 0}
-				<EmptyState
-					icon={StickyNote}
-					title="No notes found"
-					description="Create a new note to get started"
-					actionLabel="Create Note"
-					onAction={handleCreateNote}
-				/>
-			{:else}
-				<div class="notes-grid">
-					{#each noteFiles as note}
-						<button class="note-card" on:click={() => handleNoteClick(note)}>
-							<div class="note-card-header">
-								<div class="note-card-icon">
-									<FileText size={16} />
-								</div>
-								{#if isNotePublic(note)}
-									<Globe size={12} class="text-brand-500" />
-								{:else}
-									<Lock size={12} class="text-base-content/30" />
-								{/if}
-							</div>
-							<h3 class="note-card-title">{note.metadata.title || note.name}</h3>
-							<p class="note-card-meta">
-								{#if getNoteExcerpt(note)}
-									{getNoteExcerpt(note)} • {formatFileSize(note.size)} • {formatDate(
-										note.modified_at
-									)}
-								{:else}
-									{formatFileSize(note.size)} • {formatDate(note.modified_at)}
-								{/if}
-							</p>
+		<!-- Notes Panel (shown when Notes module is enabled) -->
+		{#if notesModule}
+			<section class="notes-panel">
+				<div class="notes-panel-header">
+					<div class="notes-panel-title-row">
+						<StickyNote size={16} class="text-brand-500" />
+						<h2 class="notes-panel-title">Notes</h2>
+					</div>
+					<div class="notes-panel-actions">
+						<p class="notes-panel-subtitle">Recent notes from your Library</p>
+						<button
+							class="btn btn-xs btn-primary"
+							on:click={handleCreateNote}
+							disabled={$createNoteMutation.isPending}
+						>
+							{#if $createNoteMutation.isPending}
+								<Loader2 size={12} class="animate-spin" />
+							{:else}
+								<Plus size={12} />
+							{/if}
+							<span>New Note</span>
 						</button>
-					{/each}
+					</div>
 				</div>
-			{/if}
-		</section>
+
+				{#if $recentNotesQuery.isLoading}
+					<div class="notes-loading">
+						<div class="notes-loading-spinner"></div>
+					</div>
+				{:else if noteFiles.length === 0}
+					<EmptyState
+						icon={StickyNote}
+						title="No notes found"
+						description="Create a new note to get started"
+						actionLabel="Create Note"
+						onAction={handleCreateNote}
+					/>
+				{:else}
+					<div class="notes-grid">
+						{#each noteFiles as note}
+							<button class="note-card" on:click={() => handleNoteClick(note)}>
+								<div class="note-card-header">
+									<div class="note-card-icon">
+										<FileText size={16} />
+									</div>
+									{#if isNotePublic(note)}
+										<Globe size={12} class="text-brand-500" />
+									{:else}
+										<Lock size={12} class="text-base-content/30" />
+									{/if}
+								</div>
+								<h3 class="note-card-title">{note.metadata.title || note.name}</h3>
+								<p class="note-card-meta">
+									{#if getNoteExcerpt(note)}
+										{getNoteExcerpt(note)} • {formatFileSize(note.size)} • {formatDate(
+											note.modified_at
+										)}
+									{:else}
+										{formatFileSize(note.size)} • {formatDate(note.modified_at)}
+									{/if}
+								</p>
+							</button>
+						{/each}
+					</div>
+				{/if}
+			</section>
+		{/if}
 
 		<!-- Shared With Me Section -->
 		{#if sharedFiles.length > 0}

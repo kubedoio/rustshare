@@ -223,9 +223,63 @@ pub fn replication_routes() -> Router<AppState> {
         )
 }
 
+pub fn module_routes() -> Router<AppState> {
+    use axum::routing::{get, post};
+    Router::new()
+        .route(
+            "/api/v1/modules",
+            get(crate::handlers::list_enabled_modules),
+        )
+        .route("/api/v1/modules/{key}", get(crate::handlers::get_module))
+        .route(
+            "/api/v1/modules/from-template",
+            post(crate::handlers::create_from_template),
+        )
+}
+
 pub fn admin_routes() -> Router<AppState> {
     use axum::routing::{delete, get, patch, post, put};
     Router::new()
+        .route(
+            "/api/v1/admin/modules",
+            get(crate::handlers::admin::modules::list_modules),
+        )
+        .route(
+            "/api/v1/admin/modules/{key}",
+            get(crate::handlers::admin::modules::get_module),
+        )
+        .route(
+            "/api/v1/admin/modules/{key}/enable",
+            post(crate::handlers::admin::modules::enable_module),
+        )
+        .route(
+            "/api/v1/admin/modules/{key}/disable",
+            post(crate::handlers::admin::modules::disable_module),
+        )
+        .route(
+            "/api/v1/admin/modules/{key}",
+            patch(crate::handlers::admin::modules::update_module),
+        )
+        .route(
+            "/api/v1/admin/templates",
+            get(crate::handlers::admin::templates::list_templates),
+        )
+        .route(
+            "/api/v1/admin/templates",
+            post(crate::handlers::admin::templates::create_template),
+        )
+        .route(
+            "/api/v1/admin/templates/{key}",
+            get(crate::handlers::admin::templates::get_template),
+        )
+        .route(
+            "/api/v1/admin/templates/{key}",
+            patch(crate::handlers::admin::templates::update_template),
+        )
+        .route(
+            "/api/v1/admin/templates/{key}",
+            delete(crate::handlers::admin::templates::delete_template),
+        )
         .route(
             "/api/v1/admin/users",
             get(crate::handlers::admin::users::list_admin_users),

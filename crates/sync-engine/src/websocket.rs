@@ -15,18 +15,11 @@ const MAX_RECONNECT_ATTEMPTS: usize = 10;
 #[derive(Debug, Clone)]
 pub enum RemoteChangeEvent {
     /// A file was changed on the remote
-    FileChanged {
-        file_id: String,
-        path: String,
-    },
+    FileChanged { file_id: String, path: String },
     /// A folder was changed on the remote
-    FolderChanged {
-        folder_id: String,
-    },
+    FolderChanged { folder_id: String },
     /// A sync operation completed on the remote
-    SyncComplete {
-        cursor: String,
-    },
+    SyncComplete { cursor: String },
 }
 
 /// WebSocket client for real-time remote change notifications
@@ -116,10 +109,7 @@ impl WebSocketClient {
             .await
             .context("Failed to connect to WebSocket server")?;
 
-        info!(
-            "WebSocket connected with status: {}",
-            response.status()
-        );
+        info!("WebSocket connected with status: {}", response.status());
 
         let (_, mut read) = ws_stream.split();
 

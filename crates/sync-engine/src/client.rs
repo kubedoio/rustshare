@@ -122,7 +122,9 @@ impl ApiClient {
             .error_for_status()
             .context("Server returned error when creating upload session")?;
 
-        response.json().await
+        response
+            .json()
+            .await
             .context("Failed to parse create session response")
     }
 
@@ -133,8 +135,10 @@ impl ApiClient {
         chunk_data: Vec<u8>,
         md5_hash: Option<String>,
     ) -> Result<UploadChunkResponse> {
-        let url = self.base_url
-            .join(&format!("/api/v1/uploads/sessions/{}/chunks/{}", session_id, chunk_index))?;
+        let url = self.base_url.join(&format!(
+            "/api/v1/uploads/sessions/{}/chunks/{}",
+            session_id, chunk_index
+        ))?;
 
         let mut request = self
             .client
@@ -155,7 +159,9 @@ impl ApiClient {
             .error_for_status()
             .with_context(|| format!("Server returned error for chunk {}", chunk_index))?;
 
-        response.json().await
+        response
+            .json()
+            .await
             .with_context(|| format!("Failed to parse chunk {} response", chunk_index))
     }
 
@@ -163,7 +169,8 @@ impl ApiClient {
         &self,
         session_id: Uuid,
     ) -> Result<CompleteUploadResponse> {
-        let url = self.base_url
+        let url = self
+            .base_url
             .join(&format!("/api/v1/uploads/sessions/{}/complete", session_id))?;
 
         let response = self
@@ -176,12 +183,14 @@ impl ApiClient {
             .error_for_status()
             .context("Server returned error when completing upload")?;
 
-        response.json().await
+        response
+            .json()
+            .await
             .context("Failed to parse complete upload response")
     }
 
     /// List files from the server
-    /// 
+    ///
     /// Uses /api/v1/files endpoint to get all files (works around broken delta endpoint)
     pub async fn list_files(&self) -> Result<Vec<RemoteFile>> {
         let url = self.base_url.join("/api/v1/files")?;
@@ -194,10 +203,12 @@ impl ApiClient {
             .context("Failed to list files")?
             .error_for_status()
             .context("Server returned error when listing files")?;
-        
-        let files: Vec<RemoteFile> = response.json().await
+
+        let files: Vec<RemoteFile> = response
+            .json()
+            .await
             .context("Failed to parse files list response")?;
-        
+
         Ok(files)
     }
 
@@ -303,7 +314,9 @@ mod tests {
             headers: HeaderMap,
         ) -> (StatusCode, Body) {
             assert_eq!(
-                headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()),
+                headers
+                    .get(AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok()),
                 Some("Bearer test-token")
             );
             state.hits.lock().await.push(file_id);

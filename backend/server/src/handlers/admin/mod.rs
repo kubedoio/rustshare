@@ -3,6 +3,8 @@
 pub mod audit;
 pub mod config;
 pub mod groups;
+pub mod modules;
+pub mod templates;
 pub mod users;
 pub mod webhooks;
 pub mod workflows;
