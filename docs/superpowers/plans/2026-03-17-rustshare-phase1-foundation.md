@@ -2257,10 +2257,10 @@ services:
       retries: 5
 
   rustfs:
-    image: minio/minio:latest
+    image: rustfs/rustfs:latest
     environment:
-      MINIO_ROOT_USER: rustfsadmin
-      MINIO_ROOT_PASSWORD: rustfsadmin
+      RUSTFS_ROOT_USER: rustfsadmin
+      RUSTFS_ROOT_PASSWORD: rustfsadmin
     volumes:
       - rustfs_data:/data
     ports:
@@ -2268,7 +2268,7 @@ services:
       - "9001:9001"
     command: server /data --console-address ":9001"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "sh", "-c", "nc -z localhost 9000 && nc -z localhost 9001"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -2428,7 +2428,7 @@ curl -X POST http://localhost:8080/api/auth/login \
 
 - **Backend API:** http://localhost:8080
 - **PostgreSQL:** localhost:5432
-- **MinIO Console:** http://localhost:9001 (rustfsadmin / rustfsadmin)
+- **RustFS Console:** http://localhost:9001 (rustfsadmin / rustfsadmin)
 
 ### Local Development
 
@@ -2474,7 +2474,7 @@ cargo test -- --ignored
 - **Modular Monolith:** Cargo workspace with separate crates
 - **Event Sourcing:** All state changes stored as events
 - **PostgreSQL:** Event store + projection tables
-- **RustFS (MinIO):** S3-compatible object storage for file blobs
+- **RustFS:** S3-compatible object storage for file blobs
 
 ## Project Structure
 

@@ -25,7 +25,7 @@ impl ObjectStore {
             .load()
             .await;
 
-        // Use path-style addressing for MinIO compatibility
+        // Use path-style addressing for RustFS/S3-compatible object storage
         let s3_config = aws_sdk_s3::config::Builder::from(&config)
             .force_path_style(true)
             .build();

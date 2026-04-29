@@ -44,8 +44,8 @@ jobs:
       DATABASE_URL: postgres://rustshare:postgres@localhost:5432/rustshare
       JWT_SECRET: test-jwt-secret-that-is-32-chars-long-for-ci-run
       RUSTSHARE_SECRET_ENCRYPTION_KEY: c2VjcmV0LWVuY3J5cHRpb24ta2V5LWhlcmUtMzItYnl0ZXM=
-      AWS_ACCESS_KEY_ID: minioadmin
-      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_ACCESS_KEY_ID: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: rustfsadmin
       RUSTFS_ENDPOINT: http://127.0.0.1:9000
       RUSTFS_PUBLIC_ENDPOINT: http://127.0.0.1:9000
       RUSTFS_REGION: us-east-1
@@ -65,32 +65,37 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Start MinIO
+      - name: Start RustFS
         run: |
-          docker run -d --name minio \
+          docker run -d --name rustfs \
             -p 9000:9000 -p 9001:9001 \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio server /data --console-address ":9001"
+            -e RUSTFS_ROOT_USER=rustfsadmin \
+            -e RUSTFS_ROOT_PASSWORD=rustfsadmin \
+            -e RUSTFS_DATA_DIR=/data \
+            -e RUSTFS_LOGS_DIR=/logs \
+            rustfs/rustfs:latest
 
-      - name: Wait for MinIO to be ready
+      - name: Wait for RustFS to be ready
         run: |
           for i in {1..30}; do
-            if curl -s http://localhost:9000/minio/health/live; then
-              echo "MinIO is ready"
+            if nc -z 127.0.0.1 9000 && nc -z 127.0.0.1 9001; then
+              echo "RustFS is ready"
               exit 0
             fi
-            echo "Waiting for MinIO..."
+            echo "Waiting for RustFS..."
             sleep 2
           done
-          echo "MinIO did not become ready in time"
+          echo "RustFS did not become ready in time"
           exit 1
 
-      - name: Create MinIO bucket
+      - name: Create RustFS bucket
         run: |
           docker run --rm --network host \
-            -e MC_HOST_local=http://minioadmin:minioadmin@127.0.0.1:9000 \
-            minio/mc mb --ignore-existing local/rustshare-files
+            -e AWS_ACCESS_KEY_ID=rustfsadmin \
+            -e AWS_SECRET_ACCESS_KEY=rustfsadmin \
+            amazon/aws-cli \
+            --endpoint-url http://127.0.0.1:9000 \
+            s3 mb s3://rustshare-files 2>&1 | grep -v "BucketAlreadyOwnedByYou" || true
 
       - name: Install sqlx-cli
         run: cargo install sqlx-cli --features postgres

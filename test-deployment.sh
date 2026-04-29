@@ -91,13 +91,13 @@ else
     test_failed "PostgreSQL is not healthy" "Check database logs"
 fi
 
-# Test 3: MinIO health
+# Test 3: RustFS health
 echo ""
 echo "Test 3: Checking object storage health..."
-if curl -s http://localhost:9000/minio/health/live > /dev/null 2>&1; then
-    test_passed "MinIO (RustFS) is healthy"
+if nc -z localhost 9000 > /dev/null 2>&1; then
+    test_passed "RustFS is healthy"
 else
-    test_failed "MinIO is not healthy" "Check MinIO logs"
+    test_failed "RustFS is not healthy" "Check RustFS logs"
 fi
 
 echo ""

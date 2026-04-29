@@ -171,7 +171,7 @@ The PostgreSQL schema is intentionally normalized and event-sourced-friendly.
 
 ## 7. Object Storage
 
-Files and metadata are stored in an S3-compatible object store (RustFS in Docker, MinIO, or AWS S3 in production).
+Files and metadata are stored in an S3-compatible object store (RustFS in Docker or AWS S3 in production).
 
 ### Object Layout
 
@@ -239,7 +239,7 @@ Files and metadata are stored in an S3-compatible object store (RustFS in Docker
 | Backend language | Rust | Memory safety, performance, and excellent async ecosystem. |
 | Web framework | Axum | Composable middleware, first-class Tower integration, and strong WebSocket support. |
 | Database | PostgreSQL 16 | Proven reliability, rich indexing, and JSONB for hybrid relational/document workloads. |
-| Object storage | S3-compatible (RustFS/MinIO) | Portable, deduplication-friendly, and allows zero-PostgreSQL operation. |
+| Object storage | S3-compatible (RustFS) | Portable, deduplication-friendly, and allows zero-PostgreSQL operation. |
 | Frontend framework | SvelteKit + Svelte 5 | Minimal runtime overhead, fine-grained reactivity, and simple static export. |
 | Auth hashing | Argon2id | OWASP-recommended password hashing. |
 | Encryption at rest | AES-256-GCM | Standard authenticated encryption for secrets and sensitive metadata. |

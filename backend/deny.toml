@@ -38,9 +38,6 @@ yanked = "deny"
 # Temporarily ignored advisories — these require upstream dependency updates
 # that are out of scope for the open-source-readiness PR. Track removal in a follow-up issue.
 ignore = [
-    # aws-lc-sys v0.38.0 — AWS SDK constrains this version; upgrade requires AWS SDK bump
-    { id = "RUSTSEC-2026-0044", reason = "aws-lc-sys upgrade blocked by AWS SDK dependencies" },
-    { id = "RUSTSEC-2026-0048", reason = "aws-lc-sys upgrade blocked by AWS SDK dependencies" },
     # rustls-webpki v0.101.7 — pulled in by rustls v0.21.12 via AWS SDK; fixed in v0.103+
     { id = "RUSTSEC-2026-0098", reason = "rustls-webpki v0.101.7 blocked by AWS SDK rustls 0.21 dependency" },
     { id = "RUSTSEC-2026-0099", reason = "rustls-webpki v0.101.7 blocked by AWS SDK rustls 0.21 dependency" },

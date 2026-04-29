@@ -26,7 +26,7 @@ echo "2. Waiting for services to start..."
 sleep 5
 
 echo ""
-echo "3. Creating MinIO bucket if needed..."
+echo "3. Creating RustFS bucket if needed..."
 docker run --rm --network rustshare_default \
   -e AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
   -e AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
