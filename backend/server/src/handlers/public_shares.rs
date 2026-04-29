@@ -273,7 +273,9 @@ pub async fn download_shared_file(
     ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
 
     // Get file metadata
-    let file_id = share.file_id.ok_or_else(|| bad_request("This share is not for a file"))?;
+    let file_id = share
+        .file_id
+        .ok_or_else(|| bad_request("This share is not for a file"))?;
 
     let file = state
         .metadata_store
@@ -372,7 +374,9 @@ pub async fn get_shared_folder_contents(
         .await
         .map_err(super::share_error_response)?;
 
-    let root_folder_id = share.folder_id.ok_or_else(|| internal_error("Invalid share: missing folder_id"))?;
+    let root_folder_id = share
+        .folder_id
+        .ok_or_else(|| internal_error("Invalid share: missing folder_id"))?;
 
     Ok(Json(SharedFolderContentsResponse {
         root_folder_id,
@@ -406,7 +410,9 @@ pub async fn download_shared_folder_file(
 
     ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
 
-    let root_folder_id = share.folder_id.ok_or_else(|| bad_request("This share is not for a folder"))?;
+    let root_folder_id = share
+        .folder_id
+        .ok_or_else(|| bad_request("This share is not for a folder"))?;
 
     if share.upload_only {
         return Err(forbidden("This share is upload-only"));
@@ -503,7 +509,9 @@ pub async fn upload_shared_folder_file(
 
     ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
 
-    let root_folder_id = share.folder_id.ok_or_else(|| bad_request("This share is not for a folder"))?;
+    let root_folder_id = share
+        .folder_id
+        .ok_or_else(|| bad_request("This share is not for a folder"))?;
 
     if !share.upload_only && claims.permissions < SharePermissions::Edit {
         return Err(forbidden("This share does not allow uploads"));
@@ -527,7 +535,9 @@ pub async fn upload_shared_folder_file(
         && requested_folder_id.is_some()
         && requested_folder_id != Some(root_folder_id)
     {
-        return Err(forbidden("Upload-only shares can only upload to the shared root folder"));
+        return Err(forbidden(
+            "Upload-only shares can only upload to the shared root folder",
+        ));
     }
 
     let target_folder_id = requested_folder_id.unwrap_or(root_folder_id);
@@ -615,11 +625,7 @@ fn bad_request(msg: impl Into<String>) -> Response {
 }
 
 fn forbidden(msg: impl Into<String>) -> Response {
-    (
-        StatusCode::FORBIDDEN,
-        Json(super::ErrorResponse::new(msg)),
-    )
-        .into_response()
+    (StatusCode::FORBIDDEN, Json(super::ErrorResponse::new(msg))).into_response()
 }
 
 fn internal_error(msg: impl Into<String>) -> Response {
@@ -631,6 +637,8 @@ fn internal_error(msg: impl Into<String>) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_SESSION_TOKEN: &str = "test-session-token";
 
     #[test]
     fn test_create_session_request_deserialization() {
@@ -649,7 +657,7 @@ mod tests {
     #[test]
     fn test_session_response_serialization() {
         let response = SessionResponse {
-            session_token: "test_token_123".to_string(),
+            session_token: TEST_SESSION_TOKEN.to_string(),
             expires_at: chrono::DateTime::parse_from_rfc3339("2026-12-31T23:59:59Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
@@ -658,7 +666,7 @@ mod tests {
         };
 
         let json = serde_json::to_value(&response).unwrap();
-        assert_eq!(json["session_token"], "test_token_123");
+        assert_eq!(json["session_token"], TEST_SESSION_TOKEN);
         assert_eq!(json["permissions"], "Edit");
         assert_eq!(json["upload_only"], true);
         assert!(json["expires_at"].is_string());

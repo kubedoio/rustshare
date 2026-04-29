@@ -9,7 +9,10 @@ vi.mock('$lib/stores/auth', () => ({
 	authStore: {
 		setLoading: vi.fn(),
 		login: vi.fn(),
-		subscribe: (fn: any) => { fn({ isAuthenticated: false }); return () => {}; }
+		subscribe: (fn: any) => {
+			fn({ isAuthenticated: false });
+			return () => {};
+		}
 	}
 }));
 

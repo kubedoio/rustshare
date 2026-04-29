@@ -307,7 +307,7 @@ pub async fn test_webhook(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|e| admin_internal_error(&format!("Failed to build HTTP client: {e}")))?;
+        .map_err(|e| admin_internal_error(format!("Failed to build HTTP client: {e}")))?;
 
     let mut request = client
         .post(&webhook.url)
@@ -339,13 +339,15 @@ pub async fn test_webhook(
                         "status": "error",
                         "detail": format!("Webhook returned HTTP {http_status}")
                     })),
-                ).into_response())
+                )
+                    .into_response())
             }
         }
         Err(e) => Err((
             StatusCode::BAD_GATEWAY,
             Json(json!({"status": "error", "detail": e.to_string()})),
-        ).into_response()),
+        )
+            .into_response()),
     }
 }
 
@@ -353,18 +355,20 @@ pub async fn test_webhook(
 // Helpers
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::result_large_err)]
 fn validate_events(events: &[String]) -> Result<(), axum::response::Response> {
     if events.is_empty() {
         return Err(admin_bad_request("events array must not be empty"));
     }
     for event in events {
         if !VALID_EVENTS.contains(&event.as_str()) {
-            return Err(admin_bad_request(&format!("Unknown event type: {event}")));
+            return Err(admin_bad_request(format!("Unknown event type: {event}")));
         }
     }
     Ok(())
 }
 
+#[allow(clippy::result_large_err)]
 fn encrypt_optional_secret(
     secret: Option<&str>,
     state: &AppState,

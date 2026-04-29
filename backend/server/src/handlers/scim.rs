@@ -625,7 +625,6 @@ fn map_user_row(row: &sqlx::postgres::PgRow) -> Result<User, sqlx::Error> {
     })
 }
 
-
 // Constant-time comparison for tokens
 mod constant_time_eq {
     pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {

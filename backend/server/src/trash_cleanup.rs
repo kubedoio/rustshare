@@ -63,7 +63,10 @@ async fn tick_trash_cleanup(metadata_store: &MetadataStore) -> anyhow::Result<()
     let mut total_cleaned = 0u64;
 
     for (user_id, tenant_id, days) in users {
-        match metadata_store.clean_old_trash(user_id, tenant_id, days).await {
+        match metadata_store
+            .clean_old_trash(user_id, tenant_id, days)
+            .await
+        {
             Ok(cleaned) => {
                 if cleaned > 0 {
                     info!(

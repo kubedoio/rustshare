@@ -40,13 +40,13 @@
 
 	function handleFileToggle(file: FileType, event?: MouseEvent) {
 		const isShiftKey = event?.shiftKey ?? false;
-		const allFileIds = files.map(f => f.id);
+		const allFileIds = files.map((f) => f.id);
 		selectionStore.toggleFile(file.id, isShiftKey, allFileIds);
 	}
 
 	function handleFolderToggle(folder: Folder, event?: MouseEvent) {
 		const isShiftKey = event?.shiftKey ?? false;
-		const allFolderIds = folders.map(f => f.id);
+		const allFolderIds = folders.map((f) => f.id);
 		selectionStore.toggleFolder(folder.id, isShiftKey, allFolderIds);
 	}
 
@@ -72,20 +72,26 @@
 
 	// Check if target folder is a descendant of the dragged folder (would create cycle)
 	function isDescendantOf(folderId: string, potentialParentId: string): boolean {
-		const folder = folders.find(f => f.id === folderId);
+		const folder = folders.find((f) => f.id === folderId);
 		if (!folder) return false;
 		if (folder.parent_folder_id === potentialParentId) return true;
 		if (!folder.parent_folder_id) return false;
 		return isDescendantOf(folder.parent_folder_id, potentialParentId);
 	}
 
-	function readDragPayload(e: DragEvent): { id: string; isFolder: boolean; parentFolderId: string | null } | null {
+	function readDragPayload(
+		e: DragEvent
+	): { id: string; isFolder: boolean; parentFolderId: string | null } | null {
 		try {
 			const data = e.dataTransfer?.getData('application/json');
 			if (data) {
 				const parsed = JSON.parse(data);
 				if (parsed && typeof parsed.id === 'string') {
-					return { id: parsed.id, isFolder: !!parsed.isFolder, parentFolderId: parsed.parentFolderId || null };
+					return {
+						id: parsed.id,
+						isFolder: !!parsed.isFolder,
+						parentFolderId: parsed.parentFolderId || null
+					};
 				}
 			}
 		} catch {
@@ -104,7 +110,7 @@
 			draggedItem = null;
 			return;
 		}
-		
+
 		// Can't drop onto itself
 		if (payload.id === folder.id) {
 			dragOverFolderId = null;
@@ -129,17 +135,17 @@
 		}
 
 		if (payload.isFolder) {
-			const draggedFolder = folders.find(f => f.id === payload?.id);
+			const draggedFolder = folders.find((f) => f.id === payload?.id);
 			if (draggedFolder) {
 				onMoveFolder(draggedFolder, folder.id);
 			}
 		} else {
-			const draggedFile = files.find(f => f.id === payload?.id);
+			const draggedFile = files.find((f) => f.id === payload?.id);
 			if (draggedFile) {
 				onMoveFile(draggedFile, folder.id);
 			}
 		}
-		
+
 		dragOverFolderId = null;
 		draggedItem = null;
 	}
@@ -155,18 +161,27 @@
 </script>
 
 {#if folders.length === 0 && files.length === 0}
-	<div class="flex flex-col items-center justify-center py-16 text-center px-4">
-		<div class="w-16 h-16 rounded-2xl bg-base-200 flex items-center justify-center mb-4">
-			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-8 h-8 text-base-content/30">
-				<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+	<div class="flex flex-col items-center justify-center px-4 py-16 text-center">
+		<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-base-200">
+			<svg
+				xmlns="http://www.w3.org/2000/svg"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="1.5"
+				class="h-8 w-8 text-base-content/30"
+			>
+				<path
+					d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+				/>
 			</svg>
 		</div>
-		<h3 class="text-lg font-semibold text-base-content mb-1">{emptyTitle}</h3>
-		<p class="text-sm text-base-content/60 mb-4">{emptyDescription}</p>
+		<h3 class="mb-1 text-lg font-semibold text-base-content">{emptyTitle}</h3>
+		<p class="mb-4 text-sm text-base-content/60">{emptyDescription}</p>
 		{#if emptyActionLabel}
 			<button
 				type="button"
-				class="px-4 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors"
+				class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-600"
 				on:click={() => document.getElementById('upload-file-input')?.click()}
 			>
 				{emptyActionLabel}
@@ -175,7 +190,9 @@
 	</div>
 {:else}
 	<!-- Responsive grid: 1 col mobile, 2 cols sm, auto-fill on larger -->
-	<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-2 sm:gap-3">
+	<div
+		class="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(13rem,1fr))]"
+	>
 		<!-- Folders -->
 		{#each folders as folder (folder.id)}
 			<FileGridTile
@@ -196,7 +213,12 @@
 				onPermanentDelete={() => onPermanentDeleteFolder(folder)}
 				onShare={() => onShareFolder(folder)}
 				onMove={() => onMoveFolder(folder, null)}
-				onDragStart={() => handleDragStart({ id: folder.id, isFolder: true, parentFolderId: folder.parent_folder_id })}
+				onDragStart={() =>
+					handleDragStart({
+						id: folder.id,
+						isFolder: true,
+						parentFolderId: folder.parent_folder_id
+					})}
 				onDragEnd={handleDragEnd}
 				onDrop={(e) => handleDropOnFolder(folder, e)}
 				onDragOver={() => handleDragOverFolder(folder.id)}
@@ -227,8 +249,12 @@
 				onDownload={() => onDownloadFile(file)}
 				onVersionHistory={() => onVersionHistory(file)}
 				onReplace={() => onReplaceFile(file)}
-				onEdit={() => { console.log('[FileGrid] onEdit triggered for', file.name); onEditFile(file); }}
-				onDragStart={() => handleDragStart({ id: file.id, isFolder: false, parentFolderId: file.parent_folder_id })}
+				onEdit={() => {
+					console.log('[FileGrid] onEdit triggered for', file.name);
+					onEditFile(file);
+				}}
+				onDragStart={() =>
+					handleDragStart({ id: file.id, isFolder: false, parentFolderId: file.parent_folder_id })}
 				onDragEnd={handleDragEnd}
 			/>
 		{/each}

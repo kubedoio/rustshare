@@ -36,10 +36,14 @@
 	<h2 class="text-2xl font-bold">Audit Log</h2>
 
 	{#if $auditQuery.isLoading}
-		<div class="flex justify-center py-16"><span class="loading loading-spinner loading-lg"></span></div>
+		<div class="flex justify-center py-16">
+			<span class="loading loading-lg loading-spinner"></span>
+		</div>
 	{:else if $auditQuery.isError}
 		<div class="alert alert-error">
-			Failed to load audit log: {$auditQuery.error instanceof Error ? $auditQuery.error.message : 'Unknown error'}
+			Failed to load audit log: {$auditQuery.error instanceof Error
+				? $auditQuery.error.message
+				: 'Unknown error'}
 		</div>
 	{:else if $auditQuery.data}
 		<AuditTable

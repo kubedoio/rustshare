@@ -191,16 +191,10 @@ pub struct ScimV2Group {
 }
 
 /// SCIM schemas container.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ScimSchemas {
     #[serde(rename = "schemas")]
     pub schemas: Vec<String>,
-}
-
-impl Default for ScimSchemas {
-    fn default() -> Self {
-        Self { schemas: vec![] }
-    }
 }
 
 impl ScimV2User {

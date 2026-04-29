@@ -240,7 +240,8 @@ where
         request: CreateSessionRequest,
     ) -> Result<CreateSessionResponse, UploadError> {
         // Validate file name
-        crate::validation::validate_name(&request.file_name).map_err(|msg| UploadError::InvalidFileName(msg))?;
+        crate::validation::validate_name(&request.file_name)
+            .map_err(UploadError::InvalidFileName)?;
 
         // Validate parent folder if provided
         if let Some(folder_id) = request.folder_id {
@@ -509,7 +510,11 @@ where
             .assemble_chunks(session_id, session.total_chunks(), &storage_key)
             .await?;
 
-        let file = if let Some(mut existing) = self.metadata_store.find_file_by_path(&path, user_id).await? {
+        let file = if let Some(mut existing) = self
+            .metadata_store
+            .find_file_by_path(&path, user_id)
+            .await?
+        {
             if existing.content_hash == final_hash && existing.size == session.total_size as i64 {
                 existing
             } else {
@@ -754,7 +759,6 @@ where
 
         Ok(Bytes::from(content))
     }
-
 }
 
 #[cfg(test)]
@@ -763,8 +767,8 @@ mod tests {
     use crate::domain::{FileVersion, Folder};
     use crate::services::file_service::EventStoreOps;
     use bytes::Bytes;
-    use std::sync::Mutex;
     use chrono::Utc;
+    use std::sync::Mutex;
 
     struct MockUploadRepo {
         session: Mutex<Option<UploadSession>>,
@@ -813,7 +817,11 @@ mod tests {
             unreachable!()
         }
 
-        async fn complete_session(&self, session_id: Uuid, file_id: Uuid) -> Result<(), UploadError> {
+        async fn complete_session(
+            &self,
+            session_id: Uuid,
+            file_id: Uuid,
+        ) -> Result<(), UploadError> {
             self.completed.lock().unwrap().push((session_id, file_id));
             if let Some(session) = self.session.lock().unwrap().as_mut() {
                 session.file_id = Some(file_id);
@@ -837,7 +845,10 @@ mod tests {
             Ok(Vec::new())
         }
 
-        async fn list_user_sessions(&self, _user_id: UserId) -> Result<Vec<UploadSession>, UploadError> {
+        async fn list_user_sessions(
+            &self,
+            _user_id: UserId,
+        ) -> Result<Vec<UploadSession>, UploadError> {
             Ok(Vec::new())
         }
     }
@@ -856,23 +867,44 @@ mod tests {
 
     #[async_trait::async_trait]
     impl UploadObjectStore for MockUploadObjectStore {
-        async fn put_chunk(&self, _session_id: Uuid, _chunk_index: u32, _data: Bytes) -> Result<(), UploadError> {
+        async fn put_chunk(
+            &self,
+            _session_id: Uuid,
+            _chunk_index: u32,
+            _data: Bytes,
+        ) -> Result<(), UploadError> {
             unreachable!()
         }
 
-        async fn get_chunk(&self, _session_id: Uuid, _chunk_index: u32) -> Result<Option<Bytes>, UploadError> {
+        async fn get_chunk(
+            &self,
+            _session_id: Uuid,
+            _chunk_index: u32,
+        ) -> Result<Option<Bytes>, UploadError> {
             Ok(Some(Bytes::new()))
         }
 
-        async fn delete_chunk(&self, _session_id: Uuid, _chunk_index: u32) -> Result<(), UploadError> {
+        async fn delete_chunk(
+            &self,
+            _session_id: Uuid,
+            _chunk_index: u32,
+        ) -> Result<(), UploadError> {
             Ok(())
         }
 
-        async fn delete_session_chunks(&self, _session_id: Uuid, _total_chunks: u32) -> Result<(), UploadError> {
+        async fn delete_session_chunks(
+            &self,
+            _session_id: Uuid,
+            _total_chunks: u32,
+        ) -> Result<(), UploadError> {
             Ok(())
         }
 
-        async fn chunk_exists(&self, _session_id: Uuid, _chunk_index: u32) -> Result<bool, UploadError> {
+        async fn chunk_exists(
+            &self,
+            _session_id: Uuid,
+            _chunk_index: u32,
+        ) -> Result<bool, UploadError> {
             Ok(true)
         }
 
@@ -914,7 +946,11 @@ mod tests {
             Ok(None)
         }
 
-        async fn find_file_by_path(&self, _path: &str, _owner_id: Uuid) -> Result<Option<File>, UploadError> {
+        async fn find_file_by_path(
+            &self,
+            _path: &str,
+            _owner_id: Uuid,
+        ) -> Result<Option<File>, UploadError> {
             Ok(self.existing_file.lock().unwrap().clone())
         }
 
@@ -929,7 +965,11 @@ mod tests {
             Ok(())
         }
 
-        async fn create_file_version(&self, _file: &File, version: &FileVersion) -> Result<(), UploadError> {
+        async fn create_file_version(
+            &self,
+            _file: &File,
+            version: &FileVersion,
+        ) -> Result<(), UploadError> {
             self.created_versions.lock().unwrap().push(version.clone());
             Ok(())
         }
@@ -948,7 +988,11 @@ mod tests {
     }
 
     impl EventStoreOps for MockEventStore {
-        async fn append(&self, event: &Event, _broadcaster: &EventBroadcaster) -> anyhow::Result<()> {
+        async fn append(
+            &self,
+            event: &Event,
+            _broadcaster: &EventBroadcaster,
+        ) -> anyhow::Result<()> {
             self.events.lock().unwrap().push(event.clone());
             Ok(())
         }
@@ -1017,7 +1061,10 @@ mod tests {
         assert!(metadata_store.created_files.lock().unwrap().is_empty());
         assert_eq!(metadata_store.updated_files.lock().unwrap().len(), 1);
         assert_eq!(metadata_store.created_versions.lock().unwrap().len(), 1);
-        assert_eq!(repo.completed.lock().unwrap().as_slice(), &[(session_id, existing_file.id)]);
+        assert_eq!(
+            repo.completed.lock().unwrap().as_slice(),
+            &[(session_id, existing_file.id)]
+        );
 
         let updated = metadata_store.updated_files.lock().unwrap()[0].clone();
         assert_eq!(updated.id, existing_file.id);
@@ -1028,6 +1075,9 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, EventType::FileModified);
         let payload = events[0].payload.clone();
-        assert_eq!(payload["file_id"].as_str(), Some(existing_file.id.to_string().as_str()));
+        assert_eq!(
+            payload["file_id"].as_str(),
+            Some(existing_file.id.to_string().as_str())
+        );
     }
 }

@@ -541,7 +541,8 @@ async fn create_test_compat(pool: sqlx::PgPool) -> MetadataStoreCompat {
             _tenant_id: Uuid,
             _query: &str,
             _limit: usize,
-        ) -> Result<Vec<rustshare_storage::metadata_v2::schemas::SearchResult>, RepositoryError> {
+        ) -> Result<Vec<rustshare_storage::metadata_v2::schemas::SearchResult>, RepositoryError>
+        {
             Ok(vec![])
         }
     }

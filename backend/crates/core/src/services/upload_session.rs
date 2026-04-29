@@ -136,7 +136,7 @@ impl UploadSession {
             total_size,
             chunk_size,
             uploaded_bytes: 0,
-            chunks_received: vec![0; (total_chunks as usize + 31) / 32],
+            chunks_received: vec![0; (total_chunks as usize).div_ceil(32)],
             status: UploadSessionStatus::Pending,
             file_hash,
             created_at: now,
@@ -152,7 +152,7 @@ impl UploadSession {
         if total_size == 0 {
             1
         } else {
-            ((total_size + chunk_size - 1) / chunk_size) as u32
+            total_size.div_ceil(chunk_size) as u32
         }
     }
 

@@ -84,11 +84,15 @@
 </svelte:head>
 
 <div class="relative min-h-screen overflow-hidden bg-base-200 px-4 py-8 lg:px-8 lg:py-10">
-	<div class="relative mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]">
+	<div
+		class="relative mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]"
+	>
 		<section class="order-2 lg:order-1">
 			<div class="max-w-3xl">
 				<p class="rs-kicker mb-6">Operational entrypoint</p>
-				<h1 class="font-display max-w-[13ch] text-4xl leading-[0.96] text-base-content sm:text-5xl xl:text-6xl">
+				<h1
+					class="max-w-[13ch] font-display text-4xl leading-[0.96] text-base-content sm:text-5xl xl:text-6xl"
+				>
 					Controlled file access starts with a calm login.
 				</h1>
 				<p class="mt-6 max-w-2xl text-base leading-7 text-base-content/68 xl:text-lg">
@@ -99,10 +103,21 @@
 
 			<div class="mt-8 space-y-3">
 				<div class="flex items-start gap-4 border border-base-300/70 bg-base-100/60 px-4 py-3.5">
-					<div class="flex h-8 w-8 flex-shrink-0 items-center justify-center bg-brand-500/10 text-brand-500">
-						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
-							<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
-							<polyline points="10 17 15 12 10 7"/>
+					<div
+						class="flex h-8 w-8 flex-shrink-0 items-center justify-center bg-brand-500/10 text-brand-500"
+					>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							class="h-4 w-4"
+						>
+							<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+							<polyline points="10 17 15 12 10 7" />
 						</svg>
 					</div>
 					<div>
@@ -111,10 +126,21 @@
 					</div>
 				</div>
 				<div class="flex items-start gap-4 border border-base-300/70 bg-base-100/60 px-4 py-3.5">
-					<div class="flex h-8 w-8 flex-shrink-0 items-center justify-center bg-brand-500/10 text-brand-500">
-						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
-							<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
-							<path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+					<div
+						class="flex h-8 w-8 flex-shrink-0 items-center justify-center bg-brand-500/10 text-brand-500"
+					>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							class="h-4 w-4"
+						>
+							<rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+							<path d="M7 11V7a5 5 0 0 1 10 0v4" />
 						</svg>
 					</div>
 					<div>
@@ -123,24 +149,45 @@
 					</div>
 				</div>
 				<div class="flex items-start gap-4 border border-base-300/70 bg-base-100/60 px-4 py-3.5">
-					<div class="flex h-8 w-8 flex-shrink-0 items-center justify-center bg-brand-500/10 text-brand-500">
-						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
-							<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-							<path d="m9 12 2 2 4-4"/>
+					<div
+						class="flex h-8 w-8 flex-shrink-0 items-center justify-center bg-brand-500/10 text-brand-500"
+					>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							class="h-4 w-4"
+						>
+							<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+							<path d="m9 12 2 2 4-4" />
 						</svg>
 					</div>
 					<div>
 						<p class="text-sm font-semibold text-base-content">Clear recovery paths</p>
-						<p class="text-sm text-base-content/60">Explicit fallback when identity providers need attention.</p>
+						<p class="text-sm text-base-content/60">
+							Explicit fallback when identity providers need attention.
+						</p>
 					</div>
 				</div>
 			</div>
 		</section>
 
-		<section class="order-1 mx-auto w-full max-w-md border border-base-300/80 bg-base-100/94 p-6 shadow-panel backdrop-blur-xl sm:p-8 lg:order-2">
+		<section
+			class="order-1 mx-auto w-full max-w-md border border-base-300/80 bg-base-100/94 p-6 shadow-panel backdrop-blur-xl sm:p-8 lg:order-2"
+		>
 			<div class="mb-8">
 				<div class="mb-5 flex h-16 w-16 items-center justify-center bg-brand-500 text-brand-500">
-					<svg class="h-10 w-10 text-white" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+					<svg
+						class="h-10 w-10 text-white"
+						viewBox="0 0 32 32"
+						fill="none"
+						xmlns="http://www.w3.org/2000/svg"
+						aria-hidden="true"
+					>
 						<rect x="2" y="6" width="28" height="20" rx="3" fill="currentColor" />
 						<rect x="2" y="9" width="28" height="4" fill="currentColor" class="text-brand-300" />
 						<circle cx="24" cy="21" r="5" fill="#121315" />
@@ -155,30 +202,34 @@
 			</div>
 
 			<div class="mb-6 border border-base-300/70 bg-base-200/55 px-4 py-3">
-				<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/42">
+				<p class="text-xs font-semibold tracking-[0.14em] text-base-content/42 uppercase">
 					Trust statement
 				</p>
 				<p class="mt-2 font-data text-sm leading-6 text-base-content/74">
-					Use organization SSO when it is configured. Password sign-in stays visible only as
-					an explicit fallback.
+					Use organization SSO when it is configured. Password sign-in stays visible only as an
+					explicit fallback.
 				</p>
 			</div>
 
 			{#if isAuthConfigLoading}
-				<div class="flex items-center justify-center border border-base-300/80 bg-base-200/35 px-4 py-6" aria-live="polite">
-					<span class="loading loading-spinner loading-md"></span>
+				<div
+					class="flex items-center justify-center border border-base-300/80 bg-base-200/35 px-4 py-6"
+					aria-live="polite"
+				>
+					<span class="loading loading-md loading-spinner"></span>
 				</div>
 			{:else}
 				{#if isReturningFromDeviceApproval}
 					<div class="mb-4 border border-info/25 bg-info/10 p-3 text-sm text-info" role="alert">
 						<span>
-							<strong>Approve a device pairing</strong> — sign in first, then you can enter the pairing code.
+							<strong>Approve a device pairing</strong> — sign in first, then you can enter the pairing
+							code.
 						</span>
 					</div>
 				{/if}
 
 				{#if authConfigError}
-					<div class="alert alert-warning mb-4 text-sm" role="alert">
+					<div class="mb-4 alert text-sm alert-warning" role="alert">
 						<span>{authConfigError}</span>
 					</div>
 				{/if}
@@ -190,7 +241,17 @@
 						on:click={handleOidcLogin}
 						disabled={isLoading}
 					>
-						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5" aria-hidden="true">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							class="h-5 w-5"
+							aria-hidden="true"
+						>
 							<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
 							<polyline points="10,17 15,12 10,7" />
 							<line x1="15" x2="3" y1="12" y2="12" />
@@ -205,7 +266,9 @@
 							<div class="w-full border-t border-base-300/80"></div>
 						</div>
 						<div class="relative flex justify-center text-sm">
-							<span class="bg-base-100 px-3 font-data text-xs font-semibold uppercase tracking-[0.14em] text-base-content/42">
+							<span
+								class="bg-base-100 px-3 font-data text-xs font-semibold tracking-[0.14em] text-base-content/42 uppercase"
+							>
 								Password fallback
 							</span>
 						</div>
@@ -213,15 +276,20 @@
 				{/if}
 
 				{#if authConfig.password_login_enabled}
-						{#if showError}
-					<div class="mb-4 border border-error/25 bg-error/10 p-3 text-sm text-error" role="alert">
-						<span>{errorMessage}</span>
-					</div>
-						{/if}
+					{#if showError}
+						<div
+							class="mb-4 border border-error/25 bg-error/10 p-3 text-sm text-error"
+							role="alert"
+						>
+							<span>{errorMessage}</span>
+						</div>
+					{/if}
 
 					<form on:submit={handleSubmit} class="space-y-4">
 						<div>
-							<label for="email" class="mb-1.5 block text-sm font-semibold text-base-content">Email</label>
+							<label for="email" class="mb-1.5 block text-sm font-semibold text-base-content"
+								>Email</label
+							>
 							<input
 								id="email"
 								type="email"
@@ -234,7 +302,9 @@
 						</div>
 
 						<div>
-							<label for="password" class="mb-1.5 block text-sm font-semibold text-base-content">Password</label>
+							<label for="password" class="mb-1.5 block text-sm font-semibold text-base-content"
+								>Password</label
+							>
 							<input
 								id="password"
 								type="password"
@@ -252,7 +322,9 @@
 							disabled={isLoading}
 						>
 							{#if isLoading}
-								<span class="inline-block h-5 w-5 animate-spin border-2 border-white/30 border-t-white"></span>
+								<span
+									class="inline-block h-5 w-5 animate-spin border-2 border-white/30 border-t-white"
+								></span>
 								Signing in...
 							{:else}
 								Sign in with password
@@ -262,21 +334,23 @@
 				{/if}
 
 				{#if !hasAnyLoginMethod}
-					<div class="border border-warning/25 bg-warning/10 p-4 text-sm leading-6 text-warning" role="alert">
-						No login method is enabled for this deployment. Save OIDC settings in the admin
-						control plane or re-enable password login before inviting users.
+					<div
+						class="border border-warning/25 bg-warning/10 p-4 text-sm leading-6 text-warning"
+						role="alert"
+					>
+						No login method is enabled for this deployment. Save OIDC settings in the admin control
+						plane or re-enable password login before inviting users.
 					</div>
 				{/if}
-
 			{/if}
 
 			<div class="mt-6 border border-base-300/70 bg-base-200/55 px-4 py-3">
-				<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/42">
+				<p class="text-xs font-semibold tracking-[0.14em] text-base-content/42 uppercase">
 					Operator note
 				</p>
 				<p class="mt-2 font-data text-sm leading-6 text-base-content/72">
-					If SSO is missing here, the runtime config is probably incomplete rather than
-					ignored. Check the admin OIDC page first.
+					If SSO is missing here, the runtime config is probably incomplete rather than ignored.
+					Check the admin OIDC page first.
 				</p>
 			</div>
 		</section>

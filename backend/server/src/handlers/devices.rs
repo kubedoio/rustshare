@@ -9,9 +9,9 @@ use serde::Serialize;
 use sqlx::FromRow;
 use uuid::Uuid;
 
+use super::ErrorResponse;
 use crate::handlers::AuthenticatedUser;
 use crate::state::DatabaseState;
-use super::ErrorResponse;
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -130,10 +130,7 @@ fn db_error(e: sqlx::Error) -> (StatusCode, Json<ErrorResponse>) {
 }
 
 fn not_found(msg: &str) -> (StatusCode, Json<ErrorResponse>) {
-    (
-        StatusCode::NOT_FOUND,
-        Json(ErrorResponse::new(msg)),
-    )
+    (StatusCode::NOT_FOUND, Json(ErrorResponse::new(msg)))
 }
 
 // ---------------------------------------------------------------------------

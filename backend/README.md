@@ -1,5 +1,7 @@
 # RustShare Backend
 
+> **Note:** For the canonical development setup guide, see [`docs/development.md`](../docs/development.md).
+
 RustShare backend built with Axum, PostgreSQL, RustFS-compatible object storage, and WebSocket realtime updates.
 
 ## Current Role
@@ -18,6 +20,8 @@ The backend is the only production runtime server. It is responsible for:
 - `rustshare-core`: domain models and business logic
 - `rustshare-storage`: PostgreSQL and object-storage integration
 - `rustshare-auth`: password hashing, JWTs, cookie-session helpers
+- `rustshare-crypto`: encryption utilities and secret management
+- `rustshare-infrastructure`: shared infrastructure concerns (logging, configuration, etc.)
 - `rustshare-server`: Axum HTTP and WebSocket server
 
 ## Contract Rules

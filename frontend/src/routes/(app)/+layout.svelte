@@ -19,7 +19,9 @@
 	let showSearch = $derived($page.url.pathname === '/files');
 
 	// Determine sidebar variant based on route
-	let sidebarVariant: 'files' | 'default' = $derived($page.url.pathname.startsWith('/files') ? 'files' : 'default');
+	let sidebarVariant: 'files' | 'default' = $derived(
+		$page.url.pathname.startsWith('/files') ? 'files' : 'default'
+	);
 
 	// Check if this is the files page (needs full-height layout)
 	let isFilesPage = $derived($page.url.pathname === '/files');
@@ -51,10 +53,10 @@
 	}
 </script>
 
-<AppShell 
-	{showSearch} 
+<AppShell
+	{showSearch}
 	onSearchChange={showSearch ? handleSearchChange : null}
-	sidebarVariant={sidebarVariant}
+	{sidebarVariant}
 	onCreateFolder={handleCreateFolder}
 >
 	{#if isFilesPage}

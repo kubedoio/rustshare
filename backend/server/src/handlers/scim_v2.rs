@@ -19,8 +19,8 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::AppState;
 use super::ErrorResponse;
+use crate::AppState;
 
 // ---------------------------------------------------------------------------
 // Query parameters
@@ -88,7 +88,10 @@ fn scim_json_response<T: serde::Serialize>(status: StatusCode, body: T) -> Respo
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(format!("JSON serialization error: {}", e))),
+                Json(ErrorResponse::new(format!(
+                    "JSON serialization error: {}",
+                    e
+                ))),
             )
                 .into_response();
         }
@@ -339,27 +342,11 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         operations: &[rustshare_core::services::ScimPatchOperation],
     ) -> Result<(), sqlx::Error> {
         for op in operations {
-            match op.op.to_lowercase().as_str() {
-                "replace" => {
-                    if let Some(ref path) = op.path {
-                        match path.as_str() {
-                            "active" => {
-                                if let Some(ref value) = op.value {
-                                    let active = value.as_bool().unwrap_or(true);
-                                    sqlx::query(
-                                        "UPDATE users SET disabled_at = $2, updated_at = NOW() WHERE id = $1"
-                                    )
-                                    .bind(id)
-                                    .bind(if active { None::<DateTime<Utc>> } else { Some(Utc::now()) })
-                                    .execute(&self.pool)
-                                    .await?;
-                                }
-                            }
-                            _ => {}
-                        }
-                    } else if let Some(ref value) = op.value {
-                        // Handle value object with multiple attributes
-                        if let Some(active) = value.get("active").and_then(|v| v.as_bool()) {
+            if op.op.to_lowercase().as_str() == "replace" {
+                if let Some(ref path) = op.path {
+                    if path.as_str() == "active" {
+                        if let Some(ref value) = op.value {
+                            let active = value.as_bool().unwrap_or(true);
                             sqlx::query(
                                 "UPDATE users SET disabled_at = $2, updated_at = NOW() WHERE id = $1"
                             )
@@ -369,8 +356,22 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                             .await?;
                         }
                     }
+                } else if let Some(ref value) = op.value {
+                    // Handle value object with multiple attributes
+                    if let Some(active) = value.get("active").and_then(|v| v.as_bool()) {
+                        sqlx::query(
+                            "UPDATE users SET disabled_at = $2, updated_at = NOW() WHERE id = $1",
+                        )
+                        .bind(id)
+                        .bind(if active {
+                            None::<DateTime<Utc>>
+                        } else {
+                            Some(Utc::now())
+                        })
+                        .execute(&self.pool)
+                        .await?;
+                    }
                 }
-                _ => {}
             }
         }
         Ok(())
@@ -1105,4 +1106,3 @@ fn get_base_url(_headers: &HeaderMap) -> String {
     // Try to construct from request headers, fallback to env or default
     std::env::var("RUSTSHARE_SCIM_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string())
 }
-

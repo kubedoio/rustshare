@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, log_admin_action};
+use super::{
+    admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, log_admin_action,
+};
 use crate::{handlers::AdminUser, AppState};
 
 // ---------------------------------------------------------------------------
@@ -414,7 +416,11 @@ pub async fn update_admin_user(
     };
 
     // Build dynamic query
-    let password_clause = if password_changed { ", password_hash = $6" } else { "" };
+    let password_clause = if password_changed {
+        ", password_hash = $6"
+    } else {
+        ""
+    };
     let query = format!(
         "UPDATE users
          SET display_name = $2, email = $3, storage_quota = $4, is_admin = $5{}, updated_at = NOW()

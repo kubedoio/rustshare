@@ -1,0 +1,127 @@
+name: CI
+
+# Covers the backend workspace and the root workspace (including apps/desktop and crates/).
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  dco-check:
+    name: DCO Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify DCO sign-off
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+            HEAD_COMMIT="${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            BASE="origin/main"
+            HEAD_COMMIT="HEAD"
+          else
+            BASE="${{ github.event.before }}"
+            HEAD_COMMIT="HEAD"
+          fi
+          COMMITS=$(git log --format='%H' "${BASE}..${HEAD_COMMIT}")
+          MISSING=0
+          for COMMIT in $COMMITS; do
+            if ! git log -1 --format='%B' "$COMMIT" | grep -q 'Signed-off-by:'; then
+              echo "ERROR: Commit $COMMIT is missing DCO sign-off"
+              git log -1 --format='  %H %s' "$COMMIT"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -ne 0 ]; then
+            echo ""
+            echo "Every commit must include a DCO sign-off. Use: git commit -s"
+            exit 1
+          fi
+          echo "All commits have DCO sign-off"
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+        working-directory: ./backend
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-features -- -D warnings
+        working-directory: ./backend
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-features --lib
+        working-directory: ./backend
+
+  # Validates that the project compiles in release mode (expensive but required by audit).
+  build-release:
+    name: Build Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --all-features
+        working-directory: ./backend
+
+  cargo-deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          manifest-path: backend/Cargo.toml
+
+  root-workspace:
+    name: Root Workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace
+      - run: cargo test --workspace --lib
+
+# BLOCKED: sqlx prepare --check
+# This job is intentionally disabled because `backend/.sqlx/` does not exist yet.
+# Before enabling this job, you MUST:
+#   1. Start Postgres: docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
+#   2. Install sqlx-cli: cargo install sqlx-cli --features postgres
+#   3. Run migrations: cd backend && sqlx migrate run
+#   4. Generate query metadata: sqlx prepare --workspace
+#   5. Commit the generated `backend/.sqlx/` directory to the repository
+# Only after `backend/.sqlx/` is committed can the sqlx-check job be re-enabled.

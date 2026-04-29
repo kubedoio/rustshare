@@ -278,7 +278,6 @@ pub async fn update_profile(
     }
 }
 
-
 /// Update the current user's trash retention setting.
 ///
 /// # Endpoint
@@ -306,10 +305,12 @@ pub async fn update_trash_retention(
 ) -> Response {
     // Validate
     if let Some(days) = req.days {
-        if days < 1 || days > 365 {
+        if !(1..=365).contains(&days) {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(ErrorResponse::new("trash_retention_days must be between 1 and 365")),
+                Json(ErrorResponse::new(
+                    "trash_retention_days must be between 1 and 365",
+                )),
             )
                 .into_response();
         }

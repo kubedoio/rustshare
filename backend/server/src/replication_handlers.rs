@@ -145,18 +145,12 @@ pub async fn get_file_replication_status(
         last_error,
     ) = if let Some(row) = row {
         (
-            row.try_get("replication_state")
-                .map_err(internal_error)?,
-            row.try_get("job_status")
-                .map_err(internal_error)?,
-            row.try_get("attempt_count")
-                .map_err(internal_error)?,
-            row.try_get("next_attempt_at")
-                .map_err(internal_error)?,
-            row.try_get("last_attempt_at")
-                .map_err(internal_error)?,
-            row.try_get("last_error")
-                .map_err(internal_error)?,
+            row.try_get("replication_state").map_err(internal_error)?,
+            row.try_get("job_status").map_err(internal_error)?,
+            row.try_get("attempt_count").map_err(internal_error)?,
+            row.try_get("next_attempt_at").map_err(internal_error)?,
+            row.try_get("last_attempt_at").map_err(internal_error)?,
+            row.try_get("last_error").map_err(internal_error)?,
         )
     } else {
         ("primary_written".to_string(), None, None, None, None, None)
@@ -397,14 +391,13 @@ async fn require_admin(state: &AppState, user_id: Uuid) -> Result<(), Response> 
     Ok(())
 }
 
+#[allow(clippy::result_large_err)]
 fn row_i64(row: &sqlx::postgres::PgRow, column: &str) -> Result<i64, Response> {
     row.try_get::<i64, _>(column).map_err(internal_error)
 }
 
-fn row_optional_i64(
-    row: &sqlx::postgres::PgRow,
-    column: &str,
-) -> Result<Option<i64>, Response> {
+#[allow(clippy::result_large_err)]
+fn row_optional_i64(row: &sqlx::postgres::PgRow, column: &str) -> Result<Option<i64>, Response> {
     row.try_get::<Option<i64>, _>(column)
         .map_err(internal_error)
 }

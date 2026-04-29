@@ -59,17 +59,17 @@
 <svelte:window on:keydown={handleKeydown} />
 
 <dialog class="modal" class:modal-open={open} {open}>
-	<div class="modal-box max-w-7xl flex h-[90vh] flex-col p-0">
+	<div class="modal-box flex h-[90vh] max-w-7xl flex-col p-0">
 		<!-- Header -->
 		<div class="border-b border-base-300 px-6 py-4">
 			<div class="flex items-center justify-between">
 				<div class="min-w-0 flex-1">
-					<h3 class="font-bold text-lg truncate">{file?.name || title}</h3>
+					<h3 class="truncate text-lg font-bold">{file?.name || title}</h3>
 					{#if file}
 						<p class="text-sm text-base-content/60">
 							{formatFileSize(file.size)} • {file.mime_type}
 							{#if hasChanges}
-								<span class="text-warning ml-2">(unsaved changes)</span>
+								<span class="ml-2 text-warning">(unsaved changes)</span>
 							{/if}
 						</p>
 					{/if}
@@ -77,7 +77,7 @@
 
 				<button
 					type="button"
-					class="btn btn-ghost btn-sm btn-circle"
+					class="btn btn-circle btn-ghost btn-sm"
 					aria-label="Close editor"
 					on:click={handleClose}
 					disabled={isSaving}
@@ -88,7 +88,7 @@
 						viewBox="0 0 24 24"
 						stroke-width="1.5"
 						stroke="currentColor"
-						class="w-6 h-6"
+						class="h-6 w-6"
 					>
 						<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
 					</svg>
@@ -96,7 +96,7 @@
 			</div>
 
 			{#if error}
-				<div class="alert alert-error mt-3 text-sm">
+				<div class="mt-3 alert text-sm alert-error">
 					<svg
 						xmlns="http://www.w3.org/2000/svg"
 						class="h-5 w-5 shrink-0"
@@ -117,13 +117,13 @@
 		</div>
 
 		<!-- Content Area -->
-		<div class="flex-1 overflow-hidden relative">
+		<div class="relative flex-1 overflow-hidden">
 			<slot />
-			
+
 			{#if isLoading}
-				<div class="absolute inset-0 flex flex-col items-center justify-center bg-base-100/80 z-20">
-					<span class="loading loading-spinner loading-lg text-primary"></span>
-					<p class="text-sm text-base-content/60 mt-4">Loading file content...</p>
+				<div class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-base-100/80">
+					<span class="loading loading-lg loading-spinner text-primary"></span>
+					<p class="mt-4 text-sm text-base-content/60">Loading file content...</p>
 				</div>
 			{/if}
 		</div>
@@ -133,7 +133,7 @@
 			<div class="flex items-center justify-between gap-4">
 				<!-- Save Mode Selection -->
 				<div class="flex items-center gap-4">
-					<label class="flex items-center gap-2 cursor-pointer">
+					<label class="flex cursor-pointer items-center gap-2">
 						<input
 							type="radio"
 							name="saveMode"
@@ -144,7 +144,7 @@
 						/>
 						<span class="text-sm">Create new version</span>
 					</label>
-					<label class="flex items-center gap-2 cursor-pointer">
+					<label class="flex cursor-pointer items-center gap-2">
 						<input
 							type="radio"
 							name="saveMode"
@@ -159,12 +159,12 @@
 
 				<!-- Change Description (only for new version) -->
 				{#if saveMode === 'new_version'}
-					<div class="flex-1 max-w-md">
+					<div class="max-w-md flex-1">
 						<input
 							type="text"
 							placeholder="Change description (optional)"
 							bind:value={changeDescription}
-							class="input input-sm input-bordered w-full"
+							class="input-bordered input input-sm w-full"
 							disabled={isSaving}
 						/>
 					</div>
@@ -181,15 +181,15 @@
 						Cancel
 					</button>
 
-					<div class="dropdown dropdown-top dropdown-end">
+					<div class="dropdown dropdown-end dropdown-top">
 						<button
 							type="button"
-							class="btn btn-primary btn-sm"
+							class="btn btn-sm btn-primary"
 							disabled={!canSave}
 							on:click={() => handleSave()}
 						>
 							{#if isSaving}
-								<span class="loading loading-spinner loading-xs"></span>
+								<span class="loading loading-xs loading-spinner"></span>
 								Saving...
 							{:else}
 								<svg
@@ -198,7 +198,7 @@
 									viewBox="0 0 24 24"
 									stroke-width="1.5"
 									stroke="currentColor"
-									class="w-4 h-4"
+									class="h-4 w-4"
 								>
 									<path
 										stroke-linecap="round"
@@ -214,7 +214,7 @@
 			</div>
 
 			<!-- Keyboard shortcuts hint -->
-			<div class="text-xs text-base-content/40 mt-2 text-right">
+			<div class="mt-2 text-right text-xs text-base-content/40">
 				Keyboard shortcuts: <kbd class="kbd kbd-sm">Ctrl+S</kbd> to save,
 				<kbd class="kbd kbd-sm">Esc</kbd> to close
 			</div>

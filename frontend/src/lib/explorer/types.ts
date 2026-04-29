@@ -2,9 +2,9 @@
  * ==============================================================================
  * EXPLORER DOMAIN TYPES
  * ==============================================================================
- * 
+ *
  * Central type definitions for the unified file explorer architecture.
- * 
+ *
  * Concepts:
  * - ExplorerRoot: A traversable filesystem hierarchy (my-files, shared)
  * - CollectionView: A virtual aggregation (starred, recent, photos)
@@ -44,19 +44,19 @@ export type ExplorerMode = 'folder' | 'collection';
 export interface CanonicalLocation {
 	/** The root type this item belongs to */
 	rootType: ExplorerRoot;
-	
+
 	/** The folder ID containing this item */
 	folderId: string;
-	
+
 	/** The path from root to this folder as an array of folder names */
 	folderPath: string[];
-	
+
 	/** IDs of all ancestor folders from root to parent */
 	ancestorFolderIds: string[];
-	
+
 	/** The item ID (if referencing a specific file/folder) */
 	itemId?: string;
-	
+
 	/** The item type (if referencing a specific item) */
 	itemType?: 'file' | 'folder';
 }
@@ -119,10 +119,10 @@ export interface NonMountedSharedItem {
 export interface BreadcrumbItem {
 	/** Display label */
 	label: string;
-	
+
 	/** Folder ID for navigation (undefined for root) */
 	folderId?: string;
-	
+
 	/** Root type for root-level items */
 	rootType?: ExplorerRoot;
 }
@@ -134,28 +134,28 @@ export interface BreadcrumbItem {
 export interface ExplorerState {
 	/** Current mode: folder navigation or collection view */
 	mode: ExplorerMode;
-	
+
 	/** Currently active root (my-files or shared) */
 	activeRoot: ExplorerRoot;
-	
+
 	/** Currently active collection (null when in folder mode) */
 	activeCollection: CollectionView | null;
-	
+
 	/** Current folder ID being viewed (null at root) */
 	currentFolderId: string | null;
-	
+
 	/** Path from root to current folder as folder names */
 	currentFolderPath: string[];
-	
+
 	/** Currently selected item ID */
 	selectedItemId: string | null;
-	
+
 	/** Type of selected item */
 	selectedItemType: 'file' | 'folder' | null;
-	
+
 	/** Set of expanded tree node IDs */
 	expandedTreeNodeIds: Set<string>;
-	
+
 	/** Breadcrumb path for display */
 	breadcrumb: BreadcrumbItem[];
 }
@@ -171,10 +171,10 @@ export interface ExplorerState {
 export interface CollectionItemMetadata {
 	/** The canonical location of this item */
 	canonicalLocation: CanonicalLocation;
-	
+
 	/** When this item was starred (for starred collection) */
 	starredAt?: string;
-	
+
 	/** When this item was last modified (for recent collection) */
 	modifiedAt?: string;
 }
@@ -256,14 +256,14 @@ export function isAtRoot(location: CanonicalLocation): boolean {
 export function isValidCanonicalLocation(location: unknown): location is CanonicalLocation {
 	if (typeof location !== 'object' || location === null) return false;
 	const loc = location as Partial<CanonicalLocation>;
-	
+
 	return (
 		isExplorerRoot(loc.rootType) &&
 		typeof loc.folderId === 'string' &&
 		Array.isArray(loc.folderPath) &&
 		Array.isArray(loc.ancestorFolderIds) &&
-		loc.folderPath.every(p => typeof p === 'string') &&
-		loc.ancestorFolderIds.every(id => typeof id === 'string')
+		loc.folderPath.every((p) => typeof p === 'string') &&
+		loc.ancestorFolderIds.every((id) => typeof id === 'string')
 	);
 }
 
@@ -312,7 +312,7 @@ export const ROOT_CONFIG: Record<ExplorerRoot, RootConfig> = {
 		icon: 'folder',
 		rootFolderId: null // My Files root has null parent
 	},
-	'shared': {
+	shared: {
 		id: 'shared',
 		label: 'Shared',
 		icon: 'shared',
@@ -324,7 +324,7 @@ export const ROOT_CONFIG: Record<ExplorerRoot, RootConfig> = {
  * Configuration for all collections.
  */
 export const COLLECTION_CONFIG: Record<CollectionView, { label: string; icon: string }> = {
-	'starred': { label: 'Starred', icon: 'star' },
-	'recent': { label: 'Recent', icon: 'clock' },
-	'photos': { label: 'Photos', icon: 'image' }
+	starred: { label: 'Starred', icon: 'star' },
+	recent: { label: 'Recent', icon: 'clock' },
+	photos: { label: 'Photos', icon: 'image' }
 };

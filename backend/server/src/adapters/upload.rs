@@ -43,11 +43,7 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
         }
     }
 
-    async fn delete_chunk(
-        &self,
-        session_id: Uuid,
-        chunk_index: u32,
-    ) -> Result<(), UploadError> {
+    async fn delete_chunk(&self, session_id: Uuid, chunk_index: u32) -> Result<(), UploadError> {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
         self.inner
             .delete(&key)
@@ -69,11 +65,7 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
         Ok(())
     }
 
-    async fn chunk_exists(
-        &self,
-        session_id: Uuid,
-        chunk_index: u32,
-    ) -> Result<bool, UploadError> {
+    async fn chunk_exists(&self, session_id: Uuid, chunk_index: u32) -> Result<bool, UploadError> {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
         self.inner
             .exists(&key)
@@ -142,20 +134,14 @@ impl rustshare_core::services::UploadMetadataStore for UploadMetadataStoreAdapte
             .map_err(|e| UploadError::Database(e.to_string()))
     }
 
-    async fn create_file(
-        &self,
-        file: &rustshare_core::domain::File,
-    ) -> Result<(), UploadError> {
+    async fn create_file(&self, file: &rustshare_core::domain::File) -> Result<(), UploadError> {
         self.inner
             .create_file(file)
             .await
             .map_err(|e| UploadError::Database(e.to_string()))
     }
 
-    async fn update_file(
-        &self,
-        file: &rustshare_core::domain::File,
-    ) -> Result<(), UploadError> {
+    async fn update_file(&self, file: &rustshare_core::domain::File) -> Result<(), UploadError> {
         self.inner
             .update_file(file)
             .await

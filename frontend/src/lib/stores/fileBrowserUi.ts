@@ -29,7 +29,7 @@ function createFileBrowserUiStore() {
 				searchQuery: ''
 			};
 		}
-		
+
 		try {
 			const saved = localStorage.getItem(STORAGE_KEY);
 			if (saved) {
@@ -46,7 +46,7 @@ function createFileBrowserUiStore() {
 		} catch {
 			// Ignore parse errors
 		}
-		
+
 		return {
 			viewMode: 'list',
 			sortField: 'name',
@@ -64,14 +64,17 @@ function createFileBrowserUiStore() {
 	const persist = (state: FileBrowserUiState) => {
 		if (!browser) return;
 		try {
-			localStorage.setItem(STORAGE_KEY, JSON.stringify({
-				viewMode: state.viewMode,
-				sortField: state.sortField,
-				sortOrder: state.sortOrder,
-				expandedFolderIds: Array.from(state.expandedFolderIds),
-				selectedFolderId: state.selectedFolderId,
-				searchQuery: state.searchQuery
-			}));
+			localStorage.setItem(
+				STORAGE_KEY,
+				JSON.stringify({
+					viewMode: state.viewMode,
+					sortField: state.sortField,
+					sortOrder: state.sortOrder,
+					expandedFolderIds: Array.from(state.expandedFolderIds),
+					selectedFolderId: state.selectedFolderId,
+					searchQuery: state.searchQuery
+				})
+			);
 		} catch {
 			// Ignore storage errors
 		}
@@ -79,33 +82,36 @@ function createFileBrowserUiStore() {
 
 	return {
 		subscribe,
-		
+
 		setViewMode: (mode: ViewMode) => {
-			update(state => {
+			update((state) => {
 				const newState = { ...state, viewMode: mode };
 				persist(newState);
 				return newState;
 			});
 		},
-		
+
 		toggleViewMode: () => {
-			update(state => {
-				const newState: FileBrowserUiState = { ...state, viewMode: state.viewMode === 'grid' ? 'list' : 'grid' };
+			update((state) => {
+				const newState: FileBrowserUiState = {
+					...state,
+					viewMode: state.viewMode === 'grid' ? 'list' : 'grid'
+				};
 				persist(newState);
 				return newState;
 			});
 		},
-		
+
 		setSort: (field: SortField, order: SortOrder) => {
-			update(state => {
+			update((state) => {
 				const newState = { ...state, sortField: field, sortOrder: order };
 				persist(newState);
 				return newState;
 			});
 		},
-		
+
 		toggleSort: (field: SortField) => {
-			update(state => {
+			update((state) => {
 				let newOrder: SortOrder = 'asc';
 				if (state.sortField === field) {
 					newOrder = state.sortOrder === 'asc' ? 'desc' : 'asc';
@@ -115,9 +121,9 @@ function createFileBrowserUiStore() {
 				return newState;
 			});
 		},
-		
+
 		expandFolder: (folderId: string) => {
-			update(state => {
+			update((state) => {
 				const expanded = new Set(state.expandedFolderIds);
 				expanded.add(folderId);
 				const newState = { ...state, expandedFolderIds: expanded };
@@ -125,9 +131,9 @@ function createFileBrowserUiStore() {
 				return newState;
 			});
 		},
-		
+
 		collapseFolder: (folderId: string) => {
-			update(state => {
+			update((state) => {
 				const expanded = new Set(state.expandedFolderIds);
 				expanded.delete(folderId);
 				const newState = { ...state, expandedFolderIds: expanded };
@@ -135,9 +141,9 @@ function createFileBrowserUiStore() {
 				return newState;
 			});
 		},
-		
+
 		toggleFolderExpanded: (folderId: string) => {
-			update(state => {
+			update((state) => {
 				const expanded = new Set(state.expandedFolderIds);
 				if (expanded.has(folderId)) {
 					expanded.delete(folderId);
@@ -149,39 +155,39 @@ function createFileBrowserUiStore() {
 				return newState;
 			});
 		},
-		
+
 		selectFolder: (folderId: string | null) => {
-			update(state => {
+			update((state) => {
 				const newState = { ...state, selectedFolderId: folderId };
 				persist(newState);
 				return newState;
 			});
 		},
-		
+
 		setSearchQuery: (query: string) => {
-			update(state => {
+			update((state) => {
 				const newState = { ...state, searchQuery: query };
 				persist(newState);
 				return newState;
 			});
 		},
-		
+
 		clearSearch: () => {
-			update(state => {
+			update((state) => {
 				const newState = { ...state, searchQuery: '' };
 				persist(newState);
 				return newState;
 			});
 		},
-		
+
 		collapseAll: () => {
-			update(state => {
+			update((state) => {
 				const newState = { ...state, expandedFolderIds: new Set<string>() };
 				persist(newState);
 				return newState;
 			});
 		},
-		
+
 		reset: () => {
 			const defaultState = {
 				viewMode: 'list' as ViewMode,
@@ -200,9 +206,9 @@ function createFileBrowserUiStore() {
 export const fileBrowserUi = createFileBrowserUiStore();
 
 // Derived stores for convenience
-export const viewMode = derived(fileBrowserUi, $ui => $ui.viewMode);
-export const sortField = derived(fileBrowserUi, $ui => $ui.sortField);
-export const sortOrder = derived(fileBrowserUi, $ui => $ui.sortOrder);
-export const expandedFolderIds = derived(fileBrowserUi, $ui => $ui.expandedFolderIds);
-export const selectedFolderId = derived(fileBrowserUi, $ui => $ui.selectedFolderId);
-export const searchQuery = derived(fileBrowserUi, $ui => $ui.searchQuery);
+export const viewMode = derived(fileBrowserUi, ($ui) => $ui.viewMode);
+export const sortField = derived(fileBrowserUi, ($ui) => $ui.sortField);
+export const sortOrder = derived(fileBrowserUi, ($ui) => $ui.sortOrder);
+export const expandedFolderIds = derived(fileBrowserUi, ($ui) => $ui.expandedFolderIds);
+export const selectedFolderId = derived(fileBrowserUi, ($ui) => $ui.selectedFolderId);
+export const searchQuery = derived(fileBrowserUi, ($ui) => $ui.searchQuery);

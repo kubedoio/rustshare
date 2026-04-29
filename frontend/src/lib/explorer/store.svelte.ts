@@ -2,9 +2,9 @@
  * ==============================================================================
  * EXPLORER STORE / CONTROLLER
  * ==============================================================================
- * 
+ *
  * Central navigation controller for the unified file explorer.
- * 
+ *
  * This store implements the contracts defined in the specification:
  * - activateRoot(rootType): Switch to a root (my-files or shared)
  * - activateCollection(view): Switch to a collection view
@@ -12,9 +12,9 @@
  * - openFileLocation(location): Navigate to a file's parent folder and select it
  * - toggleTreeNode(folderId): Toggle tree expansion without navigation
  * - resolveCollectionItem(itemId): Resolve an item's canonical location
- * 
+ *
  * Non-negotiable rule:
- * There must be one central navigation resolver that turns any click from any 
+ * There must be one central navigation resolver that turns any click from any
  * view into canonical explorer state.
  */
 
@@ -32,12 +32,12 @@ import type {
 	CollectionFile,
 	CollectionFolder
 } from './types';
-import { 
-	createDefaultExplorerState, 
-	isExplorerRoot, 
+import {
+	createDefaultExplorerState,
+	isExplorerRoot,
 	isCollectionView,
 	isValidCanonicalLocation,
-	ROOT_CONFIG 
+	ROOT_CONFIG
 } from './types';
 
 // ============================================================================
@@ -47,18 +47,18 @@ import {
 function createExplorerStore() {
 	// Internal state
 	const state = writable<ExplorerState>(createDefaultExplorerState());
-	
+
 	// Derived stores for convenience
-	const mode = derived(state, $s => $s.mode);
-	const activeRoot = derived(state, $s => $s.activeRoot);
-	const activeCollection = derived(state, $s => $s.activeCollection);
-	const currentFolderId = derived(state, $s => $s.currentFolderId);
-	const currentFolderPath = derived(state, $s => $s.currentFolderPath);
-	const selectedItemId = derived(state, $s => $s.selectedItemId);
-	const selectedItemType = derived(state, $s => $s.selectedItemType);
-	const expandedTreeNodeIds = derived(state, $s => $s.expandedTreeNodeIds);
-	const breadcrumb = derived(state, $s => $s.breadcrumb);
-	const isAtRoot = derived(state, $s => $s.currentFolderId === null);
+	const mode = derived(state, ($s) => $s.mode);
+	const activeRoot = derived(state, ($s) => $s.activeRoot);
+	const activeCollection = derived(state, ($s) => $s.activeCollection);
+	const currentFolderId = derived(state, ($s) => $s.currentFolderId);
+	const currentFolderPath = derived(state, ($s) => $s.currentFolderPath);
+	const selectedItemId = derived(state, ($s) => $s.selectedItemId);
+	const selectedItemType = derived(state, ($s) => $s.selectedItemType);
+	const expandedTreeNodeIds = derived(state, ($s) => $s.expandedTreeNodeIds);
+	const breadcrumb = derived(state, ($s) => $s.breadcrumb);
+	const isAtRoot = derived(state, ($s) => $s.currentFolderId === null);
 
 	// ============================================================================
 	// PRIVATE HELPERS
@@ -72,9 +72,7 @@ function createExplorerStore() {
 		folderPath: string[],
 		folderIds: string[]
 	): BreadcrumbItem[] {
-		const items: BreadcrumbItem[] = [
-			{ label: ROOT_CONFIG[root].label, rootType: root }
-		];
+		const items: BreadcrumbItem[] = [{ label: ROOT_CONFIG[root].label, rootType: root }];
 
 		for (let i = 0; i < folderPath.length; i++) {
 			items.push({
@@ -127,9 +125,9 @@ function createExplorerStore() {
 
 	/**
 	 * activateRoot - Contract A
-	 * 
+	 *
 	 * Input: rootType ('my-files' | 'shared')
-	 * Output: 
+	 * Output:
 	 * - explorer enters folder mode
 	 * - activeRoot is set
 	 * - activeCollection cleared
@@ -141,7 +139,7 @@ function createExplorerStore() {
 			return;
 		}
 
-		state.update(s => {
+		state.update((s) => {
 			const newState: ExplorerState = {
 				...s,
 				mode: 'folder',
@@ -167,7 +165,7 @@ function createExplorerStore() {
 
 	/**
 	 * activateCollection - Contract B
-	 * 
+	 *
 	 * Input: collection name ('starred' | 'recent' | 'photos')
 	 * Output:
 	 * - explorer enters collection mode
@@ -180,7 +178,7 @@ function createExplorerStore() {
 			return;
 		}
 
-		state.update(s => {
+		state.update((s) => {
 			const newState: ExplorerState = {
 				...s,
 				mode: 'collection',
@@ -206,7 +204,7 @@ function createExplorerStore() {
 
 	/**
 	 * openFolder - Contract C
-	 * 
+	 *
 	 * Input: canonical location for folder
 	 * Output:
 	 * - mode becomes folder
@@ -224,11 +222,11 @@ function createExplorerStore() {
 			return;
 		}
 
-		state.update(s => {
+		state.update((s) => {
 			const newExpandedIds = new Set(s.expandedTreeNodeIds);
-			
+
 			// Expand all ancestors
-			location.ancestorFolderIds.forEach(id => newExpandedIds.add(id));
+			location.ancestorFolderIds.forEach((id) => newExpandedIds.add(id));
 
 			const newState: ExplorerState = {
 				...s,
@@ -261,7 +259,7 @@ function createExplorerStore() {
 
 	/**
 	 * openFileLocation - Contract D
-	 * 
+	 *
 	 * Input: canonical location for file
 	 * Output:
 	 * - mode becomes folder
@@ -284,11 +282,11 @@ function createExplorerStore() {
 			return;
 		}
 
-		state.update(s => {
+		state.update((s) => {
 			const newExpandedIds = new Set(s.expandedTreeNodeIds);
-			
+
 			// Expand all ancestors (including the folder containing the file)
-			location.ancestorFolderIds.forEach(id => newExpandedIds.add(id));
+			location.ancestorFolderIds.forEach((id) => newExpandedIds.add(id));
 			newExpandedIds.add(location.folderId);
 
 			const newState: ExplorerState = {
@@ -322,12 +320,12 @@ function createExplorerStore() {
 
 	/**
 	 * toggleTreeNode - Contract E
-	 * 
+	 *
 	 * Input: folderId
 	 * Output: only expansion state changes, no navigation
 	 */
 	function toggleTreeNode(folderId: string) {
-		state.update(s => {
+		state.update((s) => {
 			const newExpandedIds = new Set(s.expandedTreeNodeIds);
 			if (newExpandedIds.has(folderId)) {
 				newExpandedIds.delete(folderId);
@@ -345,7 +343,7 @@ function createExplorerStore() {
 	 * expandTreeNode - Expand a specific tree node without navigation
 	 */
 	function expandTreeNode(folderId: string) {
-		state.update(s => {
+		state.update((s) => {
 			const newExpandedIds = new Set(s.expandedTreeNodeIds);
 			newExpandedIds.add(folderId);
 			return {
@@ -359,7 +357,7 @@ function createExplorerStore() {
 	 * collapseTreeNode - Collapse a specific tree node without navigation
 	 */
 	function collapseTreeNode(folderId: string) {
-		state.update(s => {
+		state.update((s) => {
 			const newExpandedIds = new Set(s.expandedTreeNodeIds);
 			newExpandedIds.delete(folderId);
 			return {
@@ -375,7 +373,7 @@ function createExplorerStore() {
 
 	/**
 	 * resolveCollectionItem - Contract F
-	 * 
+	 *
 	 * Input: item from a collection (file or folder)
 	 * Output: valid canonical location
 	 * Failure state must be explicit and handled.
@@ -389,7 +387,7 @@ function createExplorerStore() {
 		}
 
 		const location = item.collectionMeta.canonicalLocation;
-		
+
 		if (!isValidCanonicalLocation(location)) {
 			console.error('[explorerStore] Invalid canonical location in item:', item);
 			return null;
@@ -407,7 +405,7 @@ function createExplorerStore() {
 		options?: { replaceState?: boolean }
 	): boolean {
 		const location = resolveCollectionItem(item);
-		
+
 		if (!location) {
 			return false;
 		}
@@ -429,7 +427,7 @@ function createExplorerStore() {
 	 * Clear selection.
 	 */
 	function clearSelection() {
-		state.update(s => ({
+		state.update((s) => ({
 			...s,
 			selectedItemId: null,
 			selectedItemType: null
@@ -440,7 +438,7 @@ function createExplorerStore() {
 	 * Select a specific item.
 	 */
 	function selectItem(itemId: string, itemType: 'file' | 'folder') {
-		state.update(s => ({
+		state.update((s) => ({
 			...s,
 			selectedItemId: itemId,
 			selectedItemType: itemType
@@ -459,8 +457,8 @@ function createExplorerStore() {
 	 * Call this on page load to sync state with URL.
 	 */
 	function hydrateFromUrl(
-		params: { 
-			folder?: string | null; 
+		params: {
+			folder?: string | null;
 			filter?: string | null;
 			root?: string | null;
 		},
@@ -468,7 +466,7 @@ function createExplorerStore() {
 	) {
 		// Check for collection mode
 		if (params.filter && isCollectionView(params.filter)) {
-			state.update(s => ({
+			state.update((s) => ({
 				...s,
 				mode: 'collection',
 				activeCollection: params.filter as CollectionView,
@@ -480,13 +478,13 @@ function createExplorerStore() {
 
 		// Folder mode - determine root
 		const rootType: ExplorerRoot = params.root === 'shared' ? 'shared' : 'my-files';
-		
+
 		if (params.folder) {
 			// In a specific folder
-			state.update(s => {
+			state.update((s) => {
 				const folderPath = folderPathData?.path || [];
 				const ancestorIds = folderPathData?.ancestorIds || [];
-				
+
 				return {
 					...s,
 					mode: 'folder',
@@ -500,7 +498,7 @@ function createExplorerStore() {
 			});
 		} else {
 			// At root
-			state.update(s => ({
+			state.update((s) => ({
 				...s,
 				mode: 'folder',
 				activeRoot: rootType,
@@ -519,7 +517,7 @@ function createExplorerStore() {
 	return {
 		// Subscribe to state
 		subscribe: state.subscribe,
-		
+
 		// Derived state
 		mode,
 		activeRoot,
@@ -531,7 +529,7 @@ function createExplorerStore() {
 		expandedTreeNodeIds,
 		breadcrumb,
 		isAtRoot,
-		
+
 		// Core navigation actions (contracts)
 		activateRoot,
 		activateCollection,
@@ -542,13 +540,13 @@ function createExplorerStore() {
 		collapseTreeNode,
 		resolveCollectionItem,
 		navigateToCollectionItem,
-		
+
 		// Additional state management
 		clearSelection,
 		selectItem,
 		reset,
 		hydrateFromUrl,
-		
+
 		// Get current state (for imperative access)
 		getState: () => get(state)
 	};

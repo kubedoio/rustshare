@@ -85,6 +85,7 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     ///
     /// # Returns
     /// Ok(()) if successfully indexed
+    #[allow(clippy::too_many_arguments)]
     pub async fn index_file(
         &self,
         file_id: Uuid,
@@ -300,9 +301,7 @@ fn extract_rtf_text(rtf: &str) -> String {
                 in_group += 1;
             }
             '}' => {
-                if in_group > 0 {
-                    in_group -= 1;
-                }
+                in_group = in_group.saturating_sub(1);
             }
             '\\' => {
                 in_control = true;

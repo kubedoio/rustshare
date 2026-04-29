@@ -37,10 +37,14 @@
 	<h2 class="text-2xl font-bold">Groups</h2>
 
 	{#if $groupsQuery.isLoading}
-		<div class="flex justify-center py-16"><span class="loading loading-spinner loading-lg"></span></div>
+		<div class="flex justify-center py-16">
+			<span class="loading loading-lg loading-spinner"></span>
+		</div>
 	{:else if $groupsQuery.isError}
 		<div class="alert alert-error">
-			Failed to load groups: {$groupsQuery.error instanceof Error ? $groupsQuery.error.message : 'Unknown error'}
+			Failed to load groups: {$groupsQuery.error instanceof Error
+				? $groupsQuery.error.message
+				: 'Unknown error'}
 		</div>
 	{:else if $groupsQuery.data}
 		<GroupTable

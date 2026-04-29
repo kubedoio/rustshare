@@ -51,35 +51,35 @@
 </script>
 
 <div class="space-y-4">
-	<div class="flex justify-between items-center">
+	<div class="flex items-center justify-between">
 		<span class="text-sm text-base-content/60">
 			{webhooks.length} webhook{webhooks.length !== 1 ? 's' : ''}
 		</span>
-		<button class="btn btn-primary btn-sm" on:click={onCreate}>Add Webhook</button>
+		<button class="btn btn-sm btn-primary" on:click={onCreate}>Add Webhook</button>
 	</div>
 
 	{#if webhooks.length === 0}
-		<div class="text-center py-12 text-base-content/50">
+		<div class="py-12 text-center text-base-content/50">
 			<p class="text-lg">No webhooks configured</p>
-			<p class="text-sm mt-1">Add a webhook to receive HTTP notifications for events.</p>
+			<p class="mt-1 text-sm">Add a webhook to receive HTTP notifications for events.</p>
 		</div>
 	{/if}
 
 	{#each webhooks as wh (wh.id)}
-		<div class="card bg-base-100 shadow border border-base-300">
+		<div class="card border border-base-300 bg-base-100 shadow">
 			<div class="card-body p-4">
-				<div class="flex items-start justify-between flex-wrap gap-3">
-					<div class="flex-1 min-w-0">
-						<div class="flex items-center gap-2 flex-wrap">
+				<div class="flex flex-wrap items-start justify-between gap-3">
+					<div class="min-w-0 flex-1">
+						<div class="flex flex-wrap items-center gap-2">
 							<h4 class="font-semibold">{wh.name}</h4>
 							{#if wh.enabled}
-								<span class="badge badge-success badge-sm">Enabled</span>
+								<span class="badge badge-sm badge-success">Enabled</span>
 							{:else}
 								<span class="badge badge-ghost badge-sm">Disabled</span>
 							{/if}
 						</div>
-						<p class="text-sm text-base-content/60 mt-1 break-all">{wh.url}</p>
-						<div class="flex flex-wrap gap-1 mt-2">
+						<p class="mt-1 text-sm break-all text-base-content/60">{wh.url}</p>
+						<div class="mt-2 flex flex-wrap gap-1">
 							{#each wh.events as event}
 								<span class="badge badge-outline badge-xs">
 									{EVENT_LABELS[event] ?? event}
@@ -88,13 +88,16 @@
 						</div>
 					</div>
 
-					<div class="flex items-center gap-2 flex-shrink-0">
+					<div class="flex flex-shrink-0 items-center gap-2">
 						<input
 							type="checkbox"
 							class="toggle toggle-sm toggle-success"
 							checked={wh.enabled}
 							on:change={(e) =>
-								$toggleMutation.mutate({ id: wh.id, enabled: (e.target as HTMLInputElement).checked })}
+								$toggleMutation.mutate({
+									id: wh.id,
+									enabled: (e.target as HTMLInputElement).checked
+								})}
 						/>
 						<button
 							class="btn btn-ghost btn-xs"
@@ -104,7 +107,7 @@
 							Test
 						</button>
 						<button
-							class="btn btn-ghost btn-xs text-error"
+							class="btn text-error btn-ghost btn-xs"
 							on:click={() => (confirmDelete = wh.id)}
 						>
 							Delete
@@ -114,7 +117,7 @@
 
 				{#if testResults[wh.id]}
 					<div
-						class="alert alert-sm mt-2 text-xs"
+						class="alert-sm mt-2 alert text-xs"
 						class:alert-success={testResults[wh.id].success}
 						class:alert-error={!testResults[wh.id].success}
 					>
@@ -128,9 +131,9 @@
 </div>
 
 {#if confirmDelete}
-	<div class="modal modal-open">
+	<div class="modal-open modal">
 		<div class="modal-box">
-			<h3 class="font-bold text-lg">Delete Webhook</h3>
+			<h3 class="text-lg font-bold">Delete Webhook</h3>
 			<p class="py-4">Are you sure you want to delete this webhook?</p>
 			<div class="modal-action">
 				<button class="btn btn-ghost" on:click={() => (confirmDelete = null)}>Cancel</button>

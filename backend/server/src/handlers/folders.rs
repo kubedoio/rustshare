@@ -441,7 +441,9 @@ async fn build_folder_tree_with_shares(
 
     let mut subfolders = Vec::new();
     for row in child_rows {
-        let child_id: Uuid = row.try_get("id").map_err(|_| super::internal_error_response())?;
+        let child_id: Uuid = row
+            .try_get("id")
+            .map_err(|_| super::internal_error_response())?;
         let subtree = Box::pin(build_folder_tree_with_shares(
             state, child_id, user_id, tenant_id,
         ))
@@ -552,10 +554,12 @@ pub async fn restore_folder_from_trash(
             use axum::response::IntoResponse;
             let msg = e.to_string();
             if msg.contains("already exists") {
-                (StatusCode::CONFLICT, Json(super::ErrorResponse::new(msg)))
-                    .into_response()
+                (StatusCode::CONFLICT, Json(super::ErrorResponse::new(msg))).into_response()
             } else {
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(super::ErrorResponse::new(msg)))
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(super::ErrorResponse::new(msg)),
+                )
                     .into_response()
             }
         })?;

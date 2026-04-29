@@ -5,12 +5,13 @@
 //! operation (uses specific commands for atomic operations).
 
 use super::*;
-use chrono::Utc;
 use ::redis::AsyncCommands;
+use chrono::Utc;
 use std::time::Duration;
 
 /// Redis coordination store
 pub struct RedisCoordinationStore {
+    #[allow(dead_code)]
     client: ::redis::Client,
     connection_manager: ::redis::aio::ConnectionManager,
     key_prefix: String,
@@ -193,7 +194,7 @@ impl CoordinationStore for RedisCoordinationStore {
     ) -> Result<LeaseInfo, CoordinationError> {
         // Leases use the same underlying mechanism as locks but with different semantics
         let key = self.key(&format!("lease:{}", resource_id));
-        let value = format!("{}", owner);
+        let value = owner.to_string();
 
         let mut conn = self.connection_manager.clone();
 
@@ -328,7 +329,7 @@ impl CoordinationStore for RedisCoordinationStore {
         ttl: Duration,
     ) -> Result<bool, CoordinationError> {
         let key = self.key(&format!("job:{}", job_id));
-        let value = format!("{}", worker_id);
+        let value = worker_id.to_string();
 
         let mut conn = self.connection_manager.clone();
 
@@ -721,15 +722,25 @@ impl CoordinationStore for RedisCoordinationStore {
 mod tests {
     use super::*;
 
+    async fn redis_store_or_skip() -> Option<RedisCoordinationStore> {
+        match RedisCoordinationStore::new("redis://127.0.0.1:6379").await {
+            Ok(store) => Some(store),
+            Err(err) => {
+                eprintln!("skipping Redis test: {err}");
+                None
+            }
+        }
+    }
+
     // Note: These tests require a running Redis instance
     // They are marked as ignored by default to avoid CI failures
 
     #[tokio::test]
     #[ignore = "requires Redis"]
     async fn test_redis_lock_operations() {
-        let store = RedisCoordinationStore::new("redis://127.0.0.1:6379")
-            .await
-            .expect("Failed to connect to Redis");
+        let Some(store) = redis_store_or_skip().await else {
+            return;
+        };
 
         // Acquire lock
         let lock = store
@@ -761,9 +772,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires Redis"]
     async fn test_redis_job_claiming() {
-        let store = RedisCoordinationStore::new("redis://127.0.0.1:6379")
-            .await
-            .expect("Failed to connect to Redis");
+        let Some(store) = redis_store_or_skip().await else {
+            return;
+        };
 
         // Claim job
         let claimed = store

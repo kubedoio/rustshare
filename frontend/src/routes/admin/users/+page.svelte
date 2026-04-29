@@ -54,16 +54,18 @@
 <div class="space-y-4">
 	<div class="flex items-center justify-between">
 		<h2 class="text-2xl font-bold">Users</h2>
-		<button class="btn btn-primary" on:click={() => (showCreateModal = true)}>
-			+ New User
-		</button>
+		<button class="btn btn-primary" on:click={() => (showCreateModal = true)}> + New User </button>
 	</div>
 
 	{#if $usersQuery.isLoading}
-		<div class="flex justify-center py-16"><span class="loading loading-spinner loading-lg"></span></div>
+		<div class="flex justify-center py-16">
+			<span class="loading loading-lg loading-spinner"></span>
+		</div>
 	{:else if $usersQuery.isError}
 		<div class="alert alert-error">
-			Failed to load users: {$usersQuery.error instanceof Error ? $usersQuery.error.message : 'Unknown error'}
+			Failed to load users: {$usersQuery.error instanceof Error
+				? $usersQuery.error.message
+				: 'Unknown error'}
 		</div>
 	{:else if $usersQuery.data}
 		<UserTable

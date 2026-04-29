@@ -7,5 +7,7 @@
 
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
 <QueryClientProvider client={queryClient}>
-	<slot />
+	{#snippet children()}
+		<slot />
+	{/snippet}
 </QueryClientProvider>

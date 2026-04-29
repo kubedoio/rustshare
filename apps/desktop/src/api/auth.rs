@@ -355,15 +355,15 @@ mod tests {
     #[test]
     fn build_approval_url_prefers_https_when_server_is_https() {
         let approval_url = build_approval_url(
-            "http://app.rustshare.io/device/approve",
-            "http://app.rustshare.io/device/approve?device_code=device-code-123",
+            "http://localhost:8080/device/approve",
+            "http://localhost:8080/device/approve?device_code=device-code-123",
             "device-code-123",
-            "https://app.rustshare.io",
+            "https://localhost:8080",
         );
 
         assert_eq!(
             approval_url,
-            "https://app.rustshare.io/device/approve?device_code=device-code-123"
+            "https://localhost:8080/device/approve?device_code=device-code-123"
         );
     }
 

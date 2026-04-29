@@ -1,10 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-	listAdminUsers,
-	disableAdminUser,
-	enableAdminUser,
-	deleteAdminUser
-} from '$lib/api/admin';
+import { listAdminUsers, disableAdminUser, enableAdminUser, deleteAdminUser } from '$lib/api/admin';
 
 vi.mock('$lib/api/client', () => ({
 	apiClient: {

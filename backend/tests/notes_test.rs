@@ -29,10 +29,15 @@ async fn setup_test_env() -> (
     let event_store = Arc::new(EventStore::new(pool.clone()));
     let metadata_store = Arc::new(MetadataStore::new(pool.clone()));
 
-    let s3_endpoint =
-        std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string());
-    let s3_region = std::env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".to_string());
-    let s3_bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "rustshare".to_string());
+    let s3_endpoint = std::env::var("S3_ENDPOINT")
+        .or_else(|_| std::env::var("RUSTFS_ENDPOINT"))
+        .unwrap_or_else(|_| "http://localhost:9000".to_string());
+    let s3_region = std::env::var("S3_REGION")
+        .or_else(|_| std::env::var("RUSTFS_REGION"))
+        .unwrap_or_else(|_| "us-east-1".to_string());
+    let s3_bucket = std::env::var("S3_BUCKET")
+        .or_else(|_| std::env::var("RUSTFS_BUCKET"))
+        .unwrap_or_else(|_| "rustshare".to_string());
 
     let object_store = Arc::new(
         ObjectStore::new(s3_endpoint, s3_region, s3_bucket)
@@ -42,7 +47,6 @@ async fn setup_test_env() -> (
 
     (pool, event_store, metadata_store, object_store)
 }
-
 
 fn create_file_service(
     event_store: Arc<EventStore>,
@@ -100,6 +104,14 @@ async fn create_test_user(metadata_store: &MetadataStore, username: &str, tenant
 }
 
 async fn cleanup_user(pool: &PgPool, user_id: Uuid) {
+    // Notes create file_versions rows whose created_by FK does not cascade on user delete.
+    // Removing owned files first clears the dependent version rows before deleting the user.
+    sqlx::query("DELETE FROM files WHERE owner_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .expect("Failed to cleanup test files");
+
     sqlx::query("DELETE FROM users WHERE id = $1")
         .bind(user_id)
         .execute(pool)
@@ -114,8 +126,17 @@ fn create_note_service(
     pool: &PgPool,
 ) -> Arc<NoteService> {
     let broadcaster = Arc::new(EventBroadcaster::new(100));
-    let file_service = Arc::new(create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), pool));
-    let folder_service = Arc::new(create_folder_service(event_store.clone(), metadata_store.clone(), pool));
+    let file_service = Arc::new(create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        pool,
+    ));
+    let folder_service = Arc::new(create_folder_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        pool,
+    ));
 
     Arc::new(NoteService::new(
         file_service,

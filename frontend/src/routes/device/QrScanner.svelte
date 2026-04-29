@@ -52,7 +52,7 @@
 			}
 
 			// Prefer back camera on mobile, fallback to any available camera
-			const backCamera = devices.find(d => d.label.toLowerCase().includes('back'));
+			const backCamera = devices.find((d) => d.label.toLowerCase().includes('back'));
 			const selectedCamera = backCamera || devices[0];
 
 			await scanner.start(
@@ -131,32 +131,53 @@
 	<div class="w-full">
 		{#if isLoading}
 			<div class="flex flex-col items-center justify-center py-8">
-				<span class="loading loading-spinner loading-lg text-primary"></span>
+				<span class="loading loading-lg loading-spinner text-primary"></span>
 				<p class="mt-4 text-sm opacity-70">Starting camera...</p>
 			</div>
 		{:else if scannerError}
-			<div class="alert alert-error mb-4 text-sm">
-				<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+			<div class="mb-4 alert text-sm alert-error">
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					class="h-5 w-5 shrink-0 stroke-current"
+					fill="none"
+					viewBox="0 0 24 24"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
+					/>
 				</svg>
 				<span>{scannerError}</span>
 			</div>
-			<div class="flex gap-2 justify-center">
-				<button class="btn btn-primary btn-sm" onclick={handleRetry}>Try Again</button>
+			<div class="flex justify-center gap-2">
+				<button class="btn btn-sm btn-primary" onclick={handleRetry}>Try Again</button>
 				<button class="btn btn-ghost btn-sm" onclick={handleClose}>Back</button>
 			</div>
 		{:else}
 			<div class="relative">
-				<div id="qr-reader-inline" class="w-full aspect-square rounded-lg overflow-hidden bg-black"></div>
-				<div class="absolute inset-0 pointer-events-none">
-					<div class="absolute top-3 left-3 w-6 h-6 border-l-2 border-t-2 border-primary rounded-tl-lg"></div>
-					<div class="absolute top-3 right-3 w-6 h-6 border-r-2 border-t-2 border-primary rounded-tr-lg"></div>
-					<div class="absolute bottom-3 left-3 w-6 h-6 border-l-2 border-b-2 border-primary rounded-bl-lg"></div>
-					<div class="absolute bottom-3 right-3 w-6 h-6 border-r-2 border-b-2 border-primary rounded-br-lg"></div>
-					<div class="absolute left-1/4 right-1/4 top-1/2 h-0.5 bg-primary/50 animate-pulse"></div>
+				<div
+					id="qr-reader-inline"
+					class="aspect-square w-full overflow-hidden rounded-lg bg-black"
+				></div>
+				<div class="pointer-events-none absolute inset-0">
+					<div
+						class="absolute top-3 left-3 h-6 w-6 rounded-tl-lg border-t-2 border-l-2 border-primary"
+					></div>
+					<div
+						class="absolute top-3 right-3 h-6 w-6 rounded-tr-lg border-t-2 border-r-2 border-primary"
+					></div>
+					<div
+						class="absolute bottom-3 left-3 h-6 w-6 rounded-bl-lg border-b-2 border-l-2 border-primary"
+					></div>
+					<div
+						class="absolute right-3 bottom-3 h-6 w-6 rounded-br-lg border-r-2 border-b-2 border-primary"
+					></div>
+					<div class="absolute top-1/2 right-1/4 left-1/4 h-0.5 animate-pulse bg-primary/50"></div>
 				</div>
 			</div>
-			<div class="flex justify-center mt-4">
+			<div class="mt-4 flex justify-center">
 				<button class="btn btn-ghost btn-sm" onclick={handleClose}>Cancel Scan</button>
 			</div>
 		{/if}
@@ -164,19 +185,46 @@
 {:else}
 	<!-- Modal Mode -->
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-		<div class="bg-base-100 w-full max-w-md rounded-lg shadow-2xl overflow-hidden">
+		<div class="w-full max-w-md overflow-hidden rounded-lg bg-base-100 shadow-2xl">
 			<!-- Header -->
-			<div class="bg-primary text-primary-content p-4 flex justify-between items-center">
-				<h3 class="font-bold text-lg flex items-center gap-2">
-					<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+			<div class="flex items-center justify-between bg-primary p-4 text-primary-content">
+				<h3 class="flex items-center gap-2 text-lg font-bold">
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						class="h-5 w-5"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
+						/>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
+						/>
 					</svg>
 					Scan QR Code
 				</h3>
-				<button class="btn btn-ghost btn-sm btn-circle" onclick={handleClose} aria-label="Close">
-					<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+				<button class="btn btn-circle btn-ghost btn-sm" onclick={handleClose} aria-label="Close">
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						class="h-6 w-6"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M6 18L18 6M6 6l12 12"
+						/>
 					</svg>
 				</button>
 			</div>
@@ -185,55 +233,82 @@
 			<div class="p-4">
 				{#if isLoading}
 					<div class="flex flex-col items-center justify-center py-12">
-						<span class="loading loading-spinner loading-lg text-primary"></span>
+						<span class="loading loading-lg loading-spinner text-primary"></span>
 						<p class="mt-4 text-sm opacity-70">Starting camera...</p>
 					</div>
 				{:else if scannerError}
-					<div class="alert alert-error mb-4">
-						<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+					<div class="mb-4 alert alert-error">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							class="h-6 w-6 shrink-0 stroke-current"
+							fill="none"
+							viewBox="0 0 24 24"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
+							/>
 						</svg>
 						<span>{scannerError}</span>
 					</div>
-					<div class="flex gap-2 justify-center">
+					<div class="flex justify-center gap-2">
 						<button class="btn btn-primary" onclick={handleRetry}>
-							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								class="mr-1 h-4 w-4"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+								/>
 							</svg>
 							Try Again
 						</button>
-						<button class="btn btn-ghost" onclick={handleClose}>
-							Cancel
-						</button>
+						<button class="btn btn-ghost" onclick={handleClose}> Cancel </button>
 					</div>
 				{:else}
 					<div class="relative">
 						<!-- Scanner viewport -->
-						<div id="qr-reader" class="w-full aspect-square rounded-lg overflow-hidden bg-black">
+						<div id="qr-reader" class="aspect-square w-full overflow-hidden rounded-lg bg-black">
 							<!-- Html5Qrcode will inject the video element here -->
 						</div>
 
 						<!-- Scanning overlay frame -->
-						<div class="absolute inset-0 pointer-events-none">
+						<div class="pointer-events-none absolute inset-0">
 							<!-- Corner markers -->
-							<div class="absolute top-4 left-4 w-8 h-8 border-l-4 border-t-4 border-primary rounded-tl-lg"></div>
-							<div class="absolute top-4 right-4 w-8 h-8 border-r-4 border-t-4 border-primary rounded-tr-lg"></div>
-							<div class="absolute bottom-4 left-4 w-8 h-8 border-l-4 border-b-4 border-primary rounded-bl-lg"></div>
-							<div class="absolute bottom-4 right-4 w-8 h-8 border-r-4 border-b-4 border-primary rounded-br-lg"></div>
+							<div
+								class="absolute top-4 left-4 h-8 w-8 rounded-tl-lg border-t-4 border-l-4 border-primary"
+							></div>
+							<div
+								class="absolute top-4 right-4 h-8 w-8 rounded-tr-lg border-t-4 border-r-4 border-primary"
+							></div>
+							<div
+								class="absolute bottom-4 left-4 h-8 w-8 rounded-bl-lg border-b-4 border-l-4 border-primary"
+							></div>
+							<div
+								class="absolute right-4 bottom-4 h-8 w-8 rounded-br-lg border-r-4 border-b-4 border-primary"
+							></div>
 
 							<!-- Center scanning line animation -->
-							<div class="absolute left-1/4 right-1/4 top-1/2 h-0.5 bg-primary/50 shadow-[0_0_10px_rgba(var(--color-primary),0.8)] animate-pulse"></div>
+							<div
+								class="absolute top-1/2 right-1/4 left-1/4 h-0.5 animate-pulse bg-primary/50 shadow-[0_0_10px_rgba(var(--color-primary),0.8)]"
+							></div>
 						</div>
 					</div>
 
-					<p class="text-center text-sm text-base-content/70 mt-4">
+					<p class="mt-4 text-center text-sm text-base-content/70">
 						Point your camera at a QR code to scan
 					</p>
 
-					<div class="flex justify-center mt-4">
-						<button class="btn btn-ghost btn-sm" onclick={handleClose}>
-							Cancel
-						</button>
+					<div class="mt-4 flex justify-center">
+						<button class="btn btn-ghost btn-sm" onclick={handleClose}> Cancel </button>
 					</div>
 				{/if}
 			</div>

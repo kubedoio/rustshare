@@ -3,9 +3,9 @@
 	 * ==============================================================================
 	 * FOLDER TREE COMPONENT
 	 * ==============================================================================
-	 * 
+	 *
 	 * Refactored to support dual-root structure (My Files + Shared).
-	 * 
+	 *
 	 * Per SPEC:
 	 * - My Files and Shared must have identical interaction behavior
 	 * - Tree renderer must be shared, not duplicated
@@ -39,7 +39,7 @@
 		sharedIcon?: string;
 	}
 
-	let { 
+	let {
 		folders,
 		depth = 0,
 		onFolderClick = () => {},
@@ -62,19 +62,19 @@
 	function isActiveFolder(folder: FolderTreeType): boolean {
 		// If this tree section is not active, no folder is active
 		if (!isActive) return false;
-		
+
 		const currentFolderId = $page.url.searchParams.get('folder');
-		const currentRoot = $page.url.searchParams.get('root') as ExplorerRoot || 'my-files';
-		
+		const currentRoot = ($page.url.searchParams.get('root') as ExplorerRoot) || 'my-files';
+
 		// Only match if we're in the same root
 		if (currentRoot !== rootType) return false;
-		
+
 		// If we're at the root of the file system (/files without folder param)
 		if (!currentFolderId) {
 			// Only highlight the actual top-level node in the sidebar tree
 			return depth === 0;
 		}
-		
+
 		// Otherwise, only the folder whose ID matches the URL param is active
 		return currentFolderId === folder.folder.id;
 	}
@@ -101,7 +101,7 @@
 	function navigateToFolder(folder: FolderTreeType) {
 		const folderId = folder.folder.id;
 		const isRoot = depth === 0;
-		
+
 		fileBrowserUi.selectFolder(folderId);
 		// For root folder, pass null to navigate to root URL (/files)
 		onFolderClick(isRoot ? null : folderId);
@@ -114,7 +114,7 @@
 	let draggedOverFolderId = $state<string | null>(null);
 
 	const moveFileMutation = createMutation({
-		mutationFn: ({ fileId, targetFolderId }: { fileId: string; targetFolderId: string | null }) => 
+		mutationFn: ({ fileId, targetFolderId }: { fileId: string; targetFolderId: string | null }) =>
 			moveFile(fileId, targetFolderId),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
@@ -124,8 +124,13 @@
 	});
 
 	const moveFolderMutation = createMutation({
-		mutationFn: ({ folderId, targetFolderId }: { folderId: string; targetFolderId: string | null }) => 
-			moveFolder(folderId, targetFolderId),
+		mutationFn: ({
+			folderId,
+			targetFolderId
+		}: {
+			folderId: string;
+			targetFolderId: string | null;
+		}) => moveFolder(folderId, targetFolderId),
 		onSuccess: (_, { folderId, targetFolderId }) => {
 			folderTreeStore.moveFolder(folderId, targetFolderId);
 			if (targetFolderId) {
@@ -140,12 +145,15 @@
 	function handleDragStart(e: DragEvent, folderToDrag: FolderTreeType) {
 		if (e.dataTransfer) {
 			e.dataTransfer.effectAllowed = 'move';
-			e.dataTransfer.setData('application/json', JSON.stringify({
-				id: folderToDrag.folder.id,
-				isFolder: true,
-				name: folderToDrag.folder.name,
-				parentFolderId: folderToDrag.folder.parent_folder_id
-			}));
+			e.dataTransfer.setData(
+				'application/json',
+				JSON.stringify({
+					id: folderToDrag.folder.id,
+					isFolder: true,
+					name: folderToDrag.folder.name,
+					parentFolderId: folderToDrag.folder.parent_folder_id
+				})
+			);
 		}
 	}
 
@@ -225,7 +233,12 @@
 				onclick={() => navigateToFolder(folder)}
 				role="button"
 				tabindex="0"
-				onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateToFolder(folder); } }}
+				onkeydown={(e) => {
+					if (e.key === 'Enter' || e.key === ' ') {
+						e.preventDefault();
+						navigateToFolder(folder);
+					}
+				}}
 				draggable={true}
 				ondragstart={(e) => handleDragStart(e, folder)}
 				ondragover={(e) => handleDragOver(e, folderId)}
@@ -254,26 +267,25 @@
 							{@html sharedIcon}
 						</span>
 					{:else if active || expanded}
-						<FolderOpen 
-							size={16} 
-							class="folder-icon {active ? 'active' : ''}" 
-						/>
+						<FolderOpen size={16} class="folder-icon {active ? 'active' : ''}" />
 					{:else}
-						<Folder 
-							size={16} 
-							class="folder-icon {isAncestorOfActive ? 'is-ancestor' : ''}" 
-						/>
+						<Folder size={16} class="folder-icon {isAncestorOfActive ? 'is-ancestor' : ''}" />
 					{/if}
 				</span>
 
 				<!-- Folder Name -->
-				<span class="folder-name" class:active class:is-ancestor={isAncestorOfActive} class:root-node={isRoot}>
+				<span
+					class="folder-name"
+					class:active
+					class:is-ancestor={isAncestorOfActive}
+					class:root-node={isRoot}
+				>
 					{folder.folder.name}
 				</span>
 
 				<!-- Share Indicator -->
 				{#if folder.folder.is_shared && !useSharedIcon}
-					<ShareIndicator 
+					<ShareIndicator
 						isShared={folder.folder.is_shared}
 						shareCount={folder.folder.share_count}
 						shareExpiresAt={folder.folder.share_expires_at}
@@ -288,7 +300,7 @@
 					<FolderTree
 						folders={folder.subfolders}
 						depth={depth + 1}
-						onFolderClick={onFolderClick}
+						{onFolderClick}
 						{ancestorIds}
 						{rootType}
 						{isActive}
@@ -361,7 +373,10 @@
 		flex-shrink: 0;
 		border-radius: 6px;
 		color: color-mix(in srgb, var(--rs-text-muted, #6c665f) 40%, transparent);
-		transition: transform 0.15s ease, background-color 0.12s ease, color 0.12s ease;
+		transition:
+			transform 0.15s ease,
+			background-color 0.12s ease,
+			color 0.12s ease;
 		cursor: pointer;
 		background: transparent;
 		border: none;

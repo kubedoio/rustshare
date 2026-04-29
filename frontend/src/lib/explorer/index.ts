@@ -2,12 +2,12 @@
  * ==============================================================================
  * EXPLORER MODULE
  * ==============================================================================
- * 
+ *
  * Unified file explorer for RustShare.
- * 
+ *
  * This module provides the central architecture for the refactored file explorer
  * that treats "My Files" and "Shared" as two explorer roots inside one unified shell.
- * 
+ *
  * Exports:
  * - Types: ExplorerRoot, CollectionView, CanonicalLocation, ExplorerState, etc.
  * - Store: explorerStore with navigation actions

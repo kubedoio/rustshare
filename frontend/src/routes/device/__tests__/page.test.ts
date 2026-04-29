@@ -1,27 +1,21 @@
 import { render, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const {
-	goto,
-	getDeviceQrInfo,
-	pageStore,
-	authStoreValue,
-	qrCodeToDataURL,
-	requestDevicePairing
-} = vi.hoisted(() => ({
-	goto: vi.fn(),
-	getDeviceQrInfo: vi.fn(),
-	pageStore: createMockStore({
-		url: new URL('http://localhost/device')
-	}),
-	authStoreValue: createMockStore({
-		user: null,
-		isAuthenticated: true,
-		isLoading: false
-	}),
-	qrCodeToDataURL: vi.fn(),
-	requestDevicePairing: vi.fn()
-}));
+const { goto, getDeviceQrInfo, pageStore, authStoreValue, qrCodeToDataURL, requestDevicePairing } =
+	vi.hoisted(() => ({
+		goto: vi.fn(),
+		getDeviceQrInfo: vi.fn(),
+		pageStore: createMockStore({
+			url: new URL('http://localhost/device')
+		}),
+		authStoreValue: createMockStore({
+			user: null,
+			isAuthenticated: true,
+			isLoading: false
+		}),
+		qrCodeToDataURL: vi.fn(),
+		requestDevicePairing: vi.fn()
+	}));
 
 function createMockStore<T>(initialValue: T) {
 	let value = initialValue;
@@ -96,7 +90,8 @@ describe('/device page', () => {
 			device_code: 'device-code-123',
 			expires_in: 300,
 			verification_uri: 'https://approved.example.com/device/approve',
-			verification_uri_complete: 'https://approved.example.com/device/approve?device_code=device-code-123'
+			verification_uri_complete:
+				'https://approved.example.com/device/approve?device_code=device-code-123'
 		});
 		getDeviceQrInfo.mockResolvedValue({
 			instance_url: 'https://fallback.example.invalid',

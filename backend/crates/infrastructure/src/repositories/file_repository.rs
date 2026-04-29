@@ -49,10 +49,10 @@ mod tests {
     use sqlx::PgPool;
     use uuid::Uuid;
 
+    const TEST_DATABASE_URL: &str = "postgres://rustshare:changeme@localhost:5432/rustshare";
+
     async fn test_pool() -> PgPool {
-        let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:changeme@localhost:5432/rustshare".to_string()
-        });
+        let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
         PgPool::connect(&url).await.expect("DB connect failed")
     }
 

@@ -28,6 +28,7 @@ pub struct File {
 
 impl File {
     /// Creates a new file with version 1.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
         path: String,

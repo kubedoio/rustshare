@@ -48,7 +48,7 @@
 		function traverse(t: FolderTree): boolean {
 			if (t.folder.id === folderId) {
 				ids.add(t.folder.id);
-				t.subfolders.forEach(child => traverseAll(child));
+				t.subfolders.forEach((child) => traverseAll(child));
 				return true;
 			}
 			for (const child of t.subfolders) {
@@ -59,7 +59,7 @@
 
 		function traverseAll(t: FolderTree) {
 			ids.add(t.folder.id);
-			t.subfolders.forEach(child => traverseAll(child));
+			t.subfolders.forEach((child) => traverseAll(child));
 		}
 
 		traverse(tree);
@@ -128,26 +128,26 @@
 		<!-- Backdrop -->
 		<button
 			type="button"
-			class="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-default"
+			class="absolute inset-0 cursor-default bg-black/60 backdrop-blur-sm"
 			onclick={handleClose}
 			aria-label="Close"
 		></button>
 
 		<!-- Modal -->
-		<div class="relative bg-base-100 rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+		<div class="relative w-full max-w-md overflow-hidden rounded-xl bg-base-100 shadow-2xl">
 			<!-- Header -->
-			<div class="px-5 py-4 border-b border-base-300/50">
+			<div class="border-b border-base-300/50 px-5 py-4">
 				<h3 class="text-lg font-semibold text-base-content">
 					Move {itemType === 'folder' ? 'Folder' : 'File'}
 				</h3>
-				<p class="text-sm text-base-content/60 mt-1">
+				<p class="mt-1 text-sm text-base-content/60">
 					Choose a destination for <span class="font-medium text-base-content">{itemName}</span>
 				</p>
 			</div>
 
 			<!-- Folder Tree -->
 			<div class="p-4">
-				<div class="border border-base-300/50 rounded-lg bg-base-200/30 max-h-80 overflow-y-auto">
+				<div class="max-h-80 overflow-y-auto rounded-lg border border-base-300/50 bg-base-200/30">
 					{#if $folderTreeQuery.isLoading}
 						<div class="flex items-center justify-center py-8">
 							<Loader2 size={24} class="animate-spin text-brand-500" />
@@ -161,16 +161,17 @@
 						<!-- Root option -->
 						<button
 							type="button"
-							class="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors border-b border-base-300/30
-								{selectedFolderId === null
-									? 'bg-brand-500/10 text-brand-600'
-									: 'hover:bg-base-200/50'}"
+							class="flex w-full items-center gap-3 border-b border-base-300/30 px-4 py-3 text-left transition-colors
+								{selectedFolderId === null ? 'bg-brand-500/10 text-brand-600' : 'hover:bg-base-200/50'}"
 							onclick={() => selectFolder(null)}
 						>
 							<Home size={18} />
 							<span class="font-medium">Home</span>
 							{#if currentFolderId === null}
-								<span class="ml-auto text-xs px-2 py-0.5 rounded-full bg-base-300/50 text-base-content/60">Current</span>
+								<span
+									class="ml-auto rounded-full bg-base-300/50 px-2 py-0.5 text-xs text-base-content/60"
+									>Current</span
+								>
 							{/if}
 						</button>
 
@@ -195,7 +196,9 @@
 				</div>
 
 				{#if error}
-					<div class="flex items-center gap-2 mt-3 px-3 py-2 bg-error/10 text-error rounded-lg text-sm">
+					<div
+						class="mt-3 flex items-center gap-2 rounded-lg bg-error/10 px-3 py-2 text-sm text-error"
+					>
 						<AlertCircle size={16} />
 						<span>{error}</span>
 					</div>
@@ -203,10 +206,10 @@
 			</div>
 
 			<!-- Actions -->
-			<div class="px-5 py-4 border-t border-base-300/50 flex justify-end gap-3">
+			<div class="flex justify-end gap-3 border-t border-base-300/50 px-5 py-4">
 				<button
 					type="button"
-					class="px-4 py-2 text-sm font-medium text-base-content/70 hover:text-base-content hover:bg-base-200 rounded-lg transition-colors"
+					class="rounded-lg px-4 py-2 text-sm font-medium text-base-content/70 transition-colors hover:bg-base-200 hover:text-base-content"
 					onclick={handleClose}
 					disabled={loading}
 				>
@@ -214,7 +217,7 @@
 				</button>
 				<button
 					type="button"
-					class="px-4 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
+					class="flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-600 disabled:opacity-50"
 					onclick={handleSubmit}
 					disabled={loading || selectedFolderId === currentFolderId}
 				>

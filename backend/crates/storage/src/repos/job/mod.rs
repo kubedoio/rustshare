@@ -132,7 +132,8 @@ pub mod conversions {
                 crate::metadata_v2::schemas::JobType::ThumbnailGeneration => "thumbnail_generation",
                 crate::metadata_v2::schemas::JobType::VirusScan => "virus_scan",
                 crate::metadata_v2::schemas::JobType::MetadataExtraction => "metadata_extraction",
-            }.to_string(),
+            }
+            .to_string(),
             resource_type: doc.resource_type,
             resource_id: doc.resource_id,
             status: to_core_status(doc.status),

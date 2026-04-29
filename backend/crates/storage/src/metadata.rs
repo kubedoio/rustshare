@@ -665,9 +665,13 @@ impl MetadataStore {
     }
 
     /// Update user's trash retention setting.
-    pub async fn update_user_trash_retention(&self, user_id: Uuid, days: Option<i32>) -> Result<()> {
+    pub async fn update_user_trash_retention(
+        &self,
+        user_id: Uuid,
+        days: Option<i32>,
+    ) -> Result<()> {
         sqlx::query(
-            r#"UPDATE users SET trash_retention_days = $1, updated_at = NOW() WHERE id = $2"#
+            r#"UPDATE users SET trash_retention_days = $1, updated_at = NOW() WHERE id = $2"#,
         )
         .bind(days)
         .bind(user_id)
@@ -765,12 +769,11 @@ impl MetadataStore {
         let block_duration: i32 = config.try_get("login_block_duration_minutes")?;
 
         // Check if an existing block has expired — if so, reset the count
-        let existing = sqlx::query(
-            "SELECT blocked_until FROM login_attempts WHERE ip_address = $1"
-        )
-        .bind(ip_address)
-        .fetch_optional(&self.pool)
-        .await?;
+        let existing =
+            sqlx::query("SELECT blocked_until FROM login_attempts WHERE ip_address = $1")
+                .bind(ip_address)
+                .fetch_optional(&self.pool)
+                .await?;
 
         if let Some(row) = existing {
             let blocked_until: Option<chrono::DateTime<Utc>> = row.try_get("blocked_until")?;
@@ -2153,7 +2156,11 @@ impl MetadataStore {
     }
 
     /// Get a summary of trashed items for a user.
-    pub async fn get_trash_summary(&self, owner_id: Uuid, tenant_id: Uuid) -> Result<(i64, i64, i64)> {
+    pub async fn get_trash_summary(
+        &self,
+        owner_id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<(i64, i64, i64)> {
         let file_row = sqlx::query(
             r#"
             SELECT COUNT(*) as count, COALESCE(SUM(size), 0)::bigint as total_size
@@ -2186,7 +2193,7 @@ impl MetadataStore {
     pub async fn empty_trash(&self, owner_id: Uuid, tenant_id: Uuid) -> Result<()> {
         // Delete trashed files first (to avoid FK violations when deleting folders)
         sqlx::query(
-            "DELETE FROM files WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL"
+            "DELETE FROM files WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL",
         )
         .bind(owner_id)
         .bind(tenant_id)
@@ -2195,7 +2202,7 @@ impl MetadataStore {
 
         // Delete trashed folders (cascade will handle any remaining child records)
         sqlx::query(
-            "DELETE FROM folders WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL"
+            "DELETE FROM folders WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL",
         )
         .bind(owner_id)
         .bind(tenant_id)
@@ -2739,7 +2746,7 @@ impl MetadataStore {
                 share_id, ip_address, user_agent, action, success,
                 actor_type, actor_label, share_session_id, share_session_subject
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2::inet, $3, $4, $5, $6, $7, $8, $9)
             "#,
         )
         .bind(entry.share_id)
@@ -2827,10 +2834,11 @@ mod tests {
     use super::*;
     use rustshare_core::domain::{File, FileVersion, Folder, Share, SharePermissions, User};
 
+    const TEST_DATABASE_URL: &str = "postgres://rustshare:changeme@localhost:5432/rustshare";
+
     async fn setup_test_db() -> PgPool {
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:changeme@localhost:5432/rustshare".to_string()
-        });
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
         PgPool::connect(&database_url).await.unwrap()
     }
 
@@ -3003,7 +3011,15 @@ mod tests {
         store.create_file_version(&version2).await.unwrap();
 
         // Create file version 3
-        let version3 = FileVersion::new(file.id, 3, "hash3".to_string(), 300, user.id, None, tenant_id);
+        let version3 = FileVersion::new(
+            file.id,
+            3,
+            "hash3".to_string(),
+            300,
+            user.id,
+            None,
+            tenant_id,
+        );
         store.create_file_version(&version3).await.unwrap();
 
         // Test: list_file_versions (should be in DESC order: 3, 2, 1)
@@ -3073,7 +3089,7 @@ mod tests {
         let found_folder = found.unwrap();
         assert_eq!(found_folder.id, root_folder.id);
         assert_eq!(found_folder.name, "Root");
-        assert_eq!(found_folder.path, "/");
+        assert_eq!(found_folder.path, "/Root");
         assert_eq!(found_folder.parent_folder_id, None);
         assert_eq!(found_folder.owner_id, owner.id);
 
@@ -3246,9 +3262,10 @@ mod tests {
         store.create_file(&file).await.unwrap();
 
         // Test: create_share
+        let share_token = Uuid::new_v4().to_string();
         let share = Share::new(
             file.id,
-            "sharetoken123".to_string(),
+            share_token.clone(),
             owner.id,
             SharePermissions::View,
             Some("hashed_password".to_string()),
@@ -3258,11 +3275,11 @@ mod tests {
         store.create_share(&share).await.unwrap();
 
         // Test: get_share_by_token
-        let found_by_token = store.get_share_by_token("sharetoken123").await.unwrap();
+        let found_by_token = store.get_share_by_token(&share_token).await.unwrap();
         assert!(found_by_token.is_some());
         let found_share = found_by_token.unwrap();
         assert_eq!(found_share.id, share.id);
-        assert_eq!(found_share.share_token, Some("sharetoken123".to_string()));
+        assert_eq!(found_share.share_token, Some(share_token.clone()));
         assert_eq!(found_share.file_id, Some(file.id));
         assert_eq!(found_share.permissions, SharePermissions::View);
         assert_eq!(
@@ -3276,15 +3293,13 @@ mod tests {
         assert!(found_by_id.is_some());
         let found_share_by_id = found_by_id.unwrap();
         assert_eq!(found_share_by_id.id, share.id);
-        assert_eq!(
-            found_share_by_id.share_token,
-            Some("sharetoken123".to_string())
-        );
+        assert_eq!(found_share_by_id.share_token, Some(share_token.clone()));
 
         // Create a second share for the same file
+        let share_token_2 = Uuid::new_v4().to_string();
         let share2 = Share::new(
             file.id,
-            "sharetoken456".to_string(),
+            share_token_2.clone(),
             owner.id,
             SharePermissions::Edit,
             None,
@@ -3298,10 +3313,10 @@ mod tests {
         assert_eq!(file_shares.len(), 2);
         assert!(file_shares
             .iter()
-            .any(|s| s.share_token == Some("sharetoken123".to_string())));
+            .any(|s| s.share_token == Some(share_token.clone())));
         assert!(file_shares
             .iter()
-            .any(|s| s.share_token == Some("sharetoken456".to_string())));
+            .any(|s| s.share_token == Some(share_token_2.clone())));
 
         // Test: increment_share_access
         store.increment_share_access(share.id).await.unwrap();
@@ -3343,7 +3358,7 @@ mod tests {
         assert_eq!(active_shares.len(), 1);
         assert!(active_shares
             .iter()
-            .all(|s| s.share_token == Some("sharetoken456".to_string())));
+            .all(|s| s.share_token == Some(share_token_2.clone())));
 
         // But should still be retrievable by ID
         let revoked_share = store.get_share(share.id).await.unwrap();
@@ -3377,7 +3392,6 @@ mod tests {
 
         // Create test user and group
         let user_id = Uuid::new_v4();
-        let group_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
 
         // Create user
@@ -3410,7 +3424,7 @@ mod tests {
             id: Uuid::new_v4(),
             file_id: Some(file.id),
             folder_id: None,
-            share_token: Some("public_token".to_string()),
+            share_token: Some(Uuid::new_v4().to_string()),
             permissions: SharePermissions::View,
             password_hash: None,
             expires_at: None,
@@ -3424,6 +3438,22 @@ mod tests {
             tenant_id,
         };
         store.create_share(&public_share).await.unwrap();
+
+        // Create backing group row for the FK used by recipient_group_id.
+        let group_id = Uuid::new_v4();
+        sqlx::query(
+            r#"
+            INSERT INTO user_groups (id, name, description, created_by)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(group_id)
+        .bind(format!("test-group-{}", group_id))
+        .bind(Some("Test group".to_string()))
+        .bind(owner.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         // Create group share (same file)
         let group_share = Share {
@@ -3460,6 +3490,11 @@ mod tests {
             .unwrap();
         sqlx::query("DELETE FROM files WHERE id = $1")
             .bind(file.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM user_groups WHERE id = $1")
+            .bind(group_id)
             .execute(&pool)
             .await
             .unwrap();

@@ -46,7 +46,7 @@ nginx:80 (reverse proxy)
 
 Dependencies:
 - postgres:5432 (database)
-- minio:9000 (object storage)
+- rustfs:9000 (object storage)
 ```
 
 **Benefits:**
@@ -844,8 +844,8 @@ services:
   postgres:
     # ... existing postgres service
 
-  minio:
-    # ... existing minio service
+  rustfs:
+    # ... existing rustfs service
 ```
 
 ### nginx Reverse Proxy

@@ -57,7 +57,7 @@ export interface Share {
 	resource_id: string;
 	resource_type: 'file' | 'folder';
 	resource_name?: string;
-	share_token: string | null;  // null for user/group shares
+	share_token: string | null; // null for user/group shares
 	permissions: 'View' | 'Edit' | 'Admin';
 	upload_only: boolean;
 	password_protected: boolean;

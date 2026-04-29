@@ -3,11 +3,27 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
-	import { getFolderTree, getSharedFolderTree, type FolderTree as FolderTreeType } from '$lib/api/folders';
+	import {
+		getFolderTree,
+		getSharedFolderTree,
+		type FolderTree as FolderTreeType
+	} from '$lib/api/folders';
 	import { listReceivedShares } from '$lib/api/shares';
 	import type { ReceivedShare } from '$lib/api/types';
 	import { onMount } from 'svelte';
-	import { ChevronRight, Folder, FolderOpen, Hop as Home, Users, Star, Image, Search, Plus, HardDrive, Trash } from 'lucide-svelte';
+	import {
+		ChevronRight,
+		Folder,
+		FolderOpen,
+		Hop as Home,
+		Users,
+		Star,
+		Image,
+		Search,
+		Plus,
+		HardDrive,
+		Trash
+	} from 'lucide-svelte';
 	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
 	import FolderTree from '$lib/files/FolderTree.svelte';
 	import { currentUser } from '$lib/stores/auth';
@@ -21,8 +37,8 @@
 		onClose?: () => void;
 		onCreateFolder?: () => void;
 	}
-	let { 
-		variant = 'files', 
+	let {
+		variant = 'files',
 		mobileOpen = false,
 		onClose = () => {},
 		onCreateFolder = () => {}
@@ -112,10 +128,10 @@
 
 	function findAncestorIds(root: FolderTreeType, targetId: string): Set<string> {
 		const ancestors = new Set<string>();
-		
+
 		function findPath(node: FolderTreeType, target: string, path: string[]): boolean {
 			if (node.folder.id === target) {
-				path.forEach(id => ancestors.add(id));
+				path.forEach((id) => ancestors.add(id));
 				return true;
 			}
 			if (node.subfolders) {
@@ -127,7 +143,7 @@
 			}
 			return false;
 		}
-		
+
 		findPath(root, targetId, []);
 		return ancestors;
 	}
@@ -147,7 +163,7 @@
 			}
 			return false;
 		}
-		
+
 		findAndExpand(root, targetId);
 	}
 
@@ -172,7 +188,7 @@
 	function isRootActive(root: ExplorerRoot): boolean {
 		if (!browser) return false;
 		if (currentFilter) return false; // Collections are not root
-		
+
 		if (root === 'my-files') {
 			return currentRoot === 'my-files' && !currentFolderId;
 		} else {
@@ -284,32 +300,32 @@
 {#if mobileOpen}
 	<button
 		type="button"
-		class="fixed inset-0 bg-black/60 lg:hidden z-40 backdrop-blur-sm cursor-default"
+		class="fixed inset-0 z-40 cursor-default bg-black/60 backdrop-blur-sm lg:hidden"
 		onclick={onClose}
 		aria-label="Close sidebar"
 	></button>
 {/if}
 
 <aside
-	class="h-full flex-col border-r overflow-hidden transition-all duration-300 bg-base-100 border-base-300/50 w-64 relative z-20
+	class="relative z-20 h-full w-64 flex-col overflow-hidden border-r border-base-300/50 bg-base-100 transition-all duration-300
 		{mobileOpen ? 'flex translate-x-0' : 'hidden -translate-x-full lg:flex lg:translate-x-0'}
 		{mobileOpen ? 'fixed z-50' : 'lg:static'}"
 	aria-label="Folder navigation"
 >
 	<!-- Navigation Sections -->
-	<div class="flex-1 overflow-y-auto py-2 relative z-10">
+	<div class="relative z-10 flex-1 overflow-y-auto py-2">
 		<!-- 
 			PRIMARY NAVIGATION GROUP
 			Only My Files is in the primary group per SPEC section 1.1
 			Shared has been moved to Library
 		-->
-		<nav class="px-2 mb-2" aria-label="Quick links">
+		<nav class="mb-2 px-2" aria-label="Quick links">
 			<button
 				type="button"
-				class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
-					{isRootActive('my-files') 
-						? 'bg-brand-500/10 text-brand-600 font-medium' 
-						: 'text-base-content/70 hover:bg-base-200/60'}"
+				class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors
+					{isRootActive('my-files')
+					? 'bg-brand-500/10 font-medium text-brand-600'
+					: 'text-base-content/70 hover:bg-base-200/60'}"
 				onclick={() => navigateToRoot('my-files')}
 			>
 				<Home size={18} strokeWidth={1.75} />
@@ -324,18 +340,18 @@
 			- Starred
 			- Photos  
 		-->
-		<div class="px-2 mb-4">
-			<h3 class="px-3 text-meta font-semibold text-base-content/40 uppercase tracking-wider mb-1">
+		<div class="mb-4 px-2">
+			<h3 class="mb-1 px-3 text-meta font-semibold tracking-wider text-base-content/40 uppercase">
 				Library
 			</h3>
 			<nav class="space-y-0.5" aria-label="Library">
 				<!-- Shared - Now in Library per SPEC -->
 				<button
 					type="button"
-					class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+					class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors
 						{isRootActive('shared')
-							? 'bg-brand-500/10 text-brand-600 font-medium'
-							: 'text-base-content/70 hover:bg-base-200/60'}"
+						? 'bg-brand-500/10 font-medium text-brand-600'
+						: 'text-base-content/70 hover:bg-base-200/60'}"
 					onclick={() => navigateToRoot('shared')}
 				>
 					<span class="text-base-content/70">
@@ -347,10 +363,10 @@
 				<!-- Starred -->
 				<button
 					type="button"
-					class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+					class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors
 						{isCollectionActive('starred')
-							? 'bg-brand-500/10 text-brand-600 font-medium'
-							: 'text-base-content/70 hover:bg-base-200/60'}"
+						? 'bg-brand-500/10 font-medium text-brand-600'
+						: 'text-base-content/70 hover:bg-base-200/60'}"
 					onclick={() => navigateToCollection('starred')}
 				>
 					<Star size={18} strokeWidth={1.75} />
@@ -360,10 +376,10 @@
 				<!-- Photos -->
 				<button
 					type="button"
-					class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+					class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors
 						{isCollectionActive('photos')
-							? 'bg-brand-500/10 text-brand-600 font-medium'
-							: 'text-base-content/70 hover:bg-base-200/60'}"
+						? 'bg-brand-500/10 font-medium text-brand-600'
+						: 'text-base-content/70 hover:bg-base-200/60'}"
 					onclick={() => navigateToCollection('photos')}
 				>
 					<Image size={18} strokeWidth={1.75} />
@@ -373,10 +389,10 @@
 				<!-- Trash -->
 				<button
 					type="button"
-					class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+					class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors
 						{isCollectionActive('deleted')
-							? 'bg-brand-500/10 text-brand-600 font-medium'
-							: 'text-base-content/70 hover:bg-base-200/60'}"
+						? 'bg-brand-500/10 font-medium text-brand-600'
+						: 'text-base-content/70 hover:bg-base-200/60'}"
 					onclick={() => navigateToCollection('deleted')}
 				>
 					<Trash size={18} strokeWidth={1.75} />
@@ -392,23 +408,33 @@
 			- Shared (tree root)
 		-->
 		<div class="px-2">
-			<div class="flex items-center justify-between px-3 mb-1">
-				<h3 class="text-meta font-semibold text-base-content/40 uppercase tracking-wider">
+			<div class="mb-1 flex items-center justify-between px-3">
+				<h3 class="text-meta font-semibold tracking-wider text-base-content/40 uppercase">
 					Folders
 				</h3>
 				<div class="flex items-center gap-1">
 					<button
 						type="button"
-						class="p-1 rounded-md text-base-content/40 hover:text-brand-500 hover:bg-brand-500/10 transition-colors"
+						class="rounded-md p-1 text-base-content/40 transition-colors hover:bg-brand-500/10 hover:text-brand-500"
 						onclick={handleCollapseAll}
 						aria-label="Collapse all folders"
 						title="Collapse all"
 					>
-						<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"><path d="m18 15-6-6-6 6" /></svg
+						>
 					</button>
 					<button
 						type="button"
-						class="p-1 rounded-md text-base-content/40 hover:text-brand-500 hover:bg-brand-500/10 transition-colors"
+						class="rounded-md p-1 text-base-content/40 transition-colors hover:bg-brand-500/10 hover:text-brand-500"
 						onclick={onCreateFolder}
 						aria-label="Create new folder"
 						title="New folder"
@@ -417,23 +443,34 @@
 					</button>
 				</div>
 			</div>
-			
+
 			{#if $folderTreeQuery?.isLoading || $receivedSharesQuery?.isLoading || $sharedFolderTreesQuery?.isLoading}
 				<div class="px-3 py-4">
 					<div class="flex items-center gap-2 text-sm text-base-content/50">
-						<div class="w-4 h-4 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin"></div>
+						<div
+							class="h-4 w-4 animate-spin rounded-full border-2 border-brand-500/30 border-t-brand-500"
+						></div>
 						<span>Loading folders...</span>
 					</div>
 				</div>
 			{:else if $folderTreeQuery?.isError}
 				<div class="px-3 py-4 text-sm text-error">
 					<div class="flex items-center gap-2">
-						<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-							<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							class="h-4 w-4"
+							viewBox="0 0 20 20"
+							fill="currentColor"
+						>
+							<path
+								fill-rule="evenodd"
+								d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+								clip-rule="evenodd"
+							/>
 						</svg>
 						<span>Failed to load folders</span>
 					</div>
-					<button 
+					<button
 						type="button"
 						class="mt-2 text-xs text-brand-500 hover:text-brand-600"
 						onclick={() => $folderTreeQuery.refetch()}
@@ -446,7 +483,7 @@
 					<!-- My Files Tree -->
 					{#if getMyFilesTreeData().length > 0}
 						<div class="mb-1">
-							<FolderTree 
+							<FolderTree
 								folders={getMyFilesTreeData()}
 								onFolderClick={(folderId) => navigateToFolder(folderId, 'my-files')}
 								{ancestorIds}
@@ -458,8 +495,8 @@
 
 					<!-- Shared Tree -->
 					{#if getSharedTreeData()}
-						<div class="mt-2 pt-2 border-t border-base-300/30">
-							<FolderTree 
+						<div class="mt-2 border-t border-base-300/30 pt-2">
+							<FolderTree
 								folders={[getSharedTreeData()!]}
 								onFolderClick={(folderId) => {
 									if (folderId === 'shared-root') {
@@ -476,13 +513,13 @@
 						</div>
 					{:else}
 						<!-- Empty shared state -->
-						<div class="mt-2 pt-2 border-t border-base-300/30 px-3 py-2">
+						<div class="mt-2 border-t border-base-300/30 px-3 py-2 pt-2">
 							<button
 								type="button"
-								class="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+								class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors
 									{isRootActive('shared')
-										? 'bg-brand-500/10 text-brand-600 font-medium'
-										: 'text-base-content/50 hover:bg-base-200/60'}"
+									? 'bg-brand-500/10 font-medium text-brand-600'
+									: 'text-base-content/50 hover:bg-base-200/60'}"
 								onclick={() => navigateToRoot('shared')}
 							>
 								<span class="text-base-content/50">
@@ -490,7 +527,7 @@
 								</span>
 								<span>Shared</span>
 							</button>
-							<p class="px-3 text-xs text-base-content/40 mt-1">No shared folders</p>
+							<p class="mt-1 px-3 text-xs text-base-content/40">No shared folders</p>
 						</div>
 					{/if}
 				</nav>
@@ -499,53 +536,65 @@
 	</div>
 
 	<!-- Footer -->
-	<div class="border-t border-base-300/50 p-4 bg-base-100 pb-6 w-full shrink-0">
+	<div class="w-full shrink-0 border-t border-base-300/50 bg-base-100 p-4 pb-6">
 		<div class="flex items-center gap-3">
 			<!-- Circular Progress -->
 			<div class="relative flex h-10 w-10 shrink-0 items-center justify-center">
 				<svg class="h-full w-full -rotate-90 transform" viewBox="0 0 36 36">
-					<circle 
-						cx="18" cy="18" r="15.915" 
-						fill="none" 
-						class="text-base-200" 
-						stroke="currentColor" 
+					<circle
+						cx="18"
+						cy="18"
+						r="15.915"
+						fill="none"
+						class="text-base-200"
+						stroke="currentColor"
 						stroke-width="3"
 					></circle>
 					{#if $currentUser?.storage_quota}
-						<circle 
-							cx="18" cy="18" r="15.915" 
-							fill="none" 
-							class="text-brand-500 transition-all duration-1000 ease-out" 
-							stroke="currentColor" 
-							stroke-width="3" 
-							stroke-dasharray="100, 100" 
-							stroke-dashoffset={100 - Math.min(100, (totalSizeUsed / $currentUser.storage_quota) * 100)} 
+						<circle
+							cx="18"
+							cy="18"
+							r="15.915"
+							fill="none"
+							class="text-brand-500 transition-all duration-1000 ease-out"
+							stroke="currentColor"
+							stroke-width="3"
+							stroke-dasharray="100, 100"
+							stroke-dashoffset={100 -
+								Math.min(100, (totalSizeUsed / $currentUser.storage_quota) * 100)}
 							stroke-linecap="round"
 						></circle>
 					{/if}
 				</svg>
 				<div class="absolute inset-0 flex items-center justify-center">
-					<div class="h-2.5 w-2.5 rounded-full bg-success shadow-[0_0_8px_rgba(34,197,94,0.8)] animate-pulse"></div>
+					<div
+						class="h-2.5 w-2.5 animate-pulse rounded-full bg-success shadow-[0_0_8px_rgba(34,197,94,0.8)]"
+					></div>
 				</div>
 			</div>
 
 			<!-- Storage Text -->
-			<div class="flex flex-col flex-1 min-w-0 justify-center">
-				<div class="flex items-center gap-2 mb-0.5">
-					<span class="text-meta font-bold uppercase tracking-wider text-base-content/80">Storage</span>
+			<div class="flex min-w-0 flex-1 flex-col justify-center">
+				<div class="mb-0.5 flex items-center gap-2">
+					<span class="text-meta font-bold tracking-wider text-base-content/80 uppercase"
+						>Storage</span
+					>
 					{#if $currentUser?.storage_quota}
-						<span class="text-2xs font-bold text-brand-600 bg-brand-500/10 px-1.5 py-0.5 rounded-sm">
+						<span
+							class="rounded-sm bg-brand-500/10 px-1.5 py-0.5 text-2xs font-bold text-brand-600"
+						>
 							{Math.round((totalSizeUsed / $currentUser.storage_quota) * 100)}%
 						</span>
 					{/if}
 				</div>
-				<div class="text-2xs text-base-content/50 font-medium truncate">
+				<div class="truncate text-2xs font-medium text-base-content/50">
 					{#if $allFilesQuery.isLoading}
 						Calculating usage...
 					{:else if $currentUser?.storage_quota}
-						<span class="text-base-content/90 font-semibold">{formatFileSize(totalSizeUsed)}</span> / {formatFileSize($currentUser.storage_quota)}
+						<span class="font-semibold text-base-content/90">{formatFileSize(totalSizeUsed)}</span>
+						/ {formatFileSize($currentUser.storage_quota)}
 					{:else}
-						<span class="text-base-content/90 font-semibold">{formatFileSize(totalSizeUsed)}</span> used
+						<span class="font-semibold text-base-content/90">{formatFileSize(totalSizeUsed)}</span> used
 					{/if}
 				</div>
 			</div>

@@ -32,7 +32,7 @@
 <!-- Mobile overlay -->
 {#if mobileOpen}
 	<div
-		class="inset-0 bg-black/50 lg:hidden fixed z-40"
+		class="fixed inset-0 z-40 bg-black/50 lg:hidden"
 		on:click={onClose}
 		on:keydown={(e) => e.key === 'Escape' && onClose()}
 		role="button"
@@ -42,16 +42,16 @@
 
 <!-- Sidebar -->
 <aside
-	class="w-64 bg-base-100 border-base-300 lg:static fixed z-50 flex h-screen flex-col border-r transition-transform duration-300 {mobileOpen
+	class="fixed z-50 flex h-screen w-64 flex-col border-r border-base-300 bg-base-100 transition-transform duration-300 lg:static {mobileOpen
 		? 'translate-x-0'
-		: 'lg:translate-x-0 -translate-x-full'}"
+		: '-translate-x-full lg:translate-x-0'}"
 >
-	<div class="p-4 border-base-300 flex items-center justify-between border-b">
+	<div class="flex items-center justify-between border-b border-base-300 p-4">
 		<h1 class="text-2xl font-bold">RustShare</h1>
 
 		<!-- Close button (mobile only) -->
 		<button
-			class="btn btn-ghost btn-sm btn-circle lg:hidden"
+			class="btn btn-circle btn-ghost btn-sm lg:hidden"
 			aria-label="Close navigation menu"
 			on:click={onClose}
 		>
@@ -61,27 +61,27 @@
 				viewBox="0 0 24 24"
 				stroke-width="1.5"
 				stroke="currentColor"
-				class="w-6 h-6"
+				class="h-6 w-6"
 			>
 				<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
 			</svg>
 		</button>
 	</div>
 
-	<nav class="p-4 flex-1">
+	<nav class="flex-1 p-4">
 		<ul class="menu">
 			{#each navItems as item}
 				<li>
 					<a
 						href={item.href}
 						class:active={$page.url.pathname === item.href}
-						class="gap-2 flex items-center"
+						class="flex items-center gap-2"
 						on:click={handleNavClick}
 					>
 						<span>{item.icon}</span>
 						<span>{item.label}</span>
 						{#if item.href === '/notifications' && $unreadNotificationsQuery.data && $unreadNotificationsQuery.data.count > 0}
-							<span class="badge badge-primary badge-sm ml-auto">
+							<span class="ml-auto badge badge-sm badge-primary">
 								{$unreadNotificationsQuery.data.count}
 							</span>
 						{/if}
@@ -91,7 +91,7 @@
 		</ul>
 	</nav>
 
-	<div class="p-4 border-base-300 border-t">
-		<button class="btn btn-outline btn-block" on:click={handleLogout}> Logout </button>
+	<div class="border-t border-base-300 p-4">
+		<button class="btn btn-block btn-outline" on:click={handleLogout}> Logout </button>
 	</div>
 </aside>
