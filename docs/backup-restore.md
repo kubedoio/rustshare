@@ -12,7 +12,7 @@ The `scripts/backup-stack.sh` script creates a timestamped bundle containing:
 | Artifact | Description |
 |----------|-------------|
 | `postgres.sql.gz` | Logical dump of the PostgreSQL database |
-| `rustfs-data.tar.gz` | Snapshot of the RustFS/MinIO data volume |
+| `rustfs-data.tar.gz` | Snapshot of the RustFS data volume |
 | `config.tar.gz` | Docker Compose files, scripts, and key documentation |
 | `manifest.env` | Backup metadata (timestamp, git commit, service names) |
 | `SHA256SUMS` | Checksums for integrity verification (if `shasum` is available) |
@@ -20,7 +20,7 @@ The `scripts/backup-stack.sh` script creates a timestamped bundle containing:
 This covers the three critical layers of a RustShare deployment:
 
 1. **Database** — all metadata, users, permissions, shares, and folder structures
-2. **Object storage** — the actual file content and versions stored in RustFS/MinIO
+2. **Object storage** — the actual file content and versions stored in RustFS
 3. **Configuration** — compose files, environment references, and operational docs
 
 > **Note:** The `.env` file is **not** included in the backup bundle. Keep it in a separate secrets manager or secure location, since it contains passwords and encryption keys.
@@ -56,7 +56,7 @@ You can specify a custom backup root:
 | `POSTGRES_SERVICE` | `postgres` | Name of the Postgres service in Compose |
 | `POSTGRES_DB` | `rustshare` | Database name to dump |
 | `POSTGRES_USER` | `rustshare` | Database user for `pg_dump` |
-| `RUSTFS_SERVICE` | `rustfs` | Name of the RustFS/MinIO service |
+| `RUSTFS_SERVICE` | `rustfs` | Name of the RustFS service |
 
 ### Automated Backups (Cron)
 

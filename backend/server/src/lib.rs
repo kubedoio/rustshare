@@ -16,10 +16,10 @@ pub mod state;
 pub mod trash_cleanup;
 pub mod web_session;
 
-pub use state::{AppAiService, AppState, AppUploadService, AppUserShareService};
 pub use bootstrap::default_storage_quota_bytes;
+pub use state::{AppAiService, AppState, AppUploadService, AppUserShareService};
 
-use axum::{http::StatusCode, response::IntoResponse, Json};
+use axum::Json;
 use serde::Serialize;
 
 /// Health check endpoint

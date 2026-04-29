@@ -54,7 +54,7 @@
 	<div class="relative">
 		<input
 			type="text"
-			class="input input-bordered w-full pr-8"
+			class="input-bordered input w-full pr-8"
 			{placeholder}
 			value={query}
 			on:input={handleInput}
@@ -62,20 +62,23 @@
 			on:focus={() => results.length > 0 && (open = true)}
 		/>
 		{#if loading}
-			<span class="loading loading-spinner loading-xs absolute right-3 top-1/2 -translate-y-1/2"></span>
+			<span class="loading absolute top-1/2 right-3 loading-xs -translate-y-1/2 loading-spinner"
+			></span>
 		{/if}
 	</div>
 
 	{#if open && results.length > 0}
-		<ul class="absolute z-50 mt-1 w-full bg-base-100 border border-base-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+		<ul
+			class="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-base-300 bg-base-100 shadow-lg"
+		>
 			{#each results as user (user.id)}
 				<li>
 					<button
 						type="button"
-						class="w-full text-left px-3 py-2 hover:bg-base-200 transition-colors flex flex-col"
+						class="flex w-full flex-col px-3 py-2 text-left transition-colors hover:bg-base-200"
 						on:mousedown={() => handleSelect(user)}
 					>
-						<span class="font-medium text-sm">{user.username}</span>
+						<span class="text-sm font-medium">{user.username}</span>
 						<span class="text-xs text-base-content/60">{user.email}</span>
 					</button>
 				</li>

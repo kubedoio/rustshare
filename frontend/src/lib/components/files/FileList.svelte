@@ -74,8 +74,8 @@
 	}
 </script>
 
-<div class="bg-base-100 rounded-lg shadow overflow-x-auto min-h-[200px]">
-	<table class="table-zebra table">
+<div class="min-h-[200px] overflow-x-auto rounded-lg bg-base-100 shadow">
+	<table class="table table-zebra">
 		<thead>
 			<tr>
 				<th>Name</th>
@@ -90,7 +90,7 @@
 			{#each folders as folder}
 				<tr class="hover">
 					<td>
-						<div class="gap-3 flex items-center">
+						<div class="flex items-center gap-3">
 							{#if selectionMode}
 								<input
 									type="checkbox"
@@ -136,7 +136,7 @@
 									viewBox="0 0 24 24"
 									stroke-width="1.5"
 									stroke="currentColor"
-									class="w-4 h-4"
+									class="h-4 w-4"
 								>
 									<path
 										stroke-linecap="round"
@@ -145,7 +145,7 @@
 									/>
 								</svg>
 							</button>
-							<ul class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-50">
+							<ul class="dropdown-content menu z-50 w-52 rounded-box bg-base-100 p-2 shadow">
 								<li>
 									<button type="button" on:click|stopPropagation={() => onRenameFolder(folder)}
 										>Rename</button
@@ -178,7 +178,7 @@
 			{#each files as file}
 				<tr class="hover">
 					<td>
-						<div class="gap-3 flex items-center">
+						<div class="flex items-center gap-3">
 							{#if selectionMode}
 								<input
 									type="checkbox"
@@ -190,7 +190,7 @@
 							<span class="text-2xl">{getFileIcon(file.mime_type)}</span>
 							<button
 								type="button"
-								class="font-medium hover:text-primary cursor-pointer text-left"
+								class="cursor-pointer text-left font-medium hover:text-primary"
 								on:click|stopPropagation={() => onFileClick(file)}
 							>
 								{file.name}
@@ -233,7 +233,7 @@
 									viewBox="0 0 24 24"
 									stroke-width="1.5"
 									stroke="currentColor"
-									class="w-4 h-4"
+									class="h-4 w-4"
 								>
 									<path
 										stroke-linecap="round"
@@ -242,7 +242,7 @@
 									/>
 								</svg>
 							</button>
-							<ul class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-50">
+							<ul class="dropdown-content menu z-50 w-52 rounded-box bg-base-100 p-2 shadow">
 								<li>
 									<button type="button" on:click|stopPropagation={() => onRenameFile(file)}
 										>Rename</button
@@ -295,7 +295,7 @@
 
 			{#if folders.length === 0 && files.length === 0}
 				<tr>
-					<td colspan="5" class="py-8 text-base-content/50 text-center"> No files or folders </td>
+					<td colspan="5" class="py-8 text-center text-base-content/50"> No files or folders </td>
 				</tr>
 			{/if}
 		</tbody>

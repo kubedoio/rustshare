@@ -57,12 +57,14 @@
 	<!-- Filter bar -->
 	<div class="card bg-base-100 shadow">
 		<div class="card-body p-4">
-			<div class="flex flex-wrap gap-3 items-end">
+			<div class="flex flex-wrap items-end gap-3">
 				<div class="form-control">
-					<label class="label py-0" for="audit-type"><span class="label-text text-xs">Type</span></label>
+					<label class="label py-0" for="audit-type"
+						><span class="label-text text-xs">Type</span></label
+					>
 					<select
 						id="audit-type"
-						class="select select-bordered select-sm w-40"
+						class="select-bordered select w-40 select-sm"
 						bind:value={typeFilter}
 						on:change={applyFilters}
 					>
@@ -80,7 +82,7 @@
 					<input
 						id="audit-user"
 						type="text"
-						class="input input-bordered input-sm w-44"
+						class="input-bordered input input-sm w-44"
 						bind:value={userSearch}
 						placeholder="Filter by user..."
 						on:input={applyFilters}
@@ -88,28 +90,31 @@
 				</div>
 
 				<div class="form-control">
-					<label class="label py-0" for="audit-from"><span class="label-text text-xs">From</span></label>
+					<label class="label py-0" for="audit-from"
+						><span class="label-text text-xs">From</span></label
+					>
 					<input
 						id="audit-from"
 						type="date"
-						class="input input-bordered input-sm"
+						class="input-bordered input input-sm"
 						bind:value={fromDate}
 						on:change={applyFilters}
 					/>
 				</div>
 
 				<div class="form-control">
-					<label class="label py-0" for="audit-to"><span class="label-text text-xs">To</span></label>
+					<label class="label py-0" for="audit-to"><span class="label-text text-xs">To</span></label
+					>
 					<input
 						id="audit-to"
 						type="date"
-						class="input input-bordered input-sm"
+						class="input-bordered input input-sm"
 						bind:value={toDate}
 						on:change={applyFilters}
 					/>
 				</div>
 
-				<span class="text-sm text-base-content/60 ml-auto self-center">
+				<span class="ml-auto self-center text-sm text-base-content/60">
 					{total} event{total !== 1 ? 's' : ''}
 				</span>
 			</div>
@@ -118,7 +123,7 @@
 
 	<!-- Table -->
 	<div class="overflow-x-auto rounded-lg border border-base-300">
-		<table class="table table-zebra w-full">
+		<table class="table w-full table-zebra">
 			<thead>
 				<tr>
 					<th class="font-data">Timestamp</th>
@@ -132,10 +137,10 @@
 			<tbody>
 				{#each entries as entry (entry.id)}
 					<tr>
-						<td class="text-xs text-base-content/70 whitespace-nowrap font-data tabular-nums">
+						<td class="font-data text-xs whitespace-nowrap text-base-content/70 tabular-nums">
 							{formatDate(entry.occurred_at)}
 						</td>
-						<td class="text-sm font-medium font-data">{entry.actor_label}</td>
+						<td class="font-data text-sm font-medium">{entry.actor_label}</td>
 						<td>
 							<span class="badge badge-ghost badge-sm capitalize">{entry.type}</span>
 						</td>
@@ -144,31 +149,32 @@
 								{entry.action_type}
 							</span>
 						</td>
-						<td class="text-sm text-base-content/70 font-data">{entry.target_label ?? '—'}</td>
+						<td class="font-data text-sm text-base-content/70">{entry.target_label ?? '—'}</td>
 						<td>
 							{#if Object.keys(entry.detail).length > 0}
-								<button
-									class="btn btn-ghost btn-xs"
-									on:click={() => toggleExpand(entry.id)}
-								>
+								<button class="btn btn-ghost btn-xs" on:click={() => toggleExpand(entry.id)}>
 									{expandedId === entry.id ? 'Collapse' : 'Expand'}
 								</button>
 							{:else}
-								<span class="text-base-content/40 text-xs">—</span>
+								<span class="text-xs text-base-content/40">—</span>
 							{/if}
 						</td>
 					</tr>
 					{#if expandedId === entry.id}
 						<tr>
 							<td colspan="6" class="bg-base-200">
-								<pre class="text-xs p-2 overflow-x-auto rounded">{JSON.stringify(entry.detail, null, 2)}</pre>
+								<pre class="overflow-x-auto rounded p-2 text-xs">{JSON.stringify(
+										entry.detail,
+										null,
+										2
+									)}</pre>
 							</td>
 						</tr>
 					{/if}
 				{/each}
 				{#if entries.length === 0}
 					<tr>
-						<td colspan="6" class="text-center text-base-content/50 py-8">No audit events found</td>
+						<td colspan="6" class="py-8 text-center text-base-content/50">No audit events found</td>
 					</tr>
 				{/if}
 			</tbody>
@@ -179,7 +185,7 @@
 	{#if totalPages > 1}
 		<div class="flex justify-center gap-2">
 			<button
-				class="btn btn-sm btn-ghost"
+				class="btn btn-ghost btn-sm"
 				disabled={page <= 1}
 				on:click={() => onPageChange(page - 1)}
 			>
@@ -187,7 +193,7 @@
 			</button>
 			<span class="flex items-center px-2 text-sm">Page {page} of {totalPages}</span>
 			<button
-				class="btn btn-sm btn-ghost"
+				class="btn btn-ghost btn-sm"
 				disabled={page >= totalPages}
 				on:click={() => onPageChange(page + 1)}
 			>

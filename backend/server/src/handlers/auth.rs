@@ -12,6 +12,7 @@ use rustshare_storage::MetadataStore;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use super::ErrorResponse;
 use crate::{
     middleware, oidc,
     web_session::{
@@ -20,7 +21,6 @@ use crate::{
     },
     AppState,
 };
-use super::ErrorResponse;
 
 /// Login request
 #[derive(Deserialize)]
@@ -55,7 +55,9 @@ pub async fn login(
     if !oidc::password_login_enabled() {
         return Ok((
             StatusCode::FORBIDDEN,
-            Json(ErrorResponse::new("Password login is disabled for this deployment")),
+            Json(ErrorResponse::new(
+                "Password login is disabled for this deployment",
+            )),
         )
             .into_response());
     }
@@ -67,7 +69,9 @@ pub async fn login(
             Ok(true) => {
                 return Ok((
                     StatusCode::TOO_MANY_REQUESTS,
-                    Json(ErrorResponse::new("Too many failed login attempts. Please try again later.")),
+                    Json(ErrorResponse::new(
+                        "Too many failed login attempts. Please try again later.",
+                    )),
                 )
                     .into_response());
             }

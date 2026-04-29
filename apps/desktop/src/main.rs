@@ -273,7 +273,7 @@ fn run_daemon_start(cli: &Cli) -> Result<()> {
         command.pre_exec(|| {
             nix::unistd::setsid()
                 .map(|_| ())
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                .map_err(std::io::Error::other)
         });
     }
 
@@ -575,7 +575,7 @@ async fn async_main(cli: Cli) -> Result<()> {
                                                     root.id,
                                                     &entry.relative_path,
                                                 )?;
-                                                let _ = db.mark_file_tombstone(
+                                                db.mark_file_tombstone(
                                                     root.id,
                                                     &entry.relative_path,
                                                     "local",
@@ -1056,10 +1056,10 @@ async fn run_daemon(mut core: SyncCore, handle: DaemonHandle) -> anyhow::Result<
     Ok(())
 }
 
-async fn notify_daemon_config_change(app_data_dir: &PathBuf, root_id: Uuid) -> Result<()> {
+async fn notify_daemon_config_change(app_data_dir: &std::path::Path, root_id: Uuid) -> Result<()> {
     use sync_engine::SocketClient;
 
-    let daemon_handle = DaemonHandle::new(app_data_dir.clone());
+    let daemon_handle = DaemonHandle::new(app_data_dir.to_path_buf());
 
     if daemon_handle.is_running() {
         let mut client = SocketClient::new(daemon_handle.socket_path());

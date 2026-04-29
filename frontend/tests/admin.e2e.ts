@@ -68,7 +68,10 @@ test('admin creates a user and it appears in the user list', async ({ page }) =>
 // Test 2: disable user → login blocked → re-enable → login succeeds
 // ---------------------------------------------------------------------------
 
-test('disabling a user blocks their login; re-enabling restores access', async ({ page, browser }) => {
+test('disabling a user blocks their login; re-enabling restores access', async ({
+	page,
+	browser
+}) => {
 	await loginAsAdmin(page);
 
 	const slug = uniqueSlug();
@@ -82,7 +85,9 @@ test('disabling a user blocks their login; re-enabling restores access', async (
 
 	// Disable from the user list row (no confirmation modal — direct action)
 	await page.locator(`tr:has-text("${username}") button:has-text("Disable")`).click();
-	await expect(page.locator(`tr:has-text("${username}")`).getByText('Disabled')).toBeVisible({ timeout: 5_000 });
+	await expect(page.locator(`tr:has-text("${username}")`).getByText('Disabled')).toBeVisible({
+		timeout: 5_000
+	});
 
 	// Try logging in as the disabled user in a new context
 	const ctx = await browser.newContext();
@@ -97,7 +102,9 @@ test('disabling a user blocks their login; re-enabling restores access', async (
 
 	// Re-enable the user from the list
 	await page.locator(`tr:has-text("${username}") button:has-text("Enable")`).click();
-	await expect(page.locator(`tr:has-text("${username}")`).getByText('Active')).toBeVisible({ timeout: 5_000 });
+	await expect(page.locator(`tr:has-text("${username}")`).getByText('Active')).toBeVisible({
+		timeout: 5_000
+	});
 
 	// Login should now succeed
 	const ctx2 = await browser.newContext();
@@ -146,12 +153,16 @@ test('group management: create, add member via typeahead, remove, delete', async
 	await page.locator(`text=${memberUsername}`).first().click();
 
 	// Member should now appear in the member list
-	await expect(page.locator(`td:has-text("${memberUsername}")`).first()).toBeVisible({ timeout: 5_000 });
+	await expect(page.locator(`td:has-text("${memberUsername}")`).first()).toBeVisible({
+		timeout: 5_000
+	});
 
 	// Remove the member (opens confirmation modal, then confirm)
 	await page.click(`tr:has-text("${memberUsername}") button:has-text("Remove")`);
 	await page.locator('.modal.modal-open button.btn-error').click();
-	await expect(page.locator(`td:has-text("${memberUsername}")`).first()).not.toBeVisible({ timeout: 5_000 });
+	await expect(page.locator(`td:has-text("${memberUsername}")`).first()).not.toBeVisible({
+		timeout: 5_000
+	});
 
 	// Delete the group
 	await page.goto(`${BASE}/admin/groups`);
@@ -216,7 +227,9 @@ test('user.disabled action is recorded in the audit log', async ({ page }) => {
 	await page.goto(`${BASE}/admin/users`);
 	await createUser(page, username, email, 'TestPass123!');
 	await page.locator(`tr:has-text("${username}") button:has-text("Disable")`).click();
-	await expect(page.locator(`tr:has-text("${username}")`).getByText('Disabled')).toBeVisible({ timeout: 5_000 });
+	await expect(page.locator(`tr:has-text("${username}")`).getByText('Disabled')).toBeVisible({
+		timeout: 5_000
+	});
 
 	// Check audit log for the disable action
 	await page.goto(`${BASE}/admin/audit`);
@@ -225,7 +238,7 @@ test('user.disabled action is recorded in the audit log', async ({ page }) => {
 	// Filter by admin_action type to narrow results
 	await page.locator('#audit-type').selectOption('admin_action');
 
-	await expect(
-		page.getByText('user.disabled', { exact: false }).first()
-	).toBeVisible({ timeout: 8_000 });
+	await expect(page.getByText('user.disabled', { exact: false }).first()).toBeVisible({
+		timeout: 8_000
+	});
 });

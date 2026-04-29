@@ -82,7 +82,10 @@ impl UploadSessionRepository for MockUploadRepo {
         Ok(Vec::new())
     }
 
-    async fn list_user_sessions(&self, _user_id: UserId) -> Result<Vec<UploadSession>, UploadError> {
+    async fn list_user_sessions(
+        &self,
+        _user_id: UserId,
+    ) -> Result<Vec<UploadSession>, UploadError> {
         Ok(Vec::new())
     }
 }
@@ -91,11 +94,20 @@ struct MockUploadObjectStore;
 
 #[async_trait::async_trait]
 impl UploadObjectStore for MockUploadObjectStore {
-    async fn put_chunk(&self, _session_id: Uuid, _chunk_index: u32, _data: Bytes) -> Result<(), UploadError> {
+    async fn put_chunk(
+        &self,
+        _session_id: Uuid,
+        _chunk_index: u32,
+        _data: Bytes,
+    ) -> Result<(), UploadError> {
         unreachable!()
     }
 
-    async fn get_chunk(&self, _session_id: Uuid, _chunk_index: u32) -> Result<Option<Bytes>, UploadError> {
+    async fn get_chunk(
+        &self,
+        _session_id: Uuid,
+        _chunk_index: u32,
+    ) -> Result<Option<Bytes>, UploadError> {
         Ok(Some(Bytes::new()))
     }
 
@@ -103,11 +115,19 @@ impl UploadObjectStore for MockUploadObjectStore {
         Ok(())
     }
 
-    async fn delete_session_chunks(&self, _session_id: Uuid, _total_chunks: u32) -> Result<(), UploadError> {
+    async fn delete_session_chunks(
+        &self,
+        _session_id: Uuid,
+        _total_chunks: u32,
+    ) -> Result<(), UploadError> {
         Ok(())
     }
 
-    async fn chunk_exists(&self, _session_id: Uuid, _chunk_index: u32) -> Result<bool, UploadError> {
+    async fn chunk_exists(
+        &self,
+        _session_id: Uuid,
+        _chunk_index: u32,
+    ) -> Result<bool, UploadError> {
         Ok(true)
     }
 
@@ -157,7 +177,11 @@ impl UploadMetadataStore for MockUploadMetadataStore {
             .cloned())
     }
 
-    async fn find_file_by_path(&self, _path: &str, _owner_id: Uuid) -> Result<Option<File>, UploadError> {
+    async fn find_file_by_path(
+        &self,
+        _path: &str,
+        _owner_id: Uuid,
+    ) -> Result<Option<File>, UploadError> {
         Ok(self.existing_file.lock().unwrap().clone())
     }
 
@@ -172,7 +196,11 @@ impl UploadMetadataStore for MockUploadMetadataStore {
         Ok(())
     }
 
-    async fn create_file_version(&self, _file: &File, version: &FileVersion) -> Result<(), UploadError> {
+    async fn create_file_version(
+        &self,
+        _file: &File,
+        version: &FileVersion,
+    ) -> Result<(), UploadError> {
         self.created_versions.lock().unwrap().push(version.clone());
         Ok(())
     }
@@ -255,7 +283,10 @@ async fn complete_upload_updates_existing_file_instead_of_creating_duplicate() {
     assert!(metadata_store.created_files.lock().unwrap().is_empty());
     assert_eq!(metadata_store.updated_files.lock().unwrap().len(), 1);
     assert_eq!(metadata_store.created_versions.lock().unwrap().len(), 1);
-    assert_eq!(repo.completed.lock().unwrap().as_slice(), &[(session_id, existing_file.id)]);
+    assert_eq!(
+        repo.completed.lock().unwrap().as_slice(),
+        &[(session_id, existing_file.id)]
+    );
 
     let updated = metadata_store.updated_files.lock().unwrap()[0].clone();
     assert_eq!(updated.id, existing_file.id);
@@ -276,8 +307,7 @@ async fn complete_upload_same_path_with_identical_content_is_a_no_op() {
     let owner_id = Uuid::new_v4();
     let tenant_id = Uuid::new_v4();
     let session_id = Uuid::new_v4();
-    let empty_hash =
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string();
+    let empty_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string();
 
     let mut session = UploadSession::new(
         session_id,
@@ -329,7 +359,10 @@ async fn complete_upload_same_path_with_identical_content_is_a_no_op() {
     assert!(metadata_store.updated_files.lock().unwrap().is_empty());
     assert!(metadata_store.created_versions.lock().unwrap().is_empty());
     assert!(event_store.events.lock().unwrap().is_empty());
-    assert_eq!(repo.completed.lock().unwrap().as_slice(), &[(session_id, existing_file.id)]);
+    assert_eq!(
+        repo.completed.lock().unwrap().as_slice(),
+        &[(session_id, existing_file.id)]
+    );
 }
 
 #[tokio::test]

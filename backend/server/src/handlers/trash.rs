@@ -31,11 +31,12 @@ pub struct TrashSummaryResponse {
 /// - 200 OK: Returns trash summary
 /// - 401 Unauthorized: Missing or invalid authentication
 /// - 500 Internal Server Error: Database error
-pub async fn get_trash_summary(
-    State(state): State<AppState>,
-    auth: AuthenticatedUser,
-) -> Response {
-    match state.metadata_store.get_trash_summary(auth.user_id, auth.tenant_id).await {
+pub async fn get_trash_summary(State(state): State<AppState>, auth: AuthenticatedUser) -> Response {
+    match state
+        .metadata_store
+        .get_trash_summary(auth.user_id, auth.tenant_id)
+        .await
+    {
         Ok((file_count, folder_count, total_size)) => (
             StatusCode::OK,
             Json(TrashSummaryResponse {
@@ -68,11 +69,12 @@ pub async fn get_trash_summary(
 /// - 204 No Content: Trash emptied successfully
 /// - 401 Unauthorized: Missing or invalid authentication
 /// - 500 Internal Server Error: Database error
-pub async fn empty_trash(
-    State(state): State<AppState>,
-    auth: AuthenticatedUser,
-) -> Response {
-    match state.metadata_store.empty_trash(auth.user_id, auth.tenant_id).await {
+pub async fn empty_trash(State(state): State<AppState>, auth: AuthenticatedUser) -> Response {
+    match state
+        .metadata_store
+        .empty_trash(auth.user_id, auth.tenant_id)
+        .await
+    {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             tracing::error!("Failed to empty trash: {:?}", e);

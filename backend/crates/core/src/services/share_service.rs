@@ -276,8 +276,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             EventType::ShareCreated,
             share.id,
             AggregateType::Share,
-            serde_json::to_value(&payload)
-                .map_err(|e| ShareError::Database(e.to_string()))?,
+            serde_json::to_value(&payload).map_err(|e| ShareError::Database(e.to_string()))?,
             user_id,
         );
 
@@ -290,6 +289,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     }
 
     /// Create a new share link for a folder.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_folder_share(
         &self,
         folder_id: uuid::Uuid,
@@ -352,8 +352,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             EventType::ShareCreated,
             share.id,
             AggregateType::Share,
-            serde_json::to_value(&payload)
-                .map_err(|e| ShareError::Database(e.to_string()))?,
+            serde_json::to_value(&payload).map_err(|e| ShareError::Database(e.to_string()))?,
             user_id,
         );
 
@@ -484,7 +483,9 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
             folder.owner_id
         } else {
-            return Err(ShareError::InvalidState("share has no associated resource".to_string()));
+            return Err(ShareError::InvalidState(
+                "share has no associated resource".to_string(),
+            ));
         };
 
         if owner_id != user_id {
@@ -511,8 +512,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             EventType::ShareRevoked,
             share.id,
             AggregateType::Share,
-            serde_json::to_value(&payload)
-                .map_err(|e| ShareError::Database(e.to_string()))?,
+            serde_json::to_value(&payload).map_err(|e| ShareError::Database(e.to_string()))?,
             user_id,
         );
 
@@ -564,7 +564,9 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
             folder.owner_id
         } else {
-            return Err(ShareError::InvalidState("share has no associated resource".to_string()));
+            return Err(ShareError::InvalidState(
+                "share has no associated resource".to_string(),
+            ));
         };
 
         if owner_id != user_id {
@@ -612,8 +614,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             EventType::ShareUpdated,
             share.id,
             AggregateType::Share,
-            serde_json::to_value(&payload)
-                .map_err(|e| ShareError::Database(e.to_string()))?,
+            serde_json::to_value(&payload).map_err(|e| ShareError::Database(e.to_string()))?,
             user_id,
         );
 
@@ -729,7 +730,9 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
             Ok((share, None, Some(folder)))
         } else {
-            Err(ShareError::InvalidState("share has no associated resource".to_string()))
+            Err(ShareError::InvalidState(
+                "share has no associated resource".to_string(),
+            ))
         }
     }
 
@@ -740,7 +743,9 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         current_folder_id: Option<uuid::Uuid>,
     ) -> Result<(Share, Folder, Vec<Folder>, Vec<File>), ShareError> {
         let (share, _file, root_folder) = self.get_public_share_info(share_token).await?;
-        let root_folder = root_folder.ok_or(ShareError::InvalidState("share is not linked to a folder".to_string()))?;
+        let root_folder = root_folder.ok_or(ShareError::InvalidState(
+            "share is not linked to a folder".to_string(),
+        ))?;
         let target_folder_id = current_folder_id.unwrap_or(root_folder.id);
 
         let descendants = self
@@ -900,8 +905,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             EventType::ShareCreated,
             share.id,
             AggregateType::Share,
-            serde_json::to_value(&payload)
-                .map_err(|e| ShareError::Database(e.to_string()))?,
+            serde_json::to_value(&payload).map_err(|e| ShareError::Database(e.to_string()))?,
             created_by,
         );
 
@@ -980,8 +984,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             EventType::ShareRevoked,
             share_id,
             AggregateType::Share,
-            serde_json::to_value(&payload)
-                .map_err(|e| ShareError::Database(e.to_string()))?,
+            serde_json::to_value(&payload).map_err(|e| ShareError::Database(e.to_string()))?,
             requesting_user,
         );
 
@@ -1066,8 +1069,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             EventType::ShareUpdated,
             share_id,
             AggregateType::Share,
-            serde_json::to_value(&payload)
-                .map_err(|e| ShareError::Database(e.to_string()))?,
+            serde_json::to_value(&payload).map_err(|e| ShareError::Database(e.to_string()))?,
             requesting_user,
         );
 
@@ -1123,13 +1125,13 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
                 // Check group shares - user must be member of group with sufficient permission
                 for share in &shares {
-                    if share.recipient_group_id.is_some()
-                        && share.revoked_at.is_none()
-                        && share.permissions >= required
+                    if let Some(group_id) = share
+                        .recipient_group_id
+                        .filter(|_| share.revoked_at.is_none() && share.permissions >= required)
                     {
                         let is_member = self
                             .metadata_store
-                            .is_user_in_group(user_id, share.recipient_group_id.unwrap())
+                            .is_user_in_group(user_id, group_id)
                             .await
                             .map_err(|e| ShareError::Database(e.to_string()))?;
                         if is_member {
@@ -1173,13 +1175,13 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
                 // Check group shares - user must be member of group with sufficient permission
                 for share in &shares {
-                    if share.recipient_group_id.is_some()
-                        && share.revoked_at.is_none()
-                        && share.permissions >= required
+                    if let Some(group_id) = share
+                        .recipient_group_id
+                        .filter(|_| share.revoked_at.is_none() && share.permissions >= required)
                     {
                         let is_member = self
                             .metadata_store
-                            .is_user_in_group(user_id, share.recipient_group_id.unwrap())
+                            .is_user_in_group(user_id, group_id)
                             .await
                             .map_err(|e| ShareError::Database(e.to_string()))?;
                         if is_member {
@@ -1308,8 +1310,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             EventType::NotificationCreated,
             share.id,
             AggregateType::Share,
-            serde_json::to_value(&payload)
-                .map_err(|e| ShareError::Database(e.to_string()))?,
+            serde_json::to_value(&payload).map_err(|e| ShareError::Database(e.to_string()))?,
             share.created_by,
         );
 

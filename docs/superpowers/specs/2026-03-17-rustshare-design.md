@@ -1183,11 +1183,11 @@ services:
       - "9001:9001"  # Console UI
     command: server /data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "sh", "-c", "nc -z localhost 9000 && nc -z localhost 9001"]
       interval: 10s
       timeout: 5s
       retries: 5
-    # Note: RustFS is S3-compatible and uses MinIO-compatible health endpoints
+    # Note: RustFS is S3-compatible and exposes both the API and console ports
 
   backend:
     build:

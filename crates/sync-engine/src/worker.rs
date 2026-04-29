@@ -1,6 +1,6 @@
 use crate::client::ApiClient;
 use sync_protocol::{
-    CompleteUploadResponse, CreateUploadSessionRequest, CreateUploadSessionResponse,
+    CompleteUploadResponse, CreateUploadSessionRequest,
     UploadChunkResponse,
 };
 use crate::retry::{with_retry, with_retry_sync, RetryConfig};
@@ -25,7 +25,7 @@ fn total_chunks_for_size(file_size: u64) -> i32 {
     if file_size == 0 {
         1
     } else {
-        ((file_size + CHUNK_SIZE as u64 - 1) / CHUNK_SIZE as u64) as i32
+        file_size.div_ceil(CHUNK_SIZE as u64) as i32
     }
 }
 

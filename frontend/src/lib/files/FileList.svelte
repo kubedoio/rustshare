@@ -49,13 +49,13 @@
 
 	function handleFileToggle(file: FileType, event?: MouseEvent) {
 		const isShiftKey = event?.shiftKey ?? false;
-		const allFileIds = files.map(f => f.id);
+		const allFileIds = files.map((f) => f.id);
 		selectionStore.toggleFile(file.id, isShiftKey, allFileIds);
 	}
 
 	function handleFolderToggle(folder: Folder, event?: MouseEvent) {
 		const isShiftKey = event?.shiftKey ?? false;
-		const allFolderIds = folders.map(f => f.id);
+		const allFolderIds = folders.map((f) => f.id);
 		selectionStore.toggleFolder(folder.id, isShiftKey, allFolderIds);
 	}
 
@@ -89,20 +89,26 @@
 
 	// Check if target folder is a descendant of the dragged folder (would create cycle)
 	function isDescendantOf(folderId: string, potentialParentId: string): boolean {
-		const folder = folders.find(f => f.id === folderId);
+		const folder = folders.find((f) => f.id === folderId);
 		if (!folder) return false;
 		if (folder.parent_folder_id === potentialParentId) return true;
 		if (!folder.parent_folder_id) return false;
 		return isDescendantOf(folder.parent_folder_id, potentialParentId);
 	}
 
-	function readDragPayload(e: DragEvent): { id: string; isFolder: boolean; parentFolderId: string | null } | null {
+	function readDragPayload(
+		e: DragEvent
+	): { id: string; isFolder: boolean; parentFolderId: string | null } | null {
 		try {
 			const data = e.dataTransfer?.getData('application/json');
 			if (data) {
 				const parsed = JSON.parse(data);
 				if (parsed && typeof parsed.id === 'string') {
-					return { id: parsed.id, isFolder: !!parsed.isFolder, parentFolderId: parsed.parentFolderId || null };
+					return {
+						id: parsed.id,
+						isFolder: !!parsed.isFolder,
+						parentFolderId: parsed.parentFolderId || null
+					};
 				}
 			}
 		} catch {
@@ -121,7 +127,7 @@
 			draggedItem = null;
 			return;
 		}
-		
+
 		// Can't drop onto itself
 		if (payload.id === folder.id) {
 			dragOverFolderId = null;
@@ -146,17 +152,17 @@
 		}
 
 		if (payload.isFolder) {
-			const draggedFolder = folders.find(f => f.id === payload?.id);
+			const draggedFolder = folders.find((f) => f.id === payload?.id);
 			if (draggedFolder) {
 				onMoveFolder(draggedFolder, folder.id);
 			}
 		} else {
-			const draggedFile = files.find(f => f.id === payload?.id);
+			const draggedFile = files.find((f) => f.id === payload?.id);
 			if (draggedFile) {
 				onMoveFile(draggedFile, folder.id);
 			}
 		}
-		
+
 		dragOverFolderId = null;
 		draggedItem = null;
 	}
@@ -164,21 +170,23 @@
 	// Helper to determine if a folder is a valid drop target
 	function isValidDropTarget(folder: Folder): boolean {
 		if (!draggedItem) return false;
-		
+
 		// Can't drop onto itself
 		if (draggedItem.id === folder.id) return false;
-		
+
 		// Can't drop a folder into itself or its children (would create cycle)
 		if (draggedItem.isFolder && isDescendantOf(folder.id, draggedItem.id)) return false;
-		
+
 		// Can't drop into current parent (no-op)
 		if (draggedItem.parentFolderId === folder.id) return false;
-		
+
 		return true;
 	}
 
-	$: allSelected = folders.length + files.length > 0 &&
-		$selectionStore.selectedFolderIds.size + $selectionStore.selectedFileIds.size === folders.length + files.length;
+	$: allSelected =
+		folders.length + files.length > 0 &&
+		$selectionStore.selectedFolderIds.size + $selectionStore.selectedFileIds.size ===
+			folders.length + files.length;
 </script>
 
 {#if isLoading}
@@ -192,18 +200,51 @@
 						{#if selectionMode}
 							<input
 								type="checkbox"
-								class="w-4 h-4 rounded border-base-300 text-brand-500 focus:ring-brand-500 bg-base-100"
+								class="h-4 w-4 rounded border-base-300 bg-base-100 text-brand-500 focus:ring-brand-500"
 								checked={allSelected}
 								on:change={handleSelectAll}
 							/>
 						{/if}
 					</th>
-					<th class="w-12 px-2 py-2 text-left text-meta font-semibold text-base-content/60 uppercase tracking-wider">Preview</th>
-					<SortableTableHeader label="Name" field="name" activeField={activeSortField} activeOrder={activeSortOrder} onSort={onSort} />
-					<SortableTableHeader label="Type" field="mime_type" activeField={activeSortField} activeOrder={activeSortOrder} onSort={onSort} class="hidden md:table-cell" />
-					<SortableTableHeader label="Size" field="size" activeField={activeSortField} activeOrder={activeSortOrder} onSort={onSort} class="hidden sm:table-cell" />
-					<SortableTableHeader label="Modified" field="modified_at" activeField={activeSortField} activeOrder={activeSortOrder} onSort={onSort} class="hidden lg:table-cell" />
-					<th class="px-4 py-2 text-left text-meta font-semibold text-base-content/60 uppercase tracking-wider hidden xl:table-cell">Status</th>
+					<th
+						class="w-12 px-2 py-2 text-left text-meta font-semibold tracking-wider text-base-content/60 uppercase"
+						>Preview</th
+					>
+					<SortableTableHeader
+						label="Name"
+						field="name"
+						activeField={activeSortField}
+						activeOrder={activeSortOrder}
+						{onSort}
+					/>
+					<SortableTableHeader
+						label="Type"
+						field="mime_type"
+						activeField={activeSortField}
+						activeOrder={activeSortOrder}
+						{onSort}
+						class="hidden md:table-cell"
+					/>
+					<SortableTableHeader
+						label="Size"
+						field="size"
+						activeField={activeSortField}
+						activeOrder={activeSortOrder}
+						{onSort}
+						class="hidden sm:table-cell"
+					/>
+					<SortableTableHeader
+						label="Modified"
+						field="modified_at"
+						activeField={activeSortField}
+						activeOrder={activeSortOrder}
+						{onSort}
+						class="hidden lg:table-cell"
+					/>
+					<th
+						class="hidden px-4 py-2 text-left text-meta font-semibold tracking-wider text-base-content/60 uppercase xl:table-cell"
+						>Status</th
+					>
 					<th class="w-10 px-4 py-2"></th>
 				</tr>
 			</thead>
@@ -230,7 +271,12 @@
 						onPermanentDelete={() => onPermanentDeleteFolder(folder)}
 						onShare={() => onShareFolder(folder)}
 						onMove={() => onMoveFolder(folder, null)}
-						onDragStart={() => handleDragStart({ id: folder.id, isFolder: true, parentFolderId: folder.parent_folder_id })}
+						onDragStart={() =>
+							handleDragStart({
+								id: folder.id,
+								isFolder: true,
+								parentFolderId: folder.parent_folder_id
+							})}
 						onDragEnd={handleDragEnd}
 						onDrop={(e) => handleDropOnFolder(folder, e)}
 						onDragOver={() => handleDragOverFolder(folder.id)}
@@ -261,8 +307,16 @@
 						onDownload={() => onDownloadFile(file)}
 						onVersionHistory={() => onVersionHistory(file)}
 						onReplace={() => onReplaceFile(file)}
-						onEdit={() => { console.log('[FileList] onEdit triggered for', file.name); onEditFile(file); }}
-						onDragStart={() => handleDragStart({ id: file.id, isFolder: false, parentFolderId: file.parent_folder_id })}
+						onEdit={() => {
+							console.log('[FileList] onEdit triggered for', file.name);
+							onEditFile(file);
+						}}
+						onDragStart={() =>
+							handleDragStart({
+								id: file.id,
+								isFolder: false,
+								parentFolderId: file.parent_folder_id
+							})}
 						onDragEnd={handleDragEnd}
 					/>
 				{/each}

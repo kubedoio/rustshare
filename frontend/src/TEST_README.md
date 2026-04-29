@@ -53,6 +53,7 @@ End-to-end tests using Playwright (in `tests/` directory):
 Current test coverage for key features:
 
 ### File Sort Store (`fileSort.test.ts`)
+
 - ✅ Default state initialization
 - ✅ Sort field selection (name, date, size, type)
 - ✅ Order toggling (asc/desc)
@@ -61,6 +62,7 @@ Current test coverage for key features:
 - ✅ Corrupted data handling
 
 ### Selection Store (`selection.test.ts`)
+
 - ✅ File selection/deselection
 - ✅ Folder selection/deselection
 - ✅ Select all functionality
@@ -70,12 +72,14 @@ Current test coverage for key features:
 - ✅ Derived stores (count, hasSelection)
 
 ### Format Utilities (`format.test.ts`)
+
 - ✅ File size formatting (bytes → TB)
 - ✅ Date/time formatting
 - ✅ MIME type icon mapping
 - ✅ Edge cases (0 bytes, unknown types)
 
 ### Shares API (`shares.test.ts`)
+
 - ✅ Create share with password/expiry
 - ✅ List file shares
 - ✅ Revoke share
@@ -84,6 +88,7 @@ Current test coverage for key features:
 - ✅ Permission types (View/ReadWrite)
 
 ### Sorting Logic (`sorting.test.ts`)
+
 - ✅ Sort by name (asc/desc, case-insensitive)
 - ✅ Sort by date (oldest/newest first)
 - ✅ Sort by size (smallest/largest first)
@@ -105,19 +110,19 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { myFunction } from './myFunction';
 
 describe('myFunction', () => {
-  beforeEach(() => {
-    // Reset state before each test
-  });
+	beforeEach(() => {
+		// Reset state before each test
+	});
 
-  it('should do something', () => {
-    const result = myFunction('input');
-    expect(result).toBe('expected output');
-  });
+	it('should do something', () => {
+		const result = myFunction('input');
+		expect(result).toBe('expected output');
+	});
 
-  it('should handle edge cases', () => {
-    expect(myFunction('')).toBe('');
-    expect(myFunction(null)).toBeNull();
-  });
+	it('should handle edge cases', () => {
+		expect(myFunction('')).toBe('');
+		expect(myFunction(null)).toBeNull();
+	});
 });
 ```
 
@@ -129,10 +134,10 @@ API calls and external dependencies are mocked:
 import { vi } from 'vitest';
 
 vi.mock('$lib/api/client', () => ({
-  apiClient: {
-    get: vi.fn(),
-    post: vi.fn()
-  }
+	apiClient: {
+		get: vi.fn(),
+		post: vi.fn()
+	}
 }));
 ```
 

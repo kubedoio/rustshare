@@ -618,7 +618,7 @@ impl NoteService {
         }
 
         // Sort by updated_at desc
-        notes.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+        notes.sort_by_key(|b| std::cmp::Reverse(b.modified_at));
 
         if let Some(limit) = limit {
             notes.truncate(limit);
@@ -735,8 +735,7 @@ fn generate_excerpt(content: &str) -> String {
         .replace("## ", "")
         .replace("### ", "")
         .replace("**", "")
-        .replace('*', "")
-        .replace('`', "")
+        .replace(['*', '`'], "")
         .replace("\n", " ");
 
     plain.truncate(200);

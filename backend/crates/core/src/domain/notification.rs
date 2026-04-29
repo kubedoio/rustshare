@@ -97,6 +97,7 @@ pub struct Notification {
 
 impl Notification {
     /// Create a new notification.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         user_id: UserId,
         notification_type: NotificationType,

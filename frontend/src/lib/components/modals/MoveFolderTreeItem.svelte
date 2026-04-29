@@ -13,15 +13,15 @@
 		onToggle: (folderId: string) => void;
 	}
 
-	let { 
-		folder, 
-		level = 0, 
-		selectedFolderId, 
-		currentFolderId, 
+	let {
+		folder,
+		level = 0,
+		selectedFolderId,
+		currentFolderId,
 		invalidFolderIds,
 		expandedFolders,
-		onSelect, 
-		onToggle 
+		onSelect,
+		onToggle
 	}: Props = $props();
 
 	let isSelected = $derived(selectedFolderId === folder.folder.id);
@@ -51,11 +51,11 @@
 <div class="folder-item">
 	<div
 		class="flex items-center gap-2 px-4 py-2 text-left transition-colors
-			{isSelected 
-				? 'bg-brand-500/10 text-brand-600' 
-				: isInvalid 
-					? 'opacity-40 cursor-not-allowed' 
-					: 'hover:bg-base-200/50 cursor-pointer'}"
+			{isSelected
+			? 'bg-brand-500/10 text-brand-600'
+			: isInvalid
+				? 'cursor-not-allowed opacity-40'
+				: 'cursor-pointer hover:bg-base-200/50'}"
 		style="padding-left: {level * 16 + 16}px"
 		role="button"
 		tabindex={isInvalid ? -1 : 0}
@@ -67,30 +67,29 @@
 		{#if hasChildren}
 			<button
 				type="button"
-				class="w-5 h-5 flex items-center justify-center rounded hover:bg-base-300/50 transition-colors shrink-0"
+				class="flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-base-300/50"
 				onclick={handleToggle}
 				tabindex="-1"
 				aria-label={isExpanded ? 'Collapse' : 'Expand'}
 			>
-				<ChevronRight 
-					size={14} 
-					class="transition-transform {isExpanded ? 'rotate-90' : ''}" 
-				/>
+				<ChevronRight size={14} class="transition-transform {isExpanded ? 'rotate-90' : ''}" />
 			</button>
 		{:else}
 			<span class="w-5"></span>
 		{/if}
 
 		<Folder size={16} class="shrink-0 {isSelected ? 'text-brand-500' : 'text-base-content/50'}" />
-		
+
 		<span class="flex-1 truncate text-sm {isSelected ? 'font-medium' : ''}">
 			{folder.folder.name}
 		</span>
 
 		{#if isCurrent}
-			<span class="text-xs px-2 py-0.5 rounded-full bg-base-300/50 text-base-content/60">Current</span>
+			<span class="rounded-full bg-base-300/50 px-2 py-0.5 text-xs text-base-content/60"
+				>Current</span
+			>
 		{:else if isInvalid}
-			<span class="text-xs px-2 py-0.5 rounded-full bg-error/10 text-error">Invalid</span>
+			<span class="rounded-full bg-error/10 px-2 py-0.5 text-xs text-error">Invalid</span>
 		{/if}
 	</div>
 

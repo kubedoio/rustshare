@@ -186,8 +186,8 @@
 						Shared links that feel managed, not forgotten
 					</h1>
 					<p class="mt-4 max-w-xl text-sm leading-6 text-base-content/68 lg:text-base">
-						Review every public link, see what is still active, and revoke access before stale
-						links turn into clutter.
+						Review every public link, see what is still active, and revoke access before stale links
+						turn into clutter.
 					</p>
 				</div>
 
@@ -204,7 +204,7 @@
 			<div class="rounded-[1.5rem] border border-base-300/70 bg-base-100 p-5 shadow-sm">
 				<div class="flex items-start justify-between">
 					<div>
-						<p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/42">
+						<p class="text-xs font-semibold tracking-[0.16em] text-base-content/42 uppercase">
 							Active links
 						</p>
 						<p class="mt-3 font-display text-4xl leading-none text-base-content">
@@ -223,7 +223,7 @@
 			<div class="rounded-[1.5rem] border border-base-300/70 bg-base-100 p-5 shadow-sm">
 				<div class="flex items-start justify-between">
 					<div>
-						<p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/42">
+						<p class="text-xs font-semibold tracking-[0.16em] text-base-content/42 uppercase">
 							Expiring soon
 						</p>
 						<p class="mt-3 font-display text-4xl leading-none text-base-content">
@@ -242,7 +242,7 @@
 			<div class="rounded-[1.5rem] border border-base-300/70 bg-base-100 p-5 shadow-sm">
 				<div class="flex items-start justify-between">
 					<div>
-						<p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/42">
+						<p class="text-xs font-semibold tracking-[0.16em] text-base-content/42 uppercase">
 							Recorded visits
 						</p>
 						<p class="mt-3 font-display text-4xl leading-none text-base-content">
@@ -261,7 +261,7 @@
 
 		{#if $sharesQuery.isLoading}
 			<div class="flex justify-center py-12">
-				<span class="loading loading-spinner loading-lg"></span>
+				<span class="loading loading-lg loading-spinner"></span>
 			</div>
 		{:else if $sharesQuery.isError}
 			<div class="alert alert-error">
@@ -291,8 +291,8 @@
 				</div>
 				<h3 class="font-display text-3xl text-base-content">No shared links yet</h3>
 				<p class="mx-auto mt-3 max-w-md font-data text-sm leading-6 text-base-content/65">
-					Create a share from any file or folder in My Files, then come back here to review
-					access, expiry, and link health in one place.
+					Create a share from any file or folder in My Files, then come back here to review access,
+					expiry, and link health in one place.
 				</p>
 				<a
 					href="/files"
@@ -313,7 +313,9 @@
 							<div class="flex flex-col gap-5">
 								<div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
 									<div class="flex items-start gap-4">
-										<div class="rounded-2xl border border-base-300/70 bg-base-200/70 p-3 text-brand-500">
+										<div
+											class="rounded-2xl border border-base-300/70 bg-base-200/70 p-3 text-brand-500"
+										>
 											{#if share.resource_type === 'folder'}
 												<FolderOpen class="h-5 w-5" />
 											{:else}
@@ -326,26 +328,36 @@
 												{share.resource_name || 'Unknown resource'}
 											</h2>
 											<div class="mt-3 flex flex-wrap gap-2 text-xs font-medium">
-												<span class="rounded-full border border-base-300 bg-base-200 px-2.5 py-1 text-base-content/70">
+												<span
+													class="rounded-full border border-base-300 bg-base-200 px-2.5 py-1 text-base-content/70"
+												>
 													{share.resource_type === 'folder' ? 'Folder' : 'File'}
 												</span>
-												<span class={`rounded-full border px-2.5 py-1 ${permissionBadgeClass(share.permissions)}`}>
+												<span
+													class={`rounded-full border px-2.5 py-1 ${permissionBadgeClass(share.permissions)}`}
+												>
 													{share.permissions}
 												</span>
 												{#if share.upload_only}
-													<span class="rounded-full border border-warning/20 bg-warning/10 px-2.5 py-1 text-warning">
+													<span
+														class="rounded-full border border-warning/20 bg-warning/10 px-2.5 py-1 text-warning"
+													>
 														Upload only
 													</span>
 												{/if}
 												{#if share.password_protected}
-													<span class="rounded-full border border-base-300 bg-base-200 px-2.5 py-1 text-base-content/70">
+													<span
+														class="rounded-full border border-base-300 bg-base-200 px-2.5 py-1 text-base-content/70"
+													>
 														<Lock class="mr-1 inline h-3 w-3" />
 														Password
 													</span>
 												{/if}
-											<span class="rounded-full border border-info/20 bg-info/10 px-2.5 py-1 text-info">
-												{getShareTypeLabel(share)}
-											</span>
+												<span
+													class="rounded-full border border-info/20 bg-info/10 px-2.5 py-1 text-info"
+												>
+													{getShareTypeLabel(share)}
+												</span>
 											</div>
 										</div>
 									</div>
@@ -380,11 +392,43 @@
 									</div>
 								</div>
 
-tttttttttt{#if shareUrl}nttttttttttt<div class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-3">ntttttttttttt<p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/45">ntttttttttttttShare URLntttttttttttt</p>ntttttttttttt<p class="mt-2 truncate font-mono text-xs text-base-content/70">nttttttttttttt{shareUrl}ntttttttttttt</p>nttttttttttt</div>ntttttttttt{:else}nttttttttttt<div class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-3">ntttttttttttt<p class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/45">ntttttttttttttShare Typentttttttttttt</p>ntttttttttttt<p class="mt-2 truncate font-mono text-xs text-base-content/70">nttttttttttttt{shareType === 'group' ? 'Shared with group members' : 'Direct user share'}ntttttttttttt</p>nttttttttttt</div>ntttttttttt{/if}
+								tttttttttt{#if shareUrl}nttttttttttt
+									<div class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-3">
+										ntttttttttttt
+										<p
+											class="text-xs font-semibold tracking-[0.16em] text-base-content/45 uppercase"
+										>
+											ntttttttttttttShare URLntttttttttttt
+										</p>
+										ntttttttttttt
+										<p class="mt-2 truncate font-mono text-xs text-base-content/70">
+											nttttttttttttt{shareUrl}ntttttttttttt
+										</p>
+										nttttttttttt
+									</div>
+									ntttttttttt{:else}nttttttttttt
+									<div class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-3">
+										ntttttttttttt
+										<p
+											class="text-xs font-semibold tracking-[0.16em] text-base-content/45 uppercase"
+										>
+											ntttttttttttttShare Typentttttttttttt
+										</p>
+										ntttttttttttt
+										<p class="mt-2 truncate font-mono text-xs text-base-content/70">
+											nttttttttttttt{shareType === 'group'
+												? 'Shared with group members'
+												: 'Direct user share'}ntttttttttttt
+										</p>
+										nttttttttttt
+									</div>
+									ntttttttttt{/if}
 
 								<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
 									<div class="rounded-2xl border border-base-300/70 bg-base-100 px-4 py-3">
-										<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+										<p
+											class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase"
+										>
 											Created
 										</p>
 										<p class="mt-2 font-data text-sm font-medium text-base-content">
@@ -392,7 +436,9 @@ tttttttttt{#if shareUrl}nttttttttttt<div class="rounded-2xl border border-base-3
 										</p>
 									</div>
 									<div class="rounded-2xl border border-base-300/70 bg-base-100 px-4 py-3">
-										<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+										<p
+											class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase"
+										>
 											Expiry
 										</p>
 										<p class="mt-2 font-data text-sm font-medium text-base-content">
@@ -400,7 +446,9 @@ tttttttttt{#if shareUrl}nttttttttttt<div class="rounded-2xl border border-base-3
 										</p>
 									</div>
 									<div class="rounded-2xl border border-base-300/70 bg-base-100 px-4 py-3">
-										<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+										<p
+											class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase"
+										>
 											Access
 										</p>
 										<p class="mt-2 font-data text-sm font-medium text-base-content">
@@ -408,7 +456,9 @@ tttttttttt{#if shareUrl}nttttttttttt<div class="rounded-2xl border border-base-3
 										</p>
 									</div>
 									<div class="rounded-2xl border border-base-300/70 bg-base-100 px-4 py-3">
-										<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+										<p
+											class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase"
+										>
 											Status
 										</p>
 										<p
@@ -440,8 +490,8 @@ tttttttttt{#if shareUrl}nttttttttttt<div class="rounded-2xl border border-base-3
 									<Clock3 class="h-4 w-4" />
 								</div>
 								<p>
-									Expiring links are fine, silent expired links are not. Review them before
-									they surprise people.
+									Expiring links are fine, silent expired links are not. Review them before they
+									surprise people.
 								</p>
 							</div>
 							<div class="flex items-start gap-3">
@@ -449,8 +499,8 @@ tttttttttt{#if shareUrl}nttttttttttt<div class="rounded-2xl border border-base-3
 									<Shield class="h-4 w-4" />
 								</div>
 								<p>
-									Password-protected and upload-only links stand out more clearly now, which
-									is the point.
+									Password-protected and upload-only links stand out more clearly now, which is the
+									point.
 								</p>
 							</div>
 						</div>
@@ -476,14 +526,16 @@ tttttttttt{#if shareUrl}nttttttttttt<div class="rounded-2xl border border-base-3
 
 							{#if shareActivityLoading}
 								<div class="flex justify-center py-8">
-									<span class="loading loading-spinner loading-md"></span>
+									<span class="loading loading-md loading-spinner"></span>
 								</div>
 							{:else if shareActivityError}
 								<div class="alert alert-error">
 									<span>{shareActivityError}</span>
 								</div>
 							{:else if shareActivity.length === 0}
-								<div class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-4 text-sm text-base-content/70">
+								<div
+									class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-4 text-sm text-base-content/70"
+								>
 									No recorded access yet for this share.
 								</div>
 							{:else}
@@ -495,7 +547,9 @@ tttttttttt{#if shareUrl}nttttttttttt<div class="rounded-2xl border border-base-3
 													<p class="font-data text-sm font-semibold text-base-content">
 														{entry.actor_label || entry.actor_type || 'Anonymous'}
 													</p>
-													<p class="mt-1 font-data text-xs uppercase tracking-[0.16em] text-base-content/45">
+													<p
+														class="mt-1 font-data text-xs tracking-[0.16em] text-base-content/45 uppercase"
+													>
 														{entry.action}
 													</p>
 												</div>

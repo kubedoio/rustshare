@@ -8,7 +8,23 @@
 	import { replicationStateBadgeClass, formatReplicationStateLabel } from '$lib/stores/replication';
 	import { formatFileSize, formatDate } from '$lib/utils/format';
 	import { detectEditorType, canEditFileSize } from '$lib/utils/editor';
-	import { MoveVertical as MoreVertical, CreditCard as Edit, CreditCard as Edit3, Trash2, Share2, Move, Download, History, RefreshCw, RotateCcw, Star, Folder as FolderIcon, File as FileIcon, Check, X } from 'lucide-svelte';
+	import {
+		MoveVertical as MoreVertical,
+		CreditCard as Edit,
+		CreditCard as Edit3,
+		Trash2,
+		Share2,
+		Move,
+		Download,
+		History,
+		RefreshCw,
+		RotateCcw,
+		Star,
+		Folder as FolderIcon,
+		File as FileIcon,
+		Check,
+		X
+	} from 'lucide-svelte';
 
 	// Props
 	interface Props {
@@ -75,14 +91,21 @@
 	let fileItem = $derived(isFolder ? null : (item as FileType));
 	let displaySize = $derived(
 		isFolder
-			? (typeof (item as Folder).size === 'number' ? formatFileSize((item as Folder).size as number) : null)
+			? typeof (item as Folder).size === 'number'
+				? formatFileSize((item as Folder).size as number)
+				: null
 			: formatFileSize(fileItem?.size ?? 0)
 	);
-	let displayDate = $derived(formatDate(
-		workspaceMode === 'deleted'
-			? (item.deleted_at ?? (isFolder ? (item as Folder).updated_at : (item as FileType).modified_at))
-			: (isFolder ? (item as Folder).updated_at : (item as FileType).modified_at)
-	));
+	let displayDate = $derived(
+		formatDate(
+			workspaceMode === 'deleted'
+				? (item.deleted_at ??
+						(isFolder ? (item as Folder).updated_at : (item as FileType).modified_at))
+				: isFolder
+					? (item as Folder).updated_at
+					: (item as FileType).modified_at
+		)
+	);
 	let isStarred = $derived(Boolean(item?.starred_at));
 	let effectivePermission = $derived(item?.effective_permission || 'Admin');
 	let canManage = $derived(effectivePermission === 'Edit' || effectivePermission === 'Admin');
@@ -109,32 +132,64 @@
 			items.push(
 				{ id: 'restore', label: 'Restore', icon: RotateCcw, onClick: onRestore },
 				{ id: 'sep1', label: '', separator: true, onClick: () => {} },
-				{ id: 'delete', label: 'Delete permanently', icon: Trash2, danger: true, onClick: onPermanentDelete }
+				{
+					id: 'delete',
+					label: 'Delete permanently',
+					icon: Trash2,
+					danger: true,
+					onClick: onPermanentDelete
+				}
 			);
 		} else {
 			if (isFolder) {
 				items.push(
-					{ id: 'open', label: 'Open', icon: FolderIcon, shortcut: 'Enter', onClick: () => onSelect() },
+					{
+						id: 'open',
+						label: 'Open',
+						icon: FolderIcon,
+						shortcut: 'Enter',
+						onClick: () => onSelect()
+					},
 					{ id: 'sep1', label: '', separator: true, onClick: () => {} }
 				);
 			} else {
 				// Check if file is editable
-				const isEditable = !isFolder && 
-					fileItem && 'deleted_at' in fileItem && 
-					!fileItem.deleted_at && 
+				const isEditable =
+					!isFolder &&
+					fileItem &&
+					'deleted_at' in fileItem &&
+					!fileItem.deleted_at &&
 					detectEditorType(fileItem.name, fileItem.mime_type) !== 'none' &&
 					canEditFileSize(fileItem.size);
 
-				items.push(
-					{ id: 'open', label: 'Open', icon: FileIcon, shortcut: 'Enter', onClick: () => onSelect() }
-				);
+				items.push({
+					id: 'open',
+					label: 'Open',
+					icon: FileIcon,
+					shortcut: 'Enter',
+					onClick: () => onSelect()
+				});
 
 				if (isEditable) {
-					items.push({ id: 'edit', label: 'Edit', icon: Edit3, onClick: () => { console.log('[FileGridTile] context edit clicked, onEdit=', onEdit); onEdit(); } });
+					items.push({
+						id: 'edit',
+						label: 'Edit',
+						icon: Edit3,
+						onClick: () => {
+							console.log('[FileGridTile] context edit clicked, onEdit=', onEdit);
+							onEdit();
+						}
+					});
 				}
 
 				items.push(
-					{ id: 'download', label: 'Download', icon: Download, shortcut: '⌘D', onClick: onDownload },
+					{
+						id: 'download',
+						label: 'Download',
+						icon: Download,
+						shortcut: '⌘D',
+						onClick: onDownload
+					},
 					{ id: 'sep1', label: '', separator: true, onClick: () => {} }
 				);
 			}
@@ -158,9 +213,21 @@
 
 			if (canManage) {
 				items.push(
-					{ id: 'star', label: isStarred ? 'Remove from starred' : 'Add to starred', icon: Star, onClick: onToggleStar },
+					{
+						id: 'star',
+						label: isStarred ? 'Remove from starred' : 'Add to starred',
+						icon: Star,
+						onClick: onToggleStar
+					},
 					{ id: 'sep2', label: '', separator: true, onClick: () => {} },
-					{ id: 'delete', label: 'Move to trash', icon: Trash2, danger: true, shortcut: 'Del', onClick: onDelete }
+					{
+						id: 'delete',
+						label: 'Move to trash',
+						icon: Trash2,
+						danger: true,
+						shortcut: 'Del',
+						onClick: onDelete
+					}
 				);
 			}
 		}
@@ -229,11 +296,14 @@
 	function handleDragStart(e: DragEvent) {
 		if (e.dataTransfer) {
 			e.dataTransfer.effectAllowed = 'move';
-			e.dataTransfer.setData('application/json', JSON.stringify({
-				id: item.id,
-				isFolder,
-				parentFolderId: item.parent_folder_id
-			}));
+			e.dataTransfer.setData(
+				'application/json',
+				JSON.stringify({
+					id: item.id,
+					isFolder,
+					parentFolderId: item.parent_folder_id
+				})
+			);
 			onDragStart();
 		}
 	}
@@ -278,14 +348,16 @@
 	bind:this={tileRef}
 	role="button"
 	tabindex="0"
-	class="group relative flex flex-col rounded-xl border overflow-hidden transition-all cursor-pointer bg-base-100
+	class="group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border bg-base-100 transition-all
 		{selected
-			? 'border-brand-500/40 bg-brand-500/5 ring-1 ring-brand-500/30'
-			: 'border-base-300/60 hover:border-brand-500/30 hover:shadow-md hover:shadow-black/5'}
+		? 'border-brand-500/40 bg-brand-500/5 ring-1 ring-brand-500/30'
+		: 'border-base-300/60 hover:border-brand-500/30 hover:shadow-md hover:shadow-black/5'}
 		{isDragging ? 'opacity-40' : ''}
 		{isDropTarget ? 'border-brand-500 bg-brand-500/10 ring-2 ring-brand-500/30' : ''}"
 	onclick={handleClick}
-	onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleClick(e as any); }}
+	onkeydown={(e) => {
+		if (e.key === 'Enter' || e.key === ' ') handleClick(e as any);
+	}}
 	oncontextmenu={handleContextMenu}
 	draggable={!isRenaming}
 	ondragstart={handleDragStart}
@@ -299,7 +371,7 @@
 		<div class="absolute top-2 left-2 z-10">
 			<input
 				type="checkbox"
-				class="w-4 h-4 rounded border-base-300 text-brand-500 focus:ring-brand-500 bg-base-100 cursor-pointer"
+				class="h-4 w-4 cursor-pointer rounded border-base-300 bg-base-100 text-brand-500 focus:ring-brand-500"
 				checked={selected}
 				onclick={(e) => e.stopPropagation()}
 				onchange={() => onToggle?.()}
@@ -312,8 +384,11 @@
 		<div class="absolute top-2 right-2 z-20 opacity-0 transition-opacity group-hover:opacity-100">
 			<button
 				type="button"
-				class="p-1.5 bg-base-100/90 backdrop-blur-sm rounded-lg text-base-content/50 hover:text-base-content shadow-sm border border-base-300/50 transition-colors"
-				onclick={(e) => { e.stopPropagation(); showActions = !showActions; }}
+				class="rounded-lg border border-base-300/50 bg-base-100/90 p-1.5 text-base-content/50 shadow-sm backdrop-blur-sm transition-colors hover:text-base-content"
+				onclick={(e) => {
+					e.stopPropagation();
+					showActions = !showActions;
+				}}
 				aria-label="Actions"
 			>
 				<MoreVertical size={14} />
@@ -321,23 +396,29 @@
 
 			{#if showActions}
 				<div
-					class="absolute right-0 top-full z-50 mt-1 w-44 rounded-xl border border-base-300/70 bg-base-100 py-1 shadow-xl shadow-black/20"
+					class="absolute top-full right-0 z-50 mt-1 w-44 rounded-xl border border-base-300/70 bg-base-100 py-1 shadow-xl shadow-black/20"
 					onclick={(e) => e.stopPropagation()}
 				>
 					{#if workspaceMode === 'deleted'}
 						<button
 							type="button"
-							class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
-							onclick={(e) => { e.stopPropagation(); handleAction(onRestore); }}
+							class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+							onclick={(e) => {
+								e.stopPropagation();
+								handleAction(onRestore);
+							}}
 						>
 							<RotateCcw size={14} />
 							Restore
 						</button>
-						<div class="border-t border-base-200 my-1"></div>
+						<div class="my-1 border-t border-base-200"></div>
 						<button
 							type="button"
-							class="w-full flex items-center gap-2 px-3 py-2 text-sm text-error hover:bg-error/10 transition-colors text-left"
-							onclick={(e) => { e.stopPropagation(); handleAction(onPermanentDelete); }}
+							class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-error transition-colors hover:bg-error/10"
+							onclick={(e) => {
+								e.stopPropagation();
+								handleAction(onPermanentDelete);
+							}}
 						>
 							<Trash2 size={14} />
 							Delete permanently
@@ -346,16 +427,23 @@
 						{#if canManage}
 							<button
 								type="button"
-								class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
-								onclick={(e) => { e.stopPropagation(); startRename(); handleAction(() => {}); }}
+								class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+								onclick={(e) => {
+									e.stopPropagation();
+									startRename();
+									handleAction(() => {});
+								}}
 							>
 								<Edit size={14} />
 								Rename
 							</button>
 							<button
 								type="button"
-								class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
-								onclick={(e) => { e.stopPropagation(); handleAction(onToggleStar); }}
+								class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+								onclick={(e) => {
+									e.stopPropagation();
+									handleAction(onToggleStar);
+								}}
 							>
 								<Star size={14} class={isStarred ? 'fill-brand-500 text-brand-500' : ''} />
 								{isStarred ? 'Remove star' : 'Add to starred'}
@@ -364,8 +452,11 @@
 						{#if canShare}
 							<button
 								type="button"
-								class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
-								onclick={(e) => { e.stopPropagation(); handleAction(onShare); }}
+								class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+								onclick={(e) => {
+									e.stopPropagation();
+									handleAction(onShare);
+								}}
 							>
 								<Share2 size={14} />
 								Share
@@ -375,8 +466,11 @@
 							{#if canManage && fileItem && detectEditorType(fileItem.name, fileItem.mime_type) !== 'none' && canEditFileSize(fileItem.size)}
 								<button
 									type="button"
-									class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
-									onclick={(e) => { e.stopPropagation(); handleAction(onEdit); }}
+									class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+									onclick={(e) => {
+										e.stopPropagation();
+										handleAction(onEdit);
+									}}
 								>
 									<Edit3 size={14} />
 									Edit
@@ -384,8 +478,11 @@
 							{/if}
 							<button
 								type="button"
-								class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
-								onclick={(e) => { e.stopPropagation(); handleAction(onDownload); }}
+								class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+								onclick={(e) => {
+									e.stopPropagation();
+									handleAction(onDownload);
+								}}
 							>
 								<Download size={14} />
 								Download
@@ -393,8 +490,11 @@
 							{#if canManage}
 								<button
 									type="button"
-									class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
-									onclick={(e) => { e.stopPropagation(); handleAction(onVersionHistory); }}
+									class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+									onclick={(e) => {
+										e.stopPropagation();
+										handleAction(onVersionHistory);
+									}}
 								>
 									<History size={14} />
 									Version history
@@ -404,17 +504,23 @@
 						{#if canManage}
 							<button
 								type="button"
-								class="w-full flex items-center gap-2 px-3 py-2 text-sm text-base-content/80 hover:bg-base-200/60 transition-colors text-left"
-								onclick={(e) => { e.stopPropagation(); handleAction(onMove); }}
+								class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+								onclick={(e) => {
+									e.stopPropagation();
+									handleAction(onMove);
+								}}
 							>
 								<Move size={14} />
 								Move
 							</button>
-							<div class="border-t border-base-200 my-1"></div>
+							<div class="my-1 border-t border-base-200"></div>
 							<button
 								type="button"
-								class="w-full flex items-center gap-2 px-3 py-2 text-sm text-error hover:bg-error/10 transition-colors text-left"
-								onclick={(e) => { e.stopPropagation(); handleAction(onDelete); }}
+								class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-error transition-colors hover:bg-error/10"
+								onclick={(e) => {
+									e.stopPropagation();
+									handleAction(onDelete);
+								}}
 							>
 								<Trash2 size={14} />
 								Delete
@@ -427,52 +533,69 @@
 	{/if}
 
 	<!-- Preview Area -->
-	<div class="aspect-square bg-base-200/50 flex items-center justify-center p-3 border-b border-base-300/30">
-		<div class="w-full h-full flex items-center justify-center">
-			<FilePreview {item} {isFolder} {isSharedRoot} size="lg" showThumbnail={!isFolder && workspaceMode !== 'deleted'} />
+	<div
+		class="flex aspect-square items-center justify-center border-b border-base-300/30 bg-base-200/50 p-3"
+	>
+		<div class="flex h-full w-full items-center justify-center">
+			<FilePreview
+				{item}
+				{isFolder}
+				{isSharedRoot}
+				size="lg"
+				showThumbnail={!isFolder && workspaceMode !== 'deleted'}
+			/>
 		</div>
 	</div>
 
 	<!-- Info Area -->
-	<div class="p-2 min-w-0">
+	<div class="min-w-0 p-2">
 		{#if isRenaming}
 			<div class="flex items-center gap-1">
 				<input
 					bind:this={renameInputRef}
 					type="text"
-					class="flex-1 min-w-0 px-1.5 py-0.5 text-xs bg-base-100 border border-brand-500 rounded-md focus:outline-hidden focus:ring-2 focus:ring-brand-500/20"
+					class="min-w-0 flex-1 rounded-md border border-brand-500 bg-base-100 px-1.5 py-0.5 text-xs focus:ring-2 focus:ring-brand-500/20 focus:outline-hidden"
 					value={renameValue}
-					oninput={(e) => renameValue = e.currentTarget.value}
+					oninput={(e) => (renameValue = e.currentTarget.value)}
 					onkeydown={handleRenameKeydown}
 					onblur={confirmRename}
 				/>
 				<button
 					type="button"
-					class="p-1 text-success hover:bg-success/10 rounded-md"
-					onclick={(e) => { e.stopPropagation(); confirmRename(); }}
+					class="rounded-md p-1 text-success hover:bg-success/10"
+					onclick={(e) => {
+						e.stopPropagation();
+						confirmRename();
+					}}
 				>
 					<Check size={14} />
 				</button>
 				<button
 					type="button"
-					class="p-1 text-error hover:bg-error/10 rounded-md"
-					onclick={(e) => { e.stopPropagation(); cancelRename(); }}
+					class="rounded-md p-1 text-error hover:bg-error/10"
+					onclick={(e) => {
+						e.stopPropagation();
+						cancelRename();
+					}}
 				>
 					<X size={14} />
 				</button>
 			</div>
 		{:else}
-			<div class="flex items-start gap-1.5 min-w-0">
-				<p 
-					class="flex-1 truncate text-xs font-medium leading-4 text-base-content" 
+			<div class="flex min-w-0 items-start gap-1.5">
+				<p
+					class="flex-1 truncate text-xs leading-4 font-medium text-base-content"
 					title={item.name}
-					ondblclick={(e) => { e.stopPropagation(); startRename(); }}
+					ondblclick={(e) => {
+						e.stopPropagation();
+						startRename();
+					}}
 				>
 					{item.name}
 				</p>
 			</div>
-			
-			<div class="flex items-center gap-1.5 mt-1">
+
+			<div class="mt-1 flex items-center gap-1.5">
 				{#if item.is_shared}
 					<ShareIndicator
 						isShared={item.is_shared}
@@ -482,10 +605,10 @@
 					/>
 				{/if}
 				{#if isStarred}
-					<Star size={10} class="text-brand-500 fill-brand-500" />
+					<Star size={10} class="fill-brand-500 text-brand-500" />
 				{/if}
-				
-				<span class="text-2xs text-base-content/50 truncate font-medium font-data">
+
+				<span class="truncate font-data text-2xs font-medium text-base-content/50">
 					{#if isFolder && displaySize === null}
 						Folder
 					{:else}
@@ -503,5 +626,5 @@
 	x={contextMenuX}
 	y={contextMenuY}
 	visible={contextMenuVisible}
-	onClose={() => contextMenuVisible = false}
+	onClose={() => (contextMenuVisible = false)}
 />

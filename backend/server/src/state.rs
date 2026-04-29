@@ -1,10 +1,10 @@
+use axum::extract::FromRef;
+use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use axum::extract::FromRef;
 use tokio::sync::Mutex;
 use uuid::Uuid;
-use sqlx::PgPool;
 
 use crate::adapters;
 use crate::middleware;
@@ -55,14 +55,40 @@ pub struct DatabaseState {
 /// Domain service layer state.
 #[derive(Clone)]
 pub struct ServiceState {
-    pub file_service:
-        Arc<rustshare_core::services::FileService<EventStore, MetadataStore, ObjectStore, rustshare_infrastructure::repositories::PermissionResolverRepository>>,
-    pub folder_service: Arc<rustshare_core::services::FolderService<EventStore, MetadataStore, rustshare_infrastructure::repositories::PermissionResolverRepository>>,
-    pub share_service:
-        Arc<rustshare_core::services::ShareService<EventStore, MetadataStore, rustshare_auth::JwtManager, rustshare_storage::repos::ShareNotificationRepoImpl>>,
+    pub file_service: Arc<
+        rustshare_core::services::FileService<
+            EventStore,
+            MetadataStore,
+            ObjectStore,
+            rustshare_infrastructure::repositories::PermissionResolverRepository,
+        >,
+    >,
+    pub folder_service: Arc<
+        rustshare_core::services::FolderService<
+            EventStore,
+            MetadataStore,
+            rustshare_infrastructure::repositories::PermissionResolverRepository,
+        >,
+    >,
+    pub share_service: Arc<
+        rustshare_core::services::ShareService<
+            EventStore,
+            MetadataStore,
+            rustshare_auth::JwtManager,
+            rustshare_storage::repos::ShareNotificationRepoImpl,
+        >,
+    >,
     pub thumbnail_service: Arc<rustshare_core::services::ThumbnailService<ObjectStore>>,
-    pub permission_resolver: Arc<rustshare_core::services::PermissionResolver<rustshare_infrastructure::repositories::PermissionResolverRepository>>,
-    pub notification_service: Arc<rustshare_core::services::NotificationService<rustshare_infrastructure::repositories::NotificationRepository>>,
+    pub permission_resolver: Arc<
+        rustshare_core::services::PermissionResolver<
+            rustshare_infrastructure::repositories::PermissionResolverRepository,
+        >,
+    >,
+    pub notification_service: Arc<
+        rustshare_core::services::NotificationService<
+            rustshare_infrastructure::repositories::NotificationRepository,
+        >,
+    >,
     pub user_share_service: Arc<AppUserShareService>,
     pub ai_service: Option<Arc<AppAiService>>,
     pub upload_service: Option<Arc<AppUploadService>>,
@@ -95,14 +121,40 @@ pub struct AppState {
     pub object_store: Arc<ObjectStore>,
     pub jwt_manager: Arc<rustshare_auth::JwtManager>,
     pub broadcaster: Arc<rustshare_core::events::EventBroadcaster>,
-    pub file_service:
-        Arc<rustshare_core::services::FileService<EventStore, MetadataStore, ObjectStore, rustshare_infrastructure::repositories::PermissionResolverRepository>>,
-    pub folder_service: Arc<rustshare_core::services::FolderService<EventStore, MetadataStore, rustshare_infrastructure::repositories::PermissionResolverRepository>>,
-    pub share_service:
-        Arc<rustshare_core::services::ShareService<EventStore, MetadataStore, rustshare_auth::JwtManager, rustshare_storage::repos::ShareNotificationRepoImpl>>,
+    pub file_service: Arc<
+        rustshare_core::services::FileService<
+            EventStore,
+            MetadataStore,
+            ObjectStore,
+            rustshare_infrastructure::repositories::PermissionResolverRepository,
+        >,
+    >,
+    pub folder_service: Arc<
+        rustshare_core::services::FolderService<
+            EventStore,
+            MetadataStore,
+            rustshare_infrastructure::repositories::PermissionResolverRepository,
+        >,
+    >,
+    pub share_service: Arc<
+        rustshare_core::services::ShareService<
+            EventStore,
+            MetadataStore,
+            rustshare_auth::JwtManager,
+            rustshare_storage::repos::ShareNotificationRepoImpl,
+        >,
+    >,
     pub thumbnail_service: Arc<rustshare_core::services::ThumbnailService<ObjectStore>>,
-    pub permission_resolver: Arc<rustshare_core::services::PermissionResolver<rustshare_infrastructure::repositories::PermissionResolverRepository>>,
-    pub notification_service: Arc<rustshare_core::services::NotificationService<rustshare_infrastructure::repositories::NotificationRepository>>,
+    pub permission_resolver: Arc<
+        rustshare_core::services::PermissionResolver<
+            rustshare_infrastructure::repositories::PermissionResolverRepository,
+        >,
+    >,
+    pub notification_service: Arc<
+        rustshare_core::services::NotificationService<
+            rustshare_infrastructure::repositories::NotificationRepository,
+        >,
+    >,
     pub user_share_service: Arc<AppUserShareService>,
     pub ai_service: Option<Arc<AppAiService>>,
     pub upload_service: Option<Arc<AppUploadService>>,

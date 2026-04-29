@@ -1,11 +1,11 @@
-@import "tailwindcss";
-@config "../../tailwind.config.js";
-@plugin "daisyui" {
+@import 'tailwindcss';
+@config '../../tailwind.config.js';
+@plugin 'daisyui' {
 	themes: false;
 	logs: false;
 }
-@plugin "daisyui/theme" {
-	name: "rustshare-light";
+@plugin 'daisyui/theme' {
+	name: 'rustshare-light';
 	default: true;
 	prefersdark: false;
 	color-scheme: light;
@@ -36,8 +36,8 @@
 	--depth: 1;
 	--noise: 0;
 }
-@plugin "daisyui/theme" {
-	name: "rustshare-dark";
+@plugin 'daisyui/theme' {
+	name: 'rustshare-dark';
 	default: false;
 	prefersdark: true;
 	color-scheme: dark;
@@ -229,7 +229,7 @@
 	}
 
 	.focus-ring {
-		@apply outline-hidden ring-2 ring-brand-500 ring-offset-2 ring-offset-base-100;
+		@apply ring-2 ring-brand-500 ring-offset-2 ring-offset-base-100 outline-hidden;
 	}
 
 	.truncate-1 {

@@ -102,13 +102,28 @@ export function getFileTypeLabel(mimeType: string, fileName: string): string {
 
 	// Document types
 	if (normalized.includes('pdf')) return 'PDF';
-	if (normalized.includes('msword') || normalized.includes('wordprocessingml') || extension === 'doc' || extension === 'docx') {
+	if (
+		normalized.includes('msword') ||
+		normalized.includes('wordprocessingml') ||
+		extension === 'doc' ||
+		extension === 'docx'
+	) {
 		return 'Word';
 	}
-	if (normalized.includes('ms-excel') || normalized.includes('spreadsheetml') || extension === 'xls' || extension === 'xlsx') {
+	if (
+		normalized.includes('ms-excel') ||
+		normalized.includes('spreadsheetml') ||
+		extension === 'xls' ||
+		extension === 'xlsx'
+	) {
 		return 'Excel';
 	}
-	if (normalized.includes('ms-powerpoint') || normalized.includes('presentationml') || extension === 'ppt' || extension === 'pptx') {
+	if (
+		normalized.includes('ms-powerpoint') ||
+		normalized.includes('presentationml') ||
+		extension === 'ppt' ||
+		extension === 'pptx'
+	) {
 		return 'PowerPoint';
 	}
 	if (normalized.includes('openxmlformats-officedocument')) {
@@ -130,7 +145,13 @@ export function getFileTypeLabel(mimeType: string, fileName: string): string {
 	}
 
 	// Archive types
-	if (normalized.includes('zip') || normalized.includes('tar') || normalized.includes('gzip') || normalized.includes('archive') || normalized.includes('compressed')) {
+	if (
+		normalized.includes('zip') ||
+		normalized.includes('tar') ||
+		normalized.includes('gzip') ||
+		normalized.includes('archive') ||
+		normalized.includes('compressed')
+	) {
 		if (extension === 'zip') return 'ZIP';
 		if (extension === 'tar') return 'TAR';
 		if (extension === 'gz' || extension === 'tgz') return 'GZIP';
@@ -140,8 +161,10 @@ export function getFileTypeLabel(mimeType: string, fileName: string): string {
 	}
 
 	// Code types
-	if (normalized.includes('javascript') || extension === 'js' || extension === 'jsx') return 'JavaScript';
-	if (normalized.includes('typescript') || extension === 'ts' || extension === 'tsx') return 'TypeScript';
+	if (normalized.includes('javascript') || extension === 'js' || extension === 'jsx')
+		return 'JavaScript';
+	if (normalized.includes('typescript') || extension === 'ts' || extension === 'tsx')
+		return 'TypeScript';
 	if (normalized.includes('json')) return 'JSON';
 	if (normalized.includes('xml')) return 'XML';
 	if (normalized.includes('sql')) return 'SQL';
@@ -167,46 +190,64 @@ export function getFileTypeLabel(mimeType: string, fileName: string): string {
  * Check if a file is an MS Office document
  */
 export function isOfficeFile(mimeType: string, fileName: string): boolean {
-  if (!mimeType || !fileName) return false;
-  const normalized = mimeType.toLowerCase();
-  const name = fileName.toLowerCase();
+	if (!mimeType || !fileName) return false;
+	const normalized = mimeType.toLowerCase();
+	const name = fileName.toLowerCase();
 
-  const officeMimeTypes = [
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'application/vnd.ms-excel',
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    'application/vnd.ms-powerpoint'
-  ];
+	const officeMimeTypes = [
+		'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+		'application/msword',
+		'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+		'application/vnd.ms-excel',
+		'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+		'application/vnd.ms-powerpoint'
+	];
 
-  const officeExtensions = ['.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt'];
+	const officeExtensions = ['.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt'];
 
-  if (officeMimeTypes.some(m => normalized.includes(m))) return true;
-  if (officeExtensions.some(ext => name.endsWith(ext))) return true;
+	if (officeMimeTypes.some((m) => normalized.includes(m))) return true;
+	if (officeExtensions.some((ext) => name.endsWith(ext))) return true;
 
-  return false;
+	return false;
 }
 
 /**
  * Get Office file type label
  */
-export function getOfficeFileType(mimeType: string, fileName: string): 'word' | 'excel' | 'powerpoint' | null {
-  if (!mimeType || !fileName) return null;
-  const normalized = mimeType.toLowerCase();
-  const name = fileName.toLowerCase();
+export function getOfficeFileType(
+	mimeType: string,
+	fileName: string
+): 'word' | 'excel' | 'powerpoint' | null {
+	if (!mimeType || !fileName) return null;
+	const normalized = mimeType.toLowerCase();
+	const name = fileName.toLowerCase();
 
-  if (normalized.includes('wordprocessingml') || normalized.includes('msword') || name.endsWith('.docx') || name.endsWith('.doc')) {
-    return 'word';
-  }
-  if (normalized.includes('spreadsheetml') || normalized.includes('ms-excel') || name.endsWith('.xlsx') || name.endsWith('.xls')) {
-    return 'excel';
-  }
-  if (normalized.includes('presentationml') || normalized.includes('ms-powerpoint') || name.endsWith('.pptx') || name.endsWith('.ppt')) {
-    return 'powerpoint';
-  }
+	if (
+		normalized.includes('wordprocessingml') ||
+		normalized.includes('msword') ||
+		name.endsWith('.docx') ||
+		name.endsWith('.doc')
+	) {
+		return 'word';
+	}
+	if (
+		normalized.includes('spreadsheetml') ||
+		normalized.includes('ms-excel') ||
+		name.endsWith('.xlsx') ||
+		name.endsWith('.xls')
+	) {
+		return 'excel';
+	}
+	if (
+		normalized.includes('presentationml') ||
+		normalized.includes('ms-powerpoint') ||
+		name.endsWith('.pptx') ||
+		name.endsWith('.ppt')
+	) {
+		return 'powerpoint';
+	}
 
-  return null;
+	return null;
 }
 
 /**
@@ -218,7 +259,7 @@ export function truncateFilename(filename: string, maxLength: number = 20): stri
 
 	const parts = filename.split('.');
 	const hasExtension = parts.length > 1;
-	
+
 	if (!hasExtension) {
 		// No extension, just truncate the end
 		return filename.substring(0, maxLength - 2) + '..';
@@ -226,8 +267,8 @@ export function truncateFilename(filename: string, maxLength: number = 20): stri
 
 	const extension = parts.pop()!;
 	const name = parts.join('.');
-	
-	// If the name is very short and the extension is extremely long, 
+
+	// If the name is very short and the extension is extremely long,
 	// just truncate the whole string
 	if (name.length <= 4) {
 		return filename.substring(0, maxLength - 2) + '..';
@@ -236,7 +277,7 @@ export function truncateFilename(filename: string, maxLength: number = 20): stri
 	// Calculate how much space we have for the name
 	// Account for the ".." separator and the extension+dot
 	const charsForName = maxLength - 2 - (extension.length + 1);
-	
+
 	if (charsForName <= 4) {
 		// Not enough space for middle truncation, just do standard start truncation
 		return filename.substring(0, Math.max(3, maxLength - 2)) + '..';

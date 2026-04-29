@@ -51,7 +51,11 @@ pub trait NotificationRepositoryOps: Send + Sync {
     ) -> Result<Vec<Notification>, NotificationError>;
 
     /// Count notifications for a user with optional unread filtering.
-    async fn count_for_user(&self, user_id: UserId, unread_only: bool) -> Result<i64, NotificationError>;
+    async fn count_for_user(
+        &self,
+        user_id: UserId,
+        unread_only: bool,
+    ) -> Result<i64, NotificationError>;
 
     /// Count unread notifications for a user.
     async fn count_unread(&self, user_id: UserId) -> Result<i64, NotificationError>;

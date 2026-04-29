@@ -281,49 +281,78 @@
 	<title>Shared Resource - RustShare</title>
 </svelte:head>
 
-<div class="bg-base-200 p-4 flex min-h-screen items-center justify-center">
-	<div class="card max-w-4xl bg-base-100 shadow-xl w-full">
+<div class="flex min-h-screen items-center justify-center bg-base-200 p-4">
+	<div class="card w-full max-w-4xl bg-base-100 shadow-xl">
 		<div class="card-body">
 			{#if $shareQuery.isLoading}
-				<div class="py-8 flex flex-col items-center justify-center">
-					<span class="loading loading-spinner loading-lg"></span>
+				<div class="flex flex-col items-center justify-center py-8">
+					<span class="loading loading-lg loading-spinner"></span>
 					<p class="mt-4 text-base-content/70">Loading share information...</p>
 				</div>
 			{:else if $shareQuery.isError}
-				<div class="py-8 flex flex-col items-center justify-center">
+				<div class="flex flex-col items-center justify-center py-8">
 					{#if errorType === 'expired'}
 						<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-error/10">
-							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-8 w-8 text-error">
-								<circle cx="12" cy="12" r="10"/>
-								<polyline points="12 6 12 12 16 14"/>
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.5"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								class="h-8 w-8 text-error"
+							>
+								<circle cx="12" cy="12" r="10" />
+								<polyline points="12 6 12 12 16 14" />
 							</svg>
 						</div>
-						<h2 class="card-title text-error mb-2">Share Expired</h2>
-						<p class="text-base-content/70 text-center">
+						<h2 class="mb-2 card-title text-error">Share Expired</h2>
+						<p class="text-center text-base-content/70">
 							This share link has expired and is no longer available.
 						</p>
 					{:else if errorType === 'not-found'}
 						<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-error/10">
-							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-8 w-8 text-error">
-								<circle cx="11" cy="11" r="8"/>
-								<line x1="21" x2="16.65" y1="21" y2="16.65"/>
-								<line x1="8" x2="14" y1="11" y2="11"/>
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.5"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								class="h-8 w-8 text-error"
+							>
+								<circle cx="11" cy="11" r="8" />
+								<line x1="21" x2="16.65" y1="21" y2="16.65" />
+								<line x1="8" x2="14" y1="11" y2="11" />
 							</svg>
 						</div>
-						<h2 class="card-title text-error mb-2">Share Not Found</h2>
-						<p class="text-base-content/70 text-center">
+						<h2 class="mb-2 card-title text-error">Share Not Found</h2>
+						<p class="text-center text-base-content/70">
 							This share link is invalid or has been revoked.
 						</p>
 					{:else}
 						<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-error/10">
-							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-8 w-8 text-error">
-								<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
-								<line x1="12" x2="12" y1="9" y2="13"/>
-								<line x1="12" x2="12.01" y1="17" y2="17"/>
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.5"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								class="h-8 w-8 text-error"
+							>
+								<path
+									d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"
+								/>
+								<line x1="12" x2="12" y1="9" y2="13" />
+								<line x1="12" x2="12.01" y1="17" y2="17" />
 							</svg>
 						</div>
-						<h2 class="card-title text-error mb-2">Error Loading Share</h2>
-						<p class="text-base-content/70 text-center">
+						<h2 class="mb-2 card-title text-error">Error Loading Share</h2>
+						<p class="text-center text-base-content/70">
 							{$shareQuery.error instanceof Error
 								? $shareQuery.error.message
 								: 'Failed to load share information. Please try again later.'}
@@ -337,17 +366,32 @@
 				<div class="flex flex-col items-center">
 					<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-500/10">
 						{#if shareInfo.resource_type === 'folder'}
-							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-8 w-8 text-brand-500">
-								<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.5"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								class="h-8 w-8 text-brand-500"
+							>
+								<path
+									d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+								/>
 							</svg>
 						{:else}
-							<FileIcon mimeType={shareInfo.mime_type || 'application/octet-stream'} size="lg" iconClass="text-brand-500" />
+							<FileIcon
+								mimeType={shareInfo.mime_type || 'application/octet-stream'}
+								size="lg"
+								iconClass="text-brand-500"
+							/>
 						{/if}
 					</div>
 
-					<h2 class="card-title mb-2 text-center break-all">{shareInfo.name}</h2>
+					<h2 class="mb-2 card-title text-center break-all">{shareInfo.name}</h2>
 
-					<p class="text-base-content/70 mb-4">
+					<p class="mb-4 text-base-content/70">
 						{#if shareInfo.resource_type === 'folder'}
 							{shareInfo.upload_only ? 'Upload-only folder drop' : 'Shared folder'}
 						{:else if shareInfo.file_size !== null}
@@ -361,7 +405,7 @@
 								xmlns="http://www.w3.org/2000/svg"
 								fill="none"
 								viewBox="0 0 24 24"
-								class="w-6 h-6 shrink-0 stroke-current"
+								class="h-6 w-6 shrink-0 stroke-current"
 							>
 								<path
 									stroke-linecap="round"
@@ -386,13 +430,13 @@
 
 					{#if expired}
 						<div class="py-4 text-center">
-							<p class="text-error font-semibold">This share has expired</p>
-							<p class="text-base-content/70 text-sm mt-2">
+							<p class="font-semibold text-error">This share has expired</p>
+							<p class="mt-2 text-sm text-base-content/70">
 								The shared resource is no longer available.
 							</p>
 						</div>
 					{:else if needsPassword}
-						<form on:submit={handlePasswordSubmit} class="max-w-md w-full">
+						<form on:submit={handlePasswordSubmit} class="w-full max-w-md">
 							<div class="form-control w-full">
 								<label for="password" class="label">
 									<span class="label-text">This share is password protected</span>
@@ -401,7 +445,7 @@
 									type="password"
 									id="password"
 									placeholder="Enter password"
-									class="input input-bordered w-full"
+									class="input-bordered input w-full"
 									bind:value={password}
 									disabled={isSubmittingPassword}
 									required
@@ -414,11 +458,11 @@
 							</div>
 							<button
 								type="submit"
-								class="btn btn-primary mt-4 w-full"
+								class="btn mt-4 w-full btn-primary"
 								disabled={isSubmittingPassword || !password}
 							>
 								{#if isSubmittingPassword}
-									<span class="loading loading-spinner loading-sm"></span>
+									<span class="loading loading-sm loading-spinner"></span>
 									Verifying...
 								{:else}
 									Unlock Share
@@ -428,12 +472,12 @@
 					{:else if shareInfo.resource_type === 'file' && canAccessShare}
 						<button
 							type="button"
-							class="btn btn-primary btn-lg max-w-md w-full"
+							class="btn w-full max-w-md btn-lg btn-primary"
 							on:click={handleFileDownload}
 							disabled={isDownloading}
 						>
 							{#if isDownloading}
-								<span class="loading loading-spinner loading-sm"></span>
+								<span class="loading loading-sm loading-spinner"></span>
 								Downloading...
 							{:else}
 								Download File
@@ -450,7 +494,7 @@
 										</span>
 									</div>
 
-									<div class="gap-3 flex items-center justify-between">
+									<div class="flex items-center justify-between gap-3">
 										<div class="text-sm text-base-content/60">
 											Upload files directly to the shared folder root.
 										</div>
@@ -465,12 +509,12 @@
 												/>
 												<button
 													type="button"
-													class="btn btn-primary btn-sm"
+													class="btn btn-sm btn-primary"
 													on:click={promptFolderUpload}
 													disabled={isUploading}
 												>
 													{#if isUploading}
-														<span class="loading loading-spinner loading-xs"></span>
+														<span class="loading loading-xs loading-spinner"></span>
 														Uploading...
 													{:else}
 														Upload Files
@@ -488,7 +532,7 @@
 											</div>
 											<input
 												type="text"
-												class="input input-bordered w-full"
+												class="input-bordered input w-full"
 												bind:value={uploaderName}
 												maxlength="120"
 												placeholder="Jane from Marketing"
@@ -500,7 +544,7 @@
 										<div
 											role="region"
 											aria-label="Drag and drop upload area"
-											class={`rounded-lg p-4 border-2 border-dashed text-center transition-colors ${
+											class={`rounded-lg border-2 border-dashed p-4 text-center transition-colors ${
 												isDragActive ? 'border-primary bg-primary/5' : 'border-base-300'
 											}`}
 											on:dragenter|preventDefault={() => (isDragActive = true)}
@@ -516,12 +560,12 @@
 									{/if}
 
 									{#if uploadQueue.length > 0}
-										<div class="rounded-lg border-base-300 p-4 space-y-3 border">
+										<div class="space-y-3 rounded-lg border border-base-300 p-4">
 											<div class="font-medium">Upload Queue</div>
 											{#each uploadQueue as item}
 												<div class="space-y-1">
-													<div class="gap-3 flex items-center justify-between">
-														<div class="text-sm truncate">{item.name}</div>
+													<div class="flex items-center justify-between gap-3">
+														<div class="truncate text-sm">{item.name}</div>
 														<div class="text-xs text-base-content/60">
 															{#if item.status === 'done'}
 																Done
@@ -550,8 +594,8 @@
 									{/if}
 								</div>
 							{:else if $folderContentsQuery.isLoading}
-								<div class="py-8 flex flex-col items-center justify-center">
-									<span class="loading loading-spinner loading-lg"></span>
+								<div class="flex flex-col items-center justify-center py-8">
+									<span class="loading loading-lg loading-spinner"></span>
 									<p class="mt-4 text-base-content/70">Loading shared folder...</p>
 								</div>
 							{:else if $folderContentsQuery.isError}
@@ -564,7 +608,7 @@
 								</div>
 							{:else if $folderContentsQuery.data}
 								<div class="space-y-4">
-									<div class="gap-3 flex items-center justify-between">
+									<div class="flex items-center justify-between gap-3">
 										<div>
 											<div class="text-sm text-base-content/60">
 												{$folderContentsQuery.data.path}
@@ -574,13 +618,13 @@
 											</div>
 										</div>
 										{#if currentFolderId}
-											<button type="button" class="btn btn-sm btn-ghost" on:click={openRootFolder}>
+											<button type="button" class="btn btn-ghost btn-sm" on:click={openRootFolder}>
 												Back to shared root
 											</button>
 										{/if}
 									</div>
 
-									<div class="gap-3 flex items-center justify-between">
+									<div class="flex items-center justify-between gap-3">
 										<div class="text-sm text-base-content/60">
 											{#if shareInfo.permissions === 'View'}
 												This link is view-only.
@@ -599,12 +643,12 @@
 												/>
 												<button
 													type="button"
-													class="btn btn-primary btn-sm"
+													class="btn btn-sm btn-primary"
 													on:click={promptFolderUpload}
 													disabled={isUploading}
 												>
 													{#if isUploading}
-														<span class="loading loading-spinner loading-xs"></span>
+														<span class="loading loading-xs loading-spinner"></span>
 														Uploading...
 													{:else}
 														Upload File
@@ -618,7 +662,7 @@
 										<div
 											role="region"
 											aria-label="Drag and drop upload area"
-											class={`rounded-lg p-4 border-2 border-dashed text-center transition-colors ${
+											class={`rounded-lg border-2 border-dashed p-4 text-center transition-colors ${
 												isDragActive ? 'border-primary bg-primary/5' : 'border-base-300'
 											}`}
 											on:dragenter|preventDefault={() => (isDragActive = true)}
@@ -634,12 +678,12 @@
 									{/if}
 
 									{#if uploadQueue.length > 0}
-										<div class="rounded-lg border-base-300 p-4 space-y-3 border">
+										<div class="space-y-3 rounded-lg border border-base-300 p-4">
 											<div class="font-medium">Upload Queue</div>
 											{#each uploadQueue as item}
 												<div class="space-y-1">
-													<div class="gap-3 flex items-center justify-between">
-														<div class="text-sm truncate">{item.name}</div>
+													<div class="flex items-center justify-between gap-3">
+														<div class="truncate text-sm">{item.name}</div>
 														<div class="text-xs text-base-content/60">
 															{#if item.status === 'done'}
 																Done
@@ -667,7 +711,7 @@
 										</div>
 									{/if}
 
-									<div class="rounded-lg border-base-300 overflow-x-auto border">
+									<div class="overflow-x-auto rounded-lg border border-base-300">
 										<table class="table">
 											<thead>
 												<tr>
@@ -682,7 +726,7 @@
 														<td>
 															<button
 																type="button"
-																class="btn btn-ghost btn-sm px-0 normal-case"
+																class="btn px-0 normal-case btn-ghost btn-sm"
 																on:click={() => openFolder(folder.id)}
 															>
 																📁 {folder.name}
@@ -707,7 +751,7 @@
 														<td class="text-right">
 															<button
 																type="button"
-																class="btn btn-primary btn-sm"
+																class="btn btn-sm btn-primary"
 																on:click={() => handleFolderFileDownload(file)}
 																disabled={isDownloading}
 															>
@@ -718,7 +762,7 @@
 												{/each}
 												{#if $folderContentsQuery.data.folders.length === 0 && $folderContentsQuery.data.files.length === 0}
 													<tr>
-														<td colspan="3" class="text-base-content/60 py-8 text-center">
+														<td colspan="3" class="py-8 text-center text-base-content/60">
 															This folder is empty.
 														</td>
 													</tr>

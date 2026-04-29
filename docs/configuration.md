@@ -40,7 +40,7 @@ These variables must be set before the application will start. Run `scripts/pre-
 
 ## Object Storage
 
-RustShare supports any S3-compatible store (RustFS, MinIO, AWS S3, etc.).
+RustShare supports any S3-compatible store (RustFS, AWS S3, etc.).
 
 | Variable | Description | Default | Required? |
 |----------|-------------|---------|-----------|
@@ -48,7 +48,7 @@ RustShare supports any S3-compatible store (RustFS, MinIO, AWS S3, etc.).
 | `STORAGE_ACCESS_KEY` | S3 access key. | — | **Yes** |
 | `STORAGE_SECRET_KEY` | S3 secret key. | — | **Yes** |
 | `STORAGE_BUCKET` | Bucket name for stored files. | `rustshare-files` | **Yes** |
-| `STORAGE_REGION` | S3 region. Use `us-east-1` for RustFS/MinIO. | `us-east-1` | **Yes** |
+| `STORAGE_REGION` | S3 region. Use `us-east-1` for RustFS. | `us-east-1` | **Yes** |
 | `AWS_ACCESS_KEY_ID` | AWS SDK access key. Typically set to the same value as `STORAGE_ACCESS_KEY`. | — | **Yes** |
 | `AWS_SECRET_ACCESS_KEY` | AWS SDK secret key. Typically set to the same value as `STORAGE_SECRET_KEY`. | — | **Yes** |
 

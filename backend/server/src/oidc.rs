@@ -726,7 +726,6 @@ fn display_name_from_email(email: &str) -> String {
         .replace(['.', '_', '-'], " ")
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

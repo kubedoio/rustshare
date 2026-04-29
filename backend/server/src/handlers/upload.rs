@@ -315,7 +315,6 @@ pub async fn complete_upload(
             file_id: response.file_id,
             file_name: response.file_name,
             file_size: response.file_size,
-
         }),
     ))
 }

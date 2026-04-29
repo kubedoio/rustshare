@@ -15,9 +15,11 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use rustshare_crypto::{decrypt_secret, encrypt_secret, SecretEncryptionKey};
 use sqlx::Row;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 const OIDC_CONFIG_ID: &str = "00000000-0000-0000-0000-000000000001";
+static OIDC_CONFIG_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -141,6 +143,7 @@ async fn test_encryption_produces_different_ciphertexts() {
 #[tokio::test]
 #[ignore]
 async fn test_oidc_config_update_stores_encrypted_secret() {
+    let _guard = OIDC_CONFIG_TEST_LOCK.lock().await;
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let actor_id = create_test_admin(&pool, suffix).await;
@@ -260,6 +263,7 @@ async fn test_oidc_config_update_stores_encrypted_secret() {
 #[tokio::test]
 #[ignore]
 async fn test_oidc_config_update() {
+    let _guard = OIDC_CONFIG_TEST_LOCK.lock().await;
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let actor_id = create_test_admin(&pool, suffix).await;
@@ -333,6 +337,7 @@ async fn test_oidc_config_update() {
 #[tokio::test]
 #[ignore]
 async fn test_oidc_runtime_fields_persist() {
+    let _guard = OIDC_CONFIG_TEST_LOCK.lock().await;
     let pool = test_pool().await;
     let oidc_id: Uuid = OIDC_CONFIG_ID.parse().unwrap();
 

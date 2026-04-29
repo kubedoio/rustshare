@@ -95,7 +95,7 @@
 	<title>Approve Device - RustShare</title>
 </svelte:head>
 
-<div class="min-h-screen bg-base-200 flex items-center justify-center p-4">
+<div class="flex min-h-screen items-center justify-center bg-base-200 p-4">
 	<div class="w-full max-w-lg rounded-2xl border border-base-300 bg-base-100 p-8 shadow-xl">
 		<h1 class="text-2xl font-bold text-base-content">Approve Device Pairing</h1>
 
@@ -115,14 +115,16 @@
 						type="text"
 						maxlength="12"
 						placeholder="ABCD-1234"
-						class="input input-bordered w-full font-mono text-lg uppercase tracking-widest"
+						class="input-bordered input w-full font-mono text-lg tracking-widest uppercase"
 						bind:value={userCode}
 						disabled={isSubmitting}
-						on:input={() => { if (state === 'error') state = 'manual'; }}
+						on:input={() => {
+							if (state === 'error') state = 'manual';
+						}}
 					/>
 					<button
 						type="button"
-						class="btn btn-primary w-full"
+						class="btn w-full btn-primary"
 						on:click={handleApproveByUserCode}
 						disabled={isSubmitting || !userCode.trim()}
 					>
@@ -130,16 +132,19 @@
 					</button>
 				</div>
 				<p class="text-xs text-base-content/50">
-					Pairing codes expire after a few minutes. If the code doesn't work, start the pairing flow again from the desktop client.
+					Pairing codes expire after a few minutes. If the code doesn't work, start the pairing flow
+					again from the desktop client.
 				</p>
 			</div>
 		{:else if state === 'ready'}
 			<div class="mt-4 space-y-4">
 				<p class="text-sm text-base-content/75">
-					Approve this device only if you started the pairing flow yourself. The desktop client is waiting for confirmation.
+					Approve this device only if you started the pairing flow yourself. The desktop client is
+					waiting for confirmation.
 				</p>
 				<p class="rounded-lg bg-base-200 px-4 py-3 text-sm text-base-content/70">
-					This approval link is valid for 5 minutes and should be opened from an authenticated RustShare web UI session.
+					This approval link is valid for 5 minutes and should be opened from an authenticated
+					RustShare web UI session.
 				</p>
 				<div class="flex gap-3">
 					<button
@@ -150,18 +155,16 @@
 					>
 						{#if isSubmitting}Approving...{:else}Approve Device{/if}
 					</button>
-					<button
-						type="button"
-						class="btn btn-outline"
-						on:click={() => goto('/files')}
-					>
+					<button type="button" class="btn btn-outline" on:click={() => goto('/files')}>
 						Cancel
 					</button>
 				</div>
 			</div>
 		{:else if state === 'success'}
 			<div class="mt-4 space-y-3">
-				<p class="text-sm text-success">Device approved. You can return to the desktop client and continue setup.</p>
+				<p class="text-sm text-success">
+					Device approved. You can return to the desktop client and continue setup.
+				</p>
 			</div>
 		{:else}
 			<div class="mt-4 space-y-3">
@@ -170,7 +173,10 @@
 					<button
 						type="button"
 						class="btn btn-outline btn-sm"
-						on:click={() => { state = 'ready'; errorMessage = ''; }}
+						on:click={() => {
+							state = 'ready';
+							errorMessage = '';
+						}}
 					>
 						Try again
 					</button>
@@ -178,7 +184,10 @@
 					<button
 						type="button"
 						class="btn btn-outline btn-sm"
-						on:click={() => { state = 'manual'; errorMessage = ''; }}
+						on:click={() => {
+							state = 'manual';
+							errorMessage = '';
+						}}
 					>
 						Enter a different code
 					</button>

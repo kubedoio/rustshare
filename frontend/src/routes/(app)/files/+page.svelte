@@ -3,9 +3,9 @@
 	 * ==============================================================================
 	 * UNIFIED FILES PAGE
 	 * ==============================================================================
-	 * 
+	 *
 	 * Refactored file explorer supporting both "My Files" and "Shared" roots.
-	 * 
+	 *
 	 * URL Patterns:
 	 * - /files                    → My Files root
 	 * - /files?root=shared        → Shared root
@@ -162,29 +162,33 @@
 	}
 
 	// Current workspace mode
-	$: workspaceMode = (urlFilter === 'photos'
-		? 'photos'
-		: urlFilter === 'starred'
-			? 'starred'
-			: urlFilter === 'deleted'
-				? 'deleted'
-				: urlSort === 'recent'
-					? 'recent'
-					: 'all') as WorkspaceMode;
+	$: workspaceMode = (
+		urlFilter === 'photos'
+			? 'photos'
+			: urlFilter === 'starred'
+				? 'starred'
+				: urlFilter === 'deleted'
+					? 'deleted'
+					: urlSort === 'recent'
+						? 'recent'
+						: 'all'
+	) as WorkspaceMode;
 
 	// Active root (my-files or shared)
 	$: activeRoot = (urlRoot === 'shared' ? 'shared' : 'my-files') as ExplorerRoot;
 
 	// Is in collection mode?
-	$: isCollectionMode = workspaceMode === 'starred' || workspaceMode === 'recent' || workspaceMode === 'photos' || workspaceMode === 'deleted';
+	$: isCollectionMode =
+		workspaceMode === 'starred' ||
+		workspaceMode === 'recent' ||
+		workspaceMode === 'photos' ||
+		workspaceMode === 'deleted';
 
 	// Is shared root view?
 	$: isSharedRoot = activeRoot === 'shared' && !currentFolderId;
 
 	// Current folder ID (null at root)
-	$: currentFolderId = isCollectionMode 
-		? null 
-		: (isValidUuid(urlFolderId) ? urlFolderId : null);
+	$: currentFolderId = isCollectionMode ? null : isValidUuid(urlFolderId) ? urlFolderId : null;
 
 	// ============================================================================
 	// QUERIES
@@ -231,7 +235,7 @@
 		queryFn: async () => {
 			if (workspaceMode === 'starred') return getStarredContents();
 			if (workspaceMode === 'deleted') return getDeletedContents();
-			
+
 			// For shared root
 			if (activeRoot === 'shared') {
 				if (currentFolderId) {
@@ -242,37 +246,41 @@
 					const shares = await listReceivedShares();
 					// Transform shares into FolderContents format
 					return {
-						folders: shares.filter(s => s.resource_type === 'folder').map(s => ({
-							id: s.resource_id,
-							name: s.resource_name,
-							path: s.resource_path,
-							parent_folder_id: null,
-							owner_id: s.shared_by,
-							created_at: s.created_at,
-							updated_at: s.created_at,
-							is_shared: true,
-							share_count: 1,
-							effective_permission: s.permission
-						})),
-						files: shares.filter(s => s.resource_type === 'file').map(s => ({
-							id: s.resource_id,
-							name: s.resource_name,
-							path: s.resource_path,
-							size: 0,
-							mime_type: 'application/octet-stream',
-							parent_folder_id: null,
-							owner_id: s.shared_by,
-							current_version: 1,
-							created_at: s.created_at,
-							modified_at: s.created_at,
-							is_shared: true,
-							share_count: 1,
-							effective_permission: s.permission
-						}))
+						folders: shares
+							.filter((s) => s.resource_type === 'folder')
+							.map((s) => ({
+								id: s.resource_id,
+								name: s.resource_name,
+								path: s.resource_path,
+								parent_folder_id: null,
+								owner_id: s.shared_by,
+								created_at: s.created_at,
+								updated_at: s.created_at,
+								is_shared: true,
+								share_count: 1,
+								effective_permission: s.permission
+							})),
+						files: shares
+							.filter((s) => s.resource_type === 'file')
+							.map((s) => ({
+								id: s.resource_id,
+								name: s.resource_name,
+								path: s.resource_path,
+								size: 0,
+								mime_type: 'application/octet-stream',
+								parent_folder_id: null,
+								owner_id: s.shared_by,
+								current_version: 1,
+								created_at: s.created_at,
+								modified_at: s.created_at,
+								is_shared: true,
+								share_count: 1,
+								effective_permission: s.permission
+							}))
 					};
 				}
 			}
-			
+
 			// Default my-files behavior
 			return getFolderContents(currentFolderId);
 		}
@@ -289,9 +297,10 @@
 	// ============================================================================
 
 	// Derive folderPath from the full API folder tree (for my-files)
-	$: myFilesFolderPath = currentFolderId && $folderTreeQuery.data && activeRoot === 'my-files'
-		? buildFolderPathFromApiTree($folderTreeQuery.data, currentFolderId).slice(1)
-		: [];
+	$: myFilesFolderPath =
+		currentFolderId && $folderTreeQuery.data && activeRoot === 'my-files'
+			? buildFolderPathFromApiTree($folderTreeQuery.data, currentFolderId).slice(1)
+			: [];
 	$: sharedFolderPath =
 		currentFolderId && activeRoot === 'shared' && $sharedFolderTreesQuery.data
 			? findFolderPathInSharedTrees(currentFolderId, $sharedFolderTreesQuery.data)
@@ -361,60 +370,63 @@
 	// ============================================================================
 
 	$: workspaceTitle = isCollectionMode
-		? (workspaceMode === 'photos'
+		? workspaceMode === 'photos'
 			? 'Photos'
 			: workspaceMode === 'recent'
 				? 'Recent'
 				: workspaceMode === 'starred'
 					? 'Starred'
-					: 'Trash')
+					: 'Trash'
 		: activeRoot === 'shared'
-			? (currentFolderId ? breadcrumbPath[breadcrumbPath.length - 1]?.name : 'Shared')
-			: (currentFolderId ? breadcrumbPath[breadcrumbPath.length - 1]?.name : 'My Files');
+			? currentFolderId
+				? breadcrumbPath[breadcrumbPath.length - 1]?.name
+				: 'Shared'
+			: currentFolderId
+				? breadcrumbPath[breadcrumbPath.length - 1]?.name
+				: 'My Files';
 
 	$: workspaceDescription = isCollectionMode
-		? (workspaceMode === 'photos'
+		? workspaceMode === 'photos'
 			? 'Image files in the current workspace, without the folder noise.'
 			: workspaceMode === 'recent'
 				? 'The latest changes in this workspace, sorted by most recent first.'
 				: workspaceMode === 'starred'
 					? 'Pinned folders and files that need fast access without digging through the tree.'
-					: 'Recently deleted items live here until you restore them or remove them permanently.')
+					: 'Recently deleted items live here until you restore them or remove them permanently.'
 		: activeRoot === 'shared'
-			? (currentFolderId 
-				? 'Shared folder contents.' 
-				: 'Folders shared with you by other users.')
-			: (currentFolderId 
-				? 'Folder contents.' 
-				: 'Folders and files, tuned for quick scanning instead of dashboard theater.');
+			? currentFolderId
+				? 'Shared folder contents.'
+				: 'Folders shared with you by other users.'
+			: currentFolderId
+				? 'Folder contents.'
+				: 'Folders and files, tuned for quick scanning instead of dashboard theater.';
 
 	$: workspaceEmptyTitle = isCollectionMode
-		? (workspaceMode === 'photos'
+		? workspaceMode === 'photos'
 			? 'No photos in this view'
 			: workspaceMode === 'recent'
 				? 'No recent file activity'
 				: workspaceMode === 'starred'
 					? 'Nothing is starred yet'
-					: 'Deleted items will show up here')
+					: 'Deleted items will show up here'
 		: activeRoot === 'shared'
 			? 'No shared folders'
 			: 'No files yet';
 
 	$: workspaceEmptyDescription = isCollectionMode
-		? (workspaceMode === 'photos'
+		? workspaceMode === 'photos'
 			? 'Upload an image into this folder and it will show up here.'
 			: workspaceMode === 'recent'
 				? 'Modify or upload a file and it will show up here.'
 				: workspaceMode === 'starred'
 					? 'Star a folder or file from its action menu and it will show up here.'
-					: 'Deleting a folder or file moves it here instead of removing it immediately.')
+					: 'Deleting a folder or file moves it here instead of removing it immediately.'
 		: activeRoot === 'shared'
 			? 'Items shared with you will appear here.'
 			: 'Upload your first file or create a folder to get started.';
 
-	$: workspaceEmptyActionLabel = (!isCollectionMode && activeRoot === 'my-files')
-		? 'Upload files'
-		: null;
+	$: workspaceEmptyActionLabel =
+		!isCollectionMode && activeRoot === 'my-files' ? 'Upload files' : null;
 
 	// ============================================================================
 	// UI STATE DERIVATIONS
@@ -423,9 +435,11 @@
 	$: showFolderTree = !isCollectionMode;
 	$: showBreadcrumbs = !isCollectionMode;
 	$: canCreateFolder =
-		!isCollectionMode && (activeRoot === 'my-files' || (activeRoot === 'shared' && hasSharedWritePermission));
+		!isCollectionMode &&
+		(activeRoot === 'my-files' || (activeRoot === 'shared' && hasSharedWritePermission));
 	$: canUpload =
-		!isCollectionMode && (activeRoot === 'my-files' || (activeRoot === 'shared' && hasSharedWritePermission));
+		!isCollectionMode &&
+		(activeRoot === 'my-files' || (activeRoot === 'shared' && hasSharedWritePermission));
 	$: allowSelectionMode = workspaceMode !== 'deleted';
 	$: if (!allowSelectionMode && selectionMode) {
 		selectionMode = false;
@@ -451,13 +465,16 @@
 		workspaceMode === 'all' || workspaceMode === 'starred' || workspaceMode === 'deleted'
 			? baseFolders
 			: [];
-	$: filteredFiles = workspaceMode === 'photos'
-		? baseFiles.filter((file) => file.mime_type.startsWith('image/'))
-		: baseFiles;
+	$: filteredFiles =
+		workspaceMode === 'photos'
+			? baseFiles.filter((file) => file.mime_type.startsWith('image/'))
+			: baseFiles;
 
 	$: sortedFolders = [...filteredFolders].sort((a, b) => {
 		if (activeSortField === 'name') {
-			return activeSortOrder === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
+			return activeSortOrder === 'asc'
+				? a.name.localeCompare(b.name)
+				: b.name.localeCompare(a.name);
 		}
 		if (activeSortField === 'modified_at') {
 			return activeSortOrder === 'asc'
@@ -469,7 +486,9 @@
 
 	$: sortedFiles = [...filteredFiles].sort((a, b) => {
 		if (activeSortField === 'name') {
-			return activeSortOrder === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
+			return activeSortOrder === 'asc'
+				? a.name.localeCompare(b.name)
+				: b.name.localeCompare(a.name);
 		}
 		if (activeSortField === 'modified_at') {
 			return activeSortOrder === 'asc'
@@ -480,7 +499,9 @@
 			return activeSortOrder === 'asc' ? a.size - b.size : b.size - a.size;
 		}
 		if (activeSortField === 'mime_type') {
-			return activeSortOrder === 'asc' ? a.mime_type.localeCompare(b.mime_type) : b.mime_type.localeCompare(a.mime_type);
+			return activeSortOrder === 'asc'
+				? a.mime_type.localeCompare(b.mime_type)
+				: b.mime_type.localeCompare(a.mime_type);
 		}
 		return 0;
 	});
@@ -530,15 +551,23 @@
 	});
 
 	const createNoteMutation = createMutation({
-		mutationFn: ({ title, content, parent_folder_id }: { title: string; content: string; parent_folder_id: string | null }) => 
-			createNote({ title, content, parent_folder_id }),
+		mutationFn: ({
+			title,
+			content,
+			parent_folder_id
+		}: {
+			title: string;
+			content: string;
+			parent_folder_id: string | null;
+		}) => createNote({ title, content, parent_folder_id }),
 		onSuccess: (data) => {
 			goto(`/notes/${data.id}`);
 		}
 	});
 
 	const createFolderMutation = createMutation({
-		mutationFn: ({ name, parentFolderId }: { name: string; parentFolderId: string | null }) => createFolder(name, parentFolderId),
+		mutationFn: ({ name, parentFolderId }: { name: string; parentFolderId: string | null }) =>
+			createFolder(name, parentFolderId),
 		onSuccess: (folder, { parentFolderId }) => {
 			folderTreeStore.addFolder(folder, parentFolderId);
 			if (parentFolderId) {
@@ -557,7 +586,8 @@
 	});
 
 	const renameFileMutation = createMutation({
-		mutationFn: ({ fileId, newName }: { fileId: string; newName: string }) => renameFile(fileId, newName),
+		mutationFn: ({ fileId, newName }: { fileId: string; newName: string }) =>
+			renameFile(fileId, newName),
 		onSuccess: (_, { newName }) => {
 			const oldName = renameTarget?.name || 'File';
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
@@ -570,7 +600,8 @@
 	});
 
 	const renameFolderMutation = createMutation({
-		mutationFn: ({ folderId, newName }: { folderId: string; newName: string }) => renameFolder(folderId, newName),
+		mutationFn: ({ folderId, newName }: { folderId: string; newName: string }) =>
+			renameFolder(folderId, newName),
 		onSuccess: (_, { folderId, newName }) => {
 			const oldName = renameTarget?.name || 'Folder';
 			folderTreeStore.updateFolderName(folderId, newName);
@@ -605,7 +636,11 @@
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 			queryClient.invalidateQueries({ queryKey: ['all-files'] });
-			if (deleteTarget && (currentFolderId === deleteTarget.id || breadcrumbPath.some(f => f.id === deleteTarget?.id))) {
+			if (
+				deleteTarget &&
+				(currentFolderId === deleteTarget.id ||
+					breadcrumbPath.some((f) => f.id === deleteTarget?.id))
+			) {
 				goto('/files', { replaceState: true });
 			}
 			showDeleteModal = false;
@@ -616,7 +651,8 @@
 	});
 
 	const moveFileMutation = createMutation({
-		mutationFn: ({ fileId, targetFolderId }: { fileId: string; targetFolderId: string | null }) => moveFile(fileId, targetFolderId),
+		mutationFn: ({ fileId, targetFolderId }: { fileId: string; targetFolderId: string | null }) =>
+			moveFile(fileId, targetFolderId),
 		onSuccess: () => {
 			const fileName = moveTarget?.name || 'File';
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
@@ -630,7 +666,13 @@
 	});
 
 	const moveFolderMutation = createMutation({
-		mutationFn: ({ folderId, targetFolderId }: { folderId: string; targetFolderId: string | null }) => moveFolder(folderId, targetFolderId),
+		mutationFn: ({
+			folderId,
+			targetFolderId
+		}: {
+			folderId: string;
+			targetFolderId: string | null;
+		}) => moveFolder(folderId, targetFolderId),
 		onSuccess: (_, { folderId, targetFolderId }) => {
 			const folderName = moveTarget?.name || 'Folder';
 			folderTreeStore.moveFolder(folderId, targetFolderId);
@@ -674,7 +716,8 @@
 	});
 
 	const restoreFileMutation = createMutation({
-		mutationFn: ({ fileId, fileName }: { fileId: string; fileName: string }) => restoreFileFromTrash(fileId),
+		mutationFn: ({ fileId, fileName }: { fileId: string; fileName: string }) =>
+			restoreFileFromTrash(fileId),
 		onSuccess: (_, { fileName }) => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['all-files'] });
@@ -692,7 +735,8 @@
 	});
 
 	const permanentlyDeleteFileMutation = createMutation({
-		mutationFn: ({ fileId, fileName }: { fileId: string; fileName: string }) => permanentlyDeleteFile(fileId),
+		mutationFn: ({ fileId, fileName }: { fileId: string; fileName: string }) =>
+			permanentlyDeleteFile(fileId),
 		onSuccess: (_, { fileName }) => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['all-files'] });
@@ -823,7 +867,7 @@
 		if (!canUpload) return;
 		if (files.length === 0) return;
 
-		const newTasks: UploadTask[] = files.map(file => ({
+		const newTasks: UploadTask[] = files.map((file) => ({
 			id: `${file.name}-${Date.now()}-${Math.random()}`,
 			fileName: file.name,
 			size: file.size,
@@ -834,7 +878,7 @@
 		uploadTasks = [...uploadTasks, ...newTasks];
 
 		for (let i = 0; i < files.length; i++) {
-			const taskIndex = uploadTasks.findIndex(t => t.id === newTasks[i].id);
+			const taskIndex = uploadTasks.findIndex((t) => t.id === newTasks[i].id);
 			if (taskIndex === -1) continue;
 
 			try {
@@ -842,7 +886,7 @@
 					file: files[i],
 					folderId: uploadTargetFolderId ?? currentFolderId,
 					onProgress: (progress) => {
-						const currentTaskIndex = uploadTasks.findIndex(t => t.id === newTasks[i].id);
+						const currentTaskIndex = uploadTasks.findIndex((t) => t.id === newTasks[i].id);
 						if (currentTaskIndex !== -1) {
 							uploadTasks[currentTaskIndex].status = 'uploading';
 							uploadTasks[currentTaskIndex].progress = progress;
@@ -850,8 +894,8 @@
 						}
 					}
 				});
-				
-				const finalTaskIndex = uploadTasks.findIndex(t => t.id === newTasks[i].id);
+
+				const finalTaskIndex = uploadTasks.findIndex((t) => t.id === newTasks[i].id);
 				if (finalTaskIndex !== -1) {
 					uploadTasks[finalTaskIndex].status = 'success';
 					uploadTasks[finalTaskIndex].progress = 100;
@@ -859,7 +903,7 @@
 				}
 			} catch (error) {
 				const errorMessage = error instanceof Error ? error.message : 'Upload failed';
-				const errorTaskIndex = uploadTasks.findIndex(t => t.id === newTasks[i].id);
+				const errorTaskIndex = uploadTasks.findIndex((t) => t.id === newTasks[i].id);
 				if (errorTaskIndex !== -1) {
 					uploadTasks[errorTaskIndex].status = 'error';
 					uploadTasks[errorTaskIndex].error = errorMessage;
@@ -868,12 +912,12 @@
 			}
 		}
 
-		const successCount = uploadTasks.filter(t => t.status === 'success').length;
-		const errorCount = uploadTasks.filter(t => t.status === 'error').length;
+		const successCount = uploadTasks.filter((t) => t.status === 'success').length;
+		const errorCount = uploadTasks.filter((t) => t.status === 'error').length;
 
 		if (errorCount === 0) {
 			if (successCount === 1) {
-				const uploadedFile = uploadTasks.find(t => t.status === 'success');
+				const uploadedFile = uploadTasks.find((t) => t.status === 'success');
 				const filename = uploadedFile ? uploadedFile.fileName : '';
 				showNotification(`${truncateFilename(filename)} uploaded`, 'success');
 			} else {
@@ -884,7 +928,7 @@
 		} else {
 			showNotification(`Uploaded ${successCount}, failed ${errorCount}`, 'info');
 		}
-		
+
 		// Reset upload target folder after uploads complete
 		uploadTargetFolderId = null;
 	}
@@ -894,7 +938,8 @@
 
 		const items = files.map((file) => ({
 			file,
-			relativePath: (file as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath || file.name
+			relativePath:
+				(file as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath || file.name
 		}));
 
 		const folderPaths = extractFolderPaths(items);
@@ -935,7 +980,8 @@
 
 		const filesToUpload: { file: globalThis.File; parentFolderId: string | null }[] = [];
 		for (const file of files) {
-			const relativePath = (file as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+			const relativePath =
+				(file as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
 			const lastSlash = relativePath.lastIndexOf('/');
 
 			if (lastSlash > 0) {
@@ -1095,7 +1141,10 @@
 		}
 
 		if ($selectionStore.selectedFolderIds.size > 0) {
-			showNotification('Bulk move currently supports files only. Deselect folders and try again.', 'info');
+			showNotification(
+				'Bulk move currently supports files only. Deselect folders and try again.',
+				'info'
+			);
 			return;
 		}
 
@@ -1223,9 +1272,15 @@
 				queryClient.invalidateQueries({ queryKey: ['all-files'] });
 				selectionStore.clear();
 				selectionMode = false;
-				showNotification(`Moved ${bulkMoveFileIds.length} selected file${bulkMoveFileIds.length === 1 ? '' : 's'}`, 'success');
+				showNotification(
+					`Moved ${bulkMoveFileIds.length} selected file${bulkMoveFileIds.length === 1 ? '' : 's'}`,
+					'success'
+				);
 			} catch (error) {
-				showNotification(error instanceof Error ? error.message : 'Failed to move selected files', 'error');
+				showNotification(
+					error instanceof Error ? error.message : 'Failed to move selected files',
+					'error'
+				);
 			} finally {
 				bulkMoveLoading = false;
 				bulkMoveFileIds = [];
@@ -1301,22 +1356,26 @@
 	}
 
 	function handleCreateFolderConfirm(event: { name: string; parentFolderId: string | null }) {
-		$createFolderMutation.mutate({ 
-			name: event.name, 
-			parentFolderId: event.parentFolderId 
+		$createFolderMutation.mutate({
+			name: event.name,
+			parentFolderId: event.parentFolderId
 		});
 	}
 
-	async function handleCreateFileConfirm(event: { targetFolderId: string | null; fileType: string; fileName: string }) {
+	async function handleCreateFileConfirm(event: {
+		targetFolderId: string | null;
+		fileType: string;
+		fileName: string;
+	}) {
 		const { targetFolderId, fileType, fileName } = event;
 		createFileLoading = true;
-		
+
 		try {
 			if (fileType === 'md') {
-				const note = await $createNoteMutation.mutateAsync({ 
-					title: fileName.replace(/\.md$/i, ''), 
-					content: '', 
-					parent_folder_id: targetFolderId 
+				const note = await $createNoteMutation.mutateAsync({
+					title: fileName.replace(/\.md$/i, ''),
+					content: '',
+					parent_folder_id: targetFolderId
 				});
 				showCreateFileModal = false;
 				goto(`/notes/${note.id}`);
@@ -1334,7 +1393,7 @@
 	function handleUploadTargetConfirm(event: { targetFolderId: string | null }) {
 		uploadTargetFolderId = event.targetFolderId;
 		showUploadTargetModal = false;
-		
+
 		setTimeout(() => {
 			document.getElementById('upload-file-input')?.click();
 		}, 100);
@@ -1374,7 +1433,10 @@
 	}
 
 	function handlePermanentDeleteFolder(folder: Folder) {
-		if (!confirm(`Permanently delete ${folder.name} and everything inside it? This cannot be undone.`)) return;
+		if (
+			!confirm(`Permanently delete ${folder.name} and everything inside it? This cannot be undone.`)
+		)
+			return;
 		$permanentlyDeleteFolderMutation.mutate(folder.id);
 	}
 
@@ -1407,7 +1469,11 @@
 			showMarkdownEditor = true;
 		};
 		const handleCreateNoteEvent = () => {
-			$createNoteMutation.mutate({ title: 'Untitled Note', content: '', parent_folder_id: currentFolderId });
+			$createNoteMutation.mutate({
+				title: 'Untitled Note',
+				content: '',
+				parent_folder_id: currentFolderId
+			});
 		};
 		const handleCreateFileEvent = () => {
 			showCreateFileModal = true;
@@ -1421,7 +1487,7 @@
 		};
 
 		const handleEditFileEvent = () => {
-			editableFilesForModal = sortedFiles.filter(f => {
+			editableFilesForModal = sortedFiles.filter((f) => {
 				const name = f.name.toLowerCase();
 				return name.endsWith('.md') || name.endsWith('.txt') || name.endsWith('.excalidraw');
 			});
@@ -1435,7 +1501,7 @@
 		window.addEventListener('upload-requested', handleUploadEvent);
 		window.addEventListener('create-note-requested', handleCreateNoteEvent);
 		window.addEventListener('edit-file-requested', handleEditFileEvent);
-		
+
 		return () => {
 			window.removeEventListener('create-folder-requested', handleCreateFolderEvent);
 			window.removeEventListener('create-document-requested', handleCreateDocumentEvent);
@@ -1448,7 +1514,8 @@
 	});
 
 	function handleKeyDown(event: KeyboardEvent) {
-		if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+		if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)
+			return;
 
 		if (event.key === 'a' && (event.ctrlKey || event.metaKey)) {
 			if (!allowSelectionMode) return;
@@ -1493,10 +1560,11 @@
 		}
 	}
 
-	$: isUploading = uploadTasks.some(t => t.status === 'uploading' || t.status === 'pending');
-	$: moveCurrentFolderId = moveType === 'file' 
-		? (moveTarget as File | null)?.parent_folder_id 
-		: (moveTarget as Folder | null)?.parent_folder_id;
+	$: isUploading = uploadTasks.some((t) => t.status === 'uploading' || t.status === 'pending');
+	$: moveCurrentFolderId =
+		moveType === 'file'
+			? (moveTarget as File | null)?.parent_folder_id
+			: (moveTarget as Folder | null)?.parent_folder_id;
 	$: replicationStatuses = $replicationStore;
 </script>
 
@@ -1516,7 +1584,9 @@
 		const target = e.target as HTMLInputElement;
 		if (target.files && target.files.length > 0) {
 			const files = Array.from(target.files);
-			const isDirectory = files.some((f) => (f as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath);
+			const isDirectory = files.some(
+				(f) => (f as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath
+			);
 			if (isDirectory) {
 				handleDirectoryUpload(files);
 			} else {
@@ -1530,14 +1600,29 @@
 {#if workspaceMode === 'deleted'}
 	<div class="mb-3 flex items-center justify-between px-1">
 		<div class="text-sm text-base-content/60">
-			Items in trash are automatically deleted based on your <a href="/settings" class="text-brand-500 hover:underline">settings</a>.
+			Items in trash are automatically deleted based on your <a
+				href="/settings"
+				class="text-brand-500 hover:underline">settings</a
+			>.
 		</div>
 		<button
 			type="button"
 			class="flex items-center gap-2 rounded-lg border border-error/30 bg-error/10 px-3 py-1.5 text-sm font-medium text-error transition-colors hover:bg-error/20"
 			on:click={openEmptyTrashModal}
 		>
-			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+			<svg
+				xmlns="http://www.w3.org/2000/svg"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				class="h-4 w-4"
+				><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path
+					d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+				/></svg
+			>
 			Empty Trash
 		</button>
 	</div>
@@ -1575,7 +1660,7 @@
 		onFolderClick={handleFolderClick}
 		onFileClick={handleFileClick}
 		onRefresh={() => $filesQuery.refetch()}
-		onNewFolder={() => showCreateFolderModal = true}
+		onNewFolder={() => (showCreateFolderModal = true)}
 		onUpload={() => document.getElementById('upload-file-input')?.click()}
 		onToggleSelection={toggleSelectionMode}
 		onSelectAll={handleSelectAll}
@@ -1608,7 +1693,7 @@
 				{currentPage}
 				{totalPages}
 				pageSize={$fileSortState.pageSize}
-				onPageChange={(page) => currentPage = page}
+				onPageChange={(page) => (currentPage = page)}
 				onPageSizeChange={setPageSize}
 			/>
 		</div>
@@ -1618,85 +1703,107 @@
 <!-- Upload Progress -->
 <UploadProgress tasks={uploadTasks} onClose={handleCloseProgress} />
 
-	<FileModals
-		{currentFolderId}
-		moveCurrentFolderId={moveType === 'file'
-			? ((moveTarget as File | null)?.parent_folder_id ?? null)
-			: ((moveTarget as Folder | null)?.parent_folder_id ?? null)}
-		showRenameModal={showRenameModal}
-		renameTarget={renameTarget}
-		renameType={renameType}
-		renameLoading={$renameFileMutation.isPending || $renameFolderMutation.isPending}
-		onRenameClose={() => { showRenameModal = false; renameTarget = null; }}
-		onRenameConfirm={handleRenameConfirm}
-		showDeleteModal={showDeleteModal}
-		deleteTarget={deleteTarget}
-		deleteType={deleteType}
-		deleteLoading={$deleteFileMutation.isPending || $deleteFolderMutation.isPending}
-		onDeleteClose={() => { showDeleteModal = false; deleteTarget = null; }}
-		onDeleteConfirm={handleDeleteConfirm}
-		showMoveModal={showMoveModal}
-		moveTarget={moveTarget}
-		moveType={moveType}
-		moveLoading={$moveFileMutation.isPending || $moveFolderMutation.isPending}
-		{bulkMoveFileIds}
-		{bulkMoveLoading}
-		onMoveClose={() => { showMoveModal = false; moveTarget = null; bulkMoveFileIds = []; }}
-		onMoveConfirm={handleMoveConfirm}
-		showCreateFolderModal={showCreateFolderModal}
-		createFolderLoading={$createFolderMutation.isPending}
-		onCreateFolderClose={() => showCreateFolderModal = false}
-		onCreateFolderConfirm={handleCreateFolderConfirm}
-		showCreateFileModal={showCreateFileModal}
-		createFileLoading={createFileLoading}
-		onCreateFileClose={() => showCreateFileModal = false}
-		onCreateFileConfirm={handleCreateFileConfirm}
-		showUploadTargetModal={showUploadTargetModal}
-		onUploadTargetClose={() => showUploadTargetModal = false}
-		onUploadTargetConfirm={handleUploadTargetConfirm}
-		showEditFileModal={showEditFileModal}
-		editableFilesForModal={editableFilesForModal}
-		onEditFileClose={() => showEditFileModal = false}
-		onEditFileSelect={handleEditFileSelect}
-		showShareModal={showShareModal}
-		shareTarget={shareTarget}
-		shareType={shareType}
-		onShareClose={() => { showShareModal = false; shareTarget = null; }}
-		onShareNotification={handleShareNotification}
-		showVersionHistoryModal={showVersionHistoryModal}
-		versionHistoryTarget={versionHistoryTarget}
-		onVersionHistoryClose={() => { showVersionHistoryModal = false; versionHistoryTarget = null; }}
-		onVersionRestored={handleVersionRestored}
-		showFilePreviewModal={showFilePreviewModal}
-		previewTarget={previewTarget}
-		onFilePreviewClose={() => { showFilePreviewModal = false; previewTarget = null; }}
-		onEditFile={handleEditFile}
-		showReplaceFileModal={showReplaceFileModal}
-		replaceFileTarget={replaceFileTarget}
-		onReplaceFileClose={() => { showReplaceFileModal = false; replaceFileTarget = null; }}
-		onReplaceSuccess={handleReplaceSuccess}
-	/>
+<FileModals
+	{currentFolderId}
+	moveCurrentFolderId={moveType === 'file'
+		? ((moveTarget as File | null)?.parent_folder_id ?? null)
+		: ((moveTarget as Folder | null)?.parent_folder_id ?? null)}
+	{showRenameModal}
+	{renameTarget}
+	{renameType}
+	renameLoading={$renameFileMutation.isPending || $renameFolderMutation.isPending}
+	onRenameClose={() => {
+		showRenameModal = false;
+		renameTarget = null;
+	}}
+	onRenameConfirm={handleRenameConfirm}
+	{showDeleteModal}
+	{deleteTarget}
+	{deleteType}
+	deleteLoading={$deleteFileMutation.isPending || $deleteFolderMutation.isPending}
+	onDeleteClose={() => {
+		showDeleteModal = false;
+		deleteTarget = null;
+	}}
+	onDeleteConfirm={handleDeleteConfirm}
+	{showMoveModal}
+	{moveTarget}
+	{moveType}
+	moveLoading={$moveFileMutation.isPending || $moveFolderMutation.isPending}
+	{bulkMoveFileIds}
+	{bulkMoveLoading}
+	onMoveClose={() => {
+		showMoveModal = false;
+		moveTarget = null;
+		bulkMoveFileIds = [];
+	}}
+	onMoveConfirm={handleMoveConfirm}
+	{showCreateFolderModal}
+	createFolderLoading={$createFolderMutation.isPending}
+	onCreateFolderClose={() => (showCreateFolderModal = false)}
+	onCreateFolderConfirm={handleCreateFolderConfirm}
+	{showCreateFileModal}
+	{createFileLoading}
+	onCreateFileClose={() => (showCreateFileModal = false)}
+	onCreateFileConfirm={handleCreateFileConfirm}
+	{showUploadTargetModal}
+	onUploadTargetClose={() => (showUploadTargetModal = false)}
+	onUploadTargetConfirm={handleUploadTargetConfirm}
+	{showEditFileModal}
+	{editableFilesForModal}
+	onEditFileClose={() => (showEditFileModal = false)}
+	onEditFileSelect={handleEditFileSelect}
+	{showShareModal}
+	{shareTarget}
+	{shareType}
+	onShareClose={() => {
+		showShareModal = false;
+		shareTarget = null;
+	}}
+	onShareNotification={handleShareNotification}
+	{showVersionHistoryModal}
+	{versionHistoryTarget}
+	onVersionHistoryClose={() => {
+		showVersionHistoryModal = false;
+		versionHistoryTarget = null;
+	}}
+	onVersionRestored={handleVersionRestored}
+	{showFilePreviewModal}
+	{previewTarget}
+	onFilePreviewClose={() => {
+		showFilePreviewModal = false;
+		previewTarget = null;
+	}}
+	onEditFile={handleEditFile}
+	{showReplaceFileModal}
+	{replaceFileTarget}
+	onReplaceFileClose={() => {
+		showReplaceFileModal = false;
+		replaceFileTarget = null;
+	}}
+	onReplaceSuccess={handleReplaceSuccess}
+/>
 
-	<EmptyTrashModal
-		open={showEmptyTrashModal}
-		loading={emptyingTrash}
-		fileCount={trashSummary.file_count}
-		folderCount={trashSummary.folder_count}
-		totalSize={trashSummary.total_size}
-		onClose={() => showEmptyTrashModal = false}
-		onConfirm={handleEmptyTrash}
-	/>
+<EmptyTrashModal
+	open={showEmptyTrashModal}
+	loading={emptyingTrash}
+	fileCount={trashSummary.file_count}
+	folderCount={trashSummary.folder_count}
+	totalSize={trashSummary.total_size}
+	onClose={() => (showEmptyTrashModal = false)}
+	onConfirm={handleEmptyTrash}
+/>
 
-	<FileEditorPane
-		showTextEditor={showTextEditor}
-		showMarkdownEditor={showMarkdownEditor}
-		showExcalidrawEditor={showExcalidrawEditor}
-		editorTarget={editorTarget}
-		onEditorClose={handleEditorClose}
-		onEditorSaved={handleEditorSaved}
-	/>
+<FileEditorPane
+	{showTextEditor}
+	{showMarkdownEditor}
+	{showExcalidrawEditor}
+	{editorTarget}
+	onEditorClose={handleEditorClose}
+	onEditorSaved={handleEditorSaved}
+/>
 
 <!-- Toast -->
 {#if showToast}
-	<Toast message={toastMessage} type={toastType} onClose={() => showToast = false} />
+	<Toast message={toastMessage} type={toastType} onClose={() => (showToast = false)} />
 {/if}

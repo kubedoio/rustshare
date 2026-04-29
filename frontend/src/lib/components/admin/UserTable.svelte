@@ -62,25 +62,25 @@
 
 <div class="space-y-4">
 	<!-- Filters -->
-	<div class="flex flex-wrap gap-3 items-center">
+	<div class="flex flex-wrap items-center gap-3">
 		<input
 			type="text"
 			placeholder="Search users..."
-			class="input input-bordered input-sm w-64"
+			class="input-bordered input input-sm w-64"
 			value={searchValue}
 			on:input={handleSearchInput}
 		/>
-		<select class="select select-bordered select-sm" on:change={handleStatusChange}>
+		<select class="select-bordered select select-sm" on:change={handleStatusChange}>
 			<option value="">All statuses</option>
 			<option value="active">Active</option>
 			<option value="disabled">Disabled</option>
 		</select>
-		<span class="text-sm text-base-content/60 ml-auto">{total} user{total !== 1 ? 's' : ''}</span>
+		<span class="ml-auto text-sm text-base-content/60">{total} user{total !== 1 ? 's' : ''}</span>
 	</div>
 
 	<!-- Table -->
 	<div class="overflow-x-auto rounded-lg border border-base-300">
-		<table class="table table-zebra w-full">
+		<table class="table w-full table-zebra">
 			<thead>
 				<tr>
 					<th class="font-data">Username</th>
@@ -95,30 +95,30 @@
 			<tbody>
 				{#each users as user (user.id)}
 					<tr>
-						<td class="font-medium font-data">{user.username}</td>
-						<td class="text-sm text-base-content/70 font-data">{user.email}</td>
+						<td class="font-data font-medium">{user.username}</td>
+						<td class="font-data text-sm text-base-content/70">{user.email}</td>
 						<td>
 							{#if user.disabled_at}
-								<span class="badge badge-error badge-sm">Disabled</span>
+								<span class="badge badge-sm badge-error">Disabled</span>
 							{:else}
-								<span class="badge badge-success badge-sm">Active</span>
+								<span class="badge badge-sm badge-success">Active</span>
 							{/if}
 						</td>
 						<td>
 							{#if user.is_admin}
-								<span class="badge badge-warning badge-sm">Admin</span>
+								<span class="badge badge-sm badge-warning">Admin</span>
 							{:else}
 								<span class="badge badge-ghost badge-sm">User</span>
 							{/if}
 						</td>
-						<td class="text-sm font-data tabular-nums">{formatBytes(user.storage_quota_bytes)}</td>
-						<td class="text-sm text-base-content/60 font-data">{formatDate(user.created_at)}</td>
+						<td class="font-data text-sm tabular-nums">{formatBytes(user.storage_quota_bytes)}</td>
+						<td class="font-data text-sm text-base-content/60">{formatDate(user.created_at)}</td>
 						<td>
 							<div class="flex gap-1">
 								<a href="/admin/users/{user.id}" class="btn btn-ghost btn-xs">Edit</a>
 								{#if user.disabled_at}
 									<button
-										class="btn btn-ghost btn-xs text-success"
+										class="btn text-success btn-ghost btn-xs"
 										on:click={() => $enableMutation.mutate(user.id)}
 										disabled={$enableMutation.isPending}
 									>
@@ -126,7 +126,7 @@
 									</button>
 								{:else}
 									<button
-										class="btn btn-ghost btn-xs text-warning"
+										class="btn text-warning btn-ghost btn-xs"
 										on:click={() => $disableMutation.mutate(user.id)}
 										disabled={$disableMutation.isPending}
 									>
@@ -134,7 +134,7 @@
 									</button>
 								{/if}
 								<button
-									class="btn btn-ghost btn-xs text-error"
+									class="btn text-error btn-ghost btn-xs"
 									on:click={() => (confirmDelete = user.id)}
 								>
 									Delete
@@ -145,7 +145,7 @@
 				{/each}
 				{#if users.length === 0}
 					<tr>
-						<td colspan="7" class="text-center text-base-content/50 py-8">No users found</td>
+						<td colspan="7" class="py-8 text-center text-base-content/50">No users found</td>
 					</tr>
 				{/if}
 			</tbody>
@@ -156,7 +156,7 @@
 	{#if totalPages > 1}
 		<div class="flex justify-center gap-2">
 			<button
-				class="btn btn-sm btn-ghost"
+				class="btn btn-ghost btn-sm"
 				disabled={page <= 1}
 				on:click={() => onPageChange(page - 1)}
 			>
@@ -164,7 +164,7 @@
 			</button>
 			<span class="flex items-center px-2 text-sm">Page {page} of {totalPages}</span>
 			<button
-				class="btn btn-sm btn-ghost"
+				class="btn btn-ghost btn-sm"
 				disabled={page >= totalPages}
 				on:click={() => onPageChange(page + 1)}
 			>
@@ -176,9 +176,9 @@
 
 <!-- Delete confirmation modal -->
 {#if confirmDelete}
-	<div class="modal modal-open">
+	<div class="modal-open modal">
 		<div class="modal-box">
-			<h3 class="font-bold text-lg">Delete User</h3>
+			<h3 class="text-lg font-bold">Delete User</h3>
 			<p class="py-4">Are you sure you want to delete this user? This action cannot be undone.</p>
 			<div class="modal-action">
 				<button class="btn btn-ghost" on:click={() => (confirmDelete = null)}>Cancel</button>

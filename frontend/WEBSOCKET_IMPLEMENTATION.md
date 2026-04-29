@@ -1,11 +1,13 @@
 # WebSocket Real-Time Sync Implementation Summary
 
 ## Overview
+
 Implemented comprehensive WebSocket real-time synchronization for multi-device file updates in the RustShare frontend.
 
 ## Files Created
 
 ### Core WebSocket Module
+
 1. **`frontend/src/lib/websocket/events.ts`**
    - TypeScript event type definitions
    - Payload interfaces for all 13 event types
@@ -31,6 +33,7 @@ Implemented comprehensive WebSocket real-time synchronization for multi-device f
    - Complete documentation
 
 ### Store Management
+
 1. **`frontend/src/lib/stores/websocket.ts`**
    - Connection state management (disconnected, connecting, connected, reconnecting, error)
    - Reconnection attempt tracking
@@ -42,6 +45,7 @@ Implemented comprehensive WebSocket real-time synchronization for multi-device f
    - Multiple toast support
 
 ### UI Components
+
 1. **`frontend/src/lib/components/common/ToastContainer.svelte`**
    - Global toast notification container
    - Positioned at top-right
@@ -54,6 +58,7 @@ Implemented comprehensive WebSocket real-time synchronization for multi-device f
    - Only shown when not connected
 
 ### Integration Updates
+
 1. **`frontend/src/lib/stores/auth.ts`** (Updated)
    - Initialize WebSocket on login
    - Initialize WebSocket on session restore
@@ -70,6 +75,7 @@ Implemented comprehensive WebSocket real-time synchronization for multi-device f
 ## Features Implemented
 
 ### ✅ Connection Management
+
 - Automatic connection on login with browser session or token client auth
 - Token clients may pass `?token=<jwt>` for browser compatibility
 - Automatic reconnection with exponential backoff
@@ -79,9 +85,11 @@ Implemented comprehensive WebSocket real-time synchronization for multi-device f
 - Connection state tracking with visual feedback
 
 ### ✅ Event Handling
+
 All 13 event types handled:
 
 **File Events:**
+
 - FileUploaded
 - FileModified
 - FileRenamed
@@ -90,24 +98,29 @@ All 13 event types handled:
 - FileRestored
 
 **Folder Events:**
+
 - FolderCreated
 - FolderRenamed
 - FolderMoved
 - FolderDeleted
 
 **Share Events:**
+
 - ShareCreated
 - ShareRevoked
 - ShareUpdated
 
 ### ✅ Cache Invalidation
+
 Each event type invalidates appropriate TanStack Query caches:
+
 - File events → invalidate file details + folder contents
 - Folder events → invalidate folder tree + parent contents
 - Share events → invalidate shares list + file details
 - Smart invalidation of both old and new locations for move operations
 
 ### ✅ Toast Notifications
+
 - Non-intrusive toast notifications
 - Only shows for events from OTHER users/devices
 - Filters based on `user_id` in event payload
@@ -117,6 +130,7 @@ Each event type invalidates appropriate TanStack Query caches:
 - Color-coded by type (success, error, info)
 
 ### ✅ Connection Status UI
+
 - Visual indicator in header
 - Shows state: Disconnected, Connecting, Connected (Live), Reconnecting, Error
 - Animated pulse during connection attempts
@@ -125,6 +139,7 @@ Each event type invalidates appropriate TanStack Query caches:
 - Shows reconnection attempt count
 
 ### ✅ Error Handling
+
 - Authentication errors (close codes 1008, 1002) → no retry
 - Network errors → automatic retry with backoff
 - Event handler errors → caught and logged, don't crash app
@@ -133,6 +148,7 @@ Each event type invalidates appropriate TanStack Query caches:
 ## Configuration
 
 ### Environment Variables (.env)
+
 ```bash
 VITE_API_URL=http://localhost/api/v1
 VITE_WS_URL=ws://localhost/api/ws
@@ -185,6 +201,7 @@ WebSocket connects to: `ws://localhost/api/ws` or `ws://localhost/api/ws?token=<
 ## WebSocket URL Format
 
 The backend expects token in query parameter:
+
 ```
 ws://localhost/api/ws?token=<JWT_TOKEN>
 ```
@@ -207,6 +224,7 @@ This approach works with browser WebSocket API, which doesn't support custom hea
 ## Backend Requirements
 
 The backend WebSocket endpoint must:
+
 1. Accept bearer token as query parameter when needed: `/api/ws?token=<JWT>`
 2. Send events in the format defined in `events.ts`
 3. Include `user_id` in all events for filtering

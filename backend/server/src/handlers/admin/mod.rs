@@ -44,8 +44,8 @@ pub async fn log_admin_action(
     }
 }
 
-use axum::{http::StatusCode, response::IntoResponse, Json};
 use crate::handlers::ErrorResponse;
+use axum::{http::StatusCode, response::IntoResponse, Json};
 
 pub fn admin_ok<T>(data: T) -> axum::response::Response
 where
@@ -67,5 +67,9 @@ pub fn admin_conflict(msg: impl Into<String>) -> axum::response::Response {
 }
 
 pub fn admin_internal_error(msg: impl Into<String>) -> axum::response::Response {
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(msg))).into_response()
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse::new(msg)),
+    )
+        .into_response()
 }

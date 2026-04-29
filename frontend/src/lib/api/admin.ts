@@ -11,36 +11,29 @@ export const listAdminUsers = (params?: {
 export const createAdminUser = (data: CreateUserRequest) =>
 	apiClient.post<AdminUserDetail>('/admin/users', data);
 
-export const getAdminUser = (id: string) =>
-	apiClient.get<AdminUserDetail>(`/admin/users/${id}`);
+export const getAdminUser = (id: string) => apiClient.get<AdminUserDetail>(`/admin/users/${id}`);
 
 export const updateAdminUser = (id: string, data: UpdateUserRequest) =>
 	apiClient.patch<AdminUserDetail>(`/admin/users/${id}`, data);
 
-export const disableAdminUser = (id: string) =>
-	apiClient.post<void>(`/admin/users/${id}/disable`);
+export const disableAdminUser = (id: string) => apiClient.post<void>(`/admin/users/${id}/disable`);
 
-export const enableAdminUser = (id: string) =>
-	apiClient.post<void>(`/admin/users/${id}/enable`);
+export const enableAdminUser = (id: string) => apiClient.post<void>(`/admin/users/${id}/enable`);
 
-export const deleteAdminUser = (id: string) =>
-	apiClient.delete<void>(`/admin/users/${id}`);
+export const deleteAdminUser = (id: string) => apiClient.delete<void>(`/admin/users/${id}`);
 
 // Groups
-export const listAdminGroups = () =>
-	apiClient.get<AdminGroup[]>('/admin/groups');
+export const listAdminGroups = () => apiClient.get<AdminGroup[]>('/admin/groups');
 
 export const createAdminGroup = (data: { name: string; description?: string }) =>
 	apiClient.post<AdminGroupDetail>('/admin/groups', data);
 
-export const getAdminGroup = (id: string) =>
-	apiClient.get<AdminGroupDetail>(`/admin/groups/${id}`);
+export const getAdminGroup = (id: string) => apiClient.get<AdminGroupDetail>(`/admin/groups/${id}`);
 
 export const updateAdminGroup = (id: string, data: { name?: string; description?: string }) =>
 	apiClient.patch<AdminGroupDetail>(`/admin/groups/${id}`, data);
 
-export const deleteAdminGroup = (id: string) =>
-	apiClient.delete<void>(`/admin/groups/${id}`);
+export const deleteAdminGroup = (id: string) => apiClient.delete<void>(`/admin/groups/${id}`);
 
 export const addGroupMember = (groupId: string, userId: string) =>
 	apiClient.post<void>(`/admin/groups/${groupId}/members`, { user_id: userId });
@@ -63,8 +56,7 @@ export const testSmtpConfig = () =>
 	apiClient.post<{ success: boolean; message?: string }>('/admin/config/smtp/test');
 
 // Security config
-export const getSecurityConfig = () =>
-	apiClient.get<SecurityConfig>('/admin/config/security');
+export const getSecurityConfig = () => apiClient.get<SecurityConfig>('/admin/config/security');
 export const updateSecurityConfig = (data: SecurityConfigRequest) =>
 	apiClient.put<SecurityConfig>('/admin/config/security', data);
 
@@ -82,9 +74,7 @@ export const deleteWebhook = (id: string) =>
 	apiClient.delete<void>(`/admin/integrations/webhooks/${id}`);
 
 export const testWebhook = (id: string) =>
-	apiClient.post<{ success: boolean; message?: string }>(
-		`/admin/integrations/webhooks/${id}/test`
-	);
+	apiClient.post<{ success: boolean; message?: string }>(`/admin/integrations/webhooks/${id}/test`);
 
 // Audit
 export const listAuditLog = (params?: {
@@ -94,10 +84,7 @@ export const listAuditLog = (params?: {
 	to?: string;
 	page?: number;
 	per_page?: number;
-}) =>
-	apiClient.get<{ entries: AuditEntry[]; total: number }>(
-		'/admin/audit' + buildQuery(params)
-	);
+}) => apiClient.get<{ entries: AuditEntry[]; total: number }>('/admin/audit' + buildQuery(params));
 
 function buildQuery(params?: Record<string, string | number | undefined>): string {
 	if (!params) return '';

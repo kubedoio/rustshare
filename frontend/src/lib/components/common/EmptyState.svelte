@@ -13,17 +13,17 @@
 </script>
 
 <div class="flex flex-col items-center justify-center py-16 text-center">
-	<div class="w-16 h-16 rounded-2xl bg-base-200 flex items-center justify-center mb-4">
+	<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-base-200">
 		<Icon size={48} class="text-base-content/30" />
 	</div>
-	<h3 class="text-title-md font-semibold text-base-content mb-1">{title}</h3>
+	<h3 class="text-title-md mb-1 font-semibold text-base-content">{title}</h3>
 	{#if description}
-		<p class="text-body-sm text-base-content/60 mb-4">{description}</p>
+		<p class="mb-4 text-body-sm text-base-content/60">{description}</p>
 	{/if}
 	{#if actionLabel && onAction}
 		<button
 			type="button"
-			class="px-4 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors"
+			class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-600"
 			onclick={onAction}
 		>
 			{actionLabel}

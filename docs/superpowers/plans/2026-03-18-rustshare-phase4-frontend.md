@@ -1579,7 +1579,7 @@ Would you like me to continue with the complete plan including all remaining tas
 **Steps:**
 1. Configure environment variables for production
 2. Update docker-compose.yml with proper env vars
-3. Test full stack: nginx -> frontend + backend + postgres + minio
+3. Test full stack: nginx -> frontend + backend + postgres + rustfs
 4. Test: Login, upload file, share file, WebSocket connection
 5. Commit: "feat(docker): configure production environment"
 

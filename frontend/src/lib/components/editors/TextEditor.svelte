@@ -39,12 +39,12 @@
 		formatOnPaste: true,
 		formatOnType: true,
 		tabSize: 2,
-		insertSpaces: true,
+		insertSpaces: true
 	};
 
 	async function loadMonaco() {
 		if (typeof window === 'undefined') return null;
-		
+
 		// Dynamic import for Monaco
 		const monacoModule = await import('monaco-editor');
 		return monacoModule;
@@ -61,7 +61,7 @@
 		editor = monaco.editor.create(editorContainer, {
 			...editorOptions,
 			value: content,
-			language,
+			language
 		});
 
 		// Listen for content changes
@@ -101,7 +101,9 @@
 		}
 	}
 
-	async function handleSave(event: CustomEvent<{ saveMode: 'overwrite' | 'new_version'; changeDescription?: string }>) {
+	async function handleSave(
+		event: CustomEvent<{ saveMode: 'overwrite' | 'new_version'; changeDescription?: string }>
+	) {
 		if (!file || !hasChanges) return;
 
 		isSaving = true;
@@ -175,7 +177,7 @@
 	on:close={handleClose}
 	on:save={handleSave}
 >
-	<div bind:this={editorContainer} class="w-full h-full" />
+	<div bind:this={editorContainer} class="h-full w-full" />
 </BaseEditor>
 
 <style>

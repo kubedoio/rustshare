@@ -20,7 +20,7 @@
 	let nestedPath: Folder[] = [];
 
 	$: resourceId = $page.params.resourceId ?? '';
-	$: resourceType = (($page.params.resourceType as SharedResourceType | undefined) ?? 'file');
+	$: resourceType = ($page.params.resourceType as SharedResourceType | undefined) ?? 'file';
 	$: requestedFolderId = $page.url.searchParams.get('folder');
 
 	const receivedSharesQuery = createQuery({
@@ -170,14 +170,16 @@
 
 <svelte:head>
 	<title>
-		{shareEntry ? `${shareEntry.resource_name} - Shared with Me - RustShare` : 'Shared Resource - RustShare'}
+		{shareEntry
+			? `${shareEntry.resource_name} - Shared with Me - RustShare`
+			: 'Shared Resource - RustShare'}
 	</title>
 </svelte:head>
 
 <div class="space-y-6">
 	<div class="flex items-center justify-between gap-4">
 		<div>
-			<button class="btn btn-ghost btn-sm -ml-2 mb-2" on:click={() => goto('/shared-with-me')}>
+			<button class="btn mb-2 -ml-2 btn-ghost btn-sm" on:click={() => goto('/shared-with-me')}>
 				← Back to Shared with Me
 			</button>
 			<h1 class="text-3xl font-bold">
@@ -196,8 +198,8 @@
 	</div>
 
 	{#if $receivedSharesQuery.isLoading}
-		<div class="py-12 flex justify-center">
-			<span class="loading loading-spinner loading-lg"></span>
+		<div class="flex justify-center py-12">
+			<span class="loading loading-lg loading-spinner"></span>
 		</div>
 	{:else if $receivedSharesQuery.isError}
 		<div class="alert alert-error">
@@ -213,8 +215,8 @@
 				<div class="card-body">
 					<h2 class="card-title">Shared File</h2>
 					{#if $fileQuery.isLoading}
-						<div class="py-12 flex justify-center">
-							<span class="loading loading-spinner loading-lg"></span>
+						<div class="flex justify-center py-12">
+							<span class="loading loading-lg loading-spinner"></span>
 						</div>
 					{:else if $fileQuery.isError}
 						<div class="alert alert-error">
@@ -224,15 +226,19 @@
 						<div class="space-y-5">
 							<div class="flex items-start gap-4">
 								<div class="flex h-14 w-14 items-center justify-center rounded-xl bg-brand-500/10">
-								<FileIcon mimeType={$fileQuery.data.mime_type} size="lg" iconClass="text-brand-500" />
-							</div>
+									<FileIcon
+										mimeType={$fileQuery.data.mime_type}
+										size="lg"
+										iconClass="text-brand-500"
+									/>
+								</div>
 								<div>
 									<div class="text-xl font-semibold">{$fileQuery.data.name}</div>
 									<div class="text-sm text-base-content/60">{$fileQuery.data.path}</div>
 								</div>
 							</div>
 
-					<div class="grid gap-4 sm:grid-cols-2">
+							<div class="grid gap-4 sm:grid-cols-2">
 								<div class="rounded-lg bg-base-200 p-4">
 									<div class="text-sm text-base-content/60">Type</div>
 									<div class="font-medium">{$fileQuery.data.mime_type}</div>
@@ -294,7 +300,7 @@
 		<div class="space-y-6">
 			<div class="card bg-base-100 shadow-xl">
 				<div class="card-body">
-					<div class="flex items-center justify-between gap-4 flex-wrap">
+					<div class="flex flex-wrap items-center justify-between gap-4">
 						<div>
 							<h2 class="card-title">Shared Folder</h2>
 							<p class="text-sm text-base-content/70">
@@ -304,7 +310,7 @@
 						<div class="badge badge-ghost">{permissionLabel(shareEntry.permission)}</div>
 					</div>
 
-					<div class="text-sm text-base-content/70 mt-4">
+					<div class="mt-4 text-sm text-base-content/70">
 						<div>Shared by {shareEntry.shared_by_name}</div>
 						<div>Original path: {shareEntry.resource_path}</div>
 					</div>
@@ -313,7 +319,7 @@
 
 			<div class="card bg-base-100 shadow-xl">
 				<div class="card-body">
-					<div class="flex items-center justify-between gap-4 flex-wrap">
+					<div class="flex flex-wrap items-center justify-between gap-4">
 						<div>
 							<h2 class="card-title">{currentFolderTitle}</h2>
 							<div class="breadcrumbs text-sm">
@@ -343,8 +349,8 @@
 					</div>
 
 					{#if $folderContentsQuery.isLoading}
-						<div class="py-12 flex justify-center">
-							<span class="loading loading-spinner loading-lg"></span>
+						<div class="flex justify-center py-12">
+							<span class="loading loading-lg loading-spinner"></span>
 						</div>
 					{:else if $folderContentsQuery.isError}
 						<div class="alert alert-error">
@@ -368,7 +374,7 @@
 											<td>
 												<button
 													type="button"
-													class="font-medium flex items-center gap-3 hover:text-primary"
+													class="flex items-center gap-3 font-medium hover:text-primary"
 													on:click={() => openNestedFolder(folder)}
 												>
 													<span class="text-xl">📁</span>
@@ -381,7 +387,7 @@
 											<td class="text-right">
 												<button
 													type="button"
-													class="btn btn-sm btn-outline"
+													class="btn btn-outline btn-sm"
 													on:click={() => openNestedFolder(folder)}
 												>
 													Open
@@ -395,10 +401,14 @@
 											<td>
 												<button
 													type="button"
-													class="font-medium flex items-center gap-3 hover:text-primary"
+													class="flex items-center gap-3 font-medium hover:text-primary"
 													on:click={() => openPreview(file)}
 												>
-													<FileIcon mimeType={file.mime_type} size="md" iconClass="text-base-content/70" />
+													<FileIcon
+														mimeType={file.mime_type}
+														size="md"
+														iconClass="text-base-content/70"
+													/>
 													<span>{file.name}</span>
 												</button>
 											</td>
@@ -409,14 +419,14 @@
 												<div class="flex justify-end gap-2">
 													<button
 														type="button"
-														class="btn btn-sm btn-ghost"
+														class="btn btn-ghost btn-sm"
 														on:click={() => openPreview(file)}
 													>
 														Preview
 													</button>
 													<button
 														type="button"
-														class="btn btn-sm btn-outline"
+														class="btn btn-outline btn-sm"
 														on:click={() => handleDownload(file)}
 													>
 														Download
