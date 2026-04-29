@@ -53,7 +53,11 @@
 		showCreateFileModal: boolean;
 		createFileLoading: boolean;
 		onCreateFileClose: () => void;
-		onCreateFileConfirm: (event: { targetFolderId: string | null; fileType: string; fileName: string }) => void;
+		onCreateFileConfirm: (event: {
+			targetFolderId: string | null;
+			fileType: string;
+			fileName: string;
+		}) => void;
 
 		// Upload Target
 		showUploadTargetModal: boolean;
@@ -176,7 +180,9 @@
 	<MoveModal
 		open={showMoveModal}
 		loading={moveLoading || bulkMoveLoading}
-		itemName={bulkMoveFileIds.length > 0 ? `${bulkMoveFileIds.length} selected file${bulkMoveFileIds.length === 1 ? '' : 's'}` : moveTarget?.name || ''}
+		itemName={bulkMoveFileIds.length > 0
+			? `${bulkMoveFileIds.length} selected file${bulkMoveFileIds.length === 1 ? '' : 's'}`
+			: moveTarget?.name || ''}
 		itemType={moveType}
 		itemId={bulkMoveFileIds.length > 0 ? null : moveTarget?.id || null}
 		currentFolderId={bulkMoveFileIds.length > 0 ? currentFolderId : moveCurrentFolderId}

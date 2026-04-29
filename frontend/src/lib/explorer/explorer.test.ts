@@ -2,9 +2,9 @@
  * ==============================================================================
  * EXPLORER STORE UNIT TESTS
  * ==============================================================================
- * 
+ *
  * Tests for the central explorer store implementing the contracts from SPEC.
- * 
+ *
  * Coverage:
  * - A. Resolver tests
  * - B. Store tests (actions)
@@ -31,7 +31,9 @@ import {
 } from './types';
 
 // Mock $app/navigation
-define: { goto: vi.fn() };
+define: {
+	goto: vi.fn();
+}
 
 // We need to test the store logic separately from navigation
 // Let's test the pure functions from types.ts first
@@ -131,7 +133,7 @@ describe('Explorer Types', () => {
 	describe('createDefaultExplorerState', () => {
 		it('creates correct initial state', () => {
 			const state = createDefaultExplorerState();
-			
+
 			expect(state.mode).toBe('folder');
 			expect(state.activeRoot).toBe('my-files');
 			expect(state.activeCollection).toBeNull();
@@ -234,9 +236,9 @@ describe('Canonical Resolution Contract', () => {
 		});
 
 		it('detects missing canonicalLocation', () => {
-			const invalidItem = { 
-				...mockMyFilesFolder, 
-				collectionMeta: {} as any 
+			const invalidItem = {
+				...mockMyFilesFolder,
+				collectionMeta: {} as any
 			};
 			expect(invalidItem.collectionMeta.canonicalLocation).toBeUndefined();
 		});
@@ -267,7 +269,7 @@ describe('Explorer State Transitions', () => {
 				selectedItemType: null,
 				breadcrumb: [{ label: 'Shared', rootType: 'shared' }]
 			};
-			
+
 			expect(newState.mode).toBe('folder');
 			expect(newState.activeRoot).toBe('shared');
 			expect(newState.activeCollection).toBeNull();
@@ -281,7 +283,7 @@ describe('Explorer State Transitions', () => {
 				activeRoot: 'my-files',
 				activeCollection: null
 			};
-			
+
 			expect(newState.activeCollection).toBeNull();
 		});
 
@@ -301,13 +303,13 @@ describe('Explorer State Transitions', () => {
 				currentFolderId: null,
 				currentFolderPath: []
 			};
-			
+
 			expect(newState.mode).toBe('collection');
 			expect(newState.activeCollection).toBe('starred');
 		});
 
 		it('does not set false current folder', () => {
-			const state = createTestState({ 
+			const state = createTestState({
 				mode: 'folder',
 				currentFolderId: 'folder-1',
 				currentFolderPath: ['Some Folder']
@@ -319,15 +321,15 @@ describe('Explorer State Transitions', () => {
 				currentFolderId: null,
 				currentFolderPath: []
 			};
-			
+
 			expect(newState.currentFolderId).toBeNull();
 			expect(newState.currentFolderPath).toEqual([]);
 		});
 
 		it('supports all collection types', () => {
 			const collections: CollectionView[] = ['starred', 'recent', 'photos'];
-			
-			collections.forEach(collection => {
+
+			collections.forEach((collection) => {
 				const state = createDefaultExplorerState();
 				const newState: ExplorerState = {
 					...state,
@@ -347,9 +349,9 @@ describe('Explorer State Transitions', () => {
 				folderPath: ['A', 'B', 'C'],
 				ancestorFolderIds: ['root', 'a-id', 'b-id']
 			};
-			
+
 			const expandedIds = new Set(location.ancestorFolderIds);
-			
+
 			expect(expandedIds.has('root')).toBe(true);
 			expect(expandedIds.has('a-id')).toBe(true);
 			expect(expandedIds.has('b-id')).toBe(true);
@@ -357,18 +359,18 @@ describe('Explorer State Transitions', () => {
 		});
 
 		it('switches mode from collection to folder', () => {
-			const state = createTestState({ 
-				mode: 'collection', 
-				activeCollection: 'starred' 
+			const state = createTestState({
+				mode: 'collection',
+				activeCollection: 'starred'
 			});
-			
+
 			const location: CanonicalLocation = {
 				rootType: 'shared',
 				folderId: 'shared-folder',
 				folderPath: ['Team A'],
 				ancestorFolderIds: []
 			};
-			
+
 			const newState: ExplorerState = {
 				...state,
 				mode: 'folder',
@@ -377,7 +379,7 @@ describe('Explorer State Transitions', () => {
 				currentFolderId: location.folderId,
 				currentFolderPath: location.folderPath
 			};
-			
+
 			expect(newState.mode).toBe('folder');
 			expect(newState.activeCollection).toBeNull();
 		});
@@ -389,13 +391,13 @@ describe('Explorer State Transitions', () => {
 				folderPath: ['Team A', 'Contracts'],
 				ancestorFolderIds: ['team-a-id']
 			};
-			
+
 			const expectedBreadcrumb = [
 				{ label: 'Shared', rootType: 'shared' },
 				{ label: 'Team A', folderId: 'team-a-id' },
 				{ label: 'Contracts', folderId: 'contracts-folder' }
 			];
-			
+
 			expect(expectedBreadcrumb).toHaveLength(3);
 			expect(expectedBreadcrumb[0].label).toBe('Shared');
 			expect(expectedBreadcrumb[1].label).toBe('Team A');
@@ -413,7 +415,7 @@ describe('Explorer State Transitions', () => {
 				itemId: 'file-123',
 				itemType: 'file'
 			};
-			
+
 			const state = createDefaultExplorerState();
 			const newState: ExplorerState = {
 				...state,
@@ -424,7 +426,7 @@ describe('Explorer State Transitions', () => {
 				selectedItemId: location.itemId ?? null,
 				selectedItemType: 'file'
 			};
-			
+
 			expect(newState.currentFolderId).toBe('parent-folder');
 			expect(newState.selectedItemId).toBe('file-123');
 			expect(newState.selectedItemType).toBe('file');
@@ -439,9 +441,9 @@ describe('Explorer State Transitions', () => {
 				itemId: 'doc-file',
 				itemType: 'file'
 			};
-			
+
 			const expandedIds = new Set([...location.ancestorFolderIds, location.folderId]);
-			
+
 			expect(expandedIds.has('shared-root')).toBe(true);
 			expect(expandedIds.has('shared-parent')).toBe(true);
 		});
@@ -453,16 +455,16 @@ describe('Explorer State Transitions', () => {
 				expandedTreeNodeIds: new Set(['folder-1']),
 				currentFolderId: 'folder-2'
 			});
-			
+
 			// Toggle folder-1 closed
 			const newExpandedIds = new Set(state.expandedTreeNodeIds);
 			newExpandedIds.delete('folder-1');
-			
+
 			const newState: ExplorerState = {
 				...state,
 				expandedTreeNodeIds: newExpandedIds
 			};
-			
+
 			// Expansion changed
 			expect(newState.expandedTreeNodeIds.has('folder-1')).toBe(false);
 			// Navigation unchanged
@@ -477,14 +479,14 @@ describe('Explorer State Transitions', () => {
 				currentFolderId: 'shared-folder',
 				currentFolderPath: ['Team A']
 			});
-			
+
 			const newState: ExplorerState = {
 				...state,
 				activeRoot: 'my-files',
 				currentFolderId: 'my-folder',
 				currentFolderPath: ['Projects']
 			};
-			
+
 			expect(newState.activeRoot).toBe('my-files');
 			expect(newState.currentFolderId).toBe('my-folder');
 		});
@@ -497,7 +499,7 @@ describe('Route Contracts', () => {
 			const url = new URL('http://localhost/files');
 			const folderId = url.searchParams.get('folder');
 			const root = url.searchParams.get('root');
-			
+
 			// No folder param + no root param = my-files root
 			expect(folderId).toBeNull();
 			expect(root).toBeNull();
@@ -506,21 +508,21 @@ describe('Route Contracts', () => {
 		it('/files?root=shared maps to shared root', () => {
 			const url = new URL('http://localhost/files?root=shared');
 			const root = url.searchParams.get('root');
-			
+
 			expect(root).toBe('shared');
 		});
 
 		it('/files?folder=<id> maps to specific folder', () => {
 			const folderId = 'abc-123-def-456';
 			const url = new URL(`http://localhost/files?folder=${folderId}`);
-			
+
 			expect(url.searchParams.get('folder')).toBe(folderId);
 		});
 
 		it('/files?filter=starred maps to collection mode', () => {
 			const url = new URL('http://localhost/files?filter=starred');
 			const filter = url.searchParams.get('filter');
-			
+
 			expect(filter).toBe('starred');
 			expect(isCollectionView(filter)).toBe(true);
 		});
@@ -528,7 +530,7 @@ describe('Route Contracts', () => {
 		it('/files?filter=recent stays in collection mode', () => {
 			const url = new URL('http://localhost/files?filter=recent');
 			const filter = url.searchParams.get('filter');
-			
+
 			expect(filter).toBe('recent');
 			expect(isCollectionView(filter)).toBe(true);
 		});
@@ -536,7 +538,7 @@ describe('Route Contracts', () => {
 		it('/files?filter=photos stays in collection mode', () => {
 			const url = new URL('http://localhost/files?filter=photos');
 			const filter = url.searchParams.get('filter');
-			
+
 			expect(filter).toBe('photos');
 			expect(isCollectionView(filter)).toBe(true);
 		});
@@ -546,7 +548,7 @@ describe('Route Contracts', () => {
 		it('hydrates shared root from URL', () => {
 			const params = { root: 'shared' };
 			const state = createDefaultExplorerState();
-			
+
 			const newState: ExplorerState = {
 				...state,
 				mode: 'folder',
@@ -555,18 +557,18 @@ describe('Route Contracts', () => {
 				currentFolderId: null,
 				breadcrumb: [{ label: 'Shared', rootType: 'shared' }]
 			};
-			
+
 			expect(newState.activeRoot).toBe('shared');
 			expect(newState.breadcrumb[0].label).toBe('Shared');
 		});
 
 		it('hydrates nested shared folder with ancestors', () => {
 			const params = { folder: 'nested-folder' };
-			const folderPathData = { 
-				path: ['Team A', 'Contracts'], 
-				ancestorIds: ['team-a-id'] 
+			const folderPathData = {
+				path: ['Team A', 'Contracts'],
+				ancestorIds: ['team-a-id']
 			};
-			
+
 			const state: ExplorerState = {
 				...createDefaultExplorerState(),
 				mode: 'folder',
@@ -580,7 +582,7 @@ describe('Route Contracts', () => {
 					{ label: 'Contracts', folderId: 'nested-folder' }
 				]
 			};
-			
+
 			expect(state.expandedTreeNodeIds.has('team-a-id')).toBe(true);
 			expect(state.breadcrumb).toHaveLength(3);
 		});

@@ -22,17 +22,17 @@
 
 	function getTooltipText(): string {
 		if (!isShared) return '';
-		
+
 		let text = 'Shared';
 		if (shareCount > 1) {
 			text += ` (${shareCount} shares)`;
 		}
-		
+
 		if (shareExpiresAt) {
 			const expiryDate = new Date(shareExpiresAt);
 			const now = new Date();
 			const isExpired = expiryDate < now;
-			
+
 			if (isExpired) {
 				text += ` - Expired ${formatDate(shareExpiresAt)}`;
 			} else {
@@ -41,7 +41,7 @@
 		} else {
 			text += ' - Never expires';
 		}
-		
+
 		return text;
 	}
 
@@ -49,11 +49,11 @@
 		if (!shareExpiresAt) {
 			return 'text-success/70'; // Muted green for non-expiring shares
 		}
-		
+
 		const expiryDate = new Date(shareExpiresAt);
 		const now = new Date();
 		const daysUntilExpiry = (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-		
+
 		if (expiryDate < now) {
 			return 'text-error/70'; // Muted red for expired
 		} else if (daysUntilExpiry <= 7) {
@@ -67,12 +67,12 @@
 		const date = new Date(dateStr);
 		const now = new Date();
 		const isExpired = date < now;
-		
+
 		// Format: "Oct 24" or "Expired"
 		if (isExpired) {
 			return 'Expired';
 		}
-		
+
 		const month = date.toLocaleDateString('en-US', { month: 'short' });
 		const day = date.getDate();
 		return `Exp. ${month} ${day}`;
@@ -80,7 +80,7 @@
 </script>
 
 {#if isShared}
-	<span 
+	<span
 		class="inline-flex items-center {sizeClasses[size]} {getStatusColor()} whitespace-nowrap"
 		title={getTooltipText()}
 	>

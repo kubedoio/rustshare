@@ -26,28 +26,28 @@ function createFolderTreeStore() {
 
 	return {
 		subscribe,
-		
+
 		setRootFolders: (folders: Folder[]) => {
-			update(state => ({
+			update((state) => ({
 				...state,
-				rootFolders: folders.map(f => ({ 
-					...f, 
-					children: undefined, 
-					isExpanded: state.expandedIds.has(f.id) 
+				rootFolders: folders.map((f) => ({
+					...f,
+					children: undefined,
+					isExpanded: state.expandedIds.has(f.id)
 				})),
 				version: state.version + 1
 			}));
 		},
 
 		selectFolder: (folderId: string | null) => {
-			update(state => ({
+			update((state) => ({
 				...state,
 				selectedId: folderId
 			}));
 		},
 
 		toggleExpand: (folderId: string) => {
-			update(state => {
+			update((state) => {
 				const newExpanded = new Set(state.expandedIds);
 				if (newExpanded.has(folderId)) {
 					newExpanded.delete(folderId);
@@ -63,7 +63,7 @@ function createFolderTreeStore() {
 		},
 
 		setExpanded: (folderId: string, expanded: boolean) => {
-			update(state => {
+			update((state) => {
 				const newExpanded = new Set(state.expandedIds);
 				if (expanded) {
 					newExpanded.add(folderId);
@@ -79,7 +79,7 @@ function createFolderTreeStore() {
 		},
 
 		setFolderChildren: (folderId: string, children: Folder[]) => {
-			update(state => ({
+			update((state) => ({
 				...state,
 				rootFolders: updateFolderChildren(state.rootFolders, folderId, children, state.expandedIds),
 				version: state.version + 1
@@ -87,7 +87,7 @@ function createFolderTreeStore() {
 		},
 
 		setLoading: (folderId: string, loading: boolean) => {
-			update(state => {
+			update((state) => {
 				const newLoading = new Set(state.loadingIds);
 				if (loading) {
 					newLoading.add(folderId);
@@ -104,10 +104,10 @@ function createFolderTreeStore() {
 
 		// Remove a folder from the tree (used after delete)
 		removeFolder: (folderId: string) => {
-			update(state => ({
+			update((state) => ({
 				...state,
 				rootFolders: removeFolderFromTree(state.rootFolders, folderId),
-				expandedIds: new Set([...state.expandedIds].filter(id => id !== folderId)),
+				expandedIds: new Set([...state.expandedIds].filter((id) => id !== folderId)),
 				selectedId: state.selectedId === folderId ? null : state.selectedId,
 				version: state.version + 1
 			}));
@@ -115,7 +115,7 @@ function createFolderTreeStore() {
 
 		// Update a folder's name
 		updateFolderName: (folderId: string, newName: string) => {
-			update(state => ({
+			update((state) => ({
 				...state,
 				rootFolders: updateFolderNameInTree(state.rootFolders, folderId, newName),
 				version: state.version + 1
@@ -124,9 +124,9 @@ function createFolderTreeStore() {
 
 		// Add a new folder to the tree (for live updates after create)
 		addFolder: (folder: Folder, parentFolderId: string | null) => {
-			update(state => {
+			update((state) => {
 				const newFolder: FolderNode = { ...folder, children: undefined };
-				
+
 				if (parentFolderId === null) {
 					// Add to root
 					return {
@@ -135,7 +135,7 @@ function createFolderTreeStore() {
 						version: state.version + 1
 					};
 				}
-				
+
 				// Add to parent folder's children
 				return {
 					...state,
@@ -147,30 +147,31 @@ function createFolderTreeStore() {
 
 		// Move a folder to a new parent
 		moveFolder: (folderId: string, newParentId: string | null) => {
-			update(state => {
+			update((state) => {
 				// Find the folder to move
 				const folderToMove = findFolderById(state.rootFolders, folderId);
 				if (!folderToMove) return state;
 
 				// Remove from old location
 				const withoutFolder = removeFolderFromTree(state.rootFolders, folderId);
-				
+
 				// Update parent reference
-				const movedFolder: FolderNode = { 
-					...folderToMove, 
+				const movedFolder: FolderNode = {
+					...folderToMove,
 					parent_folder_id: newParentId,
 					children: undefined // Reset children to lazy load
 				};
-				
+
 				// Add to new location
-				const withFolderAdded = newParentId === null
-					? [...withoutFolder, movedFolder]
-					: addFolderToTree(withoutFolder, movedFolder, newParentId);
-				
+				const withFolderAdded =
+					newParentId === null
+						? [...withoutFolder, movedFolder]
+						: addFolderToTree(withoutFolder, movedFolder, newParentId);
+
 				return {
 					...state,
 					rootFolders: withFolderAdded,
-					expandedIds: new Set([...state.expandedIds].filter(id => id !== folderId)),
+					expandedIds: new Set([...state.expandedIds].filter((id) => id !== folderId)),
 					version: state.version + 1
 				};
 			});
@@ -178,9 +179,9 @@ function createFolderTreeStore() {
 
 		// Refresh the tree - clears all children to force re-fetch
 		refresh: () => {
-			update(state => ({
+			update((state) => ({
 				...state,
-				rootFolders: state.rootFolders.map(f => ({ ...f, children: undefined })),
+				rootFolders: state.rootFolders.map((f) => ({ ...f, children: undefined })),
 				version: state.version + 1
 			}));
 		},
@@ -198,16 +199,22 @@ function createFolderTreeStore() {
 }
 
 function removeFolderFromTree(folders: FolderNode[], folderId: string): FolderNode[] {
-	return folders.filter(folder => folder.id !== folderId).map(folder => {
-		if (folder.children) {
-			return { ...folder, children: removeFolderFromTree(folder.children, folderId) };
-		}
-		return folder;
-	});
+	return folders
+		.filter((folder) => folder.id !== folderId)
+		.map((folder) => {
+			if (folder.children) {
+				return { ...folder, children: removeFolderFromTree(folder.children, folderId) };
+			}
+			return folder;
+		});
 }
 
-function updateFolderNameInTree(folders: FolderNode[], folderId: string, newName: string): FolderNode[] {
-	return folders.map(folder => {
+function updateFolderNameInTree(
+	folders: FolderNode[],
+	folderId: string,
+	newName: string
+): FolderNode[] {
+	return folders.map((folder) => {
 		if (folder.id === folderId) {
 			return { ...folder, name: newName };
 		}
@@ -219,16 +226,20 @@ function updateFolderNameInTree(folders: FolderNode[], folderId: string, newName
 }
 
 function updateFolderChildren(
-	folders: FolderNode[], 
-	folderId: string, 
+	folders: FolderNode[],
+	folderId: string,
 	children: Folder[],
 	expandedIds: Set<string>
 ): FolderNode[] {
-	return folders.map(folder => {
+	return folders.map((folder) => {
 		if (folder.id === folderId) {
 			return {
 				...folder,
-				children: children.map(c => ({ ...c, children: undefined, isExpanded: expandedIds.has(c.id) }))
+				children: children.map((c) => ({
+					...c,
+					children: undefined,
+					isExpanded: expandedIds.has(c.id)
+				}))
 			};
 		}
 		if (folder.children) {
@@ -241,8 +252,12 @@ function updateFolderChildren(
 	});
 }
 
-function addFolderToTree(folders: FolderNode[], newFolder: FolderNode, parentId: string): FolderNode[] {
-	return folders.map(folder => {
+function addFolderToTree(
+	folders: FolderNode[],
+	newFolder: FolderNode,
+	parentId: string
+): FolderNode[] {
+	return folders.map((folder) => {
 		if (folder.id === parentId) {
 			return {
 				...folder,
@@ -273,10 +288,7 @@ function findFolderById(folders: FolderNode[], id: string): FolderNode | null {
 export const folderTreeStore = createFolderTreeStore();
 
 // Derived store to get the current selected folder
-export const selectedFolder = derived(
-	folderTreeStore,
-	$store => {
-		if (!$store.selectedId) return null;
-		return findFolderById($store.rootFolders, $store.selectedId);
-	}
-);
+export const selectedFolder = derived(folderTreeStore, ($store) => {
+	if (!$store.selectedId) return null;
+	return findFolderById($store.rootFolders, $store.selectedId);
+});

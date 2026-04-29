@@ -1,10 +1,10 @@
-use crate::adapters;
 use crate::handlers::ensure_optional_seed_user;
 use crate::oidc_runtime::{seed_oidc_config_from_env, OidcRuntimeCache};
 use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
+use crate::state::{AppAiService, AppState, AppUploadService};
 use crate::trash_cleanup::{spawn_trash_cleanup_worker, TrashCleanupConfig};
-use crate::state::{AppState, AppAiService, AppUploadService, AppUserShareService};
 use anyhow::Result;
+use rand::Rng;
 use rustshare_auth::{JwtManager, PasswordHasher};
 #[allow(deprecated)]
 use rustshare_core::{
@@ -23,13 +23,10 @@ use rustshare_infrastructure::repositories::{
 };
 use rustshare_storage::{repos::ShareNotificationRepoImpl, EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
-use rand::Rng;
-use uuid::Uuid;
-use std::collections::HashMap;
-use std::time::Instant;
 
 pub async fn init_app() -> Result<AppState> {
     // Load environment variables
@@ -206,8 +203,12 @@ pub async fn init_app() -> Result<AppState> {
 
     let upload_service = Arc::new(AppUploadService::new(
         Arc::new(upload_session_repo),
-        Arc::new(crate::adapters::UploadObjectStoreAdapter::new(Arc::clone(&object_store))),
-        Arc::new(crate::adapters::UploadMetadataStoreAdapter::new(Arc::clone(&metadata_store))),
+        Arc::new(crate::adapters::UploadObjectStoreAdapter::new(Arc::clone(
+            &object_store,
+        ))),
+        Arc::new(crate::adapters::UploadMetadataStoreAdapter::new(
+            Arc::clone(&metadata_store),
+        )),
         Arc::clone(&event_store),
         Arc::clone(&broadcaster),
     ));
@@ -249,7 +250,8 @@ pub async fn init_app() -> Result<AppState> {
         let admin_password = match std::env::var("RUSTSHARE_ADMIN_PASSWORD") {
             Ok(pwd) => pwd,
             Err(_) => {
-                const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+                const CHARSET: &[u8] =
+                    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
                 let mut rng = rand::thread_rng();
                 let password: String = (0..32)
                     .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)

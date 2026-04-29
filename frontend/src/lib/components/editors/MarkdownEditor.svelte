@@ -26,8 +26,6 @@
 	let hasChanges = false;
 	let showPreview = true;
 
-
-
 	$: renderedPreview = renderMarkdown(content);
 
 	// Monaco editor options
@@ -44,12 +42,12 @@
 		formatOnPaste: true,
 		formatOnType: true,
 		tabSize: 2,
-		insertSpaces: true,
+		insertSpaces: true
 	};
 
 	async function loadMonaco() {
 		if (typeof window === 'undefined') return null;
-		
+
 		const monacoModule = await import('monaco-editor');
 		return monacoModule;
 	}
@@ -63,7 +61,7 @@
 		editor = monaco.editor.create(editorContainer, {
 			...editorOptions,
 			value: content,
-			language: 'markdown',
+			language: 'markdown'
 		});
 
 		// Listen for content changes
@@ -102,7 +100,9 @@
 		}
 	}
 
-	async function handleSave(event: CustomEvent<{ saveMode: 'overwrite' | 'new_version'; changeDescription?: string }>) {
+	async function handleSave(
+		event: CustomEvent<{ saveMode: 'overwrite' | 'new_version'; changeDescription?: string }>
+	) {
 		if (!file || !hasChanges) return;
 
 		isSaving = true;
@@ -143,19 +143,21 @@
 		if (!editor) return;
 		const selection = editor.getSelection();
 		if (!selection) return;
-		
+
 		const model = editor.getModel();
 		if (!model) return;
 
 		const selectedText = model.getValueInRange(selection);
 		const newText = before + selectedText + after;
-		
-		editor.executeEdits('toolbar', [{
-			range: selection,
-			text: newText,
-			forceMoveMarkers: true
-		}]);
-		
+
+		editor.executeEdits('toolbar', [
+			{
+				range: selection,
+				text: newText,
+				forceMoveMarkers: true
+			}
+		]);
+
 		editor.focus();
 	}
 
@@ -194,69 +196,78 @@
 	on:close={handleClose}
 	on:save={handleSave}
 >
-	<div class="flex flex-col h-full">
+	<div class="flex h-full flex-col">
 		<!-- Toolbar -->
-		<div class="border-b border-base-300 px-4 py-2 flex items-center gap-2">
+		<div class="flex items-center gap-2 border-b border-base-300 px-4 py-2">
 			<div class="join">
-				<button class="btn btn-xs join-item" on:click={() => insertText('**', '**')} title="Bold">
+				<button class="btn join-item btn-xs" on:click={() => insertText('**', '**')} title="Bold">
 					<strong>B</strong>
 				</button>
-				<button class="btn btn-xs join-item" on:click={() => insertText('*', '*')} title="Italic">
+				<button class="btn join-item btn-xs" on:click={() => insertText('*', '*')} title="Italic">
 					<em>I</em>
 				</button>
-				<button class="btn btn-xs join-item" on:click={() => insertText('`', '`')} title="Code">
+				<button class="btn join-item btn-xs" on:click={() => insertText('`', '`')} title="Code">
 					&lt;/&gt;
 				</button>
 			</div>
-			<div class="divider divider-horizontal mx-1"></div>
+			<div class="divider mx-1 divider-horizontal"></div>
 			<div class="join">
-				<button class="btn btn-xs join-item" on:click={() => insertText('# ')} title="Heading 1">
+				<button class="btn join-item btn-xs" on:click={() => insertText('# ')} title="Heading 1">
 					H1
 				</button>
-				<button class="btn btn-xs join-item" on:click={() => insertText('## ')} title="Heading 2">
+				<button class="btn join-item btn-xs" on:click={() => insertText('## ')} title="Heading 2">
 					H2
 				</button>
-				<button class="btn btn-xs join-item" on:click={() => insertText('### ')} title="Heading 3">
+				<button class="btn join-item btn-xs" on:click={() => insertText('### ')} title="Heading 3">
 					H3
 				</button>
 			</div>
-			<div class="divider divider-horizontal mx-1"></div>
+			<div class="divider mx-1 divider-horizontal"></div>
 			<div class="join">
-				<button class="btn btn-xs join-item" on:click={() => insertText('- ')} title="Bullet List">
+				<button class="btn join-item btn-xs" on:click={() => insertText('- ')} title="Bullet List">
 					• List
 				</button>
-				<button class="btn btn-xs join-item" on:click={() => insertText('1. ')} title="Numbered List">
+				<button
+					class="btn join-item btn-xs"
+					on:click={() => insertText('1. ')}
+					title="Numbered List"
+				>
 					1. List
 				</button>
-				<button class="btn btn-xs join-item" on:click={() => insertText('> ')} title="Quote">
+				<button class="btn join-item btn-xs" on:click={() => insertText('> ')} title="Quote">
 					" Quote
 				</button>
 			</div>
-			<div class="divider divider-horizontal mx-1"></div>
+			<div class="divider mx-1 divider-horizontal"></div>
 			<div class="join">
-				<button class="btn btn-xs join-item" on:click={() => insertText('[', '](url)')} title="Link">
+				<button
+					class="btn join-item btn-xs"
+					on:click={() => insertText('[', '](url)')}
+					title="Link"
+				>
 					Link
 				</button>
-				<button class="btn btn-xs join-item" on:click={() => insertText('```\n', '\n```')} title="Code Block">
+				<button
+					class="btn join-item btn-xs"
+					on:click={() => insertText('```\n', '\n```')}
+					title="Code Block"
+				>
 					Code Block
 				</button>
 			</div>
 			<div class="flex-1"></div>
-			<button
-				class="btn btn-xs btn-ghost"
-				on:click={() => showPreview = !showPreview}
-			>
+			<button class="btn btn-ghost btn-xs" on:click={() => (showPreview = !showPreview)}>
 				{showPreview ? 'Hide Preview' : 'Show Preview'}
 			</button>
 		</div>
 
 		<!-- Editor and Preview -->
-		<div class="flex-1 flex overflow-hidden">
+		<div class="flex flex-1 overflow-hidden">
 			<div bind:this={editorContainer} class="flex-1 {showPreview ? 'w-1/2' : 'w-full'}" />
-			
+
 			{#if showPreview}
-				<div class="w-1/2 border-l border-base-300 overflow-auto p-4 bg-base-100">
-					<div class="prose prose-sm max-w-none">
+				<div class="w-1/2 overflow-auto border-l border-base-300 bg-base-100 p-4">
+					<div class="prose-sm prose max-w-none">
 						{@html renderedPreview}
 					</div>
 				</div>

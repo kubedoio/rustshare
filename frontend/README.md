@@ -9,26 +9,26 @@ This is the RustShare web frontend: a [SvelteKit](https://svelte.dev/docs/kit) +
 
 ## Available Scripts
 
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start the development server with hot reload |
-| `npm run build` | Create an optimized production build |
-| `npm run preview` | Preview the production build locally |
-| `npm run test` | Run the Vitest unit test suite |
-| `npm run test:watch` | Run Vitest in watch mode |
-| `npm run test:e2e` | Run Playwright end-to-end tests |
-| `npm run check` | Run TypeScript and Svelte type checking |
-| `npm run lint` | Run Prettier and ESLint |
-| `npm run format` | Auto-format code with Prettier |
+| Command              | Description                                  |
+| -------------------- | -------------------------------------------- |
+| `npm run dev`        | Start the development server with hot reload |
+| `npm run build`      | Create an optimized production build         |
+| `npm run preview`    | Preview the production build locally         |
+| `npm run test`       | Run the Vitest unit test suite               |
+| `npm run test:watch` | Run Vitest in watch mode                     |
+| `npm run test:e2e`   | Run Playwright end-to-end tests              |
+| `npm run check`      | Run TypeScript and Svelte type checking      |
+| `npm run lint`       | Run Prettier and ESLint                      |
+| `npm run format`     | Auto-format code with Prettier               |
 
 ## Environment Variables
 
 The frontend reads build-time environment variables prefixed with `VITE_`:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VITE_API_URL` | `/api/v1` | Base path for REST API calls |
-| `VITE_WS_URL` | `/api/ws` | WebSocket endpoint for real-time sync |
+| Variable       | Default   | Description                           |
+| -------------- | --------- | ------------------------------------- |
+| `VITE_API_URL` | `/api/v1` | Base path for REST API calls          |
+| `VITE_WS_URL`  | `/api/ws` | WebSocket endpoint for real-time sync |
 
 These are baked into the build at compile time. If you change them, you must rebuild.
 

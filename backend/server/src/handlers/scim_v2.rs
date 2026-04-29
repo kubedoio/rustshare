@@ -19,8 +19,8 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::AppState;
 use super::ErrorResponse;
+use crate::AppState;
 
 // ---------------------------------------------------------------------------
 // Query parameters
@@ -88,7 +88,10 @@ fn scim_json_response<T: serde::Serialize>(status: StatusCode, body: T) -> Respo
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(format!("JSON serialization error: {}", e))),
+                Json(ErrorResponse::new(format!(
+                    "JSON serialization error: {}",
+                    e
+                ))),
             )
                 .into_response();
         }
@@ -1105,4 +1108,3 @@ fn get_base_url(_headers: &HeaderMap) -> String {
     // Try to construct from request headers, fallback to env or default
     std::env::var("RUSTSHARE_SCIM_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string())
 }
-

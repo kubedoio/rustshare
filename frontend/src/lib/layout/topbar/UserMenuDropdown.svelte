@@ -29,10 +29,14 @@
 			aria-expanded={open}
 			aria-haspopup="menu"
 		>
-			<div class="flex h-8 w-8 items-center justify-center rounded-xl bg-brand-500 font-bold text-white shadow-sm">
+			<div
+				class="flex h-8 w-8 items-center justify-center rounded-xl bg-brand-500 font-bold text-white shadow-sm"
+			>
 				{getInitials(user.display_name)}
 			</div>
-			<span class="hidden max-w-[120px] truncate text-body-sm font-semibold text-base-content/80 md:block">
+			<span
+				class="hidden max-w-[120px] truncate text-body-sm font-semibold text-base-content/80 md:block"
+			>
 				{user.display_name}
 			</span>
 			<ChevronDown size={14} class="opacity-40" />
@@ -41,41 +45,63 @@
 		{#if open}
 			<div
 				role="menu"
-				class="absolute right-0 mt-2 w-56 origin-top-right rounded-2xl border border-base-300 bg-base-100 py-1.5 shadow-xl ring-1 ring-black/5 animate-in fade-in slide-in-from-top-2 duration-100"
+				class="animate-in fade-in slide-in-from-top-2 absolute right-0 mt-2 w-56 origin-top-right rounded-2xl border border-base-300 bg-base-100 py-1.5 shadow-xl ring-1 ring-black/5 duration-100"
 			>
-				<div class="border-b border-base-200 px-4 py-3 mb-1">
+				<div class="mb-1 border-b border-base-200 px-4 py-3">
 					<p class="truncate text-sm font-bold text-base-content">{user.display_name}</p>
-					<p class="truncate text-meta font-medium text-base-content/50 uppercase tracking-wider">{user.email}</p>
+					<p class="truncate text-meta font-medium tracking-wider text-base-content/50 uppercase">
+						{user.email}
+					</p>
 				</div>
 
-				<a href="/profile" role="menuitem" class="flex items-center gap-3 px-4 py-2 text-sm font-medium hover:bg-base-200 transition-colors">
+				<a
+					href="/profile"
+					role="menuitem"
+					class="flex items-center gap-3 px-4 py-2 text-sm font-medium transition-colors hover:bg-base-200"
+				>
 					<User size={16} class="text-base-content/60" /> Profile
 				</a>
-				<a href="/notifications" role="menuitem" class="flex items-center justify-between px-4 py-2 text-sm font-medium hover:bg-base-200 transition-colors">
+				<a
+					href="/notifications"
+					role="menuitem"
+					class="flex items-center justify-between px-4 py-2 text-sm font-medium transition-colors hover:bg-base-200"
+				>
 					<div class="flex items-center gap-3">
 						<Bell size={16} class="text-base-content/60" /> Notifications
 					</div>
 					{#if unreadCount > 0}
-						<span class="badge badge-error badge-sm">{unreadCount}</span>
+						<span class="badge badge-sm badge-error">{unreadCount}</span>
 					{/if}
 				</a>
-				<a href="/settings?tab=devices" role="menuitem" class="flex items-center gap-3 px-4 py-2 text-sm font-medium hover:bg-base-200 transition-colors">
+				<a
+					href="/settings?tab=devices"
+					role="menuitem"
+					class="flex items-center gap-3 px-4 py-2 text-sm font-medium transition-colors hover:bg-base-200"
+				>
 					<Smartphone size={16} class="text-base-content/60" /> Devices
 				</a>
-				<a href="/settings" role="menuitem" class="flex items-center gap-3 px-4 py-2 text-sm font-medium hover:bg-base-200 transition-colors">
+				<a
+					href="/settings"
+					role="menuitem"
+					class="flex items-center gap-3 px-4 py-2 text-sm font-medium transition-colors hover:bg-base-200"
+				>
 					<Settings size={16} class="text-base-content/60" /> Settings
 				</a>
 				{#if user.is_admin}
-					<a href="/admin" role="menuitem" class="flex items-center gap-3 px-4 py-2 text-sm font-medium hover:bg-base-200 transition-colors">
+					<a
+						href="/admin"
+						role="menuitem"
+						class="flex items-center gap-3 px-4 py-2 text-sm font-medium transition-colors hover:bg-base-200"
+					>
 						<Shield size={16} class="text-brand-500" /> Admin Panel
 					</a>
 				{/if}
 
-				<div class="border-t border-base-200 mt-1 pt-1.5">
+				<div class="mt-1 border-t border-base-200 pt-1.5">
 					<button
 						on:click={onLogout}
 						role="menuitem"
-						class="flex w-full items-center gap-3 px-4 py-2 text-sm font-bold text-error hover:bg-error/10 transition-colors"
+						class="flex w-full items-center gap-3 px-4 py-2 text-sm font-bold text-error transition-colors hover:bg-error/10"
 					>
 						<LogOut size={16} /> Sign out
 					</button>

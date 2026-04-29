@@ -43,7 +43,6 @@ async fn setup_test_env() -> (
     (pool, event_store, metadata_store, object_store)
 }
 
-
 fn create_file_service(
     event_store: Arc<EventStore>,
     metadata_store: Arc<MetadataStore>,
@@ -114,8 +113,17 @@ fn create_note_service(
     pool: &PgPool,
 ) -> Arc<NoteService> {
     let broadcaster = Arc::new(EventBroadcaster::new(100));
-    let file_service = Arc::new(create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), pool));
-    let folder_service = Arc::new(create_folder_service(event_store.clone(), metadata_store.clone(), pool));
+    let file_service = Arc::new(create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        pool,
+    ));
+    let folder_service = Arc::new(create_folder_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        pool,
+    ));
 
     Arc::new(NoteService::new(
         file_service,

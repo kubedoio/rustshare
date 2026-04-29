@@ -18,8 +18,8 @@
 		onCreateFolder?: () => void;
 	}
 
-	let { 
-		showSearch = false, 
+	let {
+		showSearch = false,
 		onSearchChange = null,
 		sidebarVariant = 'default',
 		onCreateFolder = () => {}
@@ -55,25 +55,23 @@
 
 {#if checkComplete}
 	{#if $authStore.isAuthenticated}
-		<div class="flex h-screen bg-base-100 overflow-hidden">
+		<div class="flex h-screen overflow-hidden bg-base-100">
 			<!-- Far Left Icon Rail -->
 			<LeftRail />
 
 			<!-- Main Layout Area (Topbar + Content Wrapper) -->
-			<div class="flex-1 flex flex-col min-w-0">
-				<Topbar
-					onMenuClick={toggleMobileMenu}
-				/>
+			<div class="flex min-w-0 flex-1 flex-col">
+				<Topbar onMenuClick={toggleMobileMenu} />
 
 				<!-- Wrapper for Secondary Sidebar + Main Content -->
-				<div class="flex-1 flex min-h-0 min-w-0">
+				<div class="flex min-h-0 min-w-0 flex-1">
 					<!-- Secondary Sidebar (Folder Tree for files variant) -->
 					{#if sidebarVariant === 'files'}
-						<SidebarNav 
+						<SidebarNav
 							variant="files"
 							mobileOpen={mobileMenuOpen}
 							onClose={closeMobileMenu}
-							onCreateFolder={onCreateFolder}
+							{onCreateFolder}
 						/>
 					{/if}
 
@@ -92,17 +90,21 @@
 		<ToastContainer />
 	{:else}
 		<!-- Redirecting... -->
-		<div class="flex items-center justify-center h-screen bg-base-100">
+		<div class="flex h-screen items-center justify-center bg-base-100">
 			<div class="flex flex-col items-center gap-4">
-				<div class="animate-spin h-8 w-8 border-2 border-brand-500 border-t-transparent rounded-full"></div>
+				<div
+					class="h-8 w-8 animate-spin rounded-full border-2 border-brand-500 border-t-transparent"
+				></div>
 				<span class="text-sm text-base-content/60">Redirecting to login...</span>
 			</div>
 		</div>
 	{/if}
 {:else}
-	<div class="flex items-center justify-center h-screen bg-base-100">
+	<div class="flex h-screen items-center justify-center bg-base-100">
 		<div class="flex flex-col items-center gap-4">
-			<div class="animate-spin h-8 w-8 border-2 border-brand-500 border-t-transparent rounded-full"></div>
+			<div
+				class="h-8 w-8 animate-spin rounded-full border-2 border-brand-500 border-t-transparent"
+			></div>
 			<span class="text-sm text-base-content/60">Loading...</span>
 		</div>
 	</div>

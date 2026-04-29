@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, log_admin_action};
+use super::{
+    admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, log_admin_action,
+};
 use crate::{handlers::AdminUser, AppState};
 
 // ---------------------------------------------------------------------------

@@ -23,17 +23,35 @@ impl NotificationRepository {
             .map_err(|err: String| NotificationError::Database(err))?;
 
         Ok(Notification {
-            id: row.try_get("id").map_err(|e| NotificationError::Database(e.to_string()))?,
-            user_id: row.try_get("user_id").map_err(|e| NotificationError::Database(e.to_string()))?,
+            id: row
+                .try_get("id")
+                .map_err(|e| NotificationError::Database(e.to_string()))?,
+            user_id: row
+                .try_get("user_id")
+                .map_err(|e| NotificationError::Database(e.to_string()))?,
             notification_type,
-            title: row.try_get("title").map_err(|e| NotificationError::Database(e.to_string()))?,
-            message: row.try_get("message").map_err(|e| NotificationError::Database(e.to_string()))?,
-            resource_id: row.try_get("resource_id").map_err(|e| NotificationError::Database(e.to_string()))?,
+            title: row
+                .try_get("title")
+                .map_err(|e| NotificationError::Database(e.to_string()))?,
+            message: row
+                .try_get("message")
+                .map_err(|e| NotificationError::Database(e.to_string()))?,
+            resource_id: row
+                .try_get("resource_id")
+                .map_err(|e| NotificationError::Database(e.to_string()))?,
             resource_type,
-            action_url: row.try_get("action_url").map_err(|e| NotificationError::Database(e.to_string()))?,
-            read: row.try_get("read").map_err(|e| NotificationError::Database(e.to_string()))?,
-            created_at: row.try_get("created_at").map_err(|e| NotificationError::Database(e.to_string()))?,
-            tenant_id: row.try_get("tenant_id").map_err(|e| NotificationError::Database(e.to_string()))?,
+            action_url: row
+                .try_get("action_url")
+                .map_err(|e| NotificationError::Database(e.to_string()))?,
+            read: row
+                .try_get("read")
+                .map_err(|e| NotificationError::Database(e.to_string()))?,
+            created_at: row
+                .try_get("created_at")
+                .map_err(|e| NotificationError::Database(e.to_string()))?,
+            tenant_id: row
+                .try_get("tenant_id")
+                .map_err(|e| NotificationError::Database(e.to_string()))?,
         })
     }
 
@@ -43,7 +61,10 @@ impl NotificationRepository {
     }
 
     /// Insert a new notification.
-    pub async fn create(&self, request: CreateNotification) -> Result<Notification, NotificationError> {
+    pub async fn create(
+        &self,
+        request: CreateNotification,
+    ) -> Result<Notification, NotificationError> {
         let id = Uuid::new_v4();
         let created_at = Utc::now();
 

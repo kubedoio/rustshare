@@ -7,7 +7,7 @@
 	<div class="mb-4">
 		<h3 class="text-base font-semibold text-base-content">{title}</h3>
 		{#if description}
-			<p class="text-sm text-base-content/60 mt-1">{description}</p>
+			<p class="mt-1 text-sm text-base-content/60">{description}</p>
 		{/if}
 	</div>
 	<div class="space-y-0 divide-y divide-base-300">

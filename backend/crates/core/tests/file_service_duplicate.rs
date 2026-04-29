@@ -100,7 +100,11 @@ impl FileMetadataStoreOps for MockMetadataStore {
         Ok(Vec::new())
     }
 
-    async fn find_file_version(&self, _file_id: Uuid, _version: i32) -> Result<Option<FileVersion>> {
+    async fn find_file_version(
+        &self,
+        _file_id: Uuid,
+        _version: i32,
+    ) -> Result<Option<FileVersion>> {
         Ok(None)
     }
 

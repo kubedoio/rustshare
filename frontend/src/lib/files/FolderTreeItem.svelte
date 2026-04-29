@@ -8,7 +8,7 @@
 	export let renameValue = '';
 	export let renameInputRef: HTMLInputElement | null = null;
 	export let draggedOverFolderId: string | null = null;
-	
+
 	export let onSelect: (folder: FolderNode) => void;
 	export let onToggleExpand: (folder: FolderNode) => void;
 	export let onContextMenu: (e: MouseEvent, folder: FolderNode) => void;
@@ -42,11 +42,14 @@
 	function handleDragStart(e: DragEvent) {
 		if (e.dataTransfer) {
 			e.dataTransfer.effectAllowed = 'move';
-			e.dataTransfer.setData('application/json', JSON.stringify({ 
-				id: folder.id, 
-				isFolder: true,
-				name: folder.name 
-			}));
+			e.dataTransfer.setData(
+				'application/json',
+				JSON.stringify({
+					id: folder.id,
+					isFolder: true,
+					name: folder.name
+				})
+			);
 		}
 	}
 
@@ -67,11 +70,11 @@
 
 <div class="select-none">
 	<div
-		class="group flex items-center gap-1.5 px-2 py-1 mx-1 rounded-md text-body-sm transition-all cursor-pointer
-			{isSelected 
-				? 'bg-brand-500/15 text-brand-600 font-medium' 
-				: 'text-base-content/70 hover:bg-base-200/50 hover:text-base-content'}
-			{isDragOver ? 'ring-2 ring-brand-500/50 bg-brand-500/10' : ''}"
+		class="group mx-1 flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-body-sm transition-all
+			{isSelected
+			? 'bg-brand-500/15 font-medium text-brand-600'
+			: 'text-base-content/70 hover:bg-base-200/50 hover:text-base-content'}
+			{isDragOver ? 'bg-brand-500/10 ring-2 ring-brand-500/50' : ''}"
 		style="padding-left: {level * 16 + 8}px"
 		on:click={handleClick}
 		on:contextmenu={handleContextMenu}
@@ -93,7 +96,7 @@
 		<!-- Expand/Collapse button -->
 		<button
 			type="button"
-			class="w-5 h-5 flex items-center justify-center rounded hover:bg-base-300/50 transition-colors shrink-0
+			class="flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-base-300/50
 				{folder.children === undefined && !isLoading ? 'invisible' : ''}"
 			on:click={handleToggle}
 			tabindex="-1"
@@ -101,28 +104,25 @@
 			{#if isLoading}
 				<Loader2 size={12} class="animate-spin text-base-content/40" />
 			{:else}
-				<ChevronRight 
-					size={12} 
-					class="text-base-content/40 transition-transform {isExpanded ? 'rotate-90' : ''}" 
+				<ChevronRight
+					size={12}
+					class="text-base-content/40 transition-transform {isExpanded ? 'rotate-90' : ''}"
 				/>
 			{/if}
 		</button>
 
 		<!-- Folder Icon -->
-		<Folder 
-			size={16} 
-			class="shrink-0 {isSelected ? 'text-brand-500' : 'text-base-content/50'}"
-		/>
+		<Folder size={16} class="shrink-0 {isSelected ? 'text-brand-500' : 'text-base-content/50'}" />
 
 		{#if isRenaming}
 			<!-- Inline Rename Input -->
-			<div class="flex items-center gap-1 flex-1 min-w-0">
+			<div class="flex min-w-0 flex-1 items-center gap-1">
 				<input
 					bind:this={renameInputRef}
 					type="text"
-					class="flex-1 min-w-0 px-1.5 py-0.5 text-xs bg-base-100 border border-brand-500 rounded focus:outline-hidden focus:ring-2 focus:ring-brand-500/20"
+					class="min-w-0 flex-1 rounded border border-brand-500 bg-base-100 px-1.5 py-0.5 text-xs focus:ring-2 focus:ring-brand-500/20 focus:outline-hidden"
 					value={renameValue}
-					on:input={(e) => renameValue = e.currentTarget.value}
+					on:input={(e) => (renameValue = e.currentTarget.value)}
 					on:keydown={(e) => onRenameKeydown(e, folder)}
 					on:blur={() => onRenameConfirm(folder)}
 					on:click|stopPropagation

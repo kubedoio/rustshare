@@ -40,10 +40,10 @@
 
 {#if tasks.length > 0}
 	<div
-		class="bottom-4 right-4 w-96 bg-base-100 shadow-xl rounded-lg border-base-300 fixed z-50 border"
+		class="fixed right-4 bottom-4 z-50 w-96 rounded-lg border border-base-300 bg-base-100 shadow-xl"
 	>
 		<!-- Header -->
-		<div class="p-4 border-base-300 flex items-center justify-between border-b">
+		<div class="flex items-center justify-between border-b border-base-300 p-4">
 			<h3 class="font-semibold">
 				{#if hasActiveTasks}
 					Uploading {tasks.filter((t) => t.status === 'uploading' || t.status === 'pending').length} file(s)
@@ -52,7 +52,7 @@
 				{/if}
 			</h3>
 			<button
-				class="btn btn-sm btn-ghost btn-circle"
+				class="btn btn-circle btn-ghost btn-sm"
 				aria-label="Close upload progress"
 				on:click={onClose}
 				disabled={hasActiveTasks}
@@ -63,7 +63,7 @@
 					viewBox="0 0 24 24"
 					stroke-width="1.5"
 					stroke="currentColor"
-					class="w-5 h-5"
+					class="h-5 w-5"
 				>
 					<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
 				</svg>
@@ -73,30 +73,30 @@
 		<!-- Upload tasks list -->
 		<div class="max-h-96 overflow-y-auto">
 			{#each tasks as task (task.id)}
-				<div class="p-4 border-base-300 border-b last:border-b-0">
-					<div class="gap-3 flex items-start">
+				<div class="border-b border-base-300 p-4 last:border-b-0">
+					<div class="flex items-start gap-3">
 						<!-- Thumbnail or Status Icon -->
 						<div class="flex-shrink-0">
 							{#if task.previewUrl}
-								<div class="w-12 h-12 rounded bg-base-200 relative overflow-hidden">
+								<div class="relative h-12 w-12 overflow-hidden rounded bg-base-200">
 									<img
 										src={task.previewUrl}
 										alt={task.fileName}
 										class="h-full w-full object-cover"
 									/>
 									{#if task.status === 'uploading'}
-										<div class="inset-0 bg-black/50 absolute flex items-center justify-center">
-											<span class="loading loading-spinner loading-sm text-white"></span>
+										<div class="absolute inset-0 flex items-center justify-center bg-black/50">
+											<span class="loading loading-sm loading-spinner text-white"></span>
 										</div>
 									{:else if task.status === 'success'}
-										<div class="inset-0 bg-success/20 absolute flex items-center justify-center">
+										<div class="absolute inset-0 flex items-center justify-center bg-success/20">
 											<svg
 												xmlns="http://www.w3.org/2000/svg"
 												fill="none"
 												viewBox="0 0 24 24"
 												stroke-width="2"
 												stroke="currentColor"
-												class="w-6 h-6 text-success"
+												class="h-6 w-6 text-success"
 											>
 												<path
 													stroke-linecap="round"
@@ -106,14 +106,14 @@
 											</svg>
 										</div>
 									{:else if task.status === 'error'}
-										<div class="inset-0 bg-error/20 absolute flex items-center justify-center">
+										<div class="absolute inset-0 flex items-center justify-center bg-error/20">
 											<svg
 												xmlns="http://www.w3.org/2000/svg"
 												fill="none"
 												viewBox="0 0 24 24"
 												stroke-width="2"
 												stroke="currentColor"
-												class="w-6 h-6 text-error"
+												class="h-6 w-6 text-error"
 											>
 												<path
 													stroke-linecap="round"
@@ -127,7 +127,7 @@
 							{:else}
 								<div class="mt-1">
 									{#if task.status === 'uploading'}
-										<span class="loading loading-spinner loading-sm"></span>
+										<span class="loading loading-sm loading-spinner"></span>
 									{:else if task.status === 'success'}
 										<svg
 											xmlns="http://www.w3.org/2000/svg"
@@ -135,7 +135,7 @@
 											viewBox="0 0 24 24"
 											stroke-width="1.5"
 											stroke="currentColor"
-											class="w-5 h-5 text-success"
+											class="h-5 w-5 text-success"
 										>
 											<path
 												stroke-linecap="round"
@@ -150,7 +150,7 @@
 											viewBox="0 0 24 24"
 											stroke-width="1.5"
 											stroke="currentColor"
-											class="w-5 h-5 text-error"
+											class="h-5 w-5 text-error"
 										>
 											<path
 												stroke-linecap="round"
@@ -165,7 +165,7 @@
 											viewBox="0 0 24 24"
 											stroke-width="1.5"
 											stroke="currentColor"
-											class="w-5 h-5 text-base-content/40"
+											class="h-5 w-5 text-base-content/40"
 										>
 											<path
 												stroke-linecap="round"
@@ -180,19 +180,19 @@
 
 						<!-- File info -->
 						<div class="min-w-0 flex-1">
-							<p class="text-sm font-medium truncate">{task.fileName}</p>
-							<p class="text-xs text-base-content/60 mt-0.5">
+							<p class="truncate text-sm font-medium">{task.fileName}</p>
+							<p class="mt-0.5 text-xs text-base-content/60">
 								{formatSize(task.size)}
 							</p>
 
 							{#if task.status === 'uploading'}
 								<progress
-									class="progress progress-primary mt-2 w-full"
+									class="progress mt-2 w-full progress-primary"
 									value={task.progress}
 									max="100"
 								></progress>
 							{:else if task.status === 'error' && task.error}
-								<p class="text-xs text-error mt-1">{task.error}</p>
+								<p class="mt-1 text-xs text-error">{task.error}</p>
 							{/if}
 						</div>
 					</div>
@@ -202,8 +202,8 @@
 
 		<!-- Footer with actions -->
 		{#if allCompleted}
-			<div class="p-4 bg-base-200">
-				<button class="btn btn-sm btn-block" on:click={onClose}> Close </button>
+			<div class="bg-base-200 p-4">
+				<button class="btn btn-block btn-sm" on:click={onClose}> Close </button>
 			</div>
 		{/if}
 	</div>

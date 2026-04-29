@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { createMutation } from '$lib/query-compat';
-	import { addGroupMember, removeGroupMember, type GroupMember, type AdminUser } from '$lib/api/admin';
+	import {
+		addGroupMember,
+		removeGroupMember,
+		type GroupMember,
+		type AdminUser
+	} from '$lib/api/admin';
 	import UserSearchInput from '$lib/components/common/UserSearchInput.svelte';
 
 	export let groupId: string;
@@ -41,15 +46,17 @@
 				/>
 			</div>
 			{#if $addMutation.isError}
-				<div class="alert alert-error text-sm mt-2">
-					{$addMutation.error instanceof Error ? $addMutation.error.message : 'Failed to add member'}
+				<div class="mt-2 alert text-sm alert-error">
+					{$addMutation.error instanceof Error
+						? $addMutation.error.message
+						: 'Failed to add member'}
 				</div>
 			{/if}
 		</div>
 	</div>
 
 	<div class="overflow-x-auto rounded-lg border border-base-300">
-		<table class="table table-zebra w-full">
+		<table class="table w-full table-zebra">
 			<thead>
 				<tr>
 					<th>Username</th>
@@ -68,7 +75,7 @@
 						</td>
 						<td>
 							<button
-								class="btn btn-ghost btn-xs text-error"
+								class="btn text-error btn-ghost btn-xs"
 								on:click={() => (confirmRemove = member)}
 							>
 								Remove
@@ -78,7 +85,7 @@
 				{/each}
 				{#if members.length === 0}
 					<tr>
-						<td colspan="4" class="text-center text-base-content/50 py-8">No members yet</td>
+						<td colspan="4" class="py-8 text-center text-base-content/50">No members yet</td>
 					</tr>
 				{/if}
 			</tbody>
@@ -87,9 +94,9 @@
 </div>
 
 {#if confirmRemove}
-	<div class="modal modal-open">
+	<div class="modal-open modal">
 		<div class="modal-box">
-			<h3 class="font-bold text-lg">Remove Member</h3>
+			<h3 class="text-lg font-bold">Remove Member</h3>
 			<p class="py-4">
 				Remove <strong>{confirmRemove.username}</strong> from this group?
 			</p>

@@ -2,19 +2,20 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '$lib/api/types';
 
-const { goto, approveDevicePairing, approveDevicePairingByDeviceCode, pageStore, authStoreValue } = vi.hoisted(() => ({
-	goto: vi.fn(),
-	approveDevicePairing: vi.fn(),
-	approveDevicePairingByDeviceCode: vi.fn(),
-	pageStore: createMockStore({
-		url: new URL('http://localhost/device/approve?device_code=device-code-123')
-	}),
-	authStoreValue: createMockStore({
-		user: null,
-		isAuthenticated: true,
-		isLoading: false
-	})
-}));
+const { goto, approveDevicePairing, approveDevicePairingByDeviceCode, pageStore, authStoreValue } =
+	vi.hoisted(() => ({
+		goto: vi.fn(),
+		approveDevicePairing: vi.fn(),
+		approveDevicePairingByDeviceCode: vi.fn(),
+		pageStore: createMockStore({
+			url: new URL('http://localhost/device/approve?device_code=device-code-123')
+		}),
+		authStoreValue: createMockStore({
+			user: null,
+			isAuthenticated: true,
+			isLoading: false
+		})
+	}));
 
 function createMockStore<T>(initialValue: T) {
 	let value = initialValue;
@@ -83,9 +84,7 @@ describe('device approval page', () => {
 		render(DeviceApprovePage);
 
 		await waitFor(() => {
-			expect(
-				screen.getByText(/enter the pairing code/i)
-			).toBeTruthy();
+			expect(screen.getByText(/enter the pairing code/i)).toBeTruthy();
 		});
 	});
 
@@ -118,9 +117,7 @@ describe('device approval page', () => {
 		render(DeviceApprovePage);
 
 		await waitFor(() => {
-			expect(goto).toHaveBeenCalledWith(
-				'/login?redirect_to=%2Fdevice%2Fapprove'
-			);
+			expect(goto).toHaveBeenCalledWith('/login?redirect_to=%2Fdevice%2Fapprove');
 		});
 	});
 

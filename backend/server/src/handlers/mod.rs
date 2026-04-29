@@ -17,10 +17,10 @@ mod profile;
 mod public_shares;
 pub mod scim;
 pub mod scim_v2;
-pub mod upload;
 mod shares;
 mod sync;
 mod trash;
+pub mod upload;
 mod user_shares;
 mod users;
 
@@ -40,7 +40,6 @@ pub use notifications::{
     count_unread_notifications, delete_notification, list_notifications, mark_notification_read,
 };
 pub use profile::{get_profile, update_profile, update_trash_retention};
-pub use trash::{empty_trash, get_trash_summary};
 pub use public_shares::{
     create_session, download_shared_file, download_shared_folder_file, get_share_info,
     get_shared_folder_contents, upload_shared_folder_file,
@@ -50,14 +49,10 @@ pub use shares::{
     list_public_file_shares, list_public_folder_shares, list_user_shares, revoke_share,
 };
 pub use sync::{get_sync_cursor, get_sync_delta, sync_handler};
+pub use trash::{empty_trash, get_trash_summary};
 
 pub use ai::{ask_question, semantic_search, summarize_file};
 pub use auth::{ensure_optional_seed_user, login, logout};
-pub use user_shares::{
-    create_file_share, create_folder_share, get_user_shared_folder_contents,
-    get_user_shared_folder_tree, list_file_recipients, list_folder_recipients,
-    list_received_shares, remove_recipient, update_recipient_permission,
-};
 pub use features::get_features;
 pub use groups::{
     create_file_group_share, create_folder_group_share, get_my_group, list_file_group_shares,
@@ -67,6 +62,11 @@ pub use invites::{accept_invite, create_invite, get_invite};
 pub use notes::{
     create_note, delete_note, get_note, get_public_note, list_notes, list_recent_notes, move_note,
     rename_note, save_note, toggle_visibility,
+};
+pub use user_shares::{
+    create_file_share, create_folder_share, get_user_shared_folder_contents,
+    get_user_shared_folder_tree, list_file_recipients, list_folder_recipients,
+    list_received_shares, remove_recipient, update_recipient_permission,
 };
 pub use users::{
     delete_avatar, delete_user_session, get_avatar, get_user_profile, list_user_security_events,

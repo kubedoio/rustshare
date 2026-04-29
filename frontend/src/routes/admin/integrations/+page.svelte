@@ -32,7 +32,7 @@
 	<h2 class="text-2xl font-bold">Integrations</h2>
 
 	<!-- Tabs -->
-	<div class="tabs tabs-bordered">
+	<div class="tabs-bordered tabs">
 		<button
 			class="tab"
 			class:tab-active={activeTab === 'webhooks'}
@@ -52,11 +52,13 @@
 	{#if activeTab === 'webhooks'}
 		{#if $webhooksQuery.isLoading}
 			<div class="flex justify-center py-16">
-				<span class="loading loading-spinner loading-lg"></span>
+				<span class="loading loading-lg loading-spinner"></span>
 			</div>
 		{:else if $webhooksQuery.isError}
 			<div class="alert alert-error">
-				Failed to load webhooks: {$webhooksQuery.error instanceof Error ? $webhooksQuery.error.message : 'Unknown error'}
+				Failed to load webhooks: {$webhooksQuery.error instanceof Error
+					? $webhooksQuery.error.message
+					: 'Unknown error'}
 			</div>
 		{:else if $webhooksQuery.data}
 			<WebhookList

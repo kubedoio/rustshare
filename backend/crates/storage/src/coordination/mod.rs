@@ -350,12 +350,12 @@ impl CoordinationStoreFactory {
     /// Create coordination store based on configuration
     pub async fn create(
         use_redis: bool,
-        redis_url: Option<&str>,
+        _redis_url: Option<&str>,
     ) -> Result<Box<dyn CoordinationStore>, CoordinationError> {
         if use_redis {
             #[cfg(feature = "redis-coordination")]
             {
-                let url = redis_url.ok_or_else(|| {
+                let url = _redis_url.ok_or_else(|| {
                     CoordinationError::InvalidConfig(
                         "Redis URL required when Redis coordination is enabled".to_string(),
                     )

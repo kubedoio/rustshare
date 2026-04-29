@@ -111,7 +111,8 @@ impl ObjectStore {
 
     /// Generate a presigned URL for downloading an object
     pub async fn get_presigned_url(&self, key: &str, expires_in_secs: u64) -> Result<String> {
-        self.get_presigned_url_with_disposition(key, expires_in_secs, None).await
+        self.get_presigned_url_with_disposition(key, expires_in_secs, None)
+            .await
     }
 
     /// Generate a presigned URL with optional response-content-disposition

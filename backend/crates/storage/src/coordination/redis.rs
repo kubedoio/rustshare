@@ -5,8 +5,8 @@
 //! operation (uses specific commands for atomic operations).
 
 use super::*;
-use chrono::Utc;
 use ::redis::AsyncCommands;
+use chrono::Utc;
 use std::time::Duration;
 
 /// Redis coordination store

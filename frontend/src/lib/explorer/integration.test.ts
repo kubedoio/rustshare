@@ -2,9 +2,9 @@
  * ==============================================================================
  * EXPLORER INTEGRATION TESTS
  * ==============================================================================
- * 
+ *
  * Integration tests for the unified explorer behavior.
- * 
+ *
  * Coverage:
  * 1. Shared alias behavior
  * 2. Shared tree behavior
@@ -24,7 +24,7 @@ describe('Integration: Shared Alias Behavior', () => {
 	it('click LIBRARY > Shared → route is /files?root=shared', () => {
 		// Starting from default state
 		let state = createDefaultExplorerState();
-		
+
 		// User clicks Shared in Library
 		// This should activate the Shared root
 		const newState: ExplorerState = {
@@ -36,9 +36,9 @@ describe('Integration: Shared Alias Behavior', () => {
 			currentFolderPath: [],
 			breadcrumb: [{ label: 'Shared', rootType: 'shared' }]
 		};
-		
+
 		state = newState;
-		
+
 		// Assertions
 		expect(state.activeRoot).toBe('shared');
 		expect(state.mode).toBe('folder');
@@ -52,7 +52,7 @@ describe('Integration: Shared Alias Behavior', () => {
 			activeRoot: 'shared',
 			mode: 'folder'
 		};
-		
+
 		// Both LIBRARY > Shared and FOLDERS > Shared should be highlighted
 		// This is indicated by activeRoot being 'shared'
 		expect(state.activeRoot).toBe('shared');
@@ -65,7 +65,7 @@ describe('Integration: Shared Alias Behavior', () => {
 			mode: 'folder',
 			currentFolderId: null // At root
 		};
-		
+
 		// When currentFolderId is null and activeRoot is 'shared',
 		// we're viewing the shared root contents
 		expect(state.currentFolderId).toBeNull();
@@ -79,7 +79,7 @@ describe('Integration: Shared Alias Behavior', () => {
 			mode: 'folder',
 			activeRoot: 'shared'
 		};
-		
+
 		// We should NOT be on a separate route like /shared-with-me
 		// Instead we're on /files with root=shared
 		expect(state.mode).toBe('folder');
@@ -93,7 +93,7 @@ describe('Integration: Shared Tree Behavior', () => {
 			activeRoot: 'shared',
 			expandedTreeNodeIds: new Set(['shared-root'])
 		};
-		
+
 		expect(state.expandedTreeNodeIds.has('shared-root')).toBe(true);
 	});
 
@@ -105,7 +105,7 @@ describe('Integration: Shared Tree Behavior', () => {
 			folderPath: ['Team A', 'Contracts'],
 			ancestorFolderIds: ['shared-root', 'team-a-id']
 		};
-		
+
 		const state: ExplorerState = {
 			...createDefaultExplorerState(),
 			activeRoot: 'shared',
@@ -119,11 +119,11 @@ describe('Integration: Shared Tree Behavior', () => {
 				{ label: 'Contracts', folderId: 'contracts-folder' }
 			]
 		};
-		
+
 		// Ancestors should be expanded
 		expect(state.expandedTreeNodeIds.has('shared-root')).toBe(true);
 		expect(state.expandedTreeNodeIds.has('team-a-id')).toBe(true);
-		
+
 		// Breadcrumb should reflect the path
 		expect(state.breadcrumb).toHaveLength(3);
 		expect(state.breadcrumb[2].label).toBe('Contracts');
@@ -136,14 +136,14 @@ describe('Integration: Shared Tree Behavior', () => {
 			folderPath: ['Team A', 'Projects', 'Q2'],
 			ancestorFolderIds: ['shared-root', 'team-a-id', 'projects-id']
 		};
-		
+
 		const expectedBreadcrumb = [
 			{ label: 'Shared', rootType: 'shared' },
 			{ label: 'Team A', folderId: 'team-a-id' },
 			{ label: 'Projects', folderId: 'projects-id' },
 			{ label: 'Q2', folderId: 'deep-nested-folder' }
 		];
-		
+
 		expect(expectedBreadcrumb).toHaveLength(4);
 		expect(expectedBreadcrumb[0].label).toBe('Shared');
 		expect(expectedBreadcrumb[3].label).toBe('Q2');
@@ -156,7 +156,7 @@ describe('Integration: Shared Tree Behavior', () => {
 			mode: 'folder',
 			currentFolderId: 'nested-folder-id'
 		};
-		
+
 		// When we have a currentFolderId, we're viewing its contents
 		expect(state.currentFolderId).toBe('nested-folder-id');
 		expect(state.mode).toBe('folder');
@@ -189,10 +189,10 @@ describe('Integration: Starred Folder Resolution', () => {
 			mode: 'collection',
 			activeCollection: 'starred'
 		};
-		
+
 		// User clicks a folder from Shared root
 		const location = mockStarredSharedFolder.collectionMeta.canonicalLocation;
-		
+
 		// Navigate to the folder
 		state = {
 			...state,
@@ -207,7 +207,7 @@ describe('Integration: Starred Folder Resolution', () => {
 				{ label: 'Team Documents', folderId: location.folderId }
 			]
 		};
-		
+
 		// Should have switched to folder mode
 		expect(state.mode).toBe('folder');
 		expect(state.activeCollection).toBeNull();
@@ -215,7 +215,7 @@ describe('Integration: Starred Folder Resolution', () => {
 
 	it('route becomes /files?folder=<id> for shared folder', () => {
 		const location = mockStarredSharedFolder.collectionMeta.canonicalLocation;
-		
+
 		// The URL should reflect the canonical location
 		// When activeRoot is 'shared' and we have a folderId,
 		// we need to track which root the folder belongs to
@@ -225,7 +225,7 @@ describe('Integration: Starred Folder Resolution', () => {
 
 	it('correct shared ancestors expanded', () => {
 		const location = mockStarredSharedFolder.collectionMeta.canonicalLocation;
-		
+
 		// The shared root should be expanded
 		expect(location.ancestorFolderIds).toContain('shared-root');
 	});
@@ -239,7 +239,7 @@ describe('Integration: Starred Folder Resolution', () => {
 			currentFolderId: 'my-project-folder',
 			currentFolderPath: ['Projects']
 		};
-		
+
 		// User clicks a starred folder from Shared
 		const sharedLocation: CanonicalLocation = {
 			rootType: 'shared',
@@ -247,7 +247,7 @@ describe('Integration: Starred Folder Resolution', () => {
 			folderPath: ['Team A', 'Documents'],
 			ancestorFolderIds: ['shared-root', 'team-a-id']
 		};
-		
+
 		// Navigate to shared folder
 		state = {
 			...state,
@@ -261,7 +261,7 @@ describe('Integration: Starred Folder Resolution', () => {
 				{ label: 'Documents', folderId: 'shared-docs' }
 			]
 		};
-		
+
 		// Active root should have changed
 		expect(state.activeRoot).toBe('shared');
 		// My-files tree selection should be cleared (no currentFolderId from my-files)
@@ -299,9 +299,9 @@ describe('Integration: Starred File Resolution', () => {
 			mode: 'collection',
 			activeCollection: 'starred'
 		};
-		
+
 		const location = mockStarredFile.collectionMeta.canonicalLocation;
-		
+
 		// Navigate to file location
 		state = {
 			...state,
@@ -318,7 +318,7 @@ describe('Integration: Starred File Resolution', () => {
 				{ label: 'Documents', folderId: 'docs-folder' }
 			]
 		};
-		
+
 		// Parent folder should be opened
 		expect(state.currentFolderId).toBe('docs-folder');
 		// File should be selected
@@ -335,7 +335,7 @@ describe('Integration: Starred File Resolution', () => {
 			selectedItemId: 'starred-file-1',
 			selectedItemType: 'file'
 		};
-		
+
 		expect(state.selectedItemId).toBe('starred-file-1');
 		expect(state.selectedItemType).toBe('file');
 	});
@@ -352,7 +352,7 @@ describe('Integration: Cross-Root Switching', () => {
 			currentFolderPath: ['Team A'],
 			expandedTreeNodeIds: new Set(['shared-root'])
 		};
-		
+
 		// User clicks a starred folder that belongs to my-files
 		const myFilesLocation: CanonicalLocation = {
 			rootType: 'my-files',
@@ -360,7 +360,7 @@ describe('Integration: Cross-Root Switching', () => {
 			folderPath: ['Projects', 'Website'],
 			ancestorFolderIds: ['root', 'projects-id']
 		};
-		
+
 		// Switch to my-files
 		state = {
 			...state,
@@ -374,7 +374,7 @@ describe('Integration: Cross-Root Switching', () => {
 				{ label: 'Website', folderId: 'my-project' }
 			]
 		};
-		
+
 		// Active root changed
 		expect(state.activeRoot).toBe('my-files');
 		// My-files tree selection active
@@ -387,7 +387,7 @@ describe('Integration: Cross-Root Switching', () => {
 			activeRoot: 'shared',
 			expandedTreeNodeIds: new Set(['shared-root', 'shared-folder-1'])
 		};
-		
+
 		// After switching to my-files
 		const afterState: ExplorerState = {
 			...beforeState,
@@ -396,7 +396,7 @@ describe('Integration: Cross-Root Switching', () => {
 			currentFolderId: 'my-folder',
 			expandedTreeNodeIds: new Set(['root', 'my-folder'])
 		};
-		
+
 		expect(afterState.activeRoot).toBe('my-files');
 		// No longer in shared tree
 		expect(afterState.expandedTreeNodeIds.has('shared-root')).toBe(false);
@@ -411,7 +411,7 @@ describe('Integration: Empty States', () => {
 			mode: 'folder',
 			currentFolderId: null // At root
 		};
-		
+
 		// When at shared root with no folders, show empty state
 		expect(state.activeRoot).toBe('shared');
 		expect(state.currentFolderId).toBeNull();
@@ -422,7 +422,7 @@ describe('Integration: Empty States', () => {
 			folder: { id: 'shared-root', name: 'Shared' },
 			subfolders: [] // Empty
 		};
-		
+
 		expect(emptySharedTree.subfolders).toHaveLength(0);
 	});
 
@@ -431,12 +431,12 @@ describe('Integration: Empty States', () => {
 			rootType: 'shared',
 			message: 'No shared folders'
 		};
-		
+
 		const starredEmptyState = {
 			collection: 'starred',
 			message: 'Nothing is starred yet'
 		};
-		
+
 		// They are different messages
 		expect(sharedEmptyState.message).not.toBe(starredEmptyState.message);
 	});
@@ -450,7 +450,7 @@ describe('Integration: State Synchronization', () => {
 			folderPath: ['Team A', 'Legal', 'Contracts'],
 			ancestorFolderIds: ['shared-root', 'team-a-id', 'legal-id']
 		};
-		
+
 		const state: ExplorerState = {
 			...createDefaultExplorerState(),
 			mode: 'folder',
@@ -465,7 +465,7 @@ describe('Integration: State Synchronization', () => {
 				{ label: 'Contracts', folderId: 'contracts-2024' }
 			]
 		};
-		
+
 		// All state should be consistent
 		expect(state.activeRoot).toBe('shared');
 		expect(state.currentFolderId).toBe('contracts-2024');
@@ -490,12 +490,12 @@ describe('Integration: State Synchronization', () => {
 				{ label: 'Project X', folderId: 'project-x' }
 			]
 		};
-		
+
 		// Route: /files?folder=project-x
 		// Tree: Work > Projects expanded, Project X selected
 		// Breadcrumb: My Files > Work > Projects > Project X
 		// File list: contents of Project X
-		
+
 		expect(state.currentFolderId).toBe('project-x');
 		expect(state.breadcrumb[3].label).toBe('Project X');
 		expect(state.expandedTreeNodeIds.has('projects-id')).toBe(true);

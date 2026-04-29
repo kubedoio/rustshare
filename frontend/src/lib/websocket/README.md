@@ -35,6 +35,7 @@ This module implements WebSocket real-time synchronization for multi-device file
 ## Features
 
 ### Connection Management
+
 - **Automatic connection** on login with browser session or token auth
 - **Automatic reconnection** with exponential backoff (1s, 2s, 4s, 8s, 16s, max 30s)
 - **Manual disconnection** on logout
@@ -42,9 +43,11 @@ This module implements WebSocket real-time synchronization for multi-device file
 - **Maximum retry attempts**: 10 attempts before giving up
 
 ### Event Handling
+
 All file and folder events trigger appropriate cache invalidations and notifications:
 
 #### File Events
+
 - `FileUploaded` - Invalidates folder contents
 - `FileModified` - Invalidates file details and folder contents
 - `FileRenamed` - Invalidates file details and folder contents
@@ -53,17 +56,20 @@ All file and folder events trigger appropriate cache invalidations and notificat
 - `FileRestored` - Invalidates file details and folder contents
 
 #### Folder Events
+
 - `FolderCreated` - Invalidates parent folder and folder tree
 - `FolderRenamed` - Invalidates folder tree and all contents
 - `FolderMoved` - Invalidates old/new parent folders and tree
 - `FolderDeleted` - Invalidates parent folder and folder tree
 
 #### Share Events
+
 - `ShareCreated` - Invalidates shares list and file details
 - `ShareRevoked` - Invalidates shares list and file details
 - `ShareUpdated` - Invalidates shares list and file details
 
 ### Smart Notifications
+
 - **Only shows notifications for events from other users/devices**
 - Filters based on `user_id` in event payload
 - Non-intrusive toast notifications with auto-dismiss
@@ -89,18 +95,21 @@ All file and folder events trigger appropriate cache invalidations and notificat
 ### Configuration
 
 Environment variables in `.env`:
+
 ```bash
 VITE_API_URL=http://localhost/api/v1
 VITE_WS_URL=ws://localhost/api/ws
 ```
 
 The WebSocket URL can be:
+
 - Explicitly set via `VITE_WS_URL`
 - Derived from `VITE_API_URL` (http → ws, https → wss)
 
 ### WebSocket URL Format
 
 The backend WebSocket endpoint expects:
+
 ```
 ws://localhost/api/ws
 ```
@@ -118,15 +127,18 @@ Token clients may pass `?token=<JWT_TOKEN>` for browser WebSocket API compatibil
 ## Error Handling
 
 ### Authentication Errors
+
 - Close code 1008 (Policy Violation): Authentication failed, no retry
 - Close code 1002 (Protocol error): Protocol issue, no retry
 
 ### Connection Errors
+
 - Automatic reconnection with exponential backoff
 - Maximum 10 retry attempts
 - Backoff delays: 1s, 2s, 4s, 8s, 16s, 30s (max)
 
 ### Event Handler Errors
+
 - Errors in individual handlers are caught and logged
 - Other handlers continue to execute
 - UI remains functional even if specific handler fails

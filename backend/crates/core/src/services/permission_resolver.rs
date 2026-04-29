@@ -976,13 +976,7 @@ mod tests {
         }
 
         async fn find_file_by_id(&self, id: FileId) -> Result<Option<File>> {
-            Ok(self
-                .files
-                .lock()
-                .await
-                .iter()
-                .find(|f| f.id == id)
-                .cloned())
+            Ok(self.files.lock().await.iter().find(|f| f.id == id).cloned())
         }
 
         async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>> {

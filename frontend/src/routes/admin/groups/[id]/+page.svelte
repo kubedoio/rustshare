@@ -47,8 +47,19 @@
 <div class="space-y-6">
 	<div class="flex items-center gap-2">
 		<a href="/admin/groups" class="btn btn-ghost btn-sm">
-			<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-				<path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+			<svg
+				xmlns="http://www.w3.org/2000/svg"
+				class="h-4 w-4"
+				fill="none"
+				viewBox="0 0 24 24"
+				stroke="currentColor"
+				stroke-width="1.5"
+			>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"
+				/>
 			</svg>
 			Groups
 		</a>
@@ -57,10 +68,14 @@
 	</div>
 
 	{#if $groupQuery.isLoading}
-		<div class="flex justify-center py-16"><span class="loading loading-spinner loading-lg"></span></div>
+		<div class="flex justify-center py-16">
+			<span class="loading loading-lg loading-spinner"></span>
+		</div>
 	{:else if $groupQuery.isError}
 		<div class="alert alert-error">
-			Failed to load group: {$groupQuery.error instanceof Error ? $groupQuery.error.message : 'Unknown error'}
+			Failed to load group: {$groupQuery.error instanceof Error
+				? $groupQuery.error.message
+				: 'Unknown error'}
 		</div>
 	{:else if $groupQuery.data}
 		<!-- Group details card -->
@@ -74,28 +89,26 @@
 				</div>
 
 				{#if editing}
-					<form on:submit|preventDefault={() => $updateMutation.mutate()} class="space-y-4 mt-2">
+					<form on:submit|preventDefault={() => $updateMutation.mutate()} class="mt-2 space-y-4">
 						<div class="form-control">
 							<label class="label" for="grp-name"><span class="label-text">Name</span></label>
-							<input
-								id="grp-name"
-								type="text"
-								class="input input-bordered"
-								bind:value={editName}
-							/>
+							<input id="grp-name" type="text" class="input-bordered input" bind:value={editName} />
 						</div>
 						<div class="form-control">
-							<label class="label" for="grp-desc"><span class="label-text">Description</span></label>
+							<label class="label" for="grp-desc"><span class="label-text">Description</span></label
+							>
 							<textarea
 								id="grp-desc"
-								class="textarea textarea-bordered"
+								class="textarea-bordered textarea"
 								rows="3"
 								bind:value={editDescription}
 							></textarea>
 						</div>
 						{#if $updateMutation.isError}
-							<div class="alert alert-error text-sm">
-								{$updateMutation.error instanceof Error ? $updateMutation.error.message : 'Failed to update'}
+							<div class="alert text-sm alert-error">
+								{$updateMutation.error instanceof Error
+									? $updateMutation.error.message
+									: 'Failed to update'}
 							</div>
 						{/if}
 						<button type="submit" class="btn btn-primary" disabled={$updateMutation.isPending}>
@@ -103,14 +116,14 @@
 						</button>
 					</form>
 				{:else}
-					<dl class="grid grid-cols-2 gap-4 mt-2 text-sm">
+					<dl class="mt-2 grid grid-cols-2 gap-4 text-sm">
 						<div>
 							<dt class="text-base-content/60">Name</dt>
-							<dd class="font-medium mt-1">{$groupQuery.data.name}</dd>
+							<dd class="mt-1 font-medium">{$groupQuery.data.name}</dd>
 						</div>
 						<div>
 							<dt class="text-base-content/60">Members</dt>
-							<dd class="font-medium mt-1">{$groupQuery.data.member_count}</dd>
+							<dd class="mt-1 font-medium">{$groupQuery.data.member_count}</dd>
 						</div>
 						<div class="col-span-2">
 							<dt class="text-base-content/60">Description</dt>
@@ -127,7 +140,7 @@
 
 		<!-- Members -->
 		<div>
-			<h3 class="text-lg font-semibold mb-3">Members</h3>
+			<h3 class="mb-3 text-lg font-semibold">Members</h3>
 			<GroupMemberList
 				groupId={$groupQuery.data.id}
 				members={$groupQuery.data.members}

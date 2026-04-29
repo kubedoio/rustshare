@@ -5,6 +5,7 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
 ## ✅ Pre-Deployment Checklist
 
 ### Code Quality
+
 - [x] All TypeScript files have proper type definitions
 - [x] No `any` types except in event payload (using discriminated unions)
 - [x] All imports are correct and using proper paths
@@ -13,6 +14,7 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
 - [x] Error handling implemented for all async operations
 
 ### Architecture
+
 - [x] WebSocket client properly encapsulated
 - [x] Event handlers registered in manager, not scattered
 - [x] Stores follow Svelte store pattern
@@ -20,6 +22,7 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
 - [x] No circular dependencies between modules
 
 ### Integration
+
 - [x] Auth store initializes WebSocket on login
 - [x] Auth store cleans up WebSocket on logout
 - [x] WebSocket initialized on session restore
@@ -34,6 +37,7 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
 ### Unit Testing (Manual)
 
 #### WebSocket Client
+
 - [ ] Client connects with valid token
 - [ ] Client rejects connection without token
 - [ ] Client converts http:// to ws:// correctly
@@ -45,6 +49,7 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
 - [ ] Disconnect clears reconnection timer
 
 #### Connection States
+
 - [ ] State starts as 'disconnected'
 - [ ] State changes to 'connecting' during connection
 - [ ] State changes to 'connected' on successful connection
@@ -53,6 +58,7 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
 - [ ] State changes to 'disconnected' on manual disconnect
 
 #### Reconnection Logic
+
 - [ ] Reconnect attempt 1: 1 second delay
 - [ ] Reconnect attempt 2: 2 seconds delay
 - [ ] Reconnect attempt 3: 4 seconds delay
@@ -65,6 +71,7 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
 - [ ] No reconnect on auth errors (code 1008, 1002)
 
 #### Event Handling
+
 - [ ] FileUploaded event triggers correct handler
 - [ ] FileModified event triggers correct handler
 - [ ] FileRenamed event triggers correct handler
@@ -82,6 +89,7 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
 - [ ] Unknown event type is logged but doesn't crash
 
 #### Stores
+
 - [ ] Toast store shows notifications
 - [ ] Toast store auto-dismisses after duration
 - [ ] Toast store supports multiple toasts
@@ -95,6 +103,7 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
 ### Integration Testing
 
 #### Authentication Flow
+
 - [ ] Login triggers WebSocket connection
 - [ ] Connection uses correct JWT token
 - [ ] Session restore triggers WebSocket connection
@@ -102,6 +111,7 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
 - [ ] Token expiration disconnects WebSocket
 
 #### UI Integration
+
 - [ ] ToastContainer appears in layout
 - [ ] WebSocketStatus shows in header
 - [ ] Status hidden when connected
@@ -112,6 +122,7 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
 - [ ] Pulse animation on connecting/reconnecting
 
 #### Cache Invalidation
+
 - [ ] FileUploaded invalidates folder contents
 - [ ] FileModified invalidates file details
 - [ ] FileRenamed invalidates folder contents
@@ -126,6 +137,7 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
 - [ ] ShareUpdated invalidates shares list
 
 #### Notification Behavior
+
 - [ ] Own events don't show notifications
 - [ ] Other users' events show notifications
 - [ ] Correct notification messages for each event type
@@ -138,6 +150,7 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
 ### End-to-End Testing
 
 #### Multi-Device Sync
+
 - [ ] **Test 1: File Upload**
   1. Login with User A in Browser 1
   2. Login with User B in Browser 2
@@ -173,6 +186,7 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
   3. Share list updates in User B's browser
 
 #### Reconnection Scenarios
+
 - [ ] **Test 7: Network Loss**
   1. Disconnect network
   2. Status shows "Reconnecting (1)..."
@@ -193,6 +207,7 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
   4. App remains functional without WebSocket
 
 #### Session Management
+
 - [ ] **Test 10: Page Refresh**
   1. Login and verify WebSocket connected
   2. Refresh page
@@ -214,11 +229,11 @@ Use this checklist to verify the WebSocket real-time sync implementation is work
 ### Browser Console Checks
 
 #### Verify Connection
+
 ```javascript
 // Check WebSocket state
-const wsStore = [...document.querySelectorAll('*')]
-  .find(el => el.__svelte_stores)
-  ?.__svelte_stores.websocketStore;
+const wsStore = [...document.querySelectorAll('*')].find((el) => el.__svelte_stores)
+	?.__svelte_stores.websocketStore;
 console.log('WebSocket State:', wsStore);
 
 // Check connection
@@ -228,21 +243,22 @@ console.log('State:', wsClient?.connectionState);
 ```
 
 #### Test Event Handler
+
 ```javascript
 // Manually trigger test event
 const testEvent = {
-  event_id: 'test-123',
-  type: 'FileUploaded',
-  aggregate_id: 'file-456',
-  user_id: 'other-user', // Use different user to trigger notification
-  timestamp: new Date().toISOString(),
-  payload: {
-    file_id: 'file-456',
-    file_name: 'test.txt',
-    folder_id: null,
-    size: 1024,
-    mime_type: 'text/plain'
-  }
+	event_id: 'test-123',
+	type: 'FileUploaded',
+	aggregate_id: 'file-456',
+	user_id: 'other-user', // Use different user to trigger notification
+	timestamp: new Date().toISOString(),
+	payload: {
+		file_id: 'file-456',
+		file_name: 'test.txt',
+		folder_id: null,
+		size: 1024,
+		mime_type: 'text/plain'
+	}
 };
 
 // Send via actual WebSocket (if connected)
@@ -250,29 +266,31 @@ const testEvent = {
 ```
 
 #### Monitor WebSocket Messages
+
 ```javascript
 // Monitor all WebSocket messages
 const originalWebSocket = window.WebSocket;
-window.WebSocket = function(...args) {
-  const ws = new originalWebSocket(...args);
+window.WebSocket = function (...args) {
+	const ws = new originalWebSocket(...args);
 
-  ws.addEventListener('message', (event) => {
-    console.log('[WS Message]', JSON.parse(event.data));
-  });
+	ws.addEventListener('message', (event) => {
+		console.log('[WS Message]', JSON.parse(event.data));
+	});
 
-  ws.addEventListener('open', () => {
-    console.log('[WS Open]', ws.url);
-  });
+	ws.addEventListener('open', () => {
+		console.log('[WS Open]', ws.url);
+	});
 
-  ws.addEventListener('close', (event) => {
-    console.log('[WS Close]', event.code, event.reason);
-  });
+	ws.addEventListener('close', (event) => {
+		console.log('[WS Close]', event.code, event.reason);
+	});
 
-  return ws;
+	return ws;
 };
 ```
 
 ### Network Tab Checks
+
 - [ ] WebSocket connection appears in Network tab
 - [ ] Connection URL is correct: `ws://localhost/api/sync?token=...`
 - [ ] Connection shows as "101 Switching Protocols"
@@ -280,7 +298,9 @@ window.WebSocket = function(...args) {
 - [ ] No unexpected disconnections
 
 ### Console Output
+
 Expected log messages:
+
 - `[WebSocket] Connected` - on successful connection
 - `[WebSocket] Received event: [EventType]` - on each event
 - `[WebSocket] Disconnected [code] [reason]` - on disconnection
@@ -293,7 +313,9 @@ Expected log messages:
 ## 🚨 Common Issues
 
 ### Issue: WebSocket not connecting
+
 **Check:**
+
 - [ ] Backend WebSocket server is running
 - [ ] WebSocket URL is correct in .env
 - [ ] JWT token is valid and not expired
@@ -302,7 +324,9 @@ Expected log messages:
 - [ ] Firewall/proxy not blocking WebSocket
 
 ### Issue: Events not triggering handlers
+
 **Check:**
+
 - [ ] Event handlers are registered in manager
 - [ ] Event type matches exactly (case-sensitive)
 - [ ] Event payload structure is correct
@@ -310,14 +334,18 @@ Expected log messages:
 - [ ] WebSocket is actually connected
 
 ### Issue: Notifications not showing
+
 **Check:**
+
 - [ ] ToastContainer is in layout
 - [ ] Toast store is imported correctly
 - [ ] Event user_id is different from current user
 - [ ] No CSS z-index issues hiding toasts
 
 ### Issue: Connection keeps dropping
+
 **Check:**
+
 - [ ] Network stability
 - [ ] Backend server logs for errors
 - [ ] Token not expiring during session
@@ -325,7 +353,9 @@ Expected log messages:
 - [ ] Server not killing idle connections
 
 ### Issue: Cache not invalidating
+
 **Check:**
+
 - [ ] Query keys match between queries and invalidation
 - [ ] QueryClient is same instance everywhere
 - [ ] No errors in event handlers
@@ -396,6 +426,7 @@ Expected log messages:
 ## 📞 Support
 
 If issues persist:
+
 1. Check browser console for errors
 2. Check backend WebSocket server logs
 3. Verify environment variables

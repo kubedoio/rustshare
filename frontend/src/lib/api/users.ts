@@ -152,7 +152,9 @@ export async function updateProfile(request: UpdateProfileRequest): Promise<Full
 	return apiClient.patch<FullUserProfile>('/users/me/profile', request);
 }
 
-export async function updateTrashRetention(request: UpdateTrashRetentionRequest): Promise<FullUserProfile> {
+export async function updateTrashRetention(
+	request: UpdateTrashRetentionRequest
+): Promise<FullUserProfile> {
 	return apiClient.patch<FullUserProfile>('/users/me/trash-retention', request);
 }
 
@@ -161,9 +163,10 @@ export async function updateTrashRetention(request: UpdateTrashRetentionRequest)
  */
 export async function uploadAvatar(file: File): Promise<{ avatar_path: string }> {
 	// Get the JWT token from sessionStorage
-	const token = typeof window !== 'undefined' 
-		? window.sessionStorage.getItem('rustshare.websocket_token') 
-		: null;
+	const token =
+		typeof window !== 'undefined'
+			? window.sessionStorage.getItem('rustshare.websocket_token')
+			: null;
 
 	const headers: Record<string, string> = {
 		'Content-Type': file.type,

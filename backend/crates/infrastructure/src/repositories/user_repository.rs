@@ -55,7 +55,9 @@ impl UserRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        row.map(Self::map_user_row).transpose().map_err(|e| e.into())
+        row.map(Self::map_user_row)
+            .transpose()
+            .map_err(|e| e.into())
     }
 
     /// Find a user by ID.
@@ -72,7 +74,9 @@ impl UserRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        row.map(Self::map_user_row).transpose().map_err(|e| e.into())
+        row.map(Self::map_user_row)
+            .transpose()
+            .map_err(|e| e.into())
     }
 
     /// Update user's theme preference.
@@ -93,10 +97,7 @@ impl UserRepository {
     }
 
     /// Get tenant ID for a user
-    pub async fn get_tenant_id_for_user(
-        &self,
-        user_id: UserId,
-    ) -> anyhow::Result<Option<Uuid>> {
+    pub async fn get_tenant_id_for_user(&self, user_id: UserId) -> anyhow::Result<Option<Uuid>> {
         let row = sqlx::query(r#"SELECT tenant_id FROM users WHERE id = $1"#)
             .bind(user_id)
             .fetch_optional(&self.pool)

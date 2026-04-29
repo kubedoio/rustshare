@@ -130,7 +130,6 @@ where
         Ok(())
     }
 
-
     /// Create a new folder.
     ///
     /// Validates the folder name, checks that the parent folder exists (if specified),
@@ -156,7 +155,8 @@ where
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
 
             // Verify permissions: user must own the folder or have Edit permission
-            self.require_folder_permission(owner_id, parent_id, SharePermissions::Edit).await?;
+            self.require_folder_permission(owner_id, parent_id, SharePermissions::Edit)
+                .await?;
 
             // Construct path: parent_path + "/" + name
             let path = format!("{}/{}", parent.path.trim_end_matches('/'), name);
@@ -193,8 +193,7 @@ where
             EventType::FolderCreated,
             folder.id,
             AggregateType::Folder,
-            serde_json::to_value(payload)
-                .map_err(|e| FolderError::Database(e.to_string()))?,
+            serde_json::to_value(payload).map_err(|e| FolderError::Database(e.to_string()))?,
             owner_id,
         );
 
@@ -229,7 +228,8 @@ where
             .ok_or(FolderError::NotFound(folder_id))?;
 
         // 2. Check permissions using the resolver
-        self.require_folder_permission(user_id, folder_id, SharePermissions::View).await?;
+        self.require_folder_permission(user_id, folder_id, SharePermissions::View)
+            .await?;
 
         Ok(folder)
     }
@@ -327,7 +327,8 @@ where
         let mut folder = self.get_folder(folder_id, user_id).await?;
 
         // Verify Edit permission
-        self.require_folder_permission(user_id, folder_id, SharePermissions::Edit).await?;
+        self.require_folder_permission(user_id, folder_id, SharePermissions::Edit)
+            .await?;
 
         // Check if name is actually changing
         if folder.name == new_name {
@@ -356,8 +357,14 @@ where
         folder.updated_at = chrono::Utc::now();
 
         // Update descendants' paths and ancestor_ids
-        self.update_descendant_paths_and_ancestors(folder_id, &old_path, &new_path, folder.ancestor_ids.clone(), user_id)
-            .await?;
+        self.update_descendant_paths_and_ancestors(
+            folder_id,
+            &old_path,
+            &new_path,
+            folder.ancestor_ids.clone(),
+            user_id,
+        )
+        .await?;
 
         // Emit FolderRenamed event
         let payload = FolderRenamedPayload {
@@ -373,8 +380,7 @@ where
             EventType::FolderRenamed,
             folder_id,
             AggregateType::Folder,
-            serde_json::to_value(payload)
-                .map_err(|e| FolderError::Database(e.to_string()))?,
+            serde_json::to_value(payload).map_err(|e| FolderError::Database(e.to_string()))?,
             user_id,
         );
 
@@ -405,7 +411,8 @@ where
         let mut folder = self.get_folder(folder_id, user_id).await?;
 
         // Verify Edit permission
-        self.require_folder_permission(user_id, folder_id, SharePermissions::Edit).await?;
+        self.require_folder_permission(user_id, folder_id, SharePermissions::Edit)
+            .await?;
 
         // Check if parent is actually changing
         if folder.parent_folder_id == new_parent_id {
@@ -465,8 +472,14 @@ where
         folder.ancestor_ids = new_ancestor_ids;
 
         // Update descendants' paths
-        self.update_descendant_paths_and_ancestors(folder_id, &old_path, &new_path, folder.ancestor_ids.clone(), user_id)
-            .await?;
+        self.update_descendant_paths_and_ancestors(
+            folder_id,
+            &old_path,
+            &new_path,
+            folder.ancestor_ids.clone(),
+            user_id,
+        )
+        .await?;
 
         // Emit FolderMoved event
         let payload = FolderMovedPayload {
@@ -482,8 +495,7 @@ where
             EventType::FolderMoved,
             folder_id,
             AggregateType::Folder,
-            serde_json::to_value(payload)
-                .map_err(|e| FolderError::Database(e.to_string()))?,
+            serde_json::to_value(payload).map_err(|e| FolderError::Database(e.to_string()))?,
             user_id,
         );
 
@@ -513,7 +525,8 @@ where
         let folder = self.get_folder(folder_id, user_id).await?;
 
         // Verify Admin permission for deletion
-        self.require_folder_permission(user_id, folder_id, SharePermissions::Admin).await?;
+        self.require_folder_permission(user_id, folder_id, SharePermissions::Admin)
+            .await?;
 
         // Check if it's the system root folder (nil UUID) - only protect system folders
         // User-created root folders should be deletable even if named "Root"
@@ -542,8 +555,7 @@ where
                 EventType::FolderDeleted,
                 descendant.id,
                 AggregateType::Folder,
-                serde_json::to_value(payload)
-                    .map_err(|e| FolderError::Database(e.to_string()))?,
+                serde_json::to_value(payload).map_err(|e| FolderError::Database(e.to_string()))?,
                 user_id,
             );
 
@@ -879,7 +891,9 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -907,7 +921,9 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -943,7 +959,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -962,7 +980,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -981,7 +1001,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1006,7 +1028,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1039,7 +1063,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1063,7 +1089,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1081,7 +1109,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1104,7 +1134,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1127,7 +1159,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1175,7 +1209,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1198,7 +1234,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1223,7 +1261,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1291,7 +1331,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1314,7 +1356,9 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1347,7 +1391,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1393,7 +1439,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1417,7 +1465,9 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1450,7 +1500,9 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1489,7 +1541,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1518,7 +1572,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1564,7 +1620,9 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1602,7 +1660,9 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1632,7 +1692,9 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1690,7 +1752,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1717,7 +1781,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1748,7 +1814,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1807,7 +1875,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1874,7 +1944,9 @@ mod tests {
             event_store,
             metadata_store.clone(),
             Arc::new(EventBroadcaster::new(100)),
-            Arc::new(PermissionResolver::new(Arc::new(MockPermissionOps::with_store(metadata_store.clone())))),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
         );
 
         let owner_id = Uuid::new_v4();
@@ -1905,7 +1977,6 @@ mod tests {
         // Work should now have empty ancestors (root folder)
         assert_eq!(updated_work.ancestor_ids, Some(Vec::new()));
     }
-
 
     #[tokio::test]
     async fn test_move_folder_circular_with_ancestor_ids() {
