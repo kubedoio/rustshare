@@ -1,13 +1,25 @@
 <script lang="ts">
 	import type { ModuleConfig } from '$lib/api/types';
 	import ModuleIcon from './ModuleIcon.svelte';
-	import { ArrowRight } from 'lucide-svelte';
+	import { ArrowRight, FileText, Folder } from 'lucide-svelte';
+	import { createQuery } from '$lib/query-compat';
+	import { getModuleSummary } from '$lib/api/modules';
 
 	export let module: ModuleConfig;
 
 	$: cardTitle = module.ui_config?.dashboard?.cardTitle ?? module.display_name;
 	$: cardDescription = module.ui_config?.dashboard?.cardDescription ?? module.description;
 	$: actionLabel = module.ui_config?.dashboard?.primaryAction?.label ?? 'Open';
+	$: summaryMode = module.ui_config?.dashboard?.summaryMode ?? 'none';
+
+	$: summaryQuery = createQuery({
+		queryKey: ['module-summary', module.module_key],
+		queryFn: () => getModuleSummary(module.module_key),
+		enabled: summaryMode !== 'none'
+	});
+
+	$: summary = $summaryQuery.data;
+	$: hasSummary = summaryMode !== 'none' && summary && !$summaryQuery.isLoading;
 </script>
 
 <a
@@ -29,7 +41,31 @@
 
 	<div class="flex flex-col gap-1">
 		<h3 class="text-sm font-semibold text-base-content">{cardTitle}</h3>
-		<p class="text-xs leading-relaxed text-base-content/60">{cardDescription}</p>
+		{#if hasSummary}
+			{#if summary.total_items > 0}
+				<p class="text-xs leading-relaxed text-base-content/60">
+					{summary.total_items} item{summary.total_items === 1 ? '' : 's'}
+				</p>
+				{#if summary.recent_items.length > 0}
+					<ul class="mt-1 flex flex-col gap-0.5">
+						{#each summary.recent_items.slice(0, 3) as item}
+							<li class="flex items-center gap-1.5 text-xs text-base-content/50">
+								{#if item.item_type === 'file'}
+									<FileText size={12} />
+								{:else}
+									<Folder size={12} />
+								{/if}
+								<span class="truncate">{item.name}</span>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			{:else}
+				<p class="text-xs leading-relaxed text-base-content/40">No items yet</p>
+			{/if}
+		{:else}
+			<p class="text-xs leading-relaxed text-base-content/60">{cardDescription}</p>
+		{/if}
 	</div>
 
 	<div class="mt-auto pt-1">

@@ -324,3 +324,17 @@ export interface CreateFromTemplateResponse {
 	object_type: 'file' | 'folder';
 	path: string;
 }
+
+export interface SummaryItem {
+	id: string;
+	name: string;
+	item_type: 'file' | 'folder';
+	updated_at: string;
+}
+
+export interface ModuleSummary {
+	module_key: string;
+	mode: string;
+	total_items: number;
+	recent_items: SummaryItem[];
+}
