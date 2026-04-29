@@ -583,4 +583,72 @@ mod tests {
         let err = ModuleError::NotFound("notes".to_string());
         assert_eq!(err.to_string(), "Module not found: notes");
     }
+
+    #[test]
+    fn test_module_error_display_already_exists() {
+        let err = ModuleError::AlreadyExists("meetings".to_string());
+        assert_eq!(err.to_string(), "Module already exists: meetings");
+    }
+
+    #[test]
+    fn test_module_error_display_permission_denied() {
+        let err = ModuleError::PermissionDenied;
+        assert_eq!(err.to_string(), "Permission denied");
+    }
+
+    #[test]
+    fn test_module_error_display_database() {
+        let err = ModuleError::Database("connection failed".to_string());
+        assert_eq!(err.to_string(), "Database error: connection failed");
+    }
+
+    #[test]
+    fn test_update_module_input_debug() {
+        let input = UpdateModuleInput {
+            display_name: Some("Test".to_string()),
+            description: None,
+            icon: Some("file-text".to_string()),
+            permissions: None,
+            ai_indexing: None,
+            audit: None,
+            ui_config: Some(json!({"sidebar": {"enabled": true}})),
+        };
+        let debug = format!("{:?}", input);
+        assert!(debug.contains("Test"));
+        assert!(debug.contains("sidebar"));
+    }
+
+    #[test]
+    fn test_module_summary_serialize() {
+        let summary = ModuleSummary {
+            module_key: "notes".to_string(),
+            mode: "recent-items".to_string(),
+            total_items: 5,
+            recent_items: vec![
+                SummaryItem {
+                    id: "uuid-1".to_string(),
+                    name: "Note 1".to_string(),
+                    item_type: "file".to_string(),
+                    updated_at: Utc::now(),
+                },
+            ],
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("notes"));
+        assert!(json.contains("recent-items"));
+        assert!(json.contains("Note 1"));
+    }
+
+    #[test]
+    fn test_summary_item_serialize() {
+        let item = SummaryItem {
+            id: "uuid-1".to_string(),
+            name: "Folder A".to_string(),
+            item_type: "folder".to_string(),
+            updated_at: Utc::now(),
+        };
+        let json = serde_json::to_string(&item).unwrap();
+        assert!(json.contains("Folder A"));
+        assert!(json.contains("folder"));
+    }
 }

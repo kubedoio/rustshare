@@ -731,4 +731,52 @@ mod tests {
         let err = TemplateError::NotFound("my-template".to_string());
         assert_eq!(err.to_string(), "Template not found: my-template");
     }
+
+    #[test]
+    fn test_template_error_display_already_exists() {
+        let err = TemplateError::AlreadyExists("default-note".to_string());
+        assert_eq!(err.to_string(), "Template already exists: default-note");
+    }
+
+    #[test]
+    fn test_template_error_display_module_not_found() {
+        let err = TemplateError::ModuleNotFound("unknown".to_string());
+        assert_eq!(err.to_string(), "Module not found or disabled: unknown");
+    }
+
+    #[test]
+    fn test_template_error_display_permission_denied() {
+        let err = TemplateError::PermissionDenied;
+        assert_eq!(err.to_string(), "Permission denied");
+    }
+
+    #[test]
+    fn test_template_error_display_invalid_data() {
+        let err = TemplateError::InvalidData("bad path".to_string());
+        assert_eq!(err.to_string(), "Invalid data: bad path");
+    }
+
+    #[test]
+    fn test_template_default_file_serialize() {
+        let file = TemplateDefaultFile {
+            path: "README.md".to_string(),
+            content: Some("# Hello".to_string()),
+            content_base64: None,
+        };
+        let json = serde_json::to_string(&file).unwrap();
+        assert!(json.contains("README.md"));
+        assert!(json.contains("# Hello"));
+    }
+
+    #[test]
+    fn test_created_object_serialize() {
+        let obj = CreatedObject {
+            object_id: Uuid::new_v4(),
+            object_type: "folder".to_string(),
+            path: "/Notes/My Note".to_string(),
+        };
+        let json = serde_json::to_string(&obj).unwrap();
+        assert!(json.contains("folder"));
+        assert!(json.contains("/Notes/My Note"));
+    }
 }
