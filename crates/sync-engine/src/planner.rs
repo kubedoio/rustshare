@@ -196,9 +196,19 @@ pub fn generate_plan<F>(
 where
     F: FnMut(&PathBuf) -> Option<(String, u64, Option<Uuid>)>,
 {
-    generate_plan_with_db_files(root_id, _root_path, local_files, remote_files, &[], &[], |path| {
-        db_lookup(path).map(|(hash, modified_at, remote_id)| DbFileState::synced(hash, modified_at, remote_id))
-    })
+    generate_plan_with_db_files(
+        root_id,
+        _root_path,
+        local_files,
+        remote_files,
+        &[],
+        &[],
+        |path| {
+            db_lookup(path).map(|(hash, modified_at, remote_id)| {
+                DbFileState::synced(hash, modified_at, remote_id)
+            })
+        },
+    )
 }
 
 /// Extended version that also handles DB-only files (files that were tracked but may have been deleted)
@@ -225,10 +235,8 @@ where
         .map(|f| (&f.relative_path, f))
         .collect();
 
-    let remote_dir_map: HashMap<&PathBuf, &RemoteFolderInfo> = remote_dirs
-        .iter()
-        .map(|f| (&f.relative_path, f))
-        .collect();
+    let remote_dir_map: HashMap<&PathBuf, &RemoteFolderInfo> =
+        remote_dirs.iter().map(|f| (&f.relative_path, f)).collect();
 
     let local_map: HashMap<&PathBuf, &FileScanResult> = local_files
         .iter()
@@ -236,10 +244,8 @@ where
         .map(|f| (&f.relative_path, f))
         .collect();
 
-    let remote_map: HashMap<&PathBuf, &RemoteFileInfo> = remote_files
-        .iter()
-        .map(|f| (&f.relative_path, f))
-        .collect();
+    let remote_map: HashMap<&PathBuf, &RemoteFileInfo> =
+        remote_files.iter().map(|f| (&f.relative_path, f)).collect();
 
     let db_set: std::collections::HashSet<&PathBuf> = db_paths.iter().collect();
 
@@ -328,8 +334,7 @@ where
     for relative_path in all_paths {
         let local = local_map.get(relative_path).copied();
         let remote = remote_map.get(relative_path).copied();
-        let db = db_lookup(relative_path)
-            ;
+        let db = db_lookup(relative_path);
 
         if let Some(db_state) = db.as_ref().filter(|state| state.is_tombstone()) {
             match (local, remote) {
@@ -585,12 +590,7 @@ mod tests {
         }
     }
 
-    fn create_remote_file(
-        id: Uuid,
-        path: &str,
-        hash: &str,
-        modified_at: u64,
-    ) -> RemoteFileInfo {
+    fn create_remote_file(id: Uuid, path: &str, hash: &str, modified_at: u64) -> RemoteFileInfo {
         RemoteFileInfo {
             id,
             relative_path: PathBuf::from(path),
@@ -611,13 +611,7 @@ mod tests {
     #[test]
     fn test_empty_plan() {
         let root_id = Uuid::new_v4();
-        let plan = generate_plan(
-            root_id,
-            Path::new("/test"),
-            &[],
-            &[],
-            |_path| None,
-        );
+        let plan = generate_plan(root_id, Path::new("/test"), &[], &[], |_path| None);
 
         assert!(plan.is_empty());
         assert_eq!(plan.operation_count(), 0);
@@ -629,13 +623,7 @@ mod tests {
         let root_id = Uuid::new_v4();
         let local = create_local_file("new.txt", "hash1", 1000);
 
-        let plan = generate_plan(
-            root_id,
-            Path::new("/test"),
-            &[local],
-            &[],
-            |_path| None,
-        );
+        let plan = generate_plan(root_id, Path::new("/test"), &[local], &[], |_path| None);
 
         assert_eq!(plan.uploads.len(), 1);
         assert_eq!(plan.downloads.len(), 0);
@@ -656,13 +644,7 @@ mod tests {
         let remote_id = Uuid::new_v4();
         let remote = create_remote_file(remote_id, "remote.txt", "hash1", 1000);
 
-        let plan = generate_plan(
-            root_id,
-            Path::new("/test"),
-            &[],
-            &[remote],
-            |_path| None,
-        );
+        let plan = generate_plan(root_id, Path::new("/test"), &[], &[remote], |_path| None);
 
         assert_eq!(plan.uploads.len(), 0);
         assert_eq!(plan.downloads.len(), 1);
@@ -670,7 +652,11 @@ mod tests {
         assert!(plan.conflicts.is_empty());
 
         match &plan.downloads[0] {
-            SyncOp::Download { relative_path, remote_file_id, .. } => {
+            SyncOp::Download {
+                relative_path,
+                remote_file_id,
+                ..
+            } => {
                 assert_eq!(relative_path, &PathBuf::from("remote.txt"));
                 assert_eq!(*remote_file_id, remote_id);
             }
@@ -687,19 +673,13 @@ mod tests {
         let local = create_local_file("modified.txt", "new_hash", 2000);
         let remote = create_remote_file(remote_id, "modified.txt", "old_hash", 1000);
 
-        let plan = generate_plan(
-            root_id,
-            Path::new("/test"),
-            &[local],
-            &[remote],
-            |path| {
-                if path == &PathBuf::from("modified.txt") {
-                    Some(("old_hash".to_string(), 1000, Some(remote_id)))
-                } else {
-                    None
-                }
-            },
-        );
+        let plan = generate_plan(root_id, Path::new("/test"), &[local], &[remote], |path| {
+            if path == &PathBuf::from("modified.txt") {
+                Some(("old_hash".to_string(), 1000, Some(remote_id)))
+            } else {
+                None
+            }
+        });
 
         assert_eq!(plan.uploads.len(), 1);
         assert!(plan.downloads.is_empty());
@@ -715,19 +695,13 @@ mod tests {
         let local = create_local_file("modified.txt", "old_hash", 1000);
         let remote = create_remote_file(remote_id, "modified.txt", "new_hash", 2000);
 
-        let plan = generate_plan(
-            root_id,
-            Path::new("/test"),
-            &[local],
-            &[remote],
-            |path| {
-                if path == &PathBuf::from("modified.txt") {
-                    Some(("old_hash".to_string(), 1000, Some(remote_id)))
-                } else {
-                    None
-                }
-            },
-        );
+        let plan = generate_plan(root_id, Path::new("/test"), &[local], &[remote], |path| {
+            if path == &PathBuf::from("modified.txt") {
+                Some(("old_hash".to_string(), 1000, Some(remote_id)))
+            } else {
+                None
+            }
+        });
 
         assert!(plan.uploads.is_empty());
         assert_eq!(plan.downloads.len(), 1);
@@ -743,22 +717,19 @@ mod tests {
         let local = create_local_file("conflict.txt", "local_hash", 2000);
         let remote = create_remote_file(remote_id, "conflict.txt", "remote_hash", 1500);
 
-        let plan = generate_plan(
-            root_id,
-            Path::new("/test"),
-            &[local],
-            &[remote],
-            |path| {
-                if path == &PathBuf::from("conflict.txt") {
-                    Some(("old_hash".to_string(), 1000, Some(remote_id)))
-                } else {
-                    None
-                }
-            },
-        );
+        let plan = generate_plan(root_id, Path::new("/test"), &[local], &[remote], |path| {
+            if path == &PathBuf::from("conflict.txt") {
+                Some(("old_hash".to_string(), 1000, Some(remote_id)))
+            } else {
+                None
+            }
+        });
 
         assert_eq!(plan.conflicts.len(), 1);
-        assert_eq!(plan.conflicts[0].resolution, ConflictResolution::UploadLocal);
+        assert_eq!(
+            plan.conflicts[0].resolution,
+            ConflictResolution::UploadLocal
+        );
         assert_eq!(plan.uploads.len(), 1); // Resolved as upload
     }
 
@@ -771,22 +742,19 @@ mod tests {
         let local = create_local_file("conflict.txt", "local_hash", 1500);
         let remote = create_remote_file(remote_id, "conflict.txt", "remote_hash", 2000);
 
-        let plan = generate_plan(
-            root_id,
-            Path::new("/test"),
-            &[local],
-            &[remote],
-            |path| {
-                if path == &PathBuf::from("conflict.txt") {
-                    Some(("old_hash".to_string(), 1000, Some(remote_id)))
-                } else {
-                    None
-                }
-            },
-        );
+        let plan = generate_plan(root_id, Path::new("/test"), &[local], &[remote], |path| {
+            if path == &PathBuf::from("conflict.txt") {
+                Some(("old_hash".to_string(), 1000, Some(remote_id)))
+            } else {
+                None
+            }
+        });
 
         assert_eq!(plan.conflicts.len(), 1);
-        assert_eq!(plan.conflicts[0].resolution, ConflictResolution::DownloadRemote);
+        assert_eq!(
+            plan.conflicts[0].resolution,
+            ConflictResolution::DownloadRemote
+        );
         assert_eq!(plan.downloads.len(), 1); // Resolved as download
     }
 
@@ -798,19 +766,13 @@ mod tests {
         // File exists in DB and local, but not remote
         let local = create_local_file("deleted.txt", "hash", 1000);
 
-        let plan = generate_plan(
-            root_id,
-            Path::new("/test"),
-            &[local],
-            &[],
-            |path| {
-                if path == &PathBuf::from("deleted.txt") {
-                    Some(("hash".to_string(), 1000, Some(remote_id)))
-                } else {
-                    None
-                }
-            },
-        );
+        let plan = generate_plan(root_id, Path::new("/test"), &[local], &[], |path| {
+            if path == &PathBuf::from("deleted.txt") {
+                Some(("hash".to_string(), 1000, Some(remote_id)))
+            } else {
+                None
+            }
+        });
 
         assert!(plan.uploads.is_empty());
         assert!(plan.downloads.is_empty());
@@ -832,26 +794,24 @@ mod tests {
         // File exists in DB and remote, but not local
         let remote = create_remote_file(remote_id, "deleted.txt", "hash", 1000);
 
-        let plan = generate_plan(
-            root_id,
-            Path::new("/test"),
-            &[],
-            &[remote],
-            |path| {
-                if path == &PathBuf::from("deleted.txt") {
-                    Some(("hash".to_string(), 1000, Some(remote_id)))
-                } else {
-                    None
-                }
-            },
-        );
+        let plan = generate_plan(root_id, Path::new("/test"), &[], &[remote], |path| {
+            if path == &PathBuf::from("deleted.txt") {
+                Some(("hash".to_string(), 1000, Some(remote_id)))
+            } else {
+                None
+            }
+        });
 
         assert!(plan.uploads.is_empty());
         assert!(plan.downloads.is_empty());
         assert_eq!(plan.deletes.len(), 1);
 
         match &plan.deletes[0] {
-            SyncOp::DeleteRemote { relative_path, remote_file_id, .. } => {
+            SyncOp::DeleteRemote {
+                relative_path,
+                remote_file_id,
+                ..
+            } => {
                 assert_eq!(relative_path, &PathBuf::from("deleted.txt"));
                 assert_eq!(*remote_file_id, remote_id);
             }
@@ -966,19 +926,13 @@ mod tests {
         let local = create_local_file("synced.txt", "same_hash", 1000);
         let remote = create_remote_file(remote_id, "synced.txt", "same_hash", 1000);
 
-        let plan = generate_plan(
-            root_id,
-            Path::new("/test"),
-            &[local],
-            &[remote],
-            |path| {
-                if path == &PathBuf::from("synced.txt") {
-                    Some(("same_hash".to_string(), 1000, Some(remote_id)))
-                } else {
-                    None
-                }
-            },
-        );
+        let plan = generate_plan(root_id, Path::new("/test"), &[local], &[remote], |path| {
+            if path == &PathBuf::from("synced.txt") {
+                Some(("same_hash".to_string(), 1000, Some(remote_id)))
+            } else {
+                None
+            }
+        });
 
         assert!(plan.is_empty());
         assert_eq!(plan.operation_count(), 0);

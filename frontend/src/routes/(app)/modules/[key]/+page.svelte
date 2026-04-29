@@ -97,18 +97,22 @@
 
 	{#if isLoading}
 		<div class="flex h-64 items-center justify-center">
-			<div class="loading loading-spinner loading-lg text-brand-500"></div>
+			<div class="loading loading-lg loading-spinner text-brand-500"></div>
 		</div>
 	{:else if !isAvailable}
-		<div class="flex flex-col items-center justify-center gap-4 rounded-2xl border border-base-300/50 bg-base-100 p-12 text-center">
-			<div class="flex h-16 w-16 items-center justify-center rounded-full bg-base-200 text-base-content/30">
+		<div
+			class="flex flex-col items-center justify-center gap-4 rounded-2xl border border-base-300/50 bg-base-100 p-12 text-center"
+		>
+			<div
+				class="flex h-16 w-16 items-center justify-center rounded-full bg-base-200 text-base-content/30"
+			>
 				<AlertCircle size={32} />
 			</div>
 			<h1 class="text-xl font-semibold text-base-content">Module Not Available</h1>
 			<p class="max-w-sm text-sm text-base-content/60">
 				This module is currently disabled. Contact an administrator to enable it.
 			</p>
-			<a href="/dashboard" class="btn btn-primary btn-sm">Back to Dashboard</a>
+			<a href="/dashboard" class="btn btn-sm btn-primary">Back to Dashboard</a>
 		</div>
 	{:else}
 		<div class="flex flex-col gap-6">
@@ -117,21 +121,23 @@
 				<div
 					class="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500"
 				>
-					<ModuleIcon name={moduleConfig.icon} size={24} />
+					<ModuleIcon name={moduleConfig?.icon ?? 'grid'} size={24} />
 				</div>
 				<div class="flex flex-col gap-1">
-					<h1 class="text-lg font-semibold text-base-content">{moduleConfig.display_name}</h1>
-					<p class="text-sm text-base-content/60">{moduleConfig.description}</p>
+					<h1 class="text-lg font-semibold text-base-content">
+						{moduleConfig?.display_name ?? 'Module'}
+					</h1>
+					<p class="text-sm text-base-content/60">{moduleConfig?.description ?? ''}</p>
 					<div class="mt-1 flex items-center gap-2">
 						<span
-							class="rounded-full border border-base-300/60 bg-base-200/50 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-base-content/50"
+							class="rounded-full border border-base-300/60 bg-base-200/50 px-2.5 py-0.5 text-[10px] font-semibold tracking-wider text-base-content/50 uppercase"
 						>
-							{moduleConfig.root_path}
+							{moduleConfig?.root_path ?? '/'}
 						</span>
 						<span
-							class="rounded-full border border-base-300/60 bg-base-200/50 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-base-content/50"
+							class="rounded-full border border-base-300/60 bg-base-200/50 px-2.5 py-0.5 text-[10px] font-semibold tracking-wider text-base-content/50 uppercase"
 						>
-							{moduleConfig.renderer}
+							{moduleConfig?.renderer ?? 'default'}
 						</span>
 					</div>
 				</div>
@@ -142,10 +148,10 @@
 				<!-- Notes module: show recent notes landing -->
 				<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6">
 					<div class="mb-4 flex items-center justify-between">
-						<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content">
+						<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">
 							Recent Notes
 						</h2>
-						<button class="btn btn-primary btn-sm" on:click={handleNewNote}>
+						<button class="btn btn-sm btn-primary" on:click={handleNewNote}>
 							<Plus size={14} />
 							<span>New Note</span>
 						</button>
@@ -153,7 +159,7 @@
 
 					{#if $recentNotesQuery.isLoading}
 						<div class="flex h-32 items-center justify-center">
-							<div class="loading loading-spinner loading-md text-brand-500"></div>
+							<div class="loading loading-md loading-spinner text-brand-500"></div>
 						</div>
 					{:else if recentNotes.length === 0}
 						<EmptyState
@@ -176,7 +182,9 @@
 										<FileText size={16} />
 									</div>
 									<div class="flex flex-col">
-										<span class="text-sm font-medium text-base-content">{note.metadata?.title || 'Untitled Note'}</span>
+										<span class="text-sm font-medium text-base-content"
+											>{note.metadata?.title || 'Untitled Note'}</span
+										>
 										<span class="flex items-center gap-1 text-xs text-base-content/40">
 											<Clock size={12} />
 											{note.modified_at ? new Date(note.modified_at).toLocaleDateString() : ''}
@@ -190,10 +198,10 @@
 			{:else}
 				<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6">
 					<div class="mb-4 flex items-center justify-between">
-						<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content">
+						<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">
 							Contents
 						</h2>
-						<button class="btn btn-primary btn-sm" on:click={handleCreateFromTemplate}>
+						<button class="btn btn-sm btn-primary" on:click={handleCreateFromTemplate}>
 							<Plus size={14} />
 							<span>Create from Template</span>
 						</button>
@@ -201,7 +209,7 @@
 
 					{#if $folderContentsQuery.isLoading}
 						<div class="flex h-32 items-center justify-center">
-							<div class="loading loading-spinner loading-md text-brand-500"></div>
+							<div class="loading loading-md loading-spinner text-brand-500"></div>
 						</div>
 					{:else if !contents || (contents.folders?.length === 0 && contents.files?.length === 0)}
 						<EmptyState
@@ -214,7 +222,9 @@
 					{:else}
 						<div class="flex flex-col gap-2">
 							{#if contents.folders?.length > 0}
-								<div class="mb-2 text-xs font-semibold uppercase tracking-wider text-base-content/40">
+								<div
+									class="mb-2 text-xs font-semibold tracking-wider text-base-content/40 uppercase"
+								>
 									Folders
 								</div>
 								{#each contents.folders as folder}
@@ -236,7 +246,9 @@
 							{/if}
 
 							{#if contents.files?.length > 0}
-								<div class="mb-2 mt-4 text-xs font-semibold uppercase tracking-wider text-base-content/40">
+								<div
+									class="mt-4 mb-2 text-xs font-semibold tracking-wider text-base-content/40 uppercase"
+								>
 									Files
 								</div>
 								{#each contents.files as file}

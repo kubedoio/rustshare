@@ -226,9 +226,15 @@ pub fn replication_routes() -> Router<AppState> {
 pub fn module_routes() -> Router<AppState> {
     use axum::routing::{get, post};
     Router::new()
-        .route("/api/v1/modules", get(crate::handlers::modules::list_enabled_modules))
-        .route("/api/v1/modules/{key}", get(crate::handlers::modules::get_module))
-        .route("/api/v1/modules/from-template", post(crate::handlers::modules::create_from_template))
+        .route(
+            "/api/v1/modules",
+            get(crate::handlers::list_enabled_modules),
+        )
+        .route("/api/v1/modules/{key}", get(crate::handlers::get_module))
+        .route(
+            "/api/v1/modules/from-template",
+            post(crate::handlers::create_from_template),
+        )
 }
 
 pub fn admin_routes() -> Router<AppState> {

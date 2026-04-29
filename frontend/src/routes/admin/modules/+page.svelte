@@ -2,8 +2,8 @@
 	import { createQuery, createMutation, useQueryClient } from '$lib/query-compat';
 	import { listAdminModules, enableModule, disableModule } from '$lib/api/admin-modules';
 	import ModuleIcon from '$lib/components/dashboard/ModuleIcon.svelte';
-	import { toast } from '$lib/stores/toast';
-	import { ToggleLeft, ToggleRight, AlertTriangle } from 'lucide-svelte';
+	import { toastStore } from '$lib/stores/toast';
+	import { ToggleLeft, ToggleRight } from 'lucide-svelte';
 
 	const queryClient = useQueryClient();
 
@@ -17,9 +17,9 @@
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['admin-modules'] });
 			queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
-			toast.success('Module enabled');
+			toastStore.show('Module enabled', 'success');
 		},
-		onError: (err: Error) => toast.error(err.message)
+		onError: (err: Error) => toastStore.show(err.message, 'error')
 	});
 
 	const disableMutation = createMutation({
@@ -27,9 +27,9 @@
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['admin-modules'] });
 			queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
-			toast.success('Module disabled');
+			toastStore.show('Module disabled', 'success');
 		},
-		onError: (err: Error) => toast.error(err.message)
+		onError: (err: Error) => toastStore.show(err.message, 'error')
 	});
 
 	$: modules = $modulesQuery.data ?? [];
@@ -53,20 +53,22 @@
 	<div class="mb-6">
 		<h1 class="text-2xl font-semibold text-base-content">Modules</h1>
 		<p class="mt-1 text-sm text-base-content/60">
-			Enable or disable workspace modules. Disabled modules hide from the dashboard but preserve
-			all files.
+			Enable or disable workspace modules. Disabled modules hide from the dashboard but preserve all
+			files.
 		</p>
 	</div>
 
 	{#if $modulesQuery.isLoading}
 		<div class="flex h-64 items-center justify-center">
-			<div class="loading loading-spinner loading-lg text-brand-500"></div>
+			<div class="loading loading-lg loading-spinner text-brand-500"></div>
 		</div>
 	{:else}
 		<div class="overflow-hidden rounded-2xl border border-base-300/50 bg-base-100 shadow-sm">
 			<table class="table w-full">
 				<thead>
-					<tr class="border-b border-base-300/50 bg-base-200/30 text-left text-xs uppercase tracking-wider text-base-content/60">
+					<tr
+						class="border-b border-base-300/50 bg-base-200/30 text-left text-xs tracking-wider text-base-content/60 uppercase"
+					>
 						<th class="px-4 py-3 font-semibold">Module</th>
 						<th class="px-4 py-3 font-semibold">Description</th>
 						<th class="px-4 py-3 font-semibold">Root Path</th>
@@ -94,7 +96,7 @@
 							<td class="px-4 py-3 text-sm text-base-content/70">{module.description}</td>
 							<td class="px-4 py-3">
 								<span
-									class="rounded-full border border-base-300/60 bg-base-200/50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-base-content/50"
+									class="rounded-full border border-base-300/60 bg-base-200/50 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-base-content/50 uppercase"
 								>
 									{module.root_path}
 								</span>
@@ -106,13 +108,13 @@
 							<td class="px-4 py-3">
 								{#if module.enabled}
 									<span
-										class="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-success"
+										class="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-success uppercase"
 									>
 										Active
 									</span>
 								{:else}
 									<span
-										class="inline-flex items-center gap-1 rounded-full bg-base-300/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-base-content/40"
+										class="inline-flex items-center gap-1 rounded-full bg-base-300/40 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-base-content/40 uppercase"
 									>
 										Disabled
 									</span>
@@ -120,9 +122,7 @@
 							</td>
 							<td class="px-4 py-3">
 								<button
-									class="flex items-center gap-1.5 text-sm transition-colors"
-									class:text-success={module.enabled}
-									class:text-base-content/40={!module.enabled}
+									class={`flex items-center gap-1.5 text-sm transition-colors ${module.enabled ? 'text-success' : 'text-base-content/40'}`}
 									on:click={() => handleToggle(module)}
 									disabled={$enableMutation.isPending || $disableMutation.isPending}
 								>

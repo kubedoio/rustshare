@@ -2,8 +2,6 @@
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
-    response::IntoResponse,
     Json,
 };
 use rustshare_core::domain::Module;
@@ -11,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_action};
+use crate::services::module_service::UpdateModuleInput;
 use crate::{handlers::AdminUser, state::AppState};
 
 // ---------------------------------------------------------------------------
@@ -130,12 +129,14 @@ pub async fn update_module(
         .module_service
         .update_module(
             &key,
-            body.display_name,
-            body.description,
-            body.icon,
-            body.permissions,
-            body.ai_indexing,
-            body.audit,
+            UpdateModuleInput {
+                display_name: body.display_name,
+                description: body.description,
+                icon: body.icon,
+                permissions: body.permissions,
+                ai_indexing: body.ai_indexing,
+                audit: body.audit,
+            },
             state.default_tenant_id,
         )
         .await

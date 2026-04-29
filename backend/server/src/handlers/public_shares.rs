@@ -385,7 +385,10 @@ pub async fn get_shared_folder_contents(
         .ok_or_else(|| internal_error("Invalid share: missing folder_id"))?;
 
     // Hide module metadata sidecar files from public share listings
-    let visible_files: Vec<_> = files.into_iter().filter(|f| !f.name.starts_with(".rustshare")).collect();
+    let visible_files: Vec<_> = files
+        .into_iter()
+        .filter(|f| !f.name.starts_with(".rustshare"))
+        .collect();
 
     Ok(Json(SharedFolderContentsResponse {
         root_folder_id,

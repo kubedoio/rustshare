@@ -3,7 +3,7 @@
 use bytes::Bytes;
 use chrono::Utc;
 use rustshare_core::{
-    domain::{Template, TemplateDefaultFile, CreatedObject, UserId},
+    domain::{CreatedObject, Template, TemplateDefaultFile, UserId},
     services::{FileService, FolderService},
 };
 use rustshare_storage::{MetadataStore, ObjectStore};
@@ -595,11 +595,7 @@ impl TemplateService {
     }
 
     /// Delete a template. Predefined templates cannot be deleted; they are disabled.
-    pub async fn delete_template(
-        &self,
-        key: &str,
-        tenant_id: Uuid,
-    ) -> Result<(), TemplateError> {
+    pub async fn delete_template(&self, key: &str, tenant_id: Uuid) -> Result<(), TemplateError> {
         let template = self.get_template(key, tenant_id).await?;
 
         // Prevent deletion of predefined templates
@@ -609,13 +605,11 @@ impl TemplateService {
             ));
         }
 
-        sqlx::query(
-            "DELETE FROM templates WHERE template_key = $1 AND tenant_id = $2",
-        )
-        .bind(key)
-        .bind(tenant_id)
-        .execute(self.metadata_store.pool())
-        .await?;
+        sqlx::query("DELETE FROM templates WHERE template_key = $1 AND tenant_id = $2")
+            .bind(key)
+            .bind(tenant_id)
+            .execute(self.metadata_store.pool())
+            .await?;
 
         Ok(())
     }
@@ -661,7 +655,9 @@ impl TemplateService {
             .bind(tenant_id)
             .fetch_one(self.metadata_store.pool())
             .await
-            .map_err(|e| TemplateError::Database(format!("Failed to resolve module root: {}", e)))?;
+            .map_err(|e| {
+                TemplateError::Database(format!("Failed to resolve module root: {}", e))
+            })?;
 
             let root_name = root_path.trim_start_matches('/');
 
@@ -702,7 +698,9 @@ impl TemplateService {
             serde_json::from_value(template.default_files.clone())?;
         for file in default_files {
             let content = file.content.unwrap_or_default();
-            let mime_type = file.content_type.unwrap_or_else(|| "text/plain".to_string());
+            let mime_type = file
+                .content_type
+                .unwrap_or_else(|| "text/plain".to_string());
 
             self.file_service
                 .upload_file(

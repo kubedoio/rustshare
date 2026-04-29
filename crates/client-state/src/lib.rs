@@ -183,7 +183,10 @@ impl Database {
             conn.execute("ALTER TABLE file_states ADD COLUMN tombstone_side TEXT", [])?;
         }
         if !existing.contains("tombstone_at") {
-            conn.execute("ALTER TABLE file_states ADD COLUMN tombstone_at INTEGER", [])?;
+            conn.execute(
+                "ALTER TABLE file_states ADD COLUMN tombstone_at INTEGER",
+                [],
+            )?;
         }
 
         Ok(())
@@ -366,8 +369,7 @@ impl Database {
                     remote_hash: row.get(2)?,
                     local_modified_at: row.get(3)?,
                     remote_modified_at: row.get(4)?,
-                    remote_file_id: remote_file_id
-                        .and_then(|bytes| Uuid::from_slice(&bytes).ok()),
+                    remote_file_id: remote_file_id.and_then(|bytes| Uuid::from_slice(&bytes).ok()),
                     size: row.get(6)?,
                     is_directory: row.get(7)?,
                     sync_status: row.get(8)?,
@@ -375,7 +377,7 @@ impl Database {
                     tombstone_at: row.get(10)?,
                     last_sync_at: row.get(11)?,
                 })
-            }
+            },
         );
 
         match result {
@@ -419,7 +421,7 @@ impl Database {
                 state.last_sync_at,
             ],
         )?;
-        
+
         Ok(self.conn.last_insert_rowid())
     }
 
@@ -449,8 +451,7 @@ impl Database {
                 local_hash: row.get(2)?,
                 remote_hash: row.get(3)?,
                 local_modified_at: row.get(4)?,
-                remote_file_id: remote_file_id
-                    .and_then(|bytes| Uuid::from_slice(&bytes).ok()),
+                remote_file_id: remote_file_id.and_then(|bytes| Uuid::from_slice(&bytes).ok()),
                 remote_modified_at: row.get(6)?,
                 size: row.get(7)?,
                 is_directory: row.get(8)?,
@@ -475,7 +476,7 @@ impl Database {
     pub fn get_upload_session(&self, file_state_id: i64) -> Result<Option<UploadSession>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, session_id, total_chunks, uploaded_chunks, chunk_size, expires_at 
-             FROM upload_sessions WHERE file_state_id = ?"
+             FROM upload_sessions WHERE file_state_id = ?",
         )?;
 
         let result = stmt.query_row([file_state_id], |row| {
@@ -517,7 +518,7 @@ impl Database {
                 session.expires_at,
             ],
         )?;
-        
+
         Ok(self.conn.last_insert_rowid())
     }
 
@@ -620,9 +621,7 @@ impl Database {
     }
 
     pub fn clear_all_broken_remote_entries(&self) -> Result<usize> {
-        let deleted = self
-            .conn
-            .execute("DELETE FROM broken_remote_entries", [])?;
+        let deleted = self.conn.execute("DELETE FROM broken_remote_entries", [])?;
         Ok(deleted)
     }
 
@@ -639,12 +638,17 @@ impl Database {
             root_id,
             relative_path: relative_path.to_path_buf(),
             local_hash: existing.as_ref().and_then(|state| state.local_hash.clone()),
-            remote_hash: existing.as_ref().and_then(|state| state.remote_hash.clone()),
+            remote_hash: existing
+                .as_ref()
+                .and_then(|state| state.remote_hash.clone()),
             remote_file_id: existing.as_ref().and_then(|state| state.remote_file_id),
             local_modified_at: existing.as_ref().and_then(|state| state.local_modified_at),
             remote_modified_at: existing.as_ref().and_then(|state| state.remote_modified_at),
             size: existing.as_ref().and_then(|state| state.size),
-            is_directory: existing.as_ref().and_then(|state| state.is_directory).or(Some(false)),
+            is_directory: existing
+                .as_ref()
+                .and_then(|state| state.is_directory)
+                .or(Some(false)),
             sync_status: Some("tombstone".to_string()),
             tombstone_side: Some(source_side.to_string()),
             tombstone_at: Some(deleted_at),

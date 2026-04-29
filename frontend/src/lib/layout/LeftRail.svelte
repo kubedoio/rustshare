@@ -1,15 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import Logo from '$lib/ui/Logo.svelte';
-	import {
-		Hop as Home,
-		FolderOpen,
-		Settings,
-		Users,
-		Clock,
-		Star,
-		Image
-	} from 'lucide-svelte';
+	import { Hop as Home, FolderOpen, Settings, Users, Clock, Star, Image } from 'lucide-svelte';
 
 	interface RailItem {
 		icon: typeof Home;
@@ -30,8 +22,7 @@
 			label: 'Folders',
 			href: '/files',
 			active: (path) => path === '/files' || path.startsWith('/files')
-		},
-
+		}
 	];
 
 	const secondaryItems: RailItem[] = [

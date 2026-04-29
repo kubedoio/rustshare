@@ -68,7 +68,7 @@ mod tests {
 
     #[test]
     fn test_template_default_file_deserialization() {
-        let json = r#"{"path":"index.md","content":"# Note","contentType":"text/markdown"}"#;
+        let json = r##"{"path":"index.md","content":"# Note","contentType":"text/markdown"}"##;
         let file: TemplateDefaultFile = serde_json::from_str(json).unwrap();
         assert_eq!(file.path, "index.md");
         assert_eq!(file.content, Some("# Note".to_string()));

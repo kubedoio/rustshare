@@ -3,9 +3,9 @@
 use chrono::Utc;
 use rustshare_core::{
     domain::{Module, UserId},
-    services::{FileService, FolderService},
+    services::FolderService,
 };
-use rustshare_storage::{MetadataStore, ObjectStore};
+use rustshare_storage::MetadataStore;
 use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -76,30 +76,24 @@ impl From<sqlx::Error> for ModuleError {
 
 /// Service for managing workspace modules.
 pub struct ModuleService {
-    file_service: Arc<
-        FileService<
-            rustshare_storage::EventStore,
-            MetadataStore,
-            ObjectStore,
-            PermissionResolverRepository,
-        >,
-    >,
     folder_service: Arc<
         FolderService<rustshare_storage::EventStore, MetadataStore, PermissionResolverRepository>,
     >,
     metadata_store: Arc<MetadataStore>,
 }
 
+#[derive(Debug)]
+pub struct UpdateModuleInput {
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+    pub icon: Option<String>,
+    pub permissions: Option<serde_json::Value>,
+    pub ai_indexing: Option<serde_json::Value>,
+    pub audit: Option<serde_json::Value>,
+}
+
 impl ModuleService {
     pub fn new(
-        file_service: Arc<
-            FileService<
-                rustshare_storage::EventStore,
-                MetadataStore,
-                ObjectStore,
-                PermissionResolverRepository,
-            >,
-        >,
         folder_service: Arc<
             FolderService<
                 rustshare_storage::EventStore,
@@ -110,7 +104,6 @@ impl ModuleService {
         metadata_store: Arc<MetadataStore>,
     ) -> Self {
         Self {
-            file_service,
             folder_service,
             metadata_store,
         }
@@ -272,7 +265,8 @@ impl ModuleService {
         }
 
         // Ensure root folder exists
-        self.ensure_module_root_folder(&module, actor_id, tenant_id).await?;
+        self.ensure_module_root_folder(&module, actor_id, tenant_id)
+            .await?;
 
         // Mark enabled
         sqlx::query(
@@ -323,10 +317,7 @@ impl ModuleService {
     }
 
     /// List enabled modules (for dashboard).
-    pub async fn list_enabled_modules(
-        &self,
-        tenant_id: Uuid,
-    ) -> Result<Vec<Module>, ModuleError> {
+    pub async fn list_enabled_modules(&self, tenant_id: Uuid) -> Result<Vec<Module>, ModuleError> {
         let modules: Vec<Module> = sqlx::query_as::<_, Module>(
             "SELECT * FROM modules WHERE enabled = true AND tenant_id = $1 ORDER BY display_name",
         )
@@ -354,22 +345,17 @@ impl ModuleService {
     pub async fn update_module(
         &self,
         key: &str,
-        display_name: Option<String>,
-        description: Option<String>,
-        icon: Option<String>,
-        permissions: Option<serde_json::Value>,
-        ai_indexing: Option<serde_json::Value>,
-        audit: Option<serde_json::Value>,
+        input: UpdateModuleInput,
         tenant_id: Uuid,
     ) -> Result<Module, ModuleError> {
         let module = self.get_module(key, tenant_id).await?;
 
-        let display_name = display_name.unwrap_or(module.display_name);
-        let description = description.unwrap_or(module.description);
-        let icon = icon.unwrap_or(module.icon);
-        let permissions = permissions.unwrap_or(module.permissions);
-        let ai_indexing = ai_indexing.unwrap_or(module.ai_indexing);
-        let audit = audit.unwrap_or(module.audit);
+        let display_name = input.display_name.unwrap_or(module.display_name);
+        let description = input.description.unwrap_or(module.description);
+        let icon = input.icon.unwrap_or(module.icon);
+        let permissions = input.permissions.unwrap_or(module.permissions);
+        let ai_indexing = input.ai_indexing.unwrap_or(module.ai_indexing);
+        let audit = input.audit.unwrap_or(module.audit);
 
         sqlx::query(
             r#"
@@ -400,10 +386,7 @@ impl ModuleService {
         owner_id: UserId,
         tenant_id: Uuid,
     ) -> Result<(), ModuleError> {
-        let root_name = module
-            .root_path
-            .trim_start_matches('/')
-            .to_string();
+        let root_name = module.root_path.trim_start_matches('/').to_string();
 
         if root_name.is_empty() {
             return Err(ModuleError::InvalidName(

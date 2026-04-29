@@ -222,25 +222,28 @@ enum FilterAction {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    
+
     // Handle daemon start specially - must be done before tokio runtime
     // because daemonize forks and forking from async context causes issues
-    if let Commands::Daemon { command: DaemonCommands::Start } = &cli.command {
+    if let Commands::Daemon {
+        command: DaemonCommands::Start,
+    } = &cli.command
+    {
         return run_daemon_start(&cli);
     }
-    
+
     // Run the async main for all other commands
     tokio::runtime::Runtime::new()?.block_on(async_main(cli))
 }
 
 fn run_daemon_start(cli: &Cli) -> Result<()> {
-    use std::process::Command;
     #[cfg(unix)]
     use std::os::unix::process::CommandExt;
-    
+    use std::process::Command;
+
     let app_data_dir = PathManager::get_app_data_dir()?;
     let daemon_handle = DaemonHandle::new(app_data_dir.clone());
-    
+
     // Check if already running
     if daemon_handle.is_running() {
         if let Some(pid) = daemon_handle.get_pid() {
@@ -250,17 +253,17 @@ fn run_daemon_start(cli: &Cli) -> Result<()> {
         }
         return Ok(());
     }
-    
+
     // Cleanup stale files
     daemon_handle.cleanup_stale()?;
-    
+
     println!("Starting RustShare daemon...");
-    
+
     // Spawn daemon as detached process instead of using daemonize
     // This avoids the tokio runtime fork issues
     let log_path = app_data_dir.join("daemon.log");
     std::fs::create_dir_all(&app_data_dir)?;
-    
+
     let mut command = Command::new(std::env::current_exe()?);
     command
         .args(daemon_run_args(cli))
@@ -278,10 +281,10 @@ fn run_daemon_start(cli: &Cli) -> Result<()> {
     }
 
     let child = command.spawn()?;
-    
+
     // Write PID file
     std::fs::write(daemon_handle.pid_file(), child.id().to_string())?;
-    
+
     println!("Daemon started successfully (PID: {})", child.id());
     Ok(())
 }
@@ -356,7 +359,7 @@ async fn async_main(cli: Cli) -> Result<()> {
             None
         }
     };
-    
+
     // Fallback: try to load from token file (for daemon process)
     let token = token.or_else(|| {
         let token_path = app_data_dir.join("token.txt");
@@ -372,11 +375,14 @@ async fn async_main(cli: Cli) -> Result<()> {
             }
         }
     });
-    
+
     if let Some(token) = token {
         client.set_token(token);
     } else {
-        warn!("No auth token available for device {}. Login required.", device_id);
+        warn!(
+            "No auth token available for device {}. Login required.",
+            device_id
+        );
     }
 
     let socket_path = app_data_dir.join("daemon.sock");
@@ -389,10 +395,15 @@ async fn async_main(cli: Cli) -> Result<()> {
                 Box::pin(interactive_pairing(server))
             })
             .await?;
-            if let Err(e) = token_store.save_token(&device_token.device_id.to_string(), &device_token.token) {
+            if let Err(e) =
+                token_store.save_token(&device_token.device_id.to_string(), &device_token.token)
+            {
                 warn!("Failed to save auth token to keychain: {}", e);
             } else {
-                info!("Saved auth token to keychain for device {}", device_token.device_id);
+                info!(
+                    "Saved auth token to keychain for device {}",
+                    device_token.device_id
+                );
             }
             persist_daemon_token(&app_data_dir, &device_token.token)?;
             println!("✓ Authenticated successfully.");
@@ -409,14 +420,14 @@ async fn async_main(cli: Cli) -> Result<()> {
                     remote_path: remote_path.clone(),
                     local_path: resolved_local_path.clone(),
                 };
-                
+
                 // Register in database
                 core.register_root(root).await?;
-                
+
                 // Also add to config.toml for persistence
                 let mut config = Config::load()?;
                 config.add_sync_folder(root_id, resolved_local_path)?;
-                
+
                 println!("✓ Registered sync root {}", root_id);
             }
             SyncAction::List => {
@@ -469,7 +480,11 @@ async fn async_main(cli: Cli) -> Result<()> {
                         Some(root_id) => db.clear_broken_remote_entries(root_id)?,
                         None => db.clear_all_broken_remote_entries()?,
                     };
-                    println!("Cleared {} quarantined broken remote entr{}", cleared, if cleared == 1 { "y" } else { "ies" });
+                    println!(
+                        "Cleared {} quarantined broken remote entr{}",
+                        cleared,
+                        if cleared == 1 { "y" } else { "ies" }
+                    );
                 }
 
                 let mut roots = db.get_sync_roots()?;
@@ -485,7 +500,11 @@ async fn async_main(cli: Cli) -> Result<()> {
                     }
                 }
             }
-            SyncAction::CleanupRemote { root_id, limit, apply } => {
+            SyncAction::CleanupRemote {
+                root_id,
+                limit,
+                apply,
+            } => {
                 let cleanup_targets = {
                     let db_arc = core.manager.database();
                     let db = db_arc.lock().await;
@@ -606,7 +625,10 @@ async fn async_main(cli: Cli) -> Result<()> {
                         if processed == 0 {
                             println!("  No unique quarantined entries to process.");
                         } else if total_entries > processed {
-                            println!("  ... {} additional entries not shown", total_entries - processed);
+                            println!(
+                                "  ... {} additional entries not shown",
+                                total_entries - processed
+                            );
                         }
                     }
 
@@ -616,7 +638,9 @@ async fn async_main(cli: Cli) -> Result<()> {
                         confirmed_missing, recovered, deleted, delete_errors
                     );
                     if !apply {
-                        println!("Dry run only. Re-run with --apply to delete confirmed stale metadata.");
+                        println!(
+                            "Dry run only. Re-run with --apply to delete confirmed stale metadata."
+                        );
                     }
                 }
             }
@@ -902,9 +926,7 @@ fn read_log_tail(log_path: &std::path::Path, tail: usize) -> Result<String> {
 
     let file = fs::File::open(log_path)?;
     let reader = BufReader::new(file);
-    let lines = reader
-        .lines()
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let lines = reader.lines().collect::<std::result::Result<Vec<_>, _>>()?;
 
     let start = lines.len().saturating_sub(tail);
     let mut output = lines[start..].join("\n");
@@ -1252,11 +1274,12 @@ mod tests {
 
         match cli.command {
             Commands::Sync {
-                action: SyncAction::Doctor {
-                    root_id: parsed_root_id,
-                    limit,
-                    clear_quarantine,
-                },
+                action:
+                    SyncAction::Doctor {
+                        root_id: parsed_root_id,
+                        limit,
+                        clear_quarantine,
+                    },
             } => {
                 assert_eq!(parsed_root_id, Some(Uuid::nil()));
                 assert_eq!(limit, 25);
@@ -1282,11 +1305,12 @@ mod tests {
 
         match cli.command {
             Commands::Sync {
-                action: SyncAction::CleanupRemote {
-                    root_id: parsed_root_id,
-                    limit,
-                    apply,
-                },
+                action:
+                    SyncAction::CleanupRemote {
+                        root_id: parsed_root_id,
+                        limit,
+                        apply,
+                    },
             } => {
                 assert_eq!(parsed_root_id, Some(Uuid::nil()));
                 assert_eq!(limit, 12);

@@ -29,7 +29,7 @@
 			<ModuleIcon name={module.icon} size={20} />
 		</div>
 		<span
-			class="rounded-full border border-base-300/60 bg-base-200/50 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-base-content/50"
+			class="rounded-full border border-base-300/60 bg-base-200/50 px-2.5 py-0.5 text-[10px] font-semibold tracking-wider text-base-content/50 uppercase"
 		>
 			{module.root_path}
 		</span>

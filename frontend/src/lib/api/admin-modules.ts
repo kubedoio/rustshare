@@ -1,6 +1,14 @@
 import { apiClient } from './client';
 import type { ModuleConfig, TemplateConfig, TemplateDefaultFile } from './types';
 
+interface AdminModulesResponse {
+	modules: ModuleConfig[];
+}
+
+interface AdminTemplatesResponse {
+	templates: TemplateConfig[];
+}
+
 export interface CreateTemplateRequest {
 	template_key: string;
 	name: string;
@@ -14,7 +22,8 @@ export interface CreateTemplateRequest {
 }
 
 export async function listAdminModules(): Promise<ModuleConfig[]> {
-	return apiClient.get<ModuleConfig[]>('/admin/modules');
+	const response = await apiClient.get<AdminModulesResponse>('/admin/modules');
+	return response.modules;
 }
 
 export async function getAdminModule(key: string): Promise<ModuleConfig> {
@@ -37,7 +46,8 @@ export async function updateModule(
 }
 
 export async function listAdminTemplates(): Promise<TemplateConfig[]> {
-	return apiClient.get<TemplateConfig[]>('/admin/templates');
+	const response = await apiClient.get<AdminTemplatesResponse>('/admin/templates');
+	return response.templates;
 }
 
 export async function getAdminTemplate(key: string): Promise<TemplateConfig> {

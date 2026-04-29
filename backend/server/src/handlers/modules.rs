@@ -2,6 +2,7 @@
 
 use axum::{
     extract::{Path, State},
+    response::IntoResponse,
     Json,
 };
 use rustshare_core::domain::{CreateFromTemplateRequest, CreatedObject, Module};
@@ -33,7 +34,10 @@ pub struct ModuleDetailResponse {
 // ---------------------------------------------------------------------------
 
 pub async fn list_enabled_modules(
-    AuthenticatedUser { user_id: _, tenant_id }: AuthenticatedUser,
+    AuthenticatedUser {
+        user_id: _,
+        tenant_id,
+    }: AuthenticatedUser,
     State(state): State<AppState>,
 ) -> Result<Json<EnabledModulesResponse>, axum::response::Response> {
     let modules = state
@@ -52,7 +56,10 @@ pub async fn list_enabled_modules(
 }
 
 pub async fn get_module(
-    AuthenticatedUser { user_id: _, tenant_id }: AuthenticatedUser,
+    AuthenticatedUser {
+        user_id: _,
+        tenant_id,
+    }: AuthenticatedUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<Json<ModuleDetailResponse>, axum::response::Response> {
@@ -77,9 +84,7 @@ pub async fn get_module(
             .into_response());
     }
 
-    Ok(Json(ModuleDetailResponse {
-        module,
-    }))
+    Ok(Json(ModuleDetailResponse { module }))
 }
 
 pub async fn create_from_template(
@@ -125,5 +130,3 @@ pub async fn create_from_template(
 
     Ok(Json(object))
 }
-
-

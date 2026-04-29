@@ -133,7 +133,6 @@ pub async fn init_app() -> Result<AppState> {
         Arc::clone(&object_store),
     ));
     let module_service = Arc::new(crate::services::module_service::ModuleService::new(
-        Arc::clone(&file_service),
         Arc::clone(&folder_service),
         Arc::clone(&metadata_store),
     ));
@@ -305,9 +304,13 @@ pub async fn init_app() -> Result<AppState> {
     .await?;
 
     // Seed default modules and templates
-    module_service.ensure_default_modules(default_tenant_id).await
+    module_service
+        .ensure_default_modules(default_tenant_id)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to seed default modules: {}", e))?;
-    template_service.ensure_default_templates(default_tenant_id).await
+    template_service
+        .ensure_default_templates(default_tenant_id)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to seed default templates: {}", e))?;
     info!("Default modules and templates seeded");
 

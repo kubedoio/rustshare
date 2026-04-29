@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { createMutation, useQueryClient } from '$lib/query-compat';
+	import { createMutation, createQuery, useQueryClient } from '$lib/query-compat';
 	import { createTemplate } from '$lib/api/admin-modules';
 	import { listAdminModules } from '$lib/api/admin-modules';
-	import { toast } from '$lib/stores/toast';
+	import { toastStore } from '$lib/stores/toast';
 	import { ArrowLeft, Plus, AlertCircle } from 'lucide-svelte';
 
 	const queryClient = useQueryClient();
@@ -13,7 +13,8 @@
 	let moduleKey = '';
 	let description = '';
 	let folderStructureJson = '[\n  "subfolder-1",\n  "subfolder-2"\n]';
-	let defaultFilesJson = '[\n  {\n    "path": "README.md",\n    "content": "# Hello",\n    "contentType": "text/markdown"\n  }\n]';
+	let defaultFilesJson =
+		'[\n  {\n    "path": "README.md",\n    "content": "# Hello",\n    "contentType": "text/markdown"\n  }\n]';
 	let metadataSchemaJson = '{}';
 	let renderer = '';
 	let visibilityPolicy = 'workspace';
@@ -24,15 +25,15 @@
 		queryFn: () => listAdminModules()
 	});
 
-	const createMutation = createMutation({
+	const createTemplateMutation = createMutation({
 		mutationFn: createTemplate,
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['admin-templates'] });
-			toast.success('Template created');
+			toastStore.show('Template created', 'success');
 			goto('/admin/templates');
 		},
 		onError: (err: Error) => {
-			toast.error(err.message);
+			toastStore.show(err.message, 'error');
 		}
 	});
 
@@ -40,7 +41,9 @@
 		try {
 			return JSON.parse(value);
 		} catch (e) {
-			throw new Error(`Invalid JSON in ${label}: ${e instanceof Error ? e.message : String(e)}`);
+			throw new Error(`Invalid JSON in ${label}: ${e instanceof Error ? e.message : String(e)}`, {
+				cause: e
+			});
 		}
 	}
 
@@ -57,7 +60,7 @@
 			const defaultFiles = validateJson('Default Files', defaultFilesJson);
 			const metadataSchema = validateJson('Metadata Schema', metadataSchemaJson);
 
-			$createMutation.mutate({
+			$createTemplateMutation.mutate({
 				template_key: templateKey.trim(),
 				name: name.trim(),
 				module_key: moduleKey,
@@ -91,7 +94,9 @@
 	<p class="mt-1 text-sm text-base-content/60">Create a custom template for workspace modules.</p>
 
 	{#if error}
-		<div class="mt-4 flex items-center gap-2 rounded-xl border border-error/30 bg-error/5 p-3 text-sm text-error">
+		<div
+			class="mt-4 flex items-center gap-2 rounded-xl border border-error/30 bg-error/5 p-3 text-sm text-error"
+		>
 			<AlertCircle size={16} />
 			{error}
 		</div>
@@ -99,7 +104,7 @@
 
 	<form on:submit|preventDefault={handleSubmit} class="mt-6 flex flex-col gap-4">
 		<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6 shadow-sm">
-			<h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-base-content">
+			<h2 class="mb-4 text-sm font-semibold tracking-wider text-base-content uppercase">
 				Basic Information
 			</h2>
 			<div class="grid gap-4">
@@ -108,18 +113,20 @@
 						<label class="text-xs font-semibold text-base-content/70">Template Key *</label>
 						<input
 							type="text"
-							class="input input-bordered input-sm"
+							class="input-bordered input input-sm"
 							placeholder="my-custom-template"
 							bind:value={templateKey}
 							required
 						/>
-						<p class="text-[10px] text-base-content/40">Unique identifier, e.g. template_custom_notes</p>
+						<p class="text-[10px] text-base-content/40">
+							Unique identifier, e.g. template_custom_notes
+						</p>
 					</div>
 					<div class="flex flex-col gap-1">
 						<label class="text-xs font-semibold text-base-content/70">Template Name *</label>
 						<input
 							type="text"
-							class="input input-bordered input-sm"
+							class="input-bordered input input-sm"
 							placeholder="My Custom Template"
 							bind:value={name}
 							required
@@ -129,7 +136,7 @@
 
 				<div class="flex flex-col gap-1">
 					<label class="text-xs font-semibold text-base-content/70">Module *</label>
-					<select class="select select-bordered select-sm" bind:value={moduleKey} required>
+					<select class="select-bordered select select-sm" bind:value={moduleKey} required>
 						<option value="" disabled>Select a module</option>
 						{#each $modulesQuery.data ?? [] as mod}
 							<option value={mod.module_key}>{mod.display_name}</option>
@@ -140,7 +147,7 @@
 				<div class="flex flex-col gap-1">
 					<label class="text-xs font-semibold text-base-content/70">Description</label>
 					<textarea
-						class="textarea textarea-bordered textarea-sm"
+						class="textarea-bordered textarea textarea-sm"
 						placeholder="What this template creates..."
 						bind:value={description}
 						rows={2}
@@ -152,14 +159,14 @@
 						<label class="text-xs font-semibold text-base-content/70">Renderer</label>
 						<input
 							type="text"
-							class="input input-bordered input-sm"
+							class="input-bordered input input-sm"
 							placeholder="e.g. notes, kanban"
 							bind:value={renderer}
 						/>
 					</div>
 					<div class="flex flex-col gap-1">
 						<label class="text-xs font-semibold text-base-content/70">Visibility Policy</label>
-						<select class="select select-bordered select-sm" bind:value={visibilityPolicy}>
+						<select class="select-bordered select select-sm" bind:value={visibilityPolicy}>
 							<option value="workspace">Workspace</option>
 							<option value="admin-only">Admin Only</option>
 							<option value="public">Public</option>
@@ -170,32 +177,38 @@
 		</div>
 
 		<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6 shadow-sm">
-			<h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-base-content">
+			<h2 class="mb-4 text-sm font-semibold tracking-wider text-base-content uppercase">
 				Structure & Content
 			</h2>
 			<div class="flex flex-col gap-4">
 				<div class="flex flex-col gap-1">
-					<label class="text-xs font-semibold text-base-content/70">Folder Structure (JSON array)</label>
+					<label class="text-xs font-semibold text-base-content/70"
+						>Folder Structure (JSON array)</label
+					>
 					<textarea
-						class="font-mono textarea textarea-bordered textarea-sm text-xs"
+						class="textarea-bordered textarea font-mono text-xs textarea-sm"
 						bind:value={folderStructureJson}
 						rows={4}
 					></textarea>
 				</div>
 
 				<div class="flex flex-col gap-1">
-					<label class="text-xs font-semibold text-base-content/70">Default Files (JSON array)</label>
+					<label class="text-xs font-semibold text-base-content/70"
+						>Default Files (JSON array)</label
+					>
 					<textarea
-						class="font-mono textarea textarea-bordered textarea-sm text-xs"
+						class="textarea-bordered textarea font-mono text-xs textarea-sm"
 						bind:value={defaultFilesJson}
 						rows={6}
 					></textarea>
 				</div>
 
 				<div class="flex flex-col gap-1">
-					<label class="text-xs font-semibold text-base-content/70">Metadata Schema (JSON object)</label>
+					<label class="text-xs font-semibold text-base-content/70"
+						>Metadata Schema (JSON object)</label
+					>
 					<textarea
-						class="font-mono textarea textarea-bordered textarea-sm text-xs"
+						class="textarea-bordered textarea font-mono text-xs textarea-sm"
 						bind:value={metadataSchemaJson}
 						rows={4}
 					></textarea>
@@ -205,9 +218,13 @@
 
 		<div class="flex items-center justify-end gap-3">
 			<a href="/admin/templates" class="btn btn-ghost btn-sm">Cancel</a>
-			<button type="submit" class="btn btn-primary btn-sm" disabled={$createMutation.isPending}>
-				{#if $createMutation.isPending}
-					<span class="loading loading-spinner loading-xs"></span>
+			<button
+				type="submit"
+				class="btn btn-sm btn-primary"
+				disabled={$createTemplateMutation.isPending}
+			>
+				{#if $createTemplateMutation.isPending}
+					<span class="loading loading-xs loading-spinner"></span>
 				{:else}
 					<Plus size={14} />
 				{/if}

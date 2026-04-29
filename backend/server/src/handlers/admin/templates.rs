@@ -2,6 +2,7 @@
 
 use axum::{
     extract::{Path, State},
+    response::IntoResponse,
     Json,
 };
 use rustshare_core::domain::Template;
@@ -9,8 +10,8 @@ use serde::Serialize;
 use serde_json::json;
 
 use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_action};
-use crate::{handlers::AdminUser, state::AppState};
 use crate::services::template_service::{CreateTemplateRequest, UpdateTemplateRequest};
+use crate::{handlers::AdminUser, state::AppState};
 
 // ---------------------------------------------------------------------------
 // Request / response types

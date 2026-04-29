@@ -94,14 +94,13 @@ mod tests {
 
     #[test]
     fn test_module_permissions_parsing() {
-        let perms: ModulePermissions =
-            serde_json::from_value(serde_json::json!({
-                "admin_can_configure": true,
-                "workspace_members_can_use": true,
-                "allow_public_share": false,
-                "allow_internal_share": true
-            }))
-            .unwrap();
+        let perms: ModulePermissions = serde_json::from_value(serde_json::json!({
+            "admin_can_configure": true,
+            "workspace_members_can_use": true,
+            "allow_public_share": false,
+            "allow_internal_share": true
+        }))
+        .unwrap();
         assert!(perms.admin_can_configure);
         assert!(perms.workspace_members_can_use);
         assert!(!perms.allow_public_share);

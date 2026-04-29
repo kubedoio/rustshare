@@ -1,18 +1,15 @@
 use crate::client::ApiClient;
-use sync_protocol::{
-    CompleteUploadResponse, CreateUploadSessionRequest,
-    UploadChunkResponse,
-};
 use crate::retry::{with_retry, with_retry_sync, RetryConfig};
 use anyhow::{Context, Result};
 use client_state::{Database, FileState, UploadSession};
-use filetime::FileTime;
 use file_ops::atomic_rename;
+use filetime::FileTime;
 use futures_util::StreamExt;
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
 use sync_domain::{LocalEntry, RemoteEntry, SyncError};
+use sync_protocol::{CompleteUploadResponse, CreateUploadSessionRequest, UploadChunkResponse};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 use tracing::info;
@@ -250,13 +247,19 @@ mod tests {
             AxumPath(_file_id): AxumPath<Uuid>,
             State(body): State<Arc<Vec<u8>>>,
         ) -> (axum::http::StatusCode, Bytes) {
-            (axum::http::StatusCode::OK, Bytes::from(body.as_ref().clone()))
+            (
+                axum::http::StatusCode::OK,
+                Bytes::from(body.as_ref().clone()),
+            )
         }
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let app = Router::new()
-            .route("/api/v1/files/{file_id}/content", get(download_file_content))
+            .route(
+                "/api/v1/files/{file_id}/content",
+                get(download_file_content),
+            )
             .with_state(Arc::new(body));
 
         tokio::spawn(async move {
@@ -395,8 +398,7 @@ mod tests {
             name: "note.md".to_string(),
             entry_type: sync_domain::EntryType::File,
             size: body.len() as u64,
-            hash: "5c90a3b922e9376c872e234f4c56f14612549d59c8c83f9afdfab7f9221e8d07"
-                .to_string(),
+            hash: "5c90a3b922e9376c872e234f4c56f14612549d59c8c83f9afdfab7f9221e8d07".to_string(),
             version: "1".to_string(),
             modified_at,
         };
@@ -455,7 +457,7 @@ impl SyncWorker {
             info!("Skipping directory: {}", local.path.display());
             return Ok(());
         }
-        
+
         info!("Uploading {}...", local.path.display());
 
         let file_size = local.size;
@@ -463,19 +465,24 @@ impl SyncWorker {
         let file_hash = &local.hash;
 
         // Get or create file state
-        let file_state_id = self.get_or_create_file_state(remote_root, relative_path, local).await?;
+        let file_state_id = self
+            .get_or_create_file_state(remote_root, relative_path, local)
+            .await?;
 
         // Check for existing upload session
-        let session = self.get_or_create_upload_session(
-            file_state_id,
-            parent_folder_id,
-            relative_path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown"),
-            file_size,
-            total_chunks,
-            file_hash,
-        ).await?;
+        let session = self
+            .get_or_create_upload_session(
+                file_state_id,
+                parent_folder_id,
+                relative_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown"),
+                file_size,
+                total_chunks,
+                file_hash,
+            )
+            .await?;
 
         let session_id = session.session_id.clone();
         let uploaded_chunks = session.uploaded_chunks;
@@ -488,32 +495,40 @@ impl SyncWorker {
         // Upload remaining chunks
         for chunk_index in uploaded_chunks..total_chunks {
             let chunk_data = self.read_chunk(&local.path, chunk_index).await?;
-            
+
             // Upload chunk with retry
-            with_retry(&self.retry_config, &format!("upload chunk {}", chunk_index), || async {
-                self.upload_chunk(&session_id, chunk_index, chunk_data.clone()).await
-            }).await?;
+            with_retry(
+                &self.retry_config,
+                &format!("upload chunk {}", chunk_index),
+                || async {
+                    self.upload_chunk(&session_id, chunk_index, chunk_data.clone())
+                        .await
+                },
+            )
+            .await?;
 
             // Update progress in database
             let db = self.database.lock().await;
             db.update_uploaded_chunks(&session_id, chunk_index + 1)?;
             drop(db);
 
-            info!("Uploaded chunk {}/{} for {}", chunk_index + 1, total_chunks, local.path.display());
+            info!(
+                "Uploaded chunk {}/{} for {}",
+                chunk_index + 1,
+                total_chunks,
+                local.path.display()
+            );
         }
 
         // Complete the upload
-        let complete_result = with_retry_sync(
-            &self.retry_config,
-            "complete upload session",
-            || async {
+        let complete_result =
+            with_retry_sync(&self.retry_config, "complete upload session", || async {
                 self.complete_upload_session(&session_id)
                     .await
                     .map_err(to_sync_error)
-            }
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
         // Update file state as synced
         self.update_file_state_as_synced(
@@ -523,14 +538,19 @@ impl SyncWorker {
             local,
             &complete_result.content_hash,
             complete_result.file_id,
-        ).await?;
+        )
+        .await?;
 
         // Clean up upload session
         let db = self.database.lock().await;
         db.delete_upload_session(&session_id)?;
         drop(db);
 
-        info!("Successfully uploaded {} -> file_id={}", local.path.display(), complete_result.file_id);
+        info!(
+            "Successfully uploaded {} -> file_id={}",
+            local.path.display(),
+            complete_result.file_id
+        );
         Ok(())
     }
 
@@ -554,32 +574,38 @@ impl SyncWorker {
 
         // Ensure parent directory exists
         if let Some(parent) = temp_path.parent() {
-            tokio::fs::create_dir_all(parent).await
+            tokio::fs::create_dir_all(parent)
+                .await
                 .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
         }
 
         // Download with retry
-        let download_result = with_retry_sync(
-            &self.retry_config,
-            "download file",
-            || async { self.client.download_file(remote.id).await.map_err(to_sync_error) }
-        )
+        let download_result = with_retry_sync(&self.retry_config, "download file", || async {
+            self.client
+                .download_file(remote.id)
+                .await
+                .map_err(to_sync_error)
+        })
         .await;
 
         let response = download_result.map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
         // Stream response to temp file
-        let mut temp_file = tokio::fs::File::create(&temp_path).await
+        let mut temp_file = tokio::fs::File::create(&temp_path)
+            .await
             .with_context(|| format!("Failed to create temp file: {}", temp_path.display()))?;
 
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.context("Failed to read download chunk")?;
-            temp_file.write_all(&chunk).await
-                .with_context(|| format!("Failed to write to temp file: {}", temp_path.display()))?;
+            temp_file.write_all(&chunk).await.with_context(|| {
+                format!("Failed to write to temp file: {}", temp_path.display())
+            })?;
         }
 
-        temp_file.flush().await
+        temp_file
+            .flush()
+            .await
             .with_context(|| format!("Failed to flush temp file: {}", temp_path.display()))?;
         drop(temp_file);
 
@@ -594,8 +620,13 @@ impl SyncWorker {
         }
 
         // Atomic rename
-        atomic_rename(&temp_path, local_dest)
-            .with_context(|| format!("Failed to rename {} to {}", temp_path.display(), local_dest.display()))?;
+        atomic_rename(&temp_path, local_dest).with_context(|| {
+            format!(
+                "Failed to rename {} to {}",
+                temp_path.display(),
+                local_dest.display()
+            )
+        })?;
 
         // Preserve the remote timestamp locally so the next scan does not treat a fresh
         // download as a brand-new local edit.
@@ -604,14 +635,14 @@ impl SyncWorker {
             .with_context(|| format!("Failed to set modified time for {}", local_dest.display()))?;
 
         // Update file state
-        self.update_file_state_after_download(
-            root_id,
-            relative_path,
-            remote,
-            expected_hash,
-        ).await?;
+        self.update_file_state_after_download(root_id, relative_path, remote, expected_hash)
+            .await?;
 
-        info!("Successfully downloaded {} -> {}", remote.name, local_dest.display());
+        info!(
+            "Successfully downloaded {} -> {}",
+            remote.name,
+            local_dest.display()
+        );
         Ok(())
     }
 
@@ -626,7 +657,7 @@ impl SyncWorker {
         local: &LocalEntry,
     ) -> Result<i64> {
         let db = self.database.lock().await;
-        
+
         if let Some(existing) = db.get_file_state(root_id, relative_path)? {
             drop(db);
             return Ok(existing.id.unwrap_or(0));
@@ -722,12 +753,9 @@ impl SyncWorker {
         drop(db);
 
         // Create new session via API
-        let session_response = self.create_upload_session(
-            parent_folder_id,
-            file_size,
-            file_hash,
-            file_name,
-        ).await?;
+        let session_response = self
+            .create_upload_session(parent_folder_id, file_size, file_hash, file_name)
+            .await?;
 
         // Store session in database
         let session = UploadSession {
@@ -738,8 +766,7 @@ impl SyncWorker {
             uploaded_chunks: 0,
             chunk_size: CHUNK_SIZE as i32,
             expires_at: Some(
-                chrono::DateTime::parse_from_rfc3339(&session_response.expires_at)?
-                    .timestamp()
+                chrono::DateTime::parse_from_rfc3339(&session_response.expires_at)?.timestamp(),
             ),
         };
 
@@ -773,43 +800,46 @@ impl SyncWorker {
         chunk_index: i32,
         chunk_data: Vec<u8>,
     ) -> Result<UploadChunkResponse> {
-        let session_uuid = Uuid::parse_str(session_id)
-            .context("Invalid session ID format")?;
+        let session_uuid = Uuid::parse_str(session_id).context("Invalid session ID format")?;
 
         // Skip MD5 hash - server doesn't use Content-MD5 header correctly
-        let result = self.client
+        let result = self
+            .client
             .upload_chunk(session_uuid, chunk_index as u32, chunk_data, None)
             .await?;
 
         if !result.verified {
-            return Err(anyhow::anyhow!("Chunk {} hash verification failed", chunk_index));
+            return Err(anyhow::anyhow!(
+                "Chunk {} hash verification failed",
+                chunk_index
+            ));
         }
 
         Ok(result)
     }
 
-    async fn complete_upload_session(
-        &self,
-        session_id: &str,
-    ) -> Result<CompleteUploadResponse> {
-        let session_uuid = Uuid::parse_str(session_id)
-            .context("Invalid session ID format")?;
+    async fn complete_upload_session(&self, session_id: &str) -> Result<CompleteUploadResponse> {
+        let session_uuid = Uuid::parse_str(session_id).context("Invalid session ID format")?;
 
         self.client.complete_upload_session(session_uuid).await
     }
 
     async fn read_chunk(&self, file_path: &Path, chunk_index: i32) -> Result<Vec<u8>> {
         let offset = chunk_index as u64 * CHUNK_SIZE as u64;
-        let mut file = tokio::fs::File::open(file_path).await
+        let mut file = tokio::fs::File::open(file_path)
+            .await
             .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
 
         // Seek to chunk position
-        file.seek(std::io::SeekFrom::Start(offset)).await
+        file.seek(std::io::SeekFrom::Start(offset))
+            .await
             .with_context(|| format!("Failed to seek in file: {}", file_path.display()))?;
 
         // Read chunk
         let mut buffer = vec![0u8; CHUNK_SIZE];
-        let bytes_read = file.read(&mut buffer).await
+        let bytes_read = file
+            .read(&mut buffer)
+            .await
             .with_context(|| format!("Failed to read chunk from file: {}", file_path.display()))?;
 
         buffer.truncate(bytes_read);
@@ -820,7 +850,8 @@ impl SyncWorker {
         let computed_hash = tokio::task::spawn_blocking({
             let path = file_path.to_path_buf();
             move || file_ops::calculate_hash(&path)
-        }).await??;
+        })
+        .await??;
 
         Ok(computed_hash == expected_hash)
     }
