@@ -1,0 +1,102 @@
+name: Integration Tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'crates/**'
+      - '.github/workflows/integration-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'crates/**'
+      - '.github/workflows/integration-tests.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: rustshare
+          POSTGRES_USER: rustshare
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      CARGO_TERM_COLOR: always
+      DATABASE_URL: postgres://rustshare:postgres@localhost:5432/rustshare
+      JWT_SECRET: test-jwt-secret-that-is-32-chars-long-for-ci-run
+      RUSTSHARE_SECRET_ENCRYPTION_KEY: c2VjcmV0LWVuY3J5cHRpb24ta2V5LWhlcmUtMzItYnl0ZXM=
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      RUSTFS_ENDPOINT: http://127.0.0.1:9000
+      RUSTFS_PUBLIC_ENDPOINT: http://127.0.0.1:9000
+      RUSTFS_REGION: us-east-1
+      RUSTFS_BUCKET: rustshare-files
+      RUSTSHARE_ADMIN_PASSWORD: ci-admin-password-123
+      RUSTSHARE_ADMIN_EMAIL: admin@localhost
+      RUSTSHARE_ADMIN_USERNAME: admin
+      PASSWORD_LOGIN_ENABLED: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio server /data --console-address ":9001"
+
+      - name: Wait for MinIO to be ready
+        run: |
+          for i in {1..30}; do
+            if curl -s http://localhost:9000/minio/health/live; then
+              echo "MinIO is ready"
+              exit 0
+            fi
+            echo "Waiting for MinIO..."
+            sleep 2
+          done
+          echo "MinIO did not become ready in time"
+          exit 1
+
+      - name: Create MinIO bucket
+        run: |
+          docker run --rm --network host \
+            -e MC_HOST_local=http://minioadmin:minioadmin@127.0.0.1:9000 \
+            minio/mc mb --ignore-existing local/rustshare-files
+
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --features postgres
+
+      - name: Run migrations
+        run: cd backend && sqlx migrate run
+
+      - name: Run integration and contract tests
+        run: cd backend && cargo test --all-features -- --ignored
