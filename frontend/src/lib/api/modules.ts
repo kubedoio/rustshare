@@ -6,12 +6,26 @@ import type {
 	ModuleSummary
 } from './types';
 
+interface EnabledModulesResponse {
+	modules: ModuleConfig[];
+}
+
+interface ModuleDetailResponse {
+	module: ModuleConfig;
+}
+
+interface ModuleSummaryResponse {
+	summary: ModuleSummary;
+}
+
 export async function listEnabledModules(): Promise<ModuleConfig[]> {
-	return apiClient.get<ModuleConfig[]>('/modules');
+	const response = await apiClient.get<EnabledModulesResponse>('/modules');
+	return response.modules;
 }
 
 export async function getModule(key: string): Promise<ModuleConfig> {
-	return apiClient.get<ModuleConfig>(`/modules/${key}`);
+	const response = await apiClient.get<ModuleDetailResponse>(`/modules/${key}`);
+	return response.module;
 }
 
 export async function createFromTemplate(
@@ -21,5 +35,6 @@ export async function createFromTemplate(
 }
 
 export async function getModuleSummary(moduleKey: string): Promise<ModuleSummary> {
-	return apiClient.get<ModuleSummary>(`/modules/${moduleKey}/summary`);
+	const response = await apiClient.get<ModuleSummaryResponse>(`/modules/${moduleKey}/summary`);
+	return response.summary;
 }
