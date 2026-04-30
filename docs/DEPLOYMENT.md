@@ -388,6 +388,20 @@ Check that nginx is proxying `/api/` to the backend:
 curl -I http://localhost/api/v1/health
 ```
 
+For real-time sync and dashboard/module live updates, nginx must also proxy the websocket endpoint explicitly:
+
+```nginx
+location = /api/ws {
+    proxy_pass http://backend;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+    proxy_buffering off;
+}
+```
+
 If nginx returns 404, verify the container is healthy:
 
 ```bash

@@ -66,14 +66,14 @@
 
 <style>
 	.overview-shell {
-		display: grid;
-		grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
-		gap: 1rem;
-		align-items: stretch;
-		padding: 1.25rem 1.5rem;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1.25rem;
+		padding: 1.1rem 1.5rem;
 		border: 1px solid color-mix(in oklab, var(--base-300) 58%, transparent);
 		border-radius: 1.75rem;
-		min-height: 6.5rem;
+		min-height: 6rem;
 	}
 
 	.overview-title-block {
@@ -86,26 +86,28 @@
 
 	.overview-kicker {
 		margin: 0;
-		font-size: 0.72rem;
+		font-size: 0.68rem;
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
-		color: var(--brand-500);
+		color: color-mix(in oklab, var(--base-content) 58%, transparent);
 	}
 
 	.overview-title-block h1 {
 		margin: 0;
-		font-size: clamp(1.8rem, 3.2vw, 2.7rem);
-		line-height: 1.05;
+		font-size: clamp(1.6rem, 2.5vw, 2.15rem);
+		line-height: 1.08;
 		font-weight: 700;
 		color: var(--base-content);
 		font-family: 'Fraunces', serif;
 	}
 
 	.overview-stats {
-		display: grid;
-		grid-template-columns: repeat(4, minmax(0, 1fr));
-		gap: 0.9rem;
+		display: flex;
+		align-items: stretch;
+		justify-content: flex-end;
+		gap: 0.75rem;
+		flex-wrap: wrap;
 	}
 
 	.stat-card,
@@ -113,40 +115,45 @@
 		border: 1px solid color-mix(in oklab, var(--base-300) 52%, transparent);
 		border-radius: 1.25rem;
 		background: color-mix(in oklab, var(--base-100) 92%, white);
-		padding: 1rem;
-		min-width: 0;
+		padding: 0.85rem 0.95rem;
+		min-width: 7.5rem;
 	}
 
 	.stat-head {
 		display: flex;
 		align-items: center;
 		gap: 0.45rem;
-		margin-bottom: 0.65rem;
-		font-size: 0.82rem;
+		margin-bottom: 0.45rem;
+		font-size: 0.78rem;
 		font-weight: 600;
 		color: color-mix(in oklab, var(--base-content) 72%, transparent);
 	}
 
 	.stat-value {
 		margin: 0;
-		font-size: 1.25rem;
+		font-size: 1.05rem;
 		font-weight: 700;
 		color: var(--base-content);
+	}
+
+	.storage-card {
+		min-width: 11.5rem;
 	}
 
 	.storage-values {
 		display: flex;
 		align-items: baseline;
 		gap: 0.4rem;
-		margin-bottom: 0.75rem;
+		margin-bottom: 0.55rem;
+		white-space: nowrap;
 	}
 
 	.storage-values strong {
-		font-size: 1rem;
+		font-size: 0.98rem;
 	}
 
 	.storage-values span {
-		font-size: 0.8rem;
+		font-size: 0.76rem;
 		color: color-mix(in oklab, var(--base-content) 60%, transparent);
 	}
 
@@ -165,11 +172,12 @@
 
 	@media (max-width: 1199px) {
 		.overview-shell {
-			grid-template-columns: 1fr;
+			flex-direction: column;
+			align-items: stretch;
 		}
 
 		.overview-stats {
-			grid-template-columns: repeat(2, minmax(0, 1fr));
+			justify-content: flex-start;
 		}
 	}
 
@@ -179,11 +187,17 @@
 		}
 
 		.overview-stats {
-			grid-template-columns: 1fr;
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
 
 		.overview-title-block h1 {
-			font-size: 1.7rem;
+			font-size: 1.5rem;
+		}
+
+		.storage-card {
+			grid-column: 1 / -1;
+			min-width: 0;
 		}
 	}
 </style>

@@ -287,9 +287,19 @@ VITE_WS_URL=/api/ws
 
 **Solution:**
 
-Verify Nginx is forwarding WebSocket upgrade headers:
+Verify Nginx is forwarding WebSocket upgrade headers, and add an explicit websocket route before the generic `/api/` block:
 
 ```nginx
+location = /api/ws {
+    proxy_pass http://backend;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+    proxy_buffering off;
+}
+
 location /api/ {
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
@@ -297,7 +307,7 @@ location /api/ {
 }
 ```
 
-The included `docker/nginx.conf` already does this. If you use a custom proxy (Traefik, Caddy, Cloudflare), ensure WebSocket support is enabled.
+The included `docker/nginx.conf` now includes this explicit `/api/ws` handling. If you use a custom proxy (Traefik, Caddy, Cloudflare), ensure WebSocket support is enabled there too.
 
 ### Wrong `VITE_WS_URL`
 
