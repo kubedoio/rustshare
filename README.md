@@ -2,6 +2,10 @@
 
 RustShare is a modern file-sharing and sync platform for technical teams and security-conscious organizations.
 
+Our motto is: "Everything is a File."
+
+RustShare is built around files and their relationships.
+
 It is being designed as a serious alternative in the category of Nextcloud, Seafile, OpenCloud, and Dropbox-style systems, with a strong focus on:
 
 - self-hosted and private-cloud deployment
@@ -370,6 +374,8 @@ Index stores fast searchable projections.
 - Templates are reusable creation patterns inside modules.
 - UI definitions are stored in module and template manifests.
 - Sidebar and dashboard must be rendered from enabled module definitions, not hardcoded UI.
+- Dashboard module cards and compact summary actions are driven by module UI definitions.
+- Module routes resolve dynamically through `/modules/:moduleKey` and fall back to generic rendering when needed.
 - Disabled modules hide from navigation and dashboard but do not delete user data.
 - Public shares must never expose hidden RustShare metadata by default.
 

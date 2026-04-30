@@ -3,6 +3,7 @@
 	import { createMutation, createQuery, useQueryClient } from '$lib/query-compat';
 	import { createTemplate } from '$lib/api/admin-modules';
 	import { listAdminModules } from '$lib/api/admin-modules';
+	import { APPROVED_MODULE_ICONS } from '$lib/modules/iconRegistry';
 	import { toastStore } from '$lib/stores/toast';
 	import { ArrowLeft, Plus, AlertCircle } from 'lucide-svelte';
 
@@ -12,6 +13,8 @@
 	let name = '';
 	let moduleKey = '';
 	let description = '';
+	let createLabel = '';
+	let icon = 'file-text';
 	let folderStructureJson = '[\n  "subfolder-1",\n  "subfolder-2"\n]';
 	let defaultFilesJson =
 		'[\n  {\n    "path": "README.md",\n    "content": "# Hello",\n    "contentType": "text/markdown"\n  }\n]';
@@ -19,7 +22,6 @@
 	let renderer = '';
 	let visibilityPolicy = 'workspace';
 	let error = '';
-
 	const modulesQuery = createQuery({
 		queryKey: ['admin-modules'],
 		queryFn: () => listAdminModules()
@@ -65,6 +67,10 @@
 				name: name.trim(),
 				module_key: moduleKey,
 				description: description.trim(),
+				ui_config: {
+					createLabel: createLabel.trim() || undefined,
+					icon: icon.trim() || undefined
+				},
 				folder_structure: Array.isArray(folderStructure) ? folderStructure : [],
 				default_files: Array.isArray(defaultFiles) ? defaultFiles : [],
 				metadata_schema: metadataSchema as Record<string, unknown>,
@@ -168,7 +174,27 @@
 					></textarea>
 				</div>
 
-				<div class="grid gap-4 sm:grid-cols-2">
+				<div class="grid gap-4 sm:grid-cols-3">
+					<div class="flex flex-col gap-1">
+						<label class="text-xs font-semibold text-base-content/70" for="create-label"
+							>Create Label</label
+						>
+						<input
+							id="create-label"
+							type="text"
+							class="input-bordered input input-sm"
+							placeholder="New Note"
+							bind:value={createLabel}
+						/>
+					</div>
+					<div class="flex flex-col gap-1">
+						<label class="text-xs font-semibold text-base-content/70" for="icon">Icon</label>
+						<select id="icon" class="select-bordered select select-sm" bind:value={icon}>
+							{#each APPROVED_MODULE_ICONS as approvedIcon}
+								<option value={approvedIcon}>{approvedIcon}</option>
+							{/each}
+						</select>
+					</div>
 					<div class="flex flex-col gap-1">
 						<label class="text-xs font-semibold text-base-content/70" for="renderer">Renderer</label
 						>

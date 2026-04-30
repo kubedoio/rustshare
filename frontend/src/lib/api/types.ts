@@ -296,6 +296,7 @@ export interface TemplateConfig {
 	module_key: string;
 	version: string;
 	description: string;
+	ui_config?: TemplateUiConfig;
 	folder_structure: string[];
 	default_files: TemplateDefaultFile[];
 	metadata_schema: Record<string, unknown>;
@@ -311,6 +312,12 @@ export interface TemplateDefaultFile {
 	path: string;
 	content?: string;
 	content_type?: string;
+}
+
+export interface TemplateUiConfig {
+	createLabel?: string;
+	icon?: string;
+	form?: Record<string, unknown>;
 }
 
 export interface CreateFromTemplateRequest {
@@ -337,4 +344,5 @@ export interface ModuleSummary {
 	mode: string;
 	total_items: number;
 	recent_items: SummaryItem[];
+	extra?: Record<string, unknown> | null;
 }

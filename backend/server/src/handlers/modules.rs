@@ -35,14 +35,14 @@ pub struct ModuleDetailResponse {
 
 pub async fn list_enabled_modules(
     AuthenticatedUser {
-        user_id: _,
+        user_id,
         tenant_id,
     }: AuthenticatedUser,
     State(state): State<AppState>,
 ) -> Result<Json<EnabledModulesResponse>, axum::response::Response> {
     let modules = state
         .module_service
-        .list_enabled_modules(tenant_id)
+        .list_enabled_modules(tenant_id, user_id)
         .await
         .map_err(|e| {
             (
@@ -57,7 +57,7 @@ pub async fn list_enabled_modules(
 
 pub async fn get_module(
     AuthenticatedUser {
-        user_id: _,
+        user_id,
         tenant_id,
     }: AuthenticatedUser,
     State(state): State<AppState>,
@@ -78,8 +78,28 @@ pub async fn get_module(
 
     if !module.enabled {
         return Err((
-            axum::http::StatusCode::NOT_FOUND,
-            Json(ErrorResponse::new("Module not found".to_string())),
+            axum::http::StatusCode::FORBIDDEN,
+            Json(ErrorResponse::new("Module disabled".to_string())),
+        )
+            .into_response());
+    }
+
+    let visible_modules = state
+        .module_service
+        .list_enabled_modules(tenant_id, user_id)
+        .await
+        .map_err(|e| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new(e.to_string())),
+            )
+                .into_response()
+        })?;
+
+    if !visible_modules.iter().any(|visible| visible.module_key == module.module_key) {
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            Json(ErrorResponse::new("Access denied".to_string())),
         )
             .into_response());
     }
@@ -94,7 +114,7 @@ pub struct ModuleSummaryResponse {
 
 pub async fn get_module_summary(
     AuthenticatedUser {
-        user_id: _,
+        user_id,
         tenant_id,
     }: AuthenticatedUser,
     State(state): State<AppState>,
@@ -102,13 +122,15 @@ pub async fn get_module_summary(
 ) -> Result<Json<ModuleSummaryResponse>, axum::response::Response> {
     let summary = state
         .module_service
-        .get_module_summary(&key, tenant_id)
+        .get_module_summary(&key, tenant_id, user_id)
         .await
         .map_err(|e| {
             let status = if e.to_string().contains("not found") {
                 axum::http::StatusCode::NOT_FOUND
+            } else if e.to_string().contains("Permission denied") {
+                axum::http::StatusCode::FORBIDDEN
             } else {
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                axum::http::StatusCode::BAD_REQUEST
             };
             (status, Json(ErrorResponse::new(e.to_string()))).into_response()
         })?;

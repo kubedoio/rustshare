@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { createMutation, createQuery, useQueryClient } from '$lib/query-compat';
 	import { getAdminModule, updateModule, listAdminTemplates } from '$lib/api/admin-modules';
+	import { APPROVED_MODULE_ICONS } from '$lib/modules/iconRegistry';
 	import { toastStore } from '$lib/stores/toast';
 	import { ArrowLeft, Save, AlertCircle } from 'lucide-svelte';
 
@@ -26,23 +27,17 @@
 	let dashboardOrder = 10;
 	let dashboardCardTitle = '';
 	let dashboardCardDescription = '';
+	let dashboardSummaryMode = 'recent-items';
+	let dashboardMaxItems = 4;
+	let primaryActionLabel = '';
+	let primaryActionAction = 'create-from-template';
+	let primaryActionTemplate = '';
+	let modulePageLayout = 'list-grid';
+	let modulePageEmptyStateTitle = '';
+	let modulePageEmptyStateDescription = '';
+	let modulePageEmptyStateAction = '';
 
 	let error = '';
-
-	const approvedIcons = [
-		'layout-dashboard',
-		'folder',
-		'file-text',
-		'sticky-note',
-		'calendar-days',
-		'clipboard-list',
-		'columns',
-		'git-branch',
-		'share-2',
-		'lock',
-		'globe',
-		'settings'
-	];
 
 	const moduleQuery = createQuery({
 		queryKey: ['admin-module', key],
@@ -76,6 +71,15 @@
 		dashboardOrder = ui.dashboard?.order ?? 10;
 		dashboardCardTitle = ui.dashboard?.cardTitle ?? displayName;
 		dashboardCardDescription = ui.dashboard?.cardDescription ?? description;
+		dashboardSummaryMode = ui.dashboard?.summaryMode ?? 'recent-items';
+		dashboardMaxItems = ui.dashboard?.maxItems ?? 4;
+		primaryActionLabel = ui.dashboard?.primaryAction?.label ?? '';
+		primaryActionAction = ui.dashboard?.primaryAction?.action ?? 'create-from-template';
+		primaryActionTemplate = ui.dashboard?.primaryAction?.template ?? m.default_template ?? '';
+		modulePageLayout = ui.modulePage?.layout ?? 'list-grid';
+		modulePageEmptyStateTitle = ui.modulePage?.emptyStateTitle ?? '';
+		modulePageEmptyStateDescription = ui.modulePage?.emptyStateDescription ?? '';
+		modulePageEmptyStateAction = ui.modulePage?.emptyStateAction ?? '';
 	}
 
 	const updateMutation = createMutation({
@@ -83,6 +87,9 @@
 			display_name: string;
 			description: string;
 			icon: string;
+			root_path: string;
+			renderer: string | null;
+			default_template: string | null;
 			ui_config: {
 				sidebar: { enabled: boolean; order: number; icon: string; label: string };
 				dashboard: {
@@ -92,6 +99,17 @@
 					cardDescription: string;
 					summaryMode: string;
 					maxItems: number;
+					primaryAction: {
+						label: string;
+						action: string;
+						template?: string;
+					};
+				};
+				modulePage: {
+					layout: string;
+					emptyStateTitle: string;
+					emptyStateDescription: string;
+					emptyStateAction: string;
 				};
 			};
 		}) => updateModule(key, payload),
@@ -119,6 +137,9 @@
 			display_name: displayName.trim(),
 			description: description.trim(),
 			icon: icon.trim(),
+			root_path: rootPath.trim(),
+			renderer: renderer.trim() || null,
+			default_template: defaultTemplate.trim() || null,
 			ui_config: {
 				sidebar: {
 					enabled: sidebarEnabled,
@@ -131,8 +152,21 @@
 					order: dashboardOrder,
 					cardTitle: dashboardCardTitle.trim() || displayName.trim(),
 					cardDescription: dashboardCardDescription.trim() || description.trim(),
-					summaryMode: 'recent',
-					maxItems: 5
+					summaryMode: dashboardSummaryMode,
+					maxItems: dashboardMaxItems,
+					primaryAction: {
+						label: primaryActionLabel.trim() || modulePageEmptyStateAction.trim() || 'Open',
+						action: primaryActionAction.trim() || 'create-from-template',
+						...(primaryActionTemplate.trim() ? { template: primaryActionTemplate.trim() } : {})
+					}
+				},
+				modulePage: {
+					layout: modulePageLayout.trim() || 'list-grid',
+					emptyStateTitle:
+						modulePageEmptyStateTitle.trim() || `No ${displayName.trim().toLowerCase()} yet`,
+					emptyStateDescription: modulePageEmptyStateDescription.trim() || description.trim(),
+					emptyStateAction:
+						modulePageEmptyStateAction.trim() || primaryActionLabel.trim() || 'Create'
 				}
 			}
 		});
@@ -230,7 +264,7 @@
 						<div class="flex flex-col gap-1">
 							<label class="text-xs font-semibold text-base-content/70" for="icon">Icon</label>
 							<select id="icon" class="select-bordered select select-sm" bind:value={icon}>
-								{#each approvedIcons as ic}
+								{#each APPROVED_MODULE_ICONS as ic}
 									<option value={ic}>{ic}</option>
 								{/each}
 							</select>
@@ -242,11 +276,12 @@
 							<input
 								id="renderer"
 								type="text"
-								class="input-bordered input input-sm bg-base-200/50"
+								class="input-bordered input input-sm"
 								bind:value={renderer}
-								disabled
 							/>
-							<p class="text-[10px] text-base-content/40">Renderer is set at creation.</p>
+							<p class="text-[10px] text-base-content/40">
+								Renderer resolves the module page view.
+							</p>
 						</div>
 					</div>
 
@@ -258,11 +293,12 @@
 							<input
 								id="root-path"
 								type="text"
-								class="input-bordered input input-sm bg-base-200/50"
+								class="input-bordered input input-sm"
 								bind:value={rootPath}
-								disabled
 							/>
-							<p class="text-[10px] text-base-content/40">Root path is set at creation.</p>
+							<p class="text-[10px] text-base-content/40">
+								Use a single absolute workspace path like `/Notes`.
+							</p>
 						</div>
 						<div class="flex flex-col gap-1">
 							<label class="text-xs font-semibold text-base-content/70" for="default-template"
@@ -325,7 +361,7 @@
 						<div class="flex flex-col gap-1">
 							<label class="text-xs font-semibold text-base-content/70" for="icon-1">Icon</label>
 							<select id="icon-1" class="select-bordered select select-sm" bind:value={sidebarIcon}>
-								{#each approvedIcons as ic}
+								{#each APPROVED_MODULE_ICONS as ic}
 									<option value={ic}>{ic}</option>
 								{/each}
 							</select>
@@ -394,6 +430,138 @@
 							class="textarea-bordered textarea textarea-sm"
 							placeholder="Short description shown on the dashboard card..."
 							bind:value={dashboardCardDescription}
+							rows={2}
+						></textarea>
+					</div>
+
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="summary-mode"
+								>Summary Mode</label
+							>
+							<select
+								id="summary-mode"
+								class="select-bordered select select-sm"
+								bind:value={dashboardSummaryMode}
+							>
+								<option value="none">None</option>
+								<option value="recent-items">Recent Items</option>
+								<option value="today-status">Today Status</option>
+								<option value="kanban-overview">Kanban Overview</option>
+								<option value="shares-overview">Shares Overview</option>
+								<option value="generic-file-summary">Generic File Summary</option>
+							</select>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="max-items"
+								>Max Items</label
+							>
+							<input
+								id="max-items"
+								type="number"
+								min="1"
+								max="10"
+								class="input-bordered input input-sm"
+								bind:value={dashboardMaxItems}
+							/>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6 shadow-sm">
+				<h2 class="mb-4 text-sm font-semibold tracking-wider text-base-content uppercase">
+					Primary Action
+				</h2>
+				<div class="grid gap-4 sm:grid-cols-3">
+					<div class="flex flex-col gap-1">
+						<label class="text-xs font-semibold text-base-content/70" for="primary-action-label"
+							>Label</label
+						>
+						<input
+							id="primary-action-label"
+							type="text"
+							class="input-bordered input input-sm"
+							bind:value={primaryActionLabel}
+						/>
+					</div>
+					<div class="flex flex-col gap-1">
+						<label class="text-xs font-semibold text-base-content/70" for="primary-action-action"
+							>Action</label
+						>
+						<input
+							id="primary-action-action"
+							type="text"
+							class="input-bordered input input-sm"
+							bind:value={primaryActionAction}
+						/>
+					</div>
+					<div class="flex flex-col gap-1">
+						<label class="text-xs font-semibold text-base-content/70" for="primary-action-template"
+							>Template</label
+						>
+						<select
+							id="primary-action-template"
+							class="select-bordered select select-sm"
+							bind:value={primaryActionTemplate}
+						>
+							<option value="">None</option>
+							{#each moduleTemplates as t}
+								<option value={t.template_key}>{t.name}</option>
+							{/each}
+						</select>
+					</div>
+				</div>
+			</div>
+
+			<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6 shadow-sm">
+				<h2 class="mb-4 text-sm font-semibold tracking-wider text-base-content uppercase">
+					Module Page
+				</h2>
+				<div class="grid gap-4">
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="module-layout"
+								>Layout</label
+							>
+							<input
+								id="module-layout"
+								type="text"
+								class="input-bordered input input-sm"
+								bind:value={modulePageLayout}
+							/>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="empty-state-action"
+								>Empty State Action</label
+							>
+							<input
+								id="empty-state-action"
+								type="text"
+								class="input-bordered input input-sm"
+								bind:value={modulePageEmptyStateAction}
+							/>
+						</div>
+					</div>
+					<div class="flex flex-col gap-1">
+						<label class="text-xs font-semibold text-base-content/70" for="empty-state-title"
+							>Empty State Title</label
+						>
+						<input
+							id="empty-state-title"
+							type="text"
+							class="input-bordered input input-sm"
+							bind:value={modulePageEmptyStateTitle}
+						/>
+					</div>
+					<div class="flex flex-col gap-1">
+						<label class="text-xs font-semibold text-base-content/70" for="empty-state-description"
+							>Empty State Description</label
+						>
+						<textarea
+							id="empty-state-description"
+							class="textarea-bordered textarea textarea-sm"
+							bind:value={modulePageEmptyStateDescription}
 							rows={2}
 						></textarea>
 					</div>

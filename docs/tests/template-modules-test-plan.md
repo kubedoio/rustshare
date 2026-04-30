@@ -12,7 +12,7 @@ Given an empty module registry, startup must create predefined module entries:
 
 ```text
 notes
-meeting-notes
+meetings
 standups
 kanban
 decisions

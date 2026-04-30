@@ -96,7 +96,7 @@ The system must ensure these module definitions exist on workspace initializatio
 
 ```text
 notes
-meeting-notes
+meetings
 standups
 kanban
 decisions

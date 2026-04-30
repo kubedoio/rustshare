@@ -64,10 +64,10 @@ Index stores fast searchable projections.
     "renderer": "notes"
   },
   {
-    "key": "meeting-notes",
+    "key": "meetings",
     "displayName": "Meeting Notes",
     "rootPath": "/Meetings",
-    "renderer": "meeting-notes"
+    "renderer": "meetings"
   },
   {
     "key": "standups",
@@ -164,7 +164,7 @@ Required shape:
   "key": "default-meeting-note",
   "name": "Default Meeting Note",
   "description": "Creates a structured meeting note.",
-  "module": "meeting-notes",
+  "module": "meetings",
   "version": "1.0",
   "renderer": "meeting-note",
   "ui": {

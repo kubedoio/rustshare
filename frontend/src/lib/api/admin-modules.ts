@@ -1,5 +1,11 @@
 import { apiClient } from './client';
-import type { ModuleConfig, TemplateConfig, TemplateDefaultFile } from './types';
+import type {
+	ModuleConfig,
+	TemplateConfig,
+	TemplateDefaultFile,
+	TemplateUiConfig,
+	ModuleUiConfig
+} from './types';
 
 interface AdminModulesResponse {
 	modules: ModuleConfig[];
@@ -14,11 +20,22 @@ export interface CreateTemplateRequest {
 	name: string;
 	module_key: string;
 	description: string;
+	ui_config?: TemplateUiConfig;
 	folder_structure: string[];
 	default_files: TemplateDefaultFile[];
 	metadata_schema: Record<string, unknown>;
 	renderer?: string | null;
 	visibility_policy: string;
+}
+
+export interface UpdateModuleRequest {
+	display_name?: string;
+	description?: string;
+	icon?: string;
+	root_path?: string;
+	renderer?: string | null;
+	default_template?: string | null;
+	ui_config?: ModuleUiConfig;
 }
 
 export async function listAdminModules(): Promise<ModuleConfig[]> {
@@ -40,7 +57,7 @@ export async function disableModule(key: string): Promise<ModuleConfig> {
 
 export async function updateModule(
 	key: string,
-	updates: Partial<ModuleConfig>
+	updates: UpdateModuleRequest
 ): Promise<ModuleConfig> {
 	return apiClient.patch<ModuleConfig>(`/admin/modules/${key}`, updates);
 }
@@ -76,6 +93,7 @@ export async function duplicateTemplate(key: string, newKey: string): Promise<Te
 		name: `${original.name} (Copy)`,
 		module_key: original.module_key,
 		description: original.description,
+		ui_config: original.ui_config,
 		folder_structure: original.folder_structure,
 		default_files: original.default_files,
 		metadata_schema: original.metadata_schema,

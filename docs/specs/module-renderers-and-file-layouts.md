@@ -39,7 +39,7 @@ Renderer keys:
 
 ```text
 notes
-meeting-notes
+meetings
 standups
 kanban
 decisions

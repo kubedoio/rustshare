@@ -130,7 +130,7 @@ RustShare will ship with these predefined modules:
 | Module | Key | Root path | Renderer |
 |---|---|---|---|
 | Notes | `notes` | `/Notes` | `notes` |
-| Meeting Notes | `meeting-notes` | `/Meetings` | `meeting-notes` |
+| Meeting Notes | `meetings` | `/Meetings` | `meetings` |
 | Standup Records | `standups` | `/Standups` | `standups` |
 | Kanban Dashboard | `kanban` | `/Kanban` | `kanban` |
 | Decisions | `decisions` | `/Decisions` | `decisions` |

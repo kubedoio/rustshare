@@ -95,7 +95,7 @@ Valid:
 
 ```text
 notes
-meeting-notes
+meetings
 standups
 kanban
 decisions

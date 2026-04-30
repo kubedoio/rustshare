@@ -31,7 +31,7 @@ describe('modules API', () => {
 				root_path: '/Notes',
 				renderer: 'notes',
 				default_template: null,
-				icon: 'notebook',
+				icon: 'sticky-note',
 				schema_version: '1',
 				permissions: {
 					admin_can_configure: true,
@@ -42,14 +42,14 @@ describe('modules API', () => {
 				ai_indexing: { enabled: true },
 				audit: { enabled: true },
 				ui_config: {
-					sidebar: { enabled: true, order: 1, icon: 'notebook', label: 'Notes' },
+					sidebar: { enabled: true, order: 1, icon: 'sticky-note', label: 'Notes' },
 					dashboard: {
 						enabled: true,
 						order: 1,
 						cardTitle: 'Notes',
 						cardDescription: 'Shared notes',
-						summaryMode: 'recent',
-						maxItems: 3
+						summaryMode: 'recent-items',
+						maxItems: 4
 					}
 				},
 				created_at: '2026-04-30T00:00:00Z',
@@ -73,7 +73,7 @@ describe('modules API', () => {
 			root_path: '/Notes',
 			renderer: 'notes',
 			default_template: null,
-			icon: 'notebook',
+			icon: 'sticky-note',
 			schema_version: '1',
 			permissions: {
 				admin_can_configure: true,
@@ -97,7 +97,7 @@ describe('modules API', () => {
 	it('unwraps module summary payloads', async () => {
 		const summary = {
 			module_key: 'notes',
-			mode: 'recent',
+			mode: 'recent-items',
 			total_items: 2,
 			recent_items: [
 				{ id: 'a', name: 'Alpha', item_type: 'file' as const, updated_at: '2026-04-30T00:00:00Z' }
@@ -112,7 +112,7 @@ describe('modules API', () => {
 
 	it('passes through create-from-template requests unchanged', async () => {
 		const request = {
-			template_key: 'meeting-notes',
+			template_key: 'meetings',
 			name: 'Planning',
 			parent_folder_id: 'folder-1'
 		};

@@ -11,6 +11,7 @@ pub struct Template {
     pub module_key: String,
     pub version: String,
     pub description: String,
+    pub ui_config: serde_json::Value,
     pub folder_structure: serde_json::Value,
     pub default_files: serde_json::Value,
     pub metadata_schema: serde_json::Value,

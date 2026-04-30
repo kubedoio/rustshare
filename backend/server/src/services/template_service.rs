@@ -12,6 +12,13 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use crate::services::icon_registry::is_approved_icon_key;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TemplateCreationMode {
+    SingleFile,
+    Folder,
+}
 
 /// Errors that can occur in template operations.
 #[derive(Debug, thiserror::Error)]
@@ -90,6 +97,7 @@ pub struct CreateTemplateRequest {
     pub name: String,
     pub module_key: String,
     pub description: String,
+    pub ui_config: Option<serde_json::Value>,
     pub folder_structure: Vec<String>,
     pub default_files: Vec<TemplateDefaultFile>,
     pub metadata_schema: serde_json::Value,
@@ -102,6 +110,7 @@ pub struct CreateTemplateRequest {
 pub struct UpdateTemplateRequest {
     pub name: Option<String>,
     pub description: Option<String>,
+    pub ui_config: Option<serde_json::Value>,
     pub folder_structure: Option<Vec<String>>,
     pub default_files: Option<Vec<TemplateDefaultFile>>,
     pub metadata_schema: Option<serde_json::Value>,
@@ -162,11 +171,20 @@ impl TemplateService {
                 "1.0",
                 "Default template for notes.",
                 Vec::<String>::new(),
-                vec![TemplateDefaultFile {
-                    path: ".rustshare-module.json".to_string(),
-                    content: Some(r#"{"type":"rustshare.module","module_key":"notes"}"#.to_string()),
-                    content_type: Some("application/json".to_string()),
-                }],
+                vec![
+                    TemplateDefaultFile {
+                        path: "__primary__.md".to_string(),
+                        content: Some("# {{title}}\n\n".to_string()),
+                        content_type: Some("text/markdown".to_string()),
+                    },
+                    TemplateDefaultFile {
+                        path: "{{file_stem}}.rustshare.json".to_string(),
+                        content: Some(
+                            r#"{"type":"note","module_key":"notes","title":"{{title}}"}"#.to_string(),
+                        ),
+                        content_type: Some("application/json".to_string()),
+                    },
+                ],
                 json!({}),
                 Some("notes"),
             ),
@@ -180,12 +198,17 @@ impl TemplateService {
                 vec![
                     TemplateDefaultFile {
                         path: "index.md".to_string(),
-                        content: Some("# Meeting\n\n## Agenda\n\n## Attendees\n\n## Notes\n\n## Decisions\n\n## Action Items\n".to_string()),
+                        content: Some(
+                            "# {{title}}\n\n## Agenda\n\n## Attendees\n\n## Notes\n\n## Decisions\n\n## Action Items\n".to_string(),
+                        ),
                         content_type: Some("text/markdown".to_string()),
                     },
                     TemplateDefaultFile {
                         path: ".rustshare.json".to_string(),
-                        content: Some(r#"{"type":"rustshare.module","module_key":"meetings"}"#.to_string()),
+                        content: Some(
+                            r#"{"type":"meeting","module_key":"meetings","title":"{{title}}"}"#
+                                .to_string(),
+                        ),
                         content_type: Some("application/json".to_string()),
                     },
                     TemplateDefaultFile {
@@ -202,7 +225,7 @@ impl TemplateService {
                         "attendees": "array"
                     }
                 }),
-                Some("meeting-notes"),
+                Some("meetings"),
             ),
             (
                 "template_default_standup",
@@ -213,8 +236,18 @@ impl TemplateService {
                 vec![],
                 vec![
                     TemplateDefaultFile {
-                        path: ".rustshare-module.json".to_string(),
-                        content: Some(r#"{"type":"rustshare.module","module_key":"standups"}"#.to_string()),
+                        path: "__primary__.md".to_string(),
+                        content: Some(
+                            "# {{title}}\n\n## Yesterday\n\n## Today\n\n## Blockers\n".to_string(),
+                        ),
+                        content_type: Some("text/markdown".to_string()),
+                    },
+                    TemplateDefaultFile {
+                        path: "{{file_stem}}.rustshare.json".to_string(),
+                        content: Some(
+                            r#"{"type":"standup","module_key":"standups","title":"{{title}}"}"#
+                                .to_string(),
+                        ),
                         content_type: Some("application/json".to_string()),
                     },
                 ],
@@ -265,8 +298,19 @@ impl TemplateService {
                 vec![],
                 vec![
                     TemplateDefaultFile {
-                        path: ".rustshare-module.json".to_string(),
-                        content: Some(r#"{"type":"rustshare.module","module_key":"decisions"}"#.to_string()),
+                        path: "__primary__.md".to_string(),
+                        content: Some(
+                            "# {{title}}\n\n## Status\n\nProposed\n\n## Context\n\n## Decision\n\n## Consequences\n"
+                                .to_string(),
+                        ),
+                        content_type: Some("text/markdown".to_string()),
+                    },
+                    TemplateDefaultFile {
+                        path: "{{file_stem}}.rustshare.json".to_string(),
+                        content: Some(
+                            r#"{"type":"decision","module_key":"decisions","title":"{{title}}"}"#
+                                .to_string(),
+                        ),
                         content_type: Some("application/json".to_string()),
                     },
                 ],
@@ -332,6 +376,7 @@ impl TemplateService {
                     module_key: module_key.to_string(),
                     version: version.to_string(),
                     description: description.to_string(),
+                    ui_config: json!({}),
                     folder_structure: serde_json::to_value(&folder_structure)?,
                     default_files: serde_json::to_value(&default_files)?,
                     metadata_schema: metadata_schema.clone(),
@@ -349,11 +394,11 @@ impl TemplateService {
                 sqlx::query(
                     r#"
                     INSERT INTO templates (
-                        id, template_key, name, module_key, version, description,
+                        id, template_key, name, module_key, version, description, ui_config,
                         folder_structure, default_files, metadata_schema, renderer,
                         visibility_policy, ai_indexing_policy, audit_logging_policy,
                         created_by, created_at, updated_at, enabled, tenant_id
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
                     "#,
                 )
                 .bind(template.id)
@@ -362,6 +407,7 @@ impl TemplateService {
                 .bind(&template.module_key)
                 .bind(&template.version)
                 .bind(&template.description)
+                .bind(&template.ui_config)
                 .bind(&template.folder_structure)
                 .bind(&template.default_files)
                 .bind(&template.metadata_schema)
@@ -417,27 +463,16 @@ impl TemplateService {
 
         // Validate folder structure
         for folder in &request.folder_structure {
-            if folder.contains('/') || folder.contains('\\') || folder.is_empty() {
-                return Err(TemplateError::InvalidData(format!(
-                    "Invalid folder name: {}",
-                    folder
-                )));
-            }
+            validate_folder_path(folder)?;
+        }
+
+        if let Some(ui_config) = request.ui_config.as_ref() {
+            validate_template_ui_config(ui_config)?;
         }
 
         // Validate default files
         for file in &request.default_files {
-            if file.path.is_empty()
-                || file.path.contains('/')
-                || file.path.contains('\\')
-                || file.path == "."
-                || file.path == ".."
-            {
-                return Err(TemplateError::InvalidData(format!(
-                    "Invalid file path: {}",
-                    file.path
-                )));
-            }
+            validate_default_file_path(&file.path)?;
         }
 
         let template = Template {
@@ -447,6 +482,7 @@ impl TemplateService {
             module_key: request.module_key,
             version: "1.0".to_string(),
             description: request.description,
+            ui_config: request.ui_config.unwrap_or_else(|| json!({})),
             folder_structure: serde_json::to_value(&request.folder_structure)?,
             default_files: serde_json::to_value(&request.default_files)?,
             metadata_schema: request.metadata_schema,
@@ -464,11 +500,11 @@ impl TemplateService {
         sqlx::query(
             r#"
             INSERT INTO templates (
-                id, template_key, name, module_key, version, description,
+                id, template_key, name, module_key, version, description, ui_config,
                 folder_structure, default_files, metadata_schema, renderer,
                 visibility_policy, ai_indexing_policy, audit_logging_policy,
                 created_by, created_at, updated_at, enabled, tenant_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             "#,
         )
         .bind(template.id)
@@ -477,6 +513,7 @@ impl TemplateService {
         .bind(&template.module_key)
         .bind(&template.version)
         .bind(&template.description)
+        .bind(&template.ui_config)
         .bind(&template.folder_structure)
         .bind(&template.default_files)
         .bind(&template.metadata_schema)
@@ -550,8 +587,33 @@ impl TemplateService {
     ) -> Result<Template, TemplateError> {
         let template = self.get_template(key, tenant_id).await?;
 
+        if let Some(folders) = request.folder_structure.as_ref() {
+            for folder in folders {
+                validate_folder_path(folder)?;
+            }
+        }
+
+        if let Some(files) = request.default_files.as_ref() {
+            for file in files {
+                validate_default_file_path(&file.path)?;
+            }
+        }
+
+        if let Some(ui_config) = request.ui_config.as_ref() {
+            validate_template_ui_config(ui_config)?;
+        }
+
+        let modifies_structure = request.description.is_some()
+            || request.folder_structure.is_some()
+            || request.default_files.is_some()
+            || request.metadata_schema.is_some()
+            || request.renderer.is_some()
+            || request.visibility_policy.is_some()
+            || request.ui_config.is_some();
+
         let name = request.name.unwrap_or(template.name);
         let description = request.description.unwrap_or(template.description);
+        let ui_config = request.ui_config.unwrap_or(template.ui_config);
         let folder_structure = request
             .folder_structure
             .map(|v| serde_json::to_value(&v))
@@ -569,17 +631,25 @@ impl TemplateService {
             .unwrap_or(template.visibility_policy);
         let enabled = request.enabled.unwrap_or(template.enabled);
 
+        let system_template = template.template_key.starts_with("template_default_");
+        if system_template && modifies_structure {
+            return Err(TemplateError::InvalidData(
+                "System templates cannot be edited destructively".to_string(),
+            ));
+        }
+
         sqlx::query(
             r#"
             UPDATE templates
-            SET name = $1, description = $2, folder_structure = $3,
-                default_files = $4, metadata_schema = $5, renderer = $6,
-                visibility_policy = $7, enabled = $8, updated_at = now()
-            WHERE template_key = $9 AND tenant_id = $10
+            SET name = $1, description = $2, ui_config = $3, folder_structure = $4,
+                default_files = $5, metadata_schema = $6, renderer = $7,
+                visibility_policy = $8, enabled = $9, updated_at = now()
+            WHERE template_key = $10 AND tenant_id = $11
             "#,
         )
         .bind(name)
         .bind(description)
+        .bind(ui_config)
         .bind(folder_structure)
         .bind(default_files)
         .bind(metadata_schema)
@@ -629,36 +699,31 @@ impl TemplateService {
             return Err(TemplateError::NotFound(template_key.to_string()));
         }
 
-        // Verify module is enabled
-        let module_enabled: bool = sqlx::query_scalar(
-            "SELECT enabled FROM modules WHERE module_key = $1 AND tenant_id = $2",
+        let module_row = sqlx::query_as::<_, (bool, String, serde_json::Value)>(
+            "SELECT enabled, root_path, permissions FROM modules WHERE module_key = $1 AND tenant_id = $2",
         )
         .bind(&template.module_key)
         .bind(tenant_id)
         .fetch_optional(self.metadata_store.pool())
-        .await?
-        .unwrap_or(false);
+        .await?;
+
+        let Some((module_enabled, root_path, permissions)) = module_row else {
+            return Err(TemplateError::ModuleNotFound(template.module_key));
+        };
 
         if !module_enabled {
             return Err(TemplateError::ModuleNotFound(template.module_key));
+        }
+
+        let is_admin = self.is_admin_user(owner_id, tenant_id).await?;
+        if !user_can_access_template_module(&permissions, is_admin) {
+            return Err(TemplateError::PermissionDenied);
         }
 
         // Determine parent folder
         let parent_id = if let Some(id) = parent_folder_id {
             Some(id)
         } else {
-            // Fetch module root_path from modules table
-            let root_path: String = sqlx::query_scalar(
-                "SELECT root_path FROM modules WHERE module_key = $1 AND tenant_id = $2",
-            )
-            .bind(&template.module_key)
-            .bind(tenant_id)
-            .fetch_one(self.metadata_store.pool())
-            .await
-            .map_err(|e| {
-                TemplateError::Database(format!("Failed to resolve module root: {}", e))
-            })?;
-
             let root_name = root_path.trim_start_matches('/');
 
             let folders = self
@@ -678,34 +743,85 @@ impl TemplateService {
             }
         };
 
-        // Create the main object folder
+        let folder_structure: Vec<String> =
+            serde_json::from_value(template.folder_structure.clone())?;
+
+        let default_files: Vec<TemplateDefaultFile> =
+            serde_json::from_value(template.default_files.clone())?;
+        match resolve_creation_mode(&template.module_key) {
+            TemplateCreationMode::SingleFile => {
+                self.create_single_file_object(
+                    &template,
+                    owner_id,
+                    tenant_id,
+                    name,
+                    parent_id,
+                    &default_files,
+                )
+                .await
+            }
+            TemplateCreationMode::Folder => {
+                self.create_folder_object(
+                    owner_id,
+                    tenant_id,
+                    name,
+                    parent_id,
+                    &folder_structure,
+                    &default_files,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn is_admin_user(&self, user_id: UserId, tenant_id: Uuid) -> Result<bool, TemplateError> {
+        let is_admin = sqlx::query_scalar::<_, bool>(
+            "SELECT COALESCE(is_admin, false) FROM users WHERE id = $1 AND tenant_id = $2",
+        )
+        .bind(user_id)
+        .bind(tenant_id)
+        .fetch_optional(self.metadata_store.pool())
+        .await?
+        .unwrap_or(false);
+        Ok(is_admin)
+    }
+
+    async fn create_folder_object(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        name: String,
+        parent_id: Option<Uuid>,
+        folder_structure: &[String],
+        default_files: &[TemplateDefaultFile],
+    ) -> Result<CreatedObject, TemplateError> {
         let object_folder = self
             .folder_service
             .create_folder(name.clone(), parent_id, owner_id, tenant_id)
             .await?;
 
-        // Create subfolders from template
-        let folder_structure: Vec<String> =
-            serde_json::from_value(template.folder_structure.clone())?;
         for subfolder_name in folder_structure {
             self.folder_service
-                .create_folder(subfolder_name, Some(object_folder.id), owner_id, tenant_id)
+                .create_folder(
+                    render_template_string(subfolder_name, &name, &name),
+                    Some(object_folder.id),
+                    owner_id,
+                    tenant_id,
+                )
                 .await?;
         }
 
-        // Create default files
-        let default_files: Vec<TemplateDefaultFile> =
-            serde_json::from_value(template.default_files.clone())?;
         for file in default_files {
-            let content = file.content.unwrap_or_default();
+            let content = render_template_string(file.content.as_deref().unwrap_or_default(), &name, &name);
             let mime_type = file
                 .content_type
+                .clone()
                 .unwrap_or_else(|| "text/plain".to_string());
 
             self.file_service
                 .upload_file(
                     owner_id,
-                    file.path,
+                    render_template_string(&file.path, &name, &name),
                     Some(object_folder.id),
                     Bytes::from(content),
                     mime_type,
@@ -720,6 +836,189 @@ impl TemplateService {
             path: object_folder.path,
         })
     }
+
+    async fn create_single_file_object(
+        &self,
+        _template: &Template,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        name: String,
+        parent_id: Option<Uuid>,
+        default_files: &[TemplateDefaultFile],
+    ) -> Result<CreatedObject, TemplateError> {
+        let file_stem = sanitize_file_stem(&name);
+        let primary_template = default_files
+            .iter()
+            .find(|file| file.path == "__primary__.md")
+            .or_else(|| default_files.iter().find(|file| file.path.ends_with(".md")));
+
+        let primary_content = render_template_string(
+            primary_template
+                .and_then(|file| file.content.as_deref())
+                .unwrap_or("# {{title}}\n\n"),
+            &name,
+            &file_stem,
+        );
+
+        let primary_file = self
+            .file_service
+            .upload_file(
+                owner_id,
+                format!("{file_stem}.md"),
+                parent_id,
+                Bytes::from(primary_content),
+                "text/markdown".to_string(),
+                tenant_id,
+            )
+            .await?;
+
+        for file in default_files {
+            if file.path == "__primary__.md" {
+                continue;
+            }
+
+            let rendered_path = render_template_string(&file.path, &name, &file_stem);
+            let content = render_template_string(file.content.as_deref().unwrap_or_default(), &name, &file_stem);
+            let mime_type = file
+                .content_type
+                .clone()
+                .unwrap_or_else(|| "text/plain".to_string());
+
+            self.file_service
+                .upload_file(
+                    owner_id,
+                    rendered_path,
+                    primary_file.parent_folder_id,
+                    Bytes::from(content),
+                    mime_type,
+                    tenant_id,
+                )
+                .await?;
+        }
+
+        Ok(CreatedObject {
+            object_id: primary_file.id,
+            object_type: "file".to_string(),
+            path: primary_file.path,
+        })
+    }
+}
+
+fn user_can_access_template_module(permissions: &serde_json::Value, is_admin: bool) -> bool {
+    if is_admin {
+        return true;
+    }
+
+    permissions
+        .get("workspace_members_can_use")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+}
+
+fn resolve_creation_mode(module_key: &str) -> TemplateCreationMode {
+    match module_key {
+        "notes" | "standups" | "decisions" => TemplateCreationMode::SingleFile,
+        _ => TemplateCreationMode::Folder,
+    }
+}
+
+fn validate_folder_path(path: &str) -> Result<(), TemplateError> {
+    validate_relative_template_path(path, false)
+}
+
+fn validate_default_file_path(path: &str) -> Result<(), TemplateError> {
+    validate_relative_template_path(path, true)
+}
+
+fn validate_relative_template_path(path: &str, allow_hidden_files: bool) -> Result<(), TemplateError> {
+    if path.is_empty() || path == "." || path == ".." || path.starts_with('/') || path.starts_with('\\') {
+        return Err(TemplateError::InvalidData(format!("Invalid path: {path}")));
+    }
+
+    if path.contains('\\') {
+        return Err(TemplateError::InvalidData(format!("Invalid path: {path}")));
+    }
+
+    let segments: Vec<&str> = path.split('/').collect();
+    if segments.iter().any(|segment| segment.is_empty() || *segment == "." || *segment == "..") {
+        return Err(TemplateError::InvalidData(format!("Invalid path: {path}")));
+    }
+
+    if path.starts_with(".rustshare/system") {
+        return Err(TemplateError::InvalidData(format!(
+            "Reserved system path is not allowed: {path}"
+        )));
+    }
+
+    if !allow_hidden_files && segments.iter().any(|segment| segment.starts_with('.')) {
+        return Err(TemplateError::InvalidData(format!(
+            "Hidden folder names are not allowed: {path}"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_icon_key(icon: &str) -> Result<(), TemplateError> {
+    if is_approved_icon_key(icon) {
+        Ok(())
+    } else {
+        Err(TemplateError::InvalidData(format!(
+            "Unapproved icon key: {icon}"
+        )))
+    }
+}
+
+fn validate_template_ui_config(ui_config: &serde_json::Value) -> Result<(), TemplateError> {
+    if let Some(icon) = ui_config.get("icon").and_then(|value| value.as_str()) {
+        validate_icon_key(icon)?;
+    }
+
+    for field_name in ["createLabel"] {
+        if let Some(text) = ui_config.get(field_name).and_then(|value| value.as_str()) {
+            validate_plain_text(field_name, text)?;
+        }
+    }
+
+    if let Some(form) = ui_config.get("form").and_then(|value| value.as_object()) {
+        if let Some(fields) = form.get("fields").and_then(|value| value.as_array()) {
+            for field in fields {
+                if let Some(label) = field.get("label").and_then(|value| value.as_str()) {
+                    validate_plain_text("form.label", label)?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_plain_text(field_name: &str, text: &str) -> Result<(), TemplateError> {
+    if text.contains('<') || text.contains('>') {
+        return Err(TemplateError::InvalidData(format!(
+            "{field_name} must be plain text"
+        )));
+    }
+
+    Ok(())
+}
+
+fn sanitize_file_stem(name: &str) -> String {
+    let trimmed = name.trim();
+    let stem = trimmed.strip_suffix(".md").unwrap_or(trimmed);
+    if stem.is_empty() {
+        "untitled".to_string()
+    } else {
+        stem.to_string()
+    }
+}
+
+fn render_template_string(input: &str, title: &str, file_stem: &str) -> String {
+    input
+        .replace("{{title}}", title)
+        .replace("{{name}}", title)
+        .replace("{{file_stem}}", file_stem)
+        .replace("{{file_name}}", &format!("{file_stem}.md"))
 }
 
 #[cfg(test)]
@@ -778,5 +1077,63 @@ mod tests {
         let json = serde_json::to_string(&obj).unwrap();
         assert!(json.contains("folder"));
         assert!(json.contains("/Notes/My Note"));
+    }
+
+    #[test]
+    fn notes_templates_use_single_file_creation_mode() {
+        assert_eq!(
+            resolve_creation_mode("notes"),
+            TemplateCreationMode::SingleFile
+        );
+    }
+
+    #[test]
+    fn standup_templates_use_single_file_creation_mode() {
+        assert_eq!(
+            resolve_creation_mode("standups"),
+            TemplateCreationMode::SingleFile
+        );
+    }
+
+    #[test]
+    fn decision_templates_use_single_file_creation_mode() {
+        assert_eq!(
+            resolve_creation_mode("decisions"),
+            TemplateCreationMode::SingleFile
+        );
+    }
+
+    #[test]
+    fn meeting_templates_use_folder_creation_mode() {
+        assert_eq!(
+            resolve_creation_mode("meetings"),
+            TemplateCreationMode::Folder
+        );
+    }
+
+    #[test]
+    fn rejects_template_paths_that_escape_or_target_reserved_locations() {
+        assert!(validate_default_file_path("../escape.md").is_err());
+        assert!(validate_default_file_path("/absolute.md").is_err());
+        assert!(validate_default_file_path(".rustshare/system/modules/modules.json").is_err());
+    }
+
+    #[test]
+    fn accepts_safe_relative_template_paths() {
+        assert!(validate_default_file_path("index.md").is_ok());
+        assert!(validate_default_file_path(".rustshare.json").is_ok());
+    }
+
+    #[test]
+    fn rejects_unapproved_icon_keys() {
+        assert!(validate_icon_key("users").is_err());
+        assert!(validate_icon_key("activity").is_err());
+    }
+
+    #[test]
+    fn accepts_approved_icon_keys() {
+        assert!(validate_icon_key("file-text").is_ok());
+        assert!(validate_icon_key("calendar-days").is_ok());
+        assert!(validate_icon_key("share-2").is_ok());
     }
 }

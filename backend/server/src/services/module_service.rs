@@ -11,6 +11,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use crate::services::icon_registry::is_approved_icon_key;
 
 /// Errors that can occur in module operations.
 #[derive(Debug, thiserror::Error)]
@@ -90,6 +91,7 @@ pub struct ModuleSummary {
     pub mode: String,
     pub total_items: i64,
     pub recent_items: Vec<SummaryItem>,
+    pub extra: Option<serde_json::Value>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -105,6 +107,9 @@ pub struct UpdateModuleInput {
     pub display_name: Option<String>,
     pub description: Option<String>,
     pub icon: Option<String>,
+    pub root_path: Option<String>,
+    pub renderer: Option<String>,
+    pub default_template: Option<Option<String>>,
     pub permissions: Option<serde_json::Value>,
     pub ai_indexing: Option<serde_json::Value>,
     pub audit: Option<serde_json::Value>,
@@ -138,10 +143,10 @@ impl ModuleService {
                 "/Notes",
                 "notes",
                 "template_default_note",
-                "file-text",
+                "sticky-note",
                 true,
                 json!({
-                    "sidebar": { "enabled": true, "order": 30, "icon": "file-text", "label": "Notes" },
+                    "sidebar": { "enabled": true, "order": 30, "icon": "sticky-note", "label": "Notes" },
                     "dashboard": { "enabled": true, "order": 10, "cardTitle": "Notes", "cardDescription": "Recent file-backed notes.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New Note", "action": "create-from-template", "template": "template_default_note" } },
                     "modulePage": { "layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first file-backed note.", "emptyStateAction": "New Note" }
                 }),
@@ -151,12 +156,12 @@ impl ModuleService {
                 "Meeting Notes",
                 "Create structured meeting records with agenda, attendees, decisions and action items.",
                 "/Meetings",
-                "meeting-notes",
+                "meetings",
                 "template_default_meeting",
-                "users",
+                "calendar-days",
                 false,
                 json!({
-                    "sidebar": { "enabled": true, "order": 40, "icon": "users", "label": "Meetings" },
+                    "sidebar": { "enabled": true, "order": 40, "icon": "calendar-days", "label": "Meeting Notes" },
                     "dashboard": { "enabled": true, "order": 20, "cardTitle": "Meeting Notes", "cardDescription": "Structured meeting records.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New Meeting", "action": "create-from-template", "template": "template_default_meeting" } },
                     "modulePage": { "layout": "list-grid", "emptyStateTitle": "No meetings yet", "emptyStateDescription": "Create your first meeting note.", "emptyStateAction": "New Meeting" }
                 }),
@@ -168,11 +173,11 @@ impl ModuleService {
                 "/Standups",
                 "standups",
                 "template_default_standup",
-                "activity",
+                "clipboard-list",
                 false,
                 json!({
-                    "sidebar": { "enabled": true, "order": 50, "icon": "activity", "label": "Standups" },
-                    "dashboard": { "enabled": true, "order": 30, "cardTitle": "Standup Records", "cardDescription": "Daily team updates and blockers.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New Standup", "action": "create-from-template", "template": "template_default_standup" } },
+                    "sidebar": { "enabled": true, "order": 50, "icon": "clipboard-list", "label": "Standup Records" },
+                    "dashboard": { "enabled": true, "order": 30, "cardTitle": "Standup Records", "cardDescription": "Daily team updates and blockers.", "summaryMode": "today-status", "maxItems": 4, "primaryAction": { "label": "New Standup", "action": "create-from-template", "template": "template_default_standup" } },
                     "modulePage": { "layout": "list-grid", "emptyStateTitle": "No standups yet", "emptyStateDescription": "Create your first standup record.", "emptyStateAction": "New Standup" }
                 }),
             ),
@@ -187,7 +192,7 @@ impl ModuleService {
                 false,
                 json!({
                     "sidebar": { "enabled": true, "order": 60, "icon": "columns", "label": "Kanban" },
-                    "dashboard": { "enabled": true, "order": 40, "cardTitle": "Kanban Dashboard", "cardDescription": "Board cards as folders and files.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New Board", "action": "create-from-template", "template": "template_default_kanban" } },
+                    "dashboard": { "enabled": true, "order": 40, "cardTitle": "Kanban Dashboard", "cardDescription": "Board cards as folders and files.", "summaryMode": "kanban-overview", "maxItems": 4, "primaryAction": { "label": "New Board", "action": "create-from-template", "template": "template_default_kanban" } },
                     "modulePage": { "layout": "list-grid", "emptyStateTitle": "No boards yet", "emptyStateDescription": "Create your first kanban board.", "emptyStateAction": "New Board" }
                 }),
             ),
@@ -217,7 +222,7 @@ impl ModuleService {
                 false,
                 json!({
                     "sidebar": { "enabled": true, "order": 80, "icon": "share-2", "label": "Shares" },
-                    "dashboard": { "enabled": true, "order": 60, "cardTitle": "Shares", "cardDescription": "Public and internal share packages.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New Share", "action": "create-from-template", "template": "template_default_share" } },
+                    "dashboard": { "enabled": true, "order": 60, "cardTitle": "Shares", "cardDescription": "Public and internal share packages.", "summaryMode": "shares-overview", "maxItems": 4, "primaryAction": { "label": "New Share", "action": "create-from-template", "template": "template_default_share" } },
                     "modulePage": { "layout": "list-grid", "emptyStateTitle": "No shares yet", "emptyStateDescription": "Create your first share package.", "emptyStateAction": "New Share" }
                 }),
             ),
@@ -300,6 +305,19 @@ impl ModuleService {
             }
         }
 
+        if let Some(admin_id) = self.find_admin_user_for_tenant(tenant_id).await? {
+            let enabled_modules = self
+                .list_modules(tenant_id)
+                .await?
+                .into_iter()
+                .filter(|module| module.enabled)
+                .collect::<Vec<_>>();
+
+            for module in enabled_modules {
+                self.ensure_module_root_folder(&module, admin_id, tenant_id).await?;
+            }
+        }
+
         Ok(())
     }
 
@@ -369,7 +387,12 @@ impl ModuleService {
     }
 
     /// List enabled modules (for dashboard).
-    pub async fn list_enabled_modules(&self, tenant_id: Uuid) -> Result<Vec<Module>, ModuleError> {
+    pub async fn list_enabled_modules(
+        &self,
+        tenant_id: Uuid,
+        user_id: UserId,
+    ) -> Result<Vec<Module>, ModuleError> {
+        let is_admin = self.is_admin_user(user_id, tenant_id).await?;
         let modules: Vec<Module> = sqlx::query_as::<_, Module>(
             "SELECT * FROM modules WHERE enabled = true AND tenant_id = $1 ORDER BY display_name",
         )
@@ -377,7 +400,10 @@ impl ModuleService {
         .fetch_all(self.metadata_store.pool())
         .await?;
 
-        Ok(modules)
+        Ok(modules
+            .into_iter()
+            .filter(|module| user_can_access_module(module, is_admin))
+            .collect())
     }
 
     /// Get a single module by key.
@@ -405,6 +431,11 @@ impl ModuleService {
         let display_name = input.display_name.unwrap_or(module.display_name);
         let description = input.description.unwrap_or(module.description);
         let icon = input.icon.unwrap_or(module.icon);
+        validate_module_icon(&icon)?;
+        let root_path = input.root_path.unwrap_or(module.root_path);
+        validate_root_path(&root_path)?;
+        let renderer = input.renderer.unwrap_or(module.renderer);
+        let default_template = input.default_template.unwrap_or(module.default_template);
         let permissions = input.permissions.unwrap_or(module.permissions);
         let ai_indexing = input.ai_indexing.unwrap_or(module.ai_indexing);
         let audit = input.audit.unwrap_or(module.audit);
@@ -413,14 +444,18 @@ impl ModuleService {
         sqlx::query(
             r#"
             UPDATE modules
-            SET display_name = $1, description = $2, icon = $3,
-                permissions = $4, ai_indexing = $5, audit = $6, ui_config = $7, updated_at = now()
-            WHERE module_key = $8 AND tenant_id = $9
+            SET display_name = $1, description = $2, icon = $3, root_path = $4,
+                renderer = $5, default_template = $6, permissions = $7,
+                ai_indexing = $8, audit = $9, ui_config = $10, updated_at = now()
+            WHERE module_key = $11 AND tenant_id = $12
             "#,
         )
         .bind(display_name)
         .bind(description)
         .bind(icon)
+        .bind(root_path)
+        .bind(renderer)
+        .bind(default_template)
         .bind(permissions)
         .bind(ai_indexing)
         .bind(audit)
@@ -438,8 +473,16 @@ impl ModuleService {
         &self,
         key: &str,
         tenant_id: Uuid,
+        user_id: UserId,
     ) -> Result<ModuleSummary, ModuleError> {
         let module = self.get_module(key, tenant_id).await?;
+        let is_admin = self.is_admin_user(user_id, tenant_id).await?;
+        if !module.enabled {
+            return Err(ModuleError::InvalidData("Module disabled".to_string()));
+        }
+        if !user_can_access_module(&module, is_admin) {
+            return Err(ModuleError::PermissionDenied);
+        }
 
         let ui_config = module
             .ui_config
@@ -450,95 +493,45 @@ impl ModuleService {
         let summary_mode = dashboard
             .and_then(|d| d.get("summaryMode"))
             .and_then(|v| v.as_str())
-            .unwrap_or("none");
+            .unwrap_or("generic-file-summary");
         let max_items = dashboard
             .and_then(|d| d.get("maxItems"))
             .and_then(|v| v.as_i64())
             .unwrap_or(4) as i64;
+        let root_path = module.root_path.trim_end_matches('/').to_string();
+        let path_prefix = format!("{root_path}/%");
 
-        let root_name = module.root_path.trim_start_matches('/');
-
-        // Find root folder
-        let folder_id: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM folders WHERE name = $1 AND parent_id IS NULL AND tenant_id = $2 LIMIT 1"
+        let file_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM files WHERE tenant_id = $1 AND deleted_at IS NULL AND path LIKE $2",
         )
-        .bind(root_name)
         .bind(tenant_id)
-        .fetch_optional(self.metadata_store.pool())
-        .await?;
+        .bind(&path_prefix)
+        .fetch_one(self.metadata_store.pool())
+        .await
+        .unwrap_or(0);
 
-        let mut recent_items = Vec::new();
-        let mut total_items = 0i64;
+        let folder_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND path LIKE $2 AND path <> $3",
+        )
+        .bind(tenant_id)
+        .bind(&path_prefix)
+        .bind(&root_path)
+        .fetch_one(self.metadata_store.pool())
+        .await
+        .unwrap_or(0);
 
-        if let Some(fid) = folder_id {
-            // Count files and subfolders
-            let file_count: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM files WHERE folder_id = $1 AND tenant_id = $2",
-            )
-            .bind(fid)
-            .bind(tenant_id)
-            .fetch_one(self.metadata_store.pool())
-            .await?;
+        let total_items = file_count + folder_count;
 
-            let folder_count: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM folders WHERE parent_id = $1 AND tenant_id = $2",
-            )
-            .bind(fid)
-            .bind(tenant_id)
-            .fetch_one(self.metadata_store.pool())
-            .await?;
-
-            total_items = file_count + folder_count;
-
-            if summary_mode == "recent-items" {
-                // Recent files
-                let files = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
-                    "SELECT id, name, updated_at FROM files WHERE folder_id = $1 AND tenant_id = $2 ORDER BY updated_at DESC LIMIT $3"
-                )
-                .bind(fid)
-                .bind(tenant_id)
-                .bind(max_items)
-                .fetch_all(self.metadata_store.pool())
+        let (mode, recent_items, extra) =
+            self.build_summary_for_mode(key, summary_mode, &root_path, &path_prefix, max_items, tenant_id)
                 .await?;
-
-                for (id, name, updated_at) in files {
-                    recent_items.push(SummaryItem {
-                        id: id.to_string(),
-                        name,
-                        item_type: "file".to_string(),
-                        updated_at,
-                    });
-                }
-
-                // Recent subfolders (fill remaining slots)
-                let remaining = max_items - recent_items.len() as i64;
-                if remaining > 0 {
-                    let folders = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
-                        "SELECT id, name, updated_at FROM folders WHERE parent_id = $1 AND tenant_id = $2 ORDER BY updated_at DESC LIMIT $3"
-                    )
-                    .bind(fid)
-                    .bind(tenant_id)
-                    .bind(remaining)
-                    .fetch_all(self.metadata_store.pool())
-                    .await?;
-
-                    for (id, name, updated_at) in folders {
-                        recent_items.push(SummaryItem {
-                            id: id.to_string(),
-                            name,
-                            item_type: "folder".to_string(),
-                            updated_at,
-                        });
-                    }
-                }
-            }
-        }
 
         Ok(ModuleSummary {
             module_key: key.to_string(),
-            mode: summary_mode.to_string(),
+            mode,
             total_items,
             recent_items,
+            extra,
         })
     }
 
@@ -575,6 +568,267 @@ impl ModuleService {
 
         Ok(())
     }
+
+    async fn build_summary_for_mode(
+        &self,
+        key: &str,
+        summary_mode: &str,
+        root_path: &str,
+        path_prefix: &str,
+        max_items: i64,
+        tenant_id: Uuid,
+    ) -> Result<(String, Vec<SummaryItem>, Option<serde_json::Value>), ModuleError> {
+        match key {
+            "notes" => {
+                let items = self.recent_files_under_path(path_prefix, max_items, tenant_id).await?;
+                Ok(("recent-items".to_string(), items, None))
+            }
+            "meetings" => {
+                let items = self
+                    .recent_folders_under_path(path_prefix, max_items, tenant_id)
+                    .await?;
+                Ok(("recent-items".to_string(), items, None))
+            }
+            "standups" => {
+                let items = self.recent_files_under_path(path_prefix, max_items, tenant_id).await?;
+                let today_token = Utc::now().format("%Y-%m-%d").to_string();
+                let today_exists = items.iter().any(|item| item.name.contains(&today_token));
+                Ok((
+                    "today-status".to_string(),
+                    items,
+                    Some(json!({ "todayExists": today_exists })),
+                ))
+            }
+            "kanban" => {
+                let boards = self
+                    .direct_child_folders(root_path, max_items, tenant_id)
+                    .await?;
+                let cards = self
+                    .recent_folders_matching(path_prefix, "CARD-%", max_items, tenant_id)
+                    .await?;
+                Ok((
+                    "kanban-overview".to_string(),
+                    cards,
+                    Some(json!({ "boards": boards })),
+                ))
+            }
+            "decisions" => {
+                let items = self.recent_files_under_path(path_prefix, max_items, tenant_id).await?;
+                Ok(("recent-items".to_string(), items, None))
+            }
+            "shares" => {
+                let items = self
+                    .recent_folders_under_path(path_prefix, max_items, tenant_id)
+                    .await?;
+                let public_count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND path LIKE '/Shares/Public/%'",
+                )
+                .bind(tenant_id)
+                .fetch_one(self.metadata_store.pool())
+                .await
+                .unwrap_or(0);
+                let internal_count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND path LIKE '/Shares/Internal/%'",
+                )
+                .bind(tenant_id)
+                .fetch_one(self.metadata_store.pool())
+                .await
+                .unwrap_or(0);
+                Ok((
+                    "shares-overview".to_string(),
+                    items,
+                    Some(json!({ "publicCount": public_count, "internalCount": internal_count })),
+                ))
+            }
+            _ => {
+                let items = if summary_mode == "recent-items" {
+                    self.recent_mixed_items(path_prefix, max_items, tenant_id).await?
+                } else {
+                    self.recent_mixed_items(path_prefix, max_items, tenant_id).await?
+                };
+                Ok(("generic-file-summary".to_string(), items, None))
+            }
+        }
+    }
+
+    async fn recent_files_under_path(
+        &self,
+        path_prefix: &str,
+        max_items: i64,
+        tenant_id: Uuid,
+    ) -> Result<Vec<SummaryItem>, ModuleError> {
+        let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
+            "SELECT id, name, modified_at FROM files WHERE tenant_id = $1 AND deleted_at IS NULL AND path LIKE $2 ORDER BY modified_at DESC LIMIT $3",
+        )
+        .bind(tenant_id)
+        .bind(path_prefix)
+        .bind(max_items)
+        .fetch_all(self.metadata_store.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, updated_at)| SummaryItem {
+                id: id.to_string(),
+                name,
+                item_type: "file".to_string(),
+                updated_at,
+            })
+            .collect())
+    }
+
+    async fn recent_folders_under_path(
+        &self,
+        path_prefix: &str,
+        max_items: i64,
+        tenant_id: Uuid,
+    ) -> Result<Vec<SummaryItem>, ModuleError> {
+        let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
+            "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND path LIKE $2 ORDER BY updated_at DESC LIMIT $3",
+        )
+        .bind(tenant_id)
+        .bind(path_prefix)
+        .bind(max_items)
+        .fetch_all(self.metadata_store.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, updated_at)| SummaryItem {
+                id: id.to_string(),
+                name,
+                item_type: "folder".to_string(),
+                updated_at,
+            })
+            .collect())
+    }
+
+    async fn recent_folders_matching(
+        &self,
+        path_prefix: &str,
+        name_pattern: &str,
+        max_items: i64,
+        tenant_id: Uuid,
+    ) -> Result<Vec<SummaryItem>, ModuleError> {
+        let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
+            "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND path LIKE $2 AND name LIKE $3 ORDER BY updated_at DESC LIMIT $4",
+        )
+        .bind(tenant_id)
+        .bind(path_prefix)
+        .bind(name_pattern)
+        .bind(max_items)
+        .fetch_all(self.metadata_store.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, updated_at)| SummaryItem {
+                id: id.to_string(),
+                name,
+                item_type: "folder".to_string(),
+                updated_at,
+            })
+            .collect())
+    }
+
+    async fn direct_child_folders(
+        &self,
+        root_path: &str,
+        max_items: i64,
+        tenant_id: Uuid,
+    ) -> Result<Vec<SummaryItem>, ModuleError> {
+        let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
+            "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND parent_folder_id = (SELECT id FROM folders WHERE path = $2 AND tenant_id = $1 AND deleted_at IS NULL LIMIT 1) ORDER BY updated_at DESC LIMIT $3",
+        )
+        .bind(tenant_id)
+        .bind(root_path)
+        .bind(max_items)
+        .fetch_all(self.metadata_store.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, updated_at)| SummaryItem {
+                id: id.to_string(),
+                name,
+                item_type: "folder".to_string(),
+                updated_at,
+            })
+            .collect())
+    }
+
+    async fn recent_mixed_items(
+        &self,
+        path_prefix: &str,
+        max_items: i64,
+        tenant_id: Uuid,
+    ) -> Result<Vec<SummaryItem>, ModuleError> {
+        let mut items = self.recent_files_under_path(path_prefix, max_items, tenant_id).await?;
+        if (items.len() as i64) < max_items {
+            let remaining = max_items - items.len() as i64;
+            items.extend(
+                self.recent_folders_under_path(path_prefix, remaining, tenant_id)
+                    .await?,
+            );
+        }
+        items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        items.truncate(max_items as usize);
+        Ok(items)
+    }
+
+    async fn is_admin_user(&self, user_id: UserId, tenant_id: Uuid) -> Result<bool, ModuleError> {
+        let is_admin = sqlx::query_scalar::<_, bool>(
+            "SELECT COALESCE(is_admin, false) FROM users WHERE id = $1 AND tenant_id = $2",
+        )
+        .bind(user_id)
+        .bind(tenant_id)
+        .fetch_optional(self.metadata_store.pool())
+        .await?
+        .unwrap_or(false);
+        Ok(is_admin)
+    }
+
+    async fn find_admin_user_for_tenant(&self, tenant_id: Uuid) -> Result<Option<UserId>, ModuleError> {
+        let admin_id = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM users WHERE tenant_id = $1 AND is_admin = true ORDER BY created_at ASC LIMIT 1",
+        )
+        .bind(tenant_id)
+        .fetch_optional(self.metadata_store.pool())
+        .await?;
+        Ok(admin_id)
+    }
+}
+
+fn user_can_access_module(module: &Module, is_admin: bool) -> bool {
+    if is_admin {
+        return true;
+    }
+
+    module
+        .permissions
+        .get("workspace_members_can_use")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+}
+
+fn validate_module_icon(icon: &str) -> Result<(), ModuleError> {
+    if is_approved_icon_key(icon) {
+        Ok(())
+    } else {
+        Err(ModuleError::InvalidData(format!(
+            "Unapproved module icon: {icon}"
+        )))
+    }
+}
+
+fn validate_root_path(root_path: &str) -> Result<(), ModuleError> {
+    if !root_path.starts_with('/') || root_path.contains("..") || root_path.trim() == "/" {
+        return Err(ModuleError::InvalidName(format!(
+            "Invalid root path: {root_path}"
+        )));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -611,6 +865,9 @@ mod tests {
             display_name: Some("Test".to_string()),
             description: None,
             icon: Some("file-text".to_string()),
+            root_path: None,
+            renderer: None,
+            default_template: None,
             permissions: None,
             ai_indexing: None,
             audit: None,
@@ -633,6 +890,7 @@ mod tests {
                 item_type: "file".to_string(),
                 updated_at: Utc::now(),
             }],
+            extra: None,
         };
         let json = serde_json::to_string(&summary).unwrap();
         assert!(json.contains("notes"));
@@ -651,5 +909,17 @@ mod tests {
         let json = serde_json::to_string(&item).unwrap();
         assert!(json.contains("Folder A"));
         assert!(json.contains("folder"));
+    }
+
+    #[test]
+    fn accepts_approved_module_icons() {
+        assert!(validate_module_icon("sticky-note").is_ok());
+        assert!(validate_module_icon("calendar-days").is_ok());
+    }
+
+    #[test]
+    fn rejects_unapproved_module_icons() {
+        assert!(validate_module_icon("users").is_err());
+        assert!(validate_module_icon("activity").is_err());
     }
 }

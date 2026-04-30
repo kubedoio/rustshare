@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { createQuery } from '$lib/query-compat';
-	import { listEnabledModules } from '$lib/api/modules';
+	import { getModule } from '$lib/api/modules';
+	import { ApiError } from '$lib/api/types';
 	import ModuleIcon from '$lib/components/dashboard/ModuleIcon.svelte';
 	import NotesModuleView from '$lib/components/modules/NotesModuleView.svelte';
 	import KanbanModuleView from '$lib/components/modules/KanbanModuleView.svelte';
@@ -21,17 +22,19 @@
 	};
 	import { ArrowLeft, AlertCircle } from 'lucide-svelte';
 
-	$: moduleKey = $page.params.key;
+	$: moduleKey = $page.params.key ?? '';
 
-	const enabledModulesQuery = createQuery({
-		queryKey: ['enabled-modules'],
-		queryFn: () => listEnabledModules()
+	const moduleQuery = createQuery({
+		queryKey: ['module', moduleKey],
+		queryFn: () => getModule(moduleKey)
 	});
 
-	$: moduleConfig = $enabledModulesQuery.data?.find((m) => m.module_key === moduleKey);
-
-	$: isAvailable = moduleConfig?.enabled ?? false;
-	$: isLoading = $enabledModulesQuery.isLoading;
+	$: moduleConfig = $moduleQuery.data;
+	$: moduleError = $moduleQuery.error;
+	$: isLoading = $moduleQuery.isLoading;
+	$: errorStatus = moduleError instanceof ApiError ? moduleError.status : null;
+	$: missingModule = errorStatus === 404;
+	$: accessDenied = errorStatus === 403;
 </script>
 
 <svelte:head>
@@ -51,7 +54,7 @@
 		<div class="flex h-64 items-center justify-center">
 			<div class="loading loading-lg loading-spinner text-brand-500"></div>
 		</div>
-	{:else if !isAvailable}
+	{:else if missingModule || accessDenied}
 		<div
 			class="flex flex-col items-center justify-center gap-4 rounded-2xl border border-base-300/50 bg-base-100 p-12 text-center"
 		>
@@ -60,9 +63,15 @@
 			>
 				<AlertCircle size={32} />
 			</div>
-			<h1 class="text-xl font-semibold text-base-content">Module Not Available</h1>
+			<h1 class="text-xl font-semibold text-base-content">
+				{missingModule ? 'Module Not Found' : 'Module Not Available'}
+			</h1>
 			<p class="max-w-sm text-sm text-base-content/60">
-				This module is currently disabled. Contact an administrator to enable it.
+				{#if missingModule}
+					No module is registered for <code>{moduleKey}</code>.
+				{:else}
+					{moduleError?.message ?? 'This module is disabled or you do not have access to it.'}
+				{/if}
 			</p>
 			<a href="/dashboard" class="btn btn-sm btn-primary">Back to Dashboard</a>
 		</div>

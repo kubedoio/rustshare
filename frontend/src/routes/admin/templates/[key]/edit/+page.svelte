@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { createMutation, createQuery, useQueryClient } from '$lib/query-compat';
 	import { getAdminTemplate, updateTemplate, listAdminModules } from '$lib/api/admin-modules';
+	import { APPROVED_MODULE_ICONS } from '$lib/modules/iconRegistry';
 	import { toastStore } from '$lib/stores/toast';
 	import { ArrowLeft, Save, AlertCircle } from 'lucide-svelte';
 
@@ -12,6 +13,8 @@
 	let name = '';
 	let moduleKey = '';
 	let description = '';
+	let createLabel = '';
+	let icon = 'file-text';
 	let folderStructureJson = '[]';
 	let defaultFilesJson = '[]';
 	let metadataSchemaJson = '{}';
@@ -19,7 +22,6 @@
 	let visibilityPolicy = 'workspace';
 	let enabled = true;
 	let error = '';
-
 	const templateQuery = createQuery({
 		queryKey: ['admin-template', key],
 		queryFn: () => getAdminTemplate(key)
@@ -35,6 +37,8 @@
 		name = t.name;
 		moduleKey = t.module_key;
 		description = t.description ?? '';
+		createLabel = t.ui_config?.createLabel ?? '';
+		icon = t.ui_config?.icon ?? 'file-text';
 		folderStructureJson = JSON.stringify(t.folder_structure ?? [], null, 2);
 		defaultFilesJson = JSON.stringify(t.default_files ?? [], null, 2);
 		metadataSchemaJson = JSON.stringify(t.metadata_schema ?? {}, null, 2);
@@ -48,6 +52,10 @@
 			name: string;
 			module_key: string;
 			description: string;
+			ui_config: {
+				createLabel?: string;
+				icon?: string;
+			};
 			folder_structure: string[];
 			default_files: { path: string; content?: string; content_type?: string }[];
 			metadata_schema: Record<string, unknown>;
@@ -93,6 +101,10 @@
 				name: name.trim(),
 				module_key: moduleKey,
 				description: description.trim(),
+				ui_config: {
+					createLabel: createLabel.trim() || undefined,
+					icon: icon.trim() || undefined
+				},
 				folder_structure: Array.isArray(folderStructure) ? folderStructure : [],
 				default_files: Array.isArray(defaultFiles) ? defaultFiles : [],
 				metadata_schema: metadataSchema as Record<string, unknown>,
@@ -206,7 +218,27 @@
 						></textarea>
 					</div>
 
-					<div class="grid gap-4 sm:grid-cols-2">
+					<div class="grid gap-4 sm:grid-cols-4">
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="create-label"
+								>Create Label</label
+							>
+							<input
+								id="create-label"
+								type="text"
+								class="input-bordered input input-sm"
+								placeholder="New Note"
+								bind:value={createLabel}
+							/>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="icon">Icon</label>
+							<select id="icon" class="select-bordered select select-sm" bind:value={icon}>
+								{#each APPROVED_MODULE_ICONS as approvedIcon}
+									<option value={approvedIcon}>{approvedIcon}</option>
+								{/each}
+							</select>
+						</div>
 						<div class="flex flex-col gap-1">
 							<label class="text-xs font-semibold text-base-content/70" for="renderer"
 								>Renderer</label

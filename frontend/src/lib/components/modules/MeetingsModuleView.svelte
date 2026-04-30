@@ -4,7 +4,7 @@
 	import { getFolderContents } from '$lib/api/folders';
 	import { createFromTemplate } from '$lib/api/modules';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
-	import { FileText, Plus, Clock } from 'lucide-svelte';
+	import { Folder, Plus, Clock } from 'lucide-svelte';
 
 	export let moduleConfig: {
 		module_key: string;
@@ -45,7 +45,7 @@
 	});
 
 	$: contents = $rootFolderQuery.data;
-	$: meetings = contents?.files ?? [];
+	$: meetings = contents?.folders ?? [];
 
 	async function handleCreateMeeting() {
 		if (!moduleConfig.default_template) return;
@@ -57,8 +57,8 @@
 				name,
 				parent_folder_id: null
 			});
-			if (result.object_type === 'file') {
-				goto(`/files?preview=${result.object_id}`);
+			if (result.object_type === 'folder') {
+				goto(`/files?folder=${result.object_id}`);
 			}
 			$rootFolderQuery.refetch();
 		} catch (err) {
@@ -66,15 +66,15 @@
 		}
 	}
 
-	function navigateToMeeting(fileId: string) {
-		goto(`/files?preview=${fileId}`);
+	function navigateToMeeting(folderId: string) {
+		goto(`/files?folder=${folderId}`);
 	}
 </script>
 
 <div class="flex flex-col gap-6">
-	{#if meetings.length === 0 && contents?.folders?.length === 0}
+	{#if meetings.length === 0 && contents?.files?.length === 0}
 		<EmptyState
-			icon={FileText}
+			icon={Folder}
 			title={emptyTitle}
 			description={emptyDescription}
 			actionLabel={emptyAction}
@@ -99,14 +99,14 @@
 						<div
 							class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500"
 						>
-							<FileText size={18} />
+							<Folder size={18} />
 						</div>
 						<div class="flex min-w-0 flex-col gap-1">
 							<span class="truncate text-sm font-medium text-base-content">{meeting.name}</span>
 							<div class="flex items-center gap-3 text-xs text-base-content/50">
 								<span class="inline-flex items-center gap-1">
 									<Clock size={12} />
-									{new Date(meeting.modified_at).toLocaleDateString()}
+									{new Date(meeting.updated_at).toLocaleDateString()}
 								</span>
 							</div>
 						</div>
