@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
-	import { getFolderContents } from '$lib/api/folders';
 	import { createFromTemplate } from '$lib/api/modules';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
+	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { FileText, Plus, Clock } from 'lucide-svelte';
 
 	export let moduleConfig: {
@@ -31,16 +31,7 @@
 	// Fetch module root folder contents
 	$: rootFolderQuery = createQuery({
 		queryKey: ['standups-root', moduleConfig.module_key],
-		queryFn: async () => {
-			const res = await fetch('/api/v1/folders/root/contents');
-			if (!res.ok) throw new Error('Failed to fetch root contents');
-			const data = await res.json();
-			const rootName = moduleConfig.root_path.replace(/^\//, '');
-			const folder = data.folders?.find((f: { name: string }) => f.name === rootName);
-			if (!folder) return { folders: [], files: [], current_folder: null };
-			const contents = await getFolderContents(folder.id);
-			return { ...contents, current_folder: folder };
-		},
+		queryFn: () => getModuleRootContents(moduleConfig.root_path),
 		enabled: true
 	});
 
@@ -57,9 +48,7 @@
 				name,
 				parent_folder_id: null
 			});
-			if (result.object_type === 'file') {
-				goto(`/files?preview=${result.object_id}`);
-			}
+			goto(getModuleObjectHref(moduleConfig.module_key, result.object_type, result.object_id));
 			$rootFolderQuery.refetch();
 		} catch (err) {
 			console.error('Failed to create standup:', err);
@@ -67,7 +56,7 @@
 	}
 
 	function navigateToStandup(fileId: string) {
-		goto(`/files?preview=${fileId}`);
+		goto(getModuleObjectHref(moduleConfig.module_key, 'file', fileId));
 	}
 </script>
 

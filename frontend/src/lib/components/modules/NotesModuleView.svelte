@@ -3,6 +3,7 @@
 	import { createQuery } from '$lib/query-compat';
 	import { createFromTemplate, getModuleSummary } from '$lib/api/modules';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
+	import { getModuleObjectHref } from '$lib/modules/modulePages';
 	import { FileText, Plus, Clock } from 'lucide-svelte';
 
 	export let moduleConfig: {
@@ -38,7 +39,7 @@
 				name: 'Untitled Note',
 				parent_folder_id: null
 			});
-			goto(`/notes/${result.object_id}`);
+			goto(getModuleObjectHref(moduleConfig.module_key, result.object_type, result.object_id));
 		} catch (err) {
 			console.error('Failed to create note:', err);
 		}
@@ -80,7 +81,7 @@
 		<div class="flex flex-col gap-2">
 			{#each recentNotes as note}
 				<a
-					href="/notes/{note.id}"
+					href={getModuleObjectHref(moduleConfig.module_key, 'file', note.id)}
 					class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
 				>
 					<div

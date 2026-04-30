@@ -1,6 +1,7 @@
 import { goto } from '$app/navigation';
 import { createFromTemplate } from '$lib/api/modules';
 import type { ModuleConfig, PrimaryActionConfig } from '$lib/api/types';
+import { getModuleObjectHref } from '$lib/modules/modulePages';
 
 function moduleUrl(moduleKey: string): string {
 	return `/modules/${moduleKey}`;
@@ -28,12 +29,7 @@ export async function runModulePrimaryAction(
 				name: buildDefaultObjectName(module, action.label)
 			});
 
-			if (created.object_type === 'file') {
-				await goto(`/files?preview=${created.object_id}`);
-				return;
-			}
-
-			await goto(`/files?folder=${created.object_id}`);
+			await goto(getModuleObjectHref(module.module_key, created.object_type, created.object_id));
 			return;
 		}
 		case 'open-module':

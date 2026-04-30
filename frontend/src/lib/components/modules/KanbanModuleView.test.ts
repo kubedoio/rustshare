@@ -12,6 +12,13 @@ vi.mock('$lib/api/modules', () => ({
 
 vi.mock('$lib/api/folders', () => ({
 	getFolderContents: vi.fn(async (folderId: string | null) => {
+		if (folderId === null) {
+			return {
+				folders: [{ id: 'kanban-root', name: 'Kanban', updated_at: '2026-04-30T10:00:00Z' }],
+				files: []
+			};
+		}
+
 		if (folderId === 'kanban-root') {
 			return {
 				folders: [
@@ -78,13 +85,6 @@ vi.mock('$lib/api/folders', () => ({
 describe('KanbanModuleView', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		global.fetch = vi.fn(async () => ({
-			ok: true,
-			json: async () => ({
-				folders: [{ id: 'kanban-root', name: 'Kanban' }],
-				files: []
-			})
-		})) as unknown as typeof fetch;
 	});
 
 	it('renders a selected board with column folders and cards', async () => {

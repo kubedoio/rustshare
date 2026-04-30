@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
-	import { getFolderContents } from '$lib/api/folders';
 	import { createFromTemplate } from '$lib/api/modules';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
+	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { Folder, FileText, Plus } from 'lucide-svelte';
 
 	export let moduleConfig: {
@@ -24,16 +24,7 @@
 
 	const folderContentsQuery = createQuery({
 		queryKey: ['module-folder-contents', moduleConfig.module_key],
-		queryFn: async () => {
-			const res = await fetch(`/api/v1/folders/root/contents`);
-			if (!res.ok) throw new Error('Failed to fetch root contents');
-			const data = await res.json();
-			const rootName = moduleConfig.root_path.replace(/^\//, '');
-			const folder = data.folders?.find((f: { name: string }) => f.name === rootName);
-			if (!folder) return { folders: [], files: [], current_folder: null };
-			const contents = await getFolderContents(folder.id);
-			return { ...contents, current_folder: folder };
-		}
+		queryFn: () => getModuleRootContents(moduleConfig.root_path)
 	});
 
 	$: contents = $folderContentsQuery.data;
@@ -51,11 +42,7 @@
 				name,
 				parent_folder_id: null
 			});
-			if (result.object_type === 'folder') {
-				goto(`/files?folder=${result.object_id}`);
-			} else {
-				goto(`/files?preview=${result.object_id}`);
-			}
+			goto(getModuleObjectHref(moduleConfig.module_key, result.object_type, result.object_id));
 		} catch (err) {
 			console.error('Failed to create from template:', err);
 			alert(err instanceof Error ? err.message : 'Failed to create item');

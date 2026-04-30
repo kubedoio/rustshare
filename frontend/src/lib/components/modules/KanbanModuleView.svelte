@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
-	import { getFolderContents } from '$lib/api/folders';
 	import { createFromTemplate } from '$lib/api/modules';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import type { File, Folder as FolderType } from '$lib/api/types';
+	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
+	import { getFolderContents } from '$lib/api/folders';
 	import { Folder, Plus, ArrowRight, GripVertical, FileText } from 'lucide-svelte';
 
 	export let moduleConfig: {
@@ -33,13 +34,7 @@
 	$: rootFolderQuery = createQuery({
 		queryKey: ['kanban-root', moduleConfig.module_key],
 		queryFn: async () => {
-			const res = await fetch('/api/v1/folders/root/contents');
-			if (!res.ok) throw new Error('Failed to fetch root contents');
-			const data = await res.json();
-			const rootName = moduleConfig.root_path.replace(/^\//, '');
-			const folder = data.folders?.find((f: { name: string }) => f.name === rootName);
-			if (!folder) return { folders: [], files: [], current_folder: null };
-			const contents = await getFolderContents(folder.id);
+			const contents = await getModuleRootContents(moduleConfig.root_path);
 			const boardCandidates = await Promise.all(
 				(contents.folders ?? []).map(async (candidate) => {
 					const boardContents = await getFolderContents(candidate.id);
@@ -63,7 +58,7 @@
 					.filter((candidate) => candidate.isValid)
 					.map(({ isValid: _ignored, ...candidate }) => candidate),
 				files: contents.files,
-				current_folder: folder,
+				current_folder: contents.current_folder,
 				ignoredFolderCount: boardCandidates.filter((candidate) => !candidate.isValid).length
 			};
 		},
@@ -176,12 +171,12 @@
 	}
 
 	function navigateToBoard(folderId: string) {
-		goto(`/files?folder=${folderId}`);
+		goto(getModuleObjectHref(moduleConfig.module_key, 'folder', folderId));
 	}
 
 	function openCard(card: BoardCard, boardId: string) {
 		if (card.itemType === 'file') {
-			goto(`/files?preview=${card.id}`);
+			goto(getModuleObjectHref(moduleConfig.module_key, 'file', card.id));
 			return;
 		}
 
