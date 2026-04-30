@@ -28,10 +28,19 @@
 	let dashboardCardTitle = '';
 	let dashboardCardDescription = '';
 	let dashboardSummaryMode = 'recent-items';
+	let dashboardWidgetEnabled = true;
+	let dashboardWidgetType = 'generic-module-summary';
+	let dashboardWidgetSize: 'small' | 'medium' | 'large' = 'small';
+	let dashboardColumnsDesktop = 3;
+	let dashboardColumnsTablet = 6;
+	let dashboardColumnsMobile = 12;
 	let dashboardMaxItems = 4;
 	let primaryActionLabel = '';
 	let primaryActionAction = 'create-from-template';
 	let primaryActionTemplate = '';
+	let pageEnabled = true;
+	let pageRoute = '';
+	let pageRenderer = '';
 	let modulePageLayout = 'list-grid';
 	let modulePageEmptyStateTitle = '';
 	let modulePageEmptyStateDescription = '';
@@ -72,14 +81,24 @@
 		dashboardCardTitle = ui.dashboard?.cardTitle ?? displayName;
 		dashboardCardDescription = ui.dashboard?.cardDescription ?? description;
 		dashboardSummaryMode = ui.dashboard?.summaryMode ?? 'recent-items';
+		dashboardWidgetEnabled = ui.dashboard?.widget?.enabled ?? dashboardEnabled;
+		dashboardWidgetType = ui.dashboard?.widget?.type ?? dashboardSummaryMode;
+		dashboardWidgetSize = ui.dashboard?.widget?.size ?? 'small';
+		dashboardColumnsDesktop = ui.dashboard?.widget?.columns?.desktop ?? 3;
+		dashboardColumnsTablet = ui.dashboard?.widget?.columns?.tablet ?? 6;
+		dashboardColumnsMobile = ui.dashboard?.widget?.columns?.mobile ?? 12;
 		dashboardMaxItems = ui.dashboard?.maxItems ?? 4;
 		primaryActionLabel = ui.dashboard?.primaryAction?.label ?? '';
 		primaryActionAction = ui.dashboard?.primaryAction?.action ?? 'create-from-template';
 		primaryActionTemplate = ui.dashboard?.primaryAction?.template ?? m.default_template ?? '';
-		modulePageLayout = ui.modulePage?.layout ?? 'list-grid';
-		modulePageEmptyStateTitle = ui.modulePage?.emptyStateTitle ?? '';
-		modulePageEmptyStateDescription = ui.modulePage?.emptyStateDescription ?? '';
-		modulePageEmptyStateAction = ui.modulePage?.emptyStateAction ?? '';
+		pageEnabled = ui.page?.enabled ?? true;
+		pageRoute = ui.page?.route ?? `/modules/${key}`;
+		pageRenderer = ui.page?.renderer ?? renderer ?? key;
+		modulePageLayout = ui.page?.layout ?? ui.modulePage?.layout ?? 'list-grid';
+		modulePageEmptyStateTitle = ui.page?.emptyStateTitle ?? ui.modulePage?.emptyStateTitle ?? '';
+		modulePageEmptyStateDescription =
+			ui.page?.emptyStateDescription ?? ui.modulePage?.emptyStateDescription ?? '';
+		modulePageEmptyStateAction = ui.page?.emptyStateAction ?? ui.modulePage?.emptyStateAction ?? '';
 	}
 
 	const updateMutation = createMutation({
@@ -99,6 +118,34 @@
 					cardDescription: string;
 					summaryMode: string;
 					maxItems: number;
+					widget: {
+						enabled: boolean;
+						type: string;
+						title: string;
+						description: string;
+						size: 'small' | 'medium' | 'large';
+						columns: { desktop: number; tablet: number; mobile: number };
+						maxItems: number;
+						primaryAction: {
+							label: string;
+							action: string;
+							template?: string;
+						};
+					};
+					primaryAction: {
+						label: string;
+						action: string;
+						template?: string;
+					};
+				};
+				page: {
+					enabled: boolean;
+					route: string;
+					renderer: string;
+					layout: string;
+					emptyStateTitle: string;
+					emptyStateDescription: string;
+					emptyStateAction: string;
 					primaryAction: {
 						label: string;
 						action: string;
@@ -152,8 +199,42 @@
 					order: dashboardOrder,
 					cardTitle: dashboardCardTitle.trim() || displayName.trim(),
 					cardDescription: dashboardCardDescription.trim() || description.trim(),
-					summaryMode: dashboardSummaryMode,
+					summaryMode: dashboardWidgetType || dashboardSummaryMode,
 					maxItems: dashboardMaxItems,
+					widget: {
+						enabled: dashboardWidgetEnabled,
+						type: dashboardWidgetType.trim() || dashboardSummaryMode,
+						title: dashboardCardTitle.trim() || displayName.trim(),
+						description: dashboardCardDescription.trim() || description.trim(),
+						size: dashboardWidgetSize as 'small' | 'medium' | 'large',
+						columns: {
+							desktop: Number(dashboardColumnsDesktop) || 3,
+							tablet: Number(dashboardColumnsTablet) || 6,
+							mobile: Number(dashboardColumnsMobile) || 12
+						},
+						maxItems: Number(dashboardMaxItems) || 4,
+						primaryAction: {
+							label: primaryActionLabel.trim() || modulePageEmptyStateAction.trim() || 'Open',
+							action: primaryActionAction.trim() || 'create-from-template',
+							...(primaryActionTemplate.trim() ? { template: primaryActionTemplate.trim() } : {})
+						}
+					},
+					primaryAction: {
+						label: primaryActionLabel.trim() || modulePageEmptyStateAction.trim() || 'Open',
+						action: primaryActionAction.trim() || 'create-from-template',
+						...(primaryActionTemplate.trim() ? { template: primaryActionTemplate.trim() } : {})
+					}
+				},
+				page: {
+					enabled: pageEnabled,
+					route: pageRoute.trim() || `/modules/${key}`,
+					renderer: pageRenderer.trim() || renderer.trim() || key,
+					layout: modulePageLayout.trim() || 'list-grid',
+					emptyStateTitle:
+						modulePageEmptyStateTitle.trim() || `No ${displayName.trim().toLowerCase()} yet`,
+					emptyStateDescription: modulePageEmptyStateDescription.trim() || description.trim(),
+					emptyStateAction:
+						modulePageEmptyStateAction.trim() || primaryActionLabel.trim() || 'Create',
 					primaryAction: {
 						label: primaryActionLabel.trim() || modulePageEmptyStateAction.trim() || 'Open',
 						action: primaryActionAction.trim() || 'create-from-template',
@@ -437,19 +518,18 @@
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div class="flex flex-col gap-1">
 							<label class="text-xs font-semibold text-base-content/70" for="summary-mode"
-								>Summary Mode</label
+								>Widget Type</label
 							>
 							<select
 								id="summary-mode"
 								class="select-bordered select select-sm"
-								bind:value={dashboardSummaryMode}
+								bind:value={dashboardWidgetType}
 							>
-								<option value="none">None</option>
-								<option value="recent-items">Recent Items</option>
-								<option value="today-status">Today Status</option>
-								<option value="kanban-overview">Kanban Overview</option>
-								<option value="shares-overview">Shares Overview</option>
-								<option value="generic-file-summary">Generic File Summary</option>
+								<option value="generic-module-summary">Generic Module Summary</option>
+								<option value="kanban-summary">Kanban Summary</option>
+								<option value="decisions-meetings-summary">Decisions & Meetings Summary</option>
+								<option value="latest-notes">Latest Notes</option>
+								<option value="active-shares">Active Shares</option>
 							</select>
 						</div>
 						<div class="flex flex-col gap-1">
@@ -463,6 +543,85 @@
 								max="10"
 								class="input-bordered input input-sm"
 								bind:value={dashboardMaxItems}
+							/>
+						</div>
+					</div>
+
+					<div class="grid gap-4 sm:grid-cols-4">
+						<div class="flex items-center gap-3 sm:col-span-1">
+							<input
+								type="checkbox"
+								class="checkbox checkbox-sm"
+								bind:checked={dashboardWidgetEnabled}
+								id="widget-enabled"
+							/>
+							<label for="widget-enabled" class="text-sm text-base-content/80">Widget enabled</label
+							>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="widget-size"
+								>Size</label
+							>
+							<select
+								id="widget-size"
+								class="select-bordered select select-sm"
+								bind:value={dashboardWidgetSize}
+							>
+								<option value="small">Small</option>
+								<option value="medium">Medium</option>
+								<option value="large">Large</option>
+							</select>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="widget-desktop"
+								>Desktop Columns</label
+							>
+							<input
+								id="widget-desktop"
+								type="number"
+								min="1"
+								max="12"
+								class="input-bordered input input-sm"
+								bind:value={dashboardColumnsDesktop}
+							/>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="widget-tablet"
+								>Tablet Columns</label
+							>
+							<input
+								id="widget-tablet"
+								type="number"
+								min="1"
+								max="12"
+								class="input-bordered input input-sm"
+								bind:value={dashboardColumnsTablet}
+							/>
+						</div>
+					</div>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="widget-mobile"
+								>Mobile Columns</label
+							>
+							<input
+								id="widget-mobile"
+								type="number"
+								min="1"
+								max="12"
+								class="input-bordered input input-sm"
+								bind:value={dashboardColumnsMobile}
+							/>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="summary-mode-legacy"
+								>Legacy Summary Mode</label
+							>
+							<input
+								id="summary-mode-legacy"
+								type="text"
+								class="input-bordered input input-sm"
+								bind:value={dashboardSummaryMode}
 							/>
 						</div>
 					</div>
@@ -519,6 +678,39 @@
 					Module Page
 				</h2>
 				<div class="grid gap-4">
+					<div class="grid gap-4 sm:grid-cols-3">
+						<div class="flex items-center gap-3">
+							<input
+								type="checkbox"
+								class="checkbox checkbox-sm"
+								bind:checked={pageEnabled}
+								id="page-enabled"
+							/>
+							<label for="page-enabled" class="text-sm text-base-content/80">Page enabled</label>
+						</div>
+						<div class="flex flex-col gap-1 sm:col-span-1">
+							<label class="text-xs font-semibold text-base-content/70" for="page-route"
+								>Route</label
+							>
+							<input
+								id="page-route"
+								type="text"
+								class="input-bordered input input-sm"
+								bind:value={pageRoute}
+							/>
+						</div>
+						<div class="flex flex-col gap-1 sm:col-span-1">
+							<label class="text-xs font-semibold text-base-content/70" for="page-renderer"
+								>Page Renderer</label
+							>
+							<input
+								id="page-renderer"
+								type="text"
+								class="input-bordered input input-sm"
+								bind:value={pageRenderer}
+							/>
+						</div>
+					</div>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div class="flex flex-col gap-1">
 							<label class="text-xs font-semibold text-base-content/70" for="module-layout"

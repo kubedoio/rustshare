@@ -5,6 +5,7 @@ import type {
 	CreateFromTemplateResponse,
 	ModuleSummary
 } from './types';
+import { normalizeModuleConfig } from '$lib/modules/workspaceSurface';
 
 interface EnabledModulesResponse {
 	modules: ModuleConfig[];
@@ -22,14 +23,14 @@ interface ModuleSummaryResponse {
 
 export async function listEnabledModules(): Promise<ModuleConfig[]> {
 	const response = await apiClient.get<EnabledModulesResponse>('/modules');
-	return response.modules;
+	return response.modules.map(normalizeModuleConfig);
 }
 
 export async function getModule(key: string): Promise<ModuleConfig> {
 	const response = await apiClient.get<ModuleDetailResponse | LegacyModuleDetailResponse>(
 		`/modules/${key}`
 	);
-	return 'module' in response ? response.module : response;
+	return normalizeModuleConfig('module' in response ? response.module : response);
 }
 
 export async function createFromTemplate(

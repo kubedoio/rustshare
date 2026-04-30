@@ -236,6 +236,10 @@ pub fn module_routes() -> Router<AppState> {
             get(crate::handlers::get_module_summary),
         )
         .route(
+            "/api/v1/workspace-surface",
+            get(crate::handlers::get_workspace_surface),
+        )
+        .route(
             "/api/v1/modules/from-template",
             post(crate::handlers::create_from_template),
         )

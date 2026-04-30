@@ -59,7 +59,25 @@ describe('modules API', () => {
 
 		vi.mocked(apiClient.get).mockResolvedValue({ modules });
 
-		await expect(listEnabledModules()).resolves.toEqual(modules);
+		await expect(listEnabledModules()).resolves.toEqual([
+			expect.objectContaining({
+				module_key: 'notes',
+				ui_config: expect.objectContaining({
+					sidebar: expect.objectContaining({ label: 'Notes' }),
+					dashboard: expect.objectContaining({
+						summaryMode: 'recent-items',
+						widget: expect.objectContaining({
+							type: 'recent-items',
+							title: 'Notes'
+						})
+					}),
+					page: expect.objectContaining({
+						route: '/modules/notes',
+						renderer: 'notes'
+					})
+				})
+			})
+		]);
 		expect(apiClient.get).toHaveBeenCalledWith('/modules');
 	});
 
@@ -90,7 +108,20 @@ describe('modules API', () => {
 
 		vi.mocked(apiClient.get).mockResolvedValue({ module });
 
-		await expect(getModule('notes')).resolves.toEqual(module);
+		await expect(getModule('notes')).resolves.toEqual(
+			expect.objectContaining({
+				module_key: 'notes',
+				ui_config: expect.objectContaining({
+					dashboard: expect.objectContaining({
+						widget: expect.objectContaining({ type: 'latest-notes' })
+					}),
+					page: expect.objectContaining({
+						route: '/modules/notes',
+						renderer: 'notes'
+					})
+				})
+			})
+		);
 		expect(apiClient.get).toHaveBeenCalledWith('/modules/notes');
 	});
 
@@ -121,7 +152,23 @@ describe('modules API', () => {
 
 		vi.mocked(apiClient.get).mockResolvedValue(module);
 
-		await expect(getModule('kanban')).resolves.toEqual(module);
+		await expect(getModule('kanban')).resolves.toEqual(
+			expect.objectContaining({
+				module_key: 'kanban',
+				ui_config: expect.objectContaining({
+					dashboard: expect.objectContaining({
+						widget: expect.objectContaining({
+							type: 'kanban-summary',
+							size: 'large'
+						})
+					}),
+					page: expect.objectContaining({
+						route: '/modules/kanban',
+						renderer: 'kanban'
+					})
+				})
+			})
+		);
 		expect(apiClient.get).toHaveBeenCalledWith('/modules/kanban');
 	});
 

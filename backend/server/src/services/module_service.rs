@@ -383,7 +383,7 @@ impl ModuleService {
         .fetch_all(self.metadata_store.pool())
         .await?;
 
-        Ok(modules)
+        Ok(modules.into_iter().map(normalize_module).collect())
     }
 
     /// List enabled modules (for dashboard).
@@ -402,6 +402,7 @@ impl ModuleService {
 
         Ok(modules
             .into_iter()
+            .map(normalize_module)
             .filter(|module| user_can_access_module(module, is_admin))
             .collect())
     }
@@ -416,7 +417,9 @@ impl ModuleService {
         .fetch_optional(self.metadata_store.pool())
         .await?;
 
-        module.ok_or_else(|| ModuleError::NotFound(key.to_string()))
+        module
+            .map(normalize_module)
+            .ok_or_else(|| ModuleError::NotFound(key.to_string()))
     }
 
     /// Update module config (admin only). Only certain fields are mutable.
@@ -439,7 +442,16 @@ impl ModuleService {
         let permissions = input.permissions.unwrap_or(module.permissions);
         let ai_indexing = input.ai_indexing.unwrap_or(module.ai_indexing);
         let audit = input.audit.unwrap_or(module.audit);
-        let ui_config = input.ui_config.unwrap_or(module.ui_config);
+        let ui_config = normalize_module_ui_config(
+            key,
+            &display_name,
+            &description,
+            &icon,
+            &root_path,
+            &renderer,
+            default_template.as_deref(),
+            Some(input.ui_config.unwrap_or(module.ui_config)),
+        );
 
         sqlx::query(
             r#"
@@ -829,6 +841,306 @@ fn validate_root_path(root_path: &str) -> Result<(), ModuleError> {
     }
 
     Ok(())
+}
+
+fn normalize_module(module: Module) -> Module {
+    let ui_config = normalize_module_ui_config(
+        &module.module_key,
+        &module.display_name,
+        &module.description,
+        &module.icon,
+        &module.root_path,
+        &module.renderer,
+        module.default_template.as_deref(),
+        Some(module.ui_config.clone()),
+    );
+
+    Module { ui_config, ..module }
+}
+
+fn normalize_module_ui_config(
+    module_key: &str,
+    display_name: &str,
+    description: &str,
+    icon: &str,
+    _root_path: &str,
+    renderer: &str,
+    default_template: Option<&str>,
+    existing_ui_config: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let existing = existing_ui_config
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+
+    let sidebar = existing
+        .get("sidebar")
+        .and_then(|value| value.as_object())
+        .cloned()
+        .unwrap_or_default();
+    let dashboard = existing
+        .get("dashboard")
+        .and_then(|value| value.as_object())
+        .cloned()
+        .unwrap_or_default();
+    let widget = dashboard
+        .get("widget")
+        .and_then(|value| value.as_object())
+        .cloned()
+        .unwrap_or_default();
+    let page = existing
+        .get("page")
+        .and_then(|value| value.as_object())
+        .cloned()
+        .or_else(|| {
+            existing
+                .get("modulePage")
+                .and_then(|value| value.as_object())
+                .cloned()
+        })
+        .unwrap_or_default();
+
+    let widget_type = widget
+        .get("type")
+        .and_then(|value| value.as_str())
+        .or_else(|| dashboard.get("summaryMode").and_then(|value| value.as_str()))
+        .unwrap_or(default_widget_type(module_key));
+    let widget_title = widget
+        .get("title")
+        .and_then(|value| value.as_str())
+        .or_else(|| dashboard.get("cardTitle").and_then(|value| value.as_str()))
+        .unwrap_or(display_name);
+    let widget_description = widget
+        .get("description")
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            dashboard
+                .get("cardDescription")
+                .and_then(|value| value.as_str())
+        })
+        .unwrap_or(description);
+    let widget_size = widget
+        .get("size")
+        .and_then(|value| value.as_str())
+        .unwrap_or(default_widget_size(module_key));
+    let columns = widget
+        .get("columns")
+        .and_then(|value| value.as_object())
+        .cloned()
+        .unwrap_or_else(|| default_widget_columns(widget_size));
+    let widget_primary_action = widget
+        .get("primaryAction")
+        .cloned()
+        .or_else(|| dashboard.get("primaryAction").cloned())
+        .unwrap_or_else(|| default_primary_action(module_key, default_template));
+    let dashboard_enabled = dashboard
+        .get("enabled")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(default_dashboard_enabled(module_key));
+    let dashboard_order = dashboard
+        .get("order")
+        .and_then(|value| value.as_i64())
+        .unwrap_or(default_dashboard_order(module_key));
+    let max_items = widget
+        .get("maxItems")
+        .and_then(|value| value.as_i64())
+        .or_else(|| dashboard.get("maxItems").and_then(|value| value.as_i64()))
+        .unwrap_or(4);
+
+    let page_enabled = page
+        .get("enabled")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    let page_route = page
+        .get("route")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| format!("/modules/{module_key}"));
+    let page_renderer = page
+        .get("renderer")
+        .and_then(|value| value.as_str())
+        .unwrap_or(renderer)
+        .to_string();
+    let page_layout = page
+        .get("layout")
+        .and_then(|value| value.as_str())
+        .unwrap_or(default_page_layout(module_key))
+        .to_string();
+    let page_empty_title = page
+        .get("emptyStateTitle")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| default_empty_state_title(module_key, display_name));
+    let page_empty_description = page
+        .get("emptyStateDescription")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| default_empty_state_description(module_key, description));
+    let page_empty_action = page
+        .get("emptyStateAction")
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            widget_primary_action
+                .get("label")
+                .and_then(|value| value.as_str())
+        })
+        .unwrap_or("Create")
+        .to_string();
+    let page_primary_action = page
+        .get("primaryAction")
+        .cloned()
+        .unwrap_or_else(|| widget_primary_action.clone());
+
+    json!({
+        "sidebar": {
+            "enabled": sidebar.get("enabled").and_then(|value| value.as_bool()).unwrap_or(true),
+            "order": sidebar.get("order").and_then(|value| value.as_i64()).unwrap_or(default_sidebar_order(module_key)),
+            "icon": sidebar.get("icon").and_then(|value| value.as_str()).unwrap_or(icon),
+            "label": sidebar.get("label").and_then(|value| value.as_str()).unwrap_or(display_name)
+        },
+        "dashboard": {
+            "enabled": dashboard_enabled,
+            "order": dashboard_order,
+            "cardTitle": widget_title,
+            "cardDescription": widget_description,
+            "summaryMode": widget_type,
+            "maxItems": max_items,
+            "primaryAction": widget_primary_action,
+            "widget": {
+                "enabled": widget.get("enabled").and_then(|value| value.as_bool()).unwrap_or(dashboard_enabled),
+                "type": widget_type,
+                "title": widget_title,
+                "description": widget_description,
+                "size": widget_size,
+                "columns": columns,
+                "maxItems": max_items,
+                "primaryAction": widget_primary_action
+            }
+        },
+        "modulePage": {
+            "layout": page_layout,
+            "emptyStateTitle": page_empty_title,
+            "emptyStateDescription": page_empty_description,
+            "emptyStateAction": page_empty_action
+        },
+        "page": {
+            "enabled": page_enabled,
+            "route": page_route,
+            "renderer": page_renderer,
+            "layout": page_layout,
+            "emptyStateTitle": page_empty_title,
+            "emptyStateDescription": page_empty_description,
+            "emptyStateAction": page_empty_action,
+            "primaryAction": page_primary_action
+        }
+    })
+}
+
+fn default_widget_type(module_key: &str) -> &str {
+    match module_key {
+        "kanban" => "kanban-summary",
+        "meetings" => "decisions-meetings-summary",
+        "notes" => "latest-notes",
+        "shares" => "active-shares",
+        _ => "generic-module-summary",
+    }
+}
+
+fn default_widget_size(module_key: &str) -> &str {
+    match module_key {
+        "kanban" => "large",
+        "meetings" => "medium",
+        _ => "small",
+    }
+}
+
+fn default_widget_columns(widget_size: &str) -> serde_json::Map<String, serde_json::Value> {
+    let (desktop, tablet, mobile) = match widget_size {
+        "large" => (5, 12, 12),
+        "medium" => (4, 6, 12),
+        _ => (3, 6, 12),
+    };
+
+    serde_json::Map::from_iter([
+        ("desktop".to_string(), json!(desktop)),
+        ("tablet".to_string(), json!(tablet)),
+        ("mobile".to_string(), json!(mobile)),
+    ])
+}
+
+fn default_primary_action(module_key: &str, default_template: Option<&str>) -> serde_json::Value {
+    let label = match module_key {
+        "kanban" => "New Board",
+        "meetings" => "New Meeting",
+        "standups" => "New Standup",
+        "decisions" => "New Decision",
+        "shares" => "New Share",
+        _ => "New Note",
+    };
+
+    json!({
+        "label": label,
+        "action": "create-from-template",
+        "template": default_template
+    })
+}
+
+fn default_dashboard_enabled(module_key: &str) -> bool {
+    !matches!(module_key, "decisions" | "standups")
+}
+
+fn default_dashboard_order(module_key: &str) -> i64 {
+    match module_key {
+        "kanban" => 10,
+        "meetings" => 20,
+        "notes" => 30,
+        "shares" => 40,
+        "standups" => 50,
+        "decisions" => 60,
+        _ => 99,
+    }
+}
+
+fn default_sidebar_order(module_key: &str) -> i64 {
+    match module_key {
+        "notes" => 30,
+        "meetings" => 40,
+        "standups" => 50,
+        "kanban" => 60,
+        "decisions" => 70,
+        "shares" => 80,
+        _ => 99,
+    }
+}
+
+fn default_page_layout(module_key: &str) -> &str {
+    match module_key {
+        "kanban" => "board",
+        _ => "list-grid",
+    }
+}
+
+fn default_empty_state_title(module_key: &str, display_name: &str) -> String {
+    match module_key {
+        "notes" => "No notes yet".to_string(),
+        "meetings" => "No meeting notes yet".to_string(),
+        "standups" => "No standups yet".to_string(),
+        "kanban" => "No boards yet".to_string(),
+        "decisions" => "No decisions yet".to_string(),
+        "shares" => "No active shares".to_string(),
+        _ => format!("No {} yet", display_name.to_lowercase()),
+    }
+}
+
+fn default_empty_state_description(module_key: &str, description: &str) -> String {
+    match module_key {
+        "notes" => "Create your first file-backed note.".to_string(),
+        "meetings" => "Create your first meeting note.".to_string(),
+        "standups" => "Create your first standup record.".to_string(),
+        "kanban" => "No boards yet. Create your first file-backed board.".to_string(),
+        "decisions" => "No decisions recorded yet.".to_string(),
+        "shares" => "No active shares.".to_string(),
+        _ => description.to_string(),
+    }
 }
 
 #[cfg(test)]

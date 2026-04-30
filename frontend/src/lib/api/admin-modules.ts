@@ -6,6 +6,7 @@ import type {
 	TemplateUiConfig,
 	ModuleUiConfig
 } from './types';
+import { normalizeModuleConfig } from '$lib/modules/workspaceSurface';
 
 interface AdminModulesResponse {
 	modules: ModuleConfig[];
@@ -40,26 +41,32 @@ export interface UpdateModuleRequest {
 
 export async function listAdminModules(): Promise<ModuleConfig[]> {
 	const response = await apiClient.get<AdminModulesResponse>('/admin/modules');
-	return response.modules;
+	return response.modules.map(normalizeModuleConfig);
 }
 
 export async function getAdminModule(key: string): Promise<ModuleConfig> {
-	return apiClient.get<ModuleConfig>(`/admin/modules/${key}`);
+	return normalizeModuleConfig(await apiClient.get<ModuleConfig>(`/admin/modules/${key}`));
 }
 
 export async function enableModule(key: string): Promise<ModuleConfig> {
-	return apiClient.post<ModuleConfig>(`/admin/modules/${key}/enable`, {});
+	return normalizeModuleConfig(
+		await apiClient.post<ModuleConfig>(`/admin/modules/${key}/enable`, {})
+	);
 }
 
 export async function disableModule(key: string): Promise<ModuleConfig> {
-	return apiClient.post<ModuleConfig>(`/admin/modules/${key}/disable`, {});
+	return normalizeModuleConfig(
+		await apiClient.post<ModuleConfig>(`/admin/modules/${key}/disable`, {})
+	);
 }
 
 export async function updateModule(
 	key: string,
 	updates: UpdateModuleRequest
 ): Promise<ModuleConfig> {
-	return apiClient.patch<ModuleConfig>(`/admin/modules/${key}`, updates);
+	return normalizeModuleConfig(
+		await apiClient.patch<ModuleConfig>(`/admin/modules/${key}`, updates)
+	);
 }
 
 export async function listAdminTemplates(): Promise<TemplateConfig[]> {

@@ -3,6 +3,7 @@
 	import { createQuery } from '$lib/query-compat';
 	import { listEnabledModules } from '$lib/api/modules';
 	import ModuleIcon from '$lib/components/dashboard/ModuleIcon.svelte';
+	import { getEnabledSidebarModules, getModuleSidebarConfig } from '$lib/modules/workspaceSurface';
 	import Logo from '$lib/ui/Logo.svelte';
 	import { Hop as Home, FolderOpen, Settings } from 'lucide-svelte';
 
@@ -42,9 +43,7 @@
 		queryFn: () => listEnabledModules()
 	});
 
-	$: sidebarModules = ($modulesQuery.data ?? [])
-		.filter((m) => m.ui_config?.sidebar?.enabled === true)
-		.sort((a, b) => (a.ui_config?.sidebar?.order ?? 99) - (b.ui_config?.sidebar?.order ?? 99));
+	$: sidebarModules = getEnabledSidebarModules($modulesQuery.data ?? []);
 
 	function isActive(item: RailItem): boolean {
 		const pathname = $page.url.pathname;
@@ -122,10 +121,10 @@
 							? 'bg-brand-500/15 text-brand-500 shadow-sm'
 							: 'text-base-content/50 hover:bg-base-200 hover:text-base-content'}"
 						aria-current={active ? 'page' : undefined}
-						aria-label={mod.ui_config?.sidebar?.label ?? mod.display_name}
+						aria-label={getModuleSidebarConfig(mod).label}
 					>
 						<ModuleIcon
-							name={mod.ui_config?.sidebar?.icon ?? mod.icon}
+							name={getModuleSidebarConfig(mod).icon ?? mod.icon}
 							size={22}
 							strokeWidth={1.75}
 						/>
@@ -133,7 +132,7 @@
 						<span
 							class="invisible absolute left-full z-50 ml-3 rounded-lg border border-base-300/70 bg-base-100 px-2.5 py-1.5 text-xs font-medium whitespace-nowrap text-base-content opacity-0 shadow-lg transition-all duration-200 group-hover:visible group-hover:opacity-100"
 						>
-							{mod.ui_config?.sidebar?.label ?? mod.display_name}
+							{getModuleSidebarConfig(mod).label}
 						</span>
 					</a>
 				{/each}

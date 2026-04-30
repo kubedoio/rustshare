@@ -242,6 +242,7 @@ export interface ModuleUiConfig {
 	sidebar?: SidebarConfig;
 	dashboard?: DashboardConfig;
 	modulePage?: ModulePageConfig;
+	page?: ModulePageDefinition;
 }
 
 export interface SidebarConfig {
@@ -254,11 +255,12 @@ export interface SidebarConfig {
 export interface DashboardConfig {
 	enabled: boolean;
 	order: number;
-	cardTitle: string;
-	cardDescription: string;
-	summaryMode: string;
-	maxItems: number;
+	cardTitle?: string;
+	cardDescription?: string;
+	summaryMode?: string;
+	maxItems?: number;
 	primaryAction?: PrimaryActionConfig;
+	widget?: WorkspaceWidgetConfig;
 }
 
 export interface PrimaryActionConfig {
@@ -272,6 +274,62 @@ export interface ModulePageConfig {
 	emptyStateTitle: string;
 	emptyStateDescription: string;
 	emptyStateAction: string;
+}
+
+export interface ModulePageDefinition {
+	enabled: boolean;
+	route: string;
+	renderer: string;
+	layout: string;
+	emptyStateTitle: string;
+	emptyStateDescription: string;
+	emptyStateAction: string;
+	primaryAction?: PrimaryActionConfig;
+}
+
+export type WorkspaceWidgetSize = 'small' | 'medium' | 'large';
+
+export interface WorkspaceWidgetColumns {
+	desktop: number;
+	tablet: number;
+	mobile: number;
+}
+
+export interface WorkspaceWidgetConfig {
+	enabled: boolean;
+	type: string;
+	title: string;
+	description: string;
+	size: WorkspaceWidgetSize;
+	columns: WorkspaceWidgetColumns;
+	maxItems: number;
+	primaryAction?: PrimaryActionConfig;
+}
+
+export interface WorkspaceSurfaceLayout {
+	type: string;
+	columns: number;
+	gap: number;
+	compactOverview: boolean;
+}
+
+export interface WorkspaceSurfaceSection {
+	key: string;
+	type: string;
+	enabled: boolean;
+	order: number;
+	title?: string;
+	renderer: string;
+}
+
+export interface WorkspaceSurfaceDefinition {
+	id: string;
+	key: string;
+	name: string;
+	version: string;
+	enabled: boolean;
+	layout: WorkspaceSurfaceLayout;
+	sections: WorkspaceSurfaceSection[];
 }
 
 export interface ModulePermissions {
