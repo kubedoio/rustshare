@@ -61,8 +61,6 @@
 	function handleCreateNew() {
 		window.location.href = '/files';
 	}
-
-
 </script>
 
 <svelte:head>
@@ -430,14 +428,6 @@
 		font-family: 'IBM Plex Mono', monospace;
 		font-size: 0.75rem;
 		font-weight: 700;
-	}
-
-	.action-button-arrow {
-		transition: transform 0.2s;
-	}
-
-	.action-button:hover .action-button-arrow {
-		transform: translateX(0.25rem);
 	}
 
 	/* Compact Stats Grid */

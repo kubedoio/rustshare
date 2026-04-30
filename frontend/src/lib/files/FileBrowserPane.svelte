@@ -67,6 +67,7 @@
 			| ((folder: Folder) => void)
 			| ((folder: Folder, targetFolderId: string | null) => void);
 		onbreadcrumbNavigate?: (event: CustomEvent<{ folderId: string | null }>) => void;
+		pagination?: import('svelte').Snippet;
 	}
 
 	let {
@@ -122,7 +123,8 @@
 		onPermanentDeleteFolder = () => {},
 		onShareFolder = () => {},
 		onMoveFolder = () => {},
-		onbreadcrumbNavigate = () => {}
+		onbreadcrumbNavigate = () => {},
+		pagination
 	}: Props = $props();
 </script>
 
@@ -275,7 +277,7 @@
 
 	{#if !isLoading && !error && (folders.length > 0 || files.length > 0)}
 		<div class="border-t border-base-300/50 px-3 py-2 md:px-4 lg:px-5">
-			<slot name="pagination" />
+			{@render pagination?.()}
 		</div>
 	{/if}
 </div>

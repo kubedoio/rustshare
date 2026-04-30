@@ -74,6 +74,7 @@
 <div class="flex flex-col gap-6">
 	{#if meetings.length === 0 && contents?.folders?.length === 0}
 		<EmptyState
+			icon={FileText}
 			title={emptyTitle}
 			description={emptyDescription}
 			actionLabel={emptyAction}
@@ -81,8 +82,8 @@
 		/>
 	{:else}
 		<div class="flex items-center justify-between">
-			<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content">Meetings</h2>
-			<button class="btn btn-primary btn-sm" on:click={handleCreateMeeting}>
+			<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">Meetings</h2>
+			<button class="btn btn-sm btn-primary" onclick={handleCreateMeeting}>
 				<Plus size={14} />
 				<span>New Meeting</span>
 			</button>
@@ -93,7 +94,7 @@
 				{#each meetings as meeting}
 					<button
 						class="group flex items-center gap-4 rounded-2xl border border-base-300/50 bg-base-100 p-4 text-left shadow-sm transition-all hover:border-brand-500/40 hover:shadow-md"
-						on:click={() => navigateToMeeting(meeting.id)}
+						onclick={() => navigateToMeeting(meeting.id)}
 					>
 						<div
 							class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500"
@@ -101,13 +102,11 @@
 							<FileText size={18} />
 						</div>
 						<div class="flex min-w-0 flex-col gap-1">
-							<span class="truncate text-sm font-medium text-base-content"
-								>{meeting.name}</span
-							>
+							<span class="truncate text-sm font-medium text-base-content">{meeting.name}</span>
 							<div class="flex items-center gap-3 text-xs text-base-content/50">
 								<span class="inline-flex items-center gap-1">
 									<Clock size={12} />
-									{new Date(meeting.updated_at).toLocaleDateString()}
+									{new Date(meeting.modified_at).toLocaleDateString()}
 								</span>
 							</div>
 						</div>

@@ -16,13 +16,15 @@
 		onSearchChange?: ((query: string) => void) | null;
 		sidebarVariant?: 'files' | 'default';
 		onCreateFolder?: () => void;
+		children?: import('svelte').Snippet;
 	}
 
 	let {
 		showSearch = false,
 		onSearchChange = null,
 		sidebarVariant = 'default',
-		onCreateFolder = () => {}
+		onCreateFolder = () => {},
+		children
 	}: Props = $props();
 
 	let checkComplete = $state(false);
@@ -76,7 +78,7 @@
 					{/if}
 
 					<main class="flex-1 overflow-auto bg-base-100">
-						<slot />
+						{@render children?.()}
 					</main>
 				</div>
 			</div>

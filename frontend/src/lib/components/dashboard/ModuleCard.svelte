@@ -42,13 +42,13 @@
 	<div class="flex flex-col gap-1">
 		<h3 class="text-sm font-semibold text-base-content">{cardTitle}</h3>
 		{#if hasSummary}
-			{#if summary.total_items > 0}
+			{#if summary!.total_items > 0}
 				<p class="text-xs leading-relaxed text-base-content/60">
-					{summary.total_items} item{summary.total_items === 1 ? '' : 's'}
+					{summary!.total_items} item{summary!.total_items === 1 ? '' : 's'}
 				</p>
-				{#if summary.recent_items.length > 0}
+				{#if summary!.recent_items.length > 0}
 					<ul class="mt-1 flex flex-col gap-0.5">
-						{#each summary.recent_items.slice(0, 3) as item}
+						{#each summary!.recent_items.slice(0, 3) as item}
 							<li class="flex items-center gap-1.5 text-xs text-base-content/50">
 								{#if item.item_type === 'file'}
 									<FileText size={12} />

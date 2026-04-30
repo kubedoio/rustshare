@@ -5,12 +5,14 @@
 		disabled?: boolean;
 		onFilesDropped?: (files: globalThis.File[]) => void;
 		onDirectoryDropped?: (files: globalThis.File[]) => void;
+		children?: import('svelte').Snippet;
 	}
 
 	let {
 		disabled = false,
 		onFilesDropped = () => {},
-		onDirectoryDropped = () => {}
+		onDirectoryDropped = () => {},
+		children
 	}: Props = $props();
 
 	let isDragging = $state(false);
@@ -83,7 +85,7 @@
 	role="region"
 	aria-label="File drop zone"
 >
-	<slot />
+	{@render children?.()}
 
 	{#if isDragging && !disabled}
 		<div

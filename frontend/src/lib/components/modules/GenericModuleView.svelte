@@ -63,14 +63,16 @@
 	}
 
 	$: emptyTitle = moduleConfig.ui_config?.modulePage?.emptyStateTitle ?? 'No items yet';
-	$: emptyDescription = moduleConfig.ui_config?.modulePage?.emptyStateDescription ?? 'Create your first item from a template to get started.';
+	$: emptyDescription =
+		moduleConfig.ui_config?.modulePage?.emptyStateDescription ??
+		'Create your first item from a template to get started.';
 	$: emptyAction = moduleConfig.ui_config?.modulePage?.emptyStateAction ?? 'Create from Template';
 </script>
 
 <div class="rounded-2xl border border-base-300/50 bg-base-100 p-6">
 	<div class="mb-4 flex items-center justify-between">
 		<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">Contents</h2>
-		<button class="btn btn-sm btn-primary" on:click={handleCreateFromTemplate}>
+		<button class="btn btn-sm btn-primary" onclick={handleCreateFromTemplate}>
 			<Plus size={14} />
 			<span>Create from Template</span>
 		</button>
@@ -99,9 +101,7 @@
 						href="/files?folder={folder.id}"
 						class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
 					>
-						<div
-							class="flex h-9 w-9 items-center justify-center rounded-lg bg-info/10 text-info"
-						>
+						<div class="flex h-9 w-9 items-center justify-center rounded-lg bg-info/10 text-info">
 							<Folder size={16} />
 						</div>
 						<div class="flex flex-col">

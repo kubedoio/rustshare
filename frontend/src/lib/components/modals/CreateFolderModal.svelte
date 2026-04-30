@@ -74,12 +74,14 @@
 	>
 		<!-- Location Section -->
 		<div class="mb-4">
-			<label class="mb-2 block text-sm font-medium text-base-content/80">Location</label>
-			<FolderTreePicker
-				selectedFolderId={selectedParentId}
-				{currentFolderId}
-				onSelect={(id) => (selectedParentId = id)}
-			/>
+			<label class="mb-2 block text-sm font-medium text-base-content/80">
+				Location
+				<FolderTreePicker
+					selectedFolderId={selectedParentId}
+					{currentFolderId}
+					onSelect={(id) => (selectedParentId = id)}
+				/>
+			</label>
 		</div>
 
 		<!-- Folder Name Section -->

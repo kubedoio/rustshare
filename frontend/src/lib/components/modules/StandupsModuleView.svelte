@@ -74,6 +74,7 @@
 <div class="flex flex-col gap-6">
 	{#if standups.length === 0 && contents?.folders?.length === 0}
 		<EmptyState
+			icon={FileText}
 			title={emptyTitle}
 			description={emptyDescription}
 			actionLabel={emptyAction}
@@ -81,8 +82,8 @@
 		/>
 	{:else}
 		<div class="flex items-center justify-between">
-			<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content">Standups</h2>
-			<button class="btn btn-primary btn-sm" on:click={handleCreateStandup}>
+			<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">Standups</h2>
+			<button class="btn btn-sm btn-primary" onclick={handleCreateStandup}>
 				<Plus size={14} />
 				<span>New Standup</span>
 			</button>
@@ -93,7 +94,7 @@
 				{#each standups as standup}
 					<button
 						class="group flex items-center gap-4 rounded-2xl border border-base-300/50 bg-base-100 p-4 text-left shadow-sm transition-all hover:border-brand-500/40 hover:shadow-md"
-						on:click={() => navigateToStandup(standup.id)}
+						onclick={() => navigateToStandup(standup.id)}
 					>
 						<div
 							class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500"
@@ -105,7 +106,7 @@
 							<div class="flex items-center gap-3 text-xs text-base-content/50">
 								<span class="inline-flex items-center gap-1">
 									<Clock size={12} />
-									{new Date(standup.updated_at).toLocaleDateString()}
+									{new Date(standup.modified_at).toLocaleDateString()}
 								</span>
 							</div>
 						</div>

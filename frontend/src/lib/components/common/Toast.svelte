@@ -21,11 +21,13 @@
 		}
 	});
 
-	const alertClass = {
-		success: 'alert-success',
-		error: 'alert-error',
-		info: 'alert-info'
-	}[type];
+	const alertClass = $derived(
+		{
+			success: 'alert-success',
+			error: 'alert-error',
+			info: 'alert-info'
+		}[type]
+	);
 </script>
 
 {#if visible}

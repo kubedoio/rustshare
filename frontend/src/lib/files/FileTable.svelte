@@ -23,9 +23,9 @@
 	export let onDeleteFile: (file: File) => void = () => {};
 	export let onShareFile: (file: File) => void = () => {};
 	export let onVersionHistory: (file: File) => void = () => {};
-	export let onMoveFile: (file: File) => void = () => {};
+	export const onMoveFile: (file: File) => void = () => {};
 	export let onDownloadFile: (file: File) => void = () => {};
-	export let onReplaceFile: (file: File) => void = () => {};
+	export const onReplaceFile: (file: File) => void = () => {};
 
 	function handleFileToggle(file: File) {
 		selectionStore.toggleFile(file.id);

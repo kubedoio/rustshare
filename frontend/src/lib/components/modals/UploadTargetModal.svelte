@@ -40,12 +40,14 @@
 
 	<!-- Location Section -->
 	<div>
-		<label class="mb-2 block text-sm font-medium text-base-content/80">Target Folder</label>
-		<FolderTreePicker
-			{selectedFolderId}
-			{currentFolderId}
-			onSelect={(id) => (selectedFolderId = id)}
-		/>
+		<label class="mb-2 block text-sm font-medium text-base-content/80">
+			Target Folder
+			<FolderTreePicker
+				{selectedFolderId}
+				{currentFolderId}
+				onSelect={(id) => (selectedFolderId = id)}
+			/>
+		</label>
 	</div>
 
 	<!-- Actions -->

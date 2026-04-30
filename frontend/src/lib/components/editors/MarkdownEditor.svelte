@@ -263,7 +263,7 @@
 
 		<!-- Editor and Preview -->
 		<div class="flex flex-1 overflow-hidden">
-			<div bind:this={editorContainer} class="flex-1 {showPreview ? 'w-1/2' : 'w-full'}" />
+			<div bind:this={editorContainer} class="flex-1 {showPreview ? 'w-1/2' : 'w-full'}"></div>
 
 			{#if showPreview}
 				<div class="w-1/2 overflow-auto border-l border-base-300 bg-base-100 p-4">

@@ -117,7 +117,7 @@
 				class:bg-brand-500_10={selectedWorkflow?.id === wf.id}
 				class:border-base-300={selectedWorkflow?.id !== wf.id}
 				class:bg-base-100={selectedWorkflow?.id !== wf.id}
-				on:click={() => selectWorkflow(wf)}
+				onclick={() => selectWorkflow(wf)}
 			>
 				<div class="flex items-start justify-between gap-2">
 					<div class="min-w-0">
@@ -147,7 +147,7 @@
 			<button
 				type="button"
 				class="rounded-xl bg-brand-500 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-brand-600"
-				on:click={() => (newModalOpen = true)}
+				onclick={() => (newModalOpen = true)}
 			>
 				+ New
 			</button>
@@ -176,14 +176,14 @@
 						<button
 							type="button"
 							class="rounded-xl border border-base-300 px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-base-200"
-							on:click={() => (previewMode = !previewMode)}
+							onclick={() => (previewMode = !previewMode)}
 						>
 							{previewMode ? 'Edit' : 'Preview'}
 						</button>
 						<button
 							type="button"
 							class="rounded-xl bg-brand-500 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-brand-600"
-							on:click={handleSave}
+							onclick={handleSave}
 						>
 							Save Changes
 						</button>
@@ -217,7 +217,7 @@
 								class:bg-base-100={editingWorkflow.status !== 'active'}
 								class:text-base-content={editingWorkflow.status !== 'active'}
 								class:border-base-300={editingWorkflow.status !== 'active'}
-								on:click={toggleStatus}
+								onclick={toggleStatus}
 							>
 								{editingWorkflow.status === 'active' ? 'Active' : 'Draft'}
 							</button>
@@ -270,7 +270,7 @@
 									class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-hidden"
 									class:bg-brand-500={editingWorkflow.terms_enabled}
 									class:bg-base-300={!editingWorkflow.terms_enabled}
-									on:click={() => {
+									onclick={() => {
 										if (editingWorkflow)
 											editingWorkflow.terms_enabled = !editingWorkflow.terms_enabled;
 									}}
@@ -364,11 +364,19 @@
 {#if newModalOpen}
 	<div
 		class="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm"
-		on:click={() => (newModalOpen = false)}
+		role="presentation"
+		tabindex="-1"
+		onclick={() => (newModalOpen = false)}
+		onkeydown={(e) => {
+			if (e.key === 'Escape') newModalOpen = false;
+		}}
 	>
 		<div
 			class="w-80 rounded-2xl border border-base-300 bg-base-100 p-6 shadow-xl"
-			on:click|stopPropagation
+			role="dialog"
+			tabindex="-1"
+			onclick={(e) => e.stopPropagation()}
+			onkeydown={(e) => e.stopPropagation()}
 		>
 			<h3 class="mb-2 text-sm font-bold text-base-content">New Workflow</h3>
 			<p class="mb-4 text-xs text-base-content/60">More workflow types coming soon.</p>
@@ -376,7 +384,7 @@
 				<button
 					type="button"
 					class="rounded-xl border border-base-300 px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-base-200"
-					on:click={() => (newModalOpen = false)}
+					onclick={() => (newModalOpen = false)}
 				>
 					Close
 				</button>

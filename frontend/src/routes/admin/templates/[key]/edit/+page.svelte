@@ -7,7 +7,7 @@
 	import { ArrowLeft, Save, AlertCircle } from 'lucide-svelte';
 
 	const queryClient = useQueryClient();
-	const key = $page.params.key;
+	const key = $page.params.key!;
 
 	let name = '';
 	let moduleKey = '';
@@ -151,8 +151,11 @@
 				<div class="grid gap-4">
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70">Template Key</label>
+							<label class="text-xs font-semibold text-base-content/70" for="template-key"
+								>Template Key</label
+							>
 							<input
+								id="template-key"
 								type="text"
 								class="input-bordered input input-sm bg-base-200/50"
 								value={key}
@@ -161,8 +164,11 @@
 							<p class="text-[10px] text-base-content/40">Template key cannot be changed.</p>
 						</div>
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70">Template Name *</label>
+							<label class="text-xs font-semibold text-base-content/70" for="template-name"
+								>Template Name *</label
+							>
 							<input
+								id="template-name"
 								type="text"
 								class="input-bordered input input-sm"
 								placeholder="My Custom Template"
@@ -173,8 +179,13 @@
 					</div>
 
 					<div class="flex flex-col gap-1">
-						<label class="text-xs font-semibold text-base-content/70">Module *</label>
-						<select class="select-bordered select select-sm" bind:value={moduleKey} required>
+						<label class="text-xs font-semibold text-base-content/70" for="module">Module *</label>
+						<select
+							id="module"
+							class="select-bordered select select-sm"
+							bind:value={moduleKey}
+							required
+						>
 							<option value="" disabled>Select a module</option>
 							{#each $modulesQuery.data ?? [] as mod}
 								<option value={mod.module_key}>{mod.display_name}</option>
@@ -183,8 +194,11 @@
 					</div>
 
 					<div class="flex flex-col gap-1">
-						<label class="text-xs font-semibold text-base-content/70">Description</label>
+						<label class="text-xs font-semibold text-base-content/70" for="description"
+							>Description</label
+						>
 						<textarea
+							id="description"
 							class="textarea-bordered textarea textarea-sm"
 							placeholder="What this template creates..."
 							bind:value={description}
@@ -194,8 +208,11 @@
 
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70">Renderer</label>
+							<label class="text-xs font-semibold text-base-content/70" for="renderer"
+								>Renderer</label
+							>
 							<input
+								id="renderer"
 								type="text"
 								class="input-bordered input input-sm"
 								placeholder="e.g. notes, kanban"
@@ -203,8 +220,14 @@
 							/>
 						</div>
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70">Visibility Policy</label>
-							<select class="select-bordered select select-sm" bind:value={visibilityPolicy}>
+							<label class="text-xs font-semibold text-base-content/70" for="visibility-policy"
+								>Visibility Policy</label
+							>
+							<select
+								id="visibility-policy"
+								class="select-bordered select select-sm"
+								bind:value={visibilityPolicy}
+							>
 								<option value="workspace">Workspace</option>
 								<option value="admin-only">Admin Only</option>
 								<option value="public">Public</option>
@@ -230,10 +253,12 @@
 				</h2>
 				<div class="flex flex-col gap-4">
 					<div class="flex flex-col gap-1">
-						<label class="text-xs font-semibold text-base-content/70"
-							>Folder Structure (JSON array)</label
+						<label
+							class="text-xs font-semibold text-base-content/70"
+							for="folder-structure-json-array">Folder Structure (JSON array)</label
 						>
 						<textarea
+							id="folder-structure-json-array"
 							class="textarea-bordered textarea font-mono text-xs textarea-sm"
 							bind:value={folderStructureJson}
 							rows={4}
@@ -241,10 +266,11 @@
 					</div>
 
 					<div class="flex flex-col gap-1">
-						<label class="text-xs font-semibold text-base-content/70"
+						<label class="text-xs font-semibold text-base-content/70" for="default-files-json-array"
 							>Default Files (JSON array)</label
 						>
 						<textarea
+							id="default-files-json-array"
 							class="textarea-bordered textarea font-mono text-xs textarea-sm"
 							bind:value={defaultFilesJson}
 							rows={6}
@@ -252,10 +278,12 @@
 					</div>
 
 					<div class="flex flex-col gap-1">
-						<label class="text-xs font-semibold text-base-content/70"
-							>Metadata Schema (JSON object)</label
+						<label
+							class="text-xs font-semibold text-base-content/70"
+							for="metadata-schema-json-object">Metadata Schema (JSON object)</label
 						>
 						<textarea
+							id="metadata-schema-json-object"
 							class="textarea-bordered textarea font-mono text-xs textarea-sm"
 							bind:value={metadataSchemaJson}
 							rows={4}
@@ -266,11 +294,7 @@
 
 			<div class="flex items-center justify-end gap-3">
 				<a href="/admin/templates" class="btn btn-ghost btn-sm">Cancel</a>
-				<button
-					type="submit"
-					class="btn btn-sm btn-primary"
-					disabled={$updateMutation.isPending}
-				>
+				<button type="submit" class="btn btn-sm btn-primary" disabled={$updateMutation.isPending}>
 					{#if $updateMutation.isPending}
 						<span class="loading loading-xs loading-spinner"></span>
 					{:else}

@@ -437,7 +437,7 @@
 									<select
 										class="rounded-lg border border-base-300 bg-base-100 px-3 py-2 text-sm text-base-content focus:border-brand-500/50 focus:outline-hidden"
 										value={trashRetentionDays === null ? 'never' : String(trashRetentionDays)}
-										on:change={(e) => {
+										onchange={(e) => {
 											const val = (e.target as HTMLSelectElement).value;
 											const days = val === 'never' ? null : Number(val);
 											trashRetentionDays = days;
@@ -493,7 +493,7 @@
 							<button
 								type="button"
 								class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-600 disabled:opacity-50"
-								on:click={handlePasswordChange}
+								onclick={handlePasswordChange}
 								disabled={passwordUpdating}
 							>
 								{#if passwordUpdating}
@@ -544,7 +544,7 @@
 												<button
 													type="button"
 													class="rounded-lg px-3 py-1.5 text-sm font-medium text-error transition-colors hover:bg-error/10"
-													on:click={() => handleRevokeSession(session.id)}
+													onclick={() => handleRevokeSession(session.id)}
 													disabled={revokingSessionId === session.id}
 												>
 													{#if revokingSessionId === session.id}
@@ -608,7 +608,7 @@
 							description="Sign out of your account on this device"
 							actionLabel="Sign out"
 							danger={true}
-							on:action={handleLogout}
+							onAction={handleLogout}
 						/>
 					</div>
 				</div>
@@ -708,7 +708,7 @@
 									class="w-32 rounded-lg border border-base-300 bg-base-100 px-4 py-2 font-mono text-sm text-base-content uppercase placeholder:text-base-content/40 focus:border-brand-500/50 focus:outline-hidden"
 									bind:value={userCodeInput}
 									maxlength="9"
-									on:input={(e) =>
+									oninput={(e) =>
 										(userCodeInput =
 											userCodeInput
 												.replace(/[^a-zA-Z0-9]/g, '')
@@ -719,7 +719,7 @@
 								<button
 									type="button"
 									class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-600 disabled:opacity-50"
-									on:click={handleApproveDevice}
+									onclick={handleApproveDevice}
 									disabled={approvingDevice || !userCodeInput}
 								>
 									{#if approvingDevice}
@@ -771,7 +771,7 @@
 											<button
 												type="button"
 												class="rounded-lg px-3 py-1.5 text-sm font-medium text-error transition-colors hover:bg-error/10"
-												on:click={() => handleRevokeDevice(device.id)}
+												onclick={() => handleRevokeDevice(device.id)}
 												disabled={revokingDeviceId === device.id}
 											>
 												{#if revokingDeviceId === device.id}
@@ -811,7 +811,7 @@
 									{$themeStore === 'light'
 									? 'border-brand-500 bg-brand-500/10'
 									: 'hover:border-base-400 border-base-300'}"
-								on:click={() => handleThemeChange('light')}
+								onclick={() => handleThemeChange('light')}
 							>
 								<div
 									class="mb-3 flex h-10 w-10 items-center justify-center rounded-lg border border-base-300 bg-base-100"
@@ -840,7 +840,7 @@
 									{$themeStore === 'dark'
 									? 'border-brand-500 bg-brand-500/10'
 									: 'hover:border-base-400 border-base-300'}"
-								on:click={() => handleThemeChange('dark')}
+								onclick={() => handleThemeChange('dark')}
 							>
 								<div
 									class="border-base-400 mb-3 flex h-10 w-10 items-center justify-center rounded-lg border bg-base-300"
@@ -866,7 +866,7 @@
 									{$themeStore === 'system'
 									? 'border-brand-500 bg-brand-500/10'
 									: 'hover:border-base-400 border-base-300'}"
-								on:click={() => handleThemeChange('system')}
+								onclick={() => handleThemeChange('system')}
 							>
 								<div
 									class="mb-3 flex h-10 w-10 items-center justify-center rounded-lg border border-base-300 bg-gradient-to-br from-base-100 to-base-300"
@@ -900,10 +900,12 @@
 						description="Preferences for new share links"
 					>
 						<div class="py-4">
-							<label class="mb-2 block text-sm font-medium text-base-content"
-								>Default link expiration</label
+							<label
+								class="mb-2 block text-sm font-medium text-base-content"
+								for="default-link-expiration">Default link expiration</label
 							>
 							<select
+								id="default-link-expiration"
 								class="w-full rounded-lg border border-base-300 bg-base-100 px-4 py-2 text-sm text-base-content focus:border-brand-500/50 focus:outline-hidden sm:w-auto"
 								bind:value={defaultLinkExpiration}
 							>
@@ -969,7 +971,7 @@
 											type="checkbox"
 											class="toggle toggle-primary"
 											bind:checked={emailSharingEnabled}
-											on:change={handleEmailSharingToggle}
+											onchange={handleEmailSharingToggle}
 										/>
 									</label>
 								</div>
@@ -1000,18 +1002,15 @@
 						{:else}
 							<div class="py-2">
 								{#each recentChanges as file, index}
+									{@const Icon = getFileIcon(file.mime_type)}
 									<button
-										on:click={() => navigateToFile(file)}
+										onclick={() => navigateToFile(file)}
 										class="flex w-full items-center gap-3 rounded-xl p-3 text-left transition-colors hover:bg-base-100"
 									>
 										<div
 											class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-base-300 bg-base-100"
 										>
-											<svelte:component
-												this={getFileIcon(file.mime_type)}
-												size={16}
-												class="text-brand-500"
-											/>
+											<Icon size={16} class="text-brand-500" />
 										</div>
 										<div class="min-w-0 flex-1">
 											<p class="truncate text-sm font-medium text-base-content">{file.name}</p>

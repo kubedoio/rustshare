@@ -225,12 +225,12 @@
 	<!-- Toolbar -->
 	<div class="flex flex-wrap items-center gap-2 border-b border-base-300 p-3">
 		<div class="flex items-center gap-1">
-			<button class="btn btn-ghost btn-sm" on:click={handleRotateCw} title="Rotate 90° clockwise">
+			<button class="btn btn-ghost btn-sm" onclick={handleRotateCw} title="Rotate 90° clockwise">
 				<RotateCw size={18} />
 			</button>
 			<button
 				class="btn btn-ghost btn-sm"
-				on:click={handleRotateCcw}
+				onclick={handleRotateCcw}
 				title="Rotate 90° counter-clockwise"
 			>
 				<RotateCcw size={18} />
@@ -240,10 +240,10 @@
 		<div class="divider divider-horizontal"></div>
 
 		<div class="flex items-center gap-1">
-			<button class="btn btn-ghost btn-sm" on:click={handleFlipH} title="Flip horizontal">
+			<button class="btn btn-ghost btn-sm" onclick={handleFlipH} title="Flip horizontal">
 				<FlipHorizontal size={18} />
 			</button>
-			<button class="btn btn-ghost btn-sm" on:click={handleFlipV} title="Flip vertical">
+			<button class="btn btn-ghost btn-sm" onclick={handleFlipV} title="Flip vertical">
 				<FlipVertical size={18} />
 			</button>
 		</div>
@@ -251,7 +251,7 @@
 		<div class="divider divider-horizontal"></div>
 
 		<div class="flex items-center gap-1">
-			<button class="btn btn-ghost btn-sm" on:click={openResizeModal} title="Resize">
+			<button class="btn btn-ghost btn-sm" onclick={openResizeModal} title="Resize">
 				<svg
 					xmlns="http://www.w3.org/2000/svg"
 					width="18"
@@ -270,7 +270,7 @@
 			<button
 				class="btn btn-ghost btn-sm"
 				class:btn-active={isCropping}
-				on:click={startCropMode}
+				onclick={startCropMode}
 				title="Crop"
 			>
 				<Scissors size={18} />
@@ -280,23 +280,23 @@
 		<div class="divider divider-horizontal"></div>
 
 		<div class="flex items-center gap-1">
-			<button class="btn btn-ghost btn-sm" on:click={handleUndo} disabled={!canUndo} title="Undo">
+			<button class="btn btn-ghost btn-sm" onclick={handleUndo} disabled={!canUndo} title="Undo">
 				<Undo size={18} />
 			</button>
-			<button class="btn btn-ghost btn-sm" on:click={handleRedo} disabled={!canRedo} title="Redo">
+			<button class="btn btn-ghost btn-sm" onclick={handleRedo} disabled={!canRedo} title="Redo">
 				<Redo size={18} />
 			</button>
 		</div>
 
 		{#if isCropping}
 			<div class="ml-auto flex items-center gap-1">
-				<button class="btn btn-ghost btn-sm btn-error" on:click={cancelCrop}>
+				<button class="btn btn-ghost btn-sm btn-error" onclick={cancelCrop}>
 					<X size={18} />
 					Cancel
 				</button>
 				<button
 					class="btn btn-ghost btn-sm btn-success"
-					on:click={applyCrop}
+					onclick={applyCrop}
 					disabled={!cropSelection}
 				>
 					<Check size={18} />
@@ -325,10 +325,10 @@
 				bind:this={canvas}
 				class="max-h-full max-w-full shadow-lg"
 				class:cursor-crosshair={isCropping}
-				on:mousedown={handleCanvasMouseDown}
-				on:mousemove={handleCanvasMouseMove}
-				on:mouseup={handleCanvasMouseUp}
-				on:mouseleave={handleCanvasMouseUp}
+				onmousedown={handleCanvasMouseDown}
+				onmousemove={handleCanvasMouseMove}
+				onmouseup={handleCanvasMouseUp}
+				onmouseleave={handleCanvasMouseUp}
 			></canvas>
 
 			{#if isCropping && cropSelection}
@@ -338,15 +338,15 @@
 						canvas.height) *
 						100}%; width: {(cropSelection.width / canvas.width) *
 						100}%; height: {(cropSelection.height / canvas.height) * 100}%"
-				/>
+				></div>
 			{/if}
 		</div>
 	</div>
 
 	<!-- Footer -->
 	<div class="flex items-center justify-end gap-2 border-t border-base-300 p-4">
-		<button class="btn btn-ghost" on:click={handleCancel}>Cancel</button>
-		<button class="btn btn-primary" on:click={handleSave}> Save as New... </button>
+		<button class="btn btn-ghost" onclick={handleCancel}>Cancel</button>
+		<button class="btn btn-primary" onclick={handleSave}> Save as New... </button>
 	</div>
 </div>
 
@@ -358,14 +358,15 @@
 
 			<div class="mb-4 flex items-center gap-4">
 				<div class="form-control flex-1">
-					<label class="label">
+					<label class="label" for="resize-width">
 						<span class="label-text">Width (px)</span>
 					</label>
 					<input
+						id="resize-width"
 						type="number"
 						class="input-bordered input"
 						bind:value={resizeWidth}
-						on:input={handleWidthChange}
+						oninput={handleWidthChange}
 						min="1"
 						max="10000"
 					/>
@@ -375,7 +376,7 @@
 					<button
 						class="btn btn-ghost btn-sm"
 						class:btn-active={maintainAspectRatio}
-						on:click={() => (maintainAspectRatio = !maintainAspectRatio)}
+						onclick={() => (maintainAspectRatio = !maintainAspectRatio)}
 						title="Lock aspect ratio"
 					>
 						<svg
@@ -396,14 +397,15 @@
 				</div>
 
 				<div class="form-control flex-1">
-					<label class="label">
+					<label class="label" for="resize-height">
 						<span class="label-text">Height (px)</span>
 					</label>
 					<input
+						id="resize-height"
 						type="number"
 						class="input-bordered input"
 						bind:value={resizeHeight}
-						on:input={handleHeightChange}
+						oninput={handleHeightChange}
 						min="1"
 						max="10000"
 					/>
@@ -416,10 +418,18 @@
 			</label>
 
 			<div class="modal-action">
-				<button class="btn btn-ghost" on:click={() => (showResizeModal = false)}>Cancel</button>
-				<button class="btn btn-primary" on:click={applyResize}>Apply</button>
+				<button class="btn btn-ghost" onclick={() => (showResizeModal = false)}>Cancel</button>
+				<button class="btn btn-primary" onclick={applyResize}>Apply</button>
 			</div>
 		</div>
-		<div class="modal-backdrop" on:click={() => (showResizeModal = false)}></div>
+		<div
+			class="modal-backdrop"
+			role="presentation"
+			tabindex="-1"
+			onclick={() => (showResizeModal = false)}
+			onkeydown={(e) => {
+				if (e.key === 'Escape') showResizeModal = false;
+			}}
+		></div>
 	</div>
 {/if}

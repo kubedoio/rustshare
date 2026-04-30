@@ -15,6 +15,9 @@
 		}
 	});
 
+	// SvelteKit layout children snippet
+	let { children } = $props();
+
 	// Show search only on files page
 	let showSearch = $derived($page.url.pathname === '/files');
 
@@ -62,12 +65,12 @@
 	{#if isFilesPage}
 		<!-- Files page uses full-height layout without padding -->
 		<div class="h-full min-h-0">
-			<slot />
+			{@render children?.()}
 		</div>
 	{:else}
 		<!-- Other pages use standard padding -->
 		<div class="mx-auto w-full max-w-[88rem] p-4 md:p-6 lg:px-8 lg:py-7">
-			<slot />
+			{@render children?.()}
 		</div>
 	{/if}
 </AppShell>

@@ -7,9 +7,17 @@
 		onClose: () => void;
 		showCloseButton?: boolean;
 		class?: string;
+		children?: import('svelte').Snippet;
 	}
 
-	let { open, title, onClose, showCloseButton = true, class: className = '' }: Props = $props();
+	let {
+		open,
+		title,
+		onClose,
+		showCloseButton = true,
+		class: className = '',
+		children
+	}: Props = $props();
 
 	let dialogRef: HTMLDialogElement | undefined = $state();
 	let titleId = $derived(`modal-title-${Math.random().toString(36).slice(2)}`);
@@ -100,7 +108,7 @@
 		</div>
 
 		<div class="p-5">
-			<slot />
+			{@render children?.()}
 		</div>
 	</div>
 </dialog>

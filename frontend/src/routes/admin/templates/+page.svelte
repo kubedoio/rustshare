@@ -21,7 +21,8 @@
 	});
 
 	const duplicateMutation = createMutation({
-		mutationFn: ({ key, newKey }: { key: string; newKey: string }) => duplicateTemplate(key, newKey),
+		mutationFn: ({ key, newKey }: { key: string; newKey: string }) =>
+			duplicateTemplate(key, newKey),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['admin-templates'] });
 			toastStore.show('Template duplicated', 'success');
@@ -38,7 +39,10 @@
 	}
 
 	function handleDuplicate(key: string, name: string) {
-		const newKey = window.prompt(`Duplicate template "${name}". Enter a new template key:`, `${key}_copy`);
+		const newKey = window.prompt(
+			`Duplicate template "${name}". Enter a new template key:`,
+			`${key}_copy`
+		);
 		if (!newKey) return;
 		$duplicateMutation.mutate({ key, newKey });
 	}

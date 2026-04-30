@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { FolderTree } from '$lib/api/folders';
 	import { ChevronRight, Folder, FolderOpen } from 'lucide-svelte';
+	import Self from './FolderTreeItem.svelte';
 
 	interface Props {
 		folder: FolderTree;
@@ -97,7 +98,7 @@
 	<!-- Children -->
 	{#if isExpanded && hasChildren}
 		{#each folder.subfolders as child (child.folder.id)}
-			<svelte:self
+			<Self
 				folder={child}
 				level={level + 1}
 				{selectedFolderId}

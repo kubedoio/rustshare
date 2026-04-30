@@ -74,6 +74,7 @@
 <div class="flex flex-col gap-6">
 	{#if decisions.length === 0 && contents?.folders?.length === 0}
 		<EmptyState
+			icon={FileText}
 			title={emptyTitle}
 			description={emptyDescription}
 			actionLabel={emptyAction}
@@ -81,8 +82,8 @@
 		/>
 	{:else}
 		<div class="flex items-center justify-between">
-			<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content">Decisions</h2>
-			<button class="btn btn-primary btn-sm" on:click={handleCreateDecision}>
+			<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">Decisions</h2>
+			<button class="btn btn-sm btn-primary" onclick={handleCreateDecision}>
 				<Plus size={14} />
 				<span>New Decision</span>
 			</button>
@@ -93,7 +94,7 @@
 				{#each decisions as decision}
 					<button
 						class="group flex items-center gap-4 rounded-2xl border border-base-300/50 bg-base-100 p-4 text-left shadow-sm transition-all hover:border-brand-500/40 hover:shadow-md"
-						on:click={() => navigateToDecision(decision.id)}
+						onclick={() => navigateToDecision(decision.id)}
 					>
 						<div
 							class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500"
@@ -105,7 +106,7 @@
 							<div class="flex items-center gap-3 text-xs text-base-content/50">
 								<span class="inline-flex items-center gap-1">
 									<Clock size={12} />
-									{new Date(decision.updated_at).toLocaleDateString()}
+									{new Date(decision.modified_at).toLocaleDateString()}
 								</span>
 							</div>
 						</div>

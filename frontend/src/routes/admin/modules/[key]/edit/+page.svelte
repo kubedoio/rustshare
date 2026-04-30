@@ -7,7 +7,7 @@
 	import { ArrowLeft, Save, AlertCircle } from 'lucide-svelte';
 
 	const queryClient = useQueryClient();
-	const key = $page.params.key;
+	const key = $page.params.key!;
 
 	let displayName = '';
 	let description = '';
@@ -85,7 +85,14 @@
 			icon: string;
 			ui_config: {
 				sidebar: { enabled: boolean; order: number; icon: string; label: string };
-				dashboard: { enabled: boolean; order: number; cardTitle: string; cardDescription: string };
+				dashboard: {
+					enabled: boolean;
+					order: number;
+					cardTitle: string;
+					cardDescription: string;
+					summaryMode: string;
+					maxItems: number;
+				};
 			};
 		}) => updateModule(key, payload),
 		onSuccess: () => {
@@ -123,7 +130,9 @@
 					enabled: dashboardEnabled,
 					order: dashboardOrder,
 					cardTitle: dashboardCardTitle.trim() || displayName.trim(),
-					cardDescription: dashboardCardDescription.trim() || description.trim()
+					cardDescription: dashboardCardDescription.trim() || description.trim(),
+					summaryMode: 'recent',
+					maxItems: 5
 				}
 			}
 		});
@@ -144,7 +153,9 @@
 	</a>
 
 	<h1 class="text-2xl font-semibold text-base-content">Edit Module</h1>
-	<p class="mt-1 text-sm text-base-content/60">Configure module visibility, appearance, and behavior.</p>
+	<p class="mt-1 text-sm text-base-content/60">
+		Configure module visibility, appearance, and behavior.
+	</p>
 
 	{#if $moduleQuery.isLoading}
 		<div class="flex h-64 items-center justify-center">
@@ -175,8 +186,11 @@
 				<div class="grid gap-4">
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70">Module Key</label>
+							<label class="text-xs font-semibold text-base-content/70" for="module-key"
+								>Module Key</label
+							>
 							<input
+								id="module-key"
 								type="text"
 								class="input-bordered input input-sm bg-base-200/50"
 								value={key}
@@ -185,8 +199,11 @@
 							<p class="text-[10px] text-base-content/40">Module key cannot be changed.</p>
 						</div>
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70">Display Name *</label>
+							<label class="text-xs font-semibold text-base-content/70" for="display-name"
+								>Display Name *</label
+							>
 							<input
+								id="display-name"
 								type="text"
 								class="input-bordered input input-sm"
 								placeholder="Notes"
@@ -197,8 +214,11 @@
 					</div>
 
 					<div class="flex flex-col gap-1">
-						<label class="text-xs font-semibold text-base-content/70">Description</label>
+						<label class="text-xs font-semibold text-base-content/70" for="description"
+							>Description</label
+						>
 						<textarea
+							id="description"
 							class="textarea-bordered textarea textarea-sm"
 							placeholder="What this module does..."
 							bind:value={description}
@@ -208,16 +228,19 @@
 
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70">Icon</label>
-							<select class="select-bordered select select-sm" bind:value={icon}>
+							<label class="text-xs font-semibold text-base-content/70" for="icon">Icon</label>
+							<select id="icon" class="select-bordered select select-sm" bind:value={icon}>
 								{#each approvedIcons as ic}
 									<option value={ic}>{ic}</option>
 								{/each}
 							</select>
 						</div>
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70">Renderer</label>
+							<label class="text-xs font-semibold text-base-content/70" for="renderer"
+								>Renderer</label
+							>
 							<input
+								id="renderer"
 								type="text"
 								class="input-bordered input input-sm bg-base-200/50"
 								bind:value={renderer}
@@ -229,8 +252,11 @@
 
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70">Root Path</label>
+							<label class="text-xs font-semibold text-base-content/70" for="root-path"
+								>Root Path</label
+							>
 							<input
+								id="root-path"
 								type="text"
 								class="input-bordered input input-sm bg-base-200/50"
 								bind:value={rootPath}
@@ -239,8 +265,14 @@
 							<p class="text-[10px] text-base-content/40">Root path is set at creation.</p>
 						</div>
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70">Default Template</label>
-							<select class="select-bordered select select-sm" bind:value={defaultTemplate}>
+							<label class="text-xs font-semibold text-base-content/70" for="default-template"
+								>Default Template</label
+							>
+							<select
+								id="default-template"
+								class="select-bordered select select-sm"
+								bind:value={defaultTemplate}
+							>
 								<option value="">None</option>
 								{#each moduleTemplates as t}
 									<option value={t.template_key}>{t.name}</option>
@@ -276,29 +308,32 @@
 							bind:checked={sidebarEnabled}
 							id="sidebar-enabled"
 						/>
-						<label for="sidebar-enabled" class="text-sm text-base-content/80">Show in sidebar</label>
+						<label for="sidebar-enabled" class="text-sm text-base-content/80">Show in sidebar</label
+						>
 					</div>
 
 					<div class="grid gap-4 sm:grid-cols-3">
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70">Order</label>
+							<label class="text-xs font-semibold text-base-content/70" for="order">Order</label>
 							<input
+								id="order"
 								type="number"
 								class="input-bordered input input-sm"
 								bind:value={sidebarOrder}
 							/>
 						</div>
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70">Icon</label>
-							<select class="select-bordered select select-sm" bind:value={sidebarIcon}>
+							<label class="text-xs font-semibold text-base-content/70" for="icon-1">Icon</label>
+							<select id="icon-1" class="select-bordered select select-sm" bind:value={sidebarIcon}>
 								{#each approvedIcons as ic}
 									<option value={ic}>{ic}</option>
 								{/each}
 							</select>
 						</div>
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70">Label</label>
+							<label class="text-xs font-semibold text-base-content/70" for="label">Label</label>
 							<input
+								id="label"
 								type="text"
 								class="input-bordered input input-sm"
 								placeholder="Notes"
@@ -321,21 +356,27 @@
 							bind:checked={dashboardEnabled}
 							id="dashboard-enabled"
 						/>
-						<label for="dashboard-enabled" class="text-sm text-base-content/80">Show on dashboard</label>
+						<label for="dashboard-enabled" class="text-sm text-base-content/80"
+							>Show on dashboard</label
+						>
 					</div>
 
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70">Order</label>
+							<label class="text-xs font-semibold text-base-content/70" for="order-1">Order</label>
 							<input
+								id="order-1"
 								type="number"
 								class="input-bordered input input-sm"
 								bind:value={dashboardOrder}
 							/>
 						</div>
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70">Card Title</label>
+							<label class="text-xs font-semibold text-base-content/70" for="card-title"
+								>Card Title</label
+							>
 							<input
+								id="card-title"
 								type="text"
 								class="input-bordered input input-sm"
 								placeholder="Notes"
@@ -345,8 +386,11 @@
 					</div>
 
 					<div class="flex flex-col gap-1">
-						<label class="text-xs font-semibold text-base-content/70">Card Description</label>
+						<label class="text-xs font-semibold text-base-content/70" for="card-description"
+							>Card Description</label
+						>
 						<textarea
+							id="card-description"
 							class="textarea-bordered textarea textarea-sm"
 							placeholder="Short description shown on the dashboard card..."
 							bind:value={dashboardCardDescription}
@@ -358,11 +402,7 @@
 
 			<div class="flex items-center justify-end gap-3">
 				<a href="/admin/modules" class="btn btn-ghost btn-sm">Cancel</a>
-				<button
-					type="submit"
-					class="btn btn-sm btn-primary"
-					disabled={$updateMutation.isPending}
-				>
+				<button type="submit" class="btn btn-sm btn-primary" disabled={$updateMutation.isPending}>
 					{#if $updateMutation.isPending}
 						<span class="loading loading-xs loading-spinner"></span>
 					{:else}

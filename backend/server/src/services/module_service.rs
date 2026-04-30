@@ -441,9 +441,10 @@ impl ModuleService {
     ) -> Result<ModuleSummary, ModuleError> {
         let module = self.get_module(key, tenant_id).await?;
 
-        let ui_config = module.ui_config.as_object().ok_or_else(|| {
-            ModuleError::InvalidData("ui_config is not an object".to_string())
-        })?;
+        let ui_config = module
+            .ui_config
+            .as_object()
+            .ok_or_else(|| ModuleError::InvalidData("ui_config is not an object".to_string()))?;
 
         let dashboard = ui_config.get("dashboard").and_then(|v| v.as_object());
         let summary_mode = dashboard
@@ -472,7 +473,7 @@ impl ModuleService {
         if let Some(fid) = folder_id {
             // Count files and subfolders
             let file_count: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM files WHERE folder_id = $1 AND tenant_id = $2"
+                "SELECT COUNT(*) FROM files WHERE folder_id = $1 AND tenant_id = $2",
             )
             .bind(fid)
             .bind(tenant_id)
@@ -480,7 +481,7 @@ impl ModuleService {
             .await?;
 
             let folder_count: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM folders WHERE parent_id = $1 AND tenant_id = $2"
+                "SELECT COUNT(*) FROM folders WHERE parent_id = $1 AND tenant_id = $2",
             )
             .bind(fid)
             .bind(tenant_id)
@@ -626,14 +627,12 @@ mod tests {
             module_key: "notes".to_string(),
             mode: "recent-items".to_string(),
             total_items: 5,
-            recent_items: vec![
-                SummaryItem {
-                    id: "uuid-1".to_string(),
-                    name: "Note 1".to_string(),
-                    item_type: "file".to_string(),
-                    updated_at: Utc::now(),
-                },
-            ],
+            recent_items: vec![SummaryItem {
+                id: "uuid-1".to_string(),
+                name: "Note 1".to_string(),
+                item_type: "file".to_string(),
+                updated_at: Utc::now(),
+            }],
         };
         let json = serde_json::to_string(&summary).unwrap();
         assert!(json.contains("notes"));

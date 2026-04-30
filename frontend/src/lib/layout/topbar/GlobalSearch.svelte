@@ -36,17 +36,16 @@
 		placeholder="Search files, folders, or activity..."
 		class="w-full rounded-2xl border border-base-300/50 bg-base-200/50 px-10 py-2 text-sm text-base-content transition-all placeholder:text-base-content/30 focus:border-brand-500/50 focus:bg-base-100 focus:ring-4 focus:ring-brand-500/10 focus:outline-hidden"
 		{value}
-		on:input={handleInput}
-		on:keydown={handleKeydown}
+		oninput={handleInput}
+		onkeydown={handleKeydown}
 		aria-autocomplete="list"
-		aria-expanded={value.length > 0}
 		aria-controls={value.length > 0 ? 'search-results' : undefined}
 	/>
 	{#if value}
 		<button
 			type="button"
 			class="absolute inset-y-0 right-0 flex items-center pr-3 text-base-content/30 hover:text-base-content"
-			on:click={onClear}
+			onclick={onClear}
 			aria-label="Clear search"
 		>
 			<X size={16} />
@@ -72,8 +71,9 @@
 					{#each results.folders as folder (folder.id)}
 						<button
 							role="option"
+							aria-selected={false}
 							class="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-base-200"
-							on:click={() => onSelect('folder', folder.id)}
+							onclick={() => onSelect('folder', folder.id)}
 						>
 							<Folder size={16} class="shrink-0 text-brand-500" />
 							<div class="flex flex-col items-start truncate leading-tight">
@@ -97,8 +97,9 @@
 					{#each results.files as file (file.id)}
 						<button
 							role="option"
+							aria-selected={false}
 							class="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-base-200"
-							on:click={() => onSelect('file', file.id)}
+							onclick={() => onSelect('file', file.id)}
 						>
 							<FileText size={16} class="shrink-0 text-brand-500" />
 							<div class="flex flex-col items-start truncate leading-tight">

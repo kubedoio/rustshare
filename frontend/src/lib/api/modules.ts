@@ -1,5 +1,10 @@
 import { apiClient } from './client';
-import type { ModuleConfig, CreateFromTemplateRequest, CreateFromTemplateResponse, ModuleSummary } from './types';
+import type {
+	ModuleConfig,
+	CreateFromTemplateRequest,
+	CreateFromTemplateResponse,
+	ModuleSummary
+} from './types';
 
 export async function listEnabledModules(): Promise<ModuleConfig[]> {
 	return apiClient.get<ModuleConfig[]>('/modules');

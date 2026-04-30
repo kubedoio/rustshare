@@ -11,6 +11,8 @@
 		loading?: boolean;
 		compact?: boolean;
 		onAction?: () => void;
+		content?: import('svelte').Snippet;
+		action?: import('svelte').Snippet;
 	}
 
 	let {
@@ -22,7 +24,9 @@
 		danger = false,
 		loading = false,
 		compact = false,
-		onAction = () => {}
+		onAction = () => {},
+		content,
+		action
 	}: Props = $props();
 
 	function handleClick() {
@@ -39,7 +43,7 @@
 		{#if value}
 			<p class="mt-1 truncate text-sm text-base-content/80">{value}</p>
 		{/if}
-		<slot name="content" />
+		{@render content?.()}
 	</div>
 
 	<div class="flex-shrink-0">
@@ -71,7 +75,7 @@
 				</button>
 			{/if}
 		{:else}
-			<slot name="action" />
+			{@render action?.()}
 		{/if}
 	</div>
 </div>
