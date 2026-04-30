@@ -14,6 +14,8 @@ interface ModuleDetailResponse {
 	module: ModuleConfig;
 }
 
+type LegacyModuleDetailResponse = ModuleConfig;
+
 interface ModuleSummaryResponse {
 	summary: ModuleSummary;
 }
@@ -24,8 +26,10 @@ export async function listEnabledModules(): Promise<ModuleConfig[]> {
 }
 
 export async function getModule(key: string): Promise<ModuleConfig> {
-	const response = await apiClient.get<ModuleDetailResponse>(`/modules/${key}`);
-	return response.module;
+	const response = await apiClient.get<ModuleDetailResponse | LegacyModuleDetailResponse>(
+		`/modules/${key}`
+	);
+	return 'module' in response ? response.module : response;
 }
 
 export async function createFromTemplate(

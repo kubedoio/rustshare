@@ -25,7 +25,6 @@ pub struct EnabledModulesResponse {
 
 #[derive(Debug, Serialize)]
 pub struct ModuleDetailResponse {
-    #[serde(flatten)]
     pub module: Module,
 }
 
