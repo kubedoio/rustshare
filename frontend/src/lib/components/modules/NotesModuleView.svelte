@@ -38,7 +38,7 @@
 				name: 'Untitled Note',
 				parent_folder_id: null
 			});
-			goto(`/files?preview=${result.object_id}`);
+			goto(`/notes/${result.object_id}`);
 		} catch (err) {
 			console.error('Failed to create note:', err);
 		}
@@ -80,7 +80,7 @@
 		<div class="flex flex-col gap-2">
 			{#each recentNotes as note}
 				<a
-					href="/files?preview={note.id}"
+					href="/notes/{note.id}"
 					class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
 				>
 					<div

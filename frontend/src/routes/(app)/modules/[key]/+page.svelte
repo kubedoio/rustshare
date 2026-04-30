@@ -100,14 +100,9 @@
 					<p class="text-sm text-base-content/60">{moduleConfig?.description ?? ''}</p>
 					<div class="mt-1 flex items-center gap-2">
 						<span
-							class="rounded-full border border-base-300/60 bg-base-200/50 px-2.5 py-0.5 text-[10px] font-semibold tracking-wider text-base-content/50 uppercase"
+							class="rounded-full border border-base-300/60 bg-base-200/50 px-3 py-1 text-xs font-medium text-base-content/60"
 						>
 							{moduleConfig?.root_path ?? '/'}
-						</span>
-						<span
-							class="rounded-full border border-base-300/60 bg-base-200/50 px-2.5 py-0.5 text-[10px] font-semibold tracking-wider text-base-content/50 uppercase"
-						>
-							{modulePageConfig?.renderer ?? moduleConfig?.renderer ?? 'default'}
 						</span>
 					</div>
 				</div>

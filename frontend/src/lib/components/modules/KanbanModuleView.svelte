@@ -40,16 +40,42 @@
 			const folder = data.folders?.find((f: { name: string }) => f.name === rootName);
 			if (!folder) return { folders: [], files: [], current_folder: null };
 			const contents = await getFolderContents(folder.id);
-			return { ...contents, current_folder: folder };
+			const boardCandidates = await Promise.all(
+				(contents.folders ?? []).map(async (candidate) => {
+					const boardContents = await getFolderContents(candidate.id);
+					const visibleColumns = boardContents.folders.filter((column) =>
+						isKanbanColumn(column.name)
+					);
+					const isValid =
+						boardContents.files.some((file) => file.name === KANBAN_METADATA_FILE) ||
+						visibleColumns.length >= 3;
+
+					return {
+						...candidate,
+						columnCount: visibleColumns.length,
+						isValid
+					};
+				})
+			);
+
+			return {
+				folders: boardCandidates
+					.filter((candidate) => candidate.isValid)
+					.map(({ isValid: _ignored, ...candidate }) => candidate),
+				files: contents.files,
+				current_folder: folder,
+				ignoredFolderCount: boardCandidates.filter((candidate) => !candidate.isValid).length
+			};
 		},
 		enabled: true
 	});
 
 	$: contents = $rootFolderQuery.data;
-	$: boards = [...(contents?.folders ?? [])].sort((a, b) =>
+	$: boards = [...((contents?.folders as BoardFolder[]) ?? [])].sort((a, b) =>
 		a.name.localeCompare(b.name, undefined, { numeric: true })
 	);
 	$: cards = contents?.files ?? [];
+	$: ignoredFolderCount = contents?.ignoredFolderCount ?? 0;
 	let selectedBoardId = '';
 	$: if (!selectedBoardId && boards.length > 0) {
 		selectedBoardId = boards[0].id;
@@ -75,6 +101,13 @@
 		name: string;
 		cards: BoardCard[];
 	};
+
+	type BoardFolder = FolderType & {
+		columnCount: number;
+	};
+
+	const STANDARD_KANBAN_COLUMNS = new Set(['backlog', 'ready', 'in progress', 'review', 'done']);
+	const KANBAN_METADATA_FILE = '.rustshare-module.json';
 
 	$: boardQuery = createQuery({
 		queryKey: ['kanban-board', moduleConfig.module_key, selectedBoardId],
@@ -162,6 +195,10 @@
 	function isHiddenItem(value: string): boolean {
 		return value.startsWith('.');
 	}
+
+	function isKanbanColumn(value: string): boolean {
+		return STANDARD_KANBAN_COLUMNS.has(formatColumnName(value).trim().toLowerCase());
+	}
 </script>
 
 <div class="flex flex-col gap-6">
@@ -177,6 +214,12 @@
 		<div class="flex items-center justify-between gap-4">
 			<div class="flex flex-col gap-2">
 				<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">Boards</h2>
+				{#if ignoredFolderCount > 0}
+					<p class="text-xs text-base-content/50">
+						Ignoring {ignoredFolderCount} folder{ignoredFolderCount === 1 ? '' : 's'} that do not match
+						the Kanban board structure.
+					</p>
+				{/if}
 				{#if boards.length > 0}
 					<div class="flex flex-wrap gap-2">
 						{#each boards as board}
@@ -208,7 +251,10 @@
 				<div>
 					<h3 class="text-lg font-semibold text-base-content">{selectedBoard.name}</h3>
 					<p class="text-sm text-base-content/55">
-						File-backed board preview. Open the board folder for attachments and metadata.
+						File-backed board preview with {selectedBoard.columnCount} active column{selectedBoard.columnCount ===
+						1
+							? ''
+							: 's'}.
 					</p>
 				</div>
 				<button

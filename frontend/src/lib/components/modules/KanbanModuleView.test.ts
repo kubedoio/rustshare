@@ -14,7 +14,10 @@ vi.mock('$lib/api/folders', () => ({
 	getFolderContents: vi.fn(async (folderId: string | null) => {
 		if (folderId === 'kanban-root') {
 			return {
-				folders: [{ id: 'board-1', name: 'Product Roadmap', updated_at: '2026-04-30T10:00:00Z' }],
+				folders: [
+					{ id: 'board-1', name: 'Product Roadmap', updated_at: '2026-04-30T10:00:00Z' },
+					{ id: 'not-a-board', name: 'Untitled Note', updated_at: '2026-04-29T10:00:00Z' }
+				],
 				files: []
 			};
 		}
@@ -25,7 +28,26 @@ vi.mock('$lib/api/folders', () => ({
 					{ id: 'col-1', name: '00-Backlog', updated_at: '2026-04-30T10:00:00Z' },
 					{ id: 'col-2', name: '03-Review', updated_at: '2026-04-30T10:00:00Z' }
 				],
-				files: []
+				files: [
+					{
+						id: 'board-metadata',
+						name: '.rustshare-module.json',
+						modified_at: '2026-04-30T10:00:00Z'
+					}
+				]
+			};
+		}
+
+		if (folderId === 'not-a-board') {
+			return {
+				folders: [],
+				files: [
+					{
+						id: 'note-file',
+						name: 'Untitled Note.md',
+						modified_at: '2026-04-29T10:00:00Z'
+					}
+				]
 			};
 		}
 
@@ -91,5 +113,6 @@ describe('KanbanModuleView', () => {
 		expect(screen.getByText('Review')).toBeTruthy();
 		expect(screen.getByText('Define MVP')).toBeTruthy();
 		expect(screen.getByText('Design Review')).toBeTruthy();
+		expect(screen.queryByRole('button', { name: 'Untitled Note' })).toBeNull();
 	});
 });
