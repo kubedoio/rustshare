@@ -123,8 +123,8 @@
 
 	// Action menu state
 	let showActions = $state(false);
-	let actionMenuRef: HTMLDivElement;
-	let actionButtonRef: HTMLButtonElement;
+	let actionMenuRef = $state<HTMLDivElement | undefined>(undefined);
+	let actionButtonRef = $state<HTMLButtonElement | undefined>(undefined);
 	let menuTop = $state(0);
 	let menuLeft = $state(0);
 
@@ -136,7 +136,7 @@
 	// Inline rename state
 	let isRenaming = $state(false);
 	let renameValue = $state('');
-	let renameInputRef: HTMLInputElement;
+	let renameInputRef = $state<HTMLInputElement | undefined>(undefined);
 
 	let menuItems = $derived(buildMenuItems());
 
@@ -443,7 +443,6 @@
 	ondragover={handleDragOver}
 	ondragleave={handleDragLeave}
 	ondrop={handleDrop}
-	role="row"
 	aria-selected={selected}
 	aria-grabbed={isDragging}
 	aria-dropeffect={isFolder && canDrop ? 'move' : 'none'}
@@ -507,6 +506,8 @@
 				<span
 					class="block min-w-0 truncate text-body-sm font-medium text-base-content"
 					ondblclick={maybeStartRename}
+					role="button"
+					tabindex="0"
 				>
 					{item.name}
 				</span>

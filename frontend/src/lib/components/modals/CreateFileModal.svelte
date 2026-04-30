@@ -98,32 +98,36 @@
 
 	<!-- Location Section -->
 	<div class="mb-5">
-		<label class="mb-2 block text-sm font-medium text-base-content/80">Location</label>
-		<FolderTreePicker
-			{selectedFolderId}
-			{currentFolderId}
-			onSelect={(id) => (selectedFolderId = id)}
-		/>
+		<label class="mb-2 block text-sm font-medium text-base-content/80">
+			Location
+			<FolderTreePicker
+				{selectedFolderId}
+				{currentFolderId}
+				onSelect={(id) => (selectedFolderId = id)}
+			/>
+		</label>
 	</div>
 
 	<!-- File Type Section -->
 	<div class="mb-5">
-		<label class="mb-2 block text-sm font-medium text-base-content/80">File Type</label>
-		<div class="grid grid-cols-2 gap-2">
-			{#each fileTypes as ft}
-				<button
-					type="button"
-					class="flex items-center gap-2 rounded-lg border p-3 text-left transition-all
+		<label class="mb-2 block text-sm font-medium text-base-content/80">
+			File Type
+			<div class="grid grid-cols-2 gap-2">
+				{#each fileTypes as ft}
+					<button
+						type="button"
+						class="flex items-center gap-2 rounded-lg border p-3 text-left transition-all
             {selectedType === ft.type
-						? 'border-brand-500 bg-brand-500/10'
-						: 'border-base-300 hover:border-brand-500/30 hover:bg-base-200/50'}"
-					onclick={() => (selectedType = ft.type)}
-				>
-					<ft.icon size={18} class={ft.color} />
-					<span class="text-sm font-medium">{ft.label}</span>
-				</button>
-			{/each}
-		</div>
+							? 'border-brand-500 bg-brand-500/10'
+							: 'border-base-300 hover:border-brand-500/30 hover:bg-base-200/50'}"
+						onclick={() => (selectedType = ft.type)}
+					>
+						<ft.icon size={18} class={ft.color} />
+						<span class="text-sm font-medium">{ft.label}</span>
+					</button>
+				{/each}
+			</div>
+		</label>
 	</div>
 
 	<!-- Filename Section -->

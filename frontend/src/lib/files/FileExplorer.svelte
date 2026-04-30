@@ -63,6 +63,7 @@
 			| ((folder: Folder, targetFolderId: string | null) => void);
 		onEditFile: (file: FileType) => void;
 		onbreadcrumbNavigate?: (event: CustomEvent<{ folderId: string | null }>) => void;
+		pagination?: import('svelte').Snippet;
 	}
 
 	let {
@@ -118,7 +119,8 @@
 		onShareFolder,
 		onMoveFolder,
 		onEditFile,
-		onbreadcrumbNavigate = () => {}
+		onbreadcrumbNavigate = () => {},
+		pagination
 	}: Props = $props();
 </script>
 
@@ -180,9 +182,9 @@
 			{onMoveFolder}
 			{onbreadcrumbNavigate}
 		>
-			<div slot="pagination">
-				<slot name="pagination" />
-			</div>
+			{#snippet pagination()}
+				{@render pagination?.()}
+			{/snippet}
 		</FileBrowserPane>
 	</div>
 </div>

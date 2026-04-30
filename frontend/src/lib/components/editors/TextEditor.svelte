@@ -177,7 +177,7 @@
 	on:close={handleClose}
 	on:save={handleSave}
 >
-	<div bind:this={editorContainer} class="h-full w-full" />
+	<div bind:this={editorContainer} class="h-full w-full"></div>
 </BaseEditor>
 
 <style>

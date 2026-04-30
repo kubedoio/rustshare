@@ -1688,15 +1688,17 @@
 		onMoveFolder={handleMoveFolderWithFallback}
 		onbreadcrumbNavigate={handleBreadcrumbNavigate}
 	>
-		<div slot="pagination" class="flex justify-center">
-			<PaginationControls
-				{currentPage}
-				{totalPages}
-				pageSize={$fileSortState.pageSize}
-				onPageChange={(page) => (currentPage = page)}
-				onPageSizeChange={setPageSize}
-			/>
-		</div>
+		{#snippet pagination()}
+			<div class="flex justify-center">
+				<PaginationControls
+					{currentPage}
+					{totalPages}
+					pageSize={$fileSortState.pageSize}
+					onPageChange={(page) => (currentPage = page)}
+					onPageSizeChange={setPageSize}
+				/>
+			</div>
+		{/snippet}
 	</FileExplorer>
 </DropZone>
 

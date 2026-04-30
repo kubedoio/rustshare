@@ -35,14 +35,16 @@
 	}
 
 	$: emptyTitle = moduleConfig.ui_config?.modulePage?.emptyStateTitle ?? 'No notes yet';
-	$: emptyDescription = moduleConfig.ui_config?.modulePage?.emptyStateDescription ?? 'Create your first note to get started.';
+	$: emptyDescription =
+		moduleConfig.ui_config?.modulePage?.emptyStateDescription ??
+		'Create your first note to get started.';
 	$: emptyAction = moduleConfig.ui_config?.modulePage?.emptyStateAction ?? 'New Note';
 </script>
 
 <div class="rounded-2xl border border-base-300/50 bg-base-100 p-6">
 	<div class="mb-4 flex items-center justify-between">
 		<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">Recent Notes</h2>
-		<button class="btn btn-sm btn-primary" on:click={handleNewNote}>
+		<button class="btn btn-sm btn-primary" onclick={handleNewNote}>
 			<Plus size={14} />
 			<span>New Note</span>
 		</button>

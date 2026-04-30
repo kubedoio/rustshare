@@ -761,11 +761,11 @@ mod tests {
         let file = TemplateDefaultFile {
             path: "README.md".to_string(),
             content: Some("# Hello".to_string()),
-            content_base64: None,
+            content_type: Some("text/markdown".to_string()),
         };
         let json = serde_json::to_string(&file).unwrap();
         assert!(json.contains("README.md"));
-        assert!(json.contains("# Hello"));
+        assert!(json.contains("contentType"));
     }
 
     #[test]

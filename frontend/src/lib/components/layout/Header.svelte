@@ -12,6 +12,7 @@
 		onSearchChange?: ((query: string) => void) | null;
 		searchQuery?: string;
 		onSearch?: (payload: { query: string }) => void;
+		breadcrumbs?: import('svelte').Snippet;
 	}
 
 	let {
@@ -19,7 +20,8 @@
 		onHelpClick = () => {},
 		onSearchChange = null,
 		searchQuery = '',
-		onSearch = () => {}
+		onSearch = () => {},
+		breadcrumbs
 	}: Props = $props();
 
 	// Cache buster for avatar - updates when user or avatar changes
@@ -87,7 +89,7 @@
 		</button>
 
 		<div class="min-w-0 flex-shrink overflow-x-auto">
-			<slot name="breadcrumbs" />
+			{@render breadcrumbs?.()}
 		</div>
 
 		<!-- Search bar (desktop) -->

@@ -121,7 +121,7 @@
 	// Inline rename state
 	let isRenaming = $state(false);
 	let renameValue = $state('');
-	let renameInputRef: HTMLInputElement;
+	let renameInputRef = $state<HTMLInputElement | undefined>(undefined);
 
 	let menuItems = $derived(buildMenuItems());
 
@@ -397,7 +397,10 @@
 			{#if showActions}
 				<div
 					class="absolute top-full right-0 z-50 mt-1 w-44 rounded-xl border border-base-300/70 bg-base-100 py-1 shadow-xl shadow-black/20"
+					role="presentation"
+					tabindex="-1"
 					onclick={(e) => e.stopPropagation()}
+					onkeydown={(e) => e.stopPropagation()}
 				>
 					{#if workspaceMode === 'deleted'}
 						<button

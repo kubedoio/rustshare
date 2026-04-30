@@ -72,6 +72,7 @@
 <div class="flex flex-col gap-6">
 	{#if boards.length === 0 && cards.length === 0}
 		<EmptyState
+			icon={Folder}
 			title={emptyTitle}
 			description={emptyDescription}
 			actionLabel={emptyAction}
@@ -79,8 +80,8 @@
 		/>
 	{:else}
 		<div class="flex items-center justify-between">
-			<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content">Boards</h2>
-			<button class="btn btn-primary btn-sm" on:click={handleCreateBoard}>
+			<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">Boards</h2>
+			<button class="btn btn-sm btn-primary" onclick={handleCreateBoard}>
 				<Plus size={14} />
 				<span>New Board</span>
 			</button>
@@ -91,7 +92,7 @@
 				{#each boards as board}
 					<button
 						class="group flex flex-col gap-3 rounded-2xl border border-base-300/50 bg-base-100 p-5 text-left shadow-sm transition-all hover:border-brand-500/40 hover:shadow-md"
-						on:click={() => navigateToBoard(board.id)}
+						onclick={() => navigateToBoard(board.id)}
 					>
 						<div class="flex items-start justify-between">
 							<div class="flex items-center gap-2">
