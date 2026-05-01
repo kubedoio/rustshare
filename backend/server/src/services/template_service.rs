@@ -1130,6 +1130,16 @@ fn render_template_string(input: &str, title: &str, file_stem: &str) -> String {
         .replace("{{file_name}}", &format!("{file_stem}.md"))
 }
 
+fn slugify(title: &str) -> String {
+    title
+        .to_lowercase()
+        .replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "-")
+        .replace("--", "-")
+        .replace("--", "-")
+        .trim_matches('-')
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
