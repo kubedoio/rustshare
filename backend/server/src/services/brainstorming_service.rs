@@ -331,11 +331,17 @@ impl BrainstormingService {
             })?;
 
         if let Some(file) = source_file {
+            tracing::info!(file_id = %file.id, "save_board_source: editing existing board.excalidraw");
             self.file_service
                 .edit_file(file.id, user_id, Bytes::from(source), "overwrite", None)
                 .await
-                .map_err(BrainstormError::from)?;
+                .map_err(|e| {
+                    tracing::info!(file_id = %file.id, error = %e, "save_board_source: edit_file failed");
+                    BrainstormError::from(e)
+                })?;
+            tracing::info!(file_id = %file.id, "save_board_source: edit_file succeeded");
         } else {
+            tracing::info!(folder_id = %folder.id, "save_board_source: uploading new board.excalidraw");
             self.file_service
                 .upload_file(
                     user_id,
@@ -346,13 +352,24 @@ impl BrainstormingService {
                     tenant_id,
                 )
                 .await
-                .map_err(BrainstormError::from)?;
+                .map_err(|e| {
+                    tracing::info!(folder_id = %folder.id, error = %e, "save_board_source: upload_file failed");
+                    BrainstormError::from(e)
+                })?;
+            tracing::info!(folder_id = %folder.id, "save_board_source: upload_file succeeded");
         }
 
         // Update metadata updatedAt
+        tracing::info!(folder_id = %folder.id, "save_board_source: updating metadata timestamp");
         self.update_metadata_timestamp(folder.id, user_id, tenant_id)
-            .await?;
+            .await
+            .map_err(|e| {
+                tracing::info!(folder_id = %folder.id, error = %e, "save_board_source: update_metadata_timestamp failed");
+                e
+            })?;
+        tracing::info!(folder_id = %folder.id, "save_board_source: metadata timestamp updated");
 
+        tracing::info!(folder_id = %folder.id, "save_board_source: loading board");
         self.load_board(&folder, user_id).await
     }
 
@@ -588,6 +605,12 @@ impl BrainstormingService {
         folder_id: Uuid,
         user_id: UserId,
     ) -> Result<BoardMetadata, BrainstormError> {
+        let folder = self
+            .folder_service
+            .get_folder(folder_id, user_id)
+            .await
+            .map_err(BrainstormError::from)?;
+
         if let Some(file) = self
             .find_file_in_folder(folder_id, user_id, ".rustshare.json")
             .await?
@@ -602,7 +625,21 @@ impl BrainstormingService {
             }
         }
 
-        Err(BrainstormError::BoardNotFound)
+        // Fallback: derive from folder (handles malformed or missing .rustshare.json)
+        let title = folder.name.replace('-', " ");
+        let slug = slugify(&title);
+        Ok(BoardMetadata {
+            id: folder.id.to_string(),
+            type_: "brainstorming.board".to_string(),
+            title: title.clone(),
+            slug,
+            template: "template_blank_brainstorm".to_string(),
+            source_file: "board.excalidraw".to_string(),
+            preview_file: "preview.png".to_string(),
+            created_at: folder.created_at,
+            updated_at: folder.updated_at,
+            schema_version: "1.0".to_string(),
+        })
     }
 
     async fn find_file_in_folder(

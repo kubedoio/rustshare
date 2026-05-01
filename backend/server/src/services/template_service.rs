@@ -916,6 +916,12 @@ impl TemplateService {
 
         for file in default_files {
             let content = render_template_string(file.content.as_deref().unwrap_or_default(), &name, &name);
+            // Replace folder-specific placeholders for brainstorming board metadata
+            let content = content
+                .replace("{{id}}", &object_folder.id.to_string())
+                .replace("{{slug}}", &slugify(&name))
+                .replace("{{created_at}}", &object_folder.created_at.to_rfc3339())
+                .replace("{{updated_at}}", &object_folder.updated_at.to_rfc3339());
             let mime_type = file
                 .content_type
                 .clone()
