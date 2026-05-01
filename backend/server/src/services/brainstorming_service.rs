@@ -234,25 +234,52 @@ impl BrainstormingService {
         user_id: UserId,
         _tenant_id: Uuid,
     ) -> Result<String, BrainstormError> {
+        tracing::info!(board_id = %board_id, user_id = %user_id, "get_board_source: start");
+
         let folder = self
             .folder_service
             .get_folder(board_id, user_id)
             .await
-            .map_err(BrainstormError::from)?;
+            .map_err(|e| {
+                tracing::info!(board_id = %board_id, user_id = %user_id, error = %e, "get_board_source: folder lookup failed");
+                BrainstormError::from(e)
+            })?;
+        tracing::info!(folder_id = %folder.id, folder_path = %folder.path, "get_board_source: folder found");
 
         let file = self
             .find_file_in_folder(folder.id, user_id, "board.excalidraw")
-            .await?
-            .ok_or(BrainstormError::BoardNotFound)?;
+            .await
+            .map_err(|e| {
+                tracing::info!(folder_id = %folder.id, user_id = %user_id, error = %e, "get_board_source: find_file_in_folder failed");
+                e
+            })?;
+
+        let file = match file {
+            Some(f) => {
+                tracing::info!(file_id = %f.id, file_name = %f.name, "get_board_source: board.excalidraw found");
+                f
+            }
+            None => {
+                tracing::info!(folder_id = %folder.id, "get_board_source: board.excalidraw NOT found in folder");
+                return Err(BrainstormError::BoardNotFound);
+            }
+        };
 
         let content = self
             .object_store
             .get(&file.storage_key())
             .await
-            .map_err(|e| BrainstormError::Storage(e.to_string()))?;
+            .map_err(|e| {
+                tracing::info!(file_id = %file.id, storage_key = %file.storage_key(), error = %e, "get_board_source: object_store.get failed");
+                BrainstormError::Storage(e.to_string())
+            })?;
+        tracing::info!(file_id = %file.id, content_len = content.len(), "get_board_source: content loaded from object store");
 
         String::from_utf8(content.to_vec())
-            .map_err(|e| BrainstormError::InvalidData(format!("Invalid UTF-8: {}", e)))
+            .map_err(|e| {
+                tracing::info!(file_id = %file.id, error = %e, "get_board_source: invalid UTF-8");
+                BrainstormError::InvalidData(format!("Invalid UTF-8: {}", e))
+            })
     }
 
     pub async fn save_board_source(
@@ -262,32 +289,46 @@ impl BrainstormingService {
         tenant_id: Uuid,
         source: String,
     ) -> Result<BrainstormBoard, BrainstormError> {
+        tracing::info!(board_id = %board_id, user_id = %user_id, tenant_id = %tenant_id, source_len = source.len(), "save_board_source: start");
+
         // Validate Excalidraw JSON structure
         let parsed: serde_json::Value =
             serde_json::from_str(&source).map_err(|e| BrainstormError::InvalidData(e.to_string()))?;
 
         if parsed.get("type").and_then(|v| v.as_str()) != Some("excalidraw") {
+            tracing::info!("save_board_source: validation failed - missing type field");
             return Err(BrainstormError::InvalidData(
                 "Invalid Excalidraw JSON: missing type field".to_string(),
             ));
         }
 
         if !parsed.get("elements").map(|v| v.is_array()).unwrap_or(false) {
+            tracing::info!("save_board_source: validation failed - missing elements array");
             return Err(BrainstormError::InvalidData(
                 "Invalid Excalidraw JSON: missing elements array".to_string(),
             ));
         }
 
+        tracing::info!(board_id = %board_id, user_id = %user_id, "save_board_source: looking up folder");
         let folder = self
             .folder_service
             .get_folder(board_id, user_id)
             .await
-            .map_err(BrainstormError::from)?;
+            .map_err(|e| {
+                tracing::info!(board_id = %board_id, user_id = %user_id, error = %e, "save_board_source: folder lookup failed");
+                BrainstormError::from(e)
+            })?;
+        tracing::info!(folder_id = %folder.id, folder_path = %folder.path, "save_board_source: folder found");
 
         // Update board.excalidraw
+        tracing::info!(folder_id = %folder.id, "save_board_source: looking for board.excalidraw");
         let source_file = self
             .find_file_in_folder(folder.id, user_id, "board.excalidraw")
-            .await?;
+            .await
+            .map_err(|e| {
+                tracing::info!(folder_id = %folder.id, error = %e, "save_board_source: find_file_in_folder failed");
+                e
+            })?;
 
         if let Some(file) = source_file {
             self.file_service

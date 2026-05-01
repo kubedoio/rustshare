@@ -83,6 +83,7 @@
 		if (!excalidrawContainer || typeof window === 'undefined' || editorInitialized) return;
 
 		try {
+			await import('@excalidraw/excalidraw/index.css');
 			const excalidrawModule = await import('@excalidraw/excalidraw');
 			const React = await import('react');
 			const ReactDOM = await import('react-dom/client');

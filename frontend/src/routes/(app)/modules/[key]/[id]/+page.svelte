@@ -16,7 +16,7 @@
 	// Determine which API to use
 	$: api = key === 'notes' ? notesApi : 
 	         key === 'decisions' ? decisionsApi : 
-			 key === 'meeting-notes' ? meetingsApi : null;
+			 key === 'meetings' ? meetingsApi : null;
 
 	$: query = createQuery<any, Error, any, any, string[]>({
 		queryKey: ['module-item', key, id],
@@ -37,7 +37,7 @@
 		mutationFn: (data: { title: string; content: string }) => {
 			if (key === 'notes') return notesApi.update(id, { content: data.content });
 			if (key === 'decisions') return decisionsApi.update(id, { title: data.title, content: data.content });
-			if (key === 'meeting-notes') return meetingsApi.update(id, { title: data.title, content: data.content });
+			if (key === 'meetings') return meetingsApi.update(id, { title: data.title, content: data.content });
 			return Promise.reject('Invalid module');
 		},
 		onSuccess: () => {

@@ -170,7 +170,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 	},
 	{
 		id: 'module_meeting_notes',
-		key: 'meeting-notes',
+		key: 'meetings',
 		displayName: 'Meeting Notes',
 		description: 'Structured meeting records.',
 		enabled: true,
@@ -202,7 +202,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 			},
 			page: {
 				enabled: true,
-				route: '/modules/meeting-notes',
+				route: '/modules/meetings',
 				renderer: 'meetings',
 				layout: 'list-grid',
 				emptyStateTitle: 'No meetings yet',

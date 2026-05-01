@@ -61,6 +61,7 @@
 
 		// Since Excalidraw is a React component, we need to mount it differently
 		// For now, we'll use a simple approach with the Excalidraw component
+		await import('@excalidraw/excalidraw/index.css');
 		const React = await import('react');
 		const ReactDOM = await import('react-dom/client');
 

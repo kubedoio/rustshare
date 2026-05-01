@@ -219,17 +219,38 @@ where
         folder_id: FolderId,
         user_id: UserId,
     ) -> Result<Folder, FolderError> {
+        tracing::info!(folder_id = %folder_id, user_id = %user_id, "folder_service::get_folder called");
+
         // 1. Find folder by ID
         let folder = self
             .metadata_store
             .find_folder_by_id(folder_id)
             .await
-            .map_err(|e| FolderError::Database(e.to_string()))?
-            .ok_or(FolderError::NotFound(folder_id))?;
+            .map_err(|e| {
+                tracing::info!(folder_id = %folder_id, error = %e, "folder_service::get_folder: find_folder_by_id DB error");
+                FolderError::Database(e.to_string())
+            })?;
+
+        let folder = match folder {
+            Some(f) => {
+                tracing::info!(folder_id = %folder_id, folder_path = %f.path, folder_owner = %f.owner_id, "folder_service::get_folder: folder found");
+                f
+            }
+            None => {
+                tracing::info!(folder_id = %folder_id, "folder_service::get_folder: folder NOT found in DB");
+                return Err(FolderError::NotFound(folder_id));
+            }
+        };
 
         // 2. Check permissions using the resolver
-        self.require_folder_permission(user_id, folder_id, SharePermissions::View)
-            .await?;
+        let perm_result = self
+            .require_folder_permission(user_id, folder_id, SharePermissions::View)
+            .await;
+        match &perm_result {
+            Ok(()) => tracing::info!(folder_id = %folder_id, user_id = %user_id, "folder_service::get_folder: permission check PASSED"),
+            Err(e) => tracing::info!(folder_id = %folder_id, user_id = %user_id, error = %e, "folder_service::get_folder: permission check FAILED"),
+        }
+        perm_result?;
 
         Ok(folder)
     }

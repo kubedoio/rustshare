@@ -12,7 +12,7 @@ describe('Module Registry', () => {
 		expect(modules.length).toBeGreaterThanOrEqual(6);
 		const keys = modules.map((m) => m.key);
 		expect(keys).toContain('notes');
-		expect(keys).toContain('meeting-notes');
+		expect(keys).toContain('meetings');
 		expect(keys).toContain('standups');
 		expect(keys).toContain('kanban');
 		expect(keys).toContain('decisions');

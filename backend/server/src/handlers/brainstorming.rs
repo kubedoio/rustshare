@@ -202,6 +202,12 @@ pub async fn get_brainstorm_board_source(
     auth: AuthenticatedUser,
     Path(board_id): Path<Uuid>,
 ) -> Result<Json<GetBoardSourceResponse>, Response> {
+    tracing::info!(
+        board_id = %board_id,
+        user_id = %auth.user_id,
+        tenant_id = %auth.tenant_id,
+        "handler: get_brainstorm_board_source called"
+    );
     let source = state
         .brainstorming_service
         .get_board_source(board_id, auth.user_id, auth.tenant_id)
@@ -226,6 +232,12 @@ pub async fn save_brainstorm_board_source(
     Path(board_id): Path<Uuid>,
     Json(req): Json<SaveBoardSourceRequest>,
 ) -> Result<Json<GetBoardResponse>, Response> {
+    tracing::info!(
+        board_id = %board_id,
+        user_id = %auth.user_id,
+        tenant_id = %auth.tenant_id,
+        "handler: save_brainstorm_board_source called"
+    );
     let board = state
         .brainstorming_service
         .save_board_source(board_id, auth.user_id, auth.tenant_id, req.source)
