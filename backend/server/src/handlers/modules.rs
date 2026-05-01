@@ -8,6 +8,7 @@ use axum::{
 use rustshare_core::domain::{CreateFromTemplateRequest, CreatedObject, Module};
 use serde::Serialize;
 use serde_json::json;
+use uuid::Uuid;
 
 use crate::{
     handlers::{admin::log_admin_action, extractors::AuthenticatedUser, ErrorResponse},
@@ -162,6 +163,16 @@ pub async fn create_from_template(
             };
             (status, Json(ErrorResponse::new(e.to_string()))).into_response()
         })?;
+
+    // Initialize kanban board metadata if created from a kanban template
+    if body.template_key.starts_with("template_default_kanban") {
+        if let Ok(board_id) = Uuid::parse_str(&object.object_id.to_string()) {
+            let _ = state
+                .kanban_service
+                .initialize_board(board_id, user_id, tenant_id)
+                .await;
+        }
+    }
 
     // Log object creation from template (audit trail)
     log_admin_action(

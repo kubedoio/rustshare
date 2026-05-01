@@ -10,6 +10,7 @@ pub mod features;
 mod files;
 mod folders;
 mod groups;
+mod kanban;
 pub mod invites;
 mod modules;
 mod notes;
@@ -37,6 +38,10 @@ pub use folders::{
     create_folder, delete_folder, get_folder, get_folder_contents, get_folder_tree,
     get_root_contents, move_folder, permanently_delete_folder, rename_folder,
     restore_folder_from_trash, toggle_folder_star,
+};
+pub use kanban::{
+    archive_board, archive_card, create_board, create_card, delete_card, get_board, get_card,
+    list_boards, list_cards, move_card, update_board, update_card,
 };
 pub use notifications::{
     count_unread_notifications, delete_notification, list_notifications, mark_notification_read,

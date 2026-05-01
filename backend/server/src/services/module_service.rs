@@ -184,16 +184,16 @@ impl ModuleService {
             (
                 "kanban",
                 "Kanban Dashboard",
-                "Manage board cards as folders and files.",
+                "Manage board cards as file-backed folders and Markdown records.",
                 "/Kanban",
                 "kanban",
                 "template_default_kanban",
                 "columns",
                 false,
                 json!({
-                    "sidebar": { "enabled": true, "order": 60, "icon": "columns", "label": "Kanban" },
-                    "dashboard": { "enabled": true, "order": 40, "cardTitle": "Kanban Dashboard", "cardDescription": "Board cards as folders and files.", "summaryMode": "kanban-overview", "maxItems": 4, "primaryAction": { "label": "New Board", "action": "create-from-template", "template": "template_default_kanban" } },
-                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No boards yet", "emptyStateDescription": "Create your first kanban board.", "emptyStateAction": "New Board" }
+                    "sidebar": { "enabled": true, "order": 50, "icon": "columns", "label": "Kanban" },
+                    "dashboard": { "enabled": true, "order": 10, "widget": { "enabled": true, "type": "kanban-summary", "title": "Kanban Dashboard", "description": "Active boards and cards.", "size": "large", "columns": { "desktop": 6, "tablet": 12, "mobile": 12 }, "maxItems": 8, "primaryAction": { "label": "New Board", "action": "create-from-template", "template": "template_default_kanban" } } },
+                    "page": { "enabled": true, "route": "/modules/kanban", "renderer": "kanban", "layout": "board", "emptyStateTitle": "No Kanban boards yet", "emptyStateDescription": "Create your first file-backed Kanban board.", "primaryAction": { "label": "New Board", "action": "create-from-template", "template": "template_default_kanban" } }
                 }),
             ),
             (

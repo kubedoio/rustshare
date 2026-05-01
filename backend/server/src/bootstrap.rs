@@ -141,6 +141,12 @@ pub async fn init_app() -> Result<AppState> {
         Arc::clone(&folder_service),
         Arc::clone(&metadata_store),
     ));
+    let kanban_service = Arc::new(crate::services::kanban_service::KanbanService::new(
+        Arc::clone(&file_service),
+        Arc::clone(&folder_service),
+        Arc::clone(&metadata_store),
+        Arc::clone(&object_store),
+    ));
     let thumbnail_service = Arc::new(ThumbnailService::new(
         db_pool.clone(),
         Arc::clone(&object_store),
@@ -357,6 +363,7 @@ pub async fn init_app() -> Result<AppState> {
         note_service,
         module_service,
         template_service,
+        kanban_service,
         public_base_url,
     };
 

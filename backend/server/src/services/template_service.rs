@@ -259,7 +259,7 @@ impl TemplateService {
                 "Default Kanban Board",
                 "kanban",
                 "1.0",
-                "Creates a standard Kanban board folder structure.",
+                "Creates a standard file-backed Kanban board folder structure.",
                 vec![
                     "00-Backlog".to_string(),
                     "01-Ready".to_string(),
@@ -269,25 +269,25 @@ impl TemplateService {
                 ],
                 vec![
                     TemplateDefaultFile {
-                        path: "README.md".to_string(),
-                        content: Some("# Kanban Board\n\nThis board is file-backed.\n".to_string()),
-                        content_type: Some("text/markdown".to_string()),
+                        path: ".rustshare-board.json".to_string(),
+                        content: Some(r#"{"type":"kanban.board","module":"kanban","schemaVersion":"1.0"}"#.to_string()),
+                        content_type: Some("application/json".to_string()),
                     },
                     TemplateDefaultFile {
-                        path: ".rustshare-module.json".to_string(),
-                        content: Some(r#"{"type":"rustshare.module","module_key":"kanban"}"#.to_string()),
-                        content_type: Some("application/json".to_string()),
+                        path: "events.jsonl".to_string(),
+                        content: Some("".to_string()),
+                        content_type: Some("application/jsonlines".to_string()),
+                    },
+                    TemplateDefaultFile {
+                        path: "README.md".to_string(),
+                        content: Some("# {{title}}\n\nThis is a file-backed Kanban board.\n".to_string()),
+                        content_type: Some("text/markdown".to_string()),
                     },
                 ],
                 json!({
-                    "type": "kanban.board",
-                    "fields": {
-                        "title": "string",
-                        "owner": "string",
-                        "statusColumns": "array"
-                    }
+                    "type": "kanban.board"
                 }),
-                Some("kanban"),
+                Some("kanban-board"),
             ),
             (
                 "template_default_decision",
@@ -369,6 +369,25 @@ impl TemplateService {
             .await?;
 
             if !exists {
+                let ui_config = if key == "template_default_kanban" {
+                    json!({
+                        "createLabel": "New Board",
+                        "icon": "columns",
+                        "form": {
+                            "fields": [
+                                {
+                                    "key": "title",
+                                    "label": "Board title",
+                                    "type": "text",
+                                    "required": true
+                                }
+                            ]
+                        }
+                    })
+                } else {
+                    json!({})
+                };
+
                 let template = Template {
                     id: Uuid::new_v4(),
                     template_key: key.to_string(),
@@ -376,7 +395,7 @@ impl TemplateService {
                     module_key: module_key.to_string(),
                     version: version.to_string(),
                     description: description.to_string(),
-                    ui_config: json!({}),
+                    ui_config,
                     folder_structure: serde_json::to_value(&folder_structure)?,
                     default_files: serde_json::to_value(&default_files)?,
                     metadata_schema: metadata_schema.clone(),

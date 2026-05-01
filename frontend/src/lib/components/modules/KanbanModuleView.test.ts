@@ -10,76 +10,86 @@ vi.mock('$lib/api/modules', () => ({
 	createFromTemplate: vi.fn()
 }));
 
-vi.mock('$lib/api/folders', () => ({
-	getFolderContents: vi.fn(async (folderId: string | null) => {
-		if (folderId === null) {
-			return {
-				folders: [{ id: 'kanban-root', name: 'Kanban', updated_at: '2026-04-30T10:00:00Z' }],
-				files: []
-			};
+vi.mock('$lib/api/kanban', () => ({
+	listKanbanBoards: vi.fn(async () => [
+		{
+			id: 'board-1',
+			title: 'Product Roadmap',
+			slug: 'product-roadmap',
+			path: '/Kanban/product-roadmap',
+			column_count: 2,
+			card_count: 2,
+			created_at: '2026-04-30T10:00:00Z',
+			updated_at: '2026-04-30T10:00:00Z'
 		}
-
-		if (folderId === 'kanban-root') {
-			return {
-				folders: [
-					{ id: 'board-1', name: 'Product Roadmap', updated_at: '2026-04-30T10:00:00Z' },
-					{ id: 'not-a-board', name: 'Untitled Note', updated_at: '2026-04-29T10:00:00Z' }
-				],
-				files: []
-			};
-		}
-
-		if (folderId === 'board-1') {
-			return {
-				folders: [
-					{ id: 'col-1', name: '00-Backlog', updated_at: '2026-04-30T10:00:00Z' },
-					{ id: 'col-2', name: '03-Review', updated_at: '2026-04-30T10:00:00Z' }
-				],
-				files: [
-					{
-						id: 'board-metadata',
-						name: '.rustshare-module.json',
-						modified_at: '2026-04-30T10:00:00Z'
-					}
-				]
-			};
-		}
-
-		if (folderId === 'not-a-board') {
-			return {
-				folders: [],
-				files: [
-					{
-						id: 'note-file',
-						name: 'Untitled Note.md',
-						modified_at: '2026-04-29T10:00:00Z'
-					}
-				]
-			};
-		}
-
-		if (folderId === 'col-1') {
-			return {
-				folders: [],
-				files: [
-					{
-						id: 'file-1',
-						name: 'Define MVP.md',
-						modified_at: '2026-04-30T10:00:00Z'
-					}
-				]
-			};
-		}
-
-		if (folderId === 'col-2') {
-			return {
-				folders: [{ id: 'card-folder', name: 'Design Review', updated_at: '2026-04-29T10:00:00Z' }],
-				files: []
-			};
-		}
-
-		return { folders: [], files: [] };
-	})
+	]),
+	getKanbanBoard: vi.fn(async (boardId: string) => {
+		if (boardId !== 'board-1') return null;
+		return {
+			id: 'board-1',
+			title: 'Product Roadmap',
+			slug: 'product-roadmap',
+			path: '/Kanban/product-roadmap',
+			columns: [
+				{
+					id: 'column_backlog',
+					title: 'Backlog',
+					slug: '00-Backlog',
+					order: 0,
+					status: 'backlog',
+					cards: [
+						{
+							id: 'card-1',
+							title: 'Define MVP',
+							slug: 'CARD-0001-define-mvp',
+							content: '# Define MVP\n',
+							column_id: 'column_backlog',
+							status: 'backlog',
+							order: 1000,
+							assignees: [],
+							tags: [],
+							priority: 'normal',
+							archived: false,
+							created_at: '2026-04-30T10:00:00Z',
+							updated_at: '2026-04-30T10:00:00Z'
+						}
+					]
+				},
+				{
+					id: 'column_review',
+					title: 'Review',
+					slug: '03-Review',
+					order: 3,
+					status: 'review',
+					cards: [
+						{
+							id: 'card-2',
+							title: 'Design Review',
+							slug: 'CARD-0002-design-review',
+							content: '# Design Review\n',
+							column_id: 'column_review',
+							status: 'review',
+							order: 1000,
+							assignees: [],
+							tags: [],
+							priority: 'normal',
+							archived: false,
+							created_at: '2026-04-30T10:00:00Z',
+							updated_at: '2026-04-30T10:00:00Z'
+						}
+					]
+				}
+			],
+			created_at: '2026-04-30T10:00:00Z',
+			updated_at: '2026-04-30T10:00:00Z'
+		};
+	}),
+	createKanbanBoard: vi.fn(),
+	createKanbanCard: vi.fn(),
+	updateKanbanCard: vi.fn(),
+	moveKanbanCard: vi.fn(),
+	archiveKanbanCard: vi.fn(),
+	deleteKanbanCard: vi.fn()
 }));
 
 describe('KanbanModuleView', () => {
@@ -113,6 +123,5 @@ describe('KanbanModuleView', () => {
 		expect(screen.getByText('Review')).toBeTruthy();
 		expect(screen.getByText('Define MVP')).toBeTruthy();
 		expect(screen.getByText('Design Review')).toBeTruthy();
-		expect(screen.queryByRole('button', { name: 'Untitled Note' })).toBeNull();
 	});
 });

@@ -245,6 +245,23 @@ pub fn module_routes() -> Router<AppState> {
         )
 }
 
+pub fn kanban_routes() -> Router<AppState> {
+    use axum::routing::{delete, get, patch, post};
+    Router::new()
+        .route("/api/v1/modules/kanban/boards", get(crate::handlers::list_boards))
+        .route("/api/v1/modules/kanban/boards", post(crate::handlers::create_board))
+        .route("/api/v1/modules/kanban/boards/{board_id}", get(crate::handlers::get_board))
+        .route("/api/v1/modules/kanban/boards/{board_id}", patch(crate::handlers::update_board))
+        .route("/api/v1/modules/kanban/boards/{board_id}/archive", post(crate::handlers::archive_board))
+        .route("/api/v1/modules/kanban/boards/{board_id}/cards", get(crate::handlers::list_cards))
+        .route("/api/v1/modules/kanban/boards/{board_id}/cards", post(crate::handlers::create_card))
+        .route("/api/v1/modules/kanban/cards/{card_id}", get(crate::handlers::get_card))
+        .route("/api/v1/modules/kanban/cards/{card_id}", patch(crate::handlers::update_card))
+        .route("/api/v1/modules/kanban/cards/{card_id}/move", post(crate::handlers::move_card))
+        .route("/api/v1/modules/kanban/cards/{card_id}/archive", post(crate::handlers::archive_card))
+        .route("/api/v1/modules/kanban/cards/{card_id}", delete(crate::handlers::delete_card))
+}
+
 pub fn admin_routes() -> Router<AppState> {
     use axum::routing::{delete, get, patch, post, put};
     Router::new()

@@ -93,6 +93,10 @@ name = "notes_test"
 path = "../tests/notes_test.rs"
 
 [[test]]
+name = "kanban_test"
+path = "../tests/kanban_test.rs"
+
+[[test]]
 name = "group_sharing_test"
 path = "../tests/group_sharing_test.rs"
 

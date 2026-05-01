@@ -404,3 +404,53 @@ export interface ModuleSummary {
 	recent_items: SummaryItem[];
 	extra?: Record<string, unknown> | null;
 }
+
+// ---------------------------------------------------------------------------
+// Kanban Types
+// ---------------------------------------------------------------------------
+
+export interface KanbanBoardSummary {
+	id: string;
+	title: string;
+	slug: string;
+	path: string;
+	column_count: number;
+	card_count: number;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface KanbanBoard {
+	id: string;
+	title: string;
+	slug: string;
+	path: string;
+	columns: KanbanColumn[];
+	created_at: string;
+	updated_at: string;
+}
+
+export interface KanbanColumn {
+	id: string;
+	title: string;
+	slug: string;
+	order: number;
+	status: string;
+	cards: KanbanCard[];
+}
+
+export interface KanbanCard {
+	id: string;
+	title: string;
+	slug: string;
+	content: string;
+	column_id: string;
+	status: string;
+	order: number;
+	assignees: string[];
+	tags: string[];
+	priority: string;
+	archived: boolean;
+	created_at: string;
+	updated_at: string;
+}

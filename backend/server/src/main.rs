@@ -89,6 +89,7 @@ async fn main() -> Result<()> {
         .merge(routes::sync_routes())
         .merge(routes::trash_routes())
         .merge(routes::module_routes())
+        .merge(routes::kanban_routes())
         .route("/api", any(api_not_found))
         .route("/api/{*path}", any(api_not_found))
         .with_state(state.clone())

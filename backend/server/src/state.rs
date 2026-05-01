@@ -95,6 +95,7 @@ pub struct ServiceState {
     pub note_service: Arc<services::note_service::NoteService>,
     pub module_service: Arc<services::module_service::ModuleService>,
     pub template_service: Arc<services::template_service::TemplateService>,
+    pub kanban_service: Arc<services::kanban_service::KanbanService>,
 }
 
 /// Application configuration and runtime state.
@@ -168,6 +169,7 @@ pub struct AppState {
     pub note_service: Arc<services::note_service::NoteService>,
     pub module_service: Arc<services::module_service::ModuleService>,
     pub template_service: Arc<services::template_service::TemplateService>,
+    pub kanban_service: Arc<services::kanban_service::KanbanService>,
     pub public_base_url: String,
 }
 
@@ -197,6 +199,7 @@ impl FromRef<AppState> for ServiceState {
             note_service: state.note_service.clone(),
             module_service: state.module_service.clone(),
             template_service: state.template_service.clone(),
+            kanban_service: state.kanban_service.clone(),
         }
     }
 }
