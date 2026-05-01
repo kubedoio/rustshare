@@ -295,7 +295,7 @@ impl KanbanService {
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Vec<KanbanBoardSummary>, KanbanError> {
-        let root = match self.find_kanban_root(tenant_id).await? {
+        let root = match self.find_kanban_root(user_id, tenant_id).await? {
             Some(r) => r,
             None => return Ok(Vec::new()),
         };
@@ -1130,7 +1130,7 @@ impl KanbanService {
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Option<Folder>, KanbanError> {
-        let root = match self.find_kanban_root(tenant_id).await? {
+        let root = match self.find_kanban_root(user_id, tenant_id).await? {
             Some(r) => r,
             None => return Ok(None),
         };
@@ -1158,11 +1158,16 @@ impl KanbanService {
     // Private helpers
     // -------------------------------------------------------------------------
 
-    async fn find_kanban_root(&self, tenant_id: Uuid) -> Result<Option<Folder>, KanbanError> {
+    async fn find_kanban_root(
+        &self,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Option<Folder>, KanbanError> {
         let row = sqlx::query(
-            "SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id FROM folders WHERE path = '/Kanban' AND tenant_id = $1 AND deleted_at IS NULL LIMIT 1",
+            "SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id FROM folders WHERE path = '/Kanban' AND tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL LIMIT 1",
         )
         .bind(tenant_id)
+        .bind(user_id)
         .fetch_optional(self.metadata_store.pool())
         .await
         .map_err(|e| KanbanError::Database(e.to_string()))?;
@@ -1187,7 +1192,7 @@ impl KanbanService {
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Folder, KanbanError> {
-        if let Some(root) = self.find_kanban_root(tenant_id).await? {
+        if let Some(root) = self.find_kanban_root(user_id, tenant_id).await? {
             return Ok(root);
         }
         let folder = self

@@ -7,6 +7,7 @@ pub mod device_auth;
 pub mod devices;
 mod extractors;
 pub mod features;
+mod brainstorming;
 mod decisions;
 mod files;
 mod folders;
@@ -40,6 +41,11 @@ pub use folders::{
     create_folder, delete_folder, get_folder, get_folder_contents, get_folder_tree,
     get_root_contents, move_folder, permanently_delete_folder, rename_folder,
     restore_folder_from_trash, toggle_folder_star,
+};
+pub use brainstorming::{
+    create_brainstorm_board, delete_brainstorm_board, get_brainstorm_board,
+    get_brainstorm_board_source, list_brainstorm_boards, save_brainstorm_board_source,
+    update_brainstorm_board_preview,
 };
 pub use kanban::{
     archive_board, archive_card, create_board, create_card, delete_card, get_board, get_card,

@@ -10,7 +10,8 @@ export const APPROVED_MODULE_ICONS = [
 	'share-2',
 	'lock',
 	'globe',
-	'settings'
+	'settings',
+	'pen-tool'
 ] as const;
 
 export const DEFAULT_MODULE_ICON = 'folder';

@@ -212,6 +212,21 @@ impl ModuleService {
                 }),
             ),
             (
+                "brainstorming",
+                "Brainstorming",
+                "Visual decision boards and brainstorming whiteboards.",
+                "/Brainstorming",
+                "brainstorming",
+                "template_blank_brainstorm",
+                "pen-tool",
+                false,
+                json!({
+                    "sidebar": { "enabled": true, "order": 55, "icon": "pen-tool", "label": "Brainstorming" },
+                    "dashboard": { "enabled": true, "order": 55, "widget": { "enabled": true, "type": "recent-brainstorm-boards", "title": "Brainstorming", "description": "Recent visual decision boards.", "size": "medium", "columns": { "desktop": 6, "tablet": 12, "mobile": 12 }, "maxItems": 4, "primaryAction": { "label": "New Board", "action": "create-from-template", "template": "template_blank_brainstorm" } } },
+                    "page": { "enabled": true, "route": "/modules/brainstorming", "renderer": "brainstorming", "layout": "gallery-grid", "emptyStateTitle": "No brainstorming boards yet", "emptyStateDescription": "Create your first visual decision board.", "primaryAction": { "label": "New Board", "action": "create-from-template", "template": "template_blank_brainstorm" } }
+                }),
+            ),
+            (
                 "shares",
                 "Shares",
                 "Manage public and internal share packages.",

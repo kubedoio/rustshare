@@ -6,6 +6,7 @@
 	import KanbanModuleView from '$lib/components/modules/KanbanModuleView.svelte';
 	import DecisionsModuleView from '$lib/components/modules/DecisionsModuleView.svelte';
 	import SharesModuleView from '$lib/components/modules/SharesModuleView.svelte';
+	import BrainstormingModuleView from '$lib/components/modules/BrainstormingModuleView.svelte';
 	import GenericModuleView from '$lib/components/modules/GenericModuleView.svelte';
 
 	export let module: ModuleDefinition;
@@ -16,7 +17,8 @@
 		'standups': StandupsModuleView,
 		'kanban': KanbanModuleView,
 		'decisions': DecisionsModuleView,
-		'shares': SharesModuleView
+		'shares': SharesModuleView,
+		'brainstorming': BrainstormingModuleView
 	};
 
 	$: Renderer = rendererMap[module.ui.page.renderer] || GenericModuleView;

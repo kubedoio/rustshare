@@ -5,6 +5,7 @@
 	import LatestNotesWidget from './widgets/LatestNotesWidget.svelte';
 	import ActiveSharesWidget from './widgets/ActiveSharesWidget.svelte';
 	import StandupsSummaryWidget from './widgets/StandupsSummaryWidget.svelte';
+	import RecentBrainstormBoardsWidget from './widgets/RecentBrainstormBoardsWidget.svelte';
 	import GenericModuleSummaryWidget from './widgets/GenericModuleSummaryWidget.svelte';
 
 	export let module: ModuleDefinition;
@@ -16,7 +17,8 @@
 		'meetings-recent': DecisionsMeetingsSummaryWidget,
 		'notes-recent': LatestNotesWidget,
 		'standups-recent': StandupsSummaryWidget,
-		'shares-summary': ActiveSharesWidget
+		'shares-summary': ActiveSharesWidget,
+		'recent-brainstorm-boards': RecentBrainstormBoardsWidget
 	};
 
 	$: widget = module.ui.dashboard.widget;

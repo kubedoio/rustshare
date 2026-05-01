@@ -2,10 +2,9 @@
 
 use axum::{
     extract::{Path, State},
-    response::{IntoResponse, Response},
+    response::IntoResponse,
     Json,
 };
-use uuid::Uuid;
 
 use crate::{
     handlers::{admin::log_admin_action, extractors::AdminUser, ErrorResponse},
@@ -140,6 +139,18 @@ pub async fn delete_template(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<axum::http::StatusCode, axum::response::Response> {
+    let template = state
+        .template_service
+        .get_template(&key, state.default_tenant_id)
+        .await
+        .map_err(|e| {
+            (
+                axum::http::StatusCode::NOT_FOUND,
+                Json(ErrorResponse::new(e.to_string())),
+            )
+                .into_response()
+        })?;
+
     state
         .template_service
         .delete_template(&key, state.default_tenant_id)

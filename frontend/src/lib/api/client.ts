@@ -11,9 +11,11 @@ export class ApiClient {
 			...((options?.headers as Record<string, string>) || {})
 		};
 
-		// Add Content-Type for JSON bodies (unless multipart form)
-		if (options?.body && !(options.body instanceof FormData)) {
-			headers['Content-Type'] = 'application/json';
+		// Add Content-Type for JSON bodies (unless multipart form or Blob)
+		if (options?.body && !(options.body instanceof FormData) && !(options.body instanceof Blob)) {
+			if (!headers['Content-Type']) {
+				headers['Content-Type'] = 'application/json';
+			}
 		}
 
 		// Add CSRF header if needed

@@ -58,6 +58,8 @@ function getDefaultWidgetType(module: ModuleConfig): string {
 			return 'latest-notes';
 		case 'shares':
 			return 'active-shares';
+		case 'brainstorming':
+			return 'recent-brainstorm-boards';
 		default:
 			return 'generic-module-summary';
 	}

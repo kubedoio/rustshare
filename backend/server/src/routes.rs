@@ -280,6 +280,18 @@ pub fn meeting_routes() -> Router<AppState> {
         .route("/api/v1/meetings/{id}", put(crate::handlers::update_meeting))
 }
 
+pub fn brainstorming_routes() -> Router<AppState> {
+    use axum::routing::{delete, get, post, put};
+    Router::new()
+        .route("/api/v1/modules/brainstorming/boards", get(crate::handlers::list_brainstorm_boards))
+        .route("/api/v1/modules/brainstorming/boards", post(crate::handlers::create_brainstorm_board))
+        .route("/api/v1/modules/brainstorming/boards/{board_id}", get(crate::handlers::get_brainstorm_board))
+        .route("/api/v1/modules/brainstorming/boards/{board_id}/source", get(crate::handlers::get_brainstorm_board_source))
+        .route("/api/v1/modules/brainstorming/boards/{board_id}/source", put(crate::handlers::save_brainstorm_board_source))
+        .route("/api/v1/modules/brainstorming/boards/{board_id}/preview", put(crate::handlers::update_brainstorm_board_preview))
+        .route("/api/v1/modules/brainstorming/boards/{board_id}", delete(crate::handlers::delete_brainstorm_board))
+}
+
 pub fn admin_routes() -> Router<AppState> {
     use axum::routing::{delete, get, patch, post, put};
     Router::new()

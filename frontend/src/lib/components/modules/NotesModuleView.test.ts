@@ -4,35 +4,41 @@ import NotesModuleView from './NotesModuleView.svelte';
 
 const mocks = vi.hoisted(() => ({
 	goto: vi.fn(),
-	createFromTemplate: vi.fn(),
-	getModuleSummary: vi.fn()
+	listNotes: vi.fn(),
+	createNote: vi.fn()
 }));
 
 vi.mock('$app/navigation', () => ({
 	goto: mocks.goto
 }));
 
-vi.mock('$lib/api/modules', () => ({
-	createFromTemplate: mocks.createFromTemplate,
-	getModuleSummary: mocks.getModuleSummary
+vi.mock('$lib/api/notes', () => ({
+	listNotes: mocks.listNotes,
+	createNote: mocks.createNote
 }));
 
 describe('NotesModuleView', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		mocks.createFromTemplate.mockResolvedValue({
-			object_id: 'note-123',
-			object_type: 'file'
+		mocks.createNote.mockResolvedValue({
+			id: 'note-123',
+			name: 'Untitled Note',
+			path: '/Notes/Untitled Note.md',
+			content: '# Untitled Note\n\n',
+			metadata: {},
+			parent_folder_id: null,
+			current_version: 1,
+			created_at: '2026-04-30T10:00:00Z',
+			modified_at: '2026-04-30T10:00:00Z',
+			public_url: null
 		});
-		mocks.getModuleSummary.mockResolvedValue({
-			recent_items: [
-				{
-					id: 'note-1',
-					name: 'Architecture.md',
-					updated_at: '2026-04-30T10:00:00Z'
-				}
-			]
-		});
+		mocks.listNotes.mockResolvedValue([
+			{
+				id: 'note-1',
+				name: 'Architecture.md',
+				modified_at: '2026-04-30T10:00:00Z'
+			}
+		]);
 	});
 
 	it('opens the dedicated note route after creating a note', async () => {
@@ -86,7 +92,7 @@ describe('NotesModuleView', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'New Note' }));
 
 		await waitFor(() => {
-			expect(mocks.goto).toHaveBeenCalledWith('/notes/note-123');
+			expect(mocks.goto).toHaveBeenCalledWith('/modules/notes/note-123');
 		});
 	});
 
@@ -139,6 +145,6 @@ describe('NotesModuleView', () => {
 		});
 
 		const link = await screen.findByRole('link', { name: /Architecture\.md/i });
-		expect(link.getAttribute('href')).toBe('/notes/note-1');
+		expect(link.getAttribute('href')).toBe('/modules/notes/note-1');
 	});
 });

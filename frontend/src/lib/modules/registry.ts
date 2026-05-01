@@ -349,6 +349,51 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		audit: { enabled: true }
 	},
 	{
+		id: 'module_brainstorming',
+		key: 'brainstorming',
+		displayName: 'Brainstorming',
+		description: 'Visual decision boards and brainstorming whiteboards.',
+		enabled: true,
+		rootPath: '/Brainstorming',
+		renderer: 'brainstorming',
+		defaultTemplate: 'template_blank_brainstorm',
+		schemaVersion: '1.0',
+		permissions: {
+			adminCanConfigure: true,
+			workspaceMembersCanUse: true,
+			allowPublicShare: false,
+			allowInternalShare: true
+		},
+		ui: {
+			sidebar: { enabled: true, order: 55, icon: 'pen-tool', label: 'Brainstorming' },
+			dashboard: {
+				enabled: true,
+				order: 55,
+				widget: {
+					enabled: true,
+					type: 'recent-brainstorm-boards',
+					title: 'Brainstorming',
+					description: 'Recent visual decision boards.',
+					size: 'medium',
+					columns: { desktop: 6, tablet: 12, mobile: 12 },
+					maxItems: 4,
+					primaryAction: { label: 'New Board', action: 'create-from-template', template: 'template_blank_brainstorm' }
+				}
+			},
+			page: {
+				enabled: true,
+				route: '/modules/brainstorming',
+				renderer: 'brainstorming',
+				layout: 'gallery-grid',
+				emptyStateTitle: 'No brainstorming boards yet',
+				emptyStateDescription: 'Create your first visual decision board.',
+				primaryAction: { label: 'New Board', action: 'create-from-template', template: 'template_blank_brainstorm' }
+			}
+		},
+		aiIndexing: { enabled: true },
+		audit: { enabled: true }
+	},
+	{
 		id: 'module_shares',
 		key: 'shares',
 		displayName: 'Shares',

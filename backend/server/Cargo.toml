@@ -98,6 +98,10 @@ name = "kanban_test"
 path = "../tests/kanban_test.rs"
 
 [[test]]
+name = "brainstorming_test"
+path = "../tests/brainstorming_test.rs"
+
+[[test]]
 name = "group_sharing_test"
 path = "../tests/group_sharing_test.rs"
 

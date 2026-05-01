@@ -346,6 +346,87 @@ impl TemplateService {
                 json!({}),
                 Some("shares"),
             ),
+            (
+                "template_blank_brainstorm",
+                "Blank Board",
+                "brainstorming",
+                "1.0",
+                "A blank visual brainstorming board.",
+                Vec::<String>::new(),
+                vec![
+                    TemplateDefaultFile {
+                        path: "board.excalidraw".to_string(),
+                        content: Some(r#"{"type":"excalidraw","version":2,"source":"rustshare","elements":[],"appState":{"viewBackgroundColor":"#ffffff","gridSize":20}}"#.to_string()),
+                        content_type: Some("application/json".to_string()),
+                    },
+                    TemplateDefaultFile {
+                        path: "README.md".to_string(),
+                        content: Some("# {{title}}\n\n".to_string()),
+                        content_type: Some("text/markdown".to_string()),
+                    },
+                    TemplateDefaultFile {
+                        path: ".rustshare.json".to_string(),
+                        content: Some(r#"{"id":"{{id}}","type":"brainstorming.board","title":"{{title}}","slug":"{{slug}}","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"{{created_at}}","updatedAt":"{{updated_at}}","schemaVersion":"1.0"}"#.to_string()),
+                        content_type: Some("application/json".to_string()),
+                    },
+                ],
+                json!({"type":"brainstorming.board"}),
+                Some("brainstorming"),
+            ),
+            (
+                "template_decision_making_brainstorm",
+                "Decision Making & Brainstorming",
+                "brainstorming",
+                "1.0",
+                "A structured board for brainstorming, synthesis, decision making, actions, and learning.",
+                Vec::<String>::new(),
+                vec![
+                    TemplateDefaultFile {
+                        path: "board.excalidraw".to_string(),
+                        content: Some(r#"{"type":"excalidraw","version":2,"source":"rustshare","elements":[{"id":"title","type":"text","x":100,"y":50,"width":400,"height":40,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"roundness":null,"seed":1,"version":1,"versionNonce":1,"isDeleted":false,"boundElements":null,"updated":1714512000000,"link":null,"locked":false,"text":"Decision Making & Brainstorming","fontSize":32,"fontFamily":1,"textAlign":"left","verticalAlign":"top","containerId":null,"originalText":"Decision Making & Brainstorming","lineHeight":1.25,"baseline":28},{"id":"sec1","type":"text","x":100,"y":150,"width":200,"height":30,"angle":0,"strokeColor":"#1971c2","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"roundness":null,"seed":2,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":1714512000000,"link":null,"locked":false,"text":"Brainstorming","fontSize":24,"fontFamily":1,"textAlign":"left","verticalAlign":"top","containerId":null,"originalText":"Brainstorming","lineHeight":1.25,"baseline":21},{"id":"sec2","type":"text","x":100,"y":300,"width":200,"height":30,"angle":0,"strokeColor":"#2f9e44","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"roundness":null,"seed":3,"version":1,"versionNonce":3,"isDeleted":false,"boundElements":null,"updated":1714512000000,"link":null,"locked":false,"text":"Synthesis","fontSize":24,"fontFamily":1,"textAlign":"left","verticalAlign":"top","containerId":null,"originalText":"Synthesis","lineHeight":1.25,"baseline":21},{"id":"sec3","type":"text","x":100,"y":450,"width":200,"height":30,"angle":0,"strokeColor":"#e03131","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"roundness":null,"seed":4,"version":1,"versionNonce":4,"isDeleted":false,"boundElements":null,"updated":1714512000000,"link":null,"locked":false,"text":"Decision Making","fontSize":24,"fontFamily":1,"textAlign":"left","verticalAlign":"top","containerId":null,"originalText":"Decision Making","lineHeight":1.25,"baseline":21},{"id":"sec4","type":"text","x":100,"y":600,"width":200,"height":30,"angle":0,"strokeColor":"#f76707","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"roundness":null,"seed":5,"version":1,"versionNonce":5,"isDeleted":false,"boundElements":null,"updated":1714512000000,"link":null,"locked":false,"text":"Actions","fontSize":24,"fontFamily":1,"textAlign":"left","verticalAlign":"top","containerId":null,"originalText":"Actions","lineHeight":1.25,"baseline":21},{"id":"sec5","type":"text","x":100,"y":750,"width":250,"height":30,"angle":0,"strokeColor":"#7950f2","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"roundness":null,"seed":6,"version":1,"versionNonce":6,"isDeleted":false,"boundElements":null,"updated":1714512000000,"link":null,"locked":false,"text":"Learn & Iterate","fontSize":24,"fontFamily":1,"textAlign":"left","verticalAlign":"top","containerId":null,"originalText":"Learn & Iterate","lineHeight":1.25,"baseline":21}],"appState":{"viewBackgroundColor":"#ffffff","gridSize":20}}"#.to_string()),
+                        content_type: Some("application/json".to_string()),
+                    },
+                    TemplateDefaultFile {
+                        path: "README.md".to_string(),
+                        content: Some("# {{title}}\n\nA structured decision-making board.\n".to_string()),
+                        content_type: Some("text/markdown".to_string()),
+                    },
+                    TemplateDefaultFile {
+                        path: ".rustshare.json".to_string(),
+                        content: Some(r#"{"id":"{{id}}","type":"brainstorming.board","title":"{{title}}","slug":"{{slug}}","template":"template_decision_making_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"{{created_at}}","updatedAt":"{{updated_at}}","schemaVersion":"1.0"}"#.to_string()),
+                        content_type: Some("application/json".to_string()),
+                    },
+                ],
+                json!({"type":"brainstorming.board"}),
+                Some("brainstorming"),
+            ),
+            (
+                "template_meeting_whiteboard",
+                "Meeting Whiteboard",
+                "brainstorming",
+                "1.0",
+                "A whiteboard template for meeting notes, decisions, and action items.",
+                Vec::<String>::new(),
+                vec![
+                    TemplateDefaultFile {
+                        path: "board.excalidraw".to_string(),
+                        content: Some(r#"{"type":"excalidraw","version":2,"source":"rustshare","elements":[{"id":"title","type":"text","x":100,"y":50,"width":300,"height":40,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"roundness":null,"seed":1,"version":1,"versionNonce":1,"isDeleted":false,"boundElements":null,"updated":1714512000000,"link":null,"locked":false,"text":"Meeting Whiteboard","fontSize":32,"fontFamily":1,"textAlign":"left","verticalAlign":"top","containerId":null,"originalText":"Meeting Whiteboard","lineHeight":1.25,"baseline":28},{"id":"sec1","type":"text","x":100,"y":150,"width":150,"height":30,"angle":0,"strokeColor":"#1971c2","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"roundness":null,"seed":2,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":1714512000000,"link":null,"locked":false,"text":"Agenda","fontSize":24,"fontFamily":1,"textAlign":"left","verticalAlign":"top","containerId":null,"originalText":"Agenda","lineHeight":1.25,"baseline":21},{"id":"sec2","type":"text","x":100,"y":350,"width":150,"height":30,"angle":0,"strokeColor":"#2f9e44","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"roundness":null,"seed":3,"version":1,"versionNonce":3,"isDeleted":false,"boundElements":null,"updated":1714512000000,"link":null,"locked":false,"text":"Notes","fontSize":24,"fontFamily":1,"textAlign":"left","verticalAlign":"top","containerId":null,"originalText":"Notes","lineHeight":1.25,"baseline":21},{"id":"sec3","type":"text","x":100,"y":550,"width":200,"height":30,"angle":0,"strokeColor":"#e03131","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"roundness":null,"seed":4,"version":1,"versionNonce":4,"isDeleted":false,"boundElements":null,"updated":1714512000000,"link":null,"locked":false,"text":"Decisions","fontSize":24,"fontFamily":1,"textAlign":"left","verticalAlign":"top","containerId":null,"originalText":"Decisions","lineHeight":1.25,"baseline":21},{"id":"sec4","type":"text","x":100,"y":750,"width":250,"height":30,"angle":0,"strokeColor":"#f76707","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"roundness":null,"seed":5,"version":1,"versionNonce":5,"isDeleted":false,"boundElements":null,"updated":1714512000000,"link":null,"locked":false,"text":"Action Items","fontSize":24,"fontFamily":1,"textAlign":"left","verticalAlign":"top","containerId":null,"originalText":"Action Items","lineHeight":1.25,"baseline":21}],"appState":{"viewBackgroundColor":"#ffffff","gridSize":20}}"#.to_string()),
+                        content_type: Some("application/json".to_string()),
+                    },
+                    TemplateDefaultFile {
+                        path: "README.md".to_string(),
+                        content: Some("# {{title}}\n\nMeeting whiteboard.\n".to_string()),
+                        content_type: Some("text/markdown".to_string()),
+                    },
+                    TemplateDefaultFile {
+                        path: ".rustshare.json".to_string(),
+                        content: Some(r#"{"id":"{{id}}","type":"brainstorming.board","title":"{{title}}","slug":"{{slug}}","template":"template_meeting_whiteboard","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"{{created_at}}","updatedAt":"{{updated_at}}","schemaVersion":"1.0"}"#.to_string()),
+                        content_type: Some("application/json".to_string()),
+                    },
+                ],
+                json!({"type":"brainstorming.board"}),
+                Some("brainstorming"),
+            ),
         ];
 
         for (

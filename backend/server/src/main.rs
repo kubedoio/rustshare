@@ -90,6 +90,7 @@ async fn main() -> Result<()> {
         .merge(routes::trash_routes())
         .merge(routes::module_routes())
         .merge(routes::kanban_routes())
+        .merge(routes::brainstorming_routes())
         .merge(routes::decision_routes())
         .merge(routes::meeting_routes())
         .route("/api", any(api_not_found))

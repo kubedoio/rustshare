@@ -13,7 +13,8 @@
 		Lock,
 		Settings,
 		Activity,
-		Users
+		Users,
+		PenTool
 	} from 'lucide-svelte';
 	import { DEFAULT_MODULE_ICON } from '$lib/modules/iconRegistry';
 
@@ -35,7 +36,8 @@
 		lock: Lock,
 		settings: Settings,
 		activity: Activity,
-		users: Users
+		users: Users,
+		'pen-tool': PenTool
 	};
 
 	$: IconComponent = iconMap[name] || iconMap[DEFAULT_MODULE_ICON] || Folder;
