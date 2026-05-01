@@ -17,7 +17,7 @@
 	import type { KanbanBoard, KanbanCard, KanbanColumn } from '$lib/api/types';
 	import { Folder, Plus, GripVertical, Archive, Trash2, X, ChevronRight } from 'lucide-svelte';
 
-	import type { ModuleDefinition } from '$lib/modules/registry';
+	import RichMarkdownEditor from '../../editor/components/RichMarkdownEditor.svelte';
 
 	interface Props {
 		module: ModuleDefinition;
@@ -524,11 +524,19 @@
 			</div>
 			<div>
 				<label for="edit-card-content" class="label-text mb-1 block text-xs font-semibold text-base-content/70">Content (Markdown)</label>
-				<textarea
-					id="edit-card-content"
-					class="textarea textarea-bordered h-32 w-full font-mono text-sm"
-					bind:value={editCardContent}
-				></textarea>
+				<div class="rounded-xl border border-base-300 bg-base-100 overflow-hidden min-h-[12rem] flex flex-col">
+					<RichMarkdownEditor
+						content={editingCard.content}
+						editable={true}
+						bind:currentMarkdown={editCardContent}
+						permissions={{
+							canEdit: true,
+							canUploadAttachments: true,
+							canDeleteAttachments: true,
+							canExport: false
+						}}
+					/>
+				</div>
 			</div>
 			<div class="flex items-center justify-between gap-2 pt-2">
 				<div class="flex gap-2">

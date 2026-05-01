@@ -1,0 +1,358 @@
+<!--
+  EditorToolbar — formatting toolbar for the Rich Markdown Editor.
+  Groups: Headings | Text formatting | Lists | Blocks | Insert | More
+-->
+<script lang="ts">
+	import type { Editor } from '@tiptap/core';
+	import {
+		Heading1,
+		Heading2,
+		Heading3,
+		Bold,
+		Italic,
+		Underline,
+		List,
+		ListOrdered,
+		ListChecks,
+		Quote,
+		Code,
+		Braces,
+		Link,
+		Unlink,
+		Minus,
+		Table,
+		Paperclip,
+		MoreHorizontal
+	} from 'lucide-svelte';
+	import { createEventDispatcher } from 'svelte';
+
+	export let editor: Editor | null = null;
+
+	/** Whether attachment features are available */
+	export let hasAttachmentHandler: boolean = false;
+
+	const dispatch = createEventDispatcher<{
+		attachment: void;
+		more: void;
+	}>();
+
+	// Force reactivity on selection/transaction changes
+	let _tick = 0;
+	$: if (editor) {
+		editor.on('selectionUpdate', () => (_tick = _tick + 1));
+		editor.on('transaction', () => (_tick = _tick + 1));
+	}
+
+	function is(name: string, attrs?: Record<string, unknown>): boolean {
+		if (!editor || _tick < 0) return false;
+		return editor.isActive(name, attrs);
+	}
+
+	function can(command: string): boolean {
+		if (!editor || _tick < 0) return false;
+		try {
+			// Check if the command can be executed
+			return (editor.can() as Record<string, unknown>)[command] !== undefined;
+		} catch {
+			return true; // Assume available if check fails
+		}
+	}
+
+	function cmd(cb: (e: Editor) => void) {
+		return () => {
+			if (!editor) return;
+			cb(editor);
+		};
+	}
+
+	function toggleLink() {
+		if (!editor) return;
+		if (editor.isActive('link')) {
+			editor.chain().focus().unsetLink().run();
+			return;
+		}
+		const href = prompt('Enter URL:');
+		if (href) {
+			editor.chain().focus().setLink({ href }).run();
+		}
+	}
+
+	function insertTable() {
+		if (!editor) return;
+		editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+	}
+</script>
+
+{#if editor}
+	<div class="editor-toolbar" role="toolbar" aria-label="Formatting toolbar">
+		<!-- Headings -->
+		<div class="toolbar-group">
+			<button
+				type="button"
+				class="toolbar-btn"
+				class:active={is('heading', { level: 1 })}
+				on:click={cmd((e) => e.chain().focus().toggleHeading({ level: 1 }).run())}
+				title="Heading 1"
+				aria-label="Heading 1"
+			>
+				<Heading1 size={16} />
+			</button>
+			<button
+				type="button"
+				class="toolbar-btn"
+				class:active={is('heading', { level: 2 })}
+				on:click={cmd((e) => e.chain().focus().toggleHeading({ level: 2 }).run())}
+				title="Heading 2"
+				aria-label="Heading 2"
+			>
+				<Heading2 size={16} />
+			</button>
+			<button
+				type="button"
+				class="toolbar-btn"
+				class:active={is('heading', { level: 3 })}
+				on:click={cmd((e) => e.chain().focus().toggleHeading({ level: 3 }).run())}
+				title="Heading 3"
+				aria-label="Heading 3"
+			>
+				<Heading3 size={16} />
+			</button>
+		</div>
+
+		<div class="toolbar-divider"></div>
+
+		<!-- Text formatting -->
+		<div class="toolbar-group">
+			<button
+				type="button"
+				class="toolbar-btn"
+				class:active={is('bold')}
+				on:click={cmd((e) => e.chain().focus().toggleBold().run())}
+				title="Bold (⌘B)"
+				aria-label="Bold"
+			>
+				<Bold size={16} />
+			</button>
+			<button
+				type="button"
+				class="toolbar-btn"
+				class:active={is('italic')}
+				on:click={cmd((e) => e.chain().focus().toggleItalic().run())}
+				title="Italic (⌘I)"
+				aria-label="Italic"
+			>
+				<Italic size={16} />
+			</button>
+			<button
+				type="button"
+				class="toolbar-btn"
+				class:active={is('underline')}
+				on:click={cmd((e) => e.chain().focus().toggleUnderline().run())}
+				title="Underline (⌘U)"
+				aria-label="Underline"
+			>
+				<Underline size={16} />
+			</button>
+			<button
+				type="button"
+				class="toolbar-btn"
+				class:active={is('code')}
+				on:click={cmd((e) => e.chain().focus().toggleCode().run())}
+				title="Inline code"
+				aria-label="Inline code"
+			>
+				<Code size={16} />
+			</button>
+		</div>
+
+		<div class="toolbar-divider"></div>
+
+		<!-- Lists -->
+		<div class="toolbar-group">
+			<button
+				type="button"
+				class="toolbar-btn"
+				class:active={is('bulletList')}
+				on:click={cmd((e) => e.chain().focus().toggleBulletList().run())}
+				title="Bullet list"
+				aria-label="Bullet list"
+			>
+				<List size={16} />
+			</button>
+			<button
+				type="button"
+				class="toolbar-btn"
+				class:active={is('orderedList')}
+				on:click={cmd((e) => e.chain().focus().toggleOrderedList().run())}
+				title="Numbered list"
+				aria-label="Numbered list"
+			>
+				<ListOrdered size={16} />
+			</button>
+			<button
+				type="button"
+				class="toolbar-btn"
+				class:active={is('taskList')}
+				on:click={cmd((e) => e.chain().focus().toggleTaskList().run())}
+				title="Task list"
+				aria-label="Task list"
+			>
+				<ListChecks size={16} />
+			</button>
+		</div>
+
+		<div class="toolbar-divider"></div>
+
+		<!-- Block elements -->
+		<div class="toolbar-group">
+			<button
+				type="button"
+				class="toolbar-btn"
+				class:active={is('blockquote')}
+				on:click={cmd((e) => e.chain().focus().toggleBlockquote().run())}
+				title="Blockquote"
+				aria-label="Blockquote"
+			>
+				<Quote size={16} />
+			</button>
+			<button
+				type="button"
+				class="toolbar-btn"
+				class:active={is('codeBlock')}
+				on:click={cmd((e) => e.chain().focus().toggleCodeBlock().run())}
+				title="Code block"
+				aria-label="Code block"
+			>
+				<Braces size={16} />
+			</button>
+			<button
+				type="button"
+				class="toolbar-btn"
+				class:active={is('link')}
+				on:click={toggleLink}
+				title={is('link') ? 'Remove link' : 'Insert link'}
+				aria-label={is('link') ? 'Remove link' : 'Insert link'}
+			>
+				{#if is('link')}
+					<Unlink size={16} />
+				{:else}
+					<Link size={16} />
+				{/if}
+			</button>
+			<button
+				type="button"
+				class="toolbar-btn"
+				on:click={insertTable}
+				title="Insert table"
+				aria-label="Insert table"
+			>
+				<Table size={16} />
+			</button>
+			<button
+				type="button"
+				class="toolbar-btn"
+				on:click={cmd((e) => e.chain().focus().setHorizontalRule().run())}
+				title="Horizontal rule"
+				aria-label="Horizontal rule"
+			>
+				<Minus size={16} />
+			</button>
+		</div>
+
+		<!-- Attachment (only if handler available) -->
+		{#if hasAttachmentHandler}
+			<div class="toolbar-divider"></div>
+			<div class="toolbar-group">
+				<button
+					type="button"
+					class="toolbar-btn"
+					on:click={() => dispatch('attachment')}
+					title="Attach file"
+					aria-label="Attach file"
+				>
+					<Paperclip size={16} />
+				</button>
+			</div>
+		{/if}
+
+		<!-- More/overflow menu placeholder -->
+		<div class="toolbar-spacer"></div>
+		<div class="toolbar-group">
+			<button
+				type="button"
+				class="toolbar-btn toolbar-btn-subtle"
+				on:click={() => dispatch('more')}
+				title="More options"
+				aria-label="More options"
+			>
+				<MoreHorizontal size={16} />
+			</button>
+		</div>
+	</div>
+{/if}
+
+<style>
+	.editor-toolbar {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.5rem 0.75rem;
+		border-bottom: 1px solid var(--color-base-300, #e5e7eb);
+		background: var(--color-base-200, #f3f4f6);
+		flex-wrap: wrap;
+	}
+
+	.toolbar-group {
+		display: flex;
+		align-items: center;
+		gap: 0.125rem;
+	}
+
+	.toolbar-divider {
+		width: 1px;
+		height: 1.25rem;
+		background: var(--color-base-300, #d1d5db);
+		margin: 0 0.25rem;
+	}
+
+	.toolbar-spacer {
+		flex: 1;
+	}
+
+	.toolbar-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.375rem;
+		border-radius: 0.375rem;
+		border: none;
+		background: transparent;
+		color: var(--color-base-content, #374151);
+		cursor: pointer;
+		transition:
+			background 0.15s,
+			color 0.15s;
+	}
+
+	.toolbar-btn:hover {
+		background: var(--color-base-300, #d1d5db);
+	}
+
+	.toolbar-btn.active {
+		background: var(--color-primary, #3b82f6);
+		color: var(--color-primary-content, #fff);
+	}
+
+	.toolbar-btn:focus-visible {
+		outline: 2px solid var(--color-primary, #3b82f6);
+		outline-offset: 1px;
+	}
+
+	.toolbar-btn-subtle {
+		opacity: 0.5;
+	}
+
+	.toolbar-btn-subtle:hover {
+		opacity: 1;
+	}
+</style>
