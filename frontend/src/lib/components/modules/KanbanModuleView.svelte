@@ -16,32 +16,13 @@
 	import type { KanbanBoard, KanbanCard, KanbanColumn } from '$lib/api/types';
 	import { Folder, Plus, GripVertical, Archive, Trash2, X } from 'lucide-svelte';
 
+	import type { ModuleDefinition } from '$lib/modules/registry';
+
 	interface Props {
-		moduleConfig: {
-			module_key: string;
-			display_name: string;
-			description: string;
-			icon: string;
-			root_path: string;
-			default_template: string | null;
-			ui_config?: {
-				modulePage?: {
-					emptyStateTitle?: string;
-					emptyStateDescription?: string;
-					emptyStateAction?: string;
-				};
-				page?: {
-					emptyStateTitle?: string;
-					emptyStateDescription?: string;
-					primaryAction?: {
-						label?: string;
-					};
-				};
-			};
-		};
+		module: ModuleDefinition;
 	}
 
-	let { moduleConfig }: Props = $props();
+	let { module }: Props = $props();
 
 	const queryClient = useQueryClient();
 
@@ -58,21 +39,9 @@
 	let draggingOverColumnId = $state<string | null>(null);
 	let columnRefs = $state<Record<string, HTMLDivElement | null>>({});
 
-	let emptyTitle = $derived(
-		moduleConfig.ui_config?.page?.emptyStateTitle ??
-		moduleConfig.ui_config?.modulePage?.emptyStateTitle ??
-		'No boards yet'
-	);
-	let emptyDescription = $derived(
-		moduleConfig.ui_config?.page?.emptyStateDescription ??
-		moduleConfig.ui_config?.modulePage?.emptyStateDescription ??
-		'Create your first file-backed board to get started.'
-	);
-	let emptyAction = $derived(
-		moduleConfig.ui_config?.page?.primaryAction?.label ??
-		moduleConfig.ui_config?.modulePage?.emptyStateAction ??
-		'New Board'
-	);
+	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No boards yet');
+	let emptyDescription = $derived(module.ui.page.emptyStateDescription ?? 'Create your first file-backed board to get started.');
+	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New Board');
 
 	// -------------------------------------------------------------------------
 	// Queries
@@ -191,13 +160,14 @@
 		const name = window.prompt('Enter a name for the new board:');
 		if (!name) return;
 		try {
-			if (moduleConfig.default_template) {
-				await createFromTemplate({
-					template_key: moduleConfig.default_template,
+			if (module.defaultTemplate) {
+				const result = await createFromTemplate({
+					template_key: module.defaultTemplate,
 					name,
 					parent_folder_id: null
 				});
 				boardsQuery.refetch();
+				selectedBoardId = result.object_id;
 			} else {
 				await createBoardMutation.mutateAsync(name);
 			}
@@ -242,7 +212,8 @@
 	}
 
 	function getDropIndex(container: HTMLDivElement, clientY: number): number {
-		const cards = Array.from(container.querySelectorAll<HTMLElement>('[data-card-id]'));
+		const cards = Array.from(container.querySelectorAll<HTMLElement>('[data-card-id]'))
+			.filter((el) => el.dataset.cardId !== dragCardId);
 		for (let i = 0; i < cards.length; i++) {
 			const rect = cards[i].getBoundingClientRect();
 			const midY = rect.top + rect.height / 2;
@@ -295,20 +266,26 @@
 			const newBoard: KanbanBoard = {
 				...oldBoard,
 				columns: oldBoard.columns.map((col) => {
+					let newCards = [...col.cards];
+					let updated = false;
+
 					if (col.id === dragSourceColumnId) {
-						return { ...col, cards: col.cards.filter((c) => c.id !== dragCardId) };
+						newCards = newCards.filter((c) => c.id !== dragCardId);
+						updated = true;
 					}
+
 					if (col.id === targetColumnId) {
 						const card = oldBoard.columns
 							.find((c) => c.id === dragSourceColumnId)
 							?.cards.find((c) => c.id === dragCardId);
 						if (card) {
-							const newCards = [...col.cards, { ...card, column_id: targetColumnId, order: targetOrder }];
+							newCards.push({ ...card, column_id: targetColumnId, order: targetOrder });
 							newCards.sort((a, b) => a.order - b.order);
-							return { ...col, cards: newCards };
+							updated = true;
 						}
 					}
-					return col;
+
+					return updated ? { ...col, cards: newCards } : col;
 				})
 			};
 			queryClient.setQueryData(queryKey, newBoard);
@@ -394,13 +371,7 @@
 	{:else}
 		<!-- Header -->
 		<div class="flex items-center justify-between gap-4">
-			<div class="flex flex-col gap-1">
-				<div class="flex items-center gap-2">
-					<Folder size={18} class="text-brand-500" />
-					<h2 class="text-lg font-bold text-base-content">Kanban</h2>
-				</div>
-				<p class="text-xs text-base-content/50">{moduleConfig.root_path}</p>
-			</div>
+			<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">Boards</h2>
 			<button class="btn btn-sm btn-primary" onclick={handleCreateBoard}>
 				<Plus size={14} />
 				<span>New Board</span>
@@ -459,7 +430,7 @@
 							aria-label="{column.title} column"
 						>
 							<header class="kanban-column-header">
-								<h4>{column.title}</h4>
+								<h4>{formatColumnName(column.title)}</h4>
 								<span>{column.cards.length}</span>
 							</header>
 

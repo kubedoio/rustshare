@@ -1,81 +1,155 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
-import { readable } from 'svelte/store';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError } from '$lib/api/types';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
+import Page from './+page.svelte';
+import { page } from '$app/stores';
+import { currentUser } from '$lib/stores/auth';
+import * as registry from '$lib/modules/registry';
 
-let moduleResponse: unknown;
-let moduleError: Error | null = null;
-
+// Mock SvelteKit stores
 vi.mock('$app/stores', () => ({
-	page: readable({
-		params: { key: 'notes' },
-		url: new URL('http://localhost/modules/notes')
-	})
+	page: {
+		subscribe: vi.fn()
+	}
 }));
 
-vi.mock('$lib/query-compat', () => ({
-	createQuery: vi.fn(() =>
-		readable({
-			data: moduleResponse,
-			error: moduleError,
-			isLoading: false
-		})
-	)
+vi.mock('$lib/stores/auth', () => ({
+	currentUser: {
+		subscribe: vi.fn()
+	}
 }));
 
-vi.mock('$lib/api/modules', () => ({
-	getModule: vi.fn()
-}));
+// Mock the registry
+vi.mock('$lib/modules/registry', async () => {
+	const actual = await vi.importActual<any>('$lib/modules/registry');
+	return {
+		...actual,
+		getModuleByKey: vi.fn()
+	};
+});
 
-vi.mock('$lib/components/modules/NotesModuleView.svelte', () => ({
-	default: vi.fn()
-}));
-vi.mock('$lib/components/modules/KanbanModuleView.svelte', () => ({
-	default: vi.fn()
-}));
-vi.mock('$lib/components/modules/MeetingsModuleView.svelte', () => ({
-	default: vi.fn()
-}));
-vi.mock('$lib/components/modules/StandupsModuleView.svelte', () => ({
-	default: vi.fn()
-}));
-vi.mock('$lib/components/modules/DecisionsModuleView.svelte', () => ({
-	default: vi.fn()
-}));
-vi.mock('$lib/components/modules/SharesModuleView.svelte', () => ({
-	default: vi.fn()
-}));
-vi.mock('$lib/components/modules/GenericModuleView.svelte', () => ({
-	default: vi.fn()
-}));
+describe('Module Page Dynamic Route', () => {
+	const mockUser = {
+		id: 'user_1',
+		email: 'test@example.com',
+		display_name: 'Test User'
+	};
 
-import ModulePage from './+page.svelte';
+	const mockModule: registry.ModuleDefinition = {
+		id: 'mod_1',
+		key: 'test-mod',
+		displayName: 'Test Module',
+		description: 'A test module description',
+		enabled: true,
+		rootPath: '/Test',
+		renderer: 'generic',
+		defaultTemplate: null,
+		schemaVersion: '1.0',
+		permissions: {
+			adminCanConfigure: true,
+			workspaceMembersCanUse: true,
+			allowPublicShare: true,
+			allowInternalShare: true
+		},
+		ui: {
+			sidebar: { enabled: true, order: 1, icon: 'folder', label: 'Test' },
+			dashboard: {
+				enabled: true,
+				order: 1,
+				widget: {
+					enabled: true,
+					type: 'generic',
+					title: 'Test',
+					description: 'Test',
+					size: 'medium',
+					columns: { desktop: 6, tablet: 12, mobile: 12 },
+					maxItems: 4
+				}
+			},
+			page: {
+				enabled: true,
+				route: '/modules/test-mod',
+				renderer: 'generic',
+				layout: 'default',
+				emptyStateTitle: 'Empty',
+				emptyStateDescription: 'Nothing here',
+				primaryAction: { label: 'Do Something', action: 'test' }
+			}
+		},
+		aiIndexing: { enabled: false },
+		audit: { enabled: false }
+	};
 
-describe('module route page', () => {
 	beforeEach(() => {
-		moduleResponse = null;
-		moduleError = null;
 		vi.clearAllMocks();
-	});
-
-	it('shows a dedicated not-found state for unknown modules', async () => {
-		moduleError = new ApiError(404, 'Module not found');
-
-		render(ModulePage);
-
-		await waitFor(() => {
-			expect(screen.getByText('Module Not Found')).toBeTruthy();
+		(currentUser.subscribe as any).mockImplementation((run: any) => {
+			run(mockUser);
+			return () => {};
 		});
 	});
 
-	it('shows the backend access message for disabled or forbidden modules', async () => {
-		moduleError = new ApiError(403, 'Module disabled');
-
-		render(ModulePage);
-
-		await waitFor(() => {
-			expect(screen.getByText('Module Not Available')).toBeTruthy();
+	it('renders 404 for unknown module', () => {
+		(page.subscribe as any).mockImplementation((run: any) => {
+			run({ params: { key: 'unknown' } });
+			return () => {};
 		});
-		expect(screen.getByText('Module disabled')).toBeTruthy();
+		(registry.getModuleByKey as any).mockReturnValue(undefined);
+
+		render(Page);
+		expect(screen.getByText('Module Not Found')).toBeTruthy();
+	});
+
+	it('renders disabled state for disabled module', () => {
+		(page.subscribe as any).mockImplementation((run: any) => {
+			run({ params: { key: 'test-mod' } });
+			return () => {};
+		});
+		(registry.getModuleByKey as any).mockReturnValue({ ...mockModule, enabled: false });
+
+		render(Page);
+		expect(screen.getByText('Module Disabled')).toBeTruthy();
+	});
+
+	it('renders page disabled state when ui.page.enabled is false', () => {
+		(page.subscribe as any).mockImplementation((run: any) => {
+			run({ params: { key: 'test-mod' } });
+			return () => {};
+		});
+		(registry.getModuleByKey as any).mockReturnValue({
+			...mockModule,
+			ui: { ...mockModule.ui, page: { ...mockModule.ui.page, enabled: false } }
+		});
+
+		render(Page);
+		expect(screen.getByText('Module Page Disabled')).toBeTruthy();
+	});
+
+	it('renders module header with correct config', () => {
+		(page.subscribe as any).mockImplementation((run: any) => {
+			run({ params: { key: 'test-mod' } });
+			return () => {};
+		});
+		(registry.getModuleByKey as any).mockReturnValue(mockModule);
+
+		render(Page);
+		expect(screen.getByText('Test Module')).toBeTruthy();
+		expect(screen.getByText('A test module description')).toBeTruthy();
+		expect(screen.getByText('/Test')).toBeTruthy();
+		expect(screen.getByText('Do Something')).toBeTruthy();
+		expect(screen.getByText('Browse Files')).toBeTruthy();
+	});
+
+	it('falls back to GenericModuleView for unknown renderer', () => {
+		(page.subscribe as any).mockImplementation((run: any) => {
+			run({ params: { key: 'test-mod' } });
+			return () => {};
+		});
+		(registry.getModuleByKey as any).mockReturnValue({
+			...mockModule,
+			ui: { ...mockModule.ui, page: { ...mockModule.ui.page, renderer: 'unknown-renderer' } }
+		});
+
+		render(Page);
+		// GenericModuleView renders a "Contents" header
+		expect(screen.getByText('Contents')).toBeTruthy();
 	});
 });

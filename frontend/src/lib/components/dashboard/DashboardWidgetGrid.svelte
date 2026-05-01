@@ -1,18 +1,17 @@
 <script lang="ts">
-	import type { ModuleConfig } from '$lib/api/types';
-	import { getModuleDashboardWidgetConfig } from '$lib/modules/workspaceSurface';
+	import type { ModuleDefinition } from '$lib/modules/registry';
 	import DashboardWidgetRenderer from './DashboardWidgetRenderer.svelte';
 
-	export let modules: ModuleConfig[] = [];
+	export let modules: ModuleDefinition[] = [];
 
-	function columnClass(module: ModuleConfig): string {
-		const columns = getModuleDashboardWidgetConfig(module).columns;
+	function columnClass(module: ModuleDefinition): string {
+		const columns = module.ui.dashboard.widget.columns;
 		return `desk-${columns.desktop} tab-${columns.tablet} mob-${columns.mobile}`;
 	}
 </script>
 
 <div class="widget-grid" aria-label="Workspace dashboard widgets">
-	{#each modules as module (module.module_key)}
+	{#each modules as module (module.key)}
 		<div class={`widget-slot ${columnClass(module)}`}>
 			<DashboardWidgetRenderer {module} {modules} />
 		</div>

@@ -6,31 +6,19 @@
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { Folder, FileText, Plus } from 'lucide-svelte';
 
-	export let moduleConfig: {
-		module_key: string;
-		display_name: string;
-		description: string;
-		icon: string;
-		root_path: string;
-		default_template: string | null;
-		ui_config?: {
-			modulePage?: {
-				emptyStateTitle?: string;
-				emptyStateDescription?: string;
-				emptyStateAction?: string;
-			};
-		};
-	};
+	import type { ModuleDefinition } from '$lib/modules/registry';
+
+	export let module: ModuleDefinition;
 
 	const folderContentsQuery = createQuery({
-		queryKey: ['module-folder-contents', moduleConfig.module_key],
-		queryFn: () => getModuleRootContents(moduleConfig.root_path)
+		queryKey: ['module-folder-contents', module.key],
+		queryFn: () => getModuleRootContents(module.rootPath)
 	});
 
 	$: contents = $folderContentsQuery.data;
 
 	async function handleCreateFromTemplate() {
-		if (!moduleConfig.default_template) {
+		if (!module.defaultTemplate) {
 			alert('No default template configured for this module.');
 			return;
 		}
@@ -38,22 +26,20 @@
 		if (!name) return;
 		try {
 			const result = await createFromTemplate({
-				template_key: moduleConfig.default_template,
+				template_key: module.defaultTemplate,
 				name,
 				parent_folder_id: null
 			});
-			goto(getModuleObjectHref(moduleConfig.module_key, result.object_type, result.object_id));
+			goto(getModuleObjectHref(module.key, result.object_type, result.object_id));
 		} catch (err) {
 			console.error('Failed to create from template:', err);
 			alert(err instanceof Error ? err.message : 'Failed to create item');
 		}
 	}
 
-	$: emptyTitle = moduleConfig.ui_config?.modulePage?.emptyStateTitle ?? 'No items yet';
-	$: emptyDescription =
-		moduleConfig.ui_config?.modulePage?.emptyStateDescription ??
-		'Create your first item from a template to get started.';
-	$: emptyAction = moduleConfig.ui_config?.modulePage?.emptyStateAction ?? 'Create from Template';
+	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No items yet';
+	$: emptyDescription = module.ui.page.emptyStateDescription ?? 'Create your first item from a template to get started.';
+	$: emptyAction = module.ui.page.primaryAction?.label ?? 'Create from Template';
 </script>
 
 <div class="rounded-2xl border border-base-300/50 bg-base-100 p-6">

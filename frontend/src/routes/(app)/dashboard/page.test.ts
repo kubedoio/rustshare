@@ -1,43 +1,62 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { render, screen } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import DashboardPage from './+page.svelte';
+import DashboardWidgetGrid from '$lib/components/dashboard/DashboardWidgetGrid.svelte';
 
-vi.mock('$lib/modules/moduleActions', () => ({
-	runModulePrimaryAction: vi.fn()
-}));
-
-vi.mock('$lib/api/workspace-surface', () => ({
-	getWorkspaceSurface: vi.fn(async () => ({
-		id: 'workspace_dashboard_default',
-		key: 'default-workspace-dashboard',
-		name: 'Default Workspace Dashboard',
-		version: '1.0',
-		enabled: true,
-		layout: {
-			type: 'responsive-grid',
-			columns: 12,
-			gap: 24,
-			compactOverview: true
-		},
-		sections: [
+vi.mock('$lib/modules/registry', async (importOriginal) => {
+	const mod = await importOriginal<typeof import('$lib/modules/registry')>();
+	return {
+		...mod,
+		getDashboardModulesForUser: vi.fn(() => [
 			{
-				key: 'workspace-overview',
-				type: 'workspace-summary',
-				enabled: true,
-				order: 10,
-				renderer: 'compact-workspace-overview'
+				key: 'kanban',
+				ui: {
+					dashboard: {
+						enabled: true,
+						order: 10,
+						widget: {
+							enabled: true,
+							type: 'kanban-summary',
+							title: 'Kanban',
+							columns: { desktop: 6, tablet: 12, mobile: 12 }
+						}
+					}
+				}
 			},
 			{
-				key: 'summary-insights',
-				type: 'dashboard-widgets',
-				enabled: true,
-				order: 20,
-				title: 'Workspace Summary & Insights',
-				renderer: 'workspace-widget-grid'
+				key: 'notes',
+				ui: {
+					dashboard: {
+						enabled: true,
+						order: 20,
+						widget: {
+							enabled: true,
+							type: 'notes-recent',
+							title: 'Latest Notes',
+							columns: { desktop: 6, tablet: 12, mobile: 12 }
+						}
+					}
+				}
+			},
+			{
+				key: 'unknown',
+				ui: {
+					dashboard: {
+						enabled: true,
+						order: 30,
+						widget: {
+							enabled: true,
+							type: 'unknown-type',
+							title: 'Unknown Widget',
+							columns: { desktop: 6, tablet: 12, mobile: 12 }
+						}
+					}
+				}
 			}
-		]
-	}))
-}));
+		])
+	};
+});
 
 vi.mock('$lib/query-compat', () => ({
 	createQuery: vi.fn((options: { queryKey?: unknown[] }) => {
@@ -51,127 +70,9 @@ vi.mock('$lib/query-compat', () => ({
 				isLoading: false
 			});
 		}
-
 		if (key === 'shares-received') {
-			return readable({
-				data: [
-					{
-						resource_id: 'folder-1',
-						resource_name: 'Designs',
-						shared_by_name: 'Ada',
-						resource_type: 'folder'
-					}
-				],
-				isLoading: false
-			});
+			return readable({ data: [], isLoading: false });
 		}
-
-		if (key === 'enabled-modules') {
-			return readable({
-				data: [
-					{
-						id: 'm1',
-						module_key: 'kanban',
-						display_name: 'Kanban Dashboard',
-						description: 'Boards',
-						enabled: true,
-						root_path: '/Kanban',
-						renderer: 'kanban',
-						default_template: 'template_default_kanban',
-						icon: 'columns',
-						schema_version: '1',
-						permissions: {
-							admin_can_configure: true,
-							workspace_members_can_use: true,
-							allow_public_share: true,
-							allow_internal_share: true
-						},
-						ai_indexing: { enabled: true },
-						audit: { enabled: true },
-						ui_config: {
-							dashboard: {
-								enabled: true,
-								order: 10,
-								widget: {
-									enabled: true,
-									type: 'kanban-summary',
-									title: 'Kanban Dashboard',
-									description: 'Boards',
-									size: 'large',
-									columns: { desktop: 6, tablet: 12, mobile: 12 },
-									maxItems: 4,
-									primaryAction: {
-										label: 'New Board',
-										action: 'create-from-template',
-										template: 'template_default_kanban'
-									}
-								},
-								primaryAction: {
-									label: 'New Board',
-									action: 'create-from-template',
-									template: 'template_default_kanban'
-								}
-							},
-							page: {
-								enabled: true,
-								route: '/modules/kanban',
-								renderer: 'kanban',
-								layout: 'board',
-								emptyStateTitle: 'No boards yet',
-								emptyStateDescription: 'Create your first file-backed board.',
-								emptyStateAction: 'New Board'
-							}
-						},
-						created_at: '2026-04-30T00:00:00Z',
-						updated_at: '2026-04-30T00:00:00Z'
-					},
-					{
-						id: 'm2',
-						module_key: 'notes',
-						display_name: 'Notes',
-						description: 'Notes',
-						enabled: true,
-						root_path: '/Notes',
-						renderer: 'notes',
-						default_template: 'template_default_note',
-						icon: 'sticky-note',
-						schema_version: '1',
-						permissions: {
-							admin_can_configure: true,
-							workspace_members_can_use: true,
-							allow_public_share: true,
-							allow_internal_share: true
-						},
-						ai_indexing: { enabled: true },
-						audit: { enabled: true },
-						ui_config: {
-							dashboard: {
-								enabled: true,
-								order: 30,
-								widget: {
-									enabled: true,
-									type: 'latest-notes',
-									title: 'Latest Notes',
-									description: 'Recent notes',
-									size: 'small',
-									columns: { desktop: 3, tablet: 6, mobile: 12 },
-									maxItems: 4,
-									primaryAction: {
-										label: 'New Note',
-										action: 'create-from-template',
-										template: 'template_default_note'
-									}
-								}
-							}
-						},
-						created_at: '2026-04-30T00:00:00Z',
-						updated_at: '2026-04-30T00:00:00Z'
-					}
-				],
-				isLoading: false
-			});
-		}
-
 		return readable({ data: null, isLoading: false });
 	})
 }));
@@ -187,19 +88,12 @@ vi.mock('$lib/stores/auth', () => ({
 	})
 }));
 
-vi.mock('$lib/components/dashboard/WorkspaceModules.svelte', () => ({
-	default: vi.fn()
-}));
-
-import DashboardPage from './+page.svelte';
-import { runModulePrimaryAction } from '$lib/modules/moduleActions';
-
-describe('dashboard page', () => {
+describe('Dashboard Page Workspace Surface', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
 
-	it('renders a compact workspace summary with the expected metrics', () => {
+	it('compact overview renders with separate stat cards and storage progress', () => {
 		render(DashboardPage);
 
 		expect(screen.getByText("Alex Johnson's Workspace Overview")).toBeTruthy();
@@ -207,21 +101,26 @@ describe('dashboard page', () => {
 		expect(screen.getByText('Shared')).toBeTruthy();
 		expect(screen.getByText('Limit')).toBeTruthy();
 		expect(screen.getByText('Storage')).toBeTruthy();
-		expect(screen.getByText('Workspace Summary & Insights')).toBeTruthy();
-		expect(screen.getByText('Kanban Dashboard')).toBeTruthy();
-		expect(screen.getByText('Latest Notes')).toBeTruthy();
-		expect(screen.getByRole('button', { name: /new board/i })).toBeTruthy();
-		expect(screen.getByRole('button', { name: /^new$/i })).toBeTruthy();
+
+		// Check progressbar
+		const progressbar = screen.getByRole('progressbar');
+		expect(progressbar).toBeTruthy();
+		// Used 4600 / Quota 10000 = 46%
+		expect(progressbar.getAttribute('aria-valuenow')).toBe('46');
 	});
 
-	it('routes the summary primary action through the module action helper', async () => {
+	it('enabled widgets render and order is respected', () => {
 		render(DashboardPage);
+		
+		expect(screen.getByText('Workspace Summary & Insights')).toBeTruthy();
 
-		await fireEvent.click(screen.getByRole('button', { name: /new board/i }));
+		// Check kanban and notes render
+		expect(screen.getByText('Kanban')).toBeTruthy();
+		expect(screen.getByText('Latest Notes')).toBeTruthy();
+	});
 
-		expect(runModulePrimaryAction).toHaveBeenCalledWith(
-			expect.objectContaining({ module_key: 'kanban' }),
-			expect.objectContaining({ action: 'create-from-template', label: 'New Board' })
-		);
+	it('unknown widget falls back to generic module summary', () => {
+		render(DashboardPage);
+		expect(screen.getByText('Unknown Widget')).toBeTruthy();
 	});
 });

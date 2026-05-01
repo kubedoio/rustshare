@@ -1,26 +1,25 @@
 <script lang="ts">
 	import { createQuery } from '$lib/query-compat';
 	import { getModuleSummary } from '$lib/api/modules';
-	import type { ModuleConfig } from '$lib/api/types';
-	import { getModuleDashboardWidgetConfig } from '$lib/modules/workspaceSurface';
+	import type { ModuleDefinition } from '$lib/modules/registry';
 
-	export let module: ModuleConfig;
+	export let module: ModuleDefinition;
 
-	$: widget = getModuleDashboardWidgetConfig(module);
+	$: widget = module.ui.dashboard.widget;
 	$: summaryQuery = createQuery({
-		queryKey: ['module-summary', module.module_key],
-		queryFn: () => getModuleSummary(module.module_key)
+		queryKey: ['module-summary', module.key],
+		queryFn: () => getModuleSummary(module.key)
 	});
 	$: extra = ($summaryQuery.data?.extra ?? {}) as { publicCount?: number; internalCount?: number };
 </script>
 
-<a class="widget-card widget-link" data-size={widget.size} href={`/modules/${module.module_key}`}>
+<a class="widget-card widget-link" data-size={widget.size} href={`/modules/${module.key}`}>
 	<div class="widget-header">
 		<div>
 			<h3>{widget.title}</h3>
 			<p>{widget.description}</p>
 		</div>
-		<span class="widget-chip">{module.root_path}</span>
+		<span class="widget-chip">{module.rootPath}</span>
 	</div>
 
 	<div class="share-stats">

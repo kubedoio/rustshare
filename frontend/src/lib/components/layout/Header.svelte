@@ -5,6 +5,8 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { getAvatarUrl } from '$lib/api/users';
+	import { createQuery } from '$lib/query-compat';
+	import { getUnreadNotificationCount } from '$lib/api/notifications';
 
 	interface Props {
 		onMenuClick?: () => void;
@@ -23,6 +25,11 @@
 		onSearch = () => {},
 		breadcrumbs
 	}: Props = $props();
+
+	const unreadNotificationsQuery = createQuery({
+		queryKey: ['notifications', 'sidebar-unread-count'],
+		queryFn: getUnreadNotificationCount
+	});
 
 	// Cache buster for avatar - updates when user or avatar changes
 	let lastUserId = $state($currentUser?.id);
@@ -143,6 +150,33 @@
 	<div class="flex flex-shrink-0 items-center gap-2 lg:gap-4">
 		<!-- WebSocket status indicator -->
 		<WebSocketStatus />
+
+		<!-- Notifications -->
+		<a
+			href="/notifications"
+			class="btn btn-circle btn-ghost btn-sm relative"
+			title="Notifications"
+		>
+			<svg
+				xmlns="http://www.w3.org/2000/svg"
+				fill="none"
+				viewBox="0 0 24 24"
+				stroke-width="1.5"
+				stroke="currentColor"
+				class="h-5 w-5"
+			>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0"
+				/>
+			</svg>
+			{#if $unreadNotificationsQuery.data && $unreadNotificationsQuery.data.count > 0}
+				<span class="badge badge-primary badge-xs absolute top-0 right-0 indicator-item">
+					{$unreadNotificationsQuery.data.count}
+				</span>
+			{/if}
+		</a>
 
 		<!-- Theme toggle -->
 		<ThemeToggle />

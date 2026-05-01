@@ -11,7 +11,9 @@
 		ClipboardList,
 		Globe,
 		Lock,
-		Settings
+		Settings,
+		Activity,
+		Users
 	} from 'lucide-svelte';
 	import { DEFAULT_MODULE_ICON } from '$lib/modules/iconRegistry';
 
@@ -31,7 +33,9 @@
 		folder: Folder,
 		globe: Globe,
 		lock: Lock,
-		settings: Settings
+		settings: Settings,
+		activity: Activity,
+		users: Users
 	};
 
 	$: IconComponent = iconMap[name] || iconMap[DEFAULT_MODULE_ICON] || Folder;

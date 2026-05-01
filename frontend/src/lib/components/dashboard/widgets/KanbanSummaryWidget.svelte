@@ -2,19 +2,18 @@
 	import { createQuery } from '$lib/query-compat';
 	import { getModuleSummary } from '$lib/api/modules';
 	import { listKanbanBoards, getKanbanBoard } from '$lib/api/kanban';
-	import type { ModuleConfig } from '$lib/api/types';
-	import { getModuleDashboardWidgetConfig } from '$lib/modules/workspaceSurface';
+	import type { ModuleDefinition } from '$lib/modules/registry';
 
-	export let module: ModuleConfig;
+	export let module: ModuleDefinition;
 
-	$: widget = getModuleDashboardWidgetConfig(module);
+	$: widget = module.ui.dashboard.widget;
 	$: summaryQuery = createQuery({
-		queryKey: ['module-summary', module.module_key],
-		queryFn: () => getModuleSummary(module.module_key)
+		queryKey: ['module-summary', module.key],
+		queryFn: () => getModuleSummary(module.key)
 	});
 
 	$: boardsQuery = createQuery({
-		queryKey: ['kanban-boards-widget', module.module_key],
+		queryKey: ['kanban-boards-widget', module.key],
 		queryFn: () => listKanbanBoards(1),
 		enabled: !!$summaryQuery.data
 	});
@@ -31,7 +30,7 @@
 	$: latestBoard = $boardQuery.data;
 </script>
 
-<a class="widget-card widget-link" data-size={widget.size} href={`/modules/${module.module_key}`}>
+<a class="widget-card widget-link" data-size={widget.size} href={`/modules/${module.key}`}>
 	<div class="widget-header">
 		<div>
 			<h3>{widget.title}</h3>

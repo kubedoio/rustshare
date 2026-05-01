@@ -6,32 +6,18 @@
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { FileText, Plus, Clock } from 'lucide-svelte';
 
-	export let moduleConfig: {
-		module_key: string;
-		display_name: string;
-		description: string;
-		icon: string;
-		root_path: string;
-		default_template: string | null;
-		ui_config?: {
-			modulePage?: {
-				emptyStateTitle?: string;
-				emptyStateDescription?: string;
-				emptyStateAction?: string;
-			};
-		};
-	};
+	import type { ModuleDefinition } from '$lib/modules/registry';
 
-	$: emptyTitle = moduleConfig.ui_config?.modulePage?.emptyStateTitle ?? 'No standups yet';
-	$: emptyDescription =
-		moduleConfig.ui_config?.modulePage?.emptyStateDescription ??
-		'Create your first standup record to get started.';
-	$: emptyAction = moduleConfig.ui_config?.modulePage?.emptyStateAction ?? 'New Standup';
+	export let module: ModuleDefinition;
+
+	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No standups yet';
+	$: emptyDescription = module.ui.page.emptyStateDescription ?? 'Create your first standup record to get started.';
+	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Standup';
 
 	// Fetch module root folder contents
 	$: rootFolderQuery = createQuery({
-		queryKey: ['standups-root', moduleConfig.module_key],
-		queryFn: () => getModuleRootContents(moduleConfig.root_path),
+		queryKey: ['standups-root', module.key],
+		queryFn: () => getModuleRootContents(module.rootPath),
 		enabled: true
 	});
 
@@ -39,16 +25,16 @@
 	$: standups = contents?.files ?? [];
 
 	async function handleCreateStandup() {
-		if (!moduleConfig.default_template) return;
+		if (!module.defaultTemplate) return;
 		const name = window.prompt('Enter a name for the new standup record:');
 		if (!name) return;
 		try {
 			const result = await createFromTemplate({
-				template_key: moduleConfig.default_template,
+				template_key: module.defaultTemplate,
 				name,
 				parent_folder_id: null
 			});
-			goto(getModuleObjectHref(moduleConfig.module_key, result.object_type, result.object_id));
+			goto(getModuleObjectHref(module.key, result.object_type, result.object_id));
 			$rootFolderQuery.refetch();
 		} catch (err) {
 			console.error('Failed to create standup:', err);
@@ -56,7 +42,7 @@
 	}
 
 	function navigateToStandup(fileId: string) {
-		goto(getModuleObjectHref(moduleConfig.module_key, 'file', fileId));
+		goto(getModuleObjectHref(module.key, 'file', fileId));
 	}
 </script>
 

@@ -23,14 +23,14 @@
 	</div>
 
 	{#if ($summaryQuery.data?.recent_items.length ?? 0) === 0}
-		<p class="empty-copy">No notes yet.</p>
+		<p class="empty-copy">No standups yet.</p>
 	{:else}
-		<ul class="note-list">
-			{#each $summaryQuery.data?.recent_items.slice(0, widget.maxItems) ?? [] as note}
+		<ul class="standup-list">
+			{#each $summaryQuery.data?.recent_items.slice(0, widget.maxItems) ?? [] as item}
 				<li>
 					<div>
-						<strong>{note.name}</strong>
-						<p>Updated {formatDistanceToNow(new Date(note.updated_at), { addSuffix: true })}</p>
+						<strong>{item.name}</strong>
+						<p>{formatDistanceToNow(new Date(item.updated_at), { addSuffix: true })}</p>
 					</div>
 				</li>
 			{/each}
@@ -41,7 +41,7 @@
 <style>
 	@import './widgetStyles.css';
 
-	.note-list {
+	.standup-list {
 		margin: 0;
 		padding: 0;
 		list-style: none;
@@ -50,19 +50,19 @@
 		gap: 0.8rem;
 	}
 
-	.note-list li {
+	.standup-list li {
 		padding: 0.85rem 0.95rem;
 		border-radius: 1rem;
 		background: color-mix(in oklab, var(--rs-surface-muted) 58%, white);
 	}
 
-	.note-list strong {
+	.standup-list strong {
 		display: block;
 		font-size: 0.94rem;
 		margin-bottom: 0.2rem;
 	}
 
-	.note-list p,
+	.standup-list p,
 	.empty-copy {
 		margin: 0;
 		font-size: 0.82rem;

@@ -99,20 +99,49 @@ describe('KanbanModuleView', () => {
 
 	it('renders a selected board with column folders and cards', async () => {
 		render(KanbanModuleView, {
-			moduleConfig: {
-				module_key: 'kanban',
-				display_name: 'Kanban Dashboard',
+			module: {
+				id: 'module_kanban',
+				key: 'kanban',
+				displayName: 'Kanban Dashboard',
 				description: 'Manage board cards as folders and files.',
-				icon: 'columns',
-				root_path: '/Kanban',
-				default_template: 'template_default_kanban',
-				ui_config: {
-					modulePage: {
+				enabled: true,
+				rootPath: '/Kanban',
+				renderer: 'kanban',
+				defaultTemplate: 'template_default_kanban',
+				schemaVersion: '1.0',
+				permissions: {
+					adminCanConfigure: true,
+					workspaceMembersCanUse: true,
+					allowPublicShare: false,
+					allowInternalShare: true
+				},
+				ui: {
+					sidebar: { enabled: true, order: 40, icon: 'columns', label: 'Kanban' },
+					dashboard: {
+						enabled: true,
+						order: 40,
+						widget: {
+							enabled: true,
+							type: 'kanban-summary',
+							title: 'Kanban',
+							description: 'Active boards and cards.',
+							size: 'large',
+							columns: { desktop: 6, tablet: 12, mobile: 12 },
+							maxItems: 4
+						}
+					},
+					page: {
+						enabled: true,
+						route: '/modules/kanban',
+						renderer: 'kanban',
+						layout: 'kanban-board',
 						emptyStateTitle: 'No boards yet',
 						emptyStateDescription: 'Create your first file-backed board.',
-						emptyStateAction: 'New Board'
+						primaryAction: { label: 'New Board', action: 'create-from-template' }
 					}
-				}
+				},
+				aiIndexing: { enabled: true },
+				audit: { enabled: true }
 			}
 		});
 

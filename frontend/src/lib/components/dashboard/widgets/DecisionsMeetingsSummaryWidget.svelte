@@ -1,18 +1,17 @@
 <script lang="ts">
 	import { createQuery } from '$lib/query-compat';
 	import { getModuleSummary } from '$lib/api/modules';
-	import type { ModuleConfig } from '$lib/api/types';
-	import { getModuleDashboardWidgetConfig } from '$lib/modules/workspaceSurface';
+	import type { ModuleDefinition } from '$lib/modules/registry';
 	import { formatDistanceToNow } from 'date-fns';
 
-	export let module: ModuleConfig;
-	export let modules: ModuleConfig[] = [];
+	export let module: ModuleDefinition;
+	export let modules: ModuleDefinition[] = [];
 
-	$: widget = getModuleDashboardWidgetConfig(module);
-	$: decisionsModule = modules.find((candidate) => candidate.module_key === 'decisions');
+	$: widget = module.ui.dashboard.widget;
+	$: decisionsModule = modules.find((candidate) => candidate.key === 'decisions');
 	$: meetingsSummaryQuery = createQuery({
-		queryKey: ['module-summary', module.module_key],
-		queryFn: () => getModuleSummary(module.module_key)
+		queryKey: ['module-summary', module.key],
+		queryFn: () => getModuleSummary(module.key)
 	});
 	$: decisionsSummaryQuery = createQuery({
 		queryKey: ['module-summary', 'decisions'],
@@ -21,7 +20,7 @@
 	});
 </script>
 
-<a class="widget-card widget-link" data-size={widget.size} href={`/modules/${module.module_key}`}>
+<a class="widget-card widget-link" data-size={widget.size} href={`/modules/${module.key}`}>
 	<div class="widget-header">
 		<div>
 			<h3>{widget.title}</h3>

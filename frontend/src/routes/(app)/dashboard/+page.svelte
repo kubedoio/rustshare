@@ -4,22 +4,11 @@
 	import WorkspaceSummaryInsightsSection from '$lib/components/dashboard/WorkspaceSummaryInsightsSection.svelte';
 	import DashboardSkeleton from '$lib/components/common/DashboardSkeleton.svelte';
 	import { listAllFiles } from '$lib/api/files';
-	import { listEnabledModules } from '$lib/api/modules';
-	import { getWorkspaceSurface } from '$lib/api/workspace-surface';
 	import { currentUser } from '$lib/stores/auth';
 	import { createQuery } from '$lib/query-compat';
-	import {
-		getEnabledDashboardModules,
-		normalizeWorkspaceSurfaceDefinition
-	} from '$lib/modules/workspaceSurface';
-	import { runModulePrimaryAction } from '$lib/modules/moduleActions';
-	import type { File, ModuleConfig } from '$lib/api/types';
+	import type { File } from '$lib/api/types';
 	import { Plus } from 'lucide-svelte';
-
-	const surfaceQuery = createQuery({
-		queryKey: ['workspace-surface'],
-		queryFn: () => getWorkspaceSurface()
-	});
+	import { DEFAULT_WORKSPACE_SURFACE, getDashboardModulesForUser } from '$lib/modules/registry';
 
 	const allFilesQuery = createQuery({
 		queryKey: ['all-files'],
@@ -35,26 +24,16 @@
 		}
 	});
 
-	const enabledModulesQuery = createQuery({
-		queryKey: ['enabled-modules'],
-		queryFn: () => listEnabledModules()
-	});
-
-	$: surface = normalizeWorkspaceSurfaceDefinition($surfaceQuery.data);
+	$: surface = DEFAULT_WORKSPACE_SURFACE;
 	$: sections = surface.sections
 		.filter((section) => section.enabled)
 		.sort((a, b) => a.order - b.order);
-	$: enabledModules = $enabledModulesQuery.data ?? [];
-	$: dashboardModules = getEnabledDashboardModules(enabledModules);
-	$: primaryDashboardModule = dashboardModules.find(
-		(module) =>
-			module.ui_config?.dashboard?.widget?.primaryAction ??
-			module.ui_config?.dashboard?.primaryAction
-	);
+	$: dashboardModules = getDashboardModulesForUser($currentUser);
+	$: primaryDashboardModule = dashboardModules.find((module) => !!module.ui.dashboard.widget.primaryAction);
 	$: sharedFiles = $sharedFilesQuery.data ?? [];
 	$: totalFilesCount = $allFilesQuery.data?.length ?? 0;
 	$: totalSizeUsed =
-		$allFilesQuery.data?.reduce((sum: number, file: File) => sum + file.size, 0) ?? 0;
+		$allFilesQuery.data?.reduce((sum: number, file: File) => sum + (file.size || 0), 0) ?? 0;
 	$: storageQuota = $currentUser?.storage_quota ?? null;
 	$: workspaceTitle = `${$currentUser?.display_name ?? 'Workspace'}'s Workspace Overview`;
 
@@ -62,11 +41,11 @@
 		await goto('/files');
 	}
 
-	async function handlePrimaryModuleAction(module: ModuleConfig) {
-		const action =
-			module.ui_config?.dashboard?.widget?.primaryAction ??
-			module.ui_config?.dashboard?.primaryAction;
-		await runModulePrimaryAction(module, action);
+	async function handlePrimaryModuleAction(module: any) {
+		const action = module.ui.dashboard.widget.primaryAction;
+		if (action && action.action === 'create-from-template') {
+			console.log('Creating from template:', action.template);
+		}
 	}
 </script>
 
@@ -74,7 +53,7 @@
 	<title>Workspace Dashboard - RustShare</title>
 </svelte:head>
 
-{#if $surfaceQuery.isLoading || $allFilesQuery.isLoading || $enabledModulesQuery.isLoading}
+{#if $allFilesQuery.isLoading}
 	<DashboardSkeleton />
 {:else}
 	<div class="workspace-dashboard-page">
@@ -96,9 +75,7 @@
 								class="surface-action primary"
 								on:click={() => handlePrimaryModuleAction(primaryDashboardModule)}
 							>
-								{primaryDashboardModule.ui_config?.dashboard?.widget?.primaryAction?.label ??
-									primaryDashboardModule.ui_config?.dashboard?.primaryAction?.label ??
-									'Open'}
+								{primaryDashboardModule.ui.dashboard.widget.primaryAction?.label ?? 'Open'}
 							</button>
 						{/if}
 

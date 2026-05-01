@@ -6,50 +6,37 @@
 	import { getModuleObjectHref } from '$lib/modules/modulePages';
 	import { FileText, Plus, Clock } from 'lucide-svelte';
 
-	export let moduleConfig: {
-		module_key: string;
-		display_name: string;
-		description: string;
-		icon: string;
-		default_template: string | null;
-		ui_config?: {
-			modulePage?: {
-				emptyStateTitle?: string;
-				emptyStateDescription?: string;
-				emptyStateAction?: string;
-			};
-		};
-	};
+	import type { ModuleDefinition } from '$lib/modules/registry';
+
+	export let module: ModuleDefinition;
 
 	const notesSummaryQuery = createQuery({
-		queryKey: ['module-summary', 'notes-module-view', moduleConfig.module_key],
-		queryFn: () => getModuleSummary(moduleConfig.module_key)
+		queryKey: ['module-summary', 'notes-module-view', module.key],
+		queryFn: () => getModuleSummary(module.key)
 	});
 
 	$: recentNotes = $notesSummaryQuery.data?.recent_items ?? [];
 
 	async function handleNewNote() {
-		if (!moduleConfig.default_template) {
+		if (!module.defaultTemplate) {
 			return;
 		}
 
 		try {
 			const result = await createFromTemplate({
-				template_key: moduleConfig.default_template,
+				template_key: module.defaultTemplate,
 				name: 'Untitled Note',
 				parent_folder_id: null
 			});
-			goto(getModuleObjectHref(moduleConfig.module_key, result.object_type, result.object_id));
+			goto(getModuleObjectHref(module.key, result.object_type, result.object_id));
 		} catch (err) {
 			console.error('Failed to create note:', err);
 		}
 	}
 
-	$: emptyTitle = moduleConfig.ui_config?.modulePage?.emptyStateTitle ?? 'No notes yet';
-	$: emptyDescription =
-		moduleConfig.ui_config?.modulePage?.emptyStateDescription ??
-		'Create your first note to get started.';
-	$: emptyAction = moduleConfig.ui_config?.modulePage?.emptyStateAction ?? 'New Note';
+	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No notes yet';
+	$: emptyDescription = module.ui.page.emptyStateDescription ?? 'Create your first note to get started.';
+	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Note';
 </script>
 
 <div class="rounded-2xl border border-base-300/50 bg-base-100 p-6">
@@ -58,7 +45,7 @@
 		<button
 			class="btn btn-sm btn-primary"
 			onclick={handleNewNote}
-			disabled={!moduleConfig.default_template}
+			disabled={!module.defaultTemplate}
 		>
 			<Plus size={14} />
 			<span>New Note</span>
@@ -81,7 +68,7 @@
 		<div class="flex flex-col gap-2">
 			{#each recentNotes as note}
 				<a
-					href={getModuleObjectHref(moduleConfig.module_key, 'file', note.id)}
+					href={getModuleObjectHref(module.key, 'file', note.id)}
 					class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
 				>
 					<div

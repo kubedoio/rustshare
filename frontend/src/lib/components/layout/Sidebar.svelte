@@ -1,24 +1,13 @@
 <script lang="ts">
-	import { createQuery } from '$lib/query-compat';
 	import { page } from '$app/stores';
-	import { getUnreadNotificationCount } from '$lib/api/notifications';
 	import { authStore } from '$lib/stores/auth';
+	import ModuleIcon from '$lib/components/dashboard/ModuleIcon.svelte';
+	import { getSidebarModulesForUser } from '$lib/modules/registry';
 
 	export let mobileOpen = false;
 	export let onClose: () => void = () => {};
 
-	const navItems = [
-		{ href: '/dashboard', label: 'Dashboard', icon: '🏠' },
-		{ href: '/files', label: 'My Files', icon: '📁' },
-		{ href: '/shared-with-me', label: 'Shared with Me', icon: '👥' },
-		{ href: '/notifications', label: 'Notifications', icon: '🔔' },
-		{ href: '/settings', label: 'Settings', icon: '⚙️' }
-	];
-
-	const unreadNotificationsQuery = createQuery({
-		queryKey: ['notifications', 'sidebar-unread-count'],
-		queryFn: getUnreadNotificationCount
-	});
+	$: sidebarModules = getSidebarModulesForUser($authStore.user);
 
 	function handleLogout() {
 		authStore.logout();
@@ -68,30 +57,74 @@
 		</button>
 	</div>
 
-	<nav class="flex-1 p-4">
-		<ul class="menu">
-			{#each navItems as item}
+	<nav class="flex-1 p-4 overflow-y-auto">
+		<ul class="menu flex flex-col gap-1">
+			<li>
+				<a
+					href="/dashboard"
+					class:active={$page.url.pathname === '/dashboard'}
+					class="flex items-center gap-2"
+					on:click={handleNavClick}
+				>
+					<ModuleIcon name="layout-dashboard" size={18} />
+					<span>Dashboard</span>
+				</a>
+			</li>
+			<li>
+				<a
+					href="/files"
+					class:active={$page.url.pathname.startsWith('/files')}
+					class="flex items-center gap-2"
+					on:click={handleNavClick}
+				>
+					<ModuleIcon name="folder" size={18} />
+					<span>My Files</span>
+				</a>
+			</li>
+			<li>
+				<a
+					href="/shared-with-me"
+					class:active={$page.url.pathname.startsWith('/shared-with-me')}
+					class="flex items-center gap-2"
+					on:click={handleNavClick}
+				>
+					<ModuleIcon name="users" size={18} />
+					<span>Shared with Me</span>
+				</a>
+			</li>
+
+			<div class="divider my-1"></div>
+
+			{#each sidebarModules as mod (mod.key)}
 				<li>
 					<a
-						href={item.href}
-						class:active={$page.url.pathname === item.href}
+						href={`/modules/${mod.key}`}
+						class:active={$page.url.pathname.startsWith(`/modules/${mod.key}`)}
 						class="flex items-center gap-2"
 						on:click={handleNavClick}
 					>
-						<span>{item.icon}</span>
-						<span>{item.label}</span>
-						{#if item.href === '/notifications' && $unreadNotificationsQuery.data && $unreadNotificationsQuery.data.count > 0}
-							<span class="ml-auto badge badge-sm badge-primary">
-								{$unreadNotificationsQuery.data.count}
-							</span>
-						{/if}
+						<ModuleIcon name={mod.ui.sidebar.icon} size={18} />
+						<span>{mod.ui.sidebar.label}</span>
 					</a>
 				</li>
 			{/each}
 		</ul>
 	</nav>
 
-	<div class="border-t border-base-300 p-4">
-		<button class="btn btn-block btn-outline" on:click={handleLogout}> Logout </button>
+	<div class="border-t border-base-300 p-4 flex flex-col gap-2">
+		<ul class="menu w-full p-0">
+			<li>
+				<a
+					href="/settings"
+					class:active={$page.url.pathname.startsWith('/settings')}
+					class="flex items-center gap-2"
+					on:click={handleNavClick}
+				>
+					<ModuleIcon name="settings" size={18} />
+					<span>Settings</span>
+				</a>
+			</li>
+		</ul>
+		<button class="btn btn-block btn-outline mt-2" on:click={handleLogout}> Logout </button>
 	</div>
 </aside>

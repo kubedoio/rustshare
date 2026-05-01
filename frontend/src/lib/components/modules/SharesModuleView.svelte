@@ -6,32 +6,18 @@
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { Folder, Plus, ArrowRight } from 'lucide-svelte';
 
-	export let moduleConfig: {
-		module_key: string;
-		display_name: string;
-		description: string;
-		icon: string;
-		root_path: string;
-		default_template: string | null;
-		ui_config?: {
-			modulePage?: {
-				emptyStateTitle?: string;
-				emptyStateDescription?: string;
-				emptyStateAction?: string;
-			};
-		};
-	};
+	import type { ModuleDefinition } from '$lib/modules/registry';
 
-	$: emptyTitle = moduleConfig.ui_config?.modulePage?.emptyStateTitle ?? 'No shares yet';
-	$: emptyDescription =
-		moduleConfig.ui_config?.modulePage?.emptyStateDescription ??
-		'Create your first share package to get started.';
-	$: emptyAction = moduleConfig.ui_config?.modulePage?.emptyStateAction ?? 'New Share';
+	export let module: ModuleDefinition;
+
+	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No shares yet';
+	$: emptyDescription = module.ui.page.emptyStateDescription ?? 'Create your first share package to get started.';
+	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Share';
 
 	// Fetch module root folder contents
 	$: rootFolderQuery = createQuery({
-		queryKey: ['shares-root', moduleConfig.module_key],
-		queryFn: () => getModuleRootContents(moduleConfig.root_path),
+		queryKey: ['shares-root', module.key],
+		queryFn: () => getModuleRootContents(module.rootPath),
 		enabled: true
 	});
 
@@ -39,12 +25,12 @@
 	$: sharePackages = contents?.folders ?? [];
 
 	async function handleCreateShare() {
-		if (!moduleConfig.default_template) return;
+		if (!module.defaultTemplate) return;
 		const name = window.prompt('Enter a name for the new share package:');
 		if (!name) return;
 		try {
 			await createFromTemplate({
-				template_key: moduleConfig.default_template,
+				template_key: module.defaultTemplate,
 				name,
 				parent_folder_id: null
 			});
@@ -55,7 +41,7 @@
 	}
 
 	function navigateToShare(folderId: string) {
-		goto(getModuleObjectHref(moduleConfig.module_key, 'folder', folderId));
+		goto(getModuleObjectHref(module.key, 'folder', folderId));
 	}
 </script>
 

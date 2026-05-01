@@ -37,12 +37,49 @@ describe('NotesModuleView', () => {
 
 	it('opens the dedicated note route after creating a note', async () => {
 		render(NotesModuleView, {
-			moduleConfig: {
-				module_key: 'notes',
-				display_name: 'Notes',
+			module: {
+				id: 'module_notes',
+				key: 'notes',
+				displayName: 'Notes',
 				description: 'Capture notes.',
-				icon: 'sticky-note',
-				default_template: 'template_default_note'
+				enabled: true,
+				rootPath: '/Notes',
+				renderer: 'notes',
+				defaultTemplate: 'template_default_note',
+				schemaVersion: '1.0',
+				permissions: {
+					adminCanConfigure: true,
+					workspaceMembersCanUse: true,
+					allowPublicShare: false,
+					allowInternalShare: true
+				},
+				ui: {
+					sidebar: { enabled: true, order: 10, icon: 'sticky-note', label: 'Notes' },
+					dashboard: {
+						enabled: true,
+						order: 10,
+						widget: {
+							enabled: true,
+							type: 'notes-recent',
+							title: 'Notes',
+							description: 'Recent notes.',
+							size: 'medium',
+							columns: { desktop: 6, tablet: 12, mobile: 12 },
+							maxItems: 4
+						}
+					},
+					page: {
+						enabled: true,
+						route: '/modules/notes',
+						renderer: 'notes',
+						layout: 'list-grid',
+						emptyStateTitle: 'No notes yet',
+						emptyStateDescription: 'Create your first note.',
+						primaryAction: { label: 'New Note', action: 'create-from-template' }
+					}
+				},
+				aiIndexing: { enabled: true },
+				audit: { enabled: true }
 			}
 		});
 
@@ -55,12 +92,49 @@ describe('NotesModuleView', () => {
 
 	it('links recent notes to the note editor route', async () => {
 		render(NotesModuleView, {
-			moduleConfig: {
-				module_key: 'notes',
-				display_name: 'Notes',
+			module: {
+				id: 'module_notes',
+				key: 'notes',
+				displayName: 'Notes',
 				description: 'Capture notes.',
-				icon: 'sticky-note',
-				default_template: 'template_default_note'
+				enabled: true,
+				rootPath: '/Notes',
+				renderer: 'notes',
+				defaultTemplate: 'template_default_note',
+				schemaVersion: '1.0',
+				permissions: {
+					adminCanConfigure: true,
+					workspaceMembersCanUse: true,
+					allowPublicShare: false,
+					allowInternalShare: true
+				},
+				ui: {
+					sidebar: { enabled: true, order: 10, icon: 'sticky-note', label: 'Notes' },
+					dashboard: {
+						enabled: true,
+						order: 10,
+						widget: {
+							enabled: true,
+							type: 'notes-recent',
+							title: 'Notes',
+							description: 'Recent notes.',
+							size: 'medium',
+							columns: { desktop: 6, tablet: 12, mobile: 12 },
+							maxItems: 4
+						}
+					},
+					page: {
+						enabled: true,
+						route: '/modules/notes',
+						renderer: 'notes',
+						layout: 'list-grid',
+						emptyStateTitle: 'No notes yet',
+						emptyStateDescription: 'Create your first note.',
+						primaryAction: { label: 'New Note', action: 'create-from-template' }
+					}
+				},
+				aiIndexing: { enabled: true },
+				audit: { enabled: true }
 			}
 		});
 
