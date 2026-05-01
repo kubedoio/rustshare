@@ -387,7 +387,6 @@ impl TemplateService {
                 } else {
                     json!({})
                 };
-
                 let template = Template {
                     id: Uuid::new_v4(),
                     template_key: key.to_string(),
@@ -396,17 +395,18 @@ impl TemplateService {
                     version: version.to_string(),
                     description: description.to_string(),
                     ui_config,
-                    folder_structure: serde_json::to_value(&folder_structure)?,
-                    default_files: serde_json::to_value(&default_files)?,
+                    folder_structure: serde_json::to_value(folder_structure)?,
+                    default_files: serde_json::to_value(default_files)?,
                     metadata_schema: metadata_schema.clone(),
                     renderer: renderer.map(|s| s.to_string()),
                     visibility_policy: "workspace".to_string(),
-                    ai_indexing_policy: json!({"enabled": true}),
-                    audit_logging_policy: json!({"enabled": true}),
+                    ai_indexing_policy: json!("enabled"),
+                    audit_logging_policy: json!("enabled"),
                     created_by: None,
                     created_at: Utc::now(),
                     updated_at: Utc::now(),
                     enabled: true,
+                    system_template: true,
                     tenant_id,
                 };
 
@@ -416,8 +416,8 @@ impl TemplateService {
                         id, template_key, name, module_key, version, description, ui_config,
                         folder_structure, default_files, metadata_schema, renderer,
                         visibility_policy, ai_indexing_policy, audit_logging_policy,
-                        created_by, created_at, updated_at, enabled, tenant_id
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                        created_by, created_at, updated_at, enabled, system_template, tenant_id
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                     "#,
                 )
                 .bind(template.id)
@@ -438,6 +438,7 @@ impl TemplateService {
                 .bind(template.created_at)
                 .bind(template.updated_at)
                 .bind(template.enabled)
+                .bind(template.system_template)
                 .bind(template.tenant_id)
                 .execute(self.metadata_store.pool())
                 .await?;
@@ -513,6 +514,7 @@ impl TemplateService {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             enabled: true,
+            system_template: false,
             tenant_id,
         };
 
@@ -522,8 +524,8 @@ impl TemplateService {
                 id, template_key, name, module_key, version, description, ui_config,
                 folder_structure, default_files, metadata_schema, renderer,
                 visibility_policy, ai_indexing_policy, audit_logging_policy,
-                created_by, created_at, updated_at, enabled, tenant_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                created_by, created_at, updated_at, enabled, system_template, tenant_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
             "#,
         )
         .bind(template.id)
@@ -544,6 +546,7 @@ impl TemplateService {
         .bind(template.created_at)
         .bind(template.updated_at)
         .bind(template.enabled)
+        .bind(template.system_template)
         .bind(template.tenant_id)
         .execute(self.metadata_store.pool())
         .await?;
@@ -650,7 +653,7 @@ impl TemplateService {
             .unwrap_or(template.visibility_policy);
         let enabled = request.enabled.unwrap_or(template.enabled);
 
-        let system_template = template.template_key.starts_with("template_default_");
+        let system_template = template.system_template;
         if system_template && modifies_structure {
             return Err(TemplateError::InvalidData(
                 "System templates cannot be edited destructively".to_string(),
@@ -688,7 +691,7 @@ impl TemplateService {
         let template = self.get_template(key, tenant_id).await?;
 
         // Prevent deletion of predefined templates
-        if template.template_key.starts_with("template_default_") {
+        if template.system_template {
             return Err(TemplateError::InvalidData(
                 "Cannot delete predefined templates".to_string(),
             ));

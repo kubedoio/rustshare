@@ -4,30 +4,40 @@
 	import { listKanbanBoards, getKanbanBoard } from '$lib/api/kanban';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
-	export let module: ModuleDefinition;
+	interface Props {
+		module: ModuleDefinition;
+	}
 
-	$: widget = module.ui.dashboard.widget;
-	$: summaryQuery = createQuery({
+	let { module }: Props = $props();
+
+	const widget = $derived(module.ui.dashboard.widget);
+
+	const summaryQuery = createQuery({
 		queryKey: ['module-summary', module.key],
 		queryFn: () => getModuleSummary(module.key)
 	});
 
-	$: boardsQuery = createQuery({
-		queryKey: ['kanban-boards-widget', module.key],
-		queryFn: () => listKanbanBoards(1),
-		enabled: !!$summaryQuery.data
-	});
+	const boardsQuery = $derived(
+		createQuery({
+			queryKey: ['kanban-boards-widget', module.key],
+			queryFn: () => listKanbanBoards(1),
+			enabled: !!$summaryQuery.data
+		})
+	);
 
-	$: latestBoardId = $boardsQuery.data?.[0]?.id ?? '';
-	$: boardQuery = createQuery({
-		queryKey: ['kanban-board-widget', latestBoardId],
-		queryFn: () => getKanbanBoard(latestBoardId),
-		enabled: !!latestBoardId
-	});
+	const latestBoardId = $derived($boardsQuery.data?.[0]?.id ?? '');
 
-	$: extra = ($summaryQuery.data?.extra ?? {}) as { boards?: Array<{ id: string; name: string }> };
-	$: maxItems = widget.maxItems ?? 8;
-	$: latestBoard = $boardQuery.data;
+	const boardQuery = $derived(
+		createQuery({
+			queryKey: ['kanban-board-widget', latestBoardId],
+			queryFn: () => getKanbanBoard(latestBoardId),
+			enabled: !!latestBoardId
+		})
+	);
+
+	const extra = $derived(($summaryQuery.data?.extra ?? {}) as { boards?: Array<{ id: string; name: string }> });
+	const maxItems = $derived(widget.maxItems ?? 8);
+	const latestBoard = $derived($boardQuery.data);
 </script>
 
 <a class="widget-card widget-link" data-size={widget.size} href={`/modules/${module.key}`}>

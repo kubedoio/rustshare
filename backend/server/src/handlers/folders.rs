@@ -193,6 +193,7 @@ pub async fn get_folder_contents(
         FROM folders f
         LEFT JOIN folder_sizes fs ON fs.root_id = f.id
         WHERE f.parent_folder_id = $1 AND f.owner_id = $2 AND f.tenant_id = $3 AND f.deleted_at IS NULL
+          AND f.name NOT LIKE '.rustshare-%'
         ORDER BY f.name
         "#,
     )
@@ -229,6 +230,7 @@ pub async fn get_folder_contents(
             'Admin'::TEXT as effective_permission
         FROM files f
         WHERE f.parent_folder_id = $1 AND f.owner_id = $2 AND f.tenant_id = $3 AND f.deleted_at IS NULL
+          AND f.name NOT LIKE '.rustshare-%'
         ORDER BY f.name
         "#,
     )
@@ -296,6 +298,7 @@ pub async fn get_root_contents(
         FROM folders f
         LEFT JOIN folder_sizes fs ON fs.root_id = f.id
         WHERE f.parent_folder_id IS NULL AND f.owner_id = $1 AND f.tenant_id = $2 AND f.deleted_at IS NULL
+          AND f.name NOT LIKE '.rustshare-%'
         ORDER BY f.name
         "#,
     )
@@ -331,6 +334,7 @@ pub async fn get_root_contents(
             'Admin'::TEXT as effective_permission
         FROM files f
         WHERE f.parent_folder_id IS NULL AND f.owner_id = $1 AND f.tenant_id = $2 AND f.deleted_at IS NULL
+          AND f.name NOT LIKE '.rustshare-%'
         ORDER BY f.name
         "#,
     )

@@ -21,8 +21,7 @@
 	});
 
 	const duplicateMutation = createMutation({
-		mutationFn: ({ key, newKey }: { key: string; newKey: string }) =>
-			duplicateTemplate(key, newKey),
+		mutationFn: (key: string) => duplicateTemplate(key),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['admin-templates'] });
 			toastStore.show('Template duplicated', 'success');
@@ -38,13 +37,8 @@
 		}
 	}
 
-	function handleDuplicate(key: string, name: string) {
-		const newKey = window.prompt(
-			`Duplicate template "${name}". Enter a new template key:`,
-			`${key}_copy`
-		);
-		if (!newKey) return;
-		$duplicateMutation.mutate({ key, newKey });
+	function handleDuplicate(key: string) {
+		$duplicateMutation.mutate(key);
 	}
 
 	function formatDate(dateStr: string | null): string {
@@ -95,7 +89,16 @@
 						<tr class="transition-colors hover:bg-base-200/20">
 							<td class="px-4 py-3">
 								<div class="flex flex-col">
-									<span class="text-sm font-medium text-base-content">{template.name}</span>
+									<div class="flex items-center gap-2">
+										<span class="text-sm font-medium text-base-content">{template.name}</span>
+										{#if template.system_template}
+											<span
+												class="rounded bg-base-300/50 px-1 py-0.5 text-[8px] font-bold tracking-tight text-base-content/60 uppercase"
+											>
+												System
+											</span>
+										{/if}
+									</div>
 									<span class="text-xs text-base-content/40">{template.template_key}</span>
 								</div>
 							</td>
@@ -131,11 +134,12 @@
 									<button
 										class="btn text-base-content/50 btn-ghost btn-xs hover:text-base-content"
 										title="Duplicate"
-										on:click={() => handleDuplicate(template.template_key, template.name)}
+										on:click={() => handleDuplicate(template.template_key)}
+										disabled={$duplicateMutation.isPending}
 									>
 										<Copy size={14} />
 									</button>
-									{#if !template.template_key.startsWith('template_default_')}
+									{#if !template.system_template}
 										<button
 											class="btn text-error/60 btn-ghost btn-xs hover:text-error"
 											title="Delete"

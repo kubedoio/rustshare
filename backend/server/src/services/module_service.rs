@@ -383,7 +383,10 @@ impl ModuleService {
         .fetch_all(self.metadata_store.pool())
         .await?;
 
-        Ok(modules.into_iter().map(normalize_module).collect())
+        Ok(modules
+            .into_iter()
+            .map(|m| self.normalize_module(m))
+            .collect())
     }
 
     /// List enabled modules (for dashboard).
@@ -402,7 +405,7 @@ impl ModuleService {
 
         Ok(modules
             .into_iter()
-            .map(normalize_module)
+            .map(|m| self.normalize_module(m))
             .filter(|module| user_can_access_module(module, is_admin))
             .collect())
     }
@@ -418,8 +421,24 @@ impl ModuleService {
         .await?;
 
         module
-            .map(normalize_module)
+            .map(|m| self.normalize_module(m))
             .ok_or_else(|| ModuleError::NotFound(key.to_string()))
+    }
+
+    /// Resolve a module by key, returning the effective definition with defaults merged.
+    fn normalize_module(&self, module: Module) -> Module {
+        let ui_config = normalize_module_ui_config(
+            &module.module_key,
+            &module.display_name,
+            &module.description,
+            &module.icon,
+            &module.root_path,
+            &module.renderer,
+            module.default_template.as_deref(),
+            Some(module.ui_config),
+        );
+
+        Module { ui_config, ..module }
     }
 
     /// Update module config (admin only). Only certain fields are mutable.
@@ -442,6 +461,30 @@ impl ModuleService {
         let permissions = input.permissions.unwrap_or(module.permissions);
         let ai_indexing = input.ai_indexing.unwrap_or(module.ai_indexing);
         let audit = input.audit.unwrap_or(module.audit);
+
+        // Validate UI config fields if provided
+        if let Some(ref ui) = input.ui_config {
+            if let Some(sidebar) = ui.get("sidebar").and_then(|v| v.as_object()) {
+                if let Some(order) = sidebar.get("order").and_then(|v| v.as_i64()) {
+                    if order < 0 || order > 1000 {
+                        return Err(ModuleError::InvalidData("Sidebar order must be between 0 and 1000".to_string()));
+                    }
+                }
+            }
+            if let Some(dashboard) = ui.get("dashboard").and_then(|v| v.as_object()) {
+                if let Some(order) = dashboard.get("order").and_then(|v| v.as_i64()) {
+                    if order < 0 || order > 1000 {
+                        return Err(ModuleError::InvalidData("Dashboard order must be between 0 and 1000".to_string()));
+                    }
+                }
+                if let Some(max) = dashboard.get("maxItems").and_then(|v| v.as_i64()) {
+                    if max < 1 || max > 50 {
+                        return Err(ModuleError::InvalidData("Dashboard maxItems must be between 1 and 50".to_string()));
+                    }
+                }
+            }
+        }
+
         let ui_config = normalize_module_ui_config(
             key,
             &display_name,
@@ -841,21 +884,6 @@ fn validate_root_path(root_path: &str) -> Result<(), ModuleError> {
     }
 
     Ok(())
-}
-
-fn normalize_module(module: Module) -> Module {
-    let ui_config = normalize_module_ui_config(
-        &module.module_key,
-        &module.display_name,
-        &module.description,
-        &module.icon,
-        &module.root_path,
-        &module.renderer,
-        module.default_template.as_deref(),
-        Some(module.ui_config.clone()),
-    );
-
-    Module { ui_config, ..module }
 }
 
 fn normalize_module_ui_config(

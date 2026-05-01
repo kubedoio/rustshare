@@ -2765,6 +2765,47 @@ impl MetadataStore {
     }
 
     /// List all markdown files for a user across their entire library.
+    pub async fn list_all_folders(
+        &self,
+        owner_id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<Vec<Folder>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
+            FROM folders
+            WHERE owner_id = $1
+              AND tenant_id = $2
+              AND deleted_at IS NULL
+            ORDER BY path ASC
+            "#,
+        )
+        .bind(owner_id)
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut folders = Vec::new();
+        for row in rows {
+            let folder = Folder {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                owner_id: row.try_get("owner_id")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
+                tenant_id: row.try_get("tenant_id")?,
+                ancestor_ids: None,
+            };
+            folders.push(folder);
+        }
+
+        Ok(folders)
+    }
+
     pub async fn list_all_markdown_files(
         &self,
         owner_id: Uuid,

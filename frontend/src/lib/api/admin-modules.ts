@@ -70,8 +70,7 @@ export async function updateModule(
 }
 
 export async function listAdminTemplates(): Promise<TemplateConfig[]> {
-	const response = await apiClient.get<AdminTemplatesResponse>('/admin/templates');
-	return response.templates;
+	return apiClient.get<TemplateConfig[]>('/admin/templates');
 }
 
 export async function getAdminTemplate(key: string): Promise<TemplateConfig> {
@@ -86,25 +85,13 @@ export async function updateTemplate(
 	key: string,
 	updates: Partial<TemplateConfig>
 ): Promise<TemplateConfig> {
-	return apiClient.patch<TemplateConfig>(`/admin/templates/${key}`, updates);
+	return apiClient.put<TemplateConfig>(`/admin/templates/${key}`, updates);
 }
 
 export async function deleteTemplate(key: string): Promise<void> {
 	return apiClient.delete<void>(`/admin/templates/${key}`);
 }
 
-export async function duplicateTemplate(key: string, newKey: string): Promise<TemplateConfig> {
-	const original = await getAdminTemplate(key);
-	return createTemplate({
-		template_key: newKey,
-		name: `${original.name} (Copy)`,
-		module_key: original.module_key,
-		description: original.description,
-		ui_config: original.ui_config,
-		folder_structure: original.folder_structure,
-		default_files: original.default_files,
-		metadata_schema: original.metadata_schema,
-		renderer: original.renderer,
-		visibility_policy: original.visibility_policy
-	});
+export async function duplicateTemplate(key: string): Promise<TemplateConfig> {
+	return apiClient.post<TemplateConfig>(`/admin/templates/${key}/duplicate`, {});
 }

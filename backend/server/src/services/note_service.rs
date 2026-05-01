@@ -185,40 +185,76 @@ impl NoteService {
         }
     }
 
-    fn sidecar_key(file_id: Uuid) -> String {
-        format!("meta/notes/{}.json", file_id)
-    }
-
     fn public_share_key(share_id: &str) -> String {
         format!("meta/notes/public/{}.json", share_id)
     }
 
-    async fn load_metadata(&self, file_id: Uuid) -> Result<Option<NoteMetadata>, NoteError> {
-        let key = Self::sidecar_key(file_id);
-        match self.object_store.get(&key).await {
-            Ok(bytes) => {
-                let meta: NoteMetadata = serde_json::from_slice(&bytes)
-                    .map_err(|e| NoteError::Storage(format!("Corrupt sidecar: {}", e)))?;
-                Ok(Some(meta))
-            }
-            Err(_) => Ok(None),
+    async fn load_metadata(&self, file_id: Uuid, user_id: UserId, tenant_id: Uuid) -> Result<Option<NoteMetadata>, NoteError> {
+        let file = self.metadata_store.find_file_by_id(file_id).await.map_err(|e| NoteError::Database(e.to_string()))?.ok_or(NoteError::NotFound(file_id))?;
+        
+        // 1. Try visible sidecar: {path}.rustshare.json
+        let sidecar_name = format!("{}.rustshare.json", file.name);
+        let parent_id = file.parent_folder_id;
+        let siblings = self.metadata_store.list_files(parent_id, user_id, tenant_id).await.map_err(|e| NoteError::Database(e.to_string()))?;
+        
+        if let Some(sidecar) = siblings.into_iter().find(|f| f.name == sidecar_name) {
+            let data = self.object_store.get(&sidecar.storage_key()).await.map_err(|e| NoteError::Storage(e.to_string()))?;
+            let meta: NoteMetadata = serde_json::from_slice(&data).map_err(|e| NoteError::Storage(format!("Corrupt sidecar: {}", e)))?;
+            return Ok(Some(meta));
         }
+
+        // 2. Fallback to legacy hidden sidecar
+        let legacy_key = format!("meta/notes/{}.json", file_id);
+        if let Ok(bytes) = self.object_store.get(&legacy_key).await {
+            let meta: NoteMetadata = serde_json::from_slice(&bytes).map_err(|e| NoteError::Storage(format!("Corrupt legacy sidecar: {}", e)))?;
+            return Ok(Some(meta));
+        }
+
+        Ok(None)
     }
 
-    async fn save_metadata(&self, file_id: Uuid, meta: &NoteMetadata) -> Result<(), NoteError> {
-        let key = Self::sidecar_key(file_id);
-        let data = serde_json::to_vec_pretty(meta)
-            .map_err(|e| NoteError::Storage(format!("Failed to serialize metadata: {}", e)))?;
-        self.object_store
-            .put(&key, Bytes::from(data))
-            .await
-            .map_err(|e| NoteError::Storage(format!("Failed to write sidecar: {}", e)))?;
+    async fn save_metadata(&self, file_id: Uuid, user_id: UserId, tenant_id: Uuid, meta: &NoteMetadata) -> Result<(), NoteError> {
+        let file = self.metadata_store.find_file_by_id(file_id).await.map_err(|e| NoteError::Database(e.to_string()))?.ok_or(NoteError::NotFound(file_id))?;
+        
+        let sidecar_name = format!("{}.rustshare.json", file.name);
+        let parent_id = file.parent_folder_id;
+        
+        let siblings = self.metadata_store.list_files(parent_id, user_id, tenant_id).await.map_err(|e| NoteError::Database(e.to_string()))?;
+        
+        let meta_data = serde_json::to_vec_pretty(meta).map_err(|e| NoteError::Storage(format!("Failed to serialize metadata: {}", e)))?;
+
+        if let Some(sidecar) = siblings.into_iter().find(|f| f.name == sidecar_name) {
+            // Update existing sidecar
+            self.file_service.edit_file(sidecar.id, user_id, Bytes::from(meta_data), "overwrite", None).await?;
+        } else {
+            // Create new sidecar
+            self.file_service.upload_file(
+                user_id,
+                sidecar_name,
+                parent_id,
+                Bytes::from(meta_data),
+                "application/json".to_string(),
+                tenant_id,
+            ).await?;
+        }
+
+        // Also update legacy if it exists? No, let's just move forward.
         Ok(())
     }
 
-    async fn delete_metadata(&self, file_id: Uuid) -> Result<(), NoteError> {
-        let key = Self::sidecar_key(file_id);
-        let _ = self.object_store.delete(&key).await;
+    async fn delete_metadata(&self, file_id: Uuid, user_id: UserId, tenant_id: Uuid) -> Result<(), NoteError> {
+        let file = self.metadata_store.find_file_by_id(file_id).await.map_err(|e| NoteError::Database(e.to_string()))?.ok_or(NoteError::NotFound(file_id))?;
+        let sidecar_name = format!("{}.rustshare.json", file.name);
+        let parent_id = file.parent_folder_id;
+        
+        let siblings = self.metadata_store.list_files(parent_id, user_id, tenant_id).await.map_err(|e| NoteError::Database(e.to_string()))?;
+        if let Some(sidecar) = siblings.into_iter().find(|f| f.name == sidecar_name) {
+            self.file_service.delete_file(sidecar.id, user_id).await?;
+        }
+
+        // Cleanup legacy
+        let legacy_key = format!("meta/notes/{}.json", file_id);
+        let _ = self.object_store.delete(&legacy_key).await;
         Ok(())
     }
 
@@ -353,7 +389,7 @@ impl NoteService {
         // Build and save metadata sidecar
         let mut meta = NoteMetadata::new(title.clone());
         meta.excerpt = generate_excerpt(&content);
-        self.save_metadata(file.id, &meta).await?;
+        self.save_metadata(file.id, owner_id, tenant_id, &meta).await?;
 
         Ok(Note {
             id: file.id,
@@ -373,7 +409,7 @@ impl NoteService {
     pub async fn get_note(&self, file_id: Uuid, user_id: UserId) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
 
-        let meta = self.load_metadata(file_id).await?.unwrap_or_else(|| {
+        let meta = self.load_metadata(file_id, user_id, file.tenant_id).await?.unwrap_or_else(|| {
             // Graceful fallback for markdown files without sidecars
             let mut fallback = NoteMetadata::new(file.name.trim_end_matches(".md"));
             fallback.created_at = file.created_at;
@@ -427,14 +463,14 @@ impl NoteService {
             .await?;
 
         // Update sidecar
-        let mut meta = self.load_metadata(file_id).await?.unwrap_or_else(|| {
+        let mut meta = self.load_metadata(file_id, user_id, file.tenant_id).await?.unwrap_or_else(|| {
             let mut fallback = NoteMetadata::new(file.name.trim_end_matches(".md"));
             fallback.created_at = file.created_at;
             fallback
         });
         meta.updated_at = Utc::now();
         meta.excerpt = generate_excerpt(&content);
-        self.save_metadata(file_id, &meta).await?;
+        self.save_metadata(file_id, user_id, file.tenant_id, &meta).await?;
 
         Ok(Note {
             id: updated_file.id,
@@ -473,12 +509,12 @@ impl NoteService {
 
         // Update sidecar title
         let mut meta = self
-            .load_metadata(file_id)
+            .load_metadata(file_id, user_id, file.tenant_id)
             .await?
             .unwrap_or_else(|| NoteMetadata::new(&new_title));
         meta.title = new_title;
         meta.updated_at = Utc::now();
-        self.save_metadata(file_id, &meta).await?;
+        self.save_metadata(file_id, user_id, file.tenant_id, &meta).await?;
 
         // Load content for response
         let storage_key = renamed_file.storage_key();
@@ -506,14 +542,14 @@ impl NoteService {
         let _file = self.file_service.get_file(file_id, user_id).await?;
 
         // If public, invalidate share index
-        if let Some(meta) = self.load_metadata(file_id).await? {
+        if let Some(meta) = self.load_metadata(file_id, user_id, _file.tenant_id).await? {
             if let Some(share_id) = meta.public_share_id {
                 let _ = self.delete_public_share_index(&share_id).await;
             }
         }
 
         // Delete sidecar and file
-        self.delete_metadata(file_id).await?;
+        self.delete_metadata(file_id, user_id, _file.tenant_id).await?;
         self.file_service.delete_file(file_id, user_id).await?;
 
         Ok(())
@@ -532,11 +568,11 @@ impl NoteService {
             .await?;
 
         let mut meta = self
-            .load_metadata(file_id)
+            .load_metadata(file_id, user_id, moved_file.tenant_id)
             .await?
             .unwrap_or_else(|| NoteMetadata::new(moved_file.name.trim_end_matches(".md")));
         meta.updated_at = Utc::now();
-        self.save_metadata(file_id, &meta).await?;
+        self.save_metadata(file_id, user_id, moved_file.tenant_id, &meta).await?;
 
         let storage_key = moved_file.storage_key();
         let content = match self.object_store.get(&storage_key).await {
@@ -592,7 +628,7 @@ impl NoteService {
                 }
             }
 
-            let meta = match self.load_metadata(file.id).await {
+            let meta = match self.load_metadata(file.id, user_id, tenant_id).await {
                 Ok(Some(m)) => m,
                 _ => {
                     // Treat plain markdown files without sidecars as notes
@@ -636,7 +672,7 @@ impl NoteService {
         let file = self.file_service.get_file(file_id, user_id).await?;
 
         let mut meta = self
-            .load_metadata(file_id)
+            .load_metadata(file_id, user_id, file.tenant_id)
             .await?
             .unwrap_or_else(|| NoteMetadata::new(file.name.trim_end_matches(".md")));
 
@@ -663,7 +699,7 @@ impl NoteService {
             }
         }
 
-        self.save_metadata(file_id, &meta).await?;
+        self.save_metadata(file_id, user_id, file.tenant_id, &meta).await?;
 
         let storage_key = file.storage_key();
         let content = match self.object_store.get(&storage_key).await {
@@ -692,24 +728,21 @@ impl NoteService {
             .await?
             .ok_or(NoteError::NotFound(Uuid::nil()))?;
 
-        let meta = self
-            .load_metadata(file_id)
-            .await?
-            .ok_or(NoteError::NotFound(file_id))?;
-
-        if meta.visibility != NoteVisibility::Public {
-            return Err(NoteError::NotFound(file_id));
-        }
-
-        // We need to find the file to get its storage key, but we don't have a user_id.
-        // We'll load the file content directly from the sidecar storage key? No.
-        // We need to look up the file in the metadata store by ID.
         let file = self
             .metadata_store
             .find_file_by_id(file_id)
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?
             .ok_or(NoteError::NotFound(file_id))?;
+
+        let meta = self
+            .load_metadata(file_id, file.owner_id, file.tenant_id)
+            .await?
+            .ok_or(NoteError::NotFound(file_id))?;
+
+        if meta.visibility != NoteVisibility::Public {
+            return Err(NoteError::NotFound(file_id));
+        }
 
         let storage_key = file.storage_key();
         let content = match self.object_store.get(&storage_key).await {

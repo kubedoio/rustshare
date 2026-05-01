@@ -6,6 +6,7 @@
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { FileText, Plus, Clock } from 'lucide-svelte';
 
+	import { decisionsApi } from '$lib/api/decisions';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
 	export let module: ModuleDefinition;
@@ -14,40 +15,37 @@
 	$: emptyDescription = module.ui.page.emptyStateDescription ?? 'Record your first decision to get started.';
 	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Decision';
 
-	// Fetch module root folder contents
-	$: rootFolderQuery = createQuery({
-		queryKey: ['decisions-root', module.key],
-		queryFn: () => getModuleRootContents(module.rootPath),
-		enabled: true
+	// Fetch decisions via module service
+	$: decisionsQuery = createQuery({
+		queryKey: ['decisions', module.key],
+		queryFn: () => decisionsApi.list()
 	});
 
-	$: contents = $rootFolderQuery.data;
-	$: decisions = contents?.files ?? [];
+	$: decisions = $decisionsQuery.data ?? [];
 
 	async function handleCreateDecision() {
-		if (!module.defaultTemplate) return;
-		const name = window.prompt('Enter a name for the new decision:');
-		if (!name) return;
+		const title = window.prompt('Enter a title for the new decision:');
+		if (!title) return;
 		try {
-			const result = await createFromTemplate({
-				template_key: module.defaultTemplate,
-				name,
-				parent_folder_id: null
+			const result = await decisionsApi.create({
+				title,
+				category: 'General',
+				content: '# ' + title + '\n\n'
 			});
-			goto(getModuleObjectHref(module.key, result.object_type, result.object_id));
-			$rootFolderQuery.refetch();
+			goto(`/modules/${module.key}/${result.id}`);
+			$decisionsQuery.refetch();
 		} catch (err) {
 			console.error('Failed to create decision:', err);
 		}
 	}
 
-	function navigateToDecision(fileId: string) {
-		goto(getModuleObjectHref(module.key, 'file', fileId));
+	function navigateToDecision(id: string) {
+		goto(`/modules/${module.key}/${id}`);
 	}
 </script>
 
 <div class="flex flex-col gap-6">
-	{#if decisions.length === 0 && contents?.folders?.length === 0}
+	{#if decisions.length === 0}
 		<EmptyState
 			icon={FileText}
 			title={emptyTitle}

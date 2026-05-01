@@ -92,58 +92,16 @@ vi.mock('$lib/api/kanban', () => ({
 	deleteKanbanCard: vi.fn()
 }));
 
+import { queryClient } from '$lib/query-client';
+
 describe('KanbanModuleView', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		queryClient.clear();
 	});
 
 	it('renders a selected board with column folders and cards', async () => {
-		render(KanbanModuleView, {
-			module: {
-				id: 'module_kanban',
-				key: 'kanban',
-				displayName: 'Kanban Dashboard',
-				description: 'Manage board cards as folders and files.',
-				enabled: true,
-				rootPath: '/Kanban',
-				renderer: 'kanban',
-				defaultTemplate: 'template_default_kanban',
-				schemaVersion: '1.0',
-				permissions: {
-					adminCanConfigure: true,
-					workspaceMembersCanUse: true,
-					allowPublicShare: false,
-					allowInternalShare: true
-				},
-				ui: {
-					sidebar: { enabled: true, order: 40, icon: 'columns', label: 'Kanban' },
-					dashboard: {
-						enabled: true,
-						order: 40,
-						widget: {
-							enabled: true,
-							type: 'kanban-summary',
-							title: 'Kanban',
-							description: 'Active boards and cards.',
-							size: 'large',
-							columns: { desktop: 6, tablet: 12, mobile: 12 },
-							maxItems: 4
-						}
-					},
-					page: {
-						enabled: true,
-						route: '/modules/kanban',
-						renderer: 'kanban',
-						layout: 'kanban-board',
-						emptyStateTitle: 'No boards yet',
-						emptyStateDescription: 'Create your first file-backed board.',
-						primaryAction: { label: 'New Board', action: 'create-from-template' }
-					}
-				},
-				aiIndexing: { enabled: true },
-				audit: { enabled: true }
-			}
-		});
+		render(KanbanModuleView, { module: mockModule as any });
 
 		await waitFor(() => {
 			expect(screen.getByText('Backlog')).toBeTruthy();
@@ -153,4 +111,71 @@ describe('KanbanModuleView', () => {
 		expect(screen.getByText('Define MVP')).toBeTruthy();
 		expect(screen.getByText('Design Review')).toBeTruthy();
 	});
+
+	it('shows create board modal when new board button is clicked', async () => {
+		render(KanbanModuleView, { module: mockModule as any });
+
+		const newBoardBtn = await screen.findByRole('button', { name: /New Board/i });
+		newBoardBtn.click();
+
+		await waitFor(() => {
+			expect(screen.getByText('Create New Kanban Board')).toBeTruthy();
+		});
+	});
+
+	it('shows empty state when no boards exist', async () => {
+		const { listKanbanBoards } = await import('$lib/api/kanban');
+		vi.mocked(listKanbanBoards).mockResolvedValueOnce([]);
+
+		render(KanbanModuleView, { module: mockModule as any });
+
+		await waitFor(() => {
+			expect(screen.getByText('No boards yet')).toBeTruthy();
+		});
+	});
 });
+
+const mockModule = {
+	id: 'module_kanban',
+	key: 'kanban',
+	displayName: 'Kanban Dashboard',
+	description: 'Manage board cards as folders and files.',
+	enabled: true,
+	rootPath: '/Kanban',
+	renderer: 'kanban',
+	defaultTemplate: 'template_default_kanban',
+	schemaVersion: '1.0',
+	permissions: {
+		adminCanConfigure: true,
+		workspaceMembersCanUse: true,
+		allowPublicShare: false,
+		allowInternalShare: true
+	},
+	ui: {
+		sidebar: { enabled: true, order: 40, icon: 'columns', label: 'Kanban' },
+		dashboard: {
+			enabled: true,
+			order: 40,
+			widget: {
+				enabled: true,
+				type: 'kanban-summary',
+				title: 'Kanban',
+				description: 'Active boards and cards.',
+				size: 'large',
+				columns: { desktop: 6, tablet: 12, mobile: 12 },
+				maxItems: 4
+			}
+		},
+		page: {
+			enabled: true,
+			route: '/modules/kanban',
+			renderer: 'kanban',
+			layout: 'kanban-board',
+			emptyStateTitle: 'No boards yet',
+			emptyStateDescription: 'Create your first file-backed board.',
+			primaryAction: { label: 'New Board', action: 'create-from-template' }
+		}
+	},
+	aiIndexing: { enabled: true },
+	audit: { enabled: true }
+};

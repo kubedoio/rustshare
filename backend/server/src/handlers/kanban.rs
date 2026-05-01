@@ -84,11 +84,11 @@ pub async fn create_board(
 pub async fn get_board(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-    Path(board_id): Path<Uuid>,
+    Path(board_id_or_slug): Path<String>,
 ) -> Result<Json<KanbanBoard>, Response> {
     let board = state
         .kanban_service
-        .get_board(board_id, auth.user_id, auth.tenant_id)
+        .get_board(board_id_or_slug, auth.user_id, auth.tenant_id)
         .await
         .map_err(kanban_error_response)?;
 
@@ -98,12 +98,12 @@ pub async fn get_board(
 pub async fn update_board(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-    Path(board_id): Path<Uuid>,
+    Path(board_id_or_slug): Path<String>,
     Json(req): Json<UpdateBoardInput>,
 ) -> Result<Json<KanbanBoard>, Response> {
     let board = state
         .kanban_service
-        .update_board(board_id, req, auth.user_id, auth.tenant_id)
+        .update_board(board_id_or_slug, req, auth.user_id, auth.tenant_id)
         .await
         .map_err(kanban_error_response)?;
 
@@ -113,11 +113,11 @@ pub async fn update_board(
 pub async fn archive_board(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-    Path(board_id): Path<Uuid>,
+    Path(board_id_or_slug): Path<String>,
 ) -> Result<StatusCode, Response> {
     state
         .kanban_service
-        .archive_board(board_id, auth.user_id, auth.tenant_id)
+        .archive_board(board_id_or_slug, auth.user_id, auth.tenant_id)
         .await
         .map_err(kanban_error_response)?;
 
@@ -131,11 +131,11 @@ pub async fn archive_board(
 pub async fn list_cards(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-    Path(board_id): Path<Uuid>,
+    Path(board_id_or_slug): Path<String>,
 ) -> Result<Json<Vec<KanbanCard>>, Response> {
     let cards = state
         .kanban_service
-        .list_cards(board_id, auth.user_id, auth.tenant_id)
+        .list_cards(board_id_or_slug, auth.user_id, auth.tenant_id)
         .await
         .map_err(kanban_error_response)?;
 
@@ -145,14 +145,14 @@ pub async fn list_cards(
 pub async fn create_card(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-    Path(board_id): Path<Uuid>,
+    Path(board_id_or_slug): Path<String>,
     Json(req): Json<CreateCardInput>,
 ) -> Result<(StatusCode, Json<KanbanCard>), Response> {
     // column_id is part of the request body for simplicity
     // but spec says POST /boards/:boardId/cards - we accept column_id in body
     let card = state
         .kanban_service
-        .create_card(board_id, req, auth.user_id, auth.tenant_id)
+        .create_card(board_id_or_slug, req, auth.user_id, auth.tenant_id)
         .await
         .map_err(kanban_error_response)?;
 

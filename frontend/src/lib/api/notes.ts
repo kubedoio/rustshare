@@ -108,3 +108,11 @@ export async function getPublicNote(shareId: string): Promise<PublicNoteResponse
 	}
 	return response.json();
 }
+export const notesApi = {
+	get: getNote,
+	list: listNotes,
+	create: createNote,
+	update: async (id: string, req: { content: string }) => saveNote(id, req),
+	delete: deleteNote,
+	toggleVisibility
+};

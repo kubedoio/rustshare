@@ -132,6 +132,18 @@ pub async fn init_app() -> Result<AppState> {
         Arc::clone(&metadata_store),
         Arc::clone(&object_store),
     ));
+    let decision_service = Arc::new(crate::services::decision_service::DecisionService::new(
+        Arc::clone(&file_service),
+        Arc::clone(&folder_service),
+        Arc::clone(&metadata_store),
+        Arc::clone(&object_store),
+    ));
+    let meeting_service = Arc::new(crate::services::meeting_service::MeetingService::new(
+        Arc::clone(&file_service),
+        Arc::clone(&folder_service),
+        Arc::clone(&metadata_store),
+        Arc::clone(&object_store),
+    ));
     let module_service = Arc::new(crate::services::module_service::ModuleService::new(
         Arc::clone(&folder_service),
         Arc::clone(&metadata_store),
@@ -361,6 +373,8 @@ pub async fn init_app() -> Result<AppState> {
         poll_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
         default_tenant_id,
         note_service,
+        decision_service,
+        meeting_service,
         module_service,
         template_service,
         kanban_service,

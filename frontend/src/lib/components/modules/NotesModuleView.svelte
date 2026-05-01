@@ -6,29 +6,26 @@
 	import { getModuleObjectHref } from '$lib/modules/modulePages';
 	import { FileText, Plus, Clock } from 'lucide-svelte';
 
+	import { listNotes, createNote } from '$lib/api/notes';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
 	export let module: ModuleDefinition;
 
-	const notesSummaryQuery = createQuery({
-		queryKey: ['module-summary', 'notes-module-view', module.key],
-		queryFn: () => getModuleSummary(module.key)
+	const notesQuery = createQuery({
+		queryKey: ['notes', module.key],
+		queryFn: () => listNotes()
 	});
 
-	$: recentNotes = $notesSummaryQuery.data?.recent_items ?? [];
+	$: recentNotes = $notesQuery.data ?? [];
 
 	async function handleNewNote() {
-		if (!module.defaultTemplate) {
-			return;
-		}
-
 		try {
-			const result = await createFromTemplate({
-				template_key: module.defaultTemplate,
-				name: 'Untitled Note',
-				parent_folder_id: null
+			const result = await createNote({
+				title: 'Untitled Note',
+				content: '# Untitled Note\n\n'
 			});
-			goto(getModuleObjectHref(module.key, result.object_type, result.object_id));
+			goto(`/modules/${module.key}/${result.id}`);
+			$notesQuery.refetch();
 		} catch (err) {
 			console.error('Failed to create note:', err);
 		}
@@ -52,7 +49,7 @@
 		</button>
 	</div>
 
-	{#if $notesSummaryQuery.isLoading}
+	{#if $notesQuery.isLoading}
 		<div class="flex h-32 items-center justify-center">
 			<div class="loading loading-md loading-spinner text-brand-500"></div>
 		</div>
@@ -68,7 +65,7 @@
 		<div class="flex flex-col gap-2">
 			{#each recentNotes as note}
 				<a
-					href={getModuleObjectHref(module.key, 'file', note.id)}
+					href={`/modules/${module.key}/${note.id}`}
 					class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
 				>
 					<div
@@ -80,7 +77,7 @@
 						<span class="text-sm font-medium text-base-content">{note.name}</span>
 						<span class="flex items-center gap-1 text-xs text-base-content/40">
 							<Clock size={12} />
-							{note.updated_at ? new Date(note.updated_at).toLocaleDateString() : ''}
+							{note.modified_at ? new Date(note.modified_at).toLocaleDateString() : ''}
 						</span>
 					</div>
 				</a>

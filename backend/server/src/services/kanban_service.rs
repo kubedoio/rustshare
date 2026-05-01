@@ -422,15 +422,24 @@ impl KanbanService {
                 .await?;
         }
 
-        self.get_board(board_folder.id, user_id, tenant_id).await
+        self.get_board(board_folder.id.to_string(), user_id, tenant_id).await
     }
 
     pub async fn get_board(
         &self,
-        board_id: Uuid,
+        board_id_or_slug: String,
         user_id: UserId,
-        _tenant_id: Uuid,
+        tenant_id: Uuid,
     ) -> Result<KanbanBoard, KanbanError> {
+        let board_id = if let Ok(id) = Uuid::parse_str(&board_id_or_slug) {
+            id
+        } else {
+            // Try to find by slug
+            let folder = self.find_board_by_slug(&board_id_or_slug, user_id, tenant_id).await?
+                .ok_or(KanbanError::BoardNotFound)?;
+            folder.id
+        };
+
         let board_folder = self
             .folder_service
             .get_folder(board_id, user_id)
@@ -505,11 +514,12 @@ impl KanbanService {
 
     pub async fn update_board(
         &self,
-        board_id: Uuid,
+        board_id_or_slug: String,
         input: UpdateBoardInput,
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<KanbanBoard, KanbanError> {
+        let board_id = self.ensure_board_id(&board_id_or_slug, user_id, tenant_id).await?;
         let board_folder = self
             .folder_service
             .get_folder(board_id, user_id)
@@ -527,15 +537,16 @@ impl KanbanService {
         self.write_board_metadata(&board_folder, &board_meta, user_id, tenant_id)
             .await?;
 
-        self.get_board(board_id, user_id, tenant_id).await
+        self.get_board(board_id.to_string(), user_id, tenant_id).await
     }
 
     pub async fn archive_board(
         &self,
-        board_id: Uuid,
+        board_id_or_slug: String,
         user_id: UserId,
-        _tenant_id: Uuid,
+        tenant_id: Uuid,
     ) -> Result<(), KanbanError> {
+        let board_id = self.ensure_board_id(&board_id_or_slug, user_id, tenant_id).await?;
         let board_folder = self
             .folder_service
             .get_folder(board_id, user_id)
@@ -558,11 +569,11 @@ impl KanbanService {
 
     pub async fn list_cards(
         &self,
-        board_id: Uuid,
+        board_id_or_slug: String,
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Vec<KanbanCard>, KanbanError> {
-        let board = self.get_board(board_id, user_id, tenant_id).await?;
+        let board = self.get_board(board_id_or_slug, user_id, tenant_id).await?;
         let mut cards = Vec::new();
         for col in board.columns {
             cards.extend(col.cards);
@@ -572,11 +583,12 @@ impl KanbanService {
 
     pub async fn create_card(
         &self,
-        board_id: Uuid,
+        board_id_or_slug: String,
         input: CreateCardInput,
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<KanbanCard, KanbanError> {
+        let board_id = self.ensure_board_id(&board_id_or_slug, user_id, tenant_id).await?;
         let column_id = input.column_id.clone().ok_or_else(|| {
             KanbanError::InvalidData("column_id is required".to_string())
         })?;
@@ -838,7 +850,7 @@ impl KanbanService {
         )
         .await?;
 
-        self.get_board(board_id, user_id, tenant_id).await
+        self.get_board(board_id.to_string(), user_id, tenant_id).await
     }
 
     pub async fn archive_card(
@@ -903,7 +915,7 @@ impl KanbanService {
             .await
             .map_err(|e| KanbanError::Database(e.to_string()))?
             .ok_or(KanbanError::BoardNotFound)?;
-        self.get_board(board_folder.id, user_id, board_folder.tenant_id)
+        self.get_board(board_folder.id.to_string(), user_id, board_folder.tenant_id)
             .await
     }
 
@@ -1095,6 +1107,51 @@ impl KanbanService {
         }
 
         Ok(())
+    }
+
+    pub async fn ensure_board_id(
+        &self,
+        board_id_or_slug: &str,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Uuid, KanbanError> {
+        if let Ok(id) = Uuid::parse_str(board_id_or_slug) {
+            Ok(id)
+        } else {
+            let folder = self.find_board_by_slug(board_id_or_slug, user_id, tenant_id).await?
+                .ok_or(KanbanError::BoardNotFound)?;
+            Ok(folder.id)
+        }
+    }
+
+    pub async fn find_board_by_slug(
+        &self,
+        slug: &str,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Option<Folder>, KanbanError> {
+        let root = match self.find_kanban_root(tenant_id).await? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        let contents = self
+            .folder_service
+            .list_contents(root.id, user_id)
+            .await
+            .map_err(KanbanError::from)?;
+
+        for folder in contents.folders {
+            if folder.name == slug {
+                return Ok(Some(folder));
+            }
+            if let Ok(meta) = self.load_board_metadata(&folder, user_id).await {
+                if meta.slug == slug {
+                    return Ok(Some(folder));
+                }
+            }
+        }
+        Ok(None)
     }
 
     // -------------------------------------------------------------------------

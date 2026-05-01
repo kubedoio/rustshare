@@ -21,6 +21,7 @@
 	let renderer = '';
 	let visibilityPolicy = 'workspace';
 	let enabled = true;
+	let isSystemTemplate = false;
 	let error = '';
 	const templateQuery = createQuery({
 		queryKey: ['admin-template', key],
@@ -45,6 +46,7 @@
 		renderer = t.renderer ?? '';
 		visibilityPolicy = t.visibility_policy ?? 'workspace';
 		enabled = t.enabled ?? true;
+		isSystemTemplate = t.system_template ?? false;
 	}
 
 	const updateMutation = createMutation({
@@ -146,6 +148,16 @@
 			Failed to load template: {$templateQuery.error?.message ?? 'Unknown error'}
 		</div>
 	{:else}
+		{#if isSystemTemplate}
+			<div
+				class="mt-4 flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/5 p-3 text-sm text-warning"
+			>
+				<AlertCircle size={16} />
+				This is a system template. Structure, files, and schema cannot be modified directly.
+				Duplicate this template to create a customizable version.
+			</div>
+		{/if}
+
 		{#if error}
 			<div
 				class="mt-4 flex items-center gap-2 rounded-xl border border-error/30 bg-error/5 p-3 text-sm text-error"
@@ -294,9 +306,10 @@
 							class="textarea-bordered textarea font-mono text-xs textarea-sm"
 							bind:value={folderStructureJson}
 							rows={4}
+							disabled={isSystemTemplate}
 						></textarea>
 					</div>
-
+ 
 					<div class="flex flex-col gap-1">
 						<label class="text-xs font-semibold text-base-content/70" for="default-files-json-array"
 							>Default Files (JSON array)</label
@@ -306,9 +319,10 @@
 							class="textarea-bordered textarea font-mono text-xs textarea-sm"
 							bind:value={defaultFilesJson}
 							rows={6}
+							disabled={isSystemTemplate}
 						></textarea>
 					</div>
-
+ 
 					<div class="flex flex-col gap-1">
 						<label
 							class="text-xs font-semibold text-base-content/70"
@@ -319,6 +333,7 @@
 							class="textarea-bordered textarea font-mono text-xs textarea-sm"
 							bind:value={metadataSchemaJson}
 							rows={4}
+							disabled={isSystemTemplate}
 						></textarea>
 					</div>
 				</div>

@@ -23,6 +23,7 @@ pub struct Template {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub enabled: bool,
+    pub system_template: bool,
     pub tenant_id: Uuid,
 }
 

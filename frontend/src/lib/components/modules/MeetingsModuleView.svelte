@@ -6,6 +6,7 @@
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { Folder, Plus, Clock } from 'lucide-svelte';
 
+	import { meetingsApi } from '$lib/api/meetings';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
 	export let module: ModuleDefinition;
@@ -14,40 +15,38 @@
 	$: emptyDescription = module.ui.page.emptyStateDescription ?? 'Create your first meeting note to get started.';
 	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Meeting';
 
-	// Fetch module root folder contents
-	$: rootFolderQuery = createQuery({
-		queryKey: ['meetings-root', module.key],
-		queryFn: () => getModuleRootContents(module.rootPath),
-		enabled: true
+	// Fetch meetings via module service
+	$: meetingsQuery = createQuery({
+		queryKey: ['meetings', module.key],
+		queryFn: () => meetingsApi.list()
 	});
 
-	$: contents = $rootFolderQuery.data;
-	$: meetings = contents?.folders ?? [];
+	$: meetings = $meetingsQuery.data ?? [];
 
 	async function handleCreateMeeting() {
-		if (!module.defaultTemplate) return;
-		const name = window.prompt('Enter a name for the new meeting:');
-		if (!name) return;
+		const title = window.prompt('Enter a title for the new meeting:');
+		if (!title) return;
 		try {
-			const result = await createFromTemplate({
-				template_key: module.defaultTemplate,
-				name,
-				parent_folder_id: null
+			const result = await meetingsApi.create({
+				title,
+				team: 'General',
+				date: new Date().toISOString(),
+				content: '# ' + title + '\n\n'
 			});
-			goto(getModuleObjectHref(module.key, result.object_type, result.object_id));
-			$rootFolderQuery.refetch();
+			goto(`/modules/${module.key}/${result.id}`);
+			$meetingsQuery.refetch();
 		} catch (err) {
 			console.error('Failed to create meeting:', err);
 		}
 	}
 
-	function navigateToMeeting(folderId: string) {
-		goto(getModuleObjectHref(module.key, 'folder', folderId));
+	function navigateToMeeting(id: string) {
+		goto(`/modules/${module.key}/${id}`);
 	}
 </script>
 
 <div class="flex flex-col gap-6">
-	{#if meetings.length === 0 && contents?.files?.length === 0}
+	{#if meetings.length === 0}
 		<EmptyState
 			icon={Folder}
 			title={emptyTitle}
@@ -81,7 +80,7 @@
 							<div class="flex items-center gap-3 text-xs text-base-content/50">
 								<span class="inline-flex items-center gap-1">
 									<Clock size={12} />
-									{new Date(meeting.updated_at).toLocaleDateString()}
+									{new Date(meeting.modified_at).toLocaleDateString()}
 								</span>
 							</div>
 						</div>

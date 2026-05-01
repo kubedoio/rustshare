@@ -7,11 +7,13 @@ pub mod device_auth;
 pub mod devices;
 mod extractors;
 pub mod features;
+mod decisions;
 mod files;
 mod folders;
 mod groups;
 mod kanban;
 pub mod invites;
+mod meetings;
 mod modules;
 mod notes;
 mod notifications;
@@ -67,6 +69,8 @@ pub use groups::{
 };
 pub use invites::{accept_invite, create_invite, get_invite};
 pub use modules::{create_from_template, get_module, get_module_summary, list_enabled_modules};
+pub use decisions::{create_decision, get_decision, list_decisions, update_decision};
+pub use meetings::{create_meeting, get_meeting, list_meetings, update_meeting};
 pub use notes::{
     create_note, delete_note, get_note, get_public_note, list_notes, list_recent_notes, move_note,
     rename_note, save_note, toggle_visibility,

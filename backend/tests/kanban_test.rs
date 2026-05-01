@@ -187,7 +187,7 @@ async fn contract_create_card_creates_folder_and_metadata() {
     let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
     let card = service
         .create_card(
-            board.id.parse().unwrap(),
+            board.id.clone(),
             CreateCardInput {
                 title: "My First Card".to_string(),
                 column_id: Some(backlog.id.clone()),
@@ -228,7 +228,7 @@ async fn contract_move_card_updates_column_and_metadata() {
 
     let card = service
         .create_card(
-            board.id.parse().unwrap(),
+            board.id.clone(),
             CreateCardInput {
                 title: "Movable Card".to_string(),
                 column_id: Some(backlog.id.clone()),
@@ -308,7 +308,7 @@ async fn contract_archive_card_hides_from_board() {
     let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
     let card = service
         .create_card(
-            board.id.parse().unwrap(),
+            board.id.clone(),
             CreateCardInput {
                 title: "To Archive".to_string(),
                 column_id: Some(backlog.id.clone()),
@@ -328,7 +328,7 @@ async fn contract_archive_card_hides_from_board() {
         .expect("archive_card should succeed");
 
     let refreshed_board = service
-        .get_board(board.id.parse().unwrap(), user.id, tenant_id)
+        .get_board(board.id.clone(), user.id, tenant_id)
         .await
         .unwrap();
     let refreshed_backlog = refreshed_board.columns.iter().find(|c| c.id == backlog.id).unwrap();
@@ -353,7 +353,7 @@ async fn contract_delete_card_removes_folder() {
     let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
     let card = service
         .create_card(
-            board.id.parse().unwrap(),
+            board.id.clone(),
             CreateCardInput {
                 title: "To Delete".to_string(),
                 column_id: Some(backlog.id.clone()),
@@ -396,7 +396,7 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
     // Create three cards
     let _card1 = service
         .create_card(
-            board.id.parse().unwrap(),
+            board.id.clone(),
             CreateCardInput { title: "Card 1".to_string(), column_id: Some(backlog.id.clone()), content: None, priority: None, tags: None },
             user.id,
             tenant_id,
@@ -406,7 +406,7 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
 
     let _card2 = service
         .create_card(
-            board.id.parse().unwrap(),
+            board.id.clone(),
             CreateCardInput { title: "Card 2".to_string(), column_id: Some(backlog.id.clone()), content: None, priority: None, tags: None },
             user.id,
             tenant_id,
@@ -416,7 +416,7 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
 
     let card3 = service
         .create_card(
-            board.id.parse().unwrap(),
+            board.id.clone(),
             CreateCardInput { title: "Card 3".to_string(), column_id: Some(backlog.id.clone()), content: None, priority: None, tags: None },
             user.id,
             tenant_id,
@@ -449,3 +449,26 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
 
     cleanup_user(&pool, user.id).await;
 }
+
+    #[tokio::test]
+    #[ignore]
+    async fn contract_get_board_by_slug_returns_board() {
+        let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+        let tenant_id = Uuid::new_v4();
+        let user = create_test_user(&metadata_store, "slug_user", tenant_id).await;
+        let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+        let board = service
+            .create_board(CreateBoardInput { title: "Slug Board".to_string() }, user.id, tenant_id)
+            .await
+            .unwrap();
+
+        // Get by ID
+        let by_id = service.get_board(board.id.clone(), user.id, tenant_id).await.unwrap();
+        assert_eq!(by_id.title, "Slug Board");
+
+        // Get by Slug
+        let by_slug = service.get_board("slug-board".to_string(), user.id, tenant_id).await.unwrap();
+        assert_eq!(by_slug.id, board.id);
+        assert_eq!(by_slug.slug, "slug-board");
+    }

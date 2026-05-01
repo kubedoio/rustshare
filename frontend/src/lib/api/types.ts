@@ -361,6 +361,7 @@ export interface TemplateConfig {
 	renderer: string | null;
 	visibility_policy: string;
 	enabled: boolean;
+	system_template: boolean;
 	created_by: string | null;
 	created_at: string;
 	updated_at: string;

@@ -788,6 +788,7 @@ pub async fn list_files(
         WHERE f.owner_id = $1
           AND f.tenant_id = $2
           AND f.deleted_at IS NULL
+          AND f.name NOT LIKE '.rustshare-%'
         ORDER BY f.created_at DESC
         "#,
     )

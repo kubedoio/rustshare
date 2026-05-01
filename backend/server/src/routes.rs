@@ -262,6 +262,24 @@ pub fn kanban_routes() -> Router<AppState> {
         .route("/api/v1/modules/kanban/cards/{card_id}", delete(crate::handlers::delete_card))
 }
 
+pub fn decision_routes() -> Router<AppState> {
+    use axum::routing::{get, post, put};
+    Router::new()
+        .route("/api/v1/decisions", get(crate::handlers::list_decisions))
+        .route("/api/v1/decisions", post(crate::handlers::create_decision))
+        .route("/api/v1/decisions/{id}", get(crate::handlers::get_decision))
+        .route("/api/v1/decisions/{id}", put(crate::handlers::update_decision))
+}
+
+pub fn meeting_routes() -> Router<AppState> {
+    use axum::routing::{get, post, put};
+    Router::new()
+        .route("/api/v1/meetings", get(crate::handlers::list_meetings))
+        .route("/api/v1/meetings", post(crate::handlers::create_meeting))
+        .route("/api/v1/meetings/{id}", get(crate::handlers::get_meeting))
+        .route("/api/v1/meetings/{id}", put(crate::handlers::update_meeting))
+}
+
 pub fn admin_routes() -> Router<AppState> {
     use axum::routing::{delete, get, patch, post, put};
     Router::new()
@@ -303,11 +321,15 @@ pub fn admin_routes() -> Router<AppState> {
         )
         .route(
             "/api/v1/admin/templates/{key}",
-            patch(crate::handlers::admin::templates::update_template),
+            put(crate::handlers::admin::templates::update_template),
         )
         .route(
             "/api/v1/admin/templates/{key}",
             delete(crate::handlers::admin::templates::delete_template),
+        )
+        .route(
+            "/api/v1/admin/templates/{key}/duplicate",
+            post(crate::handlers::admin::templates::duplicate_template),
         )
         .route(
             "/api/v1/admin/users",

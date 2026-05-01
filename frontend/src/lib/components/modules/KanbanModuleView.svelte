@@ -13,8 +13,9 @@
 	import { createFromTemplate } from '$lib/api/modules';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
+	import CreateKanbanBoardModal from '$lib/components/modals/CreateKanbanBoardModal.svelte';
 	import type { KanbanBoard, KanbanCard, KanbanColumn } from '$lib/api/types';
-	import { Folder, Plus, GripVertical, Archive, Trash2, X } from 'lucide-svelte';
+	import { Folder, Plus, GripVertical, Archive, Trash2, X, ChevronRight } from 'lucide-svelte';
 
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
@@ -27,6 +28,7 @@
 	const queryClient = useQueryClient();
 
 	let selectedBoardId = $state('');
+	let showCreateBoardModal = $state(false);
 	let dragCardId = $state<string | null>(null);
 	let dragSourceColumnId = $state<string | null>(null);
 	let dragSourceOrder = $state(0);
@@ -40,7 +42,7 @@
 	let columnRefs = $state<Record<string, HTMLDivElement | null>>({});
 
 	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No boards yet');
-	let emptyDescription = $derived(module.ui.page.emptyStateDescription ?? 'Create your first file-backed board to get started.');
+	let emptyDescription = $derived(module.ui.page.emptyStateDescription ?? 'Create your first file-backed board.');
 	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New Board');
 
 	// -------------------------------------------------------------------------
@@ -56,7 +58,7 @@
 		createQuery({
 			queryKey: ['kanban-board', selectedBoardId],
 			queryFn: () => getKanbanBoard(selectedBoardId),
-			enabled: () => !!selectedBoardId
+			enabled: !!selectedBoardId
 		})
 	);
 
@@ -83,14 +85,6 @@
 	// -------------------------------------------------------------------------
 	// Mutations
 	// -------------------------------------------------------------------------
-
-	const createBoardMutation = createMutation({
-		mutationFn: createKanbanBoard,
-		onSuccess: (data) => {
-			boardsQuery.refetch();
-			selectedBoardId = data.id;
-		}
-	});
 
 	const createCardMutation = createMutation({
 		mutationFn: ({ boardId, input }: { boardId: string; input: Parameters<typeof createKanbanCard>[1] }) =>
@@ -156,25 +150,13 @@
 	// Board creation
 	// -------------------------------------------------------------------------
 
-	async function handleCreateBoard() {
-		const name = window.prompt('Enter a name for the new board:');
-		if (!name) return;
-		try {
-			if (module.defaultTemplate) {
-				const result = await createFromTemplate({
-					template_key: module.defaultTemplate,
-					name,
-					parent_folder_id: null
-				});
-				boardsQuery.refetch();
-				selectedBoardId = result.object_id;
-			} else {
-				await createBoardMutation.mutateAsync(name);
-			}
-		} catch (err) {
-			console.error('Failed to create board:', err);
-			alert('Failed to create board');
-		}
+	function handleCreateBoard() {
+		showCreateBoardModal = true;
+	}
+
+	function handleBoardCreated(boardId: string) {
+		selectedBoardId = boardId;
+		boardsQuery.refetch();
 	}
 
 	// -------------------------------------------------------------------------
@@ -574,6 +556,13 @@
 		</div>
 	{/if}
 </ModalBase>
+
+<CreateKanbanBoardModal
+	open={showCreateBoardModal}
+	onClose={() => (showCreateBoardModal = false)}
+	onSuccess={handleBoardCreated}
+	defaultTemplate={module.defaultTemplate}
+/>
 
 <style>
 	.kanban-board-surface {
