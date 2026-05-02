@@ -1,7 +1,7 @@
 use crate::handlers::ensure_optional_seed_user;
 use crate::oidc_runtime::{seed_oidc_config_from_env, OidcRuntimeCache};
 use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
-use crate::state::{AppAiService, AppState, AppUploadService};
+use crate::state::{AppAiService, AppState, AppUploadService, AppUserShareService};
 use crate::trash_cleanup::{spawn_trash_cleanup_worker, TrashCleanupConfig};
 use anyhow::Result;
 use rand::Rng;
@@ -29,9 +29,9 @@ use tokio::sync::Mutex;
 use tracing::info;
 
 struct Services {
-    file_service: Arc<FileService>,
-    folder_service: Arc<FolderService>,
-    share_service: Arc<ShareService>,
+    file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>>,
+    folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
+    share_service: Arc<ShareService<EventStore, MetadataStore, JwtManager, ShareNotificationRepoImpl>>,
     note_service: Arc<crate::services::note_service::NoteService>,
     decision_service: Arc<crate::services::decision_service::DecisionService>,
     meeting_service: Arc<crate::services::meeting_service::MeetingService>,
@@ -39,9 +39,9 @@ struct Services {
     template_service: Arc<crate::services::template_service::TemplateService>,
     kanban_service: Arc<crate::services::kanban_service::KanbanService>,
     brainstorming_service: Arc<crate::services::brainstorming_service::BrainstormingService>,
-    thumbnail_service: Arc<ThumbnailService>,
-    notification_service: Arc<NotificationService>,
-    user_share_service: Arc<UserShareService>,
+    thumbnail_service: Arc<ThumbnailService<ObjectStore>>,
+    notification_service: Arc<NotificationService<NotificationRepository>>,
+    user_share_service: Arc<AppUserShareService>,
     ai_service: Option<Arc<AppAiService>>,
     upload_service: Arc<AppUploadService>,
 }
@@ -120,7 +120,7 @@ async fn init_repositories(
     Arc<UserRepository>,
     Arc<FileRepository>,
     Arc<FolderRepository>,
-    Arc<PermissionResolver>,
+    Arc<PermissionResolver<PermissionResolverRepository>>,
 )> {
     let notification_repository = NotificationRepository::new(db_pool.clone());
     let share_repository = Arc::new(ShareRepository::new(db_pool.clone()));
@@ -152,7 +152,7 @@ async fn init_services(
     user_repository: Arc<UserRepository>,
     file_repository: Arc<FileRepository>,
     folder_repository: Arc<FolderRepository>,
-    permission_resolver: Arc<PermissionResolver>,
+    permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
 ) -> Result<Services> {
     let (file_service, folder_service, share_notification_repo, thumbnail_service, notification_service) = tokio::join!(
         async {

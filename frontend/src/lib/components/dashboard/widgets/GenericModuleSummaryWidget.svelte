@@ -30,9 +30,9 @@
 			{#each $summaryQuery.data.recent_items.slice(0, widget.maxItems) as item}
 				<li>
 					{#if item.item_type === 'file'}
-						<FileText size={13} />
+						<FileText size={11} />
 					{:else}
-						<Folder size={13} />
+						<Folder size={11} />
 					{/if}
 					<span>{item.name}</span>
 				</li>
@@ -42,7 +42,7 @@
 
 	<div class="widget-footer">
 		<span>{widget.primaryAction?.label ?? 'Open Module'}</span>
-		<ArrowRight size={14} />
+		<ArrowRight size={12} />
 	</div>
 </a>
 
@@ -51,14 +51,14 @@
 
 	.summary-count {
 		margin: 0;
-		font-size: 0.95rem;
+		font-size: 0.82rem;
 		font-weight: 700;
 	}
 
 	.summary-list {
 		display: flex;
 		flex-direction: column;
-		gap: 0.6rem;
+		gap: 0.4rem;
 		margin: 0;
 		padding: 0;
 		list-style: none;
@@ -67,8 +67,8 @@
 	.summary-list li {
 		display: flex;
 		align-items: center;
-		gap: 0.55rem;
-		font-size: 0.9rem;
+		gap: 0.4rem;
+		font-size: 0.78rem;
 		color: color-mix(in oklab, var(--base-content) 72%, transparent);
 	}
 
@@ -76,8 +76,8 @@
 		margin-top: auto;
 		display: inline-flex;
 		align-items: center;
-		gap: 0.45rem;
-		font-size: 0.85rem;
+		gap: 0.35rem;
+		font-size: 0.78rem;
 		font-weight: 700;
 		color: var(--brand-500);
 	}

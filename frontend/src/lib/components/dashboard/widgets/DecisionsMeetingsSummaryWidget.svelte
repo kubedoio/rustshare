@@ -70,17 +70,17 @@
 	.streams {
 		display: grid;
 		grid-template-columns: 1fr;
-		gap: 1rem;
+		gap: 0.6rem;
 	}
 
 	.streams section {
-		padding-left: 1rem;
+		padding-left: 0.6rem;
 		border-left: 2px solid color-mix(in oklab, var(--base-300) 65%, transparent);
 	}
 
 	.streams header {
-		margin-bottom: 0.75rem;
-		font-size: 0.9rem;
+		margin-bottom: 0.4rem;
+		font-size: 0.75rem;
 		font-weight: 800;
 	}
 
@@ -90,22 +90,22 @@
 		list-style: none;
 		display: flex;
 		flex-direction: column;
-		gap: 0.85rem;
+		gap: 0.45rem;
 	}
 
 	.streams li {
 		display: flex;
 		flex-direction: column;
-		gap: 0.15rem;
+		gap: 0.05rem;
 	}
 
 	.streams strong {
-		font-size: 0.94rem;
+		font-size: 0.8rem;
 	}
 
 	.streams span,
 	.empty-copy {
-		font-size: 0.8rem;
+		font-size: 0.72rem;
 		color: color-mix(in oklab, var(--base-content) 62%, transparent);
 	}
 </style>

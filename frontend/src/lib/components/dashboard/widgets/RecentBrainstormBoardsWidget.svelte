@@ -39,13 +39,13 @@
 	</div>
 
 	{#if $boardsQuery.isLoading}
-		<div class="flex h-24 items-center justify-center">
+		<div class="flex h-16 items-center justify-center">
 			<div class="loading loading-sm loading-spinner text-brand-500"></div>
 		</div>
 	{:else if ($boardsQuery.data ?? []).length === 0}
-		<div class="flex flex-col items-center gap-2 py-4 text-base-content/40">
-			<PenTool size={24} />
-			<p class="text-sm">No boards yet.</p>
+		<div class="flex flex-col items-center gap-1.5 py-3 text-base-content/40">
+			<PenTool size={18} />
+			<p class="text-xs">No boards yet.</p>
 		</div>
 	{:else}
 		<div class="board-grid">
@@ -56,7 +56,7 @@
 							<img src={getPreviewUrl(board)!} alt={board.title} loading="lazy" />
 						{:else}
 							<div class="thumb-placeholder">
-								<ImageOff size={20} />
+								<ImageOff size={14} />
 							</div>
 						{/if}
 					</div>
@@ -76,7 +76,7 @@
 	{#if widget.primaryAction}
 		<button class="widget-footer" onclick={handleNewBoard}>
 			<span>{widget.primaryAction.label}</span>
-			<Plus size={14} />
+			<Plus size={12} />
 		</button>
 	{/if}
 </div>
@@ -85,37 +85,37 @@
 	.widget-card {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: 0.5rem;
 		min-height: 100%;
-		padding: 1.25rem;
-		border-radius: 1.6rem;
+		padding: 0.75rem;
+		border-radius: 1rem;
 		border: 1px solid color-mix(in oklab, var(--base-300) 54%, transparent);
 		background: color-mix(in oklab, var(--base-100) 94%, white);
 		box-shadow: 0 8px 24px rgb(72 42 17 / 0.05);
 	}
 
 	.widget-card[data-size='small'] {
-		min-height: 11rem;
+		min-height: 5.5rem;
 	}
 
 	.widget-header {
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
-		gap: 1rem;
+		gap: 0.5rem;
 	}
 
 	.widget-header h3 {
-		margin: 0 0 0.3rem;
-		font-size: 1.05rem;
+		margin: 0 0 0.15rem;
+		font-size: 0.82rem;
 		font-weight: 800;
 		letter-spacing: -0.02em;
 	}
 
 	.widget-header p {
 		margin: 0;
-		font-size: 0.86rem;
-		line-height: 1.45;
+		font-size: 0.72rem;
+		line-height: 1.4;
 		color: color-mix(in oklab, var(--base-content) 64%, transparent);
 	}
 
@@ -123,11 +123,11 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		padding: 0.2rem 0.65rem;
+		padding: 0.12rem 0.45rem;
 		border-radius: 999px;
 		border: 1px solid color-mix(in oklab, var(--base-300) 55%, transparent);
 		background: var(--rs-surface-muted);
-		font-size: 0.72rem;
+		font-size: 0.62rem;
 		font-weight: 700;
 		color: color-mix(in oklab, var(--base-content) 70%, transparent);
 	}
@@ -135,17 +135,17 @@
 	.board-grid {
 		display: grid;
 		grid-template-columns: repeat(2, 1fr);
-		gap: 0.75rem;
+		gap: 0.5rem;
 	}
 
 	.board-item {
 		display: flex;
 		flex-direction: column;
-		gap: 0.4rem;
-		border-radius: 0.85rem;
+		gap: 0.3rem;
+		border-radius: 0.65rem;
 		border: 1px solid color-mix(in oklab, var(--base-300) 40%, transparent);
 		background: color-mix(in oklab, var(--rs-surface-muted) 58%, white);
-		padding: 0.5rem;
+		padding: 0.35rem;
 		transition:
 			border-color 150ms ease,
 			background 150ms ease;
@@ -158,7 +158,7 @@
 
 	.board-thumb {
 		aspect-ratio: 16 / 10;
-		border-radius: 0.6rem;
+		border-radius: 0.5rem;
 		overflow: hidden;
 		background: var(--base-200);
 	}
@@ -181,12 +181,12 @@
 	.board-meta {
 		display: flex;
 		flex-direction: column;
-		gap: 0.15rem;
-		padding: 0 0.2rem;
+		gap: 0.05rem;
+		padding: 0 0.15rem;
 	}
 
 	.board-meta strong {
-		font-size: 0.85rem;
+		font-size: 0.72rem;
 		font-weight: 600;
 		color: var(--base-content);
 		white-space: nowrap;
@@ -195,20 +195,20 @@
 	}
 
 	.board-meta span {
-		font-size: 0.75rem;
+		font-size: 0.65rem;
 		color: color-mix(in oklab, var(--base-content) 55%, transparent);
 	}
 
 	.widget-footer {
-		margin-top: 0.75rem;
+		margin-top: 0.5rem;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		gap: 0.45rem;
+		gap: 0.35rem;
 		width: 100%;
-		padding: 0.5rem;
-		border-radius: 0.6rem;
-		font-size: 0.85rem;
+		padding: 0.35rem;
+		border-radius: 0.5rem;
+		font-size: 0.75rem;
 		font-weight: 700;
 		color: var(--brand-500);
 		background: transparent;

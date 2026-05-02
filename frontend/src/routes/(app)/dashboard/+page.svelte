@@ -1,14 +1,13 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
-	import CompactWorkspaceOverview from '$lib/components/dashboard/CompactWorkspaceOverview.svelte';
 	import WorkspaceSummaryInsightsSection from '$lib/components/dashboard/WorkspaceSummaryInsightsSection.svelte';
+	import DashboardSettingsPanel from '$lib/components/dashboard/DashboardSettingsPanel.svelte';
 	import DashboardSkeleton from '$lib/components/common/DashboardSkeleton.svelte';
 	import { listAllFiles } from '$lib/api/files';
 	import { currentUser } from '$lib/stores/auth';
 	import { createQuery } from '$lib/query-compat';
-	import type { File } from '$lib/api/types';
-	import { Plus } from 'lucide-svelte';
+	import { Settings } from 'lucide-svelte';
 	import { DEFAULT_WORKSPACE_SURFACE, getDashboardModulesForUser } from '$lib/modules/registry';
+	import { dashboardConfig, getVisibleModules } from '$lib/stores/dashboardConfig';
 
 	const allFilesQuery = createQuery({
 		queryKey: ['all-files'],
@@ -29,26 +28,10 @@
 		.filter((section) => section.enabled)
 		.sort((a, b) => a.order - b.order);
 	$: dashboardModules = getDashboardModulesForUser($currentUser);
-	$: primaryDashboardModule = dashboardModules.find(
-		(module) => !!module.ui.dashboard.widget.primaryAction
-	);
+	$: dashboardConfig.hydrate(dashboardModules);
+	$: visibleModules = getVisibleModules(dashboardModules, $dashboardConfig);
 	$: sharedFiles = $sharedFilesQuery.data ?? [];
 	$: totalFilesCount = $allFilesQuery.data?.length ?? 0;
-	$: totalSizeUsed =
-		$allFilesQuery.data?.reduce((sum: number, file: File) => sum + (file.size || 0), 0) ?? 0;
-	$: storageQuota = $currentUser?.storage_quota ?? null;
-	$: workspaceTitle = `${$currentUser?.display_name ?? 'Workspace'}'s Workspace Overview`;
-
-	async function handleCreateNew() {
-		await goto('/files');
-	}
-
-	async function handlePrimaryModuleAction(module: any) {
-		const action = module.ui.dashboard.widget.primaryAction;
-		if (action && action.action === 'create-from-template') {
-			console.log('Creating from template:', action.template);
-		}
-	}
 </script>
 
 <svelte:head>
@@ -59,36 +42,25 @@
 	<DashboardSkeleton />
 {:else}
 	<div class="workspace-dashboard-page">
+		<div class="dashboard-controls">
+			<button
+				type="button"
+				class="settings-trigger"
+				on:click={() => dashboardConfig.setEditMode(!$dashboardConfig.editMode)}
+				title={$dashboardConfig.editMode ? 'Close settings' : 'Customize dashboard'}
+				aria-pressed={$dashboardConfig.editMode}
+			>
+				<Settings size={18} />
+			</button>
+		</div>
+
+		{#if $dashboardConfig.editMode}
+			<DashboardSettingsPanel modules={dashboardModules} />
+		{/if}
+
 		{#each sections as section (section.key)}
-			{#if section.renderer === 'compact-workspace-overview'}
-				<div class="overview-stack">
-					<CompactWorkspaceOverview
-						{workspaceTitle}
-						totalFiles={totalFilesCount}
-						sharedItems={sharedFiles.length}
-						{storageQuota}
-						storageUsed={totalSizeUsed}
-					/>
-
-					<div class="surface-actions">
-						{#if primaryDashboardModule}
-							<button
-								type="button"
-								class="surface-action primary"
-								on:click={() => handlePrimaryModuleAction(primaryDashboardModule)}
-							>
-								{primaryDashboardModule.ui.dashboard.widget.primaryAction?.label ?? 'Open'}
-							</button>
-						{/if}
-
-						<button type="button" class="surface-action secondary" on:click={handleCreateNew}>
-							<Plus size={16} />
-							<span>New</span>
-						</button>
-					</div>
-				</div>
-			{:else if section.renderer === 'workspace-widget-grid'}
-				<WorkspaceSummaryInsightsSection {section} modules={dashboardModules} />
+			{#if section.renderer === 'workspace-widget-grid'}
+				<WorkspaceSummaryInsightsSection modules={visibleModules} />
 			{/if}
 		{/each}
 	</div>
@@ -101,43 +73,41 @@
 		padding: 0 2rem 2.75rem;
 		display: flex;
 		flex-direction: column;
-		gap: 2rem;
+		gap: 1.5rem;
 	}
 
-	.overview-stack {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-	}
-
-	.surface-actions {
+	.dashboard-controls {
 		display: flex;
 		justify-content: flex-end;
-		gap: 0.75rem;
 	}
 
-	.surface-action {
+	.settings-trigger {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.45rem;
-		border-radius: 999px;
-		padding: 0.85rem 1.25rem;
-		font-size: 0.92rem;
-		font-weight: 700;
-		border: 1px solid transparent;
+		justify-content: center;
+		width: 2.5rem;
+		height: 2.5rem;
+		border-radius: 0.85rem;
+		border: 1px solid color-mix(in oklab, var(--base-300) 50%, transparent);
+		background: color-mix(in oklab, var(--base-100) 92%, white);
+		color: color-mix(in oklab, var(--base-content) 65%, transparent);
 		cursor: pointer;
+		flex-shrink: 0;
+		transition:
+			background 150ms ease,
+			color 150ms ease,
+			border-color 150ms ease;
 	}
 
-	.surface-action.primary {
+	.settings-trigger:hover {
+		border-color: var(--brand-500);
+		color: var(--brand-500);
+	}
+
+	.settings-trigger[aria-pressed='true'] {
 		background: var(--brand-500);
+		border-color: var(--brand-500);
 		color: white;
-		box-shadow: 0 10px 24px rgb(195 106 40 / 0.2);
-	}
-
-	.surface-action.secondary {
-		background: color-mix(in oklab, var(--base-100) 90%, white);
-		border-color: color-mix(in oklab, var(--base-300) 55%, transparent);
-		color: var(--base-content);
 	}
 
 	@media (max-width: 1199px) {
@@ -149,12 +119,7 @@
 	@media (max-width: 767px) {
 		.workspace-dashboard-page {
 			padding: 0 1rem 2rem;
-			gap: 1.5rem;
-		}
-
-		.surface-actions {
-			justify-content: stretch;
-			flex-direction: column;
+			gap: 1.25rem;
 		}
 	}
 </style>

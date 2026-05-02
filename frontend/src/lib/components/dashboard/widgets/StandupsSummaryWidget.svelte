@@ -47,25 +47,25 @@
 		list-style: none;
 		display: flex;
 		flex-direction: column;
-		gap: 0.8rem;
+		gap: 0.45rem;
 	}
 
 	.standup-list li {
-		padding: 0.85rem 0.95rem;
-		border-radius: 1rem;
+		padding: 0.5rem 0.6rem;
+		border-radius: 0.65rem;
 		background: color-mix(in oklab, var(--rs-surface-muted) 58%, white);
 	}
 
 	.standup-list strong {
 		display: block;
-		font-size: 0.94rem;
-		margin-bottom: 0.2rem;
+		font-size: 0.8rem;
+		margin-bottom: 0.1rem;
 	}
 
 	.standup-list p,
 	.empty-copy {
 		margin: 0;
-		font-size: 0.82rem;
+		font-size: 0.72rem;
 		color: color-mix(in oklab, var(--base-content) 62%, transparent);
 	}
 </style>

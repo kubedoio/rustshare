@@ -46,32 +46,32 @@
 	.share-stats {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 0.8rem;
+		gap: 0.5rem;
 	}
 
 	.share-stats div {
-		padding: 0.85rem 0.95rem;
-		border-radius: 1rem;
+		padding: 0.5rem 0.6rem;
+		border-radius: 0.65rem;
 		background: color-mix(in oklab, var(--rs-surface-muted) 58%, white);
 	}
 
 	.share-stats strong {
 		display: block;
-		font-size: 1rem;
-		margin-bottom: 0.15rem;
+		font-size: 0.85rem;
+		margin-bottom: 0.1rem;
 	}
 
 	.share-stats span,
 	.share-list {
-		font-size: 0.82rem;
+		font-size: 0.72rem;
 		color: color-mix(in oklab, var(--base-content) 62%, transparent);
 	}
 
 	.share-list {
 		margin: 0;
-		padding-left: 1.1rem;
+		padding-left: 0.9rem;
 		display: flex;
 		flex-direction: column;
-		gap: 0.4rem;
+		gap: 0.25rem;
 	}
 </style>

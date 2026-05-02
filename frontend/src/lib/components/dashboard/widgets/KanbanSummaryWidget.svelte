@@ -13,7 +13,9 @@
 	const widget = $derived(module.ui.dashboard.widget);
 
 	const summaryQuery = createQuery({
-		queryKey: ['module-summary', module.key],
+		get queryKey() {
+			return ['module-summary', module.key];
+		},
 		queryFn: () => getModuleSummary(module.key)
 	});
 
@@ -79,54 +81,54 @@
 	.kanban-scroll {
 		display: grid;
 		grid-auto-flow: column;
-		grid-auto-columns: minmax(10rem, 12rem);
-		gap: 0.75rem;
+		grid-auto-columns: minmax(7rem, 9rem);
+		gap: 0.5rem;
 		overflow-x: auto;
-		padding-bottom: 0.5rem;
+		padding-bottom: 0.35rem;
 	}
 
 	.kanban-column {
 		display: flex;
 		flex-direction: column;
-		gap: 0.6rem;
-		min-height: 10rem;
-		padding: 0.75rem;
-		border-radius: 1rem;
+		gap: 0.4rem;
+		min-height: 5rem;
+		padding: 0.5rem;
+		border-radius: 0.65rem;
 		background: color-mix(in oklab, var(--rs-surface-muted) 55%, white);
 	}
 
 	.kanban-column header {
 		font-weight: 800;
-		font-size: 0.85rem;
+		font-size: 0.72rem;
 		color: var(--base-content);
 	}
 
 	.kanban-card {
-		padding: 0.6rem 0.7rem;
-		border-radius: 0.75rem;
+		padding: 0.4rem 0.5rem;
+		border-radius: 0.5rem;
 		background: rgba(255, 255, 255, 0.78);
 		border: 1px solid rgba(128, 93, 46, 0.08);
 	}
 
 	.kanban-card strong {
 		display: block;
-		margin-bottom: 0.2rem;
-		font-size: 0.82rem;
+		margin-bottom: 0.1rem;
+		font-size: 0.72rem;
 		color: var(--base-content);
 	}
 
 	.kanban-card p,
 	.kanban-empty {
 		margin: 0;
-		font-size: 0.72rem;
+		font-size: 0.65rem;
 		color: color-mix(in oklab, var(--base-content) 55%, transparent);
 	}
 
 	.kanban-empty {
 		display: flex;
 		align-items: center;
-		padding: 0.75rem;
-		border-radius: 0.75rem;
+		padding: 0.5rem;
+		border-radius: 0.5rem;
 		background: color-mix(in oklab, var(--rs-surface-muted) 45%, white);
 	}
 </style>

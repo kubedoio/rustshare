@@ -24,7 +24,7 @@ use crate::{
 };
 
 /// Dedicated error type for auth handlers to avoid stringly-typed errors.
-enum AuthHandlerError {
+pub enum AuthHandlerError {
     Internal(String),
     Unauthorized,
     Forbidden(&'static str),

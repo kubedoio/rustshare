@@ -22,7 +22,7 @@
 	.widget-grid {
 		display: grid;
 		grid-template-columns: repeat(12, minmax(0, 1fr));
-		gap: 1.5rem;
+		gap: 0.875rem;
 		align-items: start;
 	}
 
@@ -30,20 +30,13 @@
 		min-width: 0;
 	}
 
-	.widget-slot.desk-3 {
-		grid-column: span 3;
-	}
-	.widget-slot.desk-4 {
-		grid-column: span 4;
-	}
-	.widget-slot.desk-5 {
-		grid-column: span 5;
-	}
-	.widget-slot.desk-6 {
-		grid-column: span 6;
-	}
+	/* Force 4-column layout on desktop regardless of module config */
+	.widget-slot.desk-3,
+	.widget-slot.desk-4,
+	.widget-slot.desk-5,
+	.widget-slot.desk-6,
 	.widget-slot.desk-12 {
-		grid-column: span 12;
+		grid-column: span 3;
 	}
 
 	@media (max-width: 1199px) {
@@ -65,7 +58,7 @@
 	@media (max-width: 767px) {
 		.widget-grid {
 			grid-template-columns: 1fr;
-			gap: 1rem;
+			gap: 0.75rem;
 		}
 
 		.widget-slot {
