@@ -519,8 +519,67 @@ export const DEFAULT_WORKSPACE_SURFACE: WorkspaceSurfaceDefinition = {
 	]
 };
 
+import { writable, get } from 'svelte/store';
+import { listEnabledModules } from '$lib/api/modules';
+
+export const modulesStore = writable<ModuleDefinition[]>(PREDEFINED_MODULES);
+
+export async function refreshModules() {
+	try {
+		const enabled = await listEnabledModules();
+		modulesStore.update(current => {
+			return current.map(m => {
+				const serverModule = enabled.find(sm => sm.key === m.key);
+				if (serverModule) {
+					// Merge server-side config into predefined definition
+					return {
+						...m,
+						displayName: serverModule.display_name,
+						description: serverModule.description || m.description,
+						enabled: serverModule.enabled,
+						rootPath: serverModule.root_path || m.rootPath,
+						renderer: serverModule.renderer || m.renderer,
+						defaultTemplate: serverModule.default_template || m.defaultTemplate,
+						ui: {
+							sidebar: {
+								enabled: serverModule.ui_config.sidebar?.enabled ?? m.ui.sidebar.enabled,
+								order: serverModule.ui_config.sidebar?.order ?? m.ui.sidebar.order,
+								icon: serverModule.ui_config.sidebar?.icon ?? m.ui.sidebar.icon,
+								label: serverModule.ui_config.sidebar?.label ?? m.ui.sidebar.label
+							},
+							dashboard: {
+								enabled: serverModule.ui_config.dashboard?.enabled ?? m.ui.dashboard.enabled,
+								order: serverModule.ui_config.dashboard?.order ?? m.ui.dashboard.order,
+								widget: {
+									...m.ui.dashboard.widget,
+									enabled: serverModule.ui_config.dashboard?.widget?.enabled ?? m.ui.dashboard.widget.enabled,
+									type: serverModule.ui_config.dashboard?.widget?.type ?? m.ui.dashboard.widget.type,
+									size: serverModule.ui_config.dashboard?.widget?.size ?? m.ui.dashboard.widget.size,
+									maxItems: serverModule.ui_config.dashboard?.widget?.maxItems ?? m.ui.dashboard.widget.maxItems
+								}
+							},
+							page: {
+								enabled: serverModule.ui_config.page?.enabled ?? m.ui.page.enabled,
+								route: serverModule.ui_config.page?.route ?? m.ui.page.route,
+								renderer: serverModule.ui_config.page?.renderer ?? m.ui.page.renderer,
+								layout: serverModule.ui_config.page?.layout ?? m.ui.page.layout,
+								emptyStateTitle: serverModule.ui_config.page?.emptyStateTitle ?? m.ui.page.emptyStateTitle,
+								emptyStateDescription: serverModule.ui_config.page?.emptyStateDescription ?? m.ui.page.emptyStateDescription,
+								primaryAction: serverModule.ui_config.page?.primaryAction ?? m.ui.page.primaryAction
+							}
+						}
+					};
+				}
+				return m;
+			});
+		});
+	} catch (err) {
+		console.error('Failed to refresh modules:', err);
+	}
+}
+
 export function getAllModules(): ModuleDefinition[] {
-	return PREDEFINED_MODULES;
+	return get(modulesStore);
 }
 
 export function getEnabledModules(): ModuleDefinition[] {
@@ -545,12 +604,10 @@ export function getModuleByKey(key: string): ModuleDefinition | undefined {
 	return getAllModules().find((m) => m.key === key);
 }
 
-/**
- * Filter modules by user preference. Modules without a preference default to enabled.
- */
 export function filterModulesByUserPreference(
 	modules: ModuleDefinition[],
 	preferences: Record<string, boolean>
 ): ModuleDefinition[] {
 	return modules.filter((m) => preferences[m.key] !== false);
 }
+

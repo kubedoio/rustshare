@@ -482,8 +482,11 @@ impl NoteService {
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
 
+        // Extract H1 as the title if present
+        let extracted_title = extract_h1_title(&content);
+        
         // Update file content via edit_file (overwrite mode)
-        let updated_file = self
+        let mut updated_file = self
             .file_service
             .edit_file(
                 file_id,
@@ -500,6 +503,25 @@ impl NoteService {
             fallback.created_at = file.created_at;
             fallback
         });
+
+        // Sync title and filename if H1 changed
+        if let Some(new_title) = extracted_title {
+            if new_title != meta.title {
+                meta.title = new_title.clone();
+                
+                // Also attempt to rename the file to match the new title
+                let new_filename = self
+                    .unique_note_name(user_id, file.tenant_id, file.parent_folder_id, &new_title)
+                    .await?;
+                
+                if new_filename != updated_file.name {
+                    if let Ok(renamed) = self.file_service.rename_file(file_id, new_filename, user_id).await {
+                        updated_file = renamed;
+                    }
+                }
+            }
+        }
+
         meta.updated_at = Utc::now();
         meta.excerpt = generate_excerpt(&content);
         self.save_metadata(file_id, user_id, file.tenant_id, &meta).await?;
@@ -815,3 +837,17 @@ fn generate_share_id() -> String {
         .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
         .collect()
 }
+
+fn extract_h1_title(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("# ") {
+            let title = trimmed[2..].trim();
+            if !title.is_empty() {
+                return Some(title.to_string());
+            }
+        }
+    }
+    None
+}
+

@@ -5,6 +5,7 @@
 	import { getAdminModule, updateModule, listAdminTemplates } from '$lib/api/admin-modules';
 	import { APPROVED_MODULE_ICONS } from '$lib/modules/iconRegistry';
 	import { toastStore } from '$lib/stores/toast';
+	import { refreshModules } from '$lib/modules/registry';
 	import { ArrowLeft, Save, AlertCircle } from 'lucide-svelte';
 
 	const queryClient = useQueryClient();
@@ -161,6 +162,7 @@
 			};
 		}) => updateModule(key, payload),
 		onSuccess: () => {
+			refreshModules();
 			queryClient.invalidateQueries({ queryKey: ['admin-modules'] });
 			queryClient.invalidateQueries({ queryKey: ['admin-module', key] });
 			queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });

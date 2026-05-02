@@ -7,6 +7,7 @@
 	import { searchQuery } from '$lib/stores/search';
 	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
 	import { userModulePreferences } from '$lib/stores/userModulePreferences';
+	import { refreshModules } from '$lib/modules/registry';
 	import AppShell from '$lib/layout/AppShell.svelte';
 
 	// Check auth on mount
@@ -14,6 +15,7 @@
 		if (browser) {
 			console.log('[Layout] Checking auth state:', $authStore.isAuthenticated);
 			userModulePreferences.load();
+			refreshModules();
 		}
 	});
 

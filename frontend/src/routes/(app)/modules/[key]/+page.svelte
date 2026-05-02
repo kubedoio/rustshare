@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { getModuleByKey } from '$lib/modules/registry';
+	import { modulesStore } from '$lib/modules/registry';
 	import { currentUser } from '$lib/stores/auth';
 	import ModuleIcon from '$lib/components/dashboard/ModuleIcon.svelte';
 	import ModulePageRenderer from './ModulePageRenderer.svelte';
@@ -8,7 +8,7 @@
 	import { goto } from '$app/navigation';
 
 	$: key = $page.params.key || '';
-	$: module = getModuleByKey(key);
+	$: module = $modulesStore.find(m => m.key === key);
 	$: user = $currentUser;
 
 	// Permissions check
@@ -103,108 +103,147 @@
 
 <style>
 	.module-page-container {
-		max-width: 1320px;
+		max-width: 1440px;
 		margin: 0 auto;
-		padding: 0 2rem 2.75rem;
+		padding: 2rem;
 		display: flex;
-		flex-direction: column;
-		gap: 2rem;
+		flex-direction: row;
+		align-items: flex-start;
+		gap: 2.5rem;
 	}
 
 	.module-header {
-		padding: 0.75rem 1rem;
+		width: 25%;
+		flex-shrink: 0;
+		position: sticky;
+		top: 2rem;
+		padding: 1.5rem;
 		border-radius: var(--rs-radius-lg);
 		background: var(--rs-surface-raised);
 		border: 1px solid var(--rs-border);
+		display: flex;
+		flex-direction: column;
+		gap: 1.5rem;
 	}
 
 	.header-main {
 		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
+		flex-direction: column;
+		gap: 1.25rem;
 	}
 
 	.module-identity {
 		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		min-width: 0;
+		flex-direction: column;
+		gap: 1rem;
 	}
 
 	.module-icon-wrap {
-		flex-shrink: 0;
-		width: 2rem;
-		height: 2rem;
+		width: 3rem;
+		height: 3rem;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		background: var(--rs-brand-soft);
 		color: var(--rs-brand);
-		border-radius: 0.5rem;
+		border-radius: 0.75rem;
 		border: 1px solid color-mix(in oklab, var(--rs-brand) 20%, transparent);
-	}
-
-	.module-title-block {
-		min-width: 0;
 	}
 
 	.module-title-block h1 {
 		margin: 0;
-		font-size: 1rem;
+		font-size: 1.25rem;
 		font-weight: 700;
 		color: var(--rs-text);
-		line-height: 1.2;
+		line-height: 1.3;
 	}
 
 	.module-desc {
-		margin: 0;
-		font-size: 0.75rem;
+		margin: 0.5rem 0 0;
+		font-size: 0.875rem;
 		color: var(--rs-text-soft);
-		max-width: 400px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		line-height: 1.5;
 	}
 
 	.header-actions {
 		display: flex;
-		gap: 0.5rem;
-		flex-shrink: 0;
+		flex-direction: column;
+		gap: 0.75rem;
+		padding-top: 1rem;
+		border-top: 1px solid var(--rs-border);
+	}
+
+	.header-actions :global(.btn) {
+		width: 100%;
+		justify-content: flex-start;
 	}
 
 	.module-content {
+		flex: 1;
+		min-width: 0;
 		display: flex;
 		flex-direction: column;
 		gap: 2rem;
 	}
 
-	@media (max-width: 1023px) {
-		.header-main {
-			flex-direction: row;
-			gap: 0.75rem;
-		}
-
-		.header-actions {
-			justify-content: flex-start;
-		}
-	}
-
-	@media (max-width: 767px) {
+	@media (max-width: 1024px) {
 		.module-page-container {
-			padding: 0 1rem 2rem;
+			flex-direction: column;
+			padding: 1.5rem;
+			gap: 1.5rem;
 		}
 
 		.module-header {
-			padding: 0.625rem 0.875rem;
+			width: 100%;
+			position: static;
+			padding: 1rem;
+			flex-direction: row;
+			align-items: center;
+			justify-content: space-between;
+		}
+
+		.header-main {
+			flex-direction: row;
+			align-items: center;
+			gap: 1rem;
 		}
 
 		.module-identity {
-			gap: 0.5rem;
+			flex-direction: row;
+			align-items: center;
+		}
+
+		.module-icon-wrap {
+			width: 2.5rem;
+			height: 2.5rem;
+		}
+
+		.module-title-block h1 {
+			font-size: 1.125rem;
+		}
+
+		.module-desc {
+			display: none;
 		}
 
 		.header-actions {
-			gap: 0.375rem;
+			flex-direction: row;
+			padding-top: 0;
+			border-top: none;
+		}
+
+		.header-actions :global(.btn) {
+			width: auto;
+		}
+	}
+
+	@media (max-width: 640px) {
+		.module-page-container {
+			padding: 1rem;
+		}
+
+		.header-actions {
+			display: none;
 		}
 	}
 </style>

@@ -39,12 +39,31 @@ impl std::str::FromStr for Theme {
 }
 
 /// User's dashboard configuration
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DashboardConfig {
     pub enabled_modules: Vec<String>,
     pub module_order: Vec<String>,
     pub sections: Vec<serde_json::Value>,
 }
+
+impl Default for DashboardConfig {
+    fn default() -> Self {
+        Self {
+            enabled_modules: vec![
+                "notes".to_string(),
+                "kanban".to_string(),
+                "brainstorming".to_string(),
+            ],
+            module_order: vec![
+                "notes".to_string(),
+                "kanban".to_string(),
+                "brainstorming".to_string(),
+            ],
+            sections: vec![],
+        }
+    }
+}
+
 
 /// User account information.
 ///
