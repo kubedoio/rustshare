@@ -87,8 +87,9 @@ pub use user_shares::{
     list_received_shares, remove_recipient, update_recipient_permission,
 };
 pub use users::{
-    delete_avatar, delete_user_session, get_avatar, get_user_profile, list_user_security_events,
-    list_user_sessions, update_user_password, update_user_theme, upload_avatar,
+    delete_avatar, delete_user_session, get_avatar, get_user_profile, list_user_module_preferences,
+    list_user_security_events, list_user_sessions, update_user_module_preference,
+    update_user_password, update_user_theme, upload_avatar,
 };
 pub use workspace_surface::get_workspace_surface;
 

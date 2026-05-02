@@ -14,7 +14,6 @@ use rustshare_core::{
 };
 use rustshare_storage::{MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -212,7 +211,7 @@ impl BrainstormingService {
         &self,
         board_id: Uuid,
         user_id: UserId,
-        tenant_id: Uuid,
+        _tenant_id: Uuid,
     ) -> Result<BrainstormBoard, BrainstormError> {
         let folder = self
             .folder_service
