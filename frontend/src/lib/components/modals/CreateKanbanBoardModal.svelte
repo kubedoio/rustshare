@@ -17,6 +17,20 @@
 	let isSubmitting = $state(false);
 	let error = $state('');
 
+	let inputElement: HTMLInputElement;
+
+	onMount(() => {
+		if (open && inputElement) {
+			inputElement.focus();
+		}
+	});
+
+	$effect(() => {
+		if (open && inputElement) {
+			inputElement.focus();
+		}
+	});
+
 	const queryClient = useQueryClient();
 
 	async function handleSubmit() {
@@ -65,12 +79,12 @@
 			>
 			<input
 				id="board-name"
+				bind:this={inputElement}
 				type="text"
 				placeholder="e.g. Project Roadmap"
 				class="input-bordered input w-full"
 				bind:value={boardName}
 				disabled={isSubmitting}
-				autoFocus
 			/>
 		</div>
 

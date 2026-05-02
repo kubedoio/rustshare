@@ -28,8 +28,6 @@
 	import RichMarkdownViewer from './RichMarkdownViewer.svelte';
 	import AttachmentPanel from './AttachmentPanel.svelte';
 	import PrintableDocumentView from './PrintableDocumentView.svelte';
-	import EditorSkeleton from './EditorSkeleton.svelte';
-	import ExportModal from './ExportModal.svelte';
 	import { insertAttachmentIntoEditor } from '../adapter/attachments';
 	import { downloadTextFile, formatExportFilename, triggerPrint } from '../adapter/export';
 
@@ -216,6 +214,50 @@
 				<span class="doc-label-sep">·</span>
 			{/if}
 			<h1 class="doc-title">{title}</h1>
+
+			<!-- Color Picker -->
+			{#if permissions.canEdit}
+				<div class="dropdown dropdown-end ml-2">
+					<button
+						tabindex="0"
+						role="button"
+						class="flex h-5 w-5 items-center justify-center rounded-full border border-base-300 transition-transform hover:scale-110"
+						style="background-color: {color ? `var(--rs-accent-${color})` : 'transparent'};"
+						title="Set note color"
+					>
+						{#if !color}
+							<div class="h-1.5 w-1.5 rounded-full bg-base-content/20"></div>
+						{/if}
+					</button>
+					<ul
+						tabindex="0"
+						class="dropdown-content menu z-[100] mt-2 w-48 rounded-xl bg-base-100 p-2 shadow-xl border border-base-300"
+					>
+						<li class="menu-title text-[10px] uppercase tracking-wider text-base-content/40">
+							Purpose Color
+						</li>
+						<div class="grid grid-cols-4 gap-1 p-1">
+							{#each PURPOSEFUL_COLORS as c}
+								<button
+									class="group relative flex h-8 w-full items-center justify-center rounded-lg transition-all hover:bg-base-200"
+									on:click={() => {
+										color = c.value;
+										dispatch('save', { content: currentMarkdown || content, color: c.value });
+									}}
+									title={c.name}
+								>
+									<div
+										class="h-4 w-4 rounded-full {c.class} shadow-sm transition-transform group-hover:scale-110"
+										class:ring-2={color === c.value}
+										class:ring-offset-2={color === c.value}
+										class:ring-brand={color === c.value}
+									></div>
+								</button>
+							{/each}
+						</div>
+					</ul>
+				</div>
+			{/if}
 		</div>
 
 		<div class="doc-header-right">

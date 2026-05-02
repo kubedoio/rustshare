@@ -24,9 +24,6 @@
 	/** Whether an attachment handler is available */
 	export let hasAttachmentHandler: boolean = false;
 
-	/** Permissions for attachment validation */
-	export let permissions: EditorPermissions = WRITE_PERMISSIONS;
-
 	/** Expose current Markdown for parent reads */
 	export let currentMarkdown: string = content;
 
@@ -265,6 +262,8 @@
 	on:dragover={handleDragOver}
 	on:dragleave={handleDragLeave}
 	on:drop={handleDrop}
+	role="region"
+	aria-label="Markdown Editor"
 >
 	{#if editable}
 		<EditorToolbar
