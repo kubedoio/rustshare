@@ -312,33 +312,33 @@
    --------------------------------------------------------------------------- */
 @media print {
 	/* Hide all main UI elements */
-	:global(.doc-header),
-	:global(.header-actions),
-	:global(.attachment-panel),
-	:global(.editor-toolbar),
-	:global(.btn),
-	:global(header),
-	:global(nav),
-	:global(aside),
-	:global(.left-rail),
-	:global(.topbar),
-	:global(.sidebar-nav),
-	:global(.toast-container),
-	:global(.keyboard-shortcuts),
-	:global(.dropdown-content),
-	:global(.tooltip),
-	:global(.modal:not(.modal-open)) {
+	.doc-header,
+	.header-actions,
+	.attachment-panel,
+	.editor-toolbar,
+	.btn,
+	header,
+	nav,
+	aside,
+	.left-rail,
+	.topbar,
+	.sidebar-nav,
+	.toast-container,
+	.keyboard-shortcuts,
+	.dropdown-content,
+	.tooltip,
+	.modal:not(.modal-open) {
 		display: none !important;
 	}
 
 	/* Reset layout for print */
-	:global(body),
-	:global(html),
-	:global(#svelte),
-	:global(.flex.h-screen),
-	:global(.flex.h-full),
-	:global(.h-screen),
-	:global(.h-full) {
+	body,
+	html,
+	#svelte,
+	.flex.h-screen,
+	.flex.h-full,
+	.h-screen,
+	.h-full {
 		height: auto !important;
 		min-height: 0 !important;
 		overflow: visible !important;
@@ -347,10 +347,10 @@
 	}
 
 	/* Ensure main content takes full width and isn't clipped */
-	:global(main),
-	:global(.doc-main),
-	:global(.doc-content),
-	:global(.mx-auto.w-full.max-w-\[88rem\]) {
+	main,
+	.doc-main,
+	.doc-content,
+	.mx-auto.w-full.max-w-\[88rem\] {
 		display: block !important;
 		overflow: visible !important;
 		width: 100% !important;
@@ -361,22 +361,22 @@
 	}
 
 	/* Target the specific printable view if it exists */
-	:global(.print-only) {
+	.print-only {
 		display: block !important;
 	}
 
 	/* Hide the normal interactive page content if we are showing the printable version */
-	:global(.doc-main) {
+	.doc-main {
 		display: none !important;
 	}
 
 	/* Page-specific overrides for DaisyUI/Tailwind layout constraints */
-	:global(.flex.h-screen) {
+	.flex.h-screen {
 		height: auto !important;
 		display: block !important;
 	}
 
-	:global(.overflow-hidden) {
+	.overflow-hidden {
 		overflow: visible !important;
 	}
 

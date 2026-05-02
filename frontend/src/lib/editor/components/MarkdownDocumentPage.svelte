@@ -220,7 +220,6 @@
 				<div class="dropdown dropdown-end ml-2">
 					<button
 						tabindex="0"
-						role="button"
 						class="flex h-5 w-5 items-center justify-center rounded-full border border-base-300 transition-transform hover:scale-110"
 						style="background-color: {color ? `var(--rs-accent-${color})` : 'transparent'};"
 						title="Set note color"
@@ -230,7 +229,6 @@
 						{/if}
 					</button>
 					<ul
-						tabindex="0"
 						class="dropdown-content menu z-[100] mt-2 w-48 rounded-xl bg-base-100 p-2 shadow-xl border border-base-300"
 					>
 						<li class="menu-title text-[10px] uppercase tracking-wider text-base-content/40">
