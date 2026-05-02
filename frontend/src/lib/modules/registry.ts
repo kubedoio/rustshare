@@ -544,3 +544,13 @@ export function getDashboardModulesForUser(user: User | null): ModuleDefinition[
 export function getModuleByKey(key: string): ModuleDefinition | undefined {
 	return getAllModules().find((m) => m.key === key);
 }
+
+/**
+ * Filter modules by user preference. Modules without a preference default to enabled.
+ */
+export function filterModulesByUserPreference(
+	modules: ModuleDefinition[],
+	preferences: Record<string, boolean>
+): ModuleDefinition[] {
+	return modules.filter((m) => preferences[m.key] !== false);
+}

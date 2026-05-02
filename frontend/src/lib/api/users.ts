@@ -224,3 +224,25 @@ export async function listUserDevices(): Promise<UserDevice[]> {
 export async function revokeUserDevice(deviceId: string): Promise<void> {
 	return apiClient.delete<void>(`/user/devices/${deviceId}`);
 }
+
+export interface UserModulePreference {
+	module_key: string;
+	enabled: boolean;
+}
+
+/**
+ * List the current user's module preferences.
+ */
+export async function listUserModulePreferences(): Promise<UserModulePreference[]> {
+	return apiClient.get<UserModulePreference[]>('/users/me/modules');
+}
+
+/**
+ * Update a module preference for the current user.
+ */
+export async function updateUserModulePreference(
+	moduleKey: string,
+	enabled: boolean
+): Promise<UserModulePreference> {
+	return apiClient.patch<UserModulePreference>(`/users/me/modules/${moduleKey}`, { enabled });
+}

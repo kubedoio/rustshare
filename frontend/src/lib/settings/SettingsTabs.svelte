@@ -6,11 +6,12 @@
 		| 'devices'
 		| 'appearance'
 		| 'sharing'
-		| 'activity';
+		| 'activity'
+		| 'modules';
 </script>
 
 <script lang="ts">
-	import { User, Shield, Bell, Smartphone, Palette, Share2, Activity } from 'lucide-svelte';
+	import { User, Shield, Bell, Smartphone, Palette, Share2, Activity, LayoutGrid } from 'lucide-svelte';
 
 	export let activeTab: TabId = 'general';
 	export let onTabChange: (tab: TabId) => void;
@@ -28,7 +29,8 @@
 		{ id: 'devices', label: 'Devices', icon: Smartphone },
 		{ id: 'appearance', label: 'Appearance', icon: Palette },
 		{ id: 'sharing', label: 'Sharing', icon: Share2 },
-		{ id: 'activity', label: 'Activity', icon: Activity }
+		{ id: 'activity', label: 'Activity', icon: Activity },
+		{ id: 'modules', label: 'Modules', icon: LayoutGrid }
 	];
 
 	function handleTabClick(tabId: TabId) {

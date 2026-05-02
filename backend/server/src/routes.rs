@@ -751,6 +751,14 @@ pub fn user_routes() -> Router<AppState> {
             "/api/v1/users/{id}/avatar",
             get(crate::handlers::get_avatar),
         )
+        .route(
+            "/api/v1/users/me/modules",
+            get(crate::handlers::list_user_module_preferences),
+        )
+        .route(
+            "/api/v1/users/me/modules/{key}",
+            patch(crate::handlers::update_user_module_preference),
+        )
 }
 
 pub fn group_routes() -> Router<AppState> {

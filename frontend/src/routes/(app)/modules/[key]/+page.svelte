@@ -73,9 +73,6 @@
 						<ModuleIcon name={module.ui.sidebar.icon} size={28} />
 					</div>
 					<div class="module-title-block">
-						<div class="module-meta">
-							<span class="root-path">{module.rootPath}</span>
-						</div>
 						<h1>{module.displayName}</h1>
 						<p class="module-desc">{module.description}</p>
 					</div>
@@ -115,35 +112,36 @@
 	}
 
 	.module-header {
-		padding: 2rem;
-		border-radius: var(--rs-radius-xl);
+		padding: 0.75rem 1rem;
+		border-radius: var(--rs-radius-lg);
 		background: var(--rs-surface-raised);
 		border: 1px solid var(--rs-border);
 	}
 
 	.header-main {
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		justify-content: space-between;
-		gap: 2rem;
+		gap: 1rem;
 	}
 
 	.module-identity {
 		display: flex;
-		gap: 1.5rem;
+		align-items: center;
+		gap: 0.75rem;
 		min-width: 0;
 	}
 
 	.module-icon-wrap {
 		flex-shrink: 0;
-		width: 3.5rem;
-		height: 3.5rem;
+		width: 2rem;
+		height: 2rem;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		background: var(--rs-brand-soft);
 		color: var(--rs-brand);
-		border-radius: 1.15rem;
+		border-radius: 0.5rem;
 		border: 1px solid color-mix(in oklab, var(--rs-brand) 20%, transparent);
 	}
 
@@ -151,35 +149,27 @@
 		min-width: 0;
 	}
 
-	.module-meta {
-		margin-bottom: 0.25rem;
-	}
-
-	.root-path {
-		font-size: 0.72rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		color: var(--rs-text-muted);
-	}
-
 	.module-title-block h1 {
 		margin: 0;
-		font-size: 1.85rem;
-		font-weight: 800;
+		font-size: 1rem;
+		font-weight: 700;
 		color: var(--rs-text);
+		line-height: 1.2;
 	}
 
 	.module-desc {
-		margin: 0.5rem 0 0;
-		font-size: 0.95rem;
+		margin: 0;
+		font-size: 0.75rem;
 		color: var(--rs-text-soft);
-		max-width: 600px;
+		max-width: 400px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	.header-actions {
 		display: flex;
-		gap: 0.75rem;
+		gap: 0.5rem;
 		flex-shrink: 0;
 	}
 
@@ -191,8 +181,8 @@
 
 	@media (max-width: 1023px) {
 		.header-main {
-			flex-direction: column;
-			gap: 1.5rem;
+			flex-direction: row;
+			gap: 0.75rem;
 		}
 
 		.header-actions {
@@ -206,21 +196,15 @@
 		}
 
 		.module-header {
-			padding: 1.5rem;
+			padding: 0.625rem 0.875rem;
 		}
 
 		.module-identity {
-			flex-direction: column;
-			gap: 1rem;
+			gap: 0.5rem;
 		}
 
 		.header-actions {
-			flex-direction: column;
-			width: 100%;
-		}
-
-		.header-actions button {
-			width: 100%;
+			gap: 0.375rem;
 		}
 	}
 </style>

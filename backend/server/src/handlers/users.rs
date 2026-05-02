@@ -742,3 +742,73 @@ pub async fn get_avatar(
     )
         .into_response()
 }
+
+// ---------------------------------------------------------------------------
+// User Module Preferences
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct UserModulePreferenceResponse {
+    pub module_key: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateModulePreferenceRequest {
+    pub enabled: bool,
+}
+
+/// List the authenticated user's module preferences.
+pub async fn list_user_module_preferences(
+    State(state): State<AppState>,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+) -> Response {
+    let repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(state.db_pool.clone());
+    match repo.get_for_user(user_id).await {
+        Ok(prefs) => {
+            let response: Vec<UserModulePreferenceResponse> = prefs
+                .into_iter()
+                .map(|p| UserModulePreferenceResponse {
+                    module_key: p.module_key,
+                    enabled: p.enabled,
+                })
+                .collect();
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to list user module preferences: {:?}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new("Failed to list module preferences")),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Update a module preference for the authenticated user.
+pub async fn update_user_module_preference(
+    State(state): State<AppState>,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+    Path(module_key): Path<String>,
+    Json(req): Json<UpdateModulePreferenceRequest>,
+) -> Response {
+    let repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(state.db_pool.clone());
+    match repo.set_enabled(user_id, &module_key, req.enabled).await {
+        Ok(pref) => {
+            let response = UserModulePreferenceResponse {
+                module_key: pref.module_key,
+                enabled: pref.enabled,
+            };
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to update user module preference: {:?}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new("Failed to update module preference")),
+            )
+                .into_response()
+        }
+    }
+}

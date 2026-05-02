@@ -6,8 +6,13 @@
 	import { currentUser } from '$lib/stores/auth';
 	import { createQuery } from '$lib/query-compat';
 	import { Settings } from 'lucide-svelte';
-	import { DEFAULT_WORKSPACE_SURFACE, getDashboardModulesForUser } from '$lib/modules/registry';
+	import {
+		DEFAULT_WORKSPACE_SURFACE,
+		getDashboardModulesForUser,
+		filterModulesByUserPreference
+	} from '$lib/modules/registry';
 	import { dashboardConfig, getVisibleModules } from '$lib/stores/dashboardConfig';
+	import { userModulePreferences } from '$lib/stores/userModulePreferences';
 
 	const allFilesQuery = createQuery({
 		queryKey: ['all-files'],
@@ -27,7 +32,10 @@
 	$: sections = surface.sections
 		.filter((section) => section.enabled)
 		.sort((a, b) => a.order - b.order);
-	$: dashboardModules = getDashboardModulesForUser($currentUser);
+	$: dashboardModules = filterModulesByUserPreference(
+		getDashboardModulesForUser($currentUser),
+		$userModulePreferences.preferences
+	);
 	$: dashboardConfig.hydrate(dashboardModules);
 	$: visibleModules = getVisibleModules(dashboardModules, $dashboardConfig);
 	$: sharedFiles = $sharedFilesQuery.data ?? [];

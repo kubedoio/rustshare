@@ -716,12 +716,18 @@
 							<label class="text-xs font-semibold text-base-content/70" for="module-layout"
 								>Layout</label
 							>
-							<input
+							<select
 								id="module-layout"
-								type="text"
-								class="input-bordered input input-sm"
+								class="select-bordered select select-sm"
 								bind:value={modulePageLayout}
-							/>
+							>
+								<option value="list-grid">List Grid</option>
+								<option value="file-list">File List</option>
+								<option value="gallery-grid">Gallery Grid</option>
+								<option value="kanban-board">Kanban Board</option>
+								<option value="decision-registry">Decision Registry</option>
+								<option value="share-manager">Share Manager</option>
+							</select>
 						</div>
 						<div class="flex flex-col gap-1">
 							<label class="text-xs font-semibold text-base-content/70" for="empty-state-action"

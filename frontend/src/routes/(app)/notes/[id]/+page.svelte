@@ -3,6 +3,11 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { getNote, saveNote, renameNote, deleteNote, toggleVisibility } from '$lib/api/notes';
+
+	function extractH1(md: string): string | null {
+		const match = md.match(/^#\s+(.+)$/m);
+		return match ? match[1].trim() : null;
+	}
 	import type { Note } from '$lib/api/types';
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
 	import type { EditorMode, EditorSaveStatus } from '$lib/editor/types';
@@ -39,6 +44,14 @@
 		try {
 			await saveNote(noteId, { content: event.detail.content });
 			content = event.detail.content;
+
+			const newH1 = extractH1(content);
+			if (newH1 && newH1 !== note.metadata.title) {
+				const renamed = await renameNote(noteId, { title: newH1 });
+				note = renamed;
+				title = renamed.metadata.title;
+			}
+
 			saveStatus = 'saved';
 		} catch (err) {
 			saveStatus = 'error';

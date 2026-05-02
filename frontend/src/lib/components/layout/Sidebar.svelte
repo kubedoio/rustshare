@@ -2,12 +2,16 @@
 	import { page } from '$app/stores';
 	import { authStore } from '$lib/stores/auth';
 	import ModuleIcon from '$lib/components/dashboard/ModuleIcon.svelte';
-	import { getSidebarModulesForUser } from '$lib/modules/registry';
+	import { getSidebarModulesForUser, filterModulesByUserPreference } from '$lib/modules/registry';
+	import { userModulePreferences } from '$lib/stores/userModulePreferences';
 
 	export let mobileOpen = false;
 	export let onClose: () => void = () => {};
 
-	$: sidebarModules = getSidebarModulesForUser($authStore.user);
+	$: sidebarModules = filterModulesByUserPreference(
+		getSidebarModulesForUser($authStore.user),
+		$userModulePreferences.preferences
+	);
 
 	function handleLogout() {
 		authStore.logout();

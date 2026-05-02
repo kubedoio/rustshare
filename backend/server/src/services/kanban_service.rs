@@ -1163,6 +1163,7 @@ impl KanbanService {
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Option<Folder>, KanbanError> {
+        // Legacy: check root path
         let row = sqlx::query(
             "SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id FROM folders WHERE path = '/Kanban' AND tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL LIMIT 1",
         )
@@ -1172,19 +1173,57 @@ impl KanbanService {
         .await
         .map_err(|e| KanbanError::Database(e.to_string()))?;
 
-        Ok(row.map(|row| Folder {
-            id: row.get("id"),
-            name: row.get("name"),
-            path: row.get("path"),
-            parent_folder_id: row.get("parent_folder_id"),
-            owner_id: row.get("owner_id"),
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
-            starred_at: row.get("starred_at"),
-            deleted_at: row.get("deleted_at"),
-            tenant_id: row.get("tenant_id"),
+        if let Some(r) = row {
+            return Ok(Some(Folder {
+                id: r.get("id"),
+                name: r.get("name"),
+                path: r.get("path"),
+                parent_folder_id: r.get("parent_folder_id"),
+                owner_id: r.get("owner_id"),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+                starred_at: r.get("starred_at"),
+                deleted_at: r.get("deleted_at"),
+                tenant_id: r.get("tenant_id"),
+                ancestor_ids: None,
+            }));
+        }
+
+        // New: check under /Workspace
+        let row = sqlx::query(
+            "SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id FROM folders WHERE path = '/Workspace/Kanban' AND tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL LIMIT 1",
+        )
+        .bind(tenant_id)
+        .bind(user_id)
+        .fetch_optional(self.metadata_store.pool())
+        .await
+        .map_err(|e| KanbanError::Database(e.to_string()))?;
+
+        Ok(row.map(|r| Folder {
+            id: r.get("id"),
+            name: r.get("name"),
+            path: r.get("path"),
+            parent_folder_id: r.get("parent_folder_id"),
+            owner_id: r.get("owner_id"),
+            created_at: r.get("created_at"),
+            updated_at: r.get("updated_at"),
+            starred_at: r.get("starred_at"),
+            deleted_at: r.get("deleted_at"),
+            tenant_id: r.get("tenant_id"),
             ancestor_ids: None,
         }))
+    }
+
+    async fn ensure_workspace_folder(
+        &self,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Folder, KanbanError> {
+        let folders = self.metadata_store.list_folders(None, user_id, tenant_id).await.map_err(|e| KanbanError::Database(e.to_string()))?;
+        if let Some(ws) = folders.into_iter().find(|f| f.name == "Workspace") {
+            return Ok(ws);
+        }
+        self.folder_service.create_folder("Workspace".into(), None, user_id, tenant_id).await.map_err(KanbanError::from)
     }
 
     async fn ensure_kanban_root(
@@ -1195,9 +1234,10 @@ impl KanbanService {
         if let Some(root) = self.find_kanban_root(user_id, tenant_id).await? {
             return Ok(root);
         }
+        let ws = self.ensure_workspace_folder(user_id, tenant_id).await?;
         let folder = self
             .folder_service
-            .create_folder("Kanban".to_string(), None, user_id, tenant_id)
+            .create_folder("Kanban".to_string(), Some(ws.id), user_id, tenant_id)
             .await
             .map_err(KanbanError::from)?;
         Ok(folder)

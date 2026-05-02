@@ -144,14 +144,27 @@ impl MeetingService {
         }
     }
 
-    /// Ensure the root "Meetings" folder exists.
+    /// Ensure the root "Meetings" folder exists under /Workspace.
     async fn ensure_meetings_folder(&self, owner_id: UserId, tenant_id: Uuid) -> Result<Folder, MeetingError> {
-        let folders = self.metadata_store.list_folders(None, owner_id, tenant_id).await.map_err(|e| MeetingError::Database(e.to_string()))?;
-        if let Some(folder) = folders.into_iter().find(|f| f.name == "Meetings") {
+        let root_folders = self.metadata_store.list_folders(None, owner_id, tenant_id).await.map_err(|e| MeetingError::Database(e.to_string()))?;
+        if let Some(folder) = root_folders.into_iter().find(|f| f.name == "Meetings") {
             return Ok(folder);
         }
-        let folder = self.folder_service.create_folder("Meetings".to_string(), None, owner_id, tenant_id).await.map_err(|e| MeetingError::Storage(e.to_string()))?;
+        let ws = self.ensure_workspace_folder(owner_id, tenant_id).await?;
+        let ws_folders = self.metadata_store.list_folders(Some(ws.id), owner_id, tenant_id).await.map_err(|e| MeetingError::Database(e.to_string()))?;
+        if let Some(folder) = ws_folders.into_iter().find(|f| f.name == "Meetings") {
+            return Ok(folder);
+        }
+        let folder = self.folder_service.create_folder("Meetings".to_string(), Some(ws.id), owner_id, tenant_id).await.map_err(|e| MeetingError::Storage(e.to_string()))?;
         Ok(folder)
+    }
+
+    async fn ensure_workspace_folder(&self, owner_id: UserId, tenant_id: Uuid) -> Result<Folder, MeetingError> {
+        let folders = self.metadata_store.list_folders(None, owner_id, tenant_id).await.map_err(|e| MeetingError::Database(e.to_string()))?;
+        if let Some(ws) = folders.into_iter().find(|f| f.name == "Workspace") {
+            return Ok(ws);
+        }
+        self.folder_service.create_folder("Workspace".into(), None, owner_id, tenant_id).await.map_err(|e| MeetingError::Storage(e.to_string()))
     }
 
     /// Ensure path /{team}/{yyyy}/ exists under Meetings.

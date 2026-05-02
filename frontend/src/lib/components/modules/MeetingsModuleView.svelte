@@ -11,6 +11,8 @@
 
 	export let module: ModuleDefinition;
 
+	$: isGallery = module.ui.page.layout === 'gallery-grid';
+
 	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No meetings yet';
 	$: emptyDescription =
 		module.ui.page.emptyStateDescription ?? 'Create your first meeting note to get started.';
@@ -65,29 +67,53 @@
 		</div>
 
 		{#if meetings.length > 0}
-			<div class="flex flex-col gap-3">
-				{#each meetings as meeting}
-					<button
-						class="group flex items-center gap-4 rounded-2xl border border-base-300/50 bg-base-100 p-4 text-left shadow-sm transition-all hover:border-brand-500/40 hover:shadow-md"
-						onclick={() => navigateToMeeting(meeting.id)}
-					>
-						<div
-							class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500"
+			{#if isGallery}
+				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+					{#each meetings as meeting}
+						<button
+							class="group flex flex-col gap-3 rounded-xl border border-base-300/40 bg-base-100 p-4 text-left transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
+							onclick={() => navigateToMeeting(meeting.id)}
 						>
-							<Folder size={18} />
-						</div>
-						<div class="flex min-w-0 flex-col gap-1">
-							<span class="truncate text-sm font-medium text-base-content">{meeting.name}</span>
-							<div class="flex items-center gap-3 text-xs text-base-content/50">
-								<span class="inline-flex items-center gap-1">
+							<div
+								class="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
+							>
+								<Folder size={18} />
+							</div>
+							<div class="flex flex-col">
+								<span class="text-sm font-medium text-base-content">{meeting.name}</span>
+								<span class="flex items-center gap-1 text-xs text-base-content/40">
 									<Clock size={12} />
 									{new Date(meeting.modified_at).toLocaleDateString()}
 								</span>
 							</div>
-						</div>
-					</button>
-				{/each}
-			</div>
+						</button>
+					{/each}
+				</div>
+			{:else}
+				<div class="flex flex-col gap-3">
+					{#each meetings as meeting}
+						<button
+							class="group flex items-center gap-4 rounded-2xl border border-base-300/50 bg-base-100 p-4 text-left shadow-sm transition-all hover:border-brand-500/40 hover:shadow-md"
+							onclick={() => navigateToMeeting(meeting.id)}
+						>
+							<div
+								class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500"
+							>
+								<Folder size={18} />
+							</div>
+							<div class="flex min-w-0 flex-col gap-1">
+								<span class="truncate text-sm font-medium text-base-content">{meeting.name}</span>
+								<div class="flex items-center gap-3 text-xs text-base-content/50">
+									<span class="inline-flex items-center gap-1">
+										<Clock size={12} />
+										{new Date(meeting.modified_at).toLocaleDateString()}
+									</span>
+								</div>
+							</div>
+						</button>
+					{/each}
+				</div>
+			{/if}
 		{:else}
 			<p class="text-sm text-base-content/50">
 				No meetings yet. Create your first meeting note to get started.

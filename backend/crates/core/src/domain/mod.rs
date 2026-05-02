@@ -12,6 +12,7 @@ mod template;
 mod tenant_config;
 mod thumbnail;
 mod user;
+mod user_module_preference;
 mod user_session;
 
 pub use device_token::{DevicePairRequest, DeviceToken};
@@ -36,6 +37,7 @@ pub use thumbnail::{
     SUPPORTED_VIDEO_TYPES,
 };
 pub use user::{Theme, User};
+pub use user_module_preference::UserModulePreference;
 pub use user_session::UserSession;
 
 use uuid::Uuid;

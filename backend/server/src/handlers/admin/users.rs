@@ -328,6 +328,12 @@ pub async fn create_admin_user(
     .await
     .map_err(db_error)?;
 
+    // Seed default module preferences for new user
+    let pref_repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(state.db_pool.clone());
+    if let Err(e) = pref_repo.seed_defaults(new_id).await {
+        tracing::warn!("Failed to seed default module preferences for new user: {:?}", e);
+    }
+
     log_admin_action(
         &state.db_pool,
         actor_id,

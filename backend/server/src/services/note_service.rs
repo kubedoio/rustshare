@@ -290,31 +290,63 @@ impl NoteService {
         Ok(())
     }
 
-    /// Find or create the user's "Notes" folder in root.
+    /// Find or create the user's "Notes" folder under /Workspace.
     async fn ensure_notes_folder(
         &self,
         owner_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Folder, NoteError> {
-        // Try to find existing Notes folder in root
+        // Legacy: try to find existing Notes folder at root
+        let root_folders = self
+            .metadata_store
+            .list_folders(None, owner_id, tenant_id)
+            .await
+            .map_err(|e| NoteError::Database(e.to_string()))?;
+
+        if let Some(notes_folder) = root_folders.into_iter().find(|f| f.name == "Notes") {
+            return Ok(notes_folder);
+        }
+
+        // New: find or create Workspace, then Notes under it
+        let ws = self.ensure_workspace_folder(owner_id, tenant_id).await?;
+        let ws_folders = self
+            .metadata_store
+            .list_folders(Some(ws.id), owner_id, tenant_id)
+            .await
+            .map_err(|e| NoteError::Database(e.to_string()))?;
+
+        if let Some(notes_folder) = ws_folders.into_iter().find(|f| f.name == "Notes") {
+            return Ok(notes_folder);
+        }
+
+        let folder = self
+            .folder_service
+            .create_folder("Notes".to_string(), Some(ws.id), owner_id, tenant_id)
+            .await
+            .map_err(|e| NoteError::Storage(e.to_string()))?;
+
+        Ok(folder)
+    }
+
+    async fn ensure_workspace_folder(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Folder, NoteError> {
         let folders = self
             .metadata_store
             .list_folders(None, owner_id, tenant_id)
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?;
 
-        if let Some(notes_folder) = folders.into_iter().find(|f| f.name == "Notes") {
-            return Ok(notes_folder);
+        if let Some(ws) = folders.into_iter().find(|f| f.name == "Workspace") {
+            return Ok(ws);
         }
 
-        // Create Notes folder
-        let folder = self
-            .folder_service
-            .create_folder("Notes".to_string(), None, owner_id, tenant_id)
+        self.folder_service
+            .create_folder("Workspace".into(), None, owner_id, tenant_id)
             .await
-            .map_err(|e| NoteError::Storage(e.to_string()))?;
-
-        Ok(folder)
+            .map_err(|e| NoteError::Storage(e.to_string()))
     }
 
     /// Generate a collision-safe unique filename in the target folder.

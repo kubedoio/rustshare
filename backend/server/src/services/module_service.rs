@@ -605,7 +605,29 @@ impl ModuleService {
         })
     }
 
-    /// Ensure the module root folder exists.
+    /// Ensure the Workspace folder exists.
+    async fn ensure_workspace_folder(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<rustshare_core::domain::Folder, ModuleError> {
+        let folders = self
+            .metadata_store
+            .list_folders(None, owner_id, tenant_id)
+            .await
+            .map_err(|e| ModuleError::Database(e.to_string()))?;
+
+        if let Some(ws) = folders.into_iter().find(|f| f.name == "Workspace") {
+            return Ok(ws);
+        }
+
+        self.folder_service
+            .create_folder("Workspace".into(), None, owner_id, tenant_id)
+            .await
+            .map_err(|e| ModuleError::Storage(e.to_string()))
+    }
+
+    /// Ensure the module root folder exists under /Workspace.
     async fn ensure_module_root_folder(
         &self,
         module: &Module,
@@ -620,10 +642,11 @@ impl ModuleService {
             ));
         }
 
-        // Look for an existing folder with this name at root level for this user.
+        let ws = self.ensure_workspace_folder(owner_id, tenant_id).await?;
+
         let folders = self
             .metadata_store
-            .list_folders(None, owner_id, tenant_id)
+            .list_folders(Some(ws.id), owner_id, tenant_id)
             .await
             .map_err(|e| ModuleError::Database(e.to_string()))?;
 
@@ -631,9 +654,8 @@ impl ModuleService {
             return Ok(());
         }
 
-        // Create the root folder using the actor as owner
         self.folder_service
-            .create_folder(root_name, None, owner_id, tenant_id)
+            .create_folder(root_name, Some(ws.id), owner_id, tenant_id)
             .await?;
 
         Ok(())

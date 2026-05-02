@@ -430,6 +430,11 @@ pub async fn init_app() -> Result<AppState> {
 
         metadata_store.create_user(&admin_user).await?;
 
+        let pref_repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(db_pool.clone());
+        if let Err(e) = pref_repo.seed_defaults(admin_user.id).await {
+            tracing::warn!("Failed to seed default module preferences for admin: {:?}", e);
+        }
+
         info!("╔══════════════════════════════════════════════════════════════════╗");
         info!("║  BOOTSTRAP ADMIN PASSWORD                                        ║");
         info!("╠══════════════════════════════════════════════════════════════════╣");
