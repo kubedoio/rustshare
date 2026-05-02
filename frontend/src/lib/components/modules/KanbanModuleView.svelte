@@ -18,6 +18,7 @@
 	import { Folder, Plus, GripVertical, Archive, Trash2, X, ChevronRight } from 'lucide-svelte';
 
 	import RichMarkdownEditor from '../../editor/components/RichMarkdownEditor.svelte';
+	import type { ModuleDefinition } from '$lib/modules/registry';
 
 	interface Props {
 		module: ModuleDefinition;
@@ -42,7 +43,9 @@
 	let columnRefs = $state<Record<string, HTMLDivElement | null>>({});
 
 	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No boards yet');
-	let emptyDescription = $derived(module.ui.page.emptyStateDescription ?? 'Create your first file-backed board.');
+	let emptyDescription = $derived(
+		module.ui.page.emptyStateDescription ?? 'Create your first file-backed board.'
+	);
 	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New Board');
 
 	// -------------------------------------------------------------------------
@@ -71,11 +74,7 @@
 
 	$effect(() => {
 		const boards = $boardsQuery.data ?? [];
-		if (
-			selectedBoardId &&
-			boards.length > 0 &&
-			!boards.some((b) => b.id === selectedBoardId)
-		) {
+		if (selectedBoardId && boards.length > 0 && !boards.some((b) => b.id === selectedBoardId)) {
 			selectedBoardId = boards[0].id;
 		}
 	});
@@ -87,8 +86,13 @@
 	// -------------------------------------------------------------------------
 
 	const createCardMutation = createMutation({
-		mutationFn: ({ boardId, input }: { boardId: string; input: Parameters<typeof createKanbanCard>[1] }) =>
-			createKanbanCard(boardId, input),
+		mutationFn: ({
+			boardId,
+			input
+		}: {
+			boardId: string;
+			input: Parameters<typeof createKanbanCard>[1];
+		}) => createKanbanCard(boardId, input),
 		onSuccess: () => {
 			boardQuery.refetch();
 			showCreateCardColumnId = null;
@@ -194,8 +198,9 @@
 	}
 
 	function getDropIndex(container: HTMLDivElement, clientY: number): number {
-		const cards = Array.from(container.querySelectorAll<HTMLElement>('[data-card-id]'))
-			.filter((el) => el.dataset.cardId !== dragCardId);
+		const cards = Array.from(container.querySelectorAll<HTMLElement>('[data-card-id]')).filter(
+			(el) => el.dataset.cardId !== dragCardId
+		);
 		for (let i = 0; i < cards.length; i++) {
 			const rect = cards[i].getBoundingClientRect();
 			const midY = rect.top + rect.height / 2;
@@ -204,7 +209,11 @@
 		return cards.length;
 	}
 
-	function computeTargetOrder(column: KanbanColumn, insertIndex: number, movingCardId: string): number {
+	function computeTargetOrder(
+		column: KanbanColumn,
+		insertIndex: number,
+		movingCardId: string
+	): number {
 		const cards = column.cards
 			.filter((c) => c.id !== movingCardId)
 			.sort((a, b) => a.order - b.order);
@@ -397,7 +406,9 @@
 			{/if}
 
 			{#if $boardQuery.isLoading}
-				<div class="flex h-48 items-center justify-center rounded-3xl border border-base-300/40 bg-base-100">
+				<div
+					class="flex h-48 items-center justify-center rounded-3xl border border-base-300/40 bg-base-100"
+				>
 					<div class="loading loading-md loading-spinner text-brand-500"></div>
 				</div>
 			{:else}
@@ -440,7 +451,9 @@
 											<strong>{card.title}</strong>
 										</div>
 										{#if card.priority !== 'normal'}
-											<span class="text-[10px] font-semibold uppercase tracking-wider text-brand-500">
+											<span
+												class="text-[10px] font-semibold tracking-wider text-brand-500 uppercase"
+											>
 												{card.priority}
 											</span>
 										{/if}
@@ -450,11 +463,13 @@
 
 							<div class="mt-2">
 								{#if showCreateCardColumnId === column.id}
-									<div class="flex flex-col gap-2 rounded-xl border border-base-300/60 bg-base-100 p-2">
+									<div
+										class="flex flex-col gap-2 rounded-xl border border-base-300/60 bg-base-100 p-2"
+									>
 										<input
 											type="text"
 											placeholder="Card title"
-											class="input input-sm input-bordered w-full"
+											class="input-bordered input input-sm w-full"
 											bind:value={newCardTitle}
 											onkeydown={(e) => {
 												if (e.key === 'Enter') handleCreateCard(column.id);
@@ -466,13 +481,13 @@
 										/>
 										<div class="flex gap-2">
 											<button
-												class="btn btn-xs btn-primary flex-1"
+												class="btn flex-1 btn-xs btn-primary"
 												onclick={() => handleCreateCard(column.id)}
 											>
 												Add
 											</button>
 											<button
-												class="btn btn-xs btn-ghost"
+												class="btn btn-ghost btn-xs"
 												onclick={() => {
 													showCreateCardColumnId = null;
 													newCardTitle = '';
@@ -484,7 +499,7 @@
 									</div>
 								{:else}
 									<button
-										class="btn btn-xs btn-ghost w-full text-base-content/60"
+										class="btn w-full text-base-content/60 btn-ghost btn-xs"
 										onclick={() => {
 											showCreateCardColumnId = column.id;
 											newCardTitle = '';
@@ -514,26 +529,37 @@
 	{#if editingCard}
 		<div class="flex flex-col gap-4">
 			<div>
-				<label for="edit-card-title" class="label-text mb-1 block text-xs font-semibold text-base-content/70">Title</label>
+				<label
+					for="edit-card-title"
+					class="label-text mb-1 block text-xs font-semibold text-base-content/70">Title</label
+				>
 				<input
 					id="edit-card-title"
 					type="text"
-					class="input input-bordered w-full"
+					class="input-bordered input w-full"
 					bind:value={editCardTitle}
 				/>
 			</div>
 			<div>
-				<label for="edit-card-content" class="label-text mb-1 block text-xs font-semibold text-base-content/70">Content (Markdown)</label>
-				<div class="rounded-xl border border-base-300 bg-base-100 overflow-hidden min-h-[12rem] flex flex-col">
+				<label
+					for="edit-card-content"
+					class="label-text mb-1 block text-xs font-semibold text-base-content/70"
+					>Content (Markdown)</label
+				>
+				<div
+					class="flex min-h-[12rem] flex-col overflow-hidden rounded-xl border border-base-300 bg-base-100"
+				>
 					<RichMarkdownEditor
 						content={editingCard.content}
 						editable={true}
 						bind:currentMarkdown={editCardContent}
 						permissions={{
+							canRead: true,
 							canEdit: true,
 							canUploadAttachments: true,
 							canDeleteAttachments: true,
-							canExport: false
+							canExport: false,
+							canShare: true
 						}}
 					/>
 				</div>
@@ -542,7 +568,7 @@
 				<div class="flex gap-2">
 					<button class="btn btn-sm btn-primary" onclick={saveCardEdit}>Save</button>
 					<button
-						class="btn btn-sm btn-ghost"
+						class="btn btn-ghost btn-sm"
 						onclick={() => {
 							editingCard = null;
 						}}
@@ -551,11 +577,11 @@
 					</button>
 				</div>
 				<div class="flex gap-2">
-					<button class="btn btn-sm btn-ghost text-amber-600" onclick={handleArchiveCard}>
+					<button class="btn text-amber-600 btn-ghost btn-sm" onclick={handleArchiveCard}>
 						<Archive size={14} />
 						Archive
 					</button>
-					<button class="btn btn-sm btn-ghost text-red-600" onclick={handleDeleteCard}>
+					<button class="btn text-red-600 btn-ghost btn-sm" onclick={handleDeleteCard}>
 						<Trash2 size={14} />
 						Delete
 					</button>
@@ -591,7 +617,9 @@
 		border: 1px solid color-mix(in oklab, var(--base-300) 52%, transparent);
 		background: color-mix(in oklab, var(--rs-surface-muted) 38%, white);
 		padding: 1rem;
-		transition: border-color 150ms ease, background 150ms ease;
+		transition:
+			border-color 150ms ease,
+			background 150ms ease;
 	}
 
 	.kanban-column-dragover {

@@ -173,11 +173,13 @@
 			if (menuEl) {
 				event.preventDefault();
 				event.stopPropagation();
-				menuEl.dispatchEvent(new KeyboardEvent('keydown', {
-					key: event.key,
-					code: event.code,
-					bubbles: true
-				}));
+				menuEl.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: event.key,
+						code: event.code,
+						bubbles: true
+					})
+				);
 			}
 		}
 	}
@@ -501,7 +503,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: color-mix(in oklab, var(--color-primary, #3b82f6) 8%, var(--color-base-100, #fff) 92%);
+		background: color-mix(
+			in oklab,
+			var(--color-primary, #3b82f6) 8%,
+			var(--color-base-100, #fff) 92%
+		);
 		border: 2px dashed var(--color-primary, #3b82f6);
 		border-radius: 0.5rem;
 		pointer-events: none;

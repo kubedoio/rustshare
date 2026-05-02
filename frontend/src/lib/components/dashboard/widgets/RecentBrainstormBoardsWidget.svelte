@@ -50,17 +50,10 @@
 	{:else}
 		<div class="board-grid">
 			{#each $boardsQuery.data?.slice(0, widget.maxItems) ?? [] as board}
-				<a
-					href={`/modules/brainstorming/${board.id}`}
-					class="board-item"
-				>
+				<a href={`/modules/brainstorming/${board.id}`} class="board-item">
 					<div class="board-thumb">
 						{#if getPreviewUrl(board)}
-							<img
-								src={getPreviewUrl(board)!}
-								alt={board.title}
-								loading="lazy"
-							/>
+							<img src={getPreviewUrl(board)!} alt={board.title} loading="lazy" />
 						{:else}
 							<div class="thumb-placeholder">
 								<ImageOff size={20} />
@@ -153,7 +146,9 @@
 		border: 1px solid color-mix(in oklab, var(--base-300) 40%, transparent);
 		background: color-mix(in oklab, var(--rs-surface-muted) 58%, white);
 		padding: 0.5rem;
-		transition: border-color 150ms ease, background 150ms ease;
+		transition:
+			border-color 150ms ease,
+			background 150ms ease;
 	}
 
 	.board-item:hover {

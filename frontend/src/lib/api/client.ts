@@ -63,7 +63,9 @@ export class ApiClient {
 
 		// Handle 204 No Content and 202 Accepted (empty bodies)
 		if (response.status === 204 || response.status === 202) {
-			return null as T;
+			// TODO: empty-body responses should use a separate method to preserve type safety.
+			// Returning undefined here works for void but is a type-system lie for non-void T.
+			return undefined as unknown as T;
 		}
 
 		return response.json();

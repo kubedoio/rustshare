@@ -12,7 +12,8 @@
 	export let module: ModuleDefinition;
 
 	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No meetings yet';
-	$: emptyDescription = module.ui.page.emptyStateDescription ?? 'Create your first meeting note to get started.';
+	$: emptyDescription =
+		module.ui.page.emptyStateDescription ?? 'Create your first meeting note to get started.';
 	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Meeting';
 
 	// Fetch meetings via module service

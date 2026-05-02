@@ -35,7 +35,9 @@
 		})
 	);
 
-	const extra = $derived(($summaryQuery.data?.extra ?? {}) as { boards?: Array<{ id: string; name: string }> });
+	const extra = $derived(
+		($summaryQuery.data?.extra ?? {}) as { boards?: Array<{ id: string; name: string }> }
+	);
 	const maxItems = $derived(widget.maxItems ?? 8);
 	const latestBoard = $derived($boardQuery.data);
 </script>

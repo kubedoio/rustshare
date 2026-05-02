@@ -1,6 +1,6 @@
 /**
  * Rich Markdown Editor — Security & Sanitization
- * 
+ *
  * Enforces strict HTML sanitization for rendered Markdown content.
  */
 
@@ -9,19 +9,50 @@ import DOMPurify from 'isomorphic-dompurify';
 /**
  * Strict configuration for DOMPurify to prevent XSS.
  */
-const SANITIZE_CONFIG: DOMPurify.Config = {
+const SANITIZE_CONFIG = {
 	ALLOWED_TAGS: [
-		'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 
-		'p', 'br', 'hr', 
-		'b', 'i', 'strong', 'em', 'strike', 'u', 'code', 'pre',
-		'ul', 'ol', 'li',
+		'h1',
+		'h2',
+		'h3',
+		'h4',
+		'h5',
+		'h6',
+		'p',
+		'br',
+		'hr',
+		'b',
+		'i',
+		'strong',
+		'em',
+		'strike',
+		'u',
+		'code',
+		'pre',
+		'ul',
+		'ol',
+		'li',
 		'blockquote',
-		'a', 'img',
-		'table', 'thead', 'tbody', 'tr', 'th', 'td'
+		'a',
+		'img',
+		'table',
+		'thead',
+		'tbody',
+		'tr',
+		'th',
+		'td'
 	],
 	ALLOWED_ATTR: [
-		'href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel',
-		'checked', 'type', 'disabled'
+		'href',
+		'src',
+		'alt',
+		'title',
+		'class',
+		'id',
+		'target',
+		'rel',
+		'checked',
+		'type',
+		'disabled'
 	],
 	// Ensure we block dangerous URIs by default
 	ADD_ATTR: ['target', 'rel'],
@@ -33,7 +64,7 @@ const SANITIZE_CONFIG: DOMPurify.Config = {
  * Sanitizes an HTML string using DOMPurify.
  */
 export function sanitizeHtml(html: string): string {
-	return DOMPurify.sanitize(html, SANITIZE_CONFIG) as string;
+	return DOMPurify.sanitize(html, SANITIZE_CONFIG) as unknown as string;
 }
 
 /**
@@ -43,12 +74,12 @@ export function isSafeFilename(filename: string): boolean {
 	if (!filename || filename.startsWith('.') || filename.includes('/') || filename.includes('\\')) {
 		return false;
 	}
-	
+
 	const forbidden = ['.rustshare.json', '.ds_store', 'thumbs.db', 'index.editor.json'];
 	if (forbidden.includes(filename.toLowerCase())) {
 		return false;
 	}
-	
+
 	return true;
 }
 

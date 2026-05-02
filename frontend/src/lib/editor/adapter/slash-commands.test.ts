@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-	SLASH_COMMANDS,
-	filterSlashCommands,
-	getSlashCommandById
-} from './slash-commands';
+import { SLASH_COMMANDS, filterSlashCommands, getSlashCommandById } from './slash-commands';
 
 // ---------------------------------------------------------------------------
 // SLASH_COMMANDS structure

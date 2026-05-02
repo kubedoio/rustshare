@@ -152,7 +152,11 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 					size: 'medium',
 					columns: { desktop: 6, tablet: 12, mobile: 12 },
 					maxItems: 4,
-					primaryAction: { label: 'New Note', action: 'create-from-template', template: 'template_default_note' }
+					primaryAction: {
+						label: 'New Note',
+						action: 'create-from-template',
+						template: 'template_default_note'
+					}
 				}
 			},
 			page: {
@@ -162,7 +166,11 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				layout: 'list-grid',
 				emptyStateTitle: 'No notes yet',
 				emptyStateDescription: 'Create your first file-backed note.',
-				primaryAction: { label: 'New Note', action: 'create-from-template', template: 'template_default_note' }
+				primaryAction: {
+					label: 'New Note',
+					action: 'create-from-template',
+					template: 'template_default_note'
+				}
 			}
 		},
 		aiIndexing: { enabled: true },
@@ -197,7 +205,11 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 					size: 'medium',
 					columns: { desktop: 6, tablet: 12, mobile: 12 },
 					maxItems: 4,
-					primaryAction: { label: 'New Meeting', action: 'create-from-template', template: 'template_default_meeting' }
+					primaryAction: {
+						label: 'New Meeting',
+						action: 'create-from-template',
+						template: 'template_default_meeting'
+					}
 				}
 			},
 			page: {
@@ -207,7 +219,11 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				layout: 'list-grid',
 				emptyStateTitle: 'No meetings yet',
 				emptyStateDescription: 'Create your first meeting note.',
-				primaryAction: { label: 'New Meeting', action: 'create-from-template', template: 'template_default_meeting' }
+				primaryAction: {
+					label: 'New Meeting',
+					action: 'create-from-template',
+					template: 'template_default_meeting'
+				}
 			}
 		},
 		aiIndexing: { enabled: true },
@@ -242,7 +258,11 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 					size: 'medium',
 					columns: { desktop: 6, tablet: 12, mobile: 12 },
 					maxItems: 4,
-					primaryAction: { label: 'New Standup', action: 'create-from-template', template: 'template_default_standup' }
+					primaryAction: {
+						label: 'New Standup',
+						action: 'create-from-template',
+						template: 'template_default_standup'
+					}
 				}
 			},
 			page: {
@@ -252,7 +272,11 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				layout: 'list-grid',
 				emptyStateTitle: 'No standups yet',
 				emptyStateDescription: 'Create your first standup record.',
-				primaryAction: { label: 'New Standup', action: 'create-from-template', template: 'template_default_standup' }
+				primaryAction: {
+					label: 'New Standup',
+					action: 'create-from-template',
+					template: 'template_default_standup'
+				}
 			}
 		},
 		aiIndexing: { enabled: true },
@@ -287,7 +311,11 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 					size: 'large',
 					columns: { desktop: 6, tablet: 12, mobile: 12 },
 					maxItems: 4,
-					primaryAction: { label: 'New Board', action: 'create-from-template', template: 'template_default_kanban' }
+					primaryAction: {
+						label: 'New Board',
+						action: 'create-from-template',
+						template: 'template_default_kanban'
+					}
 				}
 			},
 			page: {
@@ -297,7 +325,11 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				layout: 'kanban-board',
 				emptyStateTitle: 'No boards yet',
 				emptyStateDescription: 'Create your first kanban board.',
-				primaryAction: { label: 'New Board', action: 'create-from-template', template: 'template_default_kanban' }
+				primaryAction: {
+					label: 'New Board',
+					action: 'create-from-template',
+					template: 'template_default_kanban'
+				}
 			}
 		},
 		aiIndexing: { enabled: true },
@@ -332,7 +364,11 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 					size: 'medium',
 					columns: { desktop: 6, tablet: 12, mobile: 12 },
 					maxItems: 4,
-					primaryAction: { label: 'New Decision', action: 'create-from-template', template: 'template_default_decision' }
+					primaryAction: {
+						label: 'New Decision',
+						action: 'create-from-template',
+						template: 'template_default_decision'
+					}
 				}
 			},
 			page: {
@@ -342,7 +378,11 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				layout: 'decision-registry',
 				emptyStateTitle: 'No decisions yet',
 				emptyStateDescription: 'Create your first decision record.',
-				primaryAction: { label: 'New Decision', action: 'create-from-template', template: 'template_default_decision' }
+				primaryAction: {
+					label: 'New Decision',
+					action: 'create-from-template',
+					template: 'template_default_decision'
+				}
 			}
 		},
 		aiIndexing: { enabled: true },
@@ -377,7 +417,11 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 					size: 'medium',
 					columns: { desktop: 6, tablet: 12, mobile: 12 },
 					maxItems: 4,
-					primaryAction: { label: 'New Board', action: 'create-from-template', template: 'template_blank_brainstorm' }
+					primaryAction: {
+						label: 'New Board',
+						action: 'create-from-template',
+						template: 'template_blank_brainstorm'
+					}
 				}
 			},
 			page: {
@@ -387,7 +431,11 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				layout: 'gallery-grid',
 				emptyStateTitle: 'No brainstorming boards yet',
 				emptyStateDescription: 'Create your first visual decision board.',
-				primaryAction: { label: 'New Board', action: 'create-from-template', template: 'template_blank_brainstorm' }
+				primaryAction: {
+					label: 'New Board',
+					action: 'create-from-template',
+					template: 'template_blank_brainstorm'
+				}
 			}
 		},
 		aiIndexing: { enabled: true },

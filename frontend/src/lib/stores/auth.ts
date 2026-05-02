@@ -14,6 +14,10 @@ interface AuthState {
 
 const WEBSOCKET_TOKEN_KEY = 'rustshare.websocket_token';
 
+function isApiError(error: unknown): error is { status: number } {
+	return typeof error === 'object' && error !== null && 'status' in error;
+}
+
 function saveWebSocketToken(token: string | null | undefined): void {
 	if (typeof window === 'undefined') {
 		return;
@@ -70,8 +74,8 @@ function createAuthStore() {
 			} catch (error) {
 				console.error('Failed to initialize WebSocket during bootstrap:', error);
 			}
-		} catch (error: any) {
-			if (error?.status !== 401) {
+		} catch (error: unknown) {
+			if (!isApiError(error) || error.status !== 401) {
 				console.error('Failed to bootstrap session:', error);
 			}
 

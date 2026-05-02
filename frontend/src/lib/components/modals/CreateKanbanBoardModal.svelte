@@ -51,14 +51,23 @@
 </script>
 
 <ModalBase {open} {onClose} title="Create New Kanban Board">
-	<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="flex flex-col gap-4">
+	<form
+		onsubmit={(e) => {
+			e.preventDefault();
+			handleSubmit();
+		}}
+		class="flex flex-col gap-4"
+	>
 		<div>
-			<label for="board-name" class="label-text mb-1 block text-xs font-semibold text-base-content/70">Board Name</label>
+			<label
+				for="board-name"
+				class="label-text mb-1 block text-xs font-semibold text-base-content/70">Board Name</label
+			>
 			<input
 				id="board-name"
 				type="text"
 				placeholder="e.g. Project Roadmap"
-				class="input input-bordered w-full"
+				class="input-bordered input w-full"
 				bind:value={boardName}
 				disabled={isSubmitting}
 				autoFocus
@@ -72,8 +81,14 @@
 		{/if}
 
 		<div class="flex justify-end gap-2 pt-2">
-			<button type="button" class="btn btn-sm btn-ghost" onclick={onClose} disabled={isSubmitting}>Cancel</button>
-			<button type="submit" class="btn btn-sm btn-primary" disabled={!boardName.trim() || isSubmitting}>
+			<button type="button" class="btn btn-ghost btn-sm" onclick={onClose} disabled={isSubmitting}
+				>Cancel</button
+			>
+			<button
+				type="submit"
+				class="btn btn-sm btn-primary"
+				disabled={!boardName.trim() || isSubmitting}
+			>
 				{#if isSubmitting}
 					<span class="loading loading-xs loading-spinner"></span>
 				{/if}

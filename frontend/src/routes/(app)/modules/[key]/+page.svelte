@@ -43,7 +43,7 @@
 		</div>
 		<h1 class="text-2xl font-bold">Module Not Found</h1>
 		<p class="mt-2 text-base-content/60">The requested module does not exist in the registry.</p>
-		<a href="/dashboard" class="btn btn-ghost mt-6">Return to Dashboard</a>
+		<a href="/dashboard" class="btn mt-6 btn-ghost">Return to Dashboard</a>
 	</div>
 {:else if !module.enabled}
 	<div class="flex h-[70vh] flex-col items-center justify-center text-center">
@@ -52,7 +52,7 @@
 		</div>
 		<h1 class="text-2xl font-bold">Module Disabled</h1>
 		<p class="mt-2 text-base-content/60">This module is currently disabled by the administrator.</p>
-		<a href="/dashboard" class="btn btn-ghost mt-6">Return to Dashboard</a>
+		<a href="/dashboard" class="btn mt-6 btn-ghost">Return to Dashboard</a>
 	</div>
 {:else if !pageEnabled}
 	<div class="flex h-[70vh] flex-col items-center justify-center text-center">
@@ -61,7 +61,7 @@
 		</div>
 		<h1 class="text-2xl font-bold">Module Page Disabled</h1>
 		<p class="mt-2 text-base-content/60">The WebUI surface for this module is disabled.</p>
-		<a href="/dashboard" class="btn btn-ghost mt-6">Return to Dashboard</a>
+		<a href="/dashboard" class="btn mt-6 btn-ghost">Return to Dashboard</a>
 	</div>
 {:else}
 	<div class="module-page-container">
@@ -82,13 +82,13 @@
 				</div>
 
 				<div class="header-actions">
-					<button class="btn btn-outline btn-sm gap-2" on:click={handleOpenRootFolder}>
+					<button class="btn gap-2 btn-outline btn-sm" on:click={handleOpenRootFolder}>
 						<Folder size={14} />
 						<span>Browse Files</span>
 					</button>
 
 					{#if module.ui.page.primaryAction}
-						<button class="btn btn-primary btn-sm gap-2" on:click={handlePrimaryAction}>
+						<button class="btn gap-2 btn-sm btn-primary" on:click={handlePrimaryAction}>
 							<span>{module.ui.page.primaryAction.label}</span>
 							<ArrowRight size={14} />
 						</button>

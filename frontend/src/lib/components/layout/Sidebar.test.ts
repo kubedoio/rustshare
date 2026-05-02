@@ -1,19 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
+import { writable } from 'svelte/store';
 import Sidebar from './Sidebar.svelte';
 import { authStore } from '$lib/stores/auth';
 import { getSidebarModulesForUser } from '$lib/modules/registry';
 
 // Mock dependencies
 vi.mock('$app/stores', () => {
-	const { writable } = require('svelte/store');
 	return {
 		page: writable({ url: { pathname: '/dashboard' } })
 	};
 });
 
 vi.mock('$lib/stores/auth', () => {
-	const { writable } = require('svelte/store');
 	return {
 		authStore: {
 			subscribe: writable({

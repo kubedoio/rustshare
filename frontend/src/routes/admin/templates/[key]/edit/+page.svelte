@@ -153,8 +153,8 @@
 				class="mt-4 flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/5 p-3 text-sm text-warning"
 			>
 				<AlertCircle size={16} />
-				This is a system template. Structure, files, and schema cannot be modified directly.
-				Duplicate this template to create a customizable version.
+				This is a system template. Structure, files, and schema cannot be modified directly. Duplicate
+				this template to create a customizable version.
 			</div>
 		{/if}
 
@@ -309,7 +309,7 @@
 							disabled={isSystemTemplate}
 						></textarea>
 					</div>
- 
+
 					<div class="flex flex-col gap-1">
 						<label class="text-xs font-semibold text-base-content/70" for="default-files-json-array"
 							>Default Files (JSON array)</label
@@ -322,7 +322,7 @@
 							disabled={isSystemTemplate}
 						></textarea>
 					</div>
- 
+
 					<div class="flex flex-col gap-1">
 						<label
 							class="text-xs font-semibold text-base-content/70"

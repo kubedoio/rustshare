@@ -28,45 +28,63 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
 
-pub async fn init_app() -> Result<AppState> {
-    // Load environment variables
-    dotenvy::dotenv().ok();
+struct Services {
+    file_service: Arc<FileService>,
+    folder_service: Arc<FolderService>,
+    share_service: Arc<ShareService>,
+    note_service: Arc<crate::services::note_service::NoteService>,
+    decision_service: Arc<crate::services::decision_service::DecisionService>,
+    meeting_service: Arc<crate::services::meeting_service::MeetingService>,
+    module_service: Arc<crate::services::module_service::ModuleService>,
+    template_service: Arc<crate::services::template_service::TemplateService>,
+    kanban_service: Arc<crate::services::kanban_service::KanbanService>,
+    brainstorming_service: Arc<crate::services::brainstorming_service::BrainstormingService>,
+    thumbnail_service: Arc<ThumbnailService>,
+    notification_service: Arc<NotificationService>,
+    user_share_service: Arc<UserShareService>,
+    ai_service: Option<Arc<AppAiService>>,
+    upload_service: Arc<AppUploadService>,
+}
 
-    // Initialize tracing
+fn init_tracing() {
     tracing_subscriber::fmt()
         .with_env_filter(
             std::env::var("RUST_LOG").unwrap_or_else(|_| "info,rustshare=debug".to_string()),
         )
         .init();
+}
 
-    info!("Starting RustShare server");
-
-    // Connect to database
+async fn init_database() -> Result<PgPool> {
     let database_url = std::env::var("DATABASE_URL")?;
     let db_pool = PgPool::connect(&database_url).await?;
-
     info!("Connected to database");
-
-    // Run migrations (path relative to workspace root)
     sqlx::migrate!("../migrations").run(&db_pool).await?;
-
     info!("Database migrations applied");
+    Ok(db_pool)
+}
 
-    // Initialize stores
-    let metadata_store = Arc::new(MetadataStore::new(db_pool.clone()));
-    let event_store = Arc::new(EventStore::new(db_pool.clone()));
-
-    // Initialize object store
+async fn init_stores(
+    db_pool: PgPool,
+) -> Result<(Arc<MetadataStore>, Arc<EventStore>, Arc<ObjectStore>)> {
     let rustfs_endpoint = std::env::var("RUSTFS_ENDPOINT")?;
     let rustfs_region = std::env::var("RUSTFS_REGION")?;
     let rustfs_bucket = std::env::var("RUSTFS_BUCKET")?;
 
-    let object_store =
-        Arc::new(ObjectStore::new(rustfs_endpoint, rustfs_region, rustfs_bucket).await?);
+    let (metadata_store, event_store, object_store) = tokio::join!(
+        async { Arc::new(MetadataStore::new(db_pool.clone())) },
+        async { Arc::new(EventStore::new(db_pool.clone())) },
+        async {
+            ObjectStore::new(rustfs_endpoint, rustfs_region, rustfs_bucket)
+                .await
+                .map(Arc::new)
+        }
+    );
 
     info!("Object store initialized");
+    Ok((metadata_store, event_store, object_store?))
+}
 
-    // Initialize JWT manager
+async fn init_jwt_manager() -> Result<Arc<JwtManager>> {
     let jwt_secret = std::env::var("JWT_SECRET")?;
     if jwt_secret.len() < 32 {
         return Err(anyhow::anyhow!(
@@ -81,99 +99,154 @@ pub async fn init_app() -> Result<AppState> {
             "JWT_SECRET is using a known weak default value. Generate a strong secret with: openssl rand -base64 32"
         ));
     }
-    let jwt_manager = Arc::new(JwtManager::new(jwt_secret));
+    Ok(Arc::new(JwtManager::new(jwt_secret)))
+}
 
-    // Initialize EventBroadcaster
+async fn init_broadcaster() -> Result<Arc<EventBroadcaster>> {
     let capacity = std::env::var("BROADCAST_CAPACITY")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(1000);
     let broadcaster = Arc::new(EventBroadcaster::new(capacity));
-
     info!("EventBroadcaster initialized with capacity {}", capacity);
+    Ok(broadcaster)
+}
 
-    // Initialize repositories for new services
+async fn init_repositories(
+    db_pool: PgPool,
+) -> Result<(
+    NotificationRepository,
+    Arc<ShareRepository>,
+    Arc<UserRepository>,
+    Arc<FileRepository>,
+    Arc<FolderRepository>,
+    Arc<PermissionResolver>,
+)> {
     let notification_repository = NotificationRepository::new(db_pool.clone());
     let share_repository = Arc::new(ShareRepository::new(db_pool.clone()));
     let user_repository = Arc::new(UserRepository::new(db_pool.clone()));
     let file_repository = Arc::new(FileRepository::new(db_pool.clone()));
     let folder_repository = Arc::new(FolderRepository::new(db_pool.clone()));
-
-    // Initialize permission resolver
     let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
         PermissionResolverRepository::new(db_pool.clone()),
     )));
+    Ok((
+        notification_repository,
+        share_repository,
+        user_repository,
+        file_repository,
+        folder_repository,
+        permission_resolver,
+    ))
+}
 
-    // Initialize services
-    let file_service = Arc::new(FileService::new(
-        Arc::clone(&event_store),
-        Arc::clone(&metadata_store),
-        Arc::clone(&object_store),
-        Arc::clone(&broadcaster),
-        Arc::clone(&permission_resolver),
-    ));
-    let folder_service = Arc::new(FolderService::new(
-        Arc::clone(&event_store),
-        Arc::clone(&metadata_store),
-        Arc::clone(&broadcaster),
-        Arc::clone(&permission_resolver),
-    ));
-    let share_notification_repo = Arc::new(ShareNotificationRepoImpl::new(db_pool.clone()));
-    let share_service = Arc::new(ShareService::new(
-        Arc::clone(&event_store),
-        Arc::clone(&metadata_store),
-        Arc::clone(&broadcaster),
-        Arc::clone(&jwt_manager),
-        Arc::clone(&share_notification_repo),
-    ));
-    let note_service = Arc::new(crate::services::note_service::NoteService::new(
-        Arc::clone(&file_service),
-        Arc::clone(&folder_service),
-        Arc::clone(&metadata_store),
-        Arc::clone(&object_store),
-    ));
-    let decision_service = Arc::new(crate::services::decision_service::DecisionService::new(
-        Arc::clone(&file_service),
-        Arc::clone(&folder_service),
-        Arc::clone(&metadata_store),
-        Arc::clone(&object_store),
-    ));
-    let meeting_service = Arc::new(crate::services::meeting_service::MeetingService::new(
-        Arc::clone(&file_service),
-        Arc::clone(&folder_service),
-        Arc::clone(&metadata_store),
-        Arc::clone(&object_store),
-    ));
-    let module_service = Arc::new(crate::services::module_service::ModuleService::new(
-        Arc::clone(&folder_service),
-        Arc::clone(&metadata_store),
-    ));
-    let template_service = Arc::new(crate::services::template_service::TemplateService::new(
-        Arc::clone(&file_service),
-        Arc::clone(&folder_service),
-        Arc::clone(&metadata_store),
-    ));
-    let kanban_service = Arc::new(crate::services::kanban_service::KanbanService::new(
-        Arc::clone(&file_service),
-        Arc::clone(&folder_service),
-        Arc::clone(&metadata_store),
-        Arc::clone(&object_store),
-    ));
-    let brainstorming_service = Arc::new(crate::services::brainstorming_service::BrainstormingService::new(
-        Arc::clone(&file_service),
-        Arc::clone(&folder_service),
-        Arc::clone(&metadata_store),
-        Arc::clone(&object_store),
-    ));
-    let thumbnail_service = Arc::new(ThumbnailService::new(
-        db_pool.clone(),
-        Arc::clone(&object_store),
-    ));
+async fn init_services(
+    db_pool: PgPool,
+    metadata_store: Arc<MetadataStore>,
+    event_store: Arc<EventStore>,
+    object_store: Arc<ObjectStore>,
+    jwt_manager: Arc<JwtManager>,
+    broadcaster: Arc<EventBroadcaster>,
+    notification_repository: NotificationRepository,
+    share_repository: Arc<ShareRepository>,
+    user_repository: Arc<UserRepository>,
+    file_repository: Arc<FileRepository>,
+    folder_repository: Arc<FolderRepository>,
+    permission_resolver: Arc<PermissionResolver>,
+) -> Result<Services> {
+    let (file_service, folder_service, share_notification_repo, thumbnail_service, notification_service) = tokio::join!(
+        async {
+            Arc::new(FileService::new(
+                Arc::clone(&event_store),
+                Arc::clone(&metadata_store),
+                Arc::clone(&object_store),
+                Arc::clone(&broadcaster),
+                Arc::clone(&permission_resolver),
+            ))
+        },
+        async {
+            Arc::new(FolderService::new(
+                Arc::clone(&event_store),
+                Arc::clone(&metadata_store),
+                Arc::clone(&broadcaster),
+                Arc::clone(&permission_resolver),
+            ))
+        },
+        async { Arc::new(ShareNotificationRepoImpl::new(db_pool.clone())) },
+        async {
+            Arc::new(ThumbnailService::new(
+                db_pool.clone(),
+                Arc::clone(&object_store),
+            ))
+        },
+        async { Arc::new(NotificationService::new(notification_repository)) },
+    );
 
-    // Initialize notification service
-    let notification_service = Arc::new(NotificationService::new(notification_repository));
+    let (share_service, note_service, decision_service, meeting_service, module_service, template_service, kanban_service, brainstorming_service) = tokio::join!(
+        async {
+            Arc::new(ShareService::new(
+                Arc::clone(&event_store),
+                Arc::clone(&metadata_store),
+                Arc::clone(&broadcaster),
+                Arc::clone(&jwt_manager),
+                Arc::clone(&share_notification_repo),
+            ))
+        },
+        async {
+            Arc::new(crate::services::note_service::NoteService::new(
+                Arc::clone(&file_service),
+                Arc::clone(&folder_service),
+                Arc::clone(&metadata_store),
+                Arc::clone(&object_store),
+            ))
+        },
+        async {
+            Arc::new(crate::services::decision_service::DecisionService::new(
+                Arc::clone(&file_service),
+                Arc::clone(&folder_service),
+                Arc::clone(&metadata_store),
+                Arc::clone(&object_store),
+            ))
+        },
+        async {
+            Arc::new(crate::services::meeting_service::MeetingService::new(
+                Arc::clone(&file_service),
+                Arc::clone(&folder_service),
+                Arc::clone(&metadata_store),
+                Arc::clone(&object_store),
+            ))
+        },
+        async {
+            Arc::new(crate::services::module_service::ModuleService::new(
+                Arc::clone(&folder_service),
+                Arc::clone(&metadata_store),
+            ))
+        },
+        async {
+            Arc::new(crate::services::template_service::TemplateService::new(
+                Arc::clone(&file_service),
+                Arc::clone(&folder_service),
+                Arc::clone(&metadata_store),
+            ))
+        },
+        async {
+            Arc::new(crate::services::kanban_service::KanbanService::new(
+                Arc::clone(&file_service),
+                Arc::clone(&folder_service),
+                Arc::clone(&metadata_store),
+                Arc::clone(&object_store),
+            ))
+        },
+        async {
+            Arc::new(crate::services::brainstorming_service::BrainstormingService::new(
+                Arc::clone(&file_service),
+                Arc::clone(&folder_service),
+                Arc::clone(&metadata_store),
+                Arc::clone(&object_store),
+            ))
+        },
+    );
 
-    // Initialize user share service
     #[allow(deprecated)]
     let user_share_service = Arc::new(UserShareService::new(UserShareServiceDeps {
         share_repo: Arc::clone(&share_repository),
@@ -186,7 +259,6 @@ pub async fn init_app() -> Result<AppState> {
         broadcaster: Arc::clone(&broadcaster),
     }));
 
-    // Initialize AI service
     let ai_service_enabled = std::env::var("RUSTSHARE_AI_ENABLED")
         .ok()
         .and_then(|s| s.parse::<bool>().ok())
@@ -209,8 +281,6 @@ pub async fn init_app() -> Result<AppState> {
         info!("AI service disabled");
     }
 
-    // Initialize upload service for resumable uploads
-    // Use local filesystem document store for upload session metadata
     let upload_doc_store_path = std::env::var("RUSTSHARE_UPLOAD_STORE_PATH")
         .unwrap_or_else(|_| "/tmp/rustshare-uploads".to_string());
 
@@ -251,12 +321,68 @@ pub async fn init_app() -> Result<AppState> {
         upload_doc_store_path
     );
 
-    // Initialize rate limiting configuration
-    let rate_limit_config = Arc::new(crate::middleware::RateLimitConfig::new());
+    Ok(Services {
+        file_service,
+        folder_service,
+        share_service,
+        note_service,
+        decision_service,
+        meeting_service,
+        module_service,
+        template_service,
+        kanban_service,
+        brainstorming_service,
+        thumbnail_service,
+        notification_service,
+        user_share_service,
+        ai_service,
+        upload_service,
+    })
+}
 
+pub async fn init_app() -> Result<AppState> {
+    dotenvy::dotenv().ok();
+
+    init_tracing();
+
+    info!("Starting RustShare server");
+
+    let db_pool = init_database().await?;
+
+    let (metadata_store, event_store, object_store) = init_stores(db_pool.clone()).await?;
+
+    let jwt_manager = init_jwt_manager().await?;
+
+    let broadcaster = init_broadcaster().await?;
+
+    let (
+        notification_repository,
+        share_repository,
+        user_repository,
+        file_repository,
+        folder_repository,
+        permission_resolver,
+    ) = init_repositories(db_pool.clone()).await?;
+
+    let services = init_services(
+        db_pool.clone(),
+        Arc::clone(&metadata_store),
+        Arc::clone(&event_store),
+        Arc::clone(&object_store),
+        Arc::clone(&jwt_manager),
+        Arc::clone(&broadcaster),
+        notification_repository,
+        Arc::clone(&share_repository),
+        Arc::clone(&user_repository),
+        Arc::clone(&file_repository),
+        Arc::clone(&folder_repository),
+        Arc::clone(&permission_resolver),
+    )
+    .await?;
+
+    let rate_limit_config = Arc::new(crate::middleware::RateLimitConfig::new());
     info!("Rate limiting initialized");
 
-    // Parse default tenant ID from env or use nil UUID
     let default_tenant_id = std::env::var("RUSTSHARE_DEFAULT_TENANT_ID")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -274,12 +400,10 @@ pub async fn init_app() -> Result<AppState> {
     let trash_cleanup_config = TrashCleanupConfig::from_env();
     spawn_trash_cleanup_worker(Arc::clone(&metadata_store), trash_cleanup_config);
 
-    // Bootstrap admin user if no users exist
     if !metadata_store.has_users().await? {
         let admin_username = std::env::var("RUSTSHARE_ADMIN_USERNAME")?;
         let admin_email = std::env::var("RUSTSHARE_ADMIN_EMAIL")?;
 
-        // Use env password if provided, otherwise generate a strong random one
         let admin_password = match std::env::var("RUSTSHARE_ADMIN_PASSWORD") {
             Ok(pwd) => pwd,
             Err(_) => {
@@ -327,18 +451,18 @@ pub async fn init_app() -> Result<AppState> {
     )
     .await?;
 
-    // Seed default modules and templates
-    module_service
+    services
+        .module_service
         .ensure_default_modules(default_tenant_id)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to seed default modules: {}", e))?;
-    template_service
+    services
+        .template_service
         .ensure_default_templates(default_tenant_id)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to seed default templates: {}", e))?;
     info!("Default modules and templates seeded");
 
-    // Load secret encryption key
     let encryption_key = std::env::var("RUSTSHARE_SECRET_ENCRYPTION_KEY").unwrap_or_default();
     if encryption_key == "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" {
         return Err(anyhow::anyhow!(
@@ -352,11 +476,9 @@ pub async fn init_app() -> Result<AppState> {
         info!("Seeded initial OIDC config from environment bootstrap values");
     }
 
-    // Public base URL for share links
     let public_base_url = std::env::var("RUSTSHARE_PUBLIC_URL")
         .unwrap_or_else(|_| "http://localhost:5173".to_string());
 
-    // Build application state
     let state = AppState {
         db_pool,
         metadata_store,
@@ -364,27 +486,27 @@ pub async fn init_app() -> Result<AppState> {
         object_store,
         jwt_manager,
         broadcaster,
-        file_service,
-        folder_service,
-        share_service,
-        thumbnail_service,
+        file_service: services.file_service,
+        folder_service: services.folder_service,
+        share_service: services.share_service,
+        thumbnail_service: services.thumbnail_service,
         permission_resolver,
-        notification_service,
-        user_share_service,
-        ai_service,
-        upload_service: Some(upload_service),
+        notification_service: services.notification_service,
+        user_share_service: services.user_share_service,
+        ai_service: services.ai_service,
+        upload_service: Some(services.upload_service),
         rate_limit_config,
         secret_key,
         oidc_runtime_cache: OidcRuntimeCache::new(),
         poll_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
         default_tenant_id,
-        note_service,
-        decision_service,
-        meeting_service,
-        module_service,
-        template_service,
-        kanban_service,
-        brainstorming_service,
+        note_service: services.note_service,
+        decision_service: services.decision_service,
+        meeting_service: services.meeting_service,
+        module_service: services.module_service,
+        template_service: services.template_service,
+        kanban_service: services.kanban_service,
+        brainstorming_service: services.brainstorming_service,
         public_base_url,
     };
 

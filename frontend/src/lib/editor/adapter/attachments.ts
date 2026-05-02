@@ -8,11 +8,7 @@
 
 import type { Editor } from '@tiptap/core';
 import type { RichMarkdownAttachment, AttachmentKind, EditorPermissions } from '../types';
-import {
-	classifyAttachmentKind,
-	deduplicateFilename,
-	isHiddenMetadataFile
-} from '../validation';
+import { classifyAttachmentKind, deduplicateFilename, isHiddenMetadataFile } from '../validation';
 import { isSafeFilename } from './security';
 import { generateAttachmentId } from '../metadata';
 import { buildAttachmentMarkdownPath } from '../paths';
@@ -221,13 +217,10 @@ export function insertAttachmentIntoEditor(
 	editor: Editor,
 	attachment: PreparedAttachment | RichMarkdownAttachment
 ): void {
-	const filename = 'sanitizedFilename' in attachment
-		? attachment.sanitizedFilename
-		: attachment.filename;
+	const filename =
+		'sanitizedFilename' in attachment ? attachment.sanitizedFilename : attachment.filename;
 	const isImage =
-		'isImage' in attachment
-			? attachment.isImage
-			: INLINE_IMAGE_MIMES.has(attachment.mimeType);
+		'isImage' in attachment ? attachment.isImage : INLINE_IMAGE_MIMES.has(attachment.mimeType);
 
 	if (isImage) {
 		insertImageIntoEditor(editor, filename);

@@ -11,7 +11,8 @@
 	export let module: ModuleDefinition;
 
 	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No shares yet';
-	$: emptyDescription = module.ui.page.emptyStateDescription ?? 'Create your first share package to get started.';
+	$: emptyDescription =
+		module.ui.page.emptyStateDescription ?? 'Create your first share package to get started.';
 	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Share';
 
 	// Fetch module root folder contents

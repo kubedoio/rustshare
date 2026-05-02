@@ -12,7 +12,8 @@
 	export let module: ModuleDefinition;
 
 	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No decisions yet';
-	$: emptyDescription = module.ui.page.emptyStateDescription ?? 'Record your first decision to get started.';
+	$: emptyDescription =
+		module.ui.page.emptyStateDescription ?? 'Record your first decision to get started.';
 	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Decision';
 
 	// Fetch decisions via module service

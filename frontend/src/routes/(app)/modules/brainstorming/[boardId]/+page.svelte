@@ -216,7 +216,11 @@
 	<!-- Header -->
 	<header class="editor-header">
 		<div class="header-left">
-			<button class="btn btn-ghost btn-sm btn-square" onclick={handleBack} aria-label="Back to gallery">
+			<button
+				class="btn btn-square btn-ghost btn-sm"
+				onclick={handleBack}
+				aria-label="Back to gallery"
+			>
 				<ArrowLeft size={20} />
 			</button>
 			<div class="title-block">
@@ -236,9 +240,7 @@
 					Saving...
 				</span>
 			{:else if saveStatus === 'unsaved'}
-				<span class="status-badge status-unsaved">
-					Unsaved changes
-				</span>
+				<span class="status-badge status-unsaved"> Unsaved changes </span>
 			{:else if saveStatus === 'error'}
 				<span class="status-badge status-error">
 					<AlertCircle size={14} />
@@ -252,7 +254,7 @@
 			{/if}
 
 			<button
-				class="btn btn-primary btn-sm gap-2"
+				class="btn gap-2 btn-sm btn-primary"
 				onclick={handleSave}
 				disabled={isSaving || !hasChanges}
 			>
@@ -283,7 +285,7 @@
 	</main>
 
 	{#if saveError}
-		<div class="toast toast-bottom toast-center z-50">
+		<div class="toast toast-center toast-bottom z-50">
 			<div class="alert alert-error shadow-lg">
 				<AlertCircle size={16} />
 				<span>{saveError}</span>

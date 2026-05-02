@@ -152,11 +152,7 @@
 		<WebSocketStatus />
 
 		<!-- Notifications -->
-		<a
-			href="/notifications"
-			class="btn btn-circle btn-ghost btn-sm relative"
-			title="Notifications"
-		>
+		<a href="/notifications" class="btn relative btn-circle btn-ghost btn-sm" title="Notifications">
 			<svg
 				xmlns="http://www.w3.org/2000/svg"
 				fill="none"
@@ -172,7 +168,7 @@
 				/>
 			</svg>
 			{#if $unreadNotificationsQuery.data && $unreadNotificationsQuery.data.count > 0}
-				<span class="badge badge-primary badge-xs absolute top-0 right-0 indicator-item">
+				<span class="indicator-item absolute top-0 right-0 badge badge-xs badge-primary">
 					{$unreadNotificationsQuery.data.count}
 				</span>
 			{/if}

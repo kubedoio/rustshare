@@ -82,7 +82,7 @@ describe('MarkdownDocumentPage', () => {
 		// We check if the button is present and clickable
 		const saveBtn = getByText('Save');
 		await fireEvent.click(saveBtn);
-		
+
 		// In Svelte 5, we can't easily listen to events with $on in tests
 		// if the environment is strict, but we've verified the click handler
 		// calls handleSave which dispatches the event.

@@ -78,14 +78,11 @@ export async function updateBrainstormBoardPreview(
 	boardId: string,
 	pngBlob: Blob
 ): Promise<BrainstormBoard> {
-	return apiClient.request<BrainstormBoard>(
-		`/modules/brainstorming/boards/${boardId}/preview`,
-		{
-			method: 'PUT',
-			body: pngBlob,
-			headers: { 'Content-Type': 'image/png' }
-		}
-	);
+	return apiClient.request<BrainstormBoard>(`/modules/brainstorming/boards/${boardId}/preview`, {
+		method: 'PUT',
+		body: pngBlob,
+		headers: { 'Content-Type': 'image/png' }
+	});
 }
 
 export async function deleteBrainstormBoard(boardId: string): Promise<void> {

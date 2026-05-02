@@ -110,7 +110,9 @@
 								loading="lazy"
 							/>
 						{:else}
-							<div class="flex h-full w-full flex-col items-center justify-center gap-2 text-base-content/30">
+							<div
+								class="flex h-full w-full flex-col items-center justify-center gap-2 text-base-content/30"
+							>
 								<ImageOff size={32} />
 								<span class="text-xs">No preview</span>
 							</div>
@@ -143,13 +145,16 @@
 >
 	<div class="flex flex-col gap-4">
 		<div>
-			<label for="board-title" class="label-text mb-1 block text-xs font-semibold text-base-content/70">
+			<label
+				for="board-title"
+				class="label-text mb-1 block text-xs font-semibold text-base-content/70"
+			>
 				Board Title
 			</label>
 			<input
 				id="board-title"
 				type="text"
-				class="input input-bordered w-full"
+				class="input-bordered input w-full"
 				placeholder="e.g., Q3 Product Roadmap"
 				bind:value={newBoardTitle}
 				onkeydown={(e) => {
@@ -167,7 +172,9 @@
 			<span class="label-text mb-1 block text-xs font-semibold text-base-content/70">Template</span>
 			<div class="flex flex-col gap-2">
 				{#each templates as tmpl}
-					<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-base-300/40 p-3 transition-colors hover:bg-base-200/30">
+					<label
+						class="flex cursor-pointer items-center gap-3 rounded-lg border border-base-300/40 p-3 transition-colors hover:bg-base-200/30"
+					>
 						<input
 							type="radio"
 							name="template"
@@ -199,7 +206,7 @@
 				Cancel
 			</button>
 			<button
-				class="btn btn-primary btn-sm"
+				class="btn btn-sm btn-primary"
 				onclick={handleSubmit}
 				disabled={$createBoardMutation.isPending}
 			>

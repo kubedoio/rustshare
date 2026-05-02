@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { resolveDocumentPaths, detectStorageType, buildImageMarkdown, buildFileLinkMarkdown, buildAttachmentMarkdownPath, buildAttachmentStoragePath } from './paths';
+import {
+	resolveDocumentPaths,
+	detectStorageType,
+	buildImageMarkdown,
+	buildFileLinkMarkdown,
+	buildAttachmentMarkdownPath,
+	buildAttachmentStoragePath
+} from './paths';
 import type { RichMarkdownDocumentTarget } from './types';
 
 // ---------------------------------------------------------------------------
@@ -16,9 +23,9 @@ describe('detectStorageType', () => {
 	});
 
 	it('detects folder-backed from .rustshare.json metadataPath', () => {
-		expect(
-			detectStorageType({ sourcePath: 'doc.md', metadataPath: '.rustshare.json' })
-		).toBe('folder-backed');
+		expect(detectStorageType({ sourcePath: 'doc.md', metadataPath: '.rustshare.json' })).toBe(
+			'folder-backed'
+		);
 	});
 
 	it('detects folder-backed from module context', () => {

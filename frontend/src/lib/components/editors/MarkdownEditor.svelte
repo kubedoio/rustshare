@@ -1,13 +1,17 @@
 <script lang="ts">
+	import { createEventDispatcher } from 'svelte';
 	import RichMarkdownEditor from '../../editor/components/RichMarkdownEditor.svelte';
 	import type { EditorPermissions } from '../../editor/types';
+	import { getFileContent, editFile } from '$lib/api/files';
+	import { BaseEditor } from '$lib/components/editors';
+	import type { File as ApiFile } from '$lib/api/types';
 
 	export let open = false;
-	export let file: File | null = null;
+	export let file: ApiFile | null = null;
 
 	const dispatch = createEventDispatcher<{
 		close: void;
-		saved: { file: File };
+		saved: { file: ApiFile };
 	}>();
 
 	let content = '';
@@ -75,10 +79,12 @@
 	}
 
 	const permissions: EditorPermissions = {
+		canRead: true,
 		canEdit: true,
 		canUploadAttachments: true,
 		canDeleteAttachments: true,
-		canExport: true
+		canExport: true,
+		canShare: true
 	};
 </script>
 
@@ -96,12 +102,7 @@
 >
 	<div class="flex h-full flex-col overflow-hidden bg-base-100">
 		{#if !isLoading && file}
-			<RichMarkdownEditor
-				{content}
-				editable={true}
-				{permissions}
-				bind:currentMarkdown
-			/>
+			<RichMarkdownEditor {content} editable={true} {permissions} bind:currentMarkdown />
 		{/if}
 	</div>
 </BaseEditor>

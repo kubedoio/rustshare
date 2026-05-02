@@ -111,7 +111,7 @@ describe('Dashboard Page Workspace Surface', () => {
 
 	it('enabled widgets render and order is respected', () => {
 		render(DashboardPage);
-		
+
 		expect(screen.getByText('Workspace Summary & Insights')).toBeTruthy();
 
 		// Check kanban and notes render

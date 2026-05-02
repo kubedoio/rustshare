@@ -57,7 +57,7 @@
 		</button>
 	</div>
 
-	<nav class="flex-1 p-4 overflow-y-auto">
+	<nav class="flex-1 overflow-y-auto p-4">
 		<ul class="menu flex flex-col gap-1">
 			<li>
 				<a
@@ -111,7 +111,7 @@
 		</ul>
 	</nav>
 
-	<div class="border-t border-base-300 p-4 flex flex-col gap-2">
+	<div class="flex flex-col gap-2 border-t border-base-300 p-4">
 		<ul class="menu w-full p-0">
 			<li>
 				<a
@@ -125,6 +125,6 @@
 				</a>
 			</li>
 		</ul>
-		<button class="btn btn-block btn-outline mt-2" on:click={handleLogout}> Logout </button>
+		<button class="btn mt-2 btn-block btn-outline" on:click={handleLogout}> Logout </button>
 	</div>
 </aside>

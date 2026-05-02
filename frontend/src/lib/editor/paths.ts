@@ -16,7 +16,11 @@
  *    /path/to/document.attachments/     (optional)
  */
 
-import type { RichMarkdownDocumentTarget, ResolvedDocumentPaths, DocumentStorageType } from './types';
+import type {
+	RichMarkdownDocumentTarget,
+	ResolvedDocumentPaths,
+	DocumentStorageType
+} from './types';
 
 // ---------------------------------------------------------------------------
 // Path Resolution

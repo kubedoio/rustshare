@@ -81,8 +81,7 @@
 			case 'ArrowUp':
 				event.preventDefault();
 				event.stopPropagation();
-				selectedIndex =
-					(selectedIndex - 1 + filteredCommands.length) % filteredCommands.length;
+				selectedIndex = (selectedIndex - 1 + filteredCommands.length) % filteredCommands.length;
 				scrollToSelected();
 				break;
 			case 'Enter':
@@ -110,7 +109,6 @@
 	}
 </script>
 
-<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
 <div
 	class="slash-menu"
 	style="top: {top}px; left: {left}px;"

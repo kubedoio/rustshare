@@ -1,5 +1,6 @@
 //! HTTP handlers for authentication operations.
 
+use anyhow::Context;
 use axum::{
     extract::State,
     http::{header, HeaderMap, HeaderValue, StatusCode},
@@ -21,6 +22,31 @@ use crate::{
     },
     AppState,
 };
+
+/// Dedicated error type for auth handlers to avoid stringly-typed errors.
+enum AuthHandlerError {
+    Internal(String),
+    Unauthorized,
+    Forbidden(&'static str),
+    TooManyRequests,
+}
+
+impl IntoResponse for AuthHandlerError {
+    fn into_response(self) -> Response {
+        let (status, message) = match self {
+            AuthHandlerError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            AuthHandlerError::Unauthorized => {
+                (StatusCode::UNAUTHORIZED, "Invalid credentials".to_string())
+            }
+            AuthHandlerError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.to_string()),
+            AuthHandlerError::TooManyRequests => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many failed login attempts. Please try again later.".to_string(),
+            ),
+        };
+        (status, Json(ErrorResponse::new(&message))).into_response()
+    }
+}
 
 /// Login request
 #[derive(Deserialize)]
@@ -46,103 +72,102 @@ pub struct UserResponse {
     pub theme: String,
 }
 
-/// Login handler
-pub async fn login(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(req): Json<LoginRequest>,
-) -> Result<Response, (StatusCode, String)> {
-    if !oidc::password_login_enabled() {
-        return Ok((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse::new(
-                "Password login is disabled for this deployment",
-            )),
-        )
-            .into_response());
-    }
-
-    // Check brute-force protection before any credential verification
-    let client_ip = middleware::extract_client_ip(&headers, None).map(|ip| ip.to_string());
-    if let Some(ref ip) = client_ip {
-        match state.metadata_store.is_ip_blocked(ip).await {
-            Ok(true) => {
-                return Ok((
-                    StatusCode::TOO_MANY_REQUESTS,
-                    Json(ErrorResponse::new(
-                        "Too many failed login attempts. Please try again later.",
-                    )),
-                )
-                    .into_response());
-            }
-            Ok(false) => {}
-            Err(e) => {
-                tracing::warn!("Failed to check IP block status: {}", e);
-            }
+async fn check_ip_block(state: &AppState, ip: &str) -> Result<(), AuthHandlerError> {
+    match state.metadata_store.is_ip_blocked(ip).await {
+        Ok(true) => Err(AuthHandlerError::TooManyRequests),
+        Ok(false) => Ok(()),
+        Err(e) => {
+            tracing::warn!("Failed to check IP block status: {}", e);
+            Ok(())
         }
     }
+}
 
-    // Find user
+async fn validate_credentials(
+    state: &AppState,
+    req: &LoginRequest,
+    ip: Option<&str>,
+) -> Result<User, AuthHandlerError> {
     let user = state
         .metadata_store
         .find_user_by_email(&req.email)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| AuthHandlerError::Internal(e.to_string()))?;
 
     let user = match user {
         Some(u) => u,
         None => {
-            if let Some(ref ip) = client_ip {
+            if let Some(ip) = ip {
                 if let Err(e) = state.metadata_store.record_login_failure(ip).await {
                     tracing::warn!("Failed to record login failure: {}", e);
                 }
             }
-            return Ok((
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse::new("Invalid credentials")),
-            )
-                .into_response());
+            return Err(AuthHandlerError::Unauthorized);
         }
     };
 
-    // Verify password
     let is_valid = PasswordHasher::verify(&req.password, &user.password_hash)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| AuthHandlerError::Internal(e.to_string()))?;
 
     if !is_valid {
-        if let Some(ref ip) = client_ip {
+        if let Some(ip) = ip {
             if let Err(e) = state.metadata_store.record_login_failure(ip).await {
                 tracing::warn!("Failed to record login failure: {}", e);
             }
         }
-        return Ok((
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse::new("Invalid credentials")),
-        )
-            .into_response());
+        return Err(AuthHandlerError::Unauthorized);
     }
 
-    // Successful login — clear any failed attempts for this IP
-    if let Some(ref ip) = client_ip {
+    if let Some(ip) = ip {
         if let Err(e) = state.metadata_store.clear_login_attempts(ip).await {
             tracing::warn!("Failed to clear login attempts: {}", e);
         }
     }
 
-    // Reject disabled accounts
     if user.disabled_at.is_some() {
-        return Ok((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse::new("account_disabled")),
-        )
-            .into_response());
+        return Err(AuthHandlerError::Forbidden("account_disabled"));
     }
 
-    // Keep JWT generation temporarily for compatibility while the web app migrates to cookies.
+    Ok(user)
+}
+
+fn build_login_response(token: String, user: User) -> LoginResponse {
+    LoginResponse {
+        token,
+        user: UserResponse {
+            id: user.id.to_string(),
+            email: user.email,
+            display_name: user.display_name,
+            is_admin: user.is_admin,
+            avatar_path: user.avatar_path,
+            theme: user.theme.to_string(),
+        },
+    }
+}
+
+/// Login handler
+pub async fn login(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<LoginRequest>,
+) -> Result<Response, AuthHandlerError> {
+    if !oidc::password_login_enabled() {
+        return Err(AuthHandlerError::Forbidden(
+            "Password login is disabled for this deployment",
+        ));
+    }
+
+    let client_ip = middleware::extract_client_ip(&headers, None).map(|ip| ip.to_string());
+    if let Some(ref ip) = client_ip {
+        check_ip_block(&state, ip).await?;
+    }
+
+    let user = validate_credentials(&state, &req, client_ip.as_deref()).await?;
+
     let token = state
         .jwt_manager
         .generate(user.id, user.email.clone())
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| AuthHandlerError::Internal(e.to_string()))?;
 
     let user_agent = headers
         .get(header::USER_AGENT)
@@ -157,7 +182,7 @@ pub async fn login(
         ip_address.clone(),
     )
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    .map_err(|e| AuthHandlerError::Internal(e))?;
 
     if let Err(error) = log_user_security_event(
         &state,
@@ -182,22 +207,12 @@ pub async fn login(
     response_headers.insert(
         header::SET_COOKIE,
         HeaderValue::from_str(&build_session_cookie(&session_token))
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
+            .map_err(|e| AuthHandlerError::Internal(e.to_string()))?,
     );
 
     Ok((
         response_headers,
-        Json(LoginResponse {
-            token,
-            user: UserResponse {
-                id: user.id.to_string(),
-                email: user.email,
-                display_name: user.display_name,
-                is_admin: user.is_admin,
-                avatar_path: user.avatar_path,
-                theme: user.theme.to_string(),
-            },
-        }),
+        Json(build_login_response(token, user)),
     )
         .into_response())
 }
@@ -205,7 +220,7 @@ pub async fn login(
 pub async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Response, (StatusCode, String)> {
+) -> Result<Response, AuthHandlerError> {
     if let Some(session_token) =
         extract_cookie_value(&headers, rustshare_auth::WEB_SESSION_COOKIE_NAME)
     {
@@ -214,7 +229,7 @@ pub async fn logout(
             .metadata_store
             .find_user_session_by_token_hash(&token_hash)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| AuthHandlerError::Internal(e.to_string()))?;
 
         let user_agent = headers
             .get(header::USER_AGENT)
@@ -226,7 +241,7 @@ pub async fn logout(
             .metadata_store
             .delete_user_session_by_token_hash(&token_hash)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| AuthHandlerError::Internal(e.to_string()))?;
 
         if let Some(session) = session {
             if let Err(error) = log_user_security_event(
@@ -251,7 +266,7 @@ pub async fn logout(
     response_headers.insert(
         header::SET_COOKIE,
         HeaderValue::from_str(&build_expired_session_cookie())
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
+            .map_err(|e| AuthHandlerError::Internal(e.to_string()))?,
     );
 
     Ok((response_headers, StatusCode::NO_CONTENT).into_response())
@@ -273,19 +288,17 @@ pub async fn ensure_optional_seed_user(
     is_admin: bool,
     default_tenant_id: uuid::Uuid,
 ) -> anyhow::Result<()> {
-    let username = std::env::var(username_env).ok();
-    let email = std::env::var(email_env).ok();
-    let password = std::env::var(password_env).ok();
+    let username = std::env::var(username_env);
+    let email = std::env::var(email_env);
+    let password = std::env::var(password_env);
 
-    if username.is_none() && email.is_none() && password.is_none() {
+    if username.is_err() && email.is_err() && password.is_err() {
         return Ok(());
     }
 
-    let username =
-        username.ok_or_else(|| anyhow::anyhow!("Missing required env {}", username_env))?;
-    let email = email.ok_or_else(|| anyhow::anyhow!("Missing required env {}", email_env))?;
-    let password =
-        password.ok_or_else(|| anyhow::anyhow!("Missing required env {}", password_env))?;
+    let username = username.with_context(|| format!("Missing required env {}", username_env))?;
+    let email = email.with_context(|| format!("Missing required env {}", email_env))?;
+    let password = password.with_context(|| format!("Missing required env {}", password_env))?;
 
     if metadata_store.find_user_by_email(&email).await?.is_some() {
         return Ok(());

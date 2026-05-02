@@ -14,9 +14,14 @@
 	$: module = getModuleByKey(key);
 
 	// Determine which API to use
-	$: api = key === 'notes' ? notesApi : 
-	         key === 'decisions' ? decisionsApi : 
-			 key === 'meetings' ? meetingsApi : null;
+	$: api =
+		key === 'notes'
+			? notesApi
+			: key === 'decisions'
+				? decisionsApi
+				: key === 'meetings'
+					? meetingsApi
+					: null;
 
 	$: query = createQuery<any, Error, any, any, string[]>({
 		queryKey: ['module-item', key, id],
@@ -38,8 +43,10 @@
 	const saveMutation = createMutation<any, Error, { title: string; content: string }>({
 		mutationFn: (data: { title: string; content: string }) => {
 			if (key === 'notes') return notesApi.update(id, { content: data.content });
-			if (key === 'decisions') return decisionsApi.update(id, { title: data.title, content: data.content });
-			if (key === 'meetings') return meetingsApi.update(id, { title: data.title, content: data.content });
+			if (key === 'decisions')
+				return decisionsApi.update(id, { title: data.title, content: data.content });
+			if (key === 'meetings')
+				return meetingsApi.update(id, { title: data.title, content: data.content });
 			return Promise.reject('Invalid module');
 		},
 		onSuccess: () => {
@@ -71,9 +78,9 @@
 			<div class="loading loading-lg loading-spinner text-brand-500"></div>
 		</div>
 	{:else if $query.error}
-		<div class="p-8 text-center h-full flex flex-col items-center justify-center">
+		<div class="flex h-full flex-col items-center justify-center p-8 text-center">
 			<p class="text-error">Failed to load item.</p>
-			<button class="btn btn-ghost mt-4" on:click={() => $query.refetch()}>Retry</button>
+			<button class="btn mt-4 btn-ghost" on:click={() => $query.refetch()}>Retry</button>
 		</div>
 	{:else if item}
 		<MarkdownDocumentPage
@@ -83,10 +90,12 @@
 			{saveStatus}
 			label={module?.displayName || key}
 			permissions={{
+				canRead: true,
 				canEdit: true,
 				canUploadAttachments: true,
 				canDeleteAttachments: true,
-				canExport: true
+				canExport: true,
+				canShare: true
 			}}
 			on:save={handleSave}
 			on:back={handleBack}

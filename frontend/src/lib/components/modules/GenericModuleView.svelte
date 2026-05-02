@@ -38,7 +38,9 @@
 	}
 
 	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No items yet';
-	$: emptyDescription = module.ui.page.emptyStateDescription ?? 'Create your first item from a template to get started.';
+	$: emptyDescription =
+		module.ui.page.emptyStateDescription ??
+		'Create your first item from a template to get started.';
 	$: emptyAction = module.ui.page.primaryAction?.label ?? 'Create from Template';
 </script>
 

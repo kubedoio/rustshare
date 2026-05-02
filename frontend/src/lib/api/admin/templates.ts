@@ -29,11 +29,16 @@ export async function getTemplate(key: string): Promise<TemplateDefinition> {
 	return apiClient.get<TemplateDefinition>(`/admin/templates/${key}`);
 }
 
-export async function createTemplate(template: Partial<TemplateDefinition>): Promise<TemplateDefinition> {
+export async function createTemplate(
+	template: Partial<TemplateDefinition>
+): Promise<TemplateDefinition> {
 	return apiClient.post<TemplateDefinition>('/admin/templates', template);
 }
 
-export async function updateTemplate(key: string, template: Partial<TemplateDefinition>): Promise<TemplateDefinition> {
+export async function updateTemplate(
+	key: string,
+	template: Partial<TemplateDefinition>
+): Promise<TemplateDefinition> {
 	return apiClient.put<TemplateDefinition>(`/admin/templates/${key}`, template);
 }
 

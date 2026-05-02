@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
+import { writable } from 'svelte/store';
 import Header from './Header.svelte';
 
 // Mock dependencies
 vi.mock('$app/stores', () => {
-	const { writable } = require('svelte/store');
 	return {
 		page: writable({ url: { pathname: '/dashboard' } })
 	};
@@ -17,7 +17,6 @@ vi.mock('$app/navigation', () => {
 });
 
 vi.mock('$lib/stores/auth', () => {
-	const { writable } = require('svelte/store');
 	return {
 		authStore: {
 			subscribe: writable({
@@ -41,7 +40,6 @@ vi.mock('$lib/stores/auth', () => {
 });
 
 vi.mock('$lib/query-compat', () => {
-	const { writable } = require('svelte/store');
 	return {
 		createQuery: vi.fn().mockReturnValue(
 			writable({

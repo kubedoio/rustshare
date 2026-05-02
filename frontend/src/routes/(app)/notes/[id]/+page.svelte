@@ -2,13 +2,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import {
-		getNote,
-		saveNote,
-		renameNote,
-		deleteNote,
-		toggleVisibility
-	} from '$lib/api/notes';
+	import { getNote, saveNote, renameNote, deleteNote, toggleVisibility } from '$lib/api/notes';
 	import type { Note } from '$lib/api/types';
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
 	import type { EditorMode, EditorSaveStatus } from '$lib/editor/types';
@@ -43,7 +37,7 @@
 		if (!note) return;
 		saveStatus = 'saving';
 		try {
-			await saveNote(noteId, event.detail.content);
+			await saveNote(noteId, { content: event.detail.content });
 			content = event.detail.content;
 			saveStatus = 'saved';
 		} catch (err) {
@@ -73,19 +67,21 @@
 			{saveStatus}
 			label="Notes"
 			permissions={{
+				canRead: true,
 				canEdit: true,
 				canUploadAttachments: true,
 				canDeleteAttachments: true,
-				canExport: true
+				canExport: true,
+				canShare: true
 			}}
 			on:save={handleSave}
 			on:back={handleBack}
 			on:modechange={handleModeChange}
 		/>
 	{:else}
-		<div class="p-8 text-center h-full flex flex-col items-center justify-center">
+		<div class="flex h-full flex-col items-center justify-center p-8 text-center">
 			<p class="text-error">Note not found</p>
-			<button class="btn btn-ghost mt-4" on:click={handleBack}>Back to Notes</button>
+			<button class="btn mt-4 btn-ghost" on:click={handleBack}>Back to Notes</button>
 		</div>
 	{/if}
 </div>

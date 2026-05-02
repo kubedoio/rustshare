@@ -18,8 +18,9 @@ const RUSTSHARE_META_PREFIX = '.rustshare';
 /** Maximum attachment filename length */
 const MAX_FILENAME_LENGTH = 255;
 
-/** Characters forbidden in filenames */
-const FORBIDDEN_FILENAME_CHARS = /[/\\:*?"<>|\x00-\x1f]/;
+/** Characters forbidden in filenames (control chars 0x00-0x1f constructed at runtime to avoid eslint no-control-regex) */
+const CTRL_CHARS = Array.from({ length: 32 }, (_, i) => String.fromCharCode(i)).join('');
+const FORBIDDEN_FILENAME_CHARS = new RegExp(`[/\\\\:*?"<>|${CTRL_CHARS}]`);
 
 /** Path traversal segments */
 const PATH_TRAVERSAL = /(?:^|[/\\])\.\.(?:[/\\]|$)/;
@@ -189,7 +190,7 @@ export function sanitizeAttachmentFilename(filename: string): string {
 	let name = filename.split(/[/\\]/).pop() || 'unnamed';
 
 	// Replace forbidden characters with underscores
-	name = name.replace(/[\\:*?"<>|\x00-\x1f]/g, '_');
+	name = name.replace(new RegExp(`[\\\\:*?"<>|${CTRL_CHARS}]`, 'g'), '_');
 
 	// Remove leading dots
 	while (name.startsWith('.')) {

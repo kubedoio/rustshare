@@ -49,9 +49,10 @@
 		max-width: 800px;
 		margin: 0 auto;
 		padding: 2rem;
-		background: #white;
+		background: white;
 		color: #000;
-		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+		font-family:
+			-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 	}
 
 	.print-header {
@@ -107,13 +108,13 @@
 			bottom: 0;
 			width: 100%;
 		}
-		
+
 		/* Force background colors and colors in print */
 		* {
 			-webkit-print-color-adjust: exact !important;
 			print-color-adjust: exact !important;
 		}
-		
+
 		/* Avoid breaking inside important elements */
 		.print-content :global(h1),
 		.print-content :global(h2),

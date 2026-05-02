@@ -4,23 +4,42 @@ import { replicationStore, type ReplicationStatus } from '$lib/stores/replicatio
 import { toastStore } from '$lib/stores/toast';
 import { resolveNotificationTarget } from '$lib/utils/shared';
 import { truncateFilename } from '$lib/utils/format';
-import type { WebSocketEvent } from './events';
+import type {
+	WebSocketEvent,
+	FileUploadedPayload,
+	FileModifiedPayload,
+	FileRenamedPayload,
+	FileMovedPayload,
+	FileDeletedPayload,
+	FileRestoredPayload,
+	FolderCreatedPayload,
+	FolderRenamedPayload,
+	FolderMovedPayload,
+	FolderDeletedPayload,
+	ShareCreatedPayload,
+	ShareRevokedPayload,
+	ShareUpdatedPayload
+} from './events';
 
-let currentUserId: string | null = null;
-let eventHandlersRegistered = false;
+const managerState = {
+	currentUserId: null as string | null,
+	eventHandlersRegistered: false
+};
+
+const MAX_TOAST_FILENAME_LENGTH = 12;
 
 /**
  * Initialize WebSocket connection for the authenticated browser session.
  * Sets up all event handlers for real-time sync
  */
 export async function initializeWebSocket(token: string | null, userId: string): Promise<void> {
-	currentUserId = userId;
+	managerState.currentUserId = userId;
 	const wsClient = getWebSocketClient();
 
 	// Register event handlers only once
-	if (!eventHandlersRegistered) {
+	if (!managerState.eventHandlersRegistered) {
 		registerEventHandlers(wsClient);
-		eventHandlersRegistered = true;
+		managerState.eventHandlersRegistered = true;
 	}
 
 	try {
@@ -37,8 +56,8 @@ export async function initializeWebSocket(token: string | null, userId: string):
  */
 export function cleanupWebSocket(): void {
 	disconnectWebSocket();
-	currentUserId = null;
-	eventHandlersRegistered = false;
+	managerState.currentUserId = null;
+	managerState.eventHandlersRegistered = false;
 }
 
 /**
@@ -69,18 +88,19 @@ function registerEventHandlers(wsClient: ReturnType<typeof getWebSocketClient>):
 
 // Helper to check if event is from current user
 function isOwnEvent(event: WebSocketEvent): boolean {
-	return event.user_id === currentUserId;
+	return event.user_id === managerState.currentUserId;
 }
 
 function isOwnOrSystemEvent(event: WebSocketEvent): boolean {
-	return !event.user_id || event.user_id === currentUserId;
+	return !event.user_id || event.user_id === managerState.currentUserId;
 }
 
 // File Event Handlers
 function handleFileUploaded(event: WebSocketEvent): void {
 	console.log('[WebSocket Manager] FileUploaded event:', event);
 
-	const payload = event.payload || (event as any);
+	const payload = event.payload as FileUploadedPayload | undefined;
+	if (!payload) return;
 
 	// Invalidate BOTH folder contents and file workspace queries
 	queryClient.invalidateQueries({ queryKey: ['folder-contents'] });
@@ -88,12 +108,13 @@ function handleFileUploaded(event: WebSocketEvent): void {
 
 	if (!isOwnEvent(event)) {
 		const fileName = payload.file_name || 'New file';
-		toastStore.show(`${truncateFilename(fileName, 12)} uploaded`, 'info');
+		toastStore.show(`${truncateFilename(fileName, MAX_TOAST_FILENAME_LENGTH)} uploaded`, 'info');
 	}
 }
 
 function handleFileModified(event: WebSocketEvent): void {
-	const payload = event.payload || (event as any);
+	const payload = event.payload as FileModifiedPayload | undefined;
+	if (!payload) return;
 
 	// Invalidate file details, folder contents and file workspace
 	queryClient.invalidateQueries({ queryKey: ['file', payload.file_id] });
@@ -102,12 +123,16 @@ function handleFileModified(event: WebSocketEvent): void {
 
 	if (!isOwnEvent(event)) {
 		const fileName = payload.file_name || 'File';
-		toastStore.show(`${truncateFilename(fileName, 12)} modified (v${payload.version})`, 'info');
+		toastStore.show(
+			`${truncateFilename(fileName, MAX_TOAST_FILENAME_LENGTH)} modified (v${payload.version})`,
+			'info'
+		);
 	}
 }
 
 function handleFileRenamed(event: WebSocketEvent): void {
-	const payload = event.payload || (event as any);
+	const payload = event.payload as FileRenamedPayload | undefined;
+	if (!payload) return;
 
 	// Invalidate file details, folder contents and file workspace
 	queryClient.invalidateQueries({ queryKey: ['file', payload.file_id] });
@@ -118,14 +143,15 @@ function handleFileRenamed(event: WebSocketEvent): void {
 		const oldName = payload.old_name || 'File';
 		const newName = payload.new_name || 'File';
 		toastStore.show(
-			`${truncateFilename(oldName, 12)} renamed to ${truncateFilename(newName, 12)}`,
+			`${truncateFilename(oldName, MAX_TOAST_FILENAME_LENGTH)} renamed to ${truncateFilename(newName, MAX_TOAST_FILENAME_LENGTH)}`,
 			'info'
 		);
 	}
 }
 
 function handleFileMoved(event: WebSocketEvent): void {
-	const payload = event.payload || (event as any);
+	const payload = event.payload as FileMovedPayload | undefined;
+	if (!payload) return;
 
 	// Invalidate both old and new folder contents
 	queryClient.invalidateQueries({
@@ -145,12 +171,13 @@ function handleFileMoved(event: WebSocketEvent): void {
 
 	if (!isOwnEvent(event)) {
 		const fileName = payload.file_name || 'File';
-		toastStore.show(`${truncateFilename(fileName, 12)} moved`, 'info');
+		toastStore.show(`${truncateFilename(fileName, MAX_TOAST_FILENAME_LENGTH)} moved`, 'info');
 	}
 }
 
 function handleFileDeleted(event: WebSocketEvent): void {
-	const payload = event.payload || (event as any);
+	const payload = event.payload as FileDeletedPayload | undefined;
+	if (!payload) return;
 
 	// Invalidate file details and folder contents
 	queryClient.invalidateQueries({ queryKey: ['file', payload.file_id] });
@@ -168,12 +195,13 @@ function handleFileDeleted(event: WebSocketEvent): void {
 
 	if (!isOwnEvent(event)) {
 		const fileName = payload.file_name || 'File';
-		toastStore.show(`${truncateFilename(fileName, 12)} deleted`, 'info');
+		toastStore.show(`${truncateFilename(fileName, MAX_TOAST_FILENAME_LENGTH)} deleted`, 'info');
 	}
 }
 
 function handleFileRestored(event: WebSocketEvent): void {
-	const payload = event.payload || (event as any);
+	const payload = event.payload as FileRestoredPayload | undefined;
+	if (!payload) return;
 
 	// Invalidate file details and folder contents
 	queryClient.invalidateQueries({ queryKey: ['file', payload.file_id] });
@@ -189,13 +217,14 @@ function handleFileRestored(event: WebSocketEvent): void {
 
 	if (!isOwnEvent(event)) {
 		const fileName = payload.file_name || 'File';
-		toastStore.show(`${truncateFilename(fileName, 12)} restored`, 'success');
+		toastStore.show(`${truncateFilename(fileName, MAX_TOAST_FILENAME_LENGTH)} restored`, 'success');
 	}
 }
 
 // Folder Event Handlers
 function handleFolderCreated(event: WebSocketEvent): void {
-	const payload = event.payload || (event as any);
+	const payload = event.payload as FolderCreatedPayload | undefined;
+	if (!payload) return;
 
 	// Invalidate parent folder contents, folder tree and file workspace
 	queryClient.invalidateQueries({
@@ -210,13 +239,17 @@ function handleFolderCreated(event: WebSocketEvent): void {
 	}
 
 	if (!isOwnEvent(event)) {
-		const folderName = payload.name || payload.folder_name || 'New folder';
-		toastStore.show(`Folder ${truncateFilename(folderName, 12)} created`, 'info');
+		const folderName = payload.folder_name || 'New folder';
+		toastStore.show(
+			`Folder ${truncateFilename(folderName, MAX_TOAST_FILENAME_LENGTH)} created`,
+			'info'
+		);
 	}
 }
 
 function handleFolderRenamed(event: WebSocketEvent): void {
-	const payload = event.payload || (event as any);
+	const payload = event.payload as FolderRenamedPayload | undefined;
+	if (!payload) return;
 
 	// Invalidate folder tree, all folder contents and file workspace
 	queryClient.invalidateQueries({ queryKey: ['folders'] });
@@ -227,14 +260,15 @@ function handleFolderRenamed(event: WebSocketEvent): void {
 		const oldName = payload.old_name || 'Folder';
 		const newName = payload.new_name || 'Folder';
 		toastStore.show(
-			`Folder ${truncateFilename(oldName, 12)} renamed to ${truncateFilename(newName, 12)}`,
+			`Folder ${truncateFilename(oldName, MAX_TOAST_FILENAME_LENGTH)} renamed to ${truncateFilename(newName, MAX_TOAST_FILENAME_LENGTH)}`,
 			'info'
 		);
 	}
 }
 
 function handleFolderMoved(event: WebSocketEvent): void {
-	const payload = event.payload || (event as any);
+	const payload = event.payload as FolderMovedPayload | undefined;
+	if (!payload) return;
 
 	// Invalidate both old and new parent folder contents and folder tree
 	queryClient.invalidateQueries({
@@ -252,13 +286,17 @@ function handleFolderMoved(event: WebSocketEvent): void {
 	}
 
 	if (!isOwnEvent(event)) {
-		const folderName = payload.name || payload.folder_name || 'Folder';
-		toastStore.show(`Folder ${truncateFilename(folderName, 12)} moved`, 'info');
+		const folderName = payload.folder_name || 'Folder';
+		toastStore.show(
+			`Folder ${truncateFilename(folderName, MAX_TOAST_FILENAME_LENGTH)} moved`,
+			'info'
+		);
 	}
 }
 
 function handleFolderDeleted(event: WebSocketEvent): void {
-	const payload = event.payload || (event as any);
+	const payload = event.payload as FolderDeletedPayload | undefined;
+	if (!payload) return;
 
 	// Invalidate parent folder contents, folder tree and file workspace
 	queryClient.invalidateQueries({
@@ -273,14 +311,18 @@ function handleFolderDeleted(event: WebSocketEvent): void {
 	}
 
 	if (!isOwnEvent(event)) {
-		const folderName = payload.name || payload.folder_name || 'Folder';
-		toastStore.show(`Folder ${truncateFilename(folderName, 12)} deleted`, 'info');
+		const folderName = payload.folder_name || 'Folder';
+		toastStore.show(
+			`Folder ${truncateFilename(folderName, MAX_TOAST_FILENAME_LENGTH)} deleted`,
+			'info'
+		);
 	}
 }
 
 // Share Event Handlers
 function handleShareCreated(event: WebSocketEvent): void {
-	const payload = event.payload || (event as any);
+	const payload = event.payload as ShareCreatedPayload | undefined;
+	if (!payload) return;
 
 	// Invalidate shares list and file details
 	queryClient.invalidateQueries({ queryKey: ['user-shares'] });
@@ -288,12 +330,16 @@ function handleShareCreated(event: WebSocketEvent): void {
 
 	if (!isOwnEvent(event)) {
 		const fileName = payload.file_name || 'File';
-		toastStore.show(`Share created for ${truncateFilename(fileName, 12)}`, 'info');
+		toastStore.show(
+			`Share created for ${truncateFilename(fileName, MAX_TOAST_FILENAME_LENGTH)}`,
+			'info'
+		);
 	}
 }
 
 function handleShareRevoked(event: WebSocketEvent): void {
-	const payload = event.payload || (event as any);
+	const payload = event.payload as ShareRevokedPayload | undefined;
+	if (!payload) return;
 
 	// Invalidate shares list and file details
 	queryClient.invalidateQueries({ queryKey: ['user-shares'] });
@@ -305,7 +351,8 @@ function handleShareRevoked(event: WebSocketEvent): void {
 }
 
 function handleShareUpdated(event: WebSocketEvent): void {
-	const payload = event.payload || (event as any);
+	const payload = event.payload as ShareUpdatedPayload | undefined;
+	if (!payload) return;
 
 	// Invalidate shares list and file details
 	queryClient.invalidateQueries({ queryKey: ['user-shares'] });

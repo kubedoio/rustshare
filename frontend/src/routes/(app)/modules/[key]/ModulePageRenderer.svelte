@@ -12,13 +12,13 @@
 	export let module: ModuleDefinition;
 
 	const rendererMap: Record<string, any> = {
-		'notes': NotesModuleView,
-		'meetings': MeetingsModuleView,
-		'standups': StandupsModuleView,
-		'kanban': KanbanModuleView,
-		'decisions': DecisionsModuleView,
-		'shares': SharesModuleView,
-		'brainstorming': BrainstormingModuleView
+		notes: NotesModuleView,
+		meetings: MeetingsModuleView,
+		standups: StandupsModuleView,
+		kanban: KanbanModuleView,
+		decisions: DecisionsModuleView,
+		shares: SharesModuleView,
+		brainstorming: BrainstormingModuleView
 	};
 
 	$: Renderer = rendererMap[module.ui.page.renderer] || GenericModuleView;

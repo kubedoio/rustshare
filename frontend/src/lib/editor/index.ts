@@ -38,7 +38,11 @@ export {
 } from './validation';
 
 // Metadata
-export type { ParsedDocumentMetadata, CreateMetadataOptions, UpdateMetadataFields } from './metadata';
+export type {
+	ParsedDocumentMetadata,
+	CreateMetadataOptions,
+	UpdateMetadataFields
+} from './metadata';
 export {
 	generateDocumentId,
 	generateAttachmentId,

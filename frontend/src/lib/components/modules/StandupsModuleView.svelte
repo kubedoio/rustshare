@@ -11,7 +11,8 @@
 	export let module: ModuleDefinition;
 
 	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No standups yet';
-	$: emptyDescription = module.ui.page.emptyStateDescription ?? 'Create your first standup record to get started.';
+	$: emptyDescription =
+		module.ui.page.emptyStateDescription ?? 'Create your first standup record to get started.';
 	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Standup';
 
 	// Fetch module root folder contents

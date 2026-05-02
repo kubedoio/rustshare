@@ -45,7 +45,11 @@ const mockModule = {
 				size: 'medium' as const,
 				columns: { desktop: 6, tablet: 12, mobile: 12 },
 				maxItems: 4,
-				primaryAction: { label: 'New Board', action: 'create-from-template', template: 'template_blank_brainstorm' }
+				primaryAction: {
+					label: 'New Board',
+					action: 'create-from-template',
+					template: 'template_blank_brainstorm'
+				}
 			}
 		},
 		page: {
@@ -55,7 +59,11 @@ const mockModule = {
 			layout: 'gallery-grid',
 			emptyStateTitle: 'No brainstorming boards yet',
 			emptyStateDescription: 'Create your first visual decision board.',
-			primaryAction: { label: 'New Board', action: 'create-from-template', template: 'template_blank_brainstorm' }
+			primaryAction: {
+				label: 'New Board',
+				action: 'create-from-template',
+				template: 'template_blank_brainstorm'
+			}
 		}
 	},
 	aiIndexing: { enabled: true },

@@ -7,16 +7,20 @@
 /**
  * Triggers a browser download of a text string as a file.
  */
-export function downloadTextFile(filename: string, content: string, mimeType: string = 'text/markdown'): void {
+export function downloadTextFile(
+	filename: string,
+	content: string,
+	mimeType: string = 'text/markdown'
+): void {
 	const blob = new Blob([content], { type: mimeType });
 	const url = URL.createObjectURL(blob);
 	const link = document.createElement('a');
-	
+
 	link.href = url;
 	link.download = filename;
 	document.body.appendChild(link);
 	link.click();
-	
+
 	// Cleanup
 	document.body.removeChild(link);
 	URL.revokeObjectURL(url);
@@ -38,6 +42,6 @@ export function formatExportFilename(title: string, extension: string): string {
 		.replace(/[^a-z0-9]/g, '-')
 		.replace(/-+/g, '-')
 		.replace(/^-|-$/g, '');
-	
+
 	return `${sanitized || 'document'}.${extension}`;
 }

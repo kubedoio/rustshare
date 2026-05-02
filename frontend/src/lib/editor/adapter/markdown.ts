@@ -60,7 +60,6 @@ export function editorToMarkdown(editor: Editor): string {
 	if (!editor) return '';
 
 	try {
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const storage = editor.storage as any;
 		const markdownStorage = storage?.markdown as { getMarkdown: () => string } | undefined;
 

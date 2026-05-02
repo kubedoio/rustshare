@@ -32,7 +32,8 @@
 	}
 
 	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No notes yet';
-	$: emptyDescription = module.ui.page.emptyStateDescription ?? 'Create your first note to get started.';
+	$: emptyDescription =
+		module.ui.page.emptyStateDescription ?? 'Create your first note to get started.';
 	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Note';
 </script>
 

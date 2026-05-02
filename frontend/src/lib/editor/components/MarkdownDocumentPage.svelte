@@ -232,7 +232,7 @@
 			<!-- Save button -->
 			{#if isEditing}
 				<button
-					class="btn btn-primary btn-sm"
+					class="btn btn-sm btn-primary"
 					on:click={handleSave}
 					disabled={saveStatus === 'saving' || saveStatus === 'saved'}
 				>
@@ -249,7 +249,10 @@
 							<Download size={14} />
 						</button>
 						<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
-						<ul tabindex="0" class="dropdown-content menu menu-sm rounded-box bg-base-200 z-10 w-40 p-1 shadow">
+						<ul
+							tabindex="0"
+							class="dropdown-content menu z-10 w-40 menu-sm rounded-box bg-base-200 p-1 shadow"
+						>
 							<li>
 								<button on:click={handleExportMarkdown}>
 									<FileText size={14} />
@@ -271,7 +274,10 @@
 						<MoreHorizontal size={14} />
 					</button>
 					<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
-					<ul tabindex="0" class="dropdown-content menu menu-sm rounded-box bg-base-200 z-10 w-48 p-1 shadow">
+					<ul
+						tabindex="0"
+						class="dropdown-content menu z-10 w-48 menu-sm rounded-box bg-base-200 p-1 shadow"
+					>
 						<li>
 							<button on:click={toggleAttachments}>
 								<Paperclip size={14} />

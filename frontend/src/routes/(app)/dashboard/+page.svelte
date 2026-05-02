@@ -29,7 +29,9 @@
 		.filter((section) => section.enabled)
 		.sort((a, b) => a.order - b.order);
 	$: dashboardModules = getDashboardModulesForUser($currentUser);
-	$: primaryDashboardModule = dashboardModules.find((module) => !!module.ui.dashboard.widget.primaryAction);
+	$: primaryDashboardModule = dashboardModules.find(
+		(module) => !!module.ui.dashboard.widget.primaryAction
+	);
 	$: sharedFiles = $sharedFilesQuery.data ?? [];
 	$: totalFilesCount = $allFilesQuery.data?.length ?? 0;
 	$: totalSizeUsed =

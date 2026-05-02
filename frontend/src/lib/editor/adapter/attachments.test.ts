@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { validateAttachmentUpload, filterVisibleAttachments, MAX_ATTACHMENT_SIZE } from './attachments';
+import {
+	validateAttachmentUpload,
+	filterVisibleAttachments,
+	MAX_ATTACHMENT_SIZE
+} from './attachments';
 import type { AttachmentUploadOptions } from './attachments';
 import { READ_ONLY_PERMISSIONS, WRITE_PERMISSIONS } from '../types';
 
@@ -38,7 +42,11 @@ describe('validateAttachmentUpload', () => {
 	});
 
 	it('rejects files exceeding size limit', () => {
-		const largeFile = { size: MAX_ATTACHMENT_SIZE + 100, name: 'large.zip', type: 'application/zip' } as File;
+		const largeFile = {
+			size: MAX_ATTACHMENT_SIZE + 100,
+			name: 'large.zip',
+			type: 'application/zip'
+		} as File;
 		const result = validateAttachmentUpload(largeFile, baseOptions);
 		expect(result.valid).toBe(false);
 		expect(result.error).toContain('exceeds maximum size');
