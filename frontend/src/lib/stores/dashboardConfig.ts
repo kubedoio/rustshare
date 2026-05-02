@@ -4,85 +4,92 @@ import { getDashboardModulesForUser } from '$lib/modules/registry';
 import type { User } from '$lib/api/types';
 import type { ModuleDefinition } from '$lib/modules/registry';
 
+import { getDashboardConfig, updateDashboardConfig } from '$lib/api/users';
+import type { DashboardConfig } from '$lib/api/users';
+
 const STORAGE_KEY = 'dashboard-config-v1';
 
 interface DashboardConfigState {
 	enabledModules: string[];
 	moduleOrder: string[];
 	editMode: boolean;
+	loading: boolean;
 }
 
 function getDefaultOrder(allModules: ModuleDefinition[]): string[] {
 	return allModules.map((m) => m.key);
 }
 
-function loadState(allModules: ModuleDefinition[]): DashboardConfigState {
-	if (!browser) {
-		return {
-			enabledModules: getDefaultOrder(allModules),
-			moduleOrder: getDefaultOrder(allModules),
-			editMode: false
-		};
-	}
-
-	try {
-		const saved = localStorage.getItem(STORAGE_KEY);
-		if (saved) {
-			const parsed = JSON.parse(saved);
-			// Validate against current module keys
-			const validKeys = new Set(allModules.map((m) => m.key));
-			const enabled = (parsed.enabledModules ?? []).filter((k: string) => validKeys.has(k));
-			const order = (parsed.moduleOrder ?? []).filter((k: string) => validKeys.has(k));
-			// Append any new modules not in saved order
-			for (const key of validKeys) {
-				if (!order.includes(key)) order.push(key);
-				if (!enabled.includes(key)) enabled.push(key);
-			}
-			return {
-				enabledModules: enabled,
-				moduleOrder: order,
-				editMode: false
-			};
-		}
-	} catch {
-		// Ignore parse errors
-	}
-
-	return {
-		enabledModules: getDefaultOrder(allModules),
-		moduleOrder: getDefaultOrder(allModules),
-		editMode: false
-	};
-}
+let updateTimeout: any = null;
 
 function persistState(state: DashboardConfigState) {
 	if (!browser) return;
-	try {
-		localStorage.setItem(
-			STORAGE_KEY,
-			JSON.stringify({
-				enabledModules: state.enabledModules,
-				moduleOrder: state.moduleOrder
-			})
-		);
-	} catch {
-		// Ignore storage errors
-	}
+	
+	// Debounce updates to the server
+	if (updateTimeout) clearTimeout(updateTimeout);
+	updateTimeout = setTimeout(async () => {
+		try {
+			await updateDashboardConfig({
+				enabled_modules: state.enabledModules,
+				module_order: state.moduleOrder,
+				sections: [] // Currently not used
+			});
+		} catch (error) {
+			console.error('Failed to persist dashboard config to server:', error);
+		}
+	}, 1000);
 }
 
 function createDashboardConfigStore() {
-	// We need all modules to initialize defaults; use empty array until hydrated
-	const allModules: ModuleDefinition[] = [];
-	const initialState = loadState(allModules);
+	const initialState: DashboardConfigState = {
+		enabledModules: [],
+		moduleOrder: [],
+		editMode: false,
+		loading: true
+	};
 
 	const { subscribe, set, update } = writable<DashboardConfigState>(initialState);
 
 	return {
 		subscribe,
 
-		hydrate: (modules: ModuleDefinition[]) => {
-			const state = loadState(modules);
-			set(state);
+		hydrate: async (allModules: ModuleDefinition[]) => {
+			update(s => ({ ...s, loading: true }));
+			try {
+				const config = await getDashboardConfig();
+				
+				const validKeys = new Set(allModules.map((m) => m.key));
+				let enabled = (config.enabled_modules ?? []).filter((k) => validKeys.has(k));
+				let order = (config.module_order ?? []).filter((k) => validKeys.has(k));
+
+				// If empty (new user), use defaults
+				if (enabled.length === 0 && order.length === 0) {
+					enabled = getDefaultOrder(allModules);
+					order = getDefaultOrder(allModules);
+				} else {
+					// Append any new modules not in saved order
+					for (const key of validKeys) {
+						if (!order.includes(key)) order.push(key);
+						if (!enabled.includes(key)) enabled.push(key);
+					}
+				}
+
+				set({
+					enabledModules: enabled,
+					moduleOrder: order,
+					editMode: false,
+					loading: false
+				});
+			} catch (error) {
+				console.error('Failed to hydrate dashboard config from server:', error);
+				// Fallback to defaults
+				set({
+					enabledModules: getDefaultOrder(allModules),
+					moduleOrder: getDefaultOrder(allModules),
+					editMode: false,
+					loading: false
+				});
+			}
 		},
 
 		toggleModule: (key: string) => {
@@ -126,7 +133,8 @@ function createDashboardConfigStore() {
 			const defaultState = {
 				enabledModules: getDefaultOrder(modules),
 				moduleOrder: getDefaultOrder(modules),
-				editMode: false
+				editMode: false,
+				loading: false
 			};
 			persistState(defaultState);
 			set(defaultState);

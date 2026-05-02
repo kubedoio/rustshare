@@ -166,7 +166,7 @@ pub async fn login(
 
     let token = state
         .jwt_manager
-        .generate(user.id, user.email.clone())
+        .generate(user.id, user.email.clone(), user.tenant_id)
         .map_err(|e| AuthHandlerError::Internal(e.to_string()))?;
 
     let user_agent = headers

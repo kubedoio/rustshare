@@ -21,6 +21,7 @@ pub enum JwtError {
 pub struct Claims {
     pub sub: String, // Subject (user ID)
     pub email: String,
+    pub tenant_id: Uuid,
     pub exp: i64,    // Expiration time
     pub iat: i64,    // Issued at
     pub iss: String, // Issuer
@@ -46,7 +47,12 @@ impl JwtManager {
     ///
     /// The email parameter accepts any string type (`&str` or `String`)
     /// to avoid unnecessary allocations.
-    pub fn generate(&self, user_id: Uuid, email: impl AsRef<str>) -> Result<String, JwtError> {
+    pub fn generate(
+        &self,
+        user_id: Uuid,
+        email: impl AsRef<str>,
+        tenant_id: Uuid,
+    ) -> Result<String, JwtError> {
         let now = Utc::now();
         let expiration = now + Duration::hours(24);
         let email = email.as_ref();
@@ -54,6 +60,7 @@ impl JwtManager {
         let claims = Claims {
             sub: user_id.to_string(),
             email: email.to_string(),
+            tenant_id,
             exp: expiration.timestamp(),
             iat: now.timestamp(),
             iss: "rustshare".to_string(),
@@ -114,13 +121,15 @@ mod tests {
         let manager = JwtManager::new(secret.to_string());
 
         let user_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
         let email = "test@example.com".to_string();
 
-        let token = manager.generate(user_id, email.clone()).unwrap();
+        let token = manager.generate(user_id, email.clone(), tenant_id).unwrap();
         let claims = manager.validate(&token).unwrap();
 
         assert_eq!(claims.sub, user_id.to_string());
         assert_eq!(claims.email, email);
+        assert_eq!(claims.tenant_id, tenant_id);
         assert_eq!(claims.iss, "rustshare");
     }
 

@@ -49,30 +49,30 @@ fn hash_token(raw: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
-/// Resolve a bearer token to a user ID.
+/// Resolve a bearer token to a (user_id, tenant_id) pair.
 ///
 /// First tries JWT validation, then falls back to device token lookup.
 /// For device tokens, updates `last_used_at` timestamp on successful lookup.
-pub async fn resolve_bearer_token(token: &str, state: &AppState) -> Result<Uuid, AuthError> {
+pub async fn resolve_bearer_token(token: &str, state: &AppState) -> Result<(Uuid, Uuid), AuthError> {
     // First, try JWT validation
     match state.jwt_manager.validate(token) {
         Ok(claims) => {
             let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AuthError::InvalidToken)?;
 
-            // Check disabled status
-            let disabled: bool =
-                sqlx::query_scalar("SELECT disabled_at IS NOT NULL FROM users WHERE id = $1")
+            // Check disabled status and get tenant_id
+            let row: (bool, Uuid) =
+                sqlx::query_as("SELECT disabled_at IS NOT NULL, tenant_id FROM users WHERE id = $1")
                     .bind(user_id)
                     .fetch_optional(&state.db_pool)
                     .await
                     .map_err(|_| AuthError::DatabaseError)?
                     .ok_or(AuthError::UserNotFound)?;
 
-            if disabled {
+            if row.0 {
                 return Err(AuthError::AccountDisabled);
             }
 
-            return Ok(user_id);
+            return Ok((user_id, row.1));
         }
         Err(_) => {
             // JWT validation failed, try device token lookup
@@ -103,20 +103,20 @@ pub async fn resolve_bearer_token(token: &str, state: &AppState) -> Result<Uuid,
         .await
         .map_err(|_| AuthError::DatabaseError)?;
 
-    // Check disabled status for device token user
-    let disabled: bool =
-        sqlx::query_scalar("SELECT disabled_at IS NOT NULL FROM users WHERE id = $1")
+    // Check disabled status for device token user and get tenant_id
+    let row: (bool, Uuid) =
+        sqlx::query_as("SELECT disabled_at IS NOT NULL, tenant_id FROM users WHERE id = $1")
             .bind(user_id)
             .fetch_optional(&state.db_pool)
             .await
             .map_err(|_| AuthError::DatabaseError)?
             .ok_or(AuthError::UserNotFound)?;
 
-    if disabled {
+    if row.0 {
         return Err(AuthError::AccountDisabled);
     }
 
-    Ok(user_id)
+    Ok((user_id, row.1))
 }
 
 /// Authenticated user extracted from JWT token.
@@ -127,7 +127,7 @@ pub async fn resolve_bearer_token(token: &str, state: &AppState) -> Result<Uuid,
 #[derive(Debug, Clone)]
 pub struct AuthenticatedUser {
     pub user_id: Uuid,
-    /// Tenant ID for multi-tenant support (defaults to nil UUID for single-tenant mode).
+    /// Tenant ID for multi-tenant support.
     pub tenant_id: Uuid,
 }
 
@@ -153,7 +153,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             {
                 return Ok(AuthenticatedUser {
                     user_id: session.user_id,
-                    tenant_id: Uuid::nil(), // TODO: Get tenant_id from session when available
+                    tenant_id: session.tenant_id,
                 });
             }
         }
@@ -163,13 +163,13 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             .await
             .map_err(|_| auth_error("Missing or invalid authentication"))?;
 
-        let user_id = resolve_bearer_token(bearer.token(), state)
+        let (user_id, tenant_id) = resolve_bearer_token(bearer.token(), state)
             .await
             .map_err(|e| e.into_response())?;
 
         Ok(AuthenticatedUser {
             user_id,
-            tenant_id: Uuid::nil(), // TODO: Get tenant_id from JWT claims when available
+            tenant_id,
         })
     }
 }
@@ -200,7 +200,7 @@ impl FromRequestParts<AppState> for AuthenticatedSession {
             .await
             .map_err(|_| auth_error("Missing or invalid authentication"))?;
 
-        let user_id = resolve_bearer_token(bearer.token(), state)
+        let (user_id, _tenant_id) = resolve_bearer_token(bearer.token(), state)
             .await
             .map_err(|e| e.into_response())?;
 

@@ -812,3 +812,50 @@ pub async fn update_user_module_preference(
         }
     }
 }
+
+/// Get the authenticated user's dashboard configuration.
+pub async fn get_dashboard_config(
+    State(state): State<AppState>,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+) -> Response {
+    match state.metadata_store.find_user_by_id(user_id).await {
+        Ok(Some(user)) => (StatusCode::OK, Json(user.dashboard_config.0)).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse::new("User not found")),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get dashboard config: {:?}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new("Failed to get dashboard config")),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Update the authenticated user's dashboard configuration.
+pub async fn update_dashboard_config(
+    State(state): State<AppState>,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+    Json(config): Json<rustshare_core::domain::DashboardConfig>,
+) -> Response {
+    match state
+        .metadata_store
+        .update_user_dashboard_config(user_id, &config)
+        .await
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            tracing::error!("Failed to update dashboard config: {:?}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new("Failed to update dashboard config")),
+            )
+                .into_response()
+        }
+    }
+}
+
