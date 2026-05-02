@@ -28,14 +28,30 @@
 	import RichMarkdownViewer from './RichMarkdownViewer.svelte';
 	import AttachmentPanel from './AttachmentPanel.svelte';
 	import PrintableDocumentView from './PrintableDocumentView.svelte';
+	import EditorSkeleton from './EditorSkeleton.svelte';
+	import ExportModal from './ExportModal.svelte';
 	import { insertAttachmentIntoEditor } from '../adapter/attachments';
 	import { downloadTextFile, formatExportFilename, triggerPrint } from '../adapter/export';
 
-	/** Document title */
-	export let title: string = 'Untitled';
+	/** Purposeful Colors from CSS */
+	const PURPOSEFUL_COLORS = [
+		{ name: 'Default', value: null, class: 'bg-base-300' },
+		{ name: 'Blue', value: 'blue', class: 'bg-[var(--rs-accent-blue)]' },
+		{ name: 'Green', value: 'green', class: 'bg-[var(--rs-accent-green)]' },
+		{ name: 'Red', value: 'red', class: 'bg-[var(--rs-accent-red)]' },
+		{ name: 'Orange', value: 'orange', class: 'bg-[var(--rs-accent-orange)]' },
+		{ name: 'Purple', value: 'purple', class: 'bg-[var(--rs-accent-purple)]' },
+		{ name: 'Pink', value: 'pink', class: 'bg-[var(--rs-accent-pink)]' }
+	];
 
-	/** Markdown content */
+	/** Note title */
+	export let title: string = '';
+
+	/** Initial Markdown content */
 	export let content: string = '';
+
+	/** Current note color */
+	export let color: string | null = null;
 
 	/** Current editor mode */
 	export let mode: EditorMode = 'read';
@@ -67,6 +83,7 @@
 		back: void;
 		export: { format: 'markdown' | 'print' };
 		upload: { files: File[] };
+		sketch: { blob: Blob; filename: string };
 		delete: { attachment: RichMarkdownAttachment };
 	}>();
 
@@ -170,6 +187,13 @@
 
 	function toggleAttachments() {
 		isAttachmentsOpen = !isAttachmentsOpen;
+	}
+
+	/**
+	 * Public API to insert an attachment into the editor.
+	 */
+	export function insertAttachment(attachment: RichMarkdownAttachment) {
+		handleAttachmentInsert(new CustomEvent('insert', { detail: { attachment } }));
 	}
 </script>
 
@@ -307,6 +331,7 @@
 					bind:currentMarkdown
 					on:change={handleEditorChange}
 					on:attachment={toggleAttachments}
+					on:sketch={(e) => dispatch('sketch', e.detail)}
 					on:filedrop={handleAttachmentUpload}
 				/>
 			{:else}
@@ -330,7 +355,7 @@
 
 	<!-- Hidden printable view for PDF generation -->
 	<div class="print-only">
-		<PrintableDocumentView {title} {content} {label} />
+		<PrintableDocumentView {title} content={currentMarkdown || content} {label} />
 	</div>
 </div>
 
@@ -344,37 +369,6 @@
 
 	.print-only {
 		display: none;
-	}
-
-	@media print {
-		.doc-header,
-		.header-actions,
-		.attachment-panel,
-		.rich-markdown-editor :global(.editor-toolbar),
-		.btn {
-			display: none !important;
-		}
-
-		.markdown-document-page {
-			display: block;
-			height: auto;
-		}
-
-		.doc-main,
-		.doc-content {
-			display: block;
-			height: auto;
-			overflow: visible;
-		}
-
-		.print-only {
-			display: block;
-		}
-
-		/* Hide the normal view if we want to use the PrintableDocumentView specifically */
-		.doc-main {
-			display: none !important;
-		}
 	}
 
 	.doc-main {

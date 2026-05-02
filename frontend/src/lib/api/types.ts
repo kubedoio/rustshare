@@ -177,6 +177,7 @@ export interface NoteMetadata {
 	extension: string;
 	pinned?: boolean;
 	icon?: string | null;
+	color?: string | null;
 }
 
 export interface Note {

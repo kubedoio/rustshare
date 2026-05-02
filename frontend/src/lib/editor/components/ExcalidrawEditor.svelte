@@ -1,0 +1,184 @@
+<script lang="ts">
+	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
+	import React from 'react';
+	import { createRoot } from 'react-dom/client';
+	import { X, Save, Palette } from 'lucide-svelte';
+
+	export let open = false;
+
+	const dispatch = createEventDispatcher<{
+		save: { blob: Blob; filename: string };
+		close: void;
+	}>();
+
+	let container: HTMLDivElement;
+	let root: any = null;
+	let excalidrawAPI: any = null;
+	let ExcalidrawComp: any = null;
+	let exportToBlobFn: any = null;
+
+	async function initExcalidraw() {
+		try {
+			// Dynamic imports for Excalidraw and React components
+			const mod = await import('@excalidraw/excalidraw');
+			ExcalidrawComp = mod.Excalidraw;
+			exportToBlobFn = mod.exportToBlob;
+
+			// Import styles
+			await import('@excalidraw/excalidraw/index.css');
+
+			if (container) {
+				root = createRoot(container);
+				render();
+			}
+		} catch (err) {
+			console.error('Failed to load Excalidraw:', err);
+		}
+	}
+
+	function render() {
+		if (!root || !ExcalidrawComp) return;
+
+		root.render(
+			React.createElement(
+				'div',
+				{
+					style: {
+						height: '100%',
+						width: '100%',
+						display: 'flex',
+						flexDirection: 'column'
+					}
+				},
+				React.createElement(ExcalidrawComp, {
+					excalidrawAPI: (api: any) => (excalidrawAPI = api),
+					UIOptions: {
+						canvasActions: {
+							toggleTheme: true,
+							export: false,
+							loadScene: false,
+							saveToActiveFile: false
+						}
+					}
+				})
+			)
+		);
+	}
+
+	async function handleSave() {
+		if (!excalidrawAPI || !exportToBlobFn) return;
+
+		const elements = excalidrawAPI.getSceneElements();
+		const appState = excalidrawAPI.getAppState();
+		const files = excalidrawAPI.getFiles();
+
+		if (!elements || elements.length === 0) {
+			alert('Please draw something first.');
+			return;
+		}
+
+		try {
+			const blob = await exportToBlobFn({
+				elements,
+				appState: {
+					...appState,
+					exportBackground: true,
+					viewBackgroundColor: appState.viewBackgroundColor || '#ffffff'
+				},
+				files,
+				mimeType: 'image/png',
+				getDimensions: (width: number, height: number) => ({
+					width: width * 2,
+					height: height * 2
+				})
+			});
+
+			const filename = `sketch-${Date.now()}.png`;
+			dispatch('save', { blob, filename });
+		} catch (err) {
+			console.error('Failed to export drawing:', err);
+			alert('Failed to save drawing. Please try again.');
+		}
+	}
+
+	onMount(() => {
+		if (open) {
+			initExcalidraw();
+		}
+	});
+
+	$: if (open && !root && container) {
+		initExcalidraw();
+	}
+
+	onDestroy(() => {
+		if (root) {
+			root.unmount();
+			root = null;
+		}
+	});
+</script>
+
+{#if open}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-md animate-fade-in"
+	>
+		<div
+			class="rs-panel flex h-[85vh] w-full max-w-6xl flex-col overflow-hidden shadow-2xl animate-slide-in-up"
+		>
+			<!-- Toolbar -->
+			<div
+				class="flex items-center justify-between border-b border-base-300/50 bg-base-100/80 px-6 py-4 backdrop-blur-md"
+			>
+				<div class="flex items-center gap-3">
+					<div class="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-soft text-brand">
+						<Palette size={20} />
+					</div>
+					<div>
+						<h2 class="text-lg font-bold tracking-tight">Excalidraw Sketch</h2>
+						<p class="text-xs text-base-content/50">Draw and insert into your note</p>
+					</div>
+				</div>
+
+				<div class="flex gap-2">
+					<button class="btn btn-ghost btn-sm px-4" on:click={() => dispatch('close')}>
+						<X size={16} />
+						<span>Cancel</span>
+					</button>
+					<button class="btn btn-primary btn-sm px-6" on:click={handleSave}>
+						<Save size={16} />
+						<span>Insert Sketch</span>
+					</button>
+				</div>
+			</div>
+
+			<!-- Canvas Container -->
+			<div class="relative flex-1 bg-base-200/30">
+				<div bind:this={container} class="absolute inset-0">
+					{#if !ExcalidrawComp}
+						<div class="flex h-full items-center justify-center">
+							<div class="flex flex-col items-center gap-3">
+								<div class="loading loading-spinner loading-lg text-brand"></div>
+								<span class="text-sm font-medium text-base-content/40">Loading Excalidraw...</span>
+							</div>
+						</div>
+					{/if}
+				</div>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<style>
+	:global(.excalidraw) {
+		--rs-border-radius: 1rem;
+	}
+
+	:global(.excalidraw .App-menu_top) {
+		margin-top: 1rem;
+	}
+
+	.border-b {
+		border-bottom-width: 1px;
+	}
+</style>

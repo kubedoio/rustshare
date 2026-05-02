@@ -139,6 +139,16 @@ export const SLASH_COMMANDS: SlashCommand[] = [
 		action: () => false // Handled by event dispatch
 	},
 	{
+		id: 'sketch',
+		label: 'Sketch',
+		description: 'Draw a hand-drawn diagram',
+		icon: 'palette',
+		keywords: ['sketch', 'draw', 'diagram', 'excalidraw', 'illustration'],
+		group: 'media',
+		requiresAttachmentHandler: true,
+		action: () => false // Handled by event dispatch
+	},
+	{
 		id: 'file-attachment',
 		label: 'File Attachment',
 		description: 'Attach a file to this document',

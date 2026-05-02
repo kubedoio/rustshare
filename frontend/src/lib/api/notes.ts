@@ -22,6 +22,7 @@ export interface CreateNoteResponse {
 
 export interface SaveNoteRequest {
 	content: string;
+	color?: string | null;
 }
 
 export interface SaveNoteResponse {
@@ -112,7 +113,7 @@ export const notesApi = {
 	get: getNote,
 	list: listNotes,
 	create: createNote,
-	update: async (id: string, req: { content: string }) => saveNote(id, req),
+	update: async (id: string, req: { content: string; color?: string | null }) => saveNote(id, req),
 	delete: deleteNote,
 	toggleVisibility
 };

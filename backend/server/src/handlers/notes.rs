@@ -151,6 +151,7 @@ pub async fn get_note(
 #[derive(Debug, Deserialize)]
 pub struct SaveNoteRequest {
     pub content: String,
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -169,7 +170,7 @@ pub async fn save_note(
 ) -> Result<Json<SaveNoteResponse>, Response> {
     let note = state
         .note_service
-        .save_note(note_id, auth.user_id, req.content)
+        .save_note(note_id, auth.user_id, req.content, req.color)
         .await
         .map_err(note_error_response)?;
 

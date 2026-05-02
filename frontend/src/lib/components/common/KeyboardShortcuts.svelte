@@ -65,7 +65,7 @@
 	});
 </script>
 
-<dialog class="modal" class:modal-open={open}>
+<dialog class="modal keyboard-shortcuts" class:modal-open={open}>
 	<div class="modal-box max-w-3xl">
 		<h3 class="mb-6 text-2xl font-bold">Keyboard Shortcuts</h3>
 

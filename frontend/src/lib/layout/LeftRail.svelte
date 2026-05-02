@@ -60,7 +60,7 @@
 
 <!-- Far-left Icon Rail -->
 <aside
-	class="z-30 hidden w-[4.5rem] flex-shrink-0 flex-col border-r border-base-300/50 bg-base-200/30 backdrop-blur lg:flex"
+	class="left-rail z-30 hidden w-[4.5rem] flex-shrink-0 flex-col border-r border-base-300/50 bg-base-200/30 backdrop-blur lg:flex"
 	aria-label="Main navigation"
 >
 	<!-- Logo -->

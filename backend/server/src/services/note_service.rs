@@ -30,6 +30,8 @@ pub struct NoteMetadata {
     pub pinned: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 impl NoteMetadata {
@@ -47,6 +49,7 @@ impl NoteMetadata {
             extension: "md".to_string(),
             pinned: Some(false),
             icon: None,
+            color: None,
         }
     }
 }
@@ -479,6 +482,7 @@ impl NoteService {
         file_id: Uuid,
         user_id: UserId,
         content: String,
+        color: Option<String>,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
 
@@ -520,6 +524,10 @@ impl NoteService {
                     }
                 }
             }
+        }
+
+        if let Some(new_color) = color {
+            meta.color = Some(new_color);
         }
 
         meta.updated_at = Utc::now();

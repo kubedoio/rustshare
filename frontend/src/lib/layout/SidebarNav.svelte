@@ -307,7 +307,7 @@
 {/if}
 
 <aside
-	class="relative z-20 h-full w-64 flex-col overflow-hidden border-r border-base-300/50 bg-base-100 transition-all duration-300
+	class="sidebar-nav relative z-20 h-full w-64 flex-col overflow-hidden border-r border-base-300/50 bg-base-100 transition-all duration-300
 		{mobileOpen ? 'flex translate-x-0' : 'hidden -translate-x-full lg:flex lg:translate-x-0'}
 		{mobileOpen ? 'fixed z-50' : 'lg:static'}"
 	aria-label="Folder navigation"

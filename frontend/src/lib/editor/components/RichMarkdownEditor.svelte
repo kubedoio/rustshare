@@ -13,6 +13,7 @@
 	import { WRITE_PERMISSIONS } from '../types';
 	import EditorToolbar from './EditorToolbar.svelte';
 	import SlashCommandMenu from './SlashCommandMenu.svelte';
+	import ExcalidrawEditor from './ExcalidrawEditor.svelte';
 
 	/** Initial Markdown content */
 	export let content: string = '';
@@ -33,6 +34,7 @@
 		change: { markdown: string };
 		ready: { editor: Editor };
 		attachment: { type: 'image' | 'file' };
+		sketch: { blob: Blob; filename: string };
 		filedrop: { files: File[] };
 	}>();
 
@@ -48,6 +50,9 @@
 	let slashMenuTop = 0;
 	let slashMenuLeft = 0;
 	let slashRangeFrom = 0;
+
+	// Excalidraw state
+	let showExcalidraw = false;
 
 	onMount(() => {
 		if (!editorElement) return;
@@ -153,7 +158,9 @@
 		editor.chain().focus().deleteRange({ from: blockStart, to: from }).run();
 
 		// Handle media commands via events
-		if (command.requiresAttachmentHandler) {
+		if (command.id === 'sketch') {
+			showExcalidraw = true;
+		} else if (command.requiresAttachmentHandler) {
 			dispatch('attachment', { type: command.id === 'image' ? 'image' : 'file' });
 		} else {
 			command.action(editor);
@@ -287,6 +294,15 @@
 			on:close={closeSlashMenu}
 		/>
 	{/if}
+
+	<ExcalidrawEditor
+		open={showExcalidraw}
+		on:close={() => (showExcalidraw = false)}
+		on:save={(e) => {
+			dispatch('sketch', e.detail);
+			showExcalidraw = false;
+		}}
+	/>
 </div>
 
 <style>

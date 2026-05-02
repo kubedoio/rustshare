@@ -156,7 +156,7 @@
 <svelte:window on:click={handleClickOutside} />
 
 <header
-	class="relative z-[95] flex h-16 items-center border-b border-base-300/60 bg-base-100/80 px-4 backdrop-blur-xl lg:px-6"
+	class="topbar relative z-[95] flex h-16 items-center border-b border-base-300/60 bg-base-100/80 px-4 backdrop-blur-xl lg:px-6"
 >
 	<!-- Left Side: Toggle & [+ New] -->
 	<div class="flex min-w-[240px] items-center gap-4">

@@ -96,6 +96,14 @@
 		--rs-motion-fast: 160ms;
 		--rs-motion-base: 240ms;
 		--rs-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+		/* Purposeful Colors */
+		--rs-accent-blue: #3b82f6;
+		--rs-accent-green: #10b981;
+		--rs-accent-red: #ef4444;
+		--rs-accent-orange: #f59e0b;
+		--rs-accent-purple: #8b5cf6;
+		--rs-accent-pink: #ec4899;
 	}
 
 	html[data-theme='rustshare-dark'] {
@@ -117,6 +125,14 @@
 		--rs-error: #d25a5a;
 		--rs-info: #5a8fae;
 		--rs-shadow: 0 22px 54px rgba(0, 0, 0, 0.24);
+
+		/* Purposeful Colors (Dark) */
+		--rs-accent-blue: #60a5fa;
+		--rs-accent-green: #34d399;
+		--rs-accent-red: #f87171;
+		--rs-accent-orange: #fbbf24;
+		--rs-accent-purple: #a78bfa;
+		--rs-accent-pink: #f472b6;
 	}
 
 	html {
@@ -289,4 +305,86 @@
 
 .animate-slide-in-up {
 	animation: slideInUp var(--rs-motion-base) var(--rs-ease);
+}
+
+/* ---------------------------------------------------------------------------
+   Print Styles - Ensures PDF export only contains the document
+   --------------------------------------------------------------------------- */
+@media print {
+	/* Hide all main UI elements */
+	:global(.doc-header),
+	:global(.header-actions),
+	:global(.attachment-panel),
+	:global(.editor-toolbar),
+	:global(.btn),
+	:global(header),
+	:global(nav),
+	:global(aside),
+	:global(.left-rail),
+	:global(.topbar),
+	:global(.sidebar-nav),
+	:global(.toast-container),
+	:global(.keyboard-shortcuts),
+	:global(.dropdown-content),
+	:global(.tooltip),
+	:global(.modal:not(.modal-open)) {
+		display: none !important;
+	}
+
+	/* Reset layout for print */
+	:global(body),
+	:global(html),
+	:global(#svelte),
+	:global(.flex.h-screen),
+	:global(.flex.h-full),
+	:global(.h-screen),
+	:global(.h-full) {
+		height: auto !important;
+		min-height: 0 !important;
+		overflow: visible !important;
+		background: white !important;
+		display: block !important;
+	}
+
+	/* Ensure main content takes full width and isn't clipped */
+	:global(main),
+	:global(.doc-main),
+	:global(.doc-content),
+	:global(.mx-auto.w-full.max-w-\[88rem\]) {
+		display: block !important;
+		overflow: visible !important;
+		width: 100% !important;
+		max-width: none !important;
+		padding: 0 !important;
+		margin: 0 !important;
+		border: none !important;
+	}
+
+	/* Target the specific printable view if it exists */
+	:global(.print-only) {
+		display: block !important;
+	}
+
+	/* Hide the normal interactive page content if we are showing the printable version */
+	:global(.doc-main) {
+		display: none !important;
+	}
+
+	/* Page-specific overrides for DaisyUI/Tailwind layout constraints */
+	:global(.flex.h-screen) {
+		height: auto !important;
+		display: block !important;
+	}
+
+	:global(.overflow-hidden) {
+		overflow: visible !important;
+	}
+
+	/* Force white background for all elements in print */
+	* {
+		background: transparent !important;
+		color: black !important;
+		box-shadow: none !important;
+		text-shadow: none !important;
+	}
 }
