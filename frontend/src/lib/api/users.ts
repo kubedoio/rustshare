@@ -246,3 +246,23 @@ export async function updateUserModulePreference(
 ): Promise<UserModulePreference> {
 	return apiClient.patch<UserModulePreference>(`/users/me/modules/${moduleKey}`, { enabled });
 }
+
+export interface DashboardConfig {
+	enabled_modules: string[];
+	module_order: string[];
+	sections: any[];
+}
+
+/**
+ * Get the current user's dashboard configuration.
+ */
+export async function getDashboardConfig(): Promise<DashboardConfig> {
+	return apiClient.get<DashboardConfig>('/users/me/dashboard-config');
+}
+
+/**
+ * Update the current user's dashboard configuration.
+ */
+export async function updateDashboardConfig(config: DashboardConfig): Promise<void> {
+	return apiClient.put<void>('/users/me/dashboard-config', config);
+}

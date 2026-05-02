@@ -38,6 +38,14 @@ impl std::str::FromStr for Theme {
     }
 }
 
+/// User's dashboard configuration
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct DashboardConfig {
+    pub enabled_modules: Vec<String>,
+    pub module_order: Vec<String>,
+    pub sections: Vec<serde_json::Value>,
+}
+
 /// User account information.
 ///
 /// Note: The `username` field is used for login and is distinct from `email`.
@@ -72,6 +80,8 @@ pub struct User {
     pub trash_retention_days: Option<i32>,
     /// Tenant this user belongs to
     pub tenant_id: Uuid,
+    /// User's dashboard configuration
+    pub dashboard_config: sqlx::types::Json<DashboardConfig>,
 }
 
 impl User {
@@ -103,6 +113,7 @@ impl User {
             email_sharing_enabled: true,
             trash_retention_days: Some(30),
             tenant_id,
+            dashboard_config: sqlx::types::Json(DashboardConfig::default()),
         }
     }
 

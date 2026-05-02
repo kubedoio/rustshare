@@ -759,6 +759,10 @@ pub fn user_routes() -> Router<AppState> {
             "/api/v1/users/me/modules/{key}",
             patch(crate::handlers::update_user_module_preference),
         )
+        .route(
+            "/api/v1/users/me/dashboard-config",
+            get(crate::handlers::get_dashboard_config).put(crate::handlers::update_dashboard_config),
+        )
 }
 
 pub fn group_routes() -> Router<AppState> {

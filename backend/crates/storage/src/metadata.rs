@@ -156,8 +156,8 @@ impl MetadataStore {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         sqlx::query(
             r#"
-            INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             "#,
         )
         .bind(user.id)
@@ -176,6 +176,7 @@ impl MetadataStore {
         .bind(user.email_sharing_enabled)
         .bind(user.trash_retention_days)
         .bind(user.tenant_id)
+        .bind(&user.dashboard_config)
         .execute(&self.pool)
         .await?;
 
@@ -483,7 +484,7 @@ impl MetadataStore {
     pub async fn find_user_by_email(&self, email: &str) -> Result<Option<User>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id FROM users WHERE email = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config FROM users WHERE email = $1"#,
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -511,6 +512,7 @@ impl MetadataStore {
                 email_sharing_enabled: row.try_get("email_sharing_enabled")?,
                 trash_retention_days: row.try_get("trash_retention_days")?,
                 tenant_id: row.try_get("tenant_id")?,
+                dashboard_config: row.try_get("dashboard_config")?,
             };
             Ok(Some(user))
         } else {
@@ -521,7 +523,7 @@ impl MetadataStore {
     /// Find user by username.
     pub async fn find_user_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id FROM users WHERE username = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config FROM users WHERE username = $1"#,
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -546,6 +548,7 @@ impl MetadataStore {
                 email_sharing_enabled: row.try_get("email_sharing_enabled")?,
                 trash_retention_days: row.try_get("trash_retention_days")?,
                 tenant_id: row.try_get("tenant_id")?,
+                dashboard_config: row.try_get("dashboard_config")?,
             }))
         } else {
             Ok(None)
@@ -556,7 +559,7 @@ impl MetadataStore {
     pub async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id FROM users WHERE id = $1"#,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config FROM users WHERE id = $1"#,
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -584,6 +587,7 @@ impl MetadataStore {
                 email_sharing_enabled: row.try_get("email_sharing_enabled")?,
                 trash_retention_days: row.try_get("trash_retention_days")?,
                 tenant_id: row.try_get("tenant_id")?,
+                dashboard_config: row.try_get("dashboard_config")?,
             };
             Ok(Some(user))
         } else {
@@ -692,6 +696,28 @@ impl MetadataStore {
             "#,
         )
         .bind(avatar_path)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update user's dashboard configuration
+    pub async fn update_user_dashboard_config(
+        &self,
+        user_id: Uuid,
+        config: &rustshare_core::domain::DashboardConfig,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE users
+            SET dashboard_config = $1,
+                updated_at = NOW()
+            WHERE id = $2
+            "#,
+        )
+        .bind(sqlx::types::Json(config))
         .bind(user_id)
         .execute(&self.pool)
         .await?;
