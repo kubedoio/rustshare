@@ -12,5 +12,5 @@ tokio = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # We'll use objc2 for FileProvider interaction
-objc2 = "0.5"
+objc2 = "0.6"
 objc2-file-provider = "0.3"
