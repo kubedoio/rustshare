@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import KanbanModuleView from './KanbanModuleView.svelte';
 
@@ -20,7 +20,8 @@ vi.mock('$lib/api/kanban', () => ({
 			column_count: 2,
 			card_count: 2,
 			created_at: '2026-04-30T10:00:00Z',
-			updated_at: '2026-04-30T10:00:00Z'
+			updated_at: '2026-04-30T10:00:00Z',
+			archived: false
 		}
 	]),
 	getKanbanBoard: vi.fn(async (boardId: string) => {
@@ -118,6 +119,8 @@ vi.mock('$lib/api/kanban', () => ({
 	})),
 	createKanbanBoard: vi.fn(),
 	createKanbanCard: vi.fn(),
+	updateKanbanBoard: vi.fn(),
+	archiveKanbanBoard: vi.fn(),
 	updateKanbanCard: vi.fn(),
 	moveKanbanCard: vi.fn(),
 	archiveKanbanCard: vi.fn(),
@@ -145,8 +148,26 @@ describe('KanbanModuleView', () => {
 		queryClient.clear();
 	});
 
-	it('renders a selected board with column folders and cards', async () => {
+	it('renders overview with board cards when boards exist', async () => {
 		render(KanbanModuleView, { module: mockModule as any });
+
+		await waitFor(() => {
+			expect(screen.getByText('Kanban')).toBeTruthy();
+		});
+
+		expect(screen.getByText('Product Roadmap')).toBeTruthy();
+		expect(screen.getByText('2 columns · 2 cards')).toBeTruthy();
+	});
+
+	it('renders a selected board with column folders and cards after clicking a board', async () => {
+		render(KanbanModuleView, { module: mockModule as any });
+
+		await waitFor(() => {
+			expect(screen.getByText('Product Roadmap')).toBeTruthy();
+		});
+
+		const boardCard = screen.getByText('Product Roadmap');
+		await fireEvent.click(boardCard);
 
 		await waitFor(() => {
 			expect(screen.getByText('Backlog')).toBeTruthy();
@@ -157,10 +178,14 @@ describe('KanbanModuleView', () => {
 		expect(screen.getByText('Design Review')).toBeTruthy();
 	});
 
-	it('shows create board modal when new board button is clicked', async () => {
+	it('shows create board modal when new board button is clicked from overview', async () => {
 		render(KanbanModuleView, { module: mockModule as any });
 
-		const newBoardBtn = await screen.findByRole('button', { name: /New Board/i });
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: /New Board/i })).toBeTruthy();
+		});
+
+		const newBoardBtn = screen.getByRole('button', { name: /New Board/i });
 		newBoardBtn.click();
 
 		await waitFor(() => {
@@ -181,6 +206,13 @@ describe('KanbanModuleView', () => {
 
 	it('renders card description preview when available', async () => {
 		render(KanbanModuleView, { module: mockModule as any });
+
+		await waitFor(() => {
+			expect(screen.getByText('Product Roadmap')).toBeTruthy();
+		});
+
+		const boardCard = screen.getByText('Product Roadmap');
+		await fireEvent.click(boardCard);
 
 		await waitFor(() => {
 			expect(screen.getByText('This is a detailed description.')).toBeTruthy();
@@ -208,6 +240,13 @@ describe('KanbanModuleView', () => {
 
 		render(KanbanModuleView, { module: mockModule as any });
 
+		await waitFor(() => {
+			expect(screen.getByText('Product Roadmap')).toBeTruthy();
+		});
+
+		const boardCard = screen.getByText('Product Roadmap');
+		await fireEvent.click(boardCard);
+
 		const card = await screen.findByText('Define MVP');
 		card.click();
 
@@ -223,6 +262,13 @@ describe('KanbanModuleView', () => {
 		render(KanbanModuleView, { module: mockModule as any });
 
 		await waitFor(() => {
+			expect(screen.getByText('Product Roadmap')).toBeTruthy();
+		});
+
+		const boardCard = screen.getByText('Product Roadmap');
+		await fireEvent.click(boardCard);
+
+		await waitFor(() => {
 			expect(screen.getByText('Define MVP')).toBeTruthy();
 		});
 	});
@@ -233,13 +279,37 @@ describe('KanbanModuleView', () => {
 		// Component should still render but module is marked disabled externally
 		expect(document.body).toBeTruthy();
 	});
+
+	it('navigates back to overview when All Boards is clicked', async () => {
+		render(KanbanModuleView, { module: mockModule as any });
+
+		await waitFor(() => {
+			expect(screen.getByText('Product Roadmap')).toBeTruthy();
+		});
+
+		// Enter board view
+		const boardCard = screen.getByText('Product Roadmap');
+		await fireEvent.click(boardCard);
+
+		await waitFor(() => {
+			expect(screen.getByText('Backlog')).toBeTruthy();
+		});
+
+		// Click All Boards
+		const allBoardsBtn = screen.getByRole('button', { name: /All Boards/i });
+		await fireEvent.click(allBoardsBtn);
+
+		await waitFor(() => {
+			expect(screen.getByText('Kanban')).toBeTruthy();
+		});
+	});
 });
 
 const mockModule = {
 	id: 'module_kanban',
 	key: 'kanban',
 	displayName: 'Kanban Dashboard',
-	description: 'Manage board cards as folders and files.',
+	description: 'Manage file-backed boards and track work.',
 	enabled: true,
 	rootPath: '/Kanban',
 	renderer: 'kanban',

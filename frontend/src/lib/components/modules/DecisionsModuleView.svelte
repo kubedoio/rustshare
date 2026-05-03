@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
-	import { createFromTemplate } from '$lib/api/modules';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
+	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
-	import { FileText, Plus, Clock } from 'lucide-svelte';
+	import { FileText, Plus, Clock, Folder } from 'lucide-svelte';
 
 	import { decisionsApi } from '$lib/api/decisions';
 	import type { ModuleDefinition } from '$lib/modules/registry';
@@ -42,81 +42,86 @@
 		}
 	}
 
+	function handleOpenInFiles() {
+		if (module.rootPath) {
+			goto(`/files?path=${encodeURIComponent(module.rootPath)}`);
+		}
+	}
+
 	function navigateToDecision(id: string) {
 		goto(`/modules/${module.key}/${id}`);
 	}
 </script>
 
-<div class="flex flex-col gap-6">
-	{#if decisions.length === 0}
-		<EmptyState
-			icon={FileText}
-			title={emptyTitle}
-			description={emptyDescription}
-			actionLabel={emptyAction}
-			onAction={handleCreateDecision}
-		/>
-	{:else}
-		<div class="flex items-center justify-between">
-			<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">Decisions</h2>
-			<button class="btn btn-sm btn-primary" onclick={handleCreateDecision}>
-				<Plus size={14} />
-				<span>New Decision</span>
-			</button>
-		</div>
+<ModulePageShell title="Decisions" subtitle={module.description}>
+	<div slot="primaryAction">
+		<button class="btn gap-2 btn-sm btn-primary" onclick={handleCreateDecision}>
+			<Plus size={14} />
+			<span>New Decision</span>
+		</button>
+	</div>
+	<div slot="secondaryActions">
+		<button class="btn gap-2 btn-outline btn-sm" onclick={handleOpenInFiles}>
+			<Folder size={14} />
+			<span>Open in Files</span>
+		</button>
+	</div>
 
-		{#if decisions.length > 0}
-			{#if isGallery}
-				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-					{#each decisions as decision}
-						<button
-							class="group flex flex-col gap-3 rounded-xl border border-base-300/40 bg-base-100 p-4 text-left transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
-							onclick={() => navigateToDecision(decision.id)}
+	<div class="flex flex-col gap-4">
+		{#if decisions.length === 0}
+			<EmptyState
+				icon={FileText}
+				title={emptyTitle}
+				description={emptyDescription}
+				actionLabel={emptyAction}
+				onAction={handleCreateDecision}
+			/>
+		{:else if isGallery}
+			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+				{#each decisions as decision}
+					<button
+						class="group flex flex-col gap-3 rounded-xl border border-base-300/40 bg-base-100 p-4 text-left transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
+						onclick={() => navigateToDecision(decision.id)}
+					>
+						<div
+							class="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
 						>
-							<div
-								class="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
-							>
-								<FileText size={18} />
-							</div>
-							<div class="flex flex-col">
-								<span class="text-sm font-medium text-base-content">{decision.name}</span>
-								<span class="flex items-center gap-1 text-xs text-base-content/40">
+							<FileText size={18} />
+						</div>
+						<div class="flex flex-col">
+							<span class="text-sm font-medium text-base-content">{decision.name}</span>
+							<span class="flex items-center gap-1 text-xs text-base-content/40">
+								<Clock size={12} />
+								{new Date(decision.modified_at).toLocaleDateString()}
+							</span>
+						</div>
+					</button>
+				{/each}
+			</div>
+		{:else}
+			<div class="flex flex-col gap-3">
+				{#each decisions as decision}
+					<button
+						class="group flex items-center gap-4 rounded-2xl border border-base-300/50 bg-base-100 p-4 text-left shadow-sm transition-all hover:border-brand-500/40 hover:shadow-md"
+						onclick={() => navigateToDecision(decision.id)}
+					>
+						<div
+							class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500"
+						>
+							<FileText size={18} />
+						</div>
+						<div class="flex min-w-0 flex-col gap-1">
+							<span class="truncate text-sm font-medium text-base-content">{decision.name}</span>
+							<div class="flex items-center gap-3 text-xs text-base-content/50">
+								<span class="inline-flex items-center gap-1">
 									<Clock size={12} />
 									{new Date(decision.modified_at).toLocaleDateString()}
 								</span>
 							</div>
-						</button>
-					{/each}
-				</div>
-			{:else}
-				<div class="flex flex-col gap-3">
-					{#each decisions as decision}
-						<button
-							class="group flex items-center gap-4 rounded-2xl border border-base-300/50 bg-base-100 p-4 text-left shadow-sm transition-all hover:border-brand-500/40 hover:shadow-md"
-							onclick={() => navigateToDecision(decision.id)}
-						>
-							<div
-								class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500"
-							>
-								<FileText size={18} />
-							</div>
-							<div class="flex min-w-0 flex-col gap-1">
-								<span class="truncate text-sm font-medium text-base-content">{decision.name}</span>
-								<div class="flex items-center gap-3 text-xs text-base-content/50">
-									<span class="inline-flex items-center gap-1">
-										<Clock size={12} />
-										{new Date(decision.modified_at).toLocaleDateString()}
-									</span>
-								</div>
-							</div>
-						</button>
-					{/each}
-				</div>
-			{/if}
-		{:else}
-			<p class="text-sm text-base-content/50">
-				No decisions yet. Record your first decision to get started.
-			</p>
+						</div>
+					</button>
+				{/each}
+			</div>
 		{/if}
-	{/if}
-</div>
+	</div>
+</ModulePageShell>

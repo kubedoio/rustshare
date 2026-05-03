@@ -3,8 +3,9 @@
 	import { createQuery } from '$lib/query-compat';
 	import { createFromTemplate } from '$lib/api/modules';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
+	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
-	import { FileText, Plus, Clock } from 'lucide-svelte';
+	import { FileText, Plus, Clock, Folder } from 'lucide-svelte';
 
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
@@ -44,30 +45,45 @@
 		}
 	}
 
+	function handleOpenInFiles() {
+		if (module.rootPath) {
+			goto(`/files?path=${encodeURIComponent(module.rootPath)}`);
+		}
+	}
+
 	function navigateToStandup(fileId: string) {
 		goto(getModuleObjectHref(module.key, 'file', fileId));
 	}
 </script>
 
-<div class="flex flex-col gap-6">
-	{#if standups.length === 0 && contents?.folders?.length === 0}
-		<EmptyState
-			icon={FileText}
-			title={emptyTitle}
-			description={emptyDescription}
-			actionLabel={emptyAction}
-			onAction={handleCreateStandup}
-		/>
-	{:else}
-		<div class="flex items-center justify-between">
-			<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">Standups</h2>
-			<button class="btn btn-sm btn-primary" onclick={handleCreateStandup}>
-				<Plus size={14} />
-				<span>New Standup</span>
-			</button>
-		</div>
+<ModulePageShell title="Standups" subtitle={module.description}>
+	<div slot="primaryAction">
+		<button
+			class="btn gap-2 btn-sm btn-primary"
+			onclick={handleCreateStandup}
+			disabled={!module.defaultTemplate}
+		>
+			<Plus size={14} />
+			<span>New Standup</span>
+		</button>
+	</div>
+	<div slot="secondaryActions">
+		<button class="btn gap-2 btn-outline btn-sm" onclick={handleOpenInFiles}>
+			<Folder size={14} />
+			<span>Open in Files</span>
+		</button>
+	</div>
 
-		{#if standups.length > 0}
+	<div class="flex flex-col gap-4">
+		{#if standups.length === 0 && contents?.folders?.length === 0}
+			<EmptyState
+				icon={FileText}
+				title={emptyTitle}
+				description={emptyDescription}
+				actionLabel={emptyAction}
+				onAction={handleCreateStandup}
+			/>
+		{:else if standups.length > 0}
 			{#if isGallery}
 				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
 					{#each standups as standup}
@@ -120,5 +136,5 @@
 				No standups yet. Create your first standup record to get started.
 			</p>
 		{/if}
-	{/if}
-</div>
+	</div>
+</ModulePageShell>

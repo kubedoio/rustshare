@@ -3,6 +3,7 @@
 	import { createQuery } from '$lib/query-compat';
 	import { createFromTemplate } from '$lib/api/modules';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
+	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { Folder, Plus, ArrowRight } from 'lucide-svelte';
 
@@ -41,30 +42,45 @@
 		}
 	}
 
+	function handleOpenInFiles() {
+		if (module.rootPath) {
+			goto(`/files?path=${encodeURIComponent(module.rootPath)}`);
+		}
+	}
+
 	function navigateToShare(folderId: string) {
 		goto(getModuleObjectHref(module.key, 'folder', folderId));
 	}
 </script>
 
-<div class="flex flex-col gap-6">
-	{#if sharePackages.length === 0 && contents?.files?.length === 0}
-		<EmptyState
-			icon={Folder}
-			title={emptyTitle}
-			description={emptyDescription}
-			actionLabel={emptyAction}
-			onAction={handleCreateShare}
-		/>
-	{:else}
-		<div class="flex items-center justify-between">
-			<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">Shares</h2>
-			<button class="btn btn-sm btn-primary" onclick={handleCreateShare}>
-				<Plus size={14} />
-				<span>New Share</span>
-			</button>
-		</div>
+<ModulePageShell title="Shares" subtitle={module.description}>
+	<div slot="primaryAction">
+		<button
+			class="btn gap-2 btn-sm btn-primary"
+			onclick={handleCreateShare}
+			disabled={!module.defaultTemplate}
+		>
+			<Plus size={14} />
+			<span>New Share</span>
+		</button>
+	</div>
+	<div slot="secondaryActions">
+		<button class="btn gap-2 btn-outline btn-sm" onclick={handleOpenInFiles}>
+			<Folder size={14} />
+			<span>Open in Files</span>
+		</button>
+	</div>
 
-		{#if sharePackages.length > 0}
+	<div class="flex flex-col gap-4">
+		{#if sharePackages.length === 0 && contents?.files?.length === 0}
+			<EmptyState
+				icon={Folder}
+				title={emptyTitle}
+				description={emptyDescription}
+				actionLabel={emptyAction}
+				onAction={handleCreateShare}
+			/>
+		{:else if sharePackages.length > 0}
 			<div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
 				{#each sharePackages as pkg}
 					<button
@@ -92,5 +108,5 @@
 				No share packages yet. Create your first share package to get started.
 			</p>
 		{/if}
-	{/if}
-</div>
+	</div>
+</ModulePageShell>

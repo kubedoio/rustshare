@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/svelte';
 import Page from './+page.svelte';
 import { page } from '$app/stores';
 import { currentUser } from '$lib/stores/auth';
-import { modulesStore } from '$lib/modules/registry';
+import * as registry from '$lib/modules/registry';
 
 // Mock SvelteKit stores
 vi.mock('$app/stores', () => ({
@@ -18,16 +18,12 @@ vi.mock('$lib/stores/auth', () => ({
 	}
 }));
 
-// Mock the registry store
+// Mock the registry
 vi.mock('$lib/modules/registry', async () => {
 	const actual = await vi.importActual<any>('$lib/modules/registry');
 	return {
 		...actual,
-		modulesStore: {
-			subscribe: vi.fn(),
-			set: vi.fn(),
-			update: vi.fn()
-		}
+		getModuleByKey: vi.fn()
 	};
 });
 
@@ -38,7 +34,7 @@ describe('Module Page Dynamic Route', () => {
 		display_name: 'Test User'
 	};
 
-	const mockModule = {
+	const mockModule: registry.ModuleDefinition = {
 		id: 'mod_1',
 		key: 'test-mod',
 		displayName: 'Test Module',
@@ -96,10 +92,7 @@ describe('Module Page Dynamic Route', () => {
 			run({ params: { key: 'unknown' } });
 			return () => {};
 		});
-		(modulesStore.subscribe as any).mockImplementation((run: any) => {
-			run([]);
-			return () => {};
-		});
+		(registry.getModuleByKey as any).mockReturnValue(undefined);
 
 		render(Page);
 		expect(screen.getByText('Module Not Found')).toBeTruthy();
@@ -110,10 +103,7 @@ describe('Module Page Dynamic Route', () => {
 			run({ params: { key: 'test-mod' } });
 			return () => {};
 		});
-		(modulesStore.subscribe as any).mockImplementation((run: any) => {
-			run([{ ...mockModule, enabled: false }]);
-			return () => {};
-		});
+		(registry.getModuleByKey as any).mockReturnValue({ ...mockModule, enabled: false });
 
 		render(Page);
 		expect(screen.getByText('Module Disabled')).toBeTruthy();
@@ -124,35 +114,25 @@ describe('Module Page Dynamic Route', () => {
 			run({ params: { key: 'test-mod' } });
 			return () => {};
 		});
-		(modulesStore.subscribe as any).mockImplementation((run: any) => {
-			run([
-				{
-					...mockModule,
-					ui: { ...mockModule.ui, page: { ...mockModule.ui.page, enabled: false } }
-				}
-			]);
-			return () => {};
+		(registry.getModuleByKey as any).mockReturnValue({
+			...mockModule,
+			ui: { ...mockModule.ui, page: { ...mockModule.ui.page, enabled: false } }
 		});
 
 		render(Page);
 		expect(screen.getByText('Module Page Disabled')).toBeTruthy();
 	});
 
-	it('renders module header with correct config', () => {
+	it('renders module content via ModulePageRenderer', () => {
 		(page.subscribe as any).mockImplementation((run: any) => {
 			run({ params: { key: 'test-mod' } });
 			return () => {};
 		});
-		(modulesStore.subscribe as any).mockImplementation((run: any) => {
-			run([mockModule]);
-			return () => {};
-		});
+		(registry.getModuleByKey as any).mockReturnValue(mockModule);
 
 		render(Page);
+		// GenericModuleView renders inside ModulePageShell with module title
 		expect(screen.getByText('Test Module')).toBeTruthy();
-		expect(screen.getByText('A test module description')).toBeTruthy();
-		expect(screen.getByText('Do Something')).toBeTruthy();
-		expect(screen.getByText('Browse Files')).toBeTruthy();
 	});
 
 	it('falls back to GenericModuleView for unknown renderer', () => {
@@ -160,18 +140,13 @@ describe('Module Page Dynamic Route', () => {
 			run({ params: { key: 'test-mod' } });
 			return () => {};
 		});
-		(modulesStore.subscribe as any).mockImplementation((run: any) => {
-			run([
-				{
-					...mockModule,
-					ui: { ...mockModule.ui, page: { ...mockModule.ui.page, renderer: 'unknown-renderer' } }
-				}
-			]);
-			return () => {};
+		(registry.getModuleByKey as any).mockReturnValue({
+			...mockModule,
+			ui: { ...mockModule.ui, page: { ...mockModule.ui.page, renderer: 'unknown-renderer' } }
 		});
 
 		render(Page);
-		// Module header still renders even with unknown renderer
+		// GenericModuleView renders inside ModulePageShell with module title
 		expect(screen.getByText('Test Module')).toBeTruthy();
 	});
 });

@@ -5,6 +5,8 @@
 		getKanbanBoard,
 		getKanbanCard,
 		createKanbanBoard,
+		updateKanbanBoard,
+		archiveKanbanBoard,
 		createKanbanCard,
 		updateKanbanCard,
 		moveKanbanCard,
@@ -24,6 +26,7 @@
 		deleteChecklistItem,
 		deleteChecklist
 	} from '$lib/api/kanban';
+	import { goto } from '$app/navigation';
 	import { createFromTemplate } from '$lib/api/modules';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import type { KanbanBoard, KanbanCard, KanbanCardDetail, KanbanColumn } from '$lib/api/types';
@@ -44,12 +47,16 @@
 		Tag,
 		AlignLeft,
 		Activity,
-		Check
+		Check,
+		Columns,
+		MoreHorizontal,
+		ArrowLeft
 	} from 'lucide-svelte';
 
 	import RichMarkdownEditor from '../../editor/components/RichMarkdownEditor.svelte';
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
 	import CreateKanbanBoardModal from '$lib/components/modals/CreateKanbanBoardModal.svelte';
+	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
 	interface Props {
@@ -75,6 +82,7 @@
 	let saveStatus = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
 	let draggingOverColumnId = $state<string | null>(null);
 	let columnRefs = $state<Record<string, HTMLDivElement | null>>({});
+	let viewMode = $state<'overview' | 'board'>('overview');
 	let showLabelPicker = $state(false);
 	let showAssigneePicker = $state(false);
 	let showNewLabelForm = $state(false);
@@ -84,6 +92,34 @@
 	let isMovingCard = $state(false);
 	let newChecklistTitle = $state('');
 	let newChecklistItemText = $state<Record<string, string>>({});
+	let showBoardMenu = $state(false);
+
+	async function handleRenameBoard() {
+		if (!selectedBoard) return;
+		const newTitle = window.prompt('Enter new board name:', selectedBoard.title);
+		if (!newTitle || !selectedBoardId) return;
+		try {
+			await updateKanbanBoard(selectedBoardId, { title: newTitle.trim() });
+			boardsQuery.refetch();
+			boardQuery.refetch();
+		} catch (err) {
+			console.error('Failed to rename board:', err);
+		}
+	}
+
+	async function handleArchiveBoard() {
+		if (!selectedBoardId) return;
+		if (confirm('Archive this board?')) {
+			try {
+				await archiveKanbanBoard(selectedBoardId);
+				selectedBoardId = '';
+				viewMode = 'overview';
+				boardsQuery.refetch();
+			} catch (err) {
+				console.error('Failed to archive board:', err);
+			}
+		}
+	}
 
 	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No boards yet');
 	let emptyDescription = $derived(
@@ -110,15 +146,9 @@
 
 	$effect(() => {
 		const boards = $boardsQuery.data ?? [];
-		if (!selectedBoardId && boards.length > 0) {
-			selectedBoardId = boards[0].id;
-		}
-	});
-
-	$effect(() => {
-		const boards = $boardsQuery.data ?? [];
 		if (selectedBoardId && boards.length > 0 && !boards.some((b) => b.id === selectedBoardId)) {
-			selectedBoardId = boards[0].id;
+			selectedBoardId = '';
+			viewMode = 'overview';
 		}
 	});
 
@@ -217,8 +247,25 @@
 
 	function handleBoardCreated(boardId: string) {
 		selectedBoardId = boardId;
+		viewMode = 'board';
 		boardsQuery.refetch();
 		showCreateBoardModal = false;
+	}
+
+	function selectBoard(boardId: string) {
+		selectedBoardId = boardId;
+		viewMode = 'board';
+	}
+
+	function showAllBoards() {
+		selectedBoardId = '';
+		viewMode = 'overview';
+	}
+
+	function handleOpenInFiles() {
+		if (module.rootPath) {
+			goto(`/files?path=${encodeURIComponent(module.rootPath)}`);
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -626,12 +673,24 @@
 	}
 </script>
 
-<div class="flex flex-col gap-6">
-	{#if $boardsQuery.isLoading}
-		<div class="flex h-48 items-center justify-center">
-			<div class="loading loading-md loading-spinner text-brand-500"></div>
+{#if $boardsQuery.isLoading}
+	<div class="flex h-48 items-center justify-center">
+		<div class="loading loading-md loading-spinner text-brand-500"></div>
+	</div>
+{:else if ($boardsQuery.data ?? []).length === 0}
+	<ModulePageShell title="Kanban" subtitle="Manage file-backed boards and track work.">
+		<div slot="primaryAction">
+			<button class="btn gap-2 btn-sm btn-primary" onclick={handleCreateBoard}>
+				<Plus size={14} />
+				<span>New Board</span>
+			</button>
 		</div>
-	{:else if ($boardsQuery.data ?? []).length === 0}
+		<div slot="secondaryActions">
+			<button class="btn gap-2 btn-outline btn-sm" onclick={handleOpenInFiles}>
+				<FolderIcon size={14} />
+				<span>Open in Files</span>
+			</button>
+		</div>
 		<EmptyState
 			icon={FolderIcon}
 			title={emptyTitle}
@@ -639,231 +698,324 @@
 			actionLabel={emptyAction}
 			onAction={handleCreateBoard}
 		/>
-	{:else}
-		<!-- Header -->
-		<div class="flex items-center justify-between gap-4">
-			<h2 class="text-sm font-semibold tracking-wider text-base-content uppercase">Boards</h2>
-			<button class="btn btn-sm btn-primary" onclick={handleCreateBoard}>
+	</ModulePageShell>
+{:else if viewMode === 'overview'}
+	<ModulePageShell title="Kanban" subtitle="Manage file-backed boards and track work.">
+		<div slot="primaryAction">
+			<button class="btn gap-2 btn-sm btn-primary" onclick={handleCreateBoard}>
 				<Plus size={14} />
 				<span>New Board</span>
 			</button>
 		</div>
+		<div slot="secondaryActions">
+			<button class="btn gap-2 btn-outline btn-sm" onclick={handleOpenInFiles}>
+				<FolderIcon size={14} />
+				<span>Open in Files</span>
+			</button>
+		</div>
 
-		<!-- Board selector -->
-		<div class="flex flex-wrap gap-2">
+		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
 			{#each $boardsQuery.data ?? [] as board}
 				<button
 					type="button"
-					class={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
-						board.id === selectedBoardId
-							? 'border-brand-500 bg-brand-500 text-white'
-							: 'border-base-300/60 bg-base-100 text-base-content/70 hover:border-brand-500/40'
-					}`}
-					onclick={() => {
-						selectedBoardId = board.id;
-					}}
+					class="group flex flex-col gap-3 rounded-xl border border-base-300/40 bg-base-100 p-5 text-left transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
+					onclick={() => selectBoard(board.id)}
 				>
-					{board.title}
+					<div class="flex items-start justify-between">
+						<div
+							class="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
+						>
+							<Columns size={18} />
+						</div>
+					</div>
+					<div class="flex flex-col gap-1">
+						<span class="text-sm font-semibold text-base-content">{board.title}</span>
+						<span class="text-xs text-base-content/50">
+							{board.column_count} column{board.column_count === 1 ? '' : 's'} · {board.card_count} card{board.card_count ===
+							1
+								? ''
+								: 's'}
+						</span>
+						<span class="text-xs text-base-content/40">
+							Updated {formatDate(board.updated_at)}
+						</span>
+					</div>
 				</button>
 			{/each}
 		</div>
-
-		<!-- Selected board -->
-		{#if selectedBoard}
-			<div class="flex items-center justify-between">
-				<div>
-					<h3 class="text-lg font-semibold text-base-content">{selectedBoard.title}</h3>
-					<p class="text-sm text-base-content/55">
-						{selectedBoard.columns.length} columns
-					</p>
-				</div>
-			</div>
-
-			{#if errorMessage}
-				<div class="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-700">
-					{errorMessage}
-				</div>
-			{/if}
-
-			{#if $boardQuery.isLoading}
-				<div
-					class="flex h-48 items-center justify-center rounded-3xl border border-base-300/40 bg-base-100"
+	</ModulePageShell>
+{:else if viewMode === 'board'}
+	<ModulePageShell
+		title={selectedBoard?.title ?? 'Board'}
+		breadcrumb={[{ label: 'Kanban', onClick: showAllBoards }, { label: selectedBoard?.title ?? '' }]}
+		metadata={selectedBoard
+			? `${selectedBoard.columns.length} columns · ${selectedBoard.columns.reduce((sum, c) => sum + c.cards.length, 0)} cards`
+			: ''}
+	>
+		<div slot="primaryAction">
+			<button class="btn gap-2 btn-sm btn-primary" onclick={handleCreateBoard}>
+				<Plus size={14} />
+				<span>New Board</span>
+			</button>
+		</div>
+		<div slot="secondaryActions">
+			<button class="btn gap-2 btn-outline btn-sm" onclick={showAllBoards}>
+				<ArrowLeft size={14} />
+				<span>All Boards</span>
+			</button>
+		</div>
+		<div slot="overflowActions">
+			<div class="relative">
+				<button
+					class="btn p-1 btn-ghost btn-sm"
+					aria-label="Board menu"
+					onclick={() => (showBoardMenu = !showBoardMenu)}
 				>
-					<div class="loading loading-md loading-spinner text-brand-500"></div>
-				</div>
-			{:else}
-				<div class="kanban-board-surface">
-					{#each selectedBoard.columns as column}
-						<section
-							class="kanban-column"
-							class:kanban-column-dragover={draggingOverColumnId === column.id}
-							ondragover={(e) => handleDragOver(e, column.id)}
-							ondragleave={() => handleDragLeave(column.id)}
-							ondrop={(e) => handleDrop(e, column.id)}
-							aria-label="{column.title} column"
+					<MoreHorizontal size={18} />
+				</button>
+				{#if showBoardMenu}
+					<div
+						class="absolute top-full right-0 z-50 mt-1 min-w-[10rem] rounded-xl border border-base-300 bg-base-100 p-1 shadow-xl"
+					>
+						<button
+							class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-base-200"
+							onclick={() => {
+								showBoardMenu = false;
+								handleRenameBoard();
+							}}
 						>
-							<header class="kanban-column-header">
-								<h4>{formatColumnName(column.title)}</h4>
+							Rename board
+						</button>
+						<button
+							class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-base-200"
+							onclick={() => {
+								showBoardMenu = false;
+								handleOpenInFiles();
+							}}
+						>
+							Open in Files
+						</button>
+						<button
+							class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-error hover:bg-error/10"
+							onclick={() => {
+								showBoardMenu = false;
+								handleArchiveBoard();
+							}}
+						>
+							Archive board
+						</button>
+					</div>
+				{/if}
+			</div>
+		</div>
+
+		{#if errorMessage}
+			<div class="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-700">
+				{errorMessage}
+			</div>
+		{/if}
+
+		{#if !selectedBoard || $boardQuery.isLoading}
+			<div
+				class="flex h-48 items-center justify-center rounded-3xl border border-base-300/40 bg-base-100"
+			>
+				<div class="loading loading-md loading-spinner text-brand-500"></div>
+			</div>
+		{:else}
+			<div class="kanban-board-surface">
+				{#each selectedBoard.columns as column}
+					<section
+						class="kanban-column"
+						class:kanban-column-dragover={draggingOverColumnId === column.id}
+						ondragover={(e) => handleDragOver(e, column.id)}
+						ondragleave={() => handleDragLeave(column.id)}
+						ondrop={(e) => handleDrop(e, column.id)}
+						aria-label="{column.title} column"
+					>
+						<header class="kanban-column-header">
+							<h4>{formatColumnName(column.title)}</h4>
+							<div class="flex items-center gap-2">
 								<span>{column.cards.length}</span>
-							</header>
-
-							<div class="kanban-card-list" bind:this={columnRefs[column.id]}>
-								{#if column.cards.length === 0}
-									<div class="kanban-empty-column">No cards.</div>
-								{/if}
-
-								{#each column.cards as card (card.id)}
-									<div
-										class="kanban-card"
-										draggable="true"
-										data-card-id={card.id}
-										role="button"
-										tabindex="0"
-										ondragstart={(e) => handleDragStart(e, card, column.id)}
-										ondragend={handleDragEnd}
-										onclick={() => openCardEdit(card)}
-										onkeydown={(e) => {
-											if (e.key === 'Enter' || e.key === ' ') openCardEdit(card);
-										}}
-									>
-										<div class="kanban-card-title-row">
-											<GripVertical size={14} class="text-base-content/30" />
-											<strong>{card.title}</strong>
-										</div>
-
-										{#if card.description_preview}
-											<div class="card-description">
-												{card.description_preview}
-											</div>
-										{/if}
-
-										{#if (card.labels && card.labels.length > 0) || card.priority !== 'normal'}
-											<div class="card-labels">
-												{#if card.priority !== 'normal'}
-													<span class="card-label label-priority priority-{card.priority}">
-														{card.priority}
-													</span>
-												{/if}
-												{#each card.labels.slice(0, 3) as label}
-													<span class="card-label label-{label.color}">
-														{label.name}
-													</span>
-												{/each}
-												{#if card.labels.length > 3}
-													<span class="card-label label-more">+{card.labels.length - 3}</span>
-												{/if}
-											</div>
-										{/if}
-
-										<div class="card-footer">
-											<div class="card-badges">
-												{#if card.attachments_count > 0}
-													<span class="card-badge" title="Attachments">
-														<Paperclip size={12} />
-														{card.attachments_count}
-													</span>
-												{/if}
-												{#if card.checklist.total > 0}
-													<span
-														class="card-badge"
-														title="Checklist"
-														class:badge-done={card.checklist.done === card.checklist.total}
-													>
-														<CheckSquare size={12} />
-														{card.checklist.done}/{card.checklist.total}
-													</span>
-												{/if}
-												{#if card.due_date}
-													<span
-														class="card-badge"
-														title="Due Date"
-														class:badge-overdue={isOverdue(card.due_date)}
-													>
-														<Calendar size={12} />
-														{formatDate(card.due_date)}
-													</span>
-												{/if}
-											</div>
-
-											{#if card.assignees && card.assignees.length > 0}
-												<div class="card-assignees">
-													{#each card.assignees.slice(0, 3) as assignee}
-														<div class="assignee-avatar" title={assignee.display_name}>
-															{#if assignee.avatar_url}
-																<img src={assignee.avatar_url} alt={assignee.display_name} />
-															{:else}
-																<span>{assignee.initials}</span>
-															{/if}
-														</div>
-													{/each}
-													{#if card.assignees.length > 3}
-														<div class="assignee-avatar avatar-more" title="More assignees">
-															<span>+{card.assignees.length - 3}</span>
-														</div>
-													{/if}
-												</div>
-											{/if}
-										</div>
-									</div>
-								{/each}
+								<button
+									class="text-base-content/40 hover:text-base-content"
+									aria-label="Add card to {formatColumnName(column.title)}"
+									onclick={() => {
+										showCreateCardColumnId = column.id;
+										newCardTitle = '';
+									}}
+								>
+									<Plus size={14} />
+								</button>
 							</div>
+						</header>
 
-							<div class="mt-2">
-								{#if showCreateCardColumnId === column.id}
-									<div
-										class="flex flex-col gap-2 rounded-xl border border-base-300/60 bg-base-100 p-2"
-									>
-										<input
-											type="text"
-											placeholder="Card title"
-											class="input-bordered input input-sm w-full"
-											bind:value={newCardTitle}
-											onkeydown={(e) => {
-												if (e.key === 'Enter') handleCreateCard(column.id);
-												if (e.key === 'Escape') {
-													showCreateCardColumnId = null;
-													newCardTitle = '';
-												}
-											}}
-										/>
-										<div class="flex gap-2">
-											<button
-												class="btn flex-1 btn-xs btn-primary"
-												onclick={() => handleCreateCard(column.id)}
-											>
-												Add
-											</button>
-											<button
-												class="btn btn-ghost btn-xs"
-												onclick={() => {
-													showCreateCardColumnId = null;
-													newCardTitle = '';
-												}}
-											>
-												Cancel
-											</button>
-										</div>
-									</div>
-								{:else}
+						<div class="kanban-card-list" bind:this={columnRefs[column.id]}>
+							{#if column.cards.length === 0}
+								<div class="kanban-empty-column">
+									No cards yet
 									<button
-										class="btn w-full text-base-content/60 btn-ghost btn-xs"
+										class="mt-1 block text-xs text-brand-500 hover:underline"
 										onclick={() => {
 											showCreateCardColumnId = column.id;
 											newCardTitle = '';
 										}}
 									>
-										<Plus size={12} />
 										Add card
 									</button>
-								{/if}
-							</div>
-						</section>
-					{/each}
-				</div>
-			{/if}
+								</div>
+							{/if}
+
+							{#each column.cards as card (card.id)}
+								<div
+									class="kanban-card"
+									draggable="true"
+									data-card-id={card.id}
+									role="button"
+									tabindex="0"
+									ondragstart={(e) => handleDragStart(e, card, column.id)}
+									ondragend={handleDragEnd}
+									onclick={() => openCardEdit(card)}
+									onkeydown={(e) => {
+										if (e.key === 'Enter' || e.key === ' ') openCardEdit(card);
+									}}
+								>
+									<div class="kanban-card-title-row">
+										<GripVertical size={14} class="text-base-content/30" />
+										<strong>{card.title}</strong>
+									</div>
+
+									{#if card.description_preview}
+										<div class="card-description">
+											{card.description_preview}
+										</div>
+									{/if}
+
+									{#if (card.labels && card.labels.length > 0) || card.priority !== 'normal'}
+										<div class="card-labels">
+											{#if card.priority !== 'normal'}
+												<span class="card-label label-priority priority-{card.priority}">
+													{card.priority}
+												</span>
+											{/if}
+											{#each card.labels.slice(0, 3) as label}
+												<span class="card-label label-{label.color}">
+													{label.name}
+												</span>
+											{/each}
+											{#if card.labels.length > 3}
+												<span class="card-label label-more">+{card.labels.length - 3}</span>
+											{/if}
+										</div>
+									{/if}
+
+									<div class="card-footer">
+										<div class="card-badges">
+											{#if card.attachments_count > 0}
+												<span class="card-badge" title="Attachments">
+													<Paperclip size={12} />
+													{card.attachments_count}
+												</span>
+											{/if}
+											{#if card.checklist.total > 0}
+												<span
+													class="card-badge"
+													title="Checklist"
+													class:badge-done={card.checklist.done === card.checklist.total}
+												>
+													<CheckSquare size={12} />
+													{card.checklist.done}/{card.checklist.total}
+												</span>
+											{/if}
+											{#if card.due_date}
+												<span
+													class="card-badge"
+													title="Due Date"
+													class:badge-overdue={isOverdue(card.due_date)}
+												>
+													<Calendar size={12} />
+													{formatDate(card.due_date)}
+												</span>
+											{/if}
+										</div>
+
+										{#if card.assignees && card.assignees.length > 0}
+											<div class="card-assignees">
+												{#each card.assignees.slice(0, 3) as assignee}
+													<div class="assignee-avatar" title={assignee.display_name}>
+														{#if assignee.avatar_url}
+															<img src={assignee.avatar_url} alt={assignee.display_name} />
+														{:else}
+															<span>{assignee.initials}</span>
+														{/if}
+													</div>
+												{/each}
+												{#if card.assignees.length > 3}
+													<div class="assignee-avatar avatar-more" title="More assignees">
+														<span>+{card.assignees.length - 3}</span>
+													</div>
+												{/if}
+											</div>
+										{/if}
+									</div>
+								</div>
+							{/each}
+						</div>
+
+						<div class="mt-2">
+							{#if showCreateCardColumnId === column.id}
+								<div
+									class="flex flex-col gap-2 rounded-xl border border-base-300/60 bg-base-100 p-2"
+								>
+									<input
+										type="text"
+										placeholder="Card title"
+										class="input-bordered input input-sm w-full"
+										bind:value={newCardTitle}
+										onkeydown={(e) => {
+											if (e.key === 'Enter') handleCreateCard(column.id);
+											if (e.key === 'Escape') {
+												showCreateCardColumnId = null;
+												newCardTitle = '';
+											}
+										}}
+									/>
+									<div class="flex gap-2">
+										<button
+											class="btn flex-1 btn-xs btn-primary"
+											onclick={() => handleCreateCard(column.id)}
+										>
+											Add
+										</button>
+										<button
+											class="btn btn-ghost btn-xs"
+											onclick={() => {
+												showCreateCardColumnId = null;
+												newCardTitle = '';
+											}}
+										>
+											Cancel
+										</button>
+									</div>
+								</div>
+							{:else}
+								<button
+									class="btn w-full text-base-content/60 btn-ghost btn-xs"
+									onclick={() => {
+										showCreateCardColumnId = column.id;
+										newCardTitle = '';
+									}}
+								>
+									<Plus size={12} />
+									Add card
+								</button>
+							{/if}
+						</div>
+					</section>
+				{/each}
+			</div>
 		{/if}
-	{/if}
-</div>
+	</ModulePageShell>
+{/if}
 
 <!-- Card edit modal -->
 <ModalBase
