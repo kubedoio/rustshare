@@ -79,11 +79,12 @@
 			const attachment = {
 				id: uploadedFile.id,
 				filename: uploadedFile.name,
+				path: `./attachments/${uploadedFile.name}`,
 				mimeType: uploadedFile.mime_type,
 				size: uploadedFile.size,
-				url: `/api/v1/files/${uploadedFile.id}/preview`,
 				kind: 'image' as const,
-				createdAt: uploadedFile.created_at
+				createdAt: uploadedFile.created_at,
+				createdBy: 'current_user'
 			};
 
 			if (editorPage) {

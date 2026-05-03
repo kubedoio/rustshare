@@ -44,6 +44,7 @@ struct Services {
     user_share_service: Arc<AppUserShareService>,
     ai_service: Option<Arc<AppAiService>>,
     upload_service: Arc<AppUploadService>,
+    user_repository: Arc<UserRepository>,
 }
 
 fn init_tracing() {
@@ -235,6 +236,7 @@ async fn init_services(
                 Arc::clone(&folder_service),
                 Arc::clone(&metadata_store),
                 Arc::clone(&object_store),
+                Arc::clone(&user_repository),
             ))
         },
         async {
@@ -337,6 +339,7 @@ async fn init_services(
         user_share_service,
         ai_service,
         upload_service,
+        user_repository,
     })
 }
 
@@ -512,6 +515,7 @@ pub async fn init_app() -> Result<AppState> {
         template_service: services.template_service,
         kanban_service: services.kanban_service,
         brainstorming_service: services.brainstorming_service,
+        user_repository: services.user_repository,
         public_base_url,
     };
 

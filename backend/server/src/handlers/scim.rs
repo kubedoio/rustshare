@@ -622,7 +622,12 @@ fn map_user_row(row: &sqlx::postgres::PgRow) -> Result<User, sqlx::Error> {
         email_sharing_enabled: row.try_get("email_sharing_enabled")?,
         trash_retention_days: row.try_get("trash_retention_days")?,
         tenant_id: row.try_get("tenant_id")?,
-        dashboard_config: row.try_get("dashboard_config")?,
+        dashboard_config: row
+            .try_get::<Option<sqlx::types::Json<rustshare_core::domain::DashboardConfig>>, _>(
+                "dashboard_config",
+            )
+            .unwrap_or_else(|_| Some(sqlx::types::Json(rustshare_core::domain::DashboardConfig::default())))
+            .unwrap_or_else(|| sqlx::types::Json(rustshare_core::domain::DashboardConfig::default())),
     })
 }
 

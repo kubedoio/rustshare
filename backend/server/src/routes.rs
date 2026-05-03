@@ -246,7 +246,7 @@ pub fn module_routes() -> Router<AppState> {
 }
 
 pub fn kanban_routes() -> Router<AppState> {
-    use axum::routing::{delete, get, patch, post};
+    use axum::routing::{delete, get, patch, post, put};
     Router::new()
         .route("/api/v1/modules/kanban/boards", get(crate::handlers::list_boards))
         .route("/api/v1/modules/kanban/boards", post(crate::handlers::create_board))
@@ -256,10 +256,31 @@ pub fn kanban_routes() -> Router<AppState> {
         .route("/api/v1/modules/kanban/boards/{board_id}/cards", get(crate::handlers::list_cards))
         .route("/api/v1/modules/kanban/boards/{board_id}/cards", post(crate::handlers::create_card))
         .route("/api/v1/modules/kanban/cards/{card_id}", get(crate::handlers::get_card))
+        .route("/api/v1/modules/kanban/cards/{card_id}/detail", get(crate::handlers::get_card_detail))
         .route("/api/v1/modules/kanban/cards/{card_id}", patch(crate::handlers::update_card))
+        .route("/api/v1/modules/kanban/cards/{card_id}/description", put(crate::handlers::update_card_description))
         .route("/api/v1/modules/kanban/cards/{card_id}/move", post(crate::handlers::move_card))
         .route("/api/v1/modules/kanban/cards/{card_id}/archive", post(crate::handlers::archive_card))
         .route("/api/v1/modules/kanban/cards/{card_id}", delete(crate::handlers::delete_card))
+        // Labels
+        .route("/api/v1/modules/kanban/boards/{board_id}/labels", post(crate::handlers::create_label))
+        .route("/api/v1/modules/kanban/boards/{board_id}/labels/{label_id}", patch(crate::handlers::update_label))
+        .route("/api/v1/modules/kanban/boards/{board_id}/labels/{label_id}", delete(crate::handlers::delete_label))
+        .route("/api/v1/modules/kanban/cards/{card_id}/labels", post(crate::handlers::add_card_label))
+        .route("/api/v1/modules/kanban/cards/{card_id}/labels/{label_id}", delete(crate::handlers::remove_card_label))
+        // Assignees
+        .route("/api/v1/modules/kanban/assignable-users", get(crate::handlers::get_assignable_users))
+        .route("/api/v1/modules/kanban/cards/{card_id}/assignees", post(crate::handlers::assign_card_member))
+        .route("/api/v1/modules/kanban/cards/{card_id}/assignees/{assignee_id}", delete(crate::handlers::unassign_card_member))
+        // Attachments
+        .route("/api/v1/modules/kanban/cards/{card_id}/attachments", post(crate::handlers::add_card_attachment))
+        .route("/api/v1/modules/kanban/cards/{card_id}/attachments/{attachment_id}", delete(crate::handlers::delete_card_attachment))
+        // Checklists
+        .route("/api/v1/modules/kanban/cards/{card_id}/checklists", post(crate::handlers::create_checklist))
+        .route("/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}/items", post(crate::handlers::create_checklist_item))
+        .route("/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}/items/{item_id}", patch(crate::handlers::toggle_checklist_item))
+        .route("/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}/items/{item_id}", delete(crate::handlers::delete_checklist_item))
+        .route("/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}", delete(crate::handlers::delete_checklist))
 }
 
 pub fn decision_routes() -> Router<AppState> {

@@ -10,13 +10,14 @@ use rustshare_core::{
     domain::{File, Folder, UserId},
     services::{FileService, FolderService},
 };
-use rustshare_storage::{MetadataStore, ObjectStore};
+use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::sync::Arc;
 use uuid::Uuid;
+use regex::Regex;
 
-use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use rustshare_infrastructure::repositories::{PermissionResolverRepository, UserRepository};
 
 // ============================================================================
 // Errors
@@ -40,6 +41,8 @@ pub enum KanbanError {
     InvalidName(String),
     #[error("Invalid data: {0}")]
     InvalidData(String),
+    #[error("Not found: {0}")]
+    NotFound(String),
 }
 
 impl From<rustshare_core::services::FileError> for KanbanError {
@@ -87,6 +90,52 @@ impl From<serde_json::Error> for KanbanError {
 // ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KanbanLabel {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KanbanAssignee {
+    pub id: String,
+    pub display_name: String,
+    pub initials: String,
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KanbanChecklist {
+    pub done: usize,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KanbanChecklistItem {
+    pub id: String,
+    pub text: String,
+    pub done: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KanbanChecklistGroup {
+    pub id: String,
+    pub title: String,
+    pub items: Vec<KanbanChecklistItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KanbanSettings {
+    pub show_description_on_cards: bool,
+    pub description_preview_lines: usize,
+    pub show_assignees: bool,
+    pub show_labels: bool,
+    pub show_due_date: bool,
+    pub show_attachment_badge: bool,
+    pub show_checklist_badge: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KanbanBoardSummary {
     pub id: String,
     pub title: String,
@@ -96,6 +145,7 @@ pub struct KanbanBoardSummary {
     pub card_count: usize,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub archived: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,8 +155,11 @@ pub struct KanbanBoard {
     pub slug: String,
     pub path: String,
     pub columns: Vec<KanbanColumn>,
+    pub labels: Vec<KanbanLabel>,
+    pub settings: KanbanSettings,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub archived: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,6 +169,7 @@ pub struct KanbanColumn {
     pub slug: String,
     pub order: i32,
     pub status: String,
+    pub wip_limit: Option<usize>,
     pub cards: Vec<KanbanCard>,
 }
 
@@ -125,15 +179,41 @@ pub struct KanbanCard {
     pub title: String,
     pub slug: String,
     pub content: String,
+    pub description_preview: String,
     pub column_id: String,
     pub status: String,
     pub order: i32,
-    pub assignees: Vec<String>,
-    pub tags: Vec<String>,
+    pub labels: Vec<KanbanLabel>,
+    pub assignees: Vec<KanbanAssignee>,
+    pub due_date: Option<DateTime<Utc>>,
     pub priority: String,
+    pub attachments_count: usize,
+    pub checklist: KanbanChecklist,
+    pub checklists: Vec<KanbanChecklistGroup>,
     pub archived: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub path: String,
+    pub schema_version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KanbanCardAttachment {
+    pub id: String,
+    pub name: String,
+    pub size: i64,
+    pub mime_type: String,
+    pub created_at: DateTime<Utc>,
+    pub created_by: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KanbanCardDetail {
+    #[serde(flatten)]
+    pub summary: KanbanCard,
+    pub attachments: Vec<KanbanCardAttachment>,
+    pub checklists: Vec<KanbanChecklistGroup>,
+    pub activity: Vec<KanbanEvent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,8 +222,23 @@ pub struct CreateBoardInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateLabelInput {
+    pub name: String,
+    pub color: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateLabelInput {
+    pub name: Option<String>,
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateBoardInput {
     pub title: Option<String>,
+    pub labels: Option<Vec<KanbanLabel>>,
+    pub settings: Option<KanbanSettings>,
+    pub archived: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,7 +247,9 @@ pub struct CreateCardInput {
     pub column_id: Option<String>,
     pub content: Option<String>,
     pub priority: Option<String>,
-    pub tags: Option<Vec<String>>,
+    pub labels: Option<Vec<String>>,
+    pub assignees: Option<Vec<String>>,
+    pub due_date: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,14 +257,19 @@ pub struct UpdateCardInput {
     pub title: Option<String>,
     pub content: Option<String>,
     pub priority: Option<String>,
-    pub tags: Option<Vec<String>>,
+    pub labels: Option<Vec<String>>,
     pub assignees: Option<Vec<String>>,
+    pub due_date: Option<DateTime<Utc>>,
+    pub archived: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MoveCardInput {
+    pub board_id: String,
     pub target_column_id: String,
-    pub target_order: i32,
+    pub target_order: Option<i32>,
+    pub before_card_id: Option<String>,
+    pub after_card_id: Option<String>,
 }
 
 // ============================================================================
@@ -184,6 +286,9 @@ pub(crate) struct BoardMetadata {
     pub module: String,
     pub schema_version: String,
     pub columns: Vec<ColumnDef>,
+    pub labels: Vec<KanbanLabel>,
+    pub settings: KanbanSettings,
+    pub archived: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -195,6 +300,7 @@ pub(crate) struct ColumnDef {
     pub slug: String,
     pub order: i32,
     pub status: String,
+    pub wip_limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +313,7 @@ struct ColumnMetadata {
     pub order: i32,
     pub status: String,
     pub board_id: String,
+    pub wip_limit: Option<usize>,
     pub schema_version: String,
 }
 
@@ -222,16 +329,22 @@ pub(crate) struct CardMetadata {
     pub status: String,
     pub order: i32,
     pub assignees: Vec<String>,
-    pub tags: Vec<String>,
+    pub labels: Vec<String>,
+    pub due_date: Option<DateTime<Utc>>,
     pub priority: String,
+    pub attachments_count: usize,
+    pub checklist_done: usize,
+    pub checklist_total: usize,
+    pub checklists: Vec<KanbanChecklistGroup>,
     pub archived: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub description_preview: Option<String>,
     pub schema_version: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct KanbanEvent {
+pub struct KanbanEvent {
     pub event_type: String,
     pub timestamp: DateTime<Utc>,
     pub actor: String,
@@ -243,47 +356,159 @@ pub(crate) struct KanbanEvent {
 // ============================================================================
 
 pub struct KanbanService {
-    file_service: Arc<
-        FileService<
-            rustshare_storage::EventStore,
-            MetadataStore,
-            ObjectStore,
-            PermissionResolverRepository,
-        >,
-    >,
-    folder_service: Arc<
-        FolderService<rustshare_storage::EventStore, MetadataStore, PermissionResolverRepository>,
-    >,
-    metadata_store: Arc<MetadataStore>,
-    object_store: Arc<ObjectStore>,
+    pub file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>>,
+    pub folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
+    pub metadata_store: Arc<MetadataStore>,
+    pub object_store: Arc<ObjectStore>,
+    pub user_repository: Arc<UserRepository>,
 }
 
 impl KanbanService {
     pub fn new(
-        file_service: Arc<
-            FileService<
-                rustshare_storage::EventStore,
-                MetadataStore,
-                ObjectStore,
-                PermissionResolverRepository,
-            >,
-        >,
-        folder_service: Arc<
-            FolderService<
-                rustshare_storage::EventStore,
-                MetadataStore,
-                PermissionResolverRepository,
-            >,
-        >,
+        file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>>,
+        folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
         metadata_store: Arc<MetadataStore>,
         object_store: Arc<ObjectStore>,
+        user_repository: Arc<UserRepository>,
     ) -> Self {
         Self {
             file_service,
             folder_service,
             metadata_store,
             object_store,
+            user_repository,
         }
+    }
+
+    pub async fn get_assignable_users(&self, tenant_id: Uuid) -> Result<Vec<KanbanAssignee>, KanbanError> {
+        let users = self.user_repository
+            .list_by_tenant(tenant_id)
+            .await
+            .map_err(|e| KanbanError::Database(e.to_string()))?;
+        
+        Ok(users.into_iter().map(|u| {
+            let display_name = if u.display_name.is_empty() { u.username.clone() } else { u.display_name };
+            KanbanAssignee {
+                id: u.id.to_string(),
+                display_name: display_name.clone(),
+                avatar_url: u.avatar_path,
+                initials: get_initials(&display_name),
+            }
+        }).collect())
+    }
+
+    pub async fn add_card_label(
+        &self,
+        card_id: Uuid,
+        label_id: String,
+        user_id: UserId,
+    ) -> Result<(), KanbanError> {
+        let card_folder = self.folder_service.get_folder(card_id, user_id).await.map_err(KanbanError::from)?;
+        let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
+        
+        if meta.labels.contains(&label_id) {
+            return Ok(());
+        }
+
+        meta.labels.push(label_id.clone());
+        meta.updated_at = Utc::now();
+
+        self.write_card_metadata(&card_folder, &meta, user_id, card_folder.tenant_id).await?;
+        
+        self.append_kanban_event(&card_folder, KanbanEvent {
+            event_type: "card.label.added".to_string(),
+            timestamp: Utc::now(),
+            actor: user_id.to_string(),
+            payload: serde_json::json!({ "labelId": label_id }),
+        }, user_id).await?;
+
+        Ok(())
+    }
+
+    pub async fn remove_card_label(
+        &self,
+        card_id: Uuid,
+        label_id: String,
+        user_id: UserId,
+    ) -> Result<(), KanbanError> {
+        let card_folder = self.folder_service.get_folder(card_id, user_id).await.map_err(KanbanError::from)?;
+        let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
+        
+        let initial_len = meta.labels.len();
+        meta.labels.retain(|l| l != &label_id);
+
+        if meta.labels.len() == initial_len {
+            return Ok(());
+        }
+
+        meta.updated_at = Utc::now();
+        self.write_card_metadata(&card_folder, &meta, user_id, card_folder.tenant_id).await?;
+        
+        self.append_kanban_event(&card_folder, KanbanEvent {
+            event_type: "card.label.removed".to_string(),
+            timestamp: Utc::now(),
+            actor: user_id.to_string(),
+            payload: serde_json::json!({ "labelId": label_id }),
+        }, user_id).await?;
+
+        Ok(())
+    }
+
+    pub async fn assign_card_member(
+        &self,
+        card_id: Uuid,
+        assignee_id: String,
+        user_id: UserId,
+    ) -> Result<(), KanbanError> {
+        let card_folder = self.folder_service.get_folder(card_id, user_id).await.map_err(KanbanError::from)?;
+        let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
+        
+        if meta.assignees.contains(&assignee_id) {
+            return Ok(());
+        }
+
+        meta.assignees.push(assignee_id.clone());
+        meta.updated_at = Utc::now();
+
+        self.write_card_metadata(&card_folder, &meta, user_id, card_folder.tenant_id).await?;
+        
+        self.append_kanban_event(&card_folder, KanbanEvent {
+            event_type: "card.assignee.added".to_string(),
+            timestamp: Utc::now(),
+            actor: user_id.to_string(),
+            payload: serde_json::json!({ "assigneeId": assignee_id }),
+        }, user_id).await?;
+
+        Ok(())
+    }
+
+    pub async fn unassign_card_member(
+        &self,
+        card_id: Uuid,
+        assignee_id: String,
+        user_id: UserId,
+    ) -> Result<(), KanbanError> {
+        let card_folder = self.folder_service.get_folder(card_id, user_id).await.map_err(KanbanError::from)?;
+        let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
+        
+        let initial_len = meta.assignees.len();
+        meta.assignees.retain(|a| a != &assignee_id);
+
+        if meta.assignees.len() == initial_len {
+            return Ok(());
+        }
+
+        meta.updated_at = Utc::now();
+        self.write_card_metadata(&card_folder, &meta, user_id, card_folder.tenant_id).await?;
+        
+        self.append_kanban_event(&card_folder, KanbanEvent {
+            event_type: "card.assignee.removed".to_string(),
+            timestamp: Utc::now(),
+            actor: user_id.to_string(),
+            payload: serde_json::json!({ "assigneeId": assignee_id }),
+        }, user_id).await?;
+
+        Ok(())
     }
 
     // -------------------------------------------------------------------------
@@ -340,6 +565,7 @@ impl KanbanService {
                 card_count,
                 created_at: folder.created_at,
                 updated_at: folder.updated_at,
+                archived: meta.archived,
             });
         }
 
@@ -355,6 +581,7 @@ impl KanbanService {
     ) -> Result<KanbanBoard, KanbanError> {
         let root = self.ensure_kanban_root(user_id, tenant_id).await?;
         let slug = slugify(&input.title);
+        Self::validate_board_slug(&slug)?;
         let name = if slug.is_empty() {
             "untitled-board".to_string()
         } else {
@@ -390,6 +617,9 @@ impl KanbanService {
             module: "kanban".to_string(),
             schema_version: "1.0".to_string(),
             columns: columns.clone(),
+            labels: default_labels(),
+            settings: default_settings(),
+            archived: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -416,6 +646,7 @@ impl KanbanService {
                 order: col.order,
                 status: col.status.clone(),
                 board_id: board_folder.id.to_string(),
+                wip_limit: col.wip_limit,
                 schema_version: "1.0".to_string(),
             };
             self.write_column_metadata(&col_folder, &col_meta, user_id, tenant_id)
@@ -477,7 +708,7 @@ impl KanbanService {
                     continue;
                 }
                 if let Ok(card) = self
-                    .load_card(&card_folder, &col_meta.id, user_id)
+                    .load_card(&card_folder, user_id)
                     .await
                 {
                     if !card.archived {
@@ -495,6 +726,7 @@ impl KanbanService {
                 slug: col_meta.slug,
                 order: col_meta.order,
                 status: col_meta.status,
+                wip_limit: col_meta.wip_limit,
                 cards,
             });
         }
@@ -507,8 +739,11 @@ impl KanbanService {
             slug: board_meta.slug,
             path: board_folder.path,
             columns,
+            labels: board_meta.labels,
+            settings: board_meta.settings,
             created_at: board_folder.created_at,
             updated_at: board_folder.updated_at,
+            archived: board_meta.archived,
         })
     }
 
@@ -520,6 +755,7 @@ impl KanbanService {
         tenant_id: Uuid,
     ) -> Result<KanbanBoard, KanbanError> {
         let board_id = self.ensure_board_id(&board_id_or_slug, user_id, tenant_id).await?;
+
         let board_folder = self
             .folder_service
             .get_folder(board_id, user_id)
@@ -533,12 +769,230 @@ impl KanbanService {
             board_meta.slug = slugify(&board_meta.title);
             board_meta.updated_at = Utc::now();
         }
+        if let Some(labels) = input.labels {
+            board_meta.labels = labels;
+            board_meta.updated_at = Utc::now();
+        }
+        if let Some(settings) = input.settings {
+            board_meta.settings = settings;
+            board_meta.updated_at = Utc::now();
+        }
+        if let Some(archived) = input.archived {
+            board_meta.archived = archived;
+            board_meta.updated_at = Utc::now();
+        }
 
         self.write_board_metadata(&board_folder, &board_meta, user_id, tenant_id)
             .await?;
 
         self.get_board(board_id.to_string(), user_id, tenant_id).await
     }
+
+    pub async fn create_label(
+        &self,
+        board_id: Uuid,
+        input: CreateLabelInput,
+        user_id: UserId,
+    ) -> Result<KanbanLabel, KanbanError> {
+        self.validate_color(&input.color)?;
+
+        let board_folder = self
+            .folder_service
+            .get_folder(board_id, user_id)
+            .await
+            .map_err(KanbanError::from)?;
+
+        let mut meta = self.load_board_metadata(&board_folder, user_id).await?;
+        
+        let label = KanbanLabel {
+            id: format!("label_{}", Uuid::new_v4().to_string()[..8].to_string()),
+            name: input.name,
+            color: input.color,
+        };
+
+        meta.labels.push(label.clone());
+        meta.updated_at = Utc::now();
+
+        self.write_board_metadata(&board_folder, &meta, user_id, board_folder.tenant_id)
+            .await?;
+
+        Ok(label)
+    }
+
+    pub async fn update_label(
+        &self,
+        board_id: Uuid,
+        label_id: String,
+        input: UpdateLabelInput,
+        user_id: UserId,
+    ) -> Result<KanbanLabel, KanbanError> {
+        if let Some(ref color) = input.color {
+            self.validate_color(color)?;
+        }
+
+        let board_folder = self
+            .folder_service
+            .get_folder(board_id, user_id)
+            .await
+            .map_err(KanbanError::from)?;
+
+        let mut meta = self.load_board_metadata(&board_folder, user_id).await?;
+        
+        let mut found = false;
+        let mut updated_label = None;
+        for label in &mut meta.labels {
+            if label.id == label_id {
+                if let Some(ref name) = input.name {
+                    label.name = name.clone();
+                }
+                if let Some(ref color) = input.color {
+                    label.color = color.clone();
+                }
+                updated_label = Some(label.clone());
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            return Err(KanbanError::NotFound(format!("Label {} not found", label_id)));
+        }
+
+        meta.updated_at = Utc::now();
+        self.write_board_metadata(&board_folder, &meta, user_id, board_folder.tenant_id)
+            .await?;
+
+        Ok(updated_label.unwrap())
+    }
+
+    pub async fn delete_label(
+        &self,
+        board_id: Uuid,
+        label_id: String,
+        user_id: UserId,
+    ) -> Result<(), KanbanError> {
+        let board_folder = self
+            .folder_service
+            .get_folder(board_id, user_id)
+            .await
+            .map_err(KanbanError::from)?;
+
+        let mut meta = self.load_board_metadata(&board_folder, user_id).await?;
+        
+        let initial_len = meta.labels.len();
+        meta.labels.retain(|l| l.id != label_id);
+
+        if meta.labels.len() == initial_len {
+            return Err(KanbanError::NotFound(format!("Label {} not found", label_id)));
+        }
+
+        meta.updated_at = Utc::now();
+        self.write_board_metadata(&board_folder, &meta, user_id, board_folder.tenant_id)
+            .await?;
+
+        Ok(())
+    }
+
+    fn validate_color(&self, color: &str) -> Result<(), KanbanError> {
+        Self::validate_color_static(color)
+    }
+
+    pub fn validate_color_static(color: &str) -> Result<(), KanbanError> {
+        let approved = ["green", "yellow", "orange", "red", "purple", "blue", "gray"];
+        if !approved.contains(&color) {
+            return Err(KanbanError::InvalidData(format!(
+                "Invalid color: {}. Approved colors: {:?}",
+                color, approved
+            )));
+        }
+        Ok(())
+    }
+
+    /// Validate a board or card slug to prevent path traversal and injection.
+    pub fn validate_slug(slug: &str) -> Result<(), KanbanError> {
+        if slug.is_empty() {
+            return Err(KanbanError::InvalidName("Slug cannot be empty".to_string()));
+        }
+        // Reject absolute paths
+        if slug.starts_with('/') || slug.starts_with('\\') {
+            return Err(KanbanError::InvalidName("Absolute paths are not allowed".to_string()));
+        }
+        // Reject traversal patterns (including encoded)
+        if slug.contains("..") || slug.contains("%2e%2e") || slug.contains("%2E%2E") {
+            return Err(KanbanError::InvalidName("Path traversal is not allowed".to_string()));
+        }
+        // Reject null bytes
+        if slug.contains('\0') {
+            return Err(KanbanError::InvalidName("Null bytes are not allowed".to_string()));
+        }
+        // Reject control characters
+        if slug.chars().any(|c| c.is_control()) {
+            return Err(KanbanError::InvalidName("Control characters are not allowed".to_string()));
+        }
+        Ok(())
+    }
+
+    /// Validate a board slug specifically.
+    pub fn validate_board_slug(slug: &str) -> Result<(), KanbanError> {
+        Self::validate_slug(slug)?;
+        // Board slugs must be reasonable length
+        if slug.len() > 120 {
+            return Err(KanbanError::InvalidName("Board slug too long".to_string()));
+        }
+        Ok(())
+    }
+
+    /// Validate a card slug specifically.
+    pub fn validate_card_slug(slug: &str) -> Result<(), KanbanError> {
+        Self::validate_slug(slug)?;
+        // Card slugs must start with CARD- prefix as created by the system
+        if !slug.starts_with("CARD-") {
+            return Err(KanbanError::InvalidName("Invalid card slug format".to_string()));
+        }
+        if slug.len() > 200 {
+            return Err(KanbanError::InvalidName("Card slug too long".to_string()));
+        }
+        Ok(())
+    }
+
+    /// Sanitize and validate an attachment filename.
+    pub fn sanitize_attachment_name(name: &str) -> Result<String, KanbanError> {
+        if name.is_empty() || name.len() > 255 {
+            return Err(KanbanError::InvalidName("Invalid attachment name length".to_string()));
+        }
+        // Reject path separators and traversal
+        if name.contains('/') || name.contains('\\') || name.contains("..") || name.contains('\0') {
+            return Err(KanbanError::InvalidName("Invalid attachment name".to_string()));
+        }
+        // Reject names that are just dots
+        if name == "." || name == ".." {
+            return Err(KanbanError::InvalidName("Invalid attachment name".to_string()));
+        }
+        // Reject hidden metadata filenames (before stripping dots)
+        let trimmed = name.trim();
+        if trimmed == ".rustshare-board.json"
+            || trimmed == ".rustshare-column.json"
+            || trimmed == ".rustshare-card.json"
+            || trimmed == "events.jsonl"
+            || trimmed == "index.md"
+        {
+            return Err(KanbanError::InvalidName("Reserved filename".to_string()));
+        }
+        // Strip leading/trailing whitespace and dots
+        let sanitized = trimmed.trim_start_matches('.').trim_end_matches('.').to_string();
+        if sanitized.is_empty() {
+            return Err(KanbanError::InvalidName("Invalid attachment name".to_string()));
+        }
+        // Reject hidden metadata filenames again after sanitization
+        if sanitized == "rustshare-board.json"
+            || sanitized == "rustshare-column.json"
+            || sanitized == "rustshare-card.json"
+        {
+            return Err(KanbanError::InvalidName("Reserved filename".to_string()));
+        }
+        Ok(sanitized)
+    }
+
 
     pub async fn archive_board(
         &self,
@@ -616,6 +1070,7 @@ impl KanbanService {
         let seq = self.next_card_sequence(col_folder.id, user_id).await?;
         let card_slug = slugify(&input.title);
         let card_name = format!("CARD-{:04}-{}", seq, card_slug);
+        Self::validate_card_slug(&card_name)?;
         let order = (seq as i32).saturating_mul(1000);
 
         let card_folder = self
@@ -625,6 +1080,7 @@ impl KanbanService {
             .map_err(KanbanError::from)?;
 
         let content = input.content.unwrap_or_default();
+        let preview = derive_preview(&content, &input.title);
         let card_meta = CardMetadata {
             id: card_folder.id.to_string(),
             type_: "kanban.card".to_string(),
@@ -634,14 +1090,26 @@ impl KanbanService {
             slug: format!("CARD-{:04}-{}", seq, card_slug),
             status: col_def.status.clone(),
             order,
-            assignees: Vec::new(),
-            tags: input.tags.unwrap_or_default(),
-            priority: input.priority.unwrap_or_else(|| "normal".to_string()),
+            assignees: input.assignees.unwrap_or_default(),
+            labels: input.labels.unwrap_or_default(),
+            due_date: input.due_date,
+            priority: input.priority.unwrap_or_else(|| "medium".to_string()),
+            attachments_count: 0,
+            checklist_done: 0,
+            checklist_total: 0,
+            checklists: vec![],
             archived: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            description_preview: Some(preview),
             schema_version: "1.0".to_string(),
         };
+
+        // Create attachments folder
+        self.folder_service
+            .create_folder("attachments".to_string(), Some(card_folder.id), user_id, tenant_id)
+            .await
+            .map_err(KanbanError::from)?;
 
         self.write_card_index(&card_folder, &content, user_id, tenant_id)
             .await?;
@@ -666,19 +1134,29 @@ impl KanbanService {
         .await?;
 
         Ok(KanbanCard {
-            id: card_folder.id.to_string(),
+            id: card_meta.id,
             title: card_meta.title,
             slug: card_meta.slug,
             content,
+            description_preview: card_meta.description_preview.clone().unwrap_or_default(),
             column_id: card_meta.column_id,
             status: card_meta.status,
             order: card_meta.order,
-            assignees: card_meta.assignees,
-            tags: card_meta.tags,
+            labels: self.map_labels(&card_meta.labels, &board_meta.labels),
+            assignees: self.map_assignees(&card_meta.assignees).await,
+            due_date: card_meta.due_date,
             priority: card_meta.priority,
+            attachments_count: card_meta.attachments_count,
+            checklist: KanbanChecklist {
+                done: card_meta.checklist_done,
+                total: card_meta.checklist_total,
+            },
+            checklists: vec![],
             archived: card_meta.archived,
             created_at: card_meta.created_at,
             updated_at: card_meta.updated_at,
+            path: card_folder.path.clone(),
+            schema_version: card_meta.schema_version,
         })
     }
 
@@ -686,7 +1164,6 @@ impl KanbanService {
         &self,
         card_id: Uuid,
         user_id: UserId,
-        _tenant_id: Uuid,
     ) -> Result<KanbanCard, KanbanError> {
         let card_folder = self
             .folder_service
@@ -694,20 +1171,30 @@ impl KanbanService {
             .await
             .map_err(KanbanError::from)?;
 
-        let column_folder = if let Some(parent_id) = card_folder.parent_folder_id {
-            self.folder_service
-                .get_folder(parent_id, user_id)
-                .await
-                .map_err(KanbanError::from)?
-        } else {
-            return Err(KanbanError::InvalidData("Card has no parent column".to_string()));
-        };
+        self.load_card(&card_folder, user_id).await
+    }
 
-        let col_meta = self
-            .load_column_metadata(&column_folder, "", user_id)
-            .await?;
+    pub async fn get_card_detail(
+        &self,
+        card_id: Uuid,
+        user_id: UserId,
+    ) -> Result<KanbanCardDetail, KanbanError> {
+        let card_folder = self
+            .folder_service
+            .get_folder(card_id, user_id)
+            .await
+            .map_err(KanbanError::from)?;
 
-        self.load_card(&card_folder, &col_meta.id, user_id).await
+        let summary = self.load_card(&card_folder, user_id).await?;
+        let attachments = self.load_card_attachments(&card_folder, user_id, card_folder.tenant_id).await?;
+        let activity = self.load_card_activity(&card_folder, user_id).await?;
+
+        Ok(KanbanCardDetail {
+            checklists: summary.checklists.clone(),
+            summary,
+            attachments,
+            activity,
+        })
     }
 
     pub async fn update_card(
@@ -725,39 +1212,82 @@ impl KanbanService {
 
         let mut card_meta = self.load_card_metadata(&card_folder, user_id).await?;
 
-        if let Some(title) = input.title {
-            card_meta.title = title;
+        if let Some(ref title) = input.title {
+            card_meta.title = title.clone();
             card_meta.updated_at = Utc::now();
         }
-        if let Some(content) = input.content {
-            self.write_card_index(&card_folder, &content, user_id, tenant_id)
+        if let Some(ref content) = input.content {
+            self.write_card_index(&card_folder, content, user_id, tenant_id)
                 .await?;
+            card_meta.description_preview = Some(derive_preview(content, &card_meta.title));
             card_meta.updated_at = Utc::now();
+        } else if input.title.is_some() {
+            // Title changed, may need to re-derive to remove heading if it matches new title
+            // We need the content to do this
+            let content = if let Some(file) = self.find_file_in_folder(card_folder.id, user_id, "index.md").await? {
+                let bytes = self.object_store.get(&file.storage_key()).await.map_err(|e| KanbanError::Storage(e.to_string()))?;
+                String::from_utf8_lossy(&bytes).to_string()
+            } else {
+                String::new()
+            };
+            card_meta.description_preview = Some(derive_preview(&content, &card_meta.title));
         }
         if let Some(priority) = input.priority {
             card_meta.priority = priority;
             card_meta.updated_at = Utc::now();
         }
-        if let Some(tags) = input.tags {
-            card_meta.tags = tags;
+        if let Some(labels) = input.labels {
+            card_meta.labels = labels;
             card_meta.updated_at = Utc::now();
         }
         if let Some(assignees) = input.assignees {
             card_meta.assignees = assignees;
             card_meta.updated_at = Utc::now();
         }
+        if let Some(due_date) = input.due_date {
+            card_meta.due_date = Some(due_date);
+            card_meta.updated_at = Utc::now();
+        }
+        if let Some(archived) = input.archived {
+            card_meta.archived = archived;
+            card_meta.updated_at = Utc::now();
+        }
 
         self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id)
             .await?;
 
-        self.load_card(&card_folder, &card_meta.column_id, user_id).await
+        self.get_card(card_id, user_id).await
+    }
+
+    pub async fn update_card_description(
+        &self,
+        card_id: Uuid,
+        content: String,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<KanbanCard, KanbanError> {
+        let card_folder = self
+            .folder_service
+            .get_folder(card_id, user_id)
+            .await
+            .map_err(KanbanError::from)?;
+
+        let mut card_meta = self.load_card_metadata(&card_folder, user_id).await?;
+        self.write_card_index(&card_folder, &content, user_id, tenant_id)
+            .await?;
+        card_meta.description_preview = Some(derive_preview(&content, &card_meta.title));
+        card_meta.updated_at = Utc::now();
+
+        self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id)
+            .await?;
+
+        self.get_card(card_id, user_id).await
     }
 
     pub async fn move_card(
         &self,
         card_id: Uuid,
-        target_column_id: String,
-        target_order: i32,
+        input: MoveCardInput,
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<KanbanBoard, KanbanError> {
@@ -768,7 +1298,7 @@ impl KanbanService {
             .map_err(KanbanError::from)?;
 
         let mut card_meta = self.load_card_metadata(&card_folder, user_id).await?;
-        let board_id = Uuid::parse_str(&card_meta.board_id)
+        let board_id = Uuid::parse_str(&input.board_id)
             .map_err(|_| KanbanError::InvalidData("Invalid board id".to_string()))?;
 
         let board_folder = self
@@ -781,8 +1311,8 @@ impl KanbanService {
         let col_def = board_meta
             .columns
             .iter()
-            .find(|c| c.id == target_column_id)
-            .ok_or_else(|| KanbanError::ColumnNotFound(target_column_id.clone()))?;
+            .find(|c| c.id == input.target_column_id)
+            .ok_or_else(|| KanbanError::ColumnNotFound(input.target_column_id.clone()))?;
 
         let col_path = format!("{}/{}", board_folder.path.trim_end_matches('/'), col_def.slug);
         let col_folder = self
@@ -790,10 +1320,25 @@ impl KanbanService {
             .find_folder_by_path(&col_path, board_folder.owner_id)
             .await
             .map_err(|e| KanbanError::Database(e.to_string()))?
-            .ok_or_else(|| KanbanError::ColumnNotFound(target_column_id.clone()))?;
+            .ok_or_else(|| KanbanError::ColumnNotFound(input.target_column_id.clone()))?;
 
         let old_column_id = card_meta.column_id.clone();
         let old_order = card_meta.order;
+
+        // Calculate target order
+        let target_order = if let (Some(before_id), Some(after_id)) = (&input.before_card_id, &input.after_card_id) {
+            let before_meta = self.load_card_by_id_meta(before_id, user_id).await?;
+            let after_meta = self.load_card_by_id_meta(after_id, user_id).await?;
+            (before_meta.order + after_meta.order) / 2
+        } else if let Some(before_id) = &input.before_card_id {
+            let before_meta = self.load_card_by_id_meta(before_id, user_id).await?;
+            before_meta.order + 1000
+        } else if let Some(after_id) = &input.after_card_id {
+            let after_meta = self.load_card_by_id_meta(after_id, user_id).await?;
+            after_meta.order / 2
+        } else {
+            input.target_order.unwrap_or(1000)
+        };
 
         // Move folder if parent changed
         if Some(col_folder.id) != card_folder.parent_folder_id {
@@ -804,7 +1349,7 @@ impl KanbanService {
         }
 
         // Update metadata
-        card_meta.column_id = target_column_id.clone();
+        card_meta.column_id = input.target_column_id.clone();
         card_meta.status = col_def.status.clone();
         card_meta.order = target_order;
         card_meta.updated_at = Utc::now();
@@ -825,7 +1370,7 @@ impl KanbanService {
                 actor: user_id.to_string(),
                 payload: serde_json::json!({
                     "fromColumnId": old_column_id,
-                    "toColumnId": target_column_id,
+                    "toColumnId": input.target_column_id,
                     "oldOrder": old_order,
                     "newOrder": target_order,
                 }),
@@ -843,14 +1388,29 @@ impl KanbanService {
                 payload: serde_json::json!({
                     "cardId": card_id.to_string(),
                     "fromColumnId": old_column_id,
-                    "toColumnId": target_column_id,
+                    "toColumnId": input.target_column_id,
                 }),
             },
             user_id,
         )
         .await?;
 
-        self.get_board(board_id.to_string(), user_id, tenant_id).await
+        self.get_board(input.board_id, user_id, tenant_id).await
+    }
+
+    async fn load_card_by_id_meta(
+        &self,
+        card_id_str: &str,
+        user_id: UserId,
+    ) -> Result<CardMetadata, KanbanError> {
+        let card_id = Uuid::parse_str(card_id_str)
+            .map_err(|_| KanbanError::InvalidData("Invalid card id".to_string()))?;
+        let folder = self
+            .folder_service
+            .get_folder(card_id, user_id)
+            .await
+            .map_err(KanbanError::from)?;
+        self.load_card_metadata(&folder, user_id).await
     }
 
     pub async fn archive_card(
@@ -884,7 +1444,7 @@ impl KanbanService {
         )
         .await?;
 
-        self.load_card(&card_folder, &card_meta.column_id, user_id).await
+        self.load_card(&card_folder, user_id).await
     }
 
     pub async fn delete_card(
@@ -960,11 +1520,11 @@ impl KanbanService {
             return Err(KanbanError::InvalidData("Card has no parent column".to_string()));
         };
 
-        let col_meta = self
+        let _col_meta = self
             .load_column_metadata(&column_folder, "", user_id)
             .await?;
 
-        self.load_card(&card_folder, &col_meta.id, user_id).await
+        self.load_card(&card_folder, user_id).await
     }
 
     pub(crate) async fn write_card_metadata(
@@ -1076,6 +1636,9 @@ impl KanbanService {
             columns: columns.clone(),
             created_at: board_folder.created_at,
             updated_at: Utc::now(),
+            archived: false,
+            labels: default_labels(),
+            settings: default_settings(),
         };
 
         self.write_board_metadata(&board_folder, &board_meta, user_id, tenant_id)
@@ -1099,6 +1662,7 @@ impl KanbanService {
                     order: col.order,
                     status: col.status.clone(),
                     board_id: board_folder.id.to_string(),
+                    wip_limit: col.wip_limit,
                     schema_version: "1.0".to_string(),
                 };
                 self.write_column_metadata(&col_folder, &col_meta, user_id, tenant_id)
@@ -1276,6 +1840,9 @@ impl KanbanService {
             module: "kanban".to_string(),
             schema_version: "1.0".to_string(),
             columns,
+            labels: default_labels(),
+            settings: default_settings(),
+            archived: false,
             created_at: board_folder.created_at,
             updated_at: board_folder.updated_at,
         })
@@ -1311,6 +1878,7 @@ impl KanbanService {
             order,
             status,
             board_id: board_id.to_string(),
+            wip_limit: None,
             schema_version: "1.0".to_string(),
         })
     }
@@ -1338,10 +1906,9 @@ impl KanbanService {
     async fn load_card(
         &self,
         card_folder: &Folder,
-        _column_id: &str,
         user_id: UserId,
     ) -> Result<KanbanCard, KanbanError> {
-        let meta = self.load_card_metadata(card_folder, user_id).await?;
+        let mut meta = self.load_card_metadata(card_folder, user_id).await?;
 
         let content = if let Some(file) = self
             .find_file_in_folder(card_folder.id, user_id, "index.md")
@@ -1357,21 +1924,75 @@ impl KanbanService {
             String::new()
         };
 
+        let board_id = Uuid::parse_str(&meta.board_id)
+            .map_err(|_| KanbanError::InvalidData("Invalid board id".to_string()))?;
+        let board_folder = self
+            .folder_service
+            .get_folder(board_id, user_id)
+            .await
+            .map_err(KanbanError::from)?;
+        let board_meta = self.load_board_metadata(&board_folder, user_id).await?;
+        
+        let mut preview = meta.description_preview.clone().unwrap_or_default();
+        if (preview.is_empty() || preview.len() < 5) && !content.is_empty() {
+            preview = derive_preview(&content, &meta.title);
+            // Cache it back to metadata
+            meta.description_preview = Some(preview.clone());
+            self.write_card_metadata(card_folder, &meta, user_id, board_folder.tenant_id).await.ok();
+        }
+
         Ok(KanbanCard {
             id: meta.id,
             title: meta.title,
             slug: meta.slug,
-            content,
+            content: content.clone(),
+            description_preview: preview,
             column_id: meta.column_id,
             status: meta.status,
             order: meta.order,
-            assignees: meta.assignees,
-            tags: meta.tags,
+            labels: self.map_labels(&meta.labels, &board_meta.labels),
+            assignees: self.map_assignees(&meta.assignees).await,
+            due_date: meta.due_date,
             priority: meta.priority,
+            attachments_count: meta.attachments_count,
+            checklist: KanbanChecklist {
+                done: meta.checklist_done,
+                total: meta.checklist_total,
+            },
+            checklists: meta.checklists,
             archived: meta.archived,
             created_at: meta.created_at,
             updated_at: meta.updated_at,
+            path: card_folder.path.clone(),
+            schema_version: meta.schema_version,
         })
+    }
+
+    fn map_labels(&self, card_labels: &[String], board_labels: &[KanbanLabel]) -> Vec<KanbanLabel> {
+        card_labels
+            .iter()
+            .filter_map(|id| board_labels.iter().find(|l| &l.id == id).cloned())
+            .collect()
+    }
+
+    async fn map_assignees(
+        &self,
+        assignee_ids: &[String],
+    ) -> Vec<KanbanAssignee> {
+        let mut assignees = Vec::new();
+        for id_str in assignee_ids {
+            if let Ok(id) = Uuid::parse_str(id_str) {
+                if let Ok(Some(user)) = self.metadata_store.find_user_by_id(id).await {
+                    assignees.push(KanbanAssignee {
+                        id: user.id.to_string(),
+                        display_name: user.display_name.clone(),
+                        initials: get_initials(&user.display_name),
+                        avatar_url: user.avatar_path.clone(),
+                    });
+                }
+            }
+        }
+        assignees
     }
 
     async fn write_column_metadata(
@@ -1462,11 +2083,22 @@ impl KanbanService {
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<File, KanbanError> {
-        let bytes = Bytes::from(content.to_string());
+        self.write_binary_file_by_name(folder_id, name, Bytes::from(content.to_string()), mime_type, user_id, tenant_id).await
+    }
+
+    async fn write_binary_file_by_name(
+        &self,
+        folder_id: Uuid,
+        name: &str,
+        content: Bytes,
+        mime_type: &str,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<File, KanbanError> {
         if let Some(existing) = self.find_file_in_folder(folder_id, user_id, name).await? {
             let updated = self
                 .file_service
-                .update_file(existing.id, user_id, existing.current_version, bytes)
+                .update_file(existing.id, user_id, existing.current_version, content)
                 .await
                 .map_err(KanbanError::from)?;
             Ok(updated)
@@ -1477,7 +2109,7 @@ impl KanbanService {
                     user_id,
                     name.to_string(),
                     Some(folder_id),
-                    bytes,
+                    content,
                     mime_type.to_string(),
                     tenant_id,
                 )
@@ -1562,6 +2194,358 @@ impl KanbanService {
         }
         Ok(max_seq + 1)
     }
+
+    async fn load_card_activity(
+        &self,
+        card_folder: &Folder,
+        user_id: UserId,
+    ) -> Result<Vec<KanbanEvent>, KanbanError> {
+        let file = match self
+            .find_file_in_folder(card_folder.id, user_id, "events.jsonl")
+            .await?
+        {
+            Some(f) => f,
+            None => return Ok(vec![]),
+        };
+
+        let bytes = self
+            .object_store
+            .get(&file.storage_key())
+            .await
+            .map_err(|e| KanbanError::Storage(e.to_string()))?;
+
+        let content = String::from_utf8_lossy(&bytes);
+        let mut events = vec![];
+        for line in content.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(event) = serde_json::from_str::<KanbanEvent>(line) {
+                events.push(event);
+            }
+        }
+
+        events.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(events)
+    }
+
+    async fn load_card_attachments(
+        &self,
+        card_folder: &Folder,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Vec<KanbanCardAttachment>, KanbanError> {
+        let folders = self
+            .metadata_store
+            .list_folders(Some(card_folder.id), user_id, tenant_id)
+            .await
+            .map_err(|e| KanbanError::Database(e.to_string()))?;
+
+        let attachments_folder = match folders.into_iter().find(|f| f.name == "attachments") {
+            Some(f) => f,
+            None => return Ok(vec![]),
+        };
+
+        let files = self
+            .metadata_store
+            .list_files(Some(attachments_folder.id), user_id, tenant_id)
+            .await
+            .map_err(|e| KanbanError::Database(e.to_string()))?;
+
+        Ok(files
+            .into_iter()
+            .map(|f| KanbanCardAttachment {
+                id: f.id.to_string(),
+                name: f.name,
+                size: f.size,
+                mime_type: f.mime_type,
+                created_at: f.created_at,
+                created_by: f.owner_id.to_string(),
+            })
+            .collect())
+    }
+
+    // --- Card Attachments ---
+
+    pub async fn add_card_attachment(
+        &self,
+        card_id: Uuid,
+        filename: String,
+        content: Bytes,
+        mime_type: String,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<KanbanCardAttachment, KanbanError> {
+        // Enforce 10MB limit
+        if content.len() > 10 * 1024 * 1024 {
+            return Err(KanbanError::InvalidData("Attachment exceeds 10MB limit".to_string()));
+        }
+
+        // Sanitize filename
+        let filename = Self::sanitize_attachment_name(&filename)?;
+
+        let card_folder = self.folder_service.get_folder(card_id, user_id).await.map_err(KanbanError::from)?;
+        let attachments_folder = self.get_attachments_folder(card_id, user_id, tenant_id).await?;
+        
+        let file = self.write_binary_file_by_name(attachments_folder.id, &filename, content, &mime_type, user_id, tenant_id).await?;
+        
+        let mut card_meta = self.load_card_metadata(&card_folder, user_id).await?;
+        card_meta.attachments_count += 1;
+        card_meta.updated_at = Utc::now();
+        self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id).await?;
+        
+        self.append_kanban_event(
+            &card_folder,
+            KanbanEvent {
+                event_type: "card.attachment_added".to_string(),
+                timestamp: Utc::now(),
+                actor: user_id.to_string(),
+                payload: serde_json::json!({ "filename": filename, "attachmentId": file.id.to_string() }),
+            },
+            user_id,
+        ).await?;
+        
+        Ok(KanbanCardAttachment {
+            id: file.id.to_string(),
+            name: file.name,
+            size: file.size,
+            mime_type: file.mime_type,
+            created_at: file.created_at,
+            created_by: file.owner_id.to_string(),
+        })
+    }
+
+    pub async fn delete_card_attachment(
+        &self,
+        card_id: Uuid,
+        attachment_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), KanbanError> {
+        let card_folder = self.folder_service.get_folder(card_id, user_id).await.map_err(KanbanError::from)?;
+        
+        self.file_service.delete_file(attachment_id, user_id).await.map_err(KanbanError::from)?;
+        
+        let mut card_meta = self.load_card_metadata(&card_folder, user_id).await?;
+        if card_meta.attachments_count > 0 {
+            card_meta.attachments_count -= 1;
+        }
+        card_meta.updated_at = Utc::now();
+        self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id).await?;
+        
+        self.append_kanban_event(
+            &card_folder,
+            KanbanEvent {
+                event_type: "card.attachment_deleted".to_string(),
+                timestamp: Utc::now(),
+                actor: user_id.to_string(),
+                payload: serde_json::json!({ "attachmentId": attachment_id.to_string() }),
+            },
+            user_id,
+        ).await?;
+        
+        Ok(())
+    }
+
+    async fn get_attachments_folder(&self, card_folder_id: Uuid, user_id: UserId, tenant_id: Uuid) -> Result<Folder, KanbanError> {
+        let folders = self.metadata_store.list_folders(Some(card_folder_id), user_id, tenant_id).await
+            .map_err(|e| KanbanError::Database(e.to_string()))?;
+        if let Some(f) = folders.into_iter().find(|f| f.name == "attachments") {
+            Ok(f)
+        } else {
+            self.folder_service.create_folder("attachments".to_string(), Some(card_folder_id), user_id, tenant_id).await
+                .map_err(KanbanError::from)
+        }
+    }
+
+    // --- Card Checklists ---
+
+    pub async fn add_checklist(
+        &self,
+        card_id: Uuid,
+        title: String,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<KanbanChecklistGroup, KanbanError> {
+        let card_folder = self.folder_service.get_folder(card_id, user_id).await.map_err(KanbanError::from)?;
+        let mut card_meta = self.load_card_metadata(&card_folder, user_id).await?;
+        
+        let group = KanbanChecklistGroup {
+            id: Uuid::new_v4().to_string(),
+            title: title.clone(),
+            items: vec![],
+        };
+        
+        card_meta.checklists.push(group.clone());
+        card_meta.updated_at = Utc::now();
+        self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id).await?;
+        
+        self.append_kanban_event(
+            &card_folder,
+            KanbanEvent {
+                event_type: "card.checklist_added".to_string(),
+                timestamp: Utc::now(),
+                actor: user_id.to_string(),
+                payload: serde_json::json!({ "title": title, "checklistId": group.id }),
+            },
+            user_id,
+        ).await?;
+        
+        Ok(group)
+    }
+
+    pub async fn add_checklist_item(
+        &self,
+        card_id: Uuid,
+        checklist_id: String,
+        text: String,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<KanbanChecklistItem, KanbanError> {
+        let card_folder = self.folder_service.get_folder(card_id, user_id).await.map_err(KanbanError::from)?;
+        let mut card_meta = self.load_card_metadata(&card_folder, user_id).await?;
+        
+        let checklist = card_meta.checklists.iter_mut().find(|c| c.id == checklist_id)
+            .ok_or_else(|| KanbanError::NotFound(format!("Checklist {}", checklist_id)))?;
+            
+        let item = KanbanChecklistItem {
+            id: Uuid::new_v4().to_string(),
+            text: text.clone(),
+            done: false,
+        };
+        
+        checklist.items.push(item.clone());
+        self.recalculate_checklist_summary(&mut card_meta);
+        card_meta.updated_at = Utc::now();
+        self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id).await?;
+        
+        self.append_kanban_event(
+            &card_folder,
+            KanbanEvent {
+                event_type: "card.checklist_item_added".to_string(),
+                timestamp: Utc::now(),
+                actor: user_id.to_string(),
+                payload: serde_json::json!({ "checklistId": checklist_id, "text": text, "itemId": item.id }),
+            },
+            user_id,
+        ).await?;
+        
+        Ok(item)
+    }
+
+    pub async fn toggle_checklist_item(
+        &self,
+        card_id: Uuid,
+        checklist_id: String,
+        item_id: String,
+        done: bool,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), KanbanError> {
+        let card_folder = self.folder_service.get_folder(card_id, user_id).await.map_err(KanbanError::from)?;
+        let mut card_meta = self.load_card_metadata(&card_folder, user_id).await?;
+        
+        let checklist = card_meta.checklists.iter_mut().find(|c| c.id == checklist_id)
+            .ok_or_else(|| KanbanError::NotFound(format!("Checklist {}", checklist_id)))?;
+            
+        let item = checklist.items.iter_mut().find(|i| i.id == item_id)
+            .ok_or_else(|| KanbanError::NotFound(format!("Item {}", item_id)))?;
+            
+        item.done = done;
+        self.recalculate_checklist_summary(&mut card_meta);
+        card_meta.updated_at = Utc::now();
+        self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id).await?;
+        
+        self.append_kanban_event(
+            &card_folder,
+            KanbanEvent {
+                event_type: "card.checklist_item_toggled".to_string(),
+                timestamp: Utc::now(),
+                actor: user_id.to_string(),
+                payload: serde_json::json!({ "checklistId": checklist_id, "itemId": item_id, "done": done }),
+            },
+            user_id,
+        ).await?;
+        
+        Ok(())
+    }
+
+    pub async fn delete_checklist_item(
+        &self,
+        card_id: Uuid,
+        checklist_id: String,
+        item_id: String,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), KanbanError> {
+        let card_folder = self.folder_service.get_folder(card_id, user_id).await.map_err(KanbanError::from)?;
+        let mut card_meta = self.load_card_metadata(&card_folder, user_id).await?;
+        
+        let checklist = card_meta.checklists.iter_mut().find(|c| c.id == checklist_id)
+            .ok_or_else(|| KanbanError::NotFound(format!("Checklist {}", checklist_id)))?;
+            
+        checklist.items.retain(|i| i.id != item_id);
+        self.recalculate_checklist_summary(&mut card_meta);
+        card_meta.updated_at = Utc::now();
+        self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id).await?;
+        
+        self.append_kanban_event(
+            &card_folder,
+            KanbanEvent {
+                event_type: "card.checklist_item_deleted".to_string(),
+                timestamp: Utc::now(),
+                actor: user_id.to_string(),
+                payload: serde_json::json!({ "checklistId": checklist_id, "itemId": item_id }),
+            },
+            user_id,
+        ).await?;
+        
+        Ok(())
+    }
+
+    pub async fn delete_checklist(
+        &self,
+        card_id: Uuid,
+        checklist_id: String,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), KanbanError> {
+        let card_folder = self.folder_service.get_folder(card_id, user_id).await.map_err(KanbanError::from)?;
+        let mut card_meta = self.load_card_metadata(&card_folder, user_id).await?;
+        
+        card_meta.checklists.retain(|c| c.id != checklist_id);
+        self.recalculate_checklist_summary(&mut card_meta);
+        card_meta.updated_at = Utc::now();
+        self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id).await?;
+        
+        self.append_kanban_event(
+            &card_folder,
+            KanbanEvent {
+                event_type: "card.checklist_deleted".to_string(),
+                timestamp: Utc::now(),
+                actor: user_id.to_string(),
+                payload: serde_json::json!({ "checklistId": checklist_id }),
+            },
+            user_id,
+        ).await?;
+        
+        Ok(())
+    }
+
+    fn recalculate_checklist_summary(&self, meta: &mut CardMetadata) {
+        let mut done = 0;
+        let mut total = 0;
+        for group in &meta.checklists {
+            for item in &group.items {
+                total += 1;
+                if item.done {
+                    done += 1;
+                }
+            }
+        }
+        meta.checklist_done = done;
+        meta.checklist_total = total;
+    }
 }
 
 // ============================================================================
@@ -1576,6 +2560,7 @@ fn standard_columns() -> Vec<ColumnDef> {
             slug: "00-Backlog".to_string(),
             order: 0,
             status: "backlog".to_string(),
+            wip_limit: None,
         },
         ColumnDef {
             id: "column_ready".to_string(),
@@ -1583,6 +2568,7 @@ fn standard_columns() -> Vec<ColumnDef> {
             slug: "01-Ready".to_string(),
             order: 1,
             status: "ready".to_string(),
+            wip_limit: None,
         },
         ColumnDef {
             id: "column_in_progress".to_string(),
@@ -1590,6 +2576,7 @@ fn standard_columns() -> Vec<ColumnDef> {
             slug: "02-In-Progress".to_string(),
             order: 2,
             status: "in_progress".to_string(),
+            wip_limit: Some(5),
         },
         ColumnDef {
             id: "column_review".to_string(),
@@ -1597,6 +2584,7 @@ fn standard_columns() -> Vec<ColumnDef> {
             slug: "03-Review".to_string(),
             order: 3,
             status: "review".to_string(),
+            wip_limit: None,
         },
         ColumnDef {
             id: "column_done".to_string(),
@@ -1604,31 +2592,303 @@ fn standard_columns() -> Vec<ColumnDef> {
             slug: "04-Done".to_string(),
             order: 4,
             status: "done".to_string(),
+            wip_limit: None,
         },
     ]
 }
 
-fn parse_column_slug(folder_name: &str) -> (String, i32) {
-    let lower = folder_name.to_lowercase();
-    match lower.as_str() {
-        "00-backlog" => ("backlog".to_string(), 0),
-        "01-ready" => ("ready".to_string(), 1),
-        "02-in-progress" => ("in_progress".to_string(), 2),
-        "03-review" => ("review".to_string(), 3),
-        "04-done" => ("done".to_string(), 4),
-        _ => {
-            let status = lower.replace("00-", "").replace("01-", "").replace("02-", "").replace("03-", "").replace("04-", "").replace('-', "_");
-            (status, 99)
-        }
+fn default_labels() -> Vec<KanbanLabel> {
+    vec![
+        KanbanLabel { id: "label_green".to_string(), name: "Low".to_string(), color: "green".to_string() },
+        KanbanLabel { id: "label_yellow".to_string(), name: "Medium".to_string(), color: "yellow".to_string() },
+        KanbanLabel { id: "label_red".to_string(), name: "High".to_string(), color: "red".to_string() },
+        KanbanLabel { id: "label_blue".to_string(), name: "UI".to_string(), color: "blue".to_string() },
+        KanbanLabel { id: "label_purple".to_string(), name: "Backend".to_string(), color: "purple".to_string() },
+        KanbanLabel { id: "label_orange".to_string(), name: "Bug".to_string(), color: "orange".to_string() },
+        KanbanLabel { id: "label_gray".to_string(), name: "DevOps".to_string(), color: "gray".to_string() },
+    ]
+}
+
+fn default_settings() -> KanbanSettings {
+    KanbanSettings {
+        show_description_on_cards: true,
+        description_preview_lines: 2,
+        show_assignees: true,
+        show_labels: true,
+        show_due_date: true,
+        show_attachment_badge: true,
+        show_checklist_badge: true,
     }
 }
 
-fn slugify(title: &str) -> String {
-    title
-        .to_lowercase()
-        .replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "-")
-        .replace("--", "-")
-        .replace("--", "-")
-        .trim_matches('-')
-        .to_string()
+fn derive_preview(content: &str, title: &str) -> String {
+    if content.trim().is_empty() {
+        return String::new();
+    }
+
+    // 1. Remove frontmatter
+    let mut text = content.to_string();
+    if text.starts_with("---") {
+        if let Some(end) = text[3..].find("---") {
+            text = text[end + 6..].to_string();
+        }
+    }
+
+    // 2. Remove first heading if it matches title
+    text = text.trim().to_string();
+    if let Some(first_line) = text.lines().next() {
+        let trimmed_line = first_line.trim_start_matches('#').trim();
+        if !trimmed_line.is_empty() && trimmed_line.to_lowercase() == title.to_lowercase() {
+            text = text.lines().skip(1).collect::<Vec<_>>().join("\n").trim().to_string();
+        }
+    }
+
+    // 3. Strip Markdown lightly
+    // Task lists: - [ ] or - [x]
+    text = text.replace("- [ ]", "").replace("- [x]", "");
+    
+    // Images: ![alt](url) -> alt
+    if let Ok(re_img) = Regex::new(r"!\[([^\]]*)\]\([^\)]*\)") {
+        text = re_img.replace_all(&text, "$1").to_string();
+    }
+    
+    // Links: [text](url) -> text
+    if let Ok(re_link) = Regex::new(r"\[([^\]]*)\]\([^\)]*\)") {
+        text = re_link.replace_all(&text, "$1").to_string();
+    }
+    
+    // Bold/Italic/Strikethrough
+    text = text.replace("**", "")
+               .replace("__", "")
+               .replace("~~", "")
+               .replace('*', "")
+               .replace('_', "");
+    
+    // 4. First meaningful paragraph
+    let mut preview = String::new();
+    for paragraph in text.split("\n\n") {
+        let p = paragraph.trim();
+        // Skip headings and empty lines
+        if !p.is_empty() && !p.starts_with('#') {
+            preview = p.to_string();
+            break;
+        }
+    }
+    
+    if preview.is_empty() {
+        preview = text.replace('\n', " ").trim().to_string();
+    }
+
+    // 5. Collapse whitespace
+    if let Ok(re_ws) = Regex::new(r"\s+") {
+        preview = re_ws.replace_all(&preview, " ").to_string();
+    }
+
+    // 6. Limit length (140-180 chars)
+    if preview.chars().count() > 160 {
+        let mut truncated: String = preview.chars().take(160).collect();
+        if let Some(last_space) = truncated.rfind(' ') {
+             truncated.truncate(last_space);
+        }
+        truncated.push_str("...");
+        preview = truncated;
+    }
+
+    preview.trim().to_string()
+}
+
+fn get_initials(name: &str) -> String {
+    name.split_whitespace()
+        .filter_map(|s| s.chars().next())
+        .take(2)
+        .collect::<String>()
+        .to_uppercase()
+}
+
+fn slugify(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn parse_column_slug(slug: &str) -> (String, i32) {
+    if let Some(rest) = slug.strip_prefix("00-") { (rest.to_lowercase().replace('-', "_"), 0) }
+    else if let Some(rest) = slug.strip_prefix("01-") { (rest.to_lowercase().replace('-', "_"), 1) }
+    else if let Some(rest) = slug.strip_prefix("02-") { (rest.to_lowercase().replace('-', "_"), 2) }
+    else if let Some(rest) = slug.strip_prefix("03-") { (rest.to_lowercase().replace('-', "_"), 3) }
+    else if let Some(rest) = slug.strip_prefix("04-") { (rest.to_lowercase().replace('-', "_"), 4) }
+    else { (slug.to_lowercase().replace('-', "_"), 99) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Slugify ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_slugify_basic() {
+        assert_eq!(slugify("Hello World!"), "hello-world");
+        assert_eq!(slugify("Valid-Slug-123"), "valid-slug-123");
+    }
+
+    #[test]
+    fn test_slugify_strips_traversal_chars() {
+        assert_eq!(slugify("../../../etc/passwd"), "etc-passwd");
+        assert_eq!(slugify("..\\..\\windows"), "windows");
+        assert_eq!(slugify("  Path/Traversal/Test  "), "path-traversal-test");
+    }
+
+    #[test]
+    fn test_slugify_strips_special_chars() {
+        assert_eq!(slugify("<script>alert(1)</script>"), "script-alert-1-script");
+        assert_eq!(slugify("a\0b"), "a-b");
+    }
+
+    #[test]
+    fn test_slugify_empty_input() {
+        assert_eq!(slugify(""), "");
+        assert_eq!(slugify("!!!"), "");
+    }
+
+    // ── Color validation ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_approved_colors_accepted() {
+        for color in &["green", "yellow", "orange", "red", "purple", "blue", "gray"] {
+            assert!(KanbanService::validate_color_static(color).is_ok(), "Should accept '{}'", color);
+        }
+    }
+
+    #[test]
+    fn test_invalid_colors_rejected() {
+        for color in &["#ff0000", "rgb(0,0,0)", "crimson", "transparent", "", "javascript:"] {
+            assert!(KanbanService::validate_color_static(color).is_err(), "Should reject '{}'", color);
+        }
+    }
+
+    // ── Preview generation ───────────────────────────────────────────────
+
+    #[test]
+    fn test_derive_preview_strips_markdown() {
+        let content = "# Title\n\nThis is a [link](http://example.com) and an ![image](img.jpg).\n- List item 1\n- List item 2";
+        let preview = derive_preview(content, "Title");
+        assert_eq!(preview, "This is a link and an image. - List item 1 - List item 2");
+    }
+
+    #[test]
+    fn test_derive_preview_removes_frontmatter() {
+        let content = "---\ntitle: Hello\n---\n\nBody text here.";
+        let preview = derive_preview(content, "Hello");
+        assert!(preview.contains("Body text here"), "Preview: {}", preview);
+        assert!(!preview.contains("---"));
+    }
+
+    #[test]
+    fn test_derive_preview_truncates_long_content() {
+        let long_content = format!("# Title\n\n{}", "A very long sentence. ".repeat(50));
+        let preview = derive_preview(&long_content, "Title");
+        assert!(preview.len() <= 200, "Preview should be truncated, got {} chars", preview.len());
+        assert!(preview.ends_with("..."));
+    }
+
+    #[test]
+    fn test_derive_preview_empty() {
+        let preview = derive_preview("", "Title");
+        assert!(preview.is_empty() || preview.len() < 10);
+    }
+
+    // ── Parse column slug ────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_column_slug() {
+        assert_eq!(parse_column_slug("00-Backlog"), ("backlog".to_string(), 0));
+        assert_eq!(parse_column_slug("04-Done"), ("done".to_string(), 4));
+        assert_eq!(parse_column_slug("custom"), ("custom".to_string(), 99));
+    }
+
+    // ── Get initials ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_initials() {
+        assert_eq!(get_initials("John Doe"), "JD");
+        assert_eq!(get_initials("Alice"), "A");
+        assert_eq!(get_initials(""), "");
+    }
+
+    // ── Slug validation ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_validate_slug_rejects_traversal() {
+        assert!(KanbanService::validate_slug("../etc/passwd").is_err());
+        assert!(KanbanService::validate_slug("..\\windows").is_err());
+        assert!(KanbanService::validate_slug("%2e%2e%2fetc").is_err());
+        assert!(KanbanService::validate_slug("%2E%2E").is_err());
+    }
+
+    #[test]
+    fn test_validate_slug_rejects_absolute_paths() {
+        assert!(KanbanService::validate_slug("/etc/passwd").is_err());
+        assert!(KanbanService::validate_slug("\\windows\\system32").is_err());
+    }
+
+    #[test]
+    fn test_validate_slug_rejects_control_chars() {
+        assert!(KanbanService::validate_slug("hello\0world").is_err());
+        assert!(KanbanService::validate_slug("hello\nworld").is_err());
+    }
+
+    #[test]
+    fn test_validate_slug_accepts_valid() {
+        assert!(KanbanService::validate_slug("my-board").is_ok());
+        assert!(KanbanService::validate_slug("CARD-0001-task-name").is_ok());
+    }
+
+    #[test]
+    fn test_validate_board_slug_rejects_invalid() {
+        assert!(KanbanService::validate_board_slug("../backdoor").is_err());
+        assert!(KanbanService::validate_board_slug("/absolute").is_err());
+    }
+
+    #[test]
+    fn test_validate_card_slug_requires_prefix() {
+        assert!(KanbanService::validate_card_slug("CARD-0001-hello").is_ok());
+        assert!(KanbanService::validate_card_slug("malicious-name").is_err());
+    }
+
+    // ── Attachment filename sanitization ─────────────────────────────────
+
+    #[test]
+    fn test_sanitize_attachment_name_rejects_traversal() {
+        assert!(KanbanService::sanitize_attachment_name("../secret.txt").is_err());
+        assert!(KanbanService::sanitize_attachment_name("..\\secret.txt").is_err());
+        assert!(KanbanService::sanitize_attachment_name("/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_attachment_name_rejects_reserved_names() {
+        assert!(KanbanService::sanitize_attachment_name(".rustshare-board.json").is_err());
+        assert!(KanbanService::sanitize_attachment_name(".rustshare-card.json").is_err());
+        assert!(KanbanService::sanitize_attachment_name("events.jsonl").is_err());
+        assert!(KanbanService::sanitize_attachment_name("index.md").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_attachment_name_accepts_valid() {
+        assert_eq!(KanbanService::sanitize_attachment_name("report.pdf").unwrap(), "report.pdf");
+        assert_eq!(KanbanService::sanitize_attachment_name("  image.png  ").unwrap(), "image.png");
+        assert_eq!(KanbanService::sanitize_attachment_name(".hidden.txt").unwrap(), "hidden.txt");
+    }
+
+    #[test]
+    fn test_sanitize_attachment_name_rejects_empty() {
+        assert!(KanbanService::sanitize_attachment_name("").is_err());
+        assert!(KanbanService::sanitize_attachment_name("   ").is_err());
+        assert!(KanbanService::sanitize_attachment_name("...").is_err());
+    }
 }

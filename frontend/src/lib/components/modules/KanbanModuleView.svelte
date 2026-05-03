@@ -3,21 +3,53 @@
 	import {
 		listKanbanBoards,
 		getKanbanBoard,
+		getKanbanCard,
 		createKanbanBoard,
 		createKanbanCard,
 		updateKanbanCard,
 		moveKanbanCard,
 		archiveKanbanCard,
-		deleteKanbanCard
+		deleteKanbanCard,
+		createKanbanLabel,
+		addCardLabel,
+		removeCardLabel,
+		getKanbanAssignableUsers,
+		assignCardMember,
+		unassignCardMember,
+		addCardAttachment,
+		deleteCardAttachment,
+		createChecklist,
+		createChecklistItem,
+		toggleChecklistItem,
+		deleteChecklistItem,
+		deleteChecklist
 	} from '$lib/api/kanban';
 	import { createFromTemplate } from '$lib/api/modules';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
-	import ModalBase from '$lib/components/common/ModalBase.svelte';
-	import CreateKanbanBoardModal from '$lib/components/modals/CreateKanbanBoardModal.svelte';
-	import type { KanbanBoard, KanbanCard, KanbanColumn } from '$lib/api/types';
-	import { Folder, Plus, GripVertical, Archive, Trash2, X, ChevronRight } from 'lucide-svelte';
+	import type { KanbanBoard, KanbanCard, KanbanCardDetail, KanbanColumn } from '$lib/api/types';
+	import {
+		Folder as FolderIcon,
+		Plus,
+		GripVertical,
+		Archive,
+		Trash2,
+		X,
+		ChevronRight,
+		Paperclip,
+		CheckSquare,
+		Calendar,
+		User,
+		Save,
+		Clock,
+		Tag,
+		AlignLeft,
+		Activity,
+		Check
+	} from 'lucide-svelte';
 
 	import RichMarkdownEditor from '../../editor/components/RichMarkdownEditor.svelte';
+	import ModalBase from '$lib/components/common/ModalBase.svelte';
+	import CreateKanbanBoardModal from '$lib/components/modals/CreateKanbanBoardModal.svelte';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
 	interface Props {
@@ -37,10 +69,21 @@
 	let showCreateCardColumnId = $state<string | null>(null);
 	let newCardTitle = $state('');
 	let editingCard = $state<KanbanCard | null>(null);
-	let editCardTitle = $state('');
-	let editCardContent = $state('');
+	let cardDetail = $state<KanbanCardDetail | null>(null);
+	let loadingDetail = $state(false);
+	let savingDetail = $state(false);
+	let saveStatus = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
 	let draggingOverColumnId = $state<string | null>(null);
 	let columnRefs = $state<Record<string, HTMLDivElement | null>>({});
+	let showLabelPicker = $state(false);
+	let showAssigneePicker = $state(false);
+	let showNewLabelForm = $state(false);
+	let newLabelName = $state('');
+	let newLabelColor = $state('blue');
+	let uploadingAttachment = $state(false);
+	let isMovingCard = $state(false);
+	let newChecklistTitle = $state('');
+	let newChecklistItemText = $state<Record<string, string>>({});
 
 	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No boards yet');
 	let emptyDescription = $derived(
@@ -81,6 +124,16 @@
 
 	const selectedBoard = $derived($boardQuery.data);
 
+	let assignableUsersQuery = $derived(
+		createQuery({
+			queryKey: ['kanban-assignable-users'],
+			queryFn: () => getKanbanAssignableUsers(),
+			enabled: !!selectedBoardId
+		})
+	);
+
+	let assignableUsers = $derived($assignableUsersQuery.data ?? []);
+
 	// -------------------------------------------------------------------------
 	// Mutations
 	// -------------------------------------------------------------------------
@@ -103,13 +156,17 @@
 	const moveCardMutation = createMutation({
 		mutationFn: ({
 			cardId,
-			columnId,
-			order
+			input
 		}: {
 			cardId: string;
-			columnId: string;
-			order: number;
-		}) => moveKanbanCard(cardId, columnId, order),
+			input: {
+				boardId: string;
+				targetColumnId: string;
+				targetOrder?: number;
+				beforeCardId?: string;
+				afterCardId?: string;
+			};
+		}) => moveKanbanCard(cardId, input),
 		onSuccess: () => {
 			errorMessage = '';
 			boardQuery.refetch();
@@ -161,6 +218,7 @@
 	function handleBoardCreated(boardId: string) {
 		selectedBoardId = boardId;
 		boardsQuery.refetch();
+		showCreateBoardModal = false;
 	}
 
 	// -------------------------------------------------------------------------
@@ -198,6 +256,7 @@
 	}
 
 	function getDropIndex(container: HTMLDivElement, clientY: number): number {
+		if (!container) return 0;
 		const cards = Array.from(container.querySelectorAll<HTMLElement>('[data-card-id]')).filter(
 			(el) => el.dataset.cardId !== dragCardId
 		);
@@ -209,90 +268,138 @@
 		return cards.length;
 	}
 
-	function computeTargetOrder(
-		column: KanbanColumn,
-		insertIndex: number,
-		movingCardId: string
-	): number {
-		const cards = column.cards
-			.filter((c) => c.id !== movingCardId)
-			.sort((a, b) => a.order - b.order);
-
-		if (cards.length === 0) return 1000;
-		if (insertIndex <= 0) return Math.round(cards[0].order / 2);
-		if (insertIndex >= cards.length) return cards[cards.length - 1].order + 1000;
-		return Math.round((cards[insertIndex - 1].order + cards[insertIndex].order) / 2);
-	}
-
-	function handleDrop(e: DragEvent, targetColumnId: string) {
+	async function handleDrop(e: DragEvent, targetColumnId: string) {
 		e.preventDefault();
 		draggingOverColumnId = null;
 
-		if (!dragCardId || !dragSourceColumnId) return;
-		if (dragCardId === '') return;
-
-		const board = selectedBoard;
-		if (!board) return;
-
-		const targetColumn = board.columns.find((c) => c.id === targetColumnId);
-		if (!targetColumn) return;
-
+		if (isMovingCard) return;
+		if (!dragCardId || !dragSourceColumnId || !selectedBoard) return;
+		
 		const container = columnRefs[targetColumnId];
 		if (!container) return;
 
-		const insertIndex = getDropIndex(container, e.clientY);
-		const targetOrder = computeTargetOrder(targetColumn, insertIndex, dragCardId);
+		const dropIndex = getDropIndex(container, e.clientY);
+		const targetColumn = selectedBoard.columns.find(c => c.id === targetColumnId);
+		if (!targetColumn) return;
 
-		// If same column and same order, skip
-		if (dragSourceColumnId === targetColumnId && Math.abs(dragSourceOrder - targetOrder) < 1) {
-			handleDragEnd();
-			return;
+		const otherCards = targetColumn.cards.filter(c => c.id !== dragCardId);
+		const beforeCardId = dropIndex > 0 ? otherCards[dropIndex - 1].id : undefined;
+		const afterCardId = dropIndex < otherCards.length ? otherCards[dropIndex].id : undefined;
+
+		// Don't move if dropped in same position
+		if (targetColumnId === dragSourceColumnId) {
+			const currentIndex = targetColumn.cards.findIndex(c => c.id === dragCardId);
+			if (currentIndex === dropIndex || currentIndex === dropIndex - 1) {
+				handleDragEnd();
+				return;
+			}
 		}
 
-		// Optimistic update
 		const queryKey = ['kanban-board', selectedBoardId];
-		const oldBoard = queryClient.getQueryData<KanbanBoard>(queryKey);
+		const previousBoard = queryClient.getQueryData<KanbanBoard>(queryKey);
 
-		if (oldBoard) {
-			const newBoard: KanbanBoard = {
-				...oldBoard,
-				columns: oldBoard.columns.map((col) => {
-					let newCards = [...col.cards];
-					let updated = false;
-
+		try {
+			// Optimistic update
+			queryClient.setQueryData<KanbanBoard>(queryKey, (old) => {
+				if (!old) return old;
+				
+				let movingCard: KanbanCard | undefined;
+				const newColumns = old.columns.map(col => {
 					if (col.id === dragSourceColumnId) {
-						newCards = newCards.filter((c) => c.id !== dragCardId);
-						updated = true;
+						movingCard = col.cards.find(c => c.id === dragCardId);
+						return { ...col, cards: col.cards.filter(c => c.id !== dragCardId) };
 					}
+					return col;
+				});
 
-					if (col.id === targetColumnId) {
-						const card = oldBoard.columns
-							.find((c) => c.id === dragSourceColumnId)
-							?.cards.find((c) => c.id === dragCardId);
-						if (card) {
-							newCards.push({ ...card, column_id: targetColumnId, order: targetOrder });
-							newCards.sort((a, b) => a.order - b.order);
-							updated = true;
+				if (!movingCard) return old;
+
+				return {
+					...old,
+					columns: newColumns.map(col => {
+						if (col.id === targetColumnId) {
+							const newCards = [...col.cards];
+							newCards.splice(dropIndex, 0, { ...movingCard!, column_id: targetColumnId });
+							return { ...col, cards: newCards };
 						}
-					}
+						return col;
+					})
+				};
+			});
 
-					return updated ? { ...col, cards: newCards } : col;
-				})
-			};
-			queryClient.setQueryData(queryKey, newBoard);
+			isMovingCard = true;
+
+			// API Call
+			await moveKanbanCard(dragCardId, {
+				boardId: selectedBoard.id,
+				targetColumnId,
+				beforeCardId,
+				afterCardId
+			});
+
+			queryClient.invalidateQueries({ queryKey });
+		} catch (err) {
+			console.error('Failed to move card:', err);
+			if (previousBoard) {
+				queryClient.setQueryData(queryKey, previousBoard);
+			}
+			alert('Card move failed. The board was restored to its previous state.');
+		} finally {
+			isMovingCard = false;
+			handleDragEnd();
 		}
-
-		moveCardMutation.mutate({
-			cardId: dragCardId,
-			columnId: targetColumnId,
-			order: targetOrder
-		});
-
-		handleDragEnd();
 	}
 
 	// -------------------------------------------------------------------------
-	// Card creation
+	// Helpers
+	// -------------------------------------------------------------------------
+
+	function formatColumnName(value: string): string {
+		return value.replace(/^\d+-/, '').replace(/-/g, ' ');
+	}
+
+	function get_initials(name: string): string {
+		if (!name) return '??';
+		return name
+			.split(' ')
+			.filter(n => n.length > 0)
+			.map((n) => n[0])
+			.join('')
+			.toUpperCase()
+			.substring(0, 2);
+	}
+
+	function formatDate(dateStr: string) {
+		const date = new Date(dateStr);
+		const now = new Date();
+		const isSameYear = date.getFullYear() === now.getFullYear();
+
+		return new Intl.DateTimeFormat('en-US', {
+			month: 'short',
+			day: 'numeric',
+			year: isSameYear ? undefined : 'numeric'
+		}).format(date);
+	}
+
+	function isOverdue(dateStr: string) {
+		const date = new Date(dateStr);
+		const now = new Date();
+		now.setHours(0, 0, 0, 0);
+		return date < now;
+	}
+
+	function formatActivityDate(dateStr: string) {
+		const date = new Date(dateStr);
+		return new Intl.DateTimeFormat('en-US', {
+			month: 'short',
+			day: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit'
+		}).format(date);
+	}
+
+	// -------------------------------------------------------------------------
+	// Card Operations
 	// -------------------------------------------------------------------------
 
 	function handleCreateCard(columnId: string) {
@@ -306,25 +413,81 @@
 		});
 	}
 
-	// -------------------------------------------------------------------------
-	// Card editing
-	// -------------------------------------------------------------------------
-
 	function openCardEdit(card: KanbanCard) {
 		editingCard = card;
-		editCardTitle = card.title;
-		editCardContent = card.content;
+		fetchCardDetail(card.id);
 	}
 
-	function saveCardEdit() {
-		if (!editingCard) return;
-		updateCardMutation.mutate({
-			cardId: editingCard.id,
-			input: {
-				title: editCardTitle.trim(),
-				content: editCardContent
+	async function fetchCardDetail(cardId: string) {
+		loadingDetail = true;
+		try {
+			cardDetail = await getKanbanCard(cardId);
+		} catch (e) {
+			console.error('Failed to fetch card detail', e);
+		} finally {
+			loadingDetail = false;
+		}
+	}
+
+	async function saveCardDetail() {
+		if (!cardDetail) return;
+		savingDetail = true;
+		saveStatus = 'saving';
+		try {
+			await updateKanbanCard(cardDetail.id, {
+				title: cardDetail.title,
+				content: cardDetail.content
+			});
+			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+			saveStatus = 'saved';
+			setTimeout(() => {
+				if (saveStatus === 'saved') saveStatus = 'idle';
+			}, 2000);
+		} catch (e) {
+			saveStatus = 'error';
+		} finally {
+			savingDetail = false;
+		}
+	}
+
+	async function toggleLabel(labelId: string) {
+		if (!cardDetail) return;
+		const hasLabel = cardDetail.labels.some((l) => l.id === labelId);
+		try {
+			if (hasLabel) {
+				await removeCardLabel(cardDetail.id, labelId);
+				cardDetail.labels = cardDetail.labels.filter((l) => l.id !== labelId);
+			} else {
+				await addCardLabel(cardDetail.id, labelId);
+				const label = selectedBoard?.labels.find((l) => l.id === labelId);
+				if (label) {
+					cardDetail.labels = [...cardDetail.labels, label];
+				}
 			}
-		});
+			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+		} catch (err) {
+			console.error('Failed to toggle label:', err);
+		}
+	}
+
+	async function toggleAssignee(userId: string) {
+		if (!cardDetail) return;
+		const hasAssignee = cardDetail.assignees.some((a) => a.id === userId);
+		try {
+			if (hasAssignee) {
+				await unassignCardMember(cardDetail.id, userId);
+				cardDetail.assignees = cardDetail.assignees.filter((a) => a.id !== userId);
+			} else {
+				await assignCardMember(cardDetail.id, userId);
+				const user = assignableUsers.find((u) => u.id === userId);
+				if (user) {
+					cardDetail.assignees = [...cardDetail.assignees, user];
+				}
+			}
+			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+		} catch (err) {
+			console.error('Failed to toggle assignee:', err);
+		}
 	}
 
 	function handleArchiveCard() {
@@ -341,8 +504,125 @@
 		}
 	}
 
-	function formatColumnName(value: string): string {
-		return value.replace(/^\d+-/, '').replace(/-/g, ' ');
+	async function handleFileUpload(e: Event) {
+		const target = e.target as HTMLInputElement;
+		const file = target.files?.[0];
+		if (!file || !cardDetail) return;
+
+		uploadingAttachment = true;
+		try {
+			const attachment = await addCardAttachment(cardDetail.id, file);
+			cardDetail.attachments = [...cardDetail.attachments, attachment];
+			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+		} catch (err) {
+			console.error('Upload failed', err);
+		} finally {
+			uploadingAttachment = false;
+			target.value = '';
+		}
+	}
+
+	async function deleteAttachment(attachmentId: string) {
+		if (!cardDetail || !confirm('Delete this attachment?')) return;
+		try {
+			await deleteCardAttachment(cardDetail.id, attachmentId);
+			cardDetail.attachments = cardDetail.attachments.filter((a) => a.id !== attachmentId);
+			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+		} catch (err) {
+			console.error('Delete attachment failed', err);
+		}
+	}
+
+	async function handleAddChecklist() {
+		if (!cardDetail || !newChecklistTitle.trim()) return;
+		try {
+			const group = await createChecklist(cardDetail.id, newChecklistTitle.trim());
+			cardDetail.checklists = [...cardDetail.checklists, group];
+			newChecklistTitle = '';
+			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+		} catch (err) {
+			console.error('Add checklist failed', err);
+		}
+	}
+
+	async function handleAddChecklistItem(checklistId: string) {
+		const text = newChecklistItemText[checklistId];
+		if (!cardDetail || !text?.trim()) return;
+		try {
+			const item = await createChecklistItem(cardDetail.id, checklistId, text.trim());
+			cardDetail.checklists = cardDetail.checklists.map((c) => {
+				if (c.id === checklistId) {
+					return { ...c, items: [...c.items, item] };
+				}
+				return c;
+			});
+			newChecklistItemText[checklistId] = '';
+			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+		} catch (err) {
+			console.error('Add checklist item failed', err);
+		}
+	}
+
+	async function handleToggleItem(checklistId: string, itemId: string, done: boolean) {
+		if (!cardDetail) return;
+		try {
+			await toggleChecklistItem(cardDetail.id, checklistId, itemId, done);
+			cardDetail.checklists = cardDetail.checklists.map((c) => {
+				if (c.id === checklistId) {
+					return {
+						...c,
+						items: c.items.map((i) => (i.id === itemId ? { ...i, done } : i))
+					};
+				}
+				return c;
+			});
+			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+		} catch (err) {
+			console.error('Toggle item failed', err);
+		}
+	}
+
+	async function handleDeleteItem(checklistId: string, itemId: string) {
+		if (!cardDetail) return;
+		try {
+			await deleteChecklistItem(cardDetail.id, checklistId, itemId);
+			cardDetail.checklists = cardDetail.checklists.map((c) => {
+				if (c.id === checklistId) {
+					return { ...c, items: c.items.filter((i) => i.id !== itemId) };
+				}
+				return c;
+			});
+			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+		} catch (err) {
+			console.error('Delete item failed', err);
+		}
+	}
+
+	async function handleDeleteChecklist(checklistId: string) {
+		if (!cardDetail || !confirm('Delete this checklist?')) return;
+		try {
+			await deleteChecklist(cardDetail.id, checklistId);
+			cardDetail.checklists = cardDetail.checklists.filter((c) => c.id !== checklistId);
+			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+		} catch (err) {
+			console.error('Delete checklist failed', err);
+		}
+	}
+
+	async function handleCreateLabel() {
+		if (!selectedBoardId || !newLabelName.trim()) return;
+		try {
+			const label = await createKanbanLabel(selectedBoardId, {
+				name: newLabelName.trim(),
+				color: newLabelColor
+			});
+			newLabelName = '';
+			showNewLabelForm = false;
+			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+			toggleLabel(label.id);
+		} catch (err) {
+			console.error('Failed to create label:', err);
+		}
 	}
 </script>
 
@@ -353,7 +633,7 @@
 		</div>
 	{:else if ($boardsQuery.data ?? []).length === 0}
 		<EmptyState
-			icon={Folder}
+			icon={FolderIcon}
 			title={emptyTitle}
 			description={emptyDescription}
 			actionLabel={emptyAction}
@@ -450,13 +730,80 @@
 											<GripVertical size={14} class="text-base-content/30" />
 											<strong>{card.title}</strong>
 										</div>
-										{#if card.priority !== 'normal'}
-											<span
-												class="text-[10px] font-semibold tracking-wider text-brand-500 uppercase"
-											>
-												{card.priority}
-											</span>
+
+										{#if card.description_preview}
+											<div class="card-description">
+												{card.description_preview}
+											</div>
 										{/if}
+
+										{#if (card.labels && card.labels.length > 0) || card.priority !== 'normal'}
+											<div class="card-labels">
+												{#if card.priority !== 'normal'}
+													<span class="card-label label-priority priority-{card.priority}">
+														{card.priority}
+													</span>
+												{/if}
+												{#each card.labels.slice(0, 3) as label}
+													<span class="card-label label-{label.color}">
+														{label.name}
+													</span>
+												{/each}
+												{#if card.labels.length > 3}
+													<span class="card-label label-more">+{card.labels.length - 3}</span>
+												{/if}
+											</div>
+										{/if}
+
+										<div class="card-footer">
+											<div class="card-badges">
+												{#if card.attachments_count > 0}
+													<span class="card-badge" title="Attachments">
+														<Paperclip size={12} />
+														{card.attachments_count}
+													</span>
+												{/if}
+												{#if card.checklist.total > 0}
+													<span
+														class="card-badge"
+														title="Checklist"
+														class:badge-done={card.checklist.done === card.checklist.total}
+													>
+														<CheckSquare size={12} />
+														{card.checklist.done}/{card.checklist.total}
+													</span>
+												{/if}
+												{#if card.due_date}
+													<span
+														class="card-badge"
+														title="Due Date"
+														class:badge-overdue={isOverdue(card.due_date)}
+													>
+														<Calendar size={12} />
+														{formatDate(card.due_date)}
+													</span>
+												{/if}
+											</div>
+
+											{#if card.assignees && card.assignees.length > 0}
+												<div class="card-assignees">
+													{#each card.assignees.slice(0, 3) as assignee}
+														<div class="assignee-avatar" title={assignee.display_name}>
+															{#if assignee.avatar_url}
+																<img src={assignee.avatar_url} alt={assignee.display_name} />
+															{:else}
+																<span>{assignee.initials}</span>
+															{/if}
+														</div>
+													{/each}
+													{#if card.assignees.length > 3}
+														<div class="assignee-avatar avatar-more" title="More assignees">
+															<span>+{card.assignees.length - 3}</span>
+														</div>
+													{/if}
+												</div>
+											{/if}
+										</div>
 									</div>
 								{/each}
 							</div>
@@ -521,74 +868,386 @@
 <!-- Card edit modal -->
 <ModalBase
 	open={editingCard !== null}
-	title="Edit Card"
 	onClose={() => {
 		editingCard = null;
+		cardDetail = null;
 	}}
+	title={editingCard?.title || 'Edit Card'}
 >
-	{#if editingCard}
-		<div class="flex flex-col gap-4">
-			<div>
-				<label
-					for="edit-card-title"
-					class="label-text mb-1 block text-xs font-semibold text-base-content/70">Title</label
-				>
-				<input
-					id="edit-card-title"
-					type="text"
-					class="input-bordered input w-full"
-					bind:value={editCardTitle}
-				/>
+	<div class="card-detail-drawer">
+		{#if loadingDetail}
+			<div class="flex h-64 items-center justify-center">
+				<span class="loading loading-spinner loading-lg text-brand-500"></span>
 			</div>
-			<div>
-				<label
-					for="edit-card-content"
-					class="label-text mb-1 block text-xs font-semibold text-base-content/70"
-					>Content (Markdown)</label
-				>
-				<div
-					class="flex min-h-[12rem] flex-col overflow-hidden rounded-xl border border-base-300 bg-base-100"
-				>
-					<RichMarkdownEditor
-						content={editingCard.content}
-						editable={true}
-						bind:currentMarkdown={editCardContent}
-						permissions={{
-							canRead: true,
-							canEdit: true,
-							canUploadAttachments: true,
-							canDeleteAttachments: true,
-							canExport: false,
-							canShare: true
-						}}
-					/>
+		{:else if cardDetail}
+			<header class="detail-header">
+				<div class="header-main">
+					<div class="title-row">
+						<input
+							type="text"
+							bind:value={cardDetail.title}
+							class="detail-title-input"
+							placeholder="Card Title"
+							onblur={saveCardDetail}
+						/>
+					</div>
+					<div class="detail-meta">
+						in column <span class="font-bold">{cardDetail.status}</span>
+					</div>
 				</div>
-			</div>
-			<div class="flex items-center justify-between gap-2 pt-2">
-				<div class="flex gap-2">
-					<button class="btn btn-sm btn-primary" onclick={saveCardEdit}>Save</button>
-					<button
-						class="btn btn-ghost btn-sm"
-						onclick={() => {
-							editingCard = null;
-						}}
-					>
-						Cancel
+				<div class="header-actions">
+					{#if saveStatus === 'saving'}
+						<span class="text-xs text-base-content/50">Saving...</span>
+					{:else if saveStatus === 'saved'}
+						<span class="text-xs text-green-600">Saved</span>
+					{:else if saveStatus === 'error'}
+						<span class="text-xs text-red-600">Error saving</span>
+					{/if}
+					<button class="btn-close" onclick={() => (editingCard = null)}>
+						<X size={20} />
 					</button>
 				</div>
-				<div class="flex gap-2">
-					<button class="btn text-amber-600 btn-ghost btn-sm" onclick={handleArchiveCard}>
-						<Archive size={14} />
-						Archive
-					</button>
-					<button class="btn text-red-600 btn-ghost btn-sm" onclick={handleDeleteCard}>
-						<Trash2 size={14} />
-						Delete
-					</button>
+			</header>
+
+			<div class="detail-content">
+				<div class="detail-main">
+					<!-- Labels & Assignees -->
+					<div class="detail-badges-row">
+						<div class="detail-section">
+							<h4 class="section-label">Labels</h4>
+							<div class="flex flex-wrap gap-1 items-center">
+								{#each cardDetail.labels as label}
+									<span class="card-label label-{label.color} relative group">
+										{label.name}
+										<button 
+											class="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center bg-base-content text-base-100 rounded-full w-4 h-4 shadow-sm"
+											onclick={() => toggleLabel(label.id)}
+										>
+											<X size={10} />
+										</button>
+									</span>
+								{/each}
+								<div class="relative">
+									<button 
+										class="btn btn-xs btn-ghost border border-dashed border-base-300 hover:border-brand-500 rounded-lg px-2 h-7"
+										onclick={() => { showLabelPicker = !showLabelPicker; showAssigneePicker = false; }}
+									>
+										<Plus size={12} class="mr-1" />
+										<span>Add</span>
+									</button>
+									{#if showLabelPicker && selectedBoard}
+										<div class="absolute left-0 top-full mt-1 z-50 bg-base-100 border border-base-300 rounded-xl shadow-xl p-3 min-w-[200px]">
+											<div class="flex items-center justify-between mb-2">
+												<div class="text-[10px] font-bold text-base-content/40 uppercase">Select Label</div>
+												<button 
+													class="btn btn-ghost btn-xs h-6 px-1 text-brand-500 hover:bg-brand-50"
+													onclick={() => showNewLabelForm = !showNewLabelForm}
+												>
+													{showNewLabelForm ? 'Cancel' : 'New'}
+												</button>
+											</div>
+
+											{#if showNewLabelForm}
+												<div class="flex flex-col gap-2 mb-3 p-2 bg-base-200/50 rounded-lg">
+													<input 
+														type="text" 
+														placeholder="Label name..." 
+														class="input input-xs h-8 bg-base-100"
+														bind:value={newLabelName}
+														onkeydown={(e) => e.key === 'Enter' && handleCreateLabel()}
+													/>
+													<div class="flex flex-wrap gap-1">
+														{#each ['green', 'yellow', 'orange', 'red', 'purple', 'blue', 'gray'] as color}
+															<button 
+																aria-label={color}
+																class="w-5 h-5 rounded-full label-{color} border-2 {newLabelColor === color ? 'border-base-content' : 'border-transparent'}"
+																onclick={() => newLabelColor = color}
+															></button>
+														{/each}
+													</div>
+													<button 
+														class="btn btn-xs btn-primary w-full h-8"
+														disabled={!newLabelName.trim()}
+														onclick={handleCreateLabel}
+													>
+														Create Label
+													</button>
+												</div>
+											{/if}
+
+											<div class="flex flex-col gap-1 max-h-48 overflow-y-auto">
+												{#each selectedBoard.labels as label}
+													<button 
+														class="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-base-200 text-xs text-left"
+														onclick={() => toggleLabel(label.id)}
+													>
+														<span class="card-label label-{label.color} !m-0">{label.name}</span>
+														{#if cardDetail.labels.some(l => l.id === label.id)}
+															<Check size={12} class="text-brand-500" />
+														{/if}
+													</button>
+												{/each}
+											</div>
+										</div>
+									{/if}
+								</div>
+							</div>
+						</div>
+
+						<div class="detail-section">
+							<h4 class="section-label">Assignees</h4>
+							<div class="flex flex-wrap gap-1 items-center">
+								{#each cardDetail.assignees as assignee}
+									<div class="assignee-avatar relative group" title={assignee.display_name}>
+										{#if assignee.avatar_url}
+											<img src={assignee.avatar_url} alt={assignee.display_name} />
+										{:else}
+											<span>{assignee.initials}</span>
+										{/if}
+										<button 
+											class="absolute -top-1 -right-1 hidden group-hover:flex items-center justify-center bg-base-content text-base-100 rounded-full w-4 h-4 shadow-sm z-10"
+											onclick={() => toggleAssignee(assignee.id)}
+										>
+											<X size={10} />
+										</button>
+									</div>
+								{/each}
+								<div class="relative">
+									<button 
+										class="btn btn-xs btn-ghost border border-dashed border-base-300 hover:border-brand-500 rounded-full w-8 h-8 p-0"
+										onclick={() => { showAssigneePicker = !showAssigneePicker; showLabelPicker = false; }}
+									>
+										<Plus size={14} />
+									</button>
+									{#if showAssigneePicker}
+										<div class="absolute left-0 top-full mt-1 z-50 bg-base-100 border border-base-300 rounded-xl shadow-xl p-2 min-w-[200px]">
+											<div class="text-[10px] font-bold text-base-content/40 uppercase px-2 mb-1">Assign Member</div>
+											<div class="flex flex-col gap-1 max-h-48 overflow-y-auto">
+												{#each assignableUsers as user}
+													<button 
+														class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-base-200 text-xs text-left w-full"
+														onclick={() => toggleAssignee(user.id)}
+													>
+														<div class="assignee-avatar !w-6 !h-6 !text-[10px]">
+															{#if user.avatar_url}
+																<img src={user.avatar_url} alt={user.display_name} />
+															{:else}
+																<span>{user.initials}</span>
+															{/if}
+														</div>
+														<span class="flex-1 truncate">{user.display_name}</span>
+														{#if cardDetail.assignees.some(a => a.id === user.id)}
+															<Check size={12} class="text-brand-500" />
+														{/if}
+													</button>
+												{/each}
+											</div>
+										</div>
+									{/if}
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<!-- Description -->
+					<div class="detail-section">
+						<div class="flex items-center gap-2 mb-2">
+							<AlignLeft size={18} class="text-base-content/60" />
+							<h4 class="section-label !mb-0">Description</h4>
+						</div>
+						<div class="description-editor">
+							<RichMarkdownEditor
+								bind:content={cardDetail.content}
+								editable={true}
+								on:change={() => {
+									saveStatus = 'idle';
+								}}
+								hasAttachmentHandler={true}
+							/>
+							<div class="mt-2 flex justify-end">
+								<button
+									class="btn btn-primary btn-sm"
+									disabled={savingDetail}
+									onclick={saveCardDetail}
+								>
+									{#if savingDetail}
+										<span class="loading loading-spinner loading-xs"></span>
+									{/if}
+									Save Changes
+								</button>
+							</div>
+						</div>
+					</div>
+
+					<!-- Attachments -->
+					<div class="detail-section">
+						<div class="flex items-center justify-between mb-4">
+							<div class="flex items-center gap-2">
+								<Paperclip size={18} class="text-base-content/60" />
+								<h4 class="section-label !mb-0">Attachments</h4>
+							</div>
+							<label class="btn btn-xs btn-ghost gap-1">
+								<Plus size={14} />
+								Add
+								<input type="file" class="hidden" onchange={handleFileUpload} />
+							</label>
+						</div>
+						
+						{#if cardDetail.attachments.length > 0}
+							<div class="grid grid-cols-1 gap-2">
+								{#each cardDetail.attachments as attachment}
+									<div class="attachment-item group">
+										<div class="attachment-icon">
+											<FolderIcon size={16} />
+										</div>
+										<div class="attachment-info flex-1">
+											<div class="attachment-name">{attachment.name}</div>
+											<div class="attachment-meta">
+												{Math.round(attachment.size / 1024)} KB • {formatActivityDate(
+													attachment.created_at
+												)}
+											</div>
+										</div>
+										<button 
+											class="btn btn-ghost btn-xs opacity-0 group-hover:opacity-100 text-error"
+											onclick={() => deleteAttachment(attachment.id)}
+										>
+											<Trash2 size={14} />
+										</button>
+									</div>
+								{/each}
+							</div>
+						{:else}
+							<div class="text-xs text-base-content/40 italic px-2">No attachments yet.</div>
+						{/if}
+						
+						{#if uploadingAttachment}
+							<div class="mt-2 flex items-center gap-2 text-xs text-base-content/60">
+								<span class="loading loading-spinner loading-xs"></span>
+								Uploading...
+							</div>
+						{/if}
+					</div>
+
+					<!-- Checklists -->
+					<div class="detail-section">
+						<div class="flex items-center justify-between mb-4">
+							<div class="flex items-center gap-2">
+								<CheckSquare size={18} class="text-base-content/60" />
+								<h4 class="section-label !mb-0">Checklists</h4>
+							</div>
+							<div class="flex items-center gap-2">
+								<input 
+									type="text" 
+									placeholder="New checklist..." 
+									class="input input-xs input-bordered w-32"
+									bind:value={newChecklistTitle}
+									onkeydown={(e) => e.key === 'Enter' && handleAddChecklist()}
+								/>
+								<button class="btn btn-xs btn-primary" onclick={handleAddChecklist}>Add</button>
+							</div>
+						</div>
+
+						{#each cardDetail.checklists as checklist}
+							<div class="mb-6 last:mb-0 bg-base-200/20 p-4 rounded-xl border border-base-200/50">
+								<div class="flex items-center justify-between mb-2">
+									<h5 class="text-sm font-bold flex items-center gap-2">
+										{checklist.title}
+										<span class="text-[10px] bg-base-200 px-1.5 py-0.5 rounded-full font-medium text-base-content/60">
+											{checklist.items.filter(i => i.done).length}/{checklist.items.length}
+										</span>
+									</h5>
+									<button 
+										class="btn btn-ghost btn-xs text-error/40 hover:text-error"
+										onclick={() => handleDeleteChecklist(checklist.id)}
+									>
+										<Trash2 size={12} />
+									</button>
+								</div>
+
+								<div class="w-full bg-base-200 h-1.5 rounded-full mb-3 overflow-hidden">
+									<div 
+										class="bg-success h-full transition-all duration-300" 
+										style="width: {(checklist.items.filter(i => i.done).length / (checklist.items.length || 1)) * 100}%"
+									></div>
+								</div>
+
+								<div class="flex flex-col gap-1 mb-3">
+									{#each checklist.items as item}
+										<div class="flex items-center gap-2 group p-1 hover:bg-base-200/50 rounded-lg transition-colors">
+											<input 
+												type="checkbox" 
+												checked={item.done} 
+												class="checkbox checkbox-xs checkbox-primary"
+												onchange={(e) => handleToggleItem(checklist.id, item.id, (e.target as HTMLInputElement).checked)}
+											/>
+											<span class="text-sm flex-1" class:line-through={item.done} class:opacity-50={item.done}>
+												{item.text}
+											</span>
+											<button 
+												class="btn btn-ghost btn-xs opacity-0 group-hover:opacity-100 text-base-content/20 hover:text-error"
+												onclick={() => handleDeleteItem(checklist.id, item.id)}
+											>
+												<X size={12} />
+											</button>
+										</div>
+									{/each}
+								</div>
+
+								<div class="flex items-center gap-2">
+									<input 
+										type="text" 
+										placeholder="Add an item..." 
+										class="input input-xs input-bordered flex-1"
+										bind:value={newChecklistItemText[checklist.id]}
+										onkeydown={(e) => e.key === 'Enter' && handleAddChecklistItem(checklist.id)}
+									/>
+									<button 
+										class="btn btn-xs btn-ghost" 
+										onclick={() => handleAddChecklistItem(checklist.id)}
+									>
+										Add
+									</button>
+								</div>
+							</div>
+						{/each}
+
+						{#if cardDetail.checklists.length === 0}
+							<div class="text-xs text-base-content/40 italic px-2">No checklists yet.</div>
+						{/if}
+					</div>
+
+					<!-- Activity -->
+					<div class="detail-section">
+						<div class="flex items-center gap-2 mb-4">
+							<Activity size={18} class="text-base-content/60" />
+							<h4 class="section-label !mb-0">Activity</h4>
+						</div>
+						<div class="activity-feed">
+							{#each cardDetail.activity as event}
+								<div class="activity-item">
+									<div class="activity-avatar">
+										{event.actor.charAt(0).toUpperCase()}
+									</div>
+									<div class="activity-body">
+										<div class="activity-header">
+											<span class="font-bold">{event.actor}</span>
+											<span class="text-base-content/40 ml-1"
+												>{formatActivityDate(event.timestamp)}</span
+											>
+										</div>
+										<div class="activity-text">
+											{event.event_type.replace(/card\./, '').replace(/\./g, ' ')}
+										</div>
+									</div>
+								</div>
+							{/each}
+						</div>
+					</div>
 				</div>
 			</div>
-		</div>
-	{/if}
+		{/if}
+	</div>
 </ModalBase>
 
 <CreateKanbanBoardModal
@@ -686,14 +1345,166 @@
 
 	.kanban-card-title-row {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 0.4rem;
+	}
+
+	.kanban-card-title-row :global(svg) {
+		margin-top: 0.15rem;
+		flex-shrink: 0;
+	}
+
+	.card-description {
+		margin-top: 0.15rem;
+		padding-left: 1.25rem;
+		font-size: 0.72rem;
+		line-height: 1.35;
+		color: color-mix(in oklab, var(--base-content) 60%, transparent);
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+
+	.card-labels {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.25rem;
+		margin-top: 0.5rem;
+		padding-left: 1.25rem;
+	}
+
+	.card-label {
+		font-size: 0.6rem;
+		font-weight: 700;
+		padding: 0.1rem 0.4rem;
+		border-radius: 0.25rem;
+		text-transform: uppercase;
+		letter-spacing: 0.02em;
+	}
+
+	.label-green {
+		background: #61bd4f;
+		color: white;
+	}
+	.label-yellow {
+		background: #f2d600;
+		color: #42526e;
+	}
+	.label-orange {
+		background: #ff9f1a;
+		color: white;
+	}
+	.label-red {
+		background: #eb5a46;
+		color: white;
+	}
+	.label-purple {
+		background: #c377e0;
+		color: white;
+	}
+	.label-blue {
+		background: #0079bf;
+		color: white;
+	}
+	.label-gray {
+		background: #b3bac5;
+		color: white;
+	}
+	.label-more {
+		background: var(--base-200);
+		color: var(--base-content);
+		opacity: 0.8;
+	}
+
+	.priority-urgent {
+		background: #eb5a46;
+		color: white;
+		box-shadow: 0 0 4px rgba(235, 90, 70, 0.4);
+	}
+	.priority-high {
+		background: #ff9f1a;
+		color: white;
+	}
+	.priority-low {
+		background: #b3bac5;
+		color: white;
+	}
+
+	.card-footer {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		margin-top: 0.75rem;
+		padding-left: 1.25rem;
+		flex-wrap: wrap;
+	}
+
+	.card-badges {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		color: color-mix(in oklab, var(--base-content) 45%, transparent);
+	}
+
+	.card-badge {
+		display: flex;
+		align-items: center;
+		gap: 0.2rem;
+		font-size: 0.68rem;
+		font-weight: 600;
+	}
+
+	.badge-done {
+		color: #61bd4f;
+	}
+
+	.badge-overdue {
+		color: #eb5a46;
+		background: color-mix(in oklab, #eb5a46 8%, transparent);
+		padding: 0 0.25rem;
+		border-radius: 0.25rem;
+	}
+
+	.card-assignees {
+		display: flex;
+		/* Avatars stack from left to right now to match the "SC" text-like flow */
+	}
+
+	.assignee-avatar {
+		width: 1.4rem;
+		height: 1.4rem;
+		border-radius: 999px;
+		background: var(--base-200);
+		border: 1.5px solid var(--rs-surface-primary, white);
+		margin-right: -0.3rem; /* Stack slightly to the right */
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.55rem;
+		font-weight: 700;
+		color: var(--base-content);
+		overflow: hidden;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+	}
+
+	.assignee-avatar img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	.avatar-more {
+		background: var(--base-300);
+		color: var(--base-content);
 	}
 
 	.kanban-card strong {
 		font-size: 0.9rem;
 		font-weight: 700;
 		color: var(--base-content);
+		line-height: 1.4;
 	}
 
 	.kanban-empty-column {
@@ -705,9 +1516,184 @@
 		color: color-mix(in oklab, var(--base-content) 58%, transparent);
 	}
 
+	.card-detail-drawer {
+		width: 100%;
+		max-width: 48rem;
+		min-height: 30rem;
+		max-height: 90vh;
+		overflow-y: auto;
+		background: var(--rs-surface-primary, white);
+		display: flex;
+		flex-direction: column;
+	}
+
+	.detail-header {
+		display: flex;
+		justify-content: space-between;
+		padding: 1.5rem;
+		background: color-mix(in oklab, var(--base-100) 95%, black);
+		border-bottom: 1px solid var(--base-200);
+		position: sticky;
+		top: 0;
+		z-index: 10;
+	}
+
+	.detail-title-input {
+		font-size: 1.5rem;
+		font-weight: 800;
+		color: var(--base-content);
+		background: transparent;
+		border: 1px solid transparent;
+		width: 100%;
+		border-radius: 0.5rem;
+		padding: 0.25rem 0.5rem;
+		margin-left: -0.5rem;
+		transition: all 0.2s;
+	}
+
+	.detail-title-input:focus {
+		background: white;
+		border-color: var(--brand-500);
+		outline: none;
+		box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand-500) 15%, transparent);
+	}
+
+	.detail-meta {
+		font-size: 0.85rem;
+		color: color-mix(in oklab, var(--base-content) 60%, transparent);
+		margin-top: 0.25rem;
+	}
+
+	.header-actions {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+	}
+
+	.detail-content {
+		padding: 1.5rem;
+		display: grid;
+		grid-template-columns: 1fr;
+		gap: 2rem;
+	}
+
+	.detail-section {
+		margin-bottom: 2rem;
+	}
+
+	.section-label {
+		font-size: 0.85rem;
+		font-weight: 700;
+		color: color-mix(in oklab, var(--base-content) 70%, transparent);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		margin-bottom: 0.75rem;
+	}
+
+	.detail-badges-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 2rem;
+		margin-bottom: 1rem;
+	}
+
+	.description-editor {
+		background: color-mix(in oklab, var(--rs-surface-muted) 30%, white);
+		border-radius: 0.75rem;
+		border: 1px solid var(--base-200);
+		padding: 0.5rem;
+	}
+
+	.attachment-item {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		padding: 0.75rem;
+		background: var(--base-100);
+		border: 1px solid var(--base-200);
+		border-radius: 0.75rem;
+		transition: all 0.2s;
+	}
+
+	.attachment-item:hover {
+		background: white;
+		border-color: var(--brand-500);
+		cursor: pointer;
+	}
+
+	.attachment-icon {
+		width: 2.5rem;
+		height: 2.5rem;
+		background: var(--base-200);
+		border-radius: 0.5rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--base-content);
+	}
+
+	.attachment-name {
+		font-weight: 700;
+		font-size: 0.9rem;
+	}
+
+	.attachment-meta {
+		font-size: 0.75rem;
+		color: var(--base-content);
+		opacity: 0.6;
+	}
+
+	.activity-feed {
+		display: flex;
+		flex-direction: column;
+		gap: 1.25rem;
+	}
+
+	.activity-item {
+		display: flex;
+		gap: 1rem;
+	}
+
+	.activity-avatar {
+		width: 2rem;
+		height: 2rem;
+		border-radius: 999px;
+		background: var(--brand-500);
+		color: white;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-weight: 800;
+		font-size: 0.8rem;
+		flex-shrink: 0;
+	}
+
+	.activity-header {
+		font-size: 0.85rem;
+	}
+
+	.activity-text {
+		font-size: 0.9rem;
+		color: var(--base-content);
+		margin-top: 0.15rem;
+	}
+
+	.btn-close {
+		padding: 0.5rem;
+		border-radius: 999px;
+		color: var(--base-content);
+		opacity: 0.5;
+		transition: all 0.2s;
+	}
+
+	.btn-close:hover {
+		background: var(--base-200);
+		opacity: 1;
+	}
+
 	@media (max-width: 767px) {
-		.kanban-board-surface {
-			grid-auto-columns: minmax(14rem, 16rem);
+		.detail-badges-row {
+			gap: 1rem;
 		}
 	}
 </style>
