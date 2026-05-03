@@ -143,11 +143,12 @@ pub async fn create_test_user(
     username: &str,
     tenant_id: Uuid,
 ) -> User {
+    let unique_username = format!("{}_{}", username, Uuid::new_v4());
     let user = User::new(
-        username.to_string(),
+        unique_username.clone(),
         format!("{} Display", username),
         "test_password_hash".to_string(),
-        format!("{}@test.local", username),
+        format!("{}@test.local", unique_username),
         false,
         10_737_418_240, // 10GB
         tenant_id,

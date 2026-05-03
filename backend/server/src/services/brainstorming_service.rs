@@ -217,8 +217,10 @@ impl BrainstormingService {
             .await
             .map_err(BrainstormError::from)?;
 
-        // Verify it's under /Brainstorming
-        if !folder.path.starts_with("/Brainstorming") {
+        // Verify it's under /Brainstorming (legacy) or /Workspace/Brainstorming
+        if !(folder.path.starts_with("/Brainstorming")
+            || folder.path.starts_with("/Workspace/Brainstorming"))
+        {
             return Err(BrainstormError::BoardNotFound);
         }
 
@@ -428,7 +430,9 @@ impl BrainstormingService {
             .await
             .map_err(BrainstormError::from)?;
 
-        if !folder.path.starts_with("/Brainstorming") {
+        if !(folder.path.starts_with("/Brainstorming")
+            || folder.path.starts_with("/Workspace/Brainstorming"))
+        {
             return Err(BrainstormError::BoardNotFound);
         }
 
