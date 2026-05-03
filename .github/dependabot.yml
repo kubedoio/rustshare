@@ -43,6 +43,11 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 3
     labels:
       - "dependencies"
       - "ci"
@@ -70,6 +75,10 @@ updates:
       interval: "weekly"
       day: "monday"
       time: "09:00"
+    groups:
+      docker-dependencies:
+        patterns:
+          - "*"
     open-pull-requests-limit: 3
     labels:
       - "dependencies"
