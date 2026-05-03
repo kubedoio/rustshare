@@ -38,9 +38,7 @@ pub struct WorkspaceSurfaceResponse {
     pub surface: WorkspaceSurfaceDefinition,
 }
 
-pub async fn get_workspace_surface(
-    _user: AuthenticatedUser,
-) -> Json<WorkspaceSurfaceResponse> {
+pub async fn get_workspace_surface(_user: AuthenticatedUser) -> Json<WorkspaceSurfaceResponse> {
     Json(WorkspaceSurfaceResponse {
         surface: WorkspaceSurfaceDefinition {
             id: "workspace_dashboard_default".to_string(),

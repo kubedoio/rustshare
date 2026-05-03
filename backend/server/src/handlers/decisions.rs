@@ -37,7 +37,13 @@ pub async fn create_decision(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Json(req): Json<CreateDecisionRequest>,
-) -> Result<(StatusCode, Json<crate::services::decision_service::Decision>), Response> {
+) -> Result<
+    (
+        StatusCode,
+        Json<crate::services::decision_service::Decision>,
+    ),
+    Response,
+> {
     let decision = state
         .decision_service
         .create_decision(

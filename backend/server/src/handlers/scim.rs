@@ -626,8 +626,14 @@ fn map_user_row(row: &sqlx::postgres::PgRow) -> Result<User, sqlx::Error> {
             .try_get::<Option<sqlx::types::Json<rustshare_core::domain::DashboardConfig>>, _>(
                 "dashboard_config",
             )
-            .unwrap_or_else(|_| Some(sqlx::types::Json(rustshare_core::domain::DashboardConfig::default())))
-            .unwrap_or_else(|| sqlx::types::Json(rustshare_core::domain::DashboardConfig::default())),
+            .unwrap_or_else(|_| {
+                Some(sqlx::types::Json(
+                    rustshare_core::domain::DashboardConfig::default(),
+                ))
+            })
+            .unwrap_or_else(|| {
+                sqlx::types::Json(rustshare_core::domain::DashboardConfig::default())
+            }),
     })
 }
 

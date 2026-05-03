@@ -26,7 +26,7 @@ use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{FileService, FolderService, PermissionResolver};
 use rustshare_infrastructure::repositories::{PermissionResolverRepository, UserRepository};
 use rustshare_server::services::kanban_service::{
-    KanbanService, CreateBoardInput, CreateCardInput, MoveCardInput,
+    CreateBoardInput, CreateCardInput, KanbanService, MoveCardInput,
 };
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
@@ -181,7 +181,13 @@ async fn contract_create_board_creates_folder_structure_and_metadata() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Product Launch".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Product Launch".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .expect("create_board should succeed");
 
@@ -202,11 +208,21 @@ async fn contract_create_card_creates_folder_and_metadata() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Test Board".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Test Board".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
 
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -229,7 +245,10 @@ async fn contract_create_card_creates_folder_and_metadata() {
     assert!(card.slug.starts_with("CARD-"));
     assert_eq!(card.column_id, backlog.id);
     assert_eq!(card.priority, "high");
-    assert!(card.labels.iter().any(|l| l.name == "urgent" || l.id == "urgent"));
+    assert!(card
+        .labels
+        .iter()
+        .any(|l| l.name == "urgent" || l.id == "urgent"));
 
     cleanup_user(&pool, user.id).await;
 }
@@ -243,11 +262,21 @@ async fn contract_move_card_updates_column_and_metadata() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Move Test".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Move Test".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
 
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let ready = board.columns.iter().find(|c| c.slug == "01-Ready").unwrap();
 
     let card = service
@@ -284,7 +313,11 @@ async fn contract_move_card_updates_column_and_metadata() {
         .await
         .expect("move_card should succeed");
 
-    let updated_ready = updated_board.columns.iter().find(|c| c.id == ready.id).unwrap();
+    let updated_ready = updated_board
+        .columns
+        .iter()
+        .find(|c| c.id == ready.id)
+        .unwrap();
     assert!(updated_ready.cards.iter().any(|c| c.id == card.id));
 
     let updated_card = service
@@ -307,11 +340,23 @@ async fn contract_list_boards_returns_created_boards() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     service
-        .create_board(CreateBoardInput { title: "Alpha".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Alpha".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
     service
-        .create_board(CreateBoardInput { title: "Beta".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Beta".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
 
@@ -332,11 +377,21 @@ async fn contract_archive_card_hides_from_board() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Archive Test".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Archive Test".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
 
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -364,7 +419,11 @@ async fn contract_archive_card_hides_from_board() {
         .get_board(board.id.clone(), user.id, tenant_id)
         .await
         .unwrap();
-    let refreshed_backlog = refreshed_board.columns.iter().find(|c| c.id == backlog.id).unwrap();
+    let refreshed_backlog = refreshed_board
+        .columns
+        .iter()
+        .find(|c| c.id == backlog.id)
+        .unwrap();
     assert!(!refreshed_backlog.cards.iter().any(|c| c.id == card.id));
 
     cleanup_user(&pool, user.id).await;
@@ -379,11 +438,21 @@ async fn contract_delete_card_removes_folder() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Delete Test".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Delete Test".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
 
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -422,17 +491,35 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Dense Test".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Dense Test".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
 
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
 
     // Create three cards
     let _card1 = service
         .create_card(
             board.id.clone(),
-            CreateCardInput { title: "Card 1".to_string(), column_id: Some(backlog.id.clone()), content: None, priority: None, labels: None, assignees: None, due_date: None },
+            CreateCardInput {
+                title: "Card 1".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
             user.id,
             tenant_id,
         )
@@ -442,7 +529,15 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
     let _card2 = service
         .create_card(
             board.id.clone(),
-            CreateCardInput { title: "Card 2".to_string(), column_id: Some(backlog.id.clone()), content: None, priority: None, labels: None, assignees: None, due_date: None },
+            CreateCardInput {
+                title: "Card 2".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
             user.id,
             tenant_id,
         )
@@ -452,7 +547,15 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
     let card3 = service
         .create_card(
             board.id.clone(),
-            CreateCardInput { title: "Card 3".to_string(), column_id: Some(backlog.id.clone()), content: None, priority: None, labels: None, assignees: None, due_date: None },
+            CreateCardInput {
+                title: "Card 3".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
             user.id,
             tenant_id,
         )
@@ -461,13 +564,18 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
 
     // Move card3 between card1 and card2 with a very small gap to trigger rebalancing
     service
-        .move_card(card3.id.parse().unwrap(), MoveCardInput {
-            board_id: board.id.clone(),
-            target_column_id: backlog.id.clone(),
-            target_order: Some(1005),
-            before_card_id: None,
-            after_card_id: None,
-        }, user.id, tenant_id)
+        .move_card(
+            card3.id.parse().unwrap(),
+            MoveCardInput {
+                board_id: board.id.clone(),
+                target_column_id: backlog.id.clone(),
+                target_order: Some(1005),
+                before_card_id: None,
+                after_card_id: None,
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
 
@@ -476,7 +584,11 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
         .await
         .unwrap();
 
-    let refreshed_backlog = refreshed_board.columns.iter().find(|c| c.id == backlog.id).unwrap();
+    let refreshed_backlog = refreshed_board
+        .columns
+        .iter()
+        .find(|c| c.id == backlog.id)
+        .unwrap();
     let orders: Vec<i32> = refreshed_backlog.cards.iter().map(|c| c.order).collect();
 
     // After rebalancing, orders should be spaced by at least 1000
@@ -491,28 +603,40 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
     cleanup_user(&pool, user.id).await;
 }
 
-    #[tokio::test]
-    #[ignore = "Requires database and S3"]
-    async fn contract_get_board_by_slug_returns_board() {
-        let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
-        let tenant_id = Uuid::new_v4();
-        let user = create_test_user(&metadata_store, "slug_user", tenant_id).await;
-        let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_get_board_by_slug_returns_board() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "slug_user", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
-        let board = service
-            .create_board(CreateBoardInput { title: "Slug Board".to_string() }, user.id, tenant_id)
-            .await
-            .unwrap();
+    let board = service
+        .create_board(
+            CreateBoardInput {
+                title: "Slug Board".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
 
-        // Get by ID
-        let by_id = service.get_board(board.id.clone(), user.id, tenant_id).await.unwrap();
-        assert_eq!(by_id.title, "Slug Board");
+    // Get by ID
+    let by_id = service
+        .get_board(board.id.clone(), user.id, tenant_id)
+        .await
+        .unwrap();
+    assert_eq!(by_id.title, "Slug Board");
 
-        // Get by Slug
-        let by_slug = service.get_board("slug-board".to_string(), user.id, tenant_id).await.unwrap();
-        assert_eq!(by_slug.id, board.id);
-        assert_eq!(by_slug.slug, "slug-board");
-    }
+    // Get by Slug
+    let by_slug = service
+        .get_board("slug-board".to_string(), user.id, tenant_id)
+        .await
+        .unwrap();
+    assert_eq!(by_slug.id, board.id);
+    assert_eq!(by_slug.slug, "slug-board");
+}
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
@@ -523,7 +647,13 @@ async fn contract_invalid_label_color_rejected() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Color Test".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Color Test".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
 
@@ -549,7 +679,10 @@ async fn contract_invalid_label_color_rejected() {
             user.id,
         )
         .await;
-    assert!(result.is_err(), "Should reject script pseudo-protocol colors");
+    assert!(
+        result.is_err(),
+        "Should reject script pseudo-protocol colors"
+    );
 
     cleanup_user(&pool, user.id).await;
 }
@@ -563,11 +696,21 @@ async fn contract_card_description_persisted_in_index_md() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Desc Test".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Desc Test".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
 
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -586,7 +729,10 @@ async fn contract_card_description_persisted_in_index_md() {
         .await
         .unwrap();
 
-    let detail = service.get_card_detail(card.id.parse().unwrap(), user.id).await.unwrap();
+    let detail = service
+        .get_card_detail(card.id.parse().unwrap(), user.id)
+        .await
+        .unwrap();
     assert!(detail.summary.content.contains("This is the description."));
 
     cleanup_user(&pool, user.id).await;
@@ -598,10 +744,21 @@ async fn contract_metadata_files_hidden_from_folder_listing() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "meta_user", tenant_id).await;
-    let service = create_kanban_service(event_store, metadata_store.clone(), object_store.clone(), &pool);
+    let service = create_kanban_service(
+        event_store,
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
 
     let board = service
-        .create_board(CreateBoardInput { title: "Meta Test".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Meta Test".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
 
@@ -631,11 +788,21 @@ async fn contract_move_card_preserves_metadata_and_events() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Move Test".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Move Test".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
 
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let ready = board.columns.iter().find(|c| c.slug == "01-Ready").unwrap();
 
     let card = service
@@ -672,7 +839,10 @@ async fn contract_move_card_preserves_metadata_and_events() {
         .await
         .unwrap();
 
-    let detail = service.get_card_detail(card.id.parse().unwrap(), user.id).await.unwrap();
+    let detail = service
+        .get_card_detail(card.id.parse().unwrap(), user.id)
+        .await
+        .unwrap();
     assert_eq!(detail.summary.column_id, ready.id);
     assert!(detail.summary.content.contains("Initial content"));
     assert!(
@@ -692,7 +862,13 @@ async fn contract_disabling_module_does_not_delete_data() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Persistent".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Persistent".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
 

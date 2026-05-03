@@ -33,10 +33,7 @@ async fn test_file_create_creates_exactly_one_version() {
     .await;
 
     // Verify file has version 1
-    assert_eq!(
-        file.current_version, 1,
-        "New file should have version 1"
-    );
+    assert_eq!(file.current_version, 1, "New file should have version 1");
 
     // List versions
     let versions = file_service
@@ -165,12 +162,7 @@ async fn test_file_restore_returns_correct_version() {
 
     // Update to v2
     let file = file_service
-        .update_file(
-            file.id,
-            user.id,
-            1,
-            bytes::Bytes::from("Modified content"),
-        )
+        .update_file(file.id, user.id, 1, bytes::Bytes::from("Modified content"))
         .await
         .expect("Failed to update file");
 
@@ -196,7 +188,10 @@ async fn test_file_restore_returns_correct_version() {
         .expect("Failed to restore version");
 
     // Verify restored file
-    assert_eq!(restored_file.current_version, 4, "Restore should create new version");
+    assert_eq!(
+        restored_file.current_version, 4,
+        "Restore should create new version"
+    );
     assert_eq!(
         restored_file.content_hash, v1_hash,
         "Restored file should have v1's content hash"
@@ -248,12 +243,7 @@ async fn test_version_history_is_immutable() {
 
     // Update to v2
     let file = file_service
-        .update_file(
-            file.id,
-            user.id,
-            1,
-            bytes::Bytes::from("Modified content"),
-        )
+        .update_file(file.id, user.id, 1, bytes::Bytes::from("Modified content"))
         .await
         .expect("Failed to update file");
 
@@ -283,7 +273,10 @@ async fn test_version_history_is_immutable() {
     assert_eq!(v2_version.content_hash, v2_hash);
 
     // Version IDs should be unique and immutable
-    assert_ne!(v1_version.id, v2_version.id, "Each version should have unique ID");
+    assert_ne!(
+        v1_version.id, v2_version.id,
+        "Each version should have unique ID"
+    );
 
     // Restore to v1 (creates v3)
     let restored_file = file_service
@@ -303,10 +296,7 @@ async fn test_version_history_is_immutable() {
         .iter()
         .find(|v| v.version_number == 1)
         .expect("v1 should still exist");
-    assert_eq!(
-        v1_still.content_hash, v1_hash,
-        "v1 should be immutable"
-    );
+    assert_eq!(v1_still.content_hash, v1_hash, "v1 should be immutable");
 
     // Cleanup
     cleanup_user(&ctx.pool, user.id).await;
@@ -348,7 +338,10 @@ async fn test_concurrent_update_optimistic_locking() {
         .await;
 
     assert!(
-        matches!(result, Err(rustshare_core::services::FileError::VersionConflict { .. })),
+        matches!(
+            result,
+            Err(rustshare_core::services::FileError::VersionConflict { .. })
+        ),
         "Update with wrong version should fail with VersionConflict"
     );
 

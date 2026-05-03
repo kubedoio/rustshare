@@ -102,7 +102,12 @@
 >
 	<div class="flex h-full flex-col overflow-hidden bg-base-100">
 		{#if !isLoading && file}
-			<RichMarkdownEditor {content} editable={true} hasAttachmentHandler={true} bind:currentMarkdown />
+			<RichMarkdownEditor
+				{content}
+				editable={true}
+				hasAttachmentHandler={true}
+				bind:currentMarkdown
+			/>
 		{/if}
 	</div>
 </BaseEditor>

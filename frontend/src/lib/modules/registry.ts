@@ -527,9 +527,9 @@ export const modulesStore = writable<ModuleDefinition[]>(PREDEFINED_MODULES);
 export async function refreshModules() {
 	try {
 		const enabled = await listEnabledModules();
-		modulesStore.update(current => {
-			return current.map(m => {
-				const serverModule = enabled.find(sm => sm.module_key === m.key);
+		modulesStore.update((current) => {
+			return current.map((m) => {
+				const serverModule = enabled.find((sm) => sm.module_key === m.key);
 				if (serverModule) {
 					const uiConfig = serverModule.ui_config;
 					// Merge server-side config into predefined definition
@@ -565,7 +565,8 @@ export async function refreshModules() {
 								renderer: uiConfig?.page?.renderer ?? m.ui.page.renderer,
 								layout: uiConfig?.page?.layout ?? m.ui.page.layout,
 								emptyStateTitle: uiConfig?.page?.emptyStateTitle ?? m.ui.page.emptyStateTitle,
-								emptyStateDescription: uiConfig?.page?.emptyStateDescription ?? m.ui.page.emptyStateDescription,
+								emptyStateDescription:
+									uiConfig?.page?.emptyStateDescription ?? m.ui.page.emptyStateDescription,
 								primaryAction: uiConfig?.page?.primaryAction ?? m.ui.page.primaryAction
 							}
 						}
@@ -611,4 +612,3 @@ export function filterModulesByUserPreference(
 ): ModuleDefinition[] {
 	return modules.filter((m) => preferences[m.key] !== false);
 }
-

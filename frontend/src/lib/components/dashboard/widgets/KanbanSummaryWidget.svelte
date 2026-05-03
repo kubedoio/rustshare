@@ -30,10 +30,10 @@
 	const latestBoardSummary = $derived.by(() => {
 		const boards = $boardsQuery.data ?? [];
 		if (boards.length === 0) return null;
-		
-		const activeBoards = boards.filter(b => !b.archived);
+
+		const activeBoards = boards.filter((b) => !b.archived);
 		const targetBoards = activeBoards.length > 0 ? activeBoards : boards;
-		
+
 		return [...targetBoards].sort((a, b) => {
 			const timeA = a.updated_at ? new Date(a.updated_at).getTime() : 0;
 			const timeB = b.updated_at ? new Date(b.updated_at).getTime() : 0;
@@ -60,13 +60,14 @@
 		if (isNaN(date.getTime())) return 'Unknown';
 		const now = new Date();
 		const diff = now.getTime() - date.getTime();
-		
+
 		if (diff < 60000) return 'Just now';
 		if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
 		if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-		
+
 		return new Intl.DateTimeFormat('en-US', {
-			month: 'short', day: 'numeric'
+			month: 'short',
+			day: 'numeric'
 		}).format(date);
 	}
 </script>
@@ -75,13 +76,17 @@
 	<div class="widget-header">
 		<div class="flex-1">
 			<a href={`/modules/${module.key}`} class="group no-underline">
-				<h3 class="group-hover:text-brand-500 transition-colors flex items-center gap-2 m-0 text-base font-bold">
+				<h3
+					class="m-0 flex items-center gap-2 text-base font-bold transition-colors group-hover:text-brand-500"
+				>
 					<Layout size={18} class="text-brand-500" />
 					{widget.title}
 				</h3>
 			</a>
 			{#if latestBoardSummary}
-				<div class="flex items-center gap-2 mt-1 text-[10px] text-base-content/40 font-bold uppercase tracking-wider">
+				<div
+					class="mt-1 flex items-center gap-2 text-[10px] font-bold tracking-wider text-base-content/40 uppercase"
+				>
 					<span class="text-brand-500/80">{latestBoardSummary.title}</span>
 					<span>•</span>
 					<span>{latestBoardSummary.card_count} active cards</span>
@@ -95,7 +100,10 @@
 				<p class="m-0 text-xs text-base-content/60">{widget.description}</p>
 			{/if}
 		</div>
-		<a href={`/modules/${module.key}`} class="btn btn-xs btn-ghost gap-1 px-2 rounded-full border border-base-200">
+		<a
+			href={`/modules/${module.key}`}
+			class="btn gap-1 rounded-full border border-base-200 px-2 btn-ghost btn-xs"
+		>
 			Open
 			<ChevronRight size={12} />
 		</a>
@@ -104,11 +112,11 @@
 	<div class="kanban-preview-grid" aria-label="Kanban summary preview">
 		{#if $boardQuery.isPending && latestBoardId}
 			<div class="kanban-loading">
-				<span class="loading loading-spinner loading-md text-brand-500/20"></span>
+				<span class="loading loading-md loading-spinner text-brand-500/20"></span>
 			</div>
 		{:else if $boardQuery.isError}
 			<div class="kanban-empty error">
-				<AlertCircle size={24} class="text-error/40 mb-2" />
+				<AlertCircle size={24} class="mb-2 text-error/40" />
 				<p>Kanban summary unavailable.</p>
 			</div>
 		{:else if latestBoard}
@@ -123,7 +131,7 @@
 						</header>
 						<div class="flex flex-col gap-1.5">
 							{#each columnCards as card}
-								<a 
+								<a
 									href={`/modules/${module.key}?boardId=${latestBoardId}&cardId=${card.id}`}
 									class="kanban-mini-card group"
 								>
@@ -134,7 +142,7 @@
 								</a>
 							{/each}
 							{#if column.cards.length > maxColCards}
-								<div class="text-[10px] text-center opacity-30 italic font-medium">
+								<div class="text-center text-[10px] font-medium italic opacity-30">
 									+{column.cards.length - maxColCards} more
 								</div>
 							{/if}
@@ -145,11 +153,13 @@
 					</section>
 				{/each}
 			</div>
-
 		{:else if !$boardsQuery.isPending}
 			<div class="kanban-empty">
 				<p>No Kanban boards yet. Create your first file-backed board.</p>
-				<a href={`/modules/${module.key}`} class="btn btn-xs btn-primary btn-outline mt-3 rounded-full">
+				<a
+					href={`/modules/${module.key}`}
+					class="btn mt-3 rounded-full btn-outline btn-xs btn-primary"
+				>
 					<Plus size={14} />
 					Create Board
 				</a>
@@ -260,9 +270,16 @@
 		flex-shrink: 0;
 	}
 
-	.priority-urgent { background: #eb5a46; box-shadow: 0 0 4px #eb5a46; }
-	.priority-high { background: #ff9f1a; }
-	.priority-low { background: #b3bac5; }
+	.priority-urgent {
+		background: #eb5a46;
+		box-shadow: 0 0 4px #eb5a46;
+	}
+	.priority-high {
+		background: #ff9f1a;
+	}
+	.priority-low {
+		background: #b3bac5;
+	}
 
 	.kanban-mini-empty {
 		font-size: 0.65rem;

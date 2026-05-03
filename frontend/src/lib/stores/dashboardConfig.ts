@@ -24,7 +24,7 @@ let updateTimeout: any = null;
 
 function persistState(state: DashboardConfigState) {
 	if (!browser) return;
-	
+
 	// Debounce updates to the server
 	if (updateTimeout) clearTimeout(updateTimeout);
 	updateTimeout = setTimeout(async () => {
@@ -54,10 +54,10 @@ function createDashboardConfigStore() {
 		subscribe,
 
 		hydrate: async (allModules: ModuleDefinition[]) => {
-			update(s => ({ ...s, loading: true }));
+			update((s) => ({ ...s, loading: true }));
 			try {
 				const config = await getDashboardConfig();
-				
+
 				const validKeys = new Set(allModules.map((m) => m.key));
 				let enabled = (config.enabled_modules ?? []).filter((k) => validKeys.has(k));
 				let order = (config.module_order ?? []).filter((k) => validKeys.has(k));

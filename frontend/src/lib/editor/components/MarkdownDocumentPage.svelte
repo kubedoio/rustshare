@@ -229,9 +229,9 @@
 						{/if}
 					</button>
 					<ul
-						class="dropdown-content menu z-[100] mt-2 w-48 rounded-xl bg-base-100 p-2 shadow-xl border border-base-300"
+						class="dropdown-content menu z-[100] mt-2 w-48 rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl"
 					>
-						<li class="menu-title text-[10px] uppercase tracking-wider text-base-content/40">
+						<li class="menu-title text-[10px] tracking-wider text-base-content/40 uppercase">
 							Purpose Color
 						</li>
 						<div class="grid grid-cols-4 gap-1 p-1">

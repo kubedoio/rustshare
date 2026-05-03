@@ -763,7 +763,9 @@ pub async fn list_user_module_preferences(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
 ) -> Response {
-    let repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(state.db_pool.clone());
+    let repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(
+        state.db_pool.clone(),
+    );
     match repo.get_for_user(user_id).await {
         Ok(prefs) => {
             let response: Vec<UserModulePreferenceResponse> = prefs
@@ -793,7 +795,9 @@ pub async fn update_user_module_preference(
     Path(module_key): Path<String>,
     Json(req): Json<UpdateModulePreferenceRequest>,
 ) -> Response {
-    let repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(state.db_pool.clone());
+    let repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(
+        state.db_pool.clone(),
+    );
     match repo.set_enabled(user_id, &module_key, req.enabled).await {
         Ok(pref) => {
             let response = UserModulePreferenceResponse {
@@ -858,4 +862,3 @@ pub async fn update_dashboard_config(
         }
     }
 }
-

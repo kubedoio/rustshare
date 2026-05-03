@@ -96,7 +96,12 @@ describe('Kanban Slug Validation', () => {
 
 // ── Hidden metadata file exclusion ───────────────────────────────────
 
-const HIDDEN_FILES = ['.rustshare-board.json', '.rustshare-column.json', '.rustshare-card.json', 'events.jsonl'];
+const HIDDEN_FILES = [
+	'.rustshare-board.json',
+	'.rustshare-column.json',
+	'.rustshare-card.json',
+	'events.jsonl'
+];
 
 function isHiddenMetadataFile(name: string): boolean {
 	return HIDDEN_FILES.includes(name);

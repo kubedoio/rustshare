@@ -328,9 +328,10 @@ pub async fn accept_invite(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?;
 
     // Seed default module preferences
-    let pref_repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(state.db_pool.clone());
+    let pref_repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(
+        state.db_pool.clone(),
+    );
     pref_repo.seed_defaults(user_id).await.ok();
-
 
     sqlx::query("UPDATE invite_tokens SET used_at = NOW() WHERE id = $1")
         .bind(row.token_id)

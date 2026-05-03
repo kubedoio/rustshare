@@ -66,7 +66,8 @@ async fn test_cross_tenant_share_link_is_denied() {
 
     // Create folder service and a folder
     let folder_service = ctx.folder_service();
-    let folder = create_test_folder(&folder_service, user_a.id, tenant_a, "SharedFolder", None).await;
+    let folder =
+        create_test_folder(&folder_service, user_a.id, tenant_a, "SharedFolder", None).await;
 
     // Verify the folder has the correct tenant
     assert_eq!(folder.tenant_id, tenant_a);

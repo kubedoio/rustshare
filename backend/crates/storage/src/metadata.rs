@@ -2791,11 +2791,7 @@ impl MetadataStore {
     }
 
     /// List all markdown files for a user across their entire library.
-    pub async fn list_all_folders(
-        &self,
-        owner_id: Uuid,
-        tenant_id: Uuid,
-    ) -> Result<Vec<Folder>> {
+    pub async fn list_all_folders(&self, owner_id: Uuid, tenant_id: Uuid) -> Result<Vec<Folder>> {
         let rows = sqlx::query(
             r#"
             SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id

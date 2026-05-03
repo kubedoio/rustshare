@@ -53,20 +53,24 @@ fn hash_token(raw: &str) -> String {
 ///
 /// First tries JWT validation, then falls back to device token lookup.
 /// For device tokens, updates `last_used_at` timestamp on successful lookup.
-pub async fn resolve_bearer_token(token: &str, state: &AppState) -> Result<(Uuid, Uuid), AuthError> {
+pub async fn resolve_bearer_token(
+    token: &str,
+    state: &AppState,
+) -> Result<(Uuid, Uuid), AuthError> {
     // First, try JWT validation
     match state.jwt_manager.validate(token) {
         Ok(claims) => {
             let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AuthError::InvalidToken)?;
 
             // Check disabled status and get tenant_id
-            let row: (bool, Uuid) =
-                sqlx::query_as("SELECT disabled_at IS NOT NULL, tenant_id FROM users WHERE id = $1")
-                    .bind(user_id)
-                    .fetch_optional(&state.db_pool)
-                    .await
-                    .map_err(|_| AuthError::DatabaseError)?
-                    .ok_or(AuthError::UserNotFound)?;
+            let row: (bool, Uuid) = sqlx::query_as(
+                "SELECT disabled_at IS NOT NULL, tenant_id FROM users WHERE id = $1",
+            )
+            .bind(user_id)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(|_| AuthError::DatabaseError)?
+            .ok_or(AuthError::UserNotFound)?;
 
             if row.0 {
                 return Err(AuthError::AccountDisabled);
@@ -167,10 +171,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             .await
             .map_err(|e| e.into_response())?;
 
-        Ok(AuthenticatedUser {
-            user_id,
-            tenant_id,
-        })
+        Ok(AuthenticatedUser { user_id, tenant_id })
     }
 }
 

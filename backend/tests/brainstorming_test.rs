@@ -307,7 +307,10 @@ async fn test_delete_board() {
         .expect("delete board");
 
     // Verify it's gone
-    let boards = service.list_boards(user.id, tenant_id).await.expect("list boards");
+    let boards = service
+        .list_boards(user.id, tenant_id)
+        .await
+        .expect("list boards");
     assert!(boards.is_empty());
 
     cleanup_user(&ctx.pool, user.id).await;

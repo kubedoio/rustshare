@@ -1050,12 +1050,19 @@
 		{:else if activeTab === 'modules'}
 			<div class="overflow-hidden rounded-xl border border-base-300 bg-base-200">
 				<div class="p-6">
-					<SettingsSection title="Module Preferences" description="Enable or disable modules you want to use in your workspace.">
+					<SettingsSection
+						title="Module Preferences"
+						description="Enable or disable modules you want to use in your workspace."
+					>
 						<div class="flex flex-col gap-4">
-							{#each getAllModules().filter(m => m.enabled) as module}
-								<div class="flex items-center justify-between rounded-xl border border-base-300 bg-base-100 p-4">
+							{#each getAllModules().filter((m) => m.enabled) as module}
+								<div
+									class="flex items-center justify-between rounded-xl border border-base-300 bg-base-100 p-4"
+								>
 									<div class="flex items-center gap-3">
-										<div class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500">
+										<div
+											class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
+										>
 											<FileText size={18} />
 										</div>
 										<div>
@@ -1064,8 +1071,16 @@
 										</div>
 									</div>
 									<label class="relative inline-flex cursor-pointer items-center">
-										<input type="checkbox" class="peer sr-only" checked={$userModulePreferences.preferences[module.key] !== false} onchange={(e) => userModulePreferences.toggle(module.key, e.currentTarget.checked)} />
-										<div class="peer h-6 w-11 rounded-full bg-base-300 after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:bg-brand-500 peer-checked:after:translate-x-full"></div>
+										<input
+											type="checkbox"
+											class="peer sr-only"
+											checked={$userModulePreferences.preferences[module.key] !== false}
+											onchange={(e) =>
+												userModulePreferences.toggle(module.key, e.currentTarget.checked)}
+										/>
+										<div
+											class="peer h-6 w-11 rounded-full bg-base-300 peer-checked:bg-brand-500 after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full"
+										></div>
 									</label>
 								</div>
 							{/each}

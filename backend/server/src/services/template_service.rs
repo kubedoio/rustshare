@@ -11,8 +11,8 @@ use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use crate::services::icon_registry::is_approved_icon_key;
+use rustshare_infrastructure::repositories::PermissionResolverRepository;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TemplateCreationMode {
@@ -915,7 +915,8 @@ impl TemplateService {
         }
 
         for file in default_files {
-            let content = render_template_string(file.content.as_deref().unwrap_or_default(), &name, &name);
+            let content =
+                render_template_string(file.content.as_deref().unwrap_or_default(), &name, &name);
             // Replace folder-specific placeholders for brainstorming board metadata
             let content = content
                 .replace("{{id}}", &object_folder.id.to_string())
@@ -987,7 +988,11 @@ impl TemplateService {
             }
 
             let rendered_path = render_template_string(&file.path, &name, &file_stem);
-            let content = render_template_string(file.content.as_deref().unwrap_or_default(), &name, &file_stem);
+            let content = render_template_string(
+                file.content.as_deref().unwrap_or_default(),
+                &name,
+                &file_stem,
+            );
             let mime_type = file
                 .content_type
                 .clone()
@@ -1039,8 +1044,16 @@ fn validate_default_file_path(path: &str) -> Result<(), TemplateError> {
     validate_relative_template_path(path, true)
 }
 
-fn validate_relative_template_path(path: &str, allow_hidden_files: bool) -> Result<(), TemplateError> {
-    if path.is_empty() || path == "." || path == ".." || path.starts_with('/') || path.starts_with('\\') {
+fn validate_relative_template_path(
+    path: &str,
+    allow_hidden_files: bool,
+) -> Result<(), TemplateError> {
+    if path.is_empty()
+        || path == "."
+        || path == ".."
+        || path.starts_with('/')
+        || path.starts_with('\\')
+    {
         return Err(TemplateError::InvalidData(format!("Invalid path: {path}")));
     }
 
@@ -1049,7 +1062,10 @@ fn validate_relative_template_path(path: &str, allow_hidden_files: bool) -> Resu
     }
 
     let segments: Vec<&str> = path.split('/').collect();
-    if segments.iter().any(|segment| segment.is_empty() || *segment == "." || *segment == "..") {
+    if segments
+        .iter()
+        .any(|segment| segment.is_empty() || *segment == "." || *segment == "..")
+    {
         return Err(TemplateError::InvalidData(format!("Invalid path: {path}")));
     }
 

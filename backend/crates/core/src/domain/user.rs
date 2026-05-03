@@ -64,7 +64,6 @@ impl Default for DashboardConfig {
     }
 }
 
-
 /// User account information.
 ///
 /// Note: The `username` field is used for login and is distinct from `email`.

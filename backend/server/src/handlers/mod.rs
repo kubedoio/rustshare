@@ -3,17 +3,17 @@
 pub mod admin;
 pub mod ai;
 pub mod auth;
+mod brainstorming;
+mod decisions;
 pub mod device_auth;
 pub mod devices;
 mod extractors;
 pub mod features;
-mod brainstorming;
-mod decisions;
 mod files;
 mod folders;
 mod groups;
-mod kanban;
 pub mod invites;
+mod kanban;
 mod meetings;
 mod modules;
 mod notes;
@@ -30,6 +30,11 @@ mod user_shares;
 mod users;
 mod workspace_surface;
 
+pub use brainstorming::{
+    create_brainstorm_board, delete_brainstorm_board, get_brainstorm_board,
+    get_brainstorm_board_source, list_brainstorm_boards, save_brainstorm_board_source,
+    update_brainstorm_board_preview,
+};
 pub use extractors::{AdminUser, AuthenticatedSession, AuthenticatedUser, ShareSessionAuth};
 pub use files::{
     delete_file, download_file, download_file_content, edit_file, get_file, get_file_thumbnail,
@@ -42,15 +47,10 @@ pub use folders::{
     get_root_contents, move_folder, permanently_delete_folder, rename_folder,
     restore_folder_from_trash, toggle_folder_star,
 };
-pub use brainstorming::{
-    create_brainstorm_board, delete_brainstorm_board, get_brainstorm_board,
-    get_brainstorm_board_source, list_brainstorm_boards, save_brainstorm_board_source,
-    update_brainstorm_board_preview,
-};
 pub use kanban::{
     add_card_attachment, add_card_label, archive_board, archive_card, assign_card_member,
     create_board, create_card, create_checklist, create_checklist_item, create_label, delete_card,
-    delete_checklist, delete_checklist_item, delete_card_attachment, delete_label,
+    delete_card_attachment, delete_checklist, delete_checklist_item, delete_label,
     get_assignable_users, get_board, get_card, get_card_detail, list_boards, list_cards, move_card,
     remove_card_label, toggle_checklist_item, unassign_card_member, update_board, update_card,
     update_card_description, update_label,
@@ -72,15 +72,15 @@ pub use trash::{empty_trash, get_trash_summary};
 
 pub use ai::{ask_question, semantic_search, summarize_file};
 pub use auth::{ensure_optional_seed_user, login, logout};
+pub use decisions::{create_decision, get_decision, list_decisions, update_decision};
 pub use features::get_features;
 pub use groups::{
     create_file_group_share, create_folder_group_share, get_my_group, list_file_group_shares,
     list_folder_group_shares, list_my_groups, revoke_group_share, update_group_share_permission,
 };
 pub use invites::{accept_invite, create_invite, get_invite};
-pub use modules::{create_from_template, get_module, get_module_summary, list_enabled_modules};
-pub use decisions::{create_decision, get_decision, list_decisions, update_decision};
 pub use meetings::{create_meeting, get_meeting, list_meetings, update_meeting};
+pub use modules::{create_from_template, get_module, get_module_summary, list_enabled_modules};
 pub use notes::{
     create_note, delete_note, get_note, get_public_note, list_notes, list_recent_notes, move_note,
     rename_note, save_note, toggle_visibility,
@@ -93,8 +93,8 @@ pub use user_shares::{
 pub use users::{
     delete_avatar, delete_user_session, get_avatar, get_dashboard_config, get_user_profile,
     list_user_module_preferences, list_user_security_events, list_user_sessions,
-    update_dashboard_config, update_user_module_preference, update_user_password, update_user_theme,
-    upload_avatar,
+    update_dashboard_config, update_user_module_preference, update_user_password,
+    update_user_theme, upload_avatar,
 };
 pub use workspace_surface::get_workspace_surface;
 

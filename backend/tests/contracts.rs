@@ -29,27 +29,27 @@
 
 // Module declarations
 mod contracts {
+    pub mod ai_permission_contract;
+    pub mod chat_integration_contract;
     pub mod common;
-    pub mod tenant_isolation_contract;
-    pub mod share_link_contract;
+    pub mod device_pairing_contract;
     pub mod public_upload_only_contract;
-    pub mod versioning_contract;
     pub mod restore_contract;
     pub mod search_authorization_contract;
-    pub mod chat_integration_contract;
-    pub mod device_pairing_contract;
-    pub mod ai_permission_contract;
+    pub mod share_link_contract;
     pub mod storage_verification_contract;
+    pub mod tenant_isolation_contract;
+    pub mod versioning_contract;
 }
 
 // Re-export all tests so they are discovered by the test runner
-pub use contracts::tenant_isolation_contract::*;
-pub use contracts::share_link_contract::*;
-pub use contracts::public_upload_only_contract::*;
-pub use contracts::versioning_contract::*;
-pub use contracts::restore_contract::*;
-pub use contracts::search_authorization_contract::*;
+pub use contracts::ai_permission_contract::*;
 pub use contracts::chat_integration_contract::*;
 pub use contracts::device_pairing_contract::*;
-pub use contracts::ai_permission_contract::*;
+pub use contracts::public_upload_only_contract::*;
+pub use contracts::restore_contract::*;
+pub use contracts::search_authorization_contract::*;
+pub use contracts::share_link_contract::*;
 pub use contracts::storage_verification_contract::*;
+pub use contracts::tenant_isolation_contract::*;
+pub use contracts::versioning_contract::*;

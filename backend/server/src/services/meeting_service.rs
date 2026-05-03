@@ -47,10 +47,10 @@ impl MeetingMetadata {
 /// Unified meeting note payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeetingNote {
-    pub id: Uuid, // Folder ID
+    pub id: Uuid,     // Folder ID
     pub name: String, // Folder name
     pub path: String,
-    pub content: String, // From index.md
+    pub content: String,           // From index.md
     pub metadata: MeetingMetadata, // From .rustshare.json
     pub owner_id: UserId,
     pub created_at: DateTime<Utc>,
@@ -85,7 +85,9 @@ impl From<rustshare_core::services::FolderError> for MeetingError {
     fn from(e: rustshare_core::services::FolderError) -> Self {
         match e {
             rustshare_core::services::FolderError::NotFound(id) => MeetingError::NotFound(id),
-            rustshare_core::services::FolderError::PermissionDenied { .. } => MeetingError::PermissionDenied,
+            rustshare_core::services::FolderError::PermissionDenied { .. } => {
+                MeetingError::PermissionDenied
+            }
             rustshare_core::services::FolderError::InvalidName(s) => MeetingError::InvalidData(s),
             _ => MeetingError::Storage(e.to_string()),
         }
@@ -145,57 +147,113 @@ impl MeetingService {
     }
 
     /// Ensure the root "Meetings" folder exists under /Workspace.
-    async fn ensure_meetings_folder(&self, owner_id: UserId, tenant_id: Uuid) -> Result<Folder, MeetingError> {
-        let root_folders = self.metadata_store.list_folders(None, owner_id, tenant_id).await.map_err(|e| MeetingError::Database(e.to_string()))?;
+    async fn ensure_meetings_folder(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Folder, MeetingError> {
+        let root_folders = self
+            .metadata_store
+            .list_folders(None, owner_id, tenant_id)
+            .await
+            .map_err(|e| MeetingError::Database(e.to_string()))?;
         if let Some(folder) = root_folders.into_iter().find(|f| f.name == "Meetings") {
             return Ok(folder);
         }
         let ws = self.ensure_workspace_folder(owner_id, tenant_id).await?;
-        let ws_folders = self.metadata_store.list_folders(Some(ws.id), owner_id, tenant_id).await.map_err(|e| MeetingError::Database(e.to_string()))?;
+        let ws_folders = self
+            .metadata_store
+            .list_folders(Some(ws.id), owner_id, tenant_id)
+            .await
+            .map_err(|e| MeetingError::Database(e.to_string()))?;
         if let Some(folder) = ws_folders.into_iter().find(|f| f.name == "Meetings") {
             return Ok(folder);
         }
-        let folder = self.folder_service.create_folder("Meetings".to_string(), Some(ws.id), owner_id, tenant_id).await.map_err(|e| MeetingError::Storage(e.to_string()))?;
+        let folder = self
+            .folder_service
+            .create_folder("Meetings".to_string(), Some(ws.id), owner_id, tenant_id)
+            .await
+            .map_err(|e| MeetingError::Storage(e.to_string()))?;
         Ok(folder)
     }
 
-    async fn ensure_workspace_folder(&self, owner_id: UserId, tenant_id: Uuid) -> Result<Folder, MeetingError> {
-        let folders = self.metadata_store.list_folders(None, owner_id, tenant_id).await.map_err(|e| MeetingError::Database(e.to_string()))?;
+    async fn ensure_workspace_folder(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Folder, MeetingError> {
+        let folders = self
+            .metadata_store
+            .list_folders(None, owner_id, tenant_id)
+            .await
+            .map_err(|e| MeetingError::Database(e.to_string()))?;
         if let Some(ws) = folders.into_iter().find(|f| f.name == "Workspace") {
             return Ok(ws);
         }
-        self.folder_service.create_folder("Workspace".into(), None, owner_id, tenant_id).await.map_err(|e| MeetingError::Storage(e.to_string()))
+        self.folder_service
+            .create_folder("Workspace".into(), None, owner_id, tenant_id)
+            .await
+            .map_err(|e| MeetingError::Storage(e.to_string()))
     }
 
     /// Ensure path /{team}/{yyyy}/ exists under Meetings.
-    async fn ensure_meeting_path(&self, root_id: Uuid, team: &str, year: i32, owner_id: UserId, tenant_id: Uuid) -> Result<Folder, MeetingError> {
+    async fn ensure_meeting_path(
+        &self,
+        root_id: Uuid,
+        team: &str,
+        year: i32,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Folder, MeetingError> {
         // Team folder
-        let folders = self.metadata_store.list_folders(Some(root_id), owner_id, tenant_id).await.map_err(|e| MeetingError::Database(e.to_string()))?;
+        let folders = self
+            .metadata_store
+            .list_folders(Some(root_id), owner_id, tenant_id)
+            .await
+            .map_err(|e| MeetingError::Database(e.to_string()))?;
         let team_folder = if let Some(f) = folders.into_iter().find(|f| f.name == team) {
             f
         } else {
-            self.folder_service.create_folder(team.to_string(), Some(root_id), owner_id, tenant_id).await.map_err(|e| MeetingError::Storage(e.to_string()))?
+            self.folder_service
+                .create_folder(team.to_string(), Some(root_id), owner_id, tenant_id)
+                .await
+                .map_err(|e| MeetingError::Storage(e.to_string()))?
         };
 
         // Year folder
-        let folders = self.metadata_store.list_folders(Some(team_folder.id), owner_id, tenant_id).await.map_err(|e| MeetingError::Database(e.to_string()))?;
+        let folders = self
+            .metadata_store
+            .list_folders(Some(team_folder.id), owner_id, tenant_id)
+            .await
+            .map_err(|e| MeetingError::Database(e.to_string()))?;
         let year_str = year.to_string();
         let year_folder = if let Some(f) = folders.into_iter().find(|f| f.name == year_str) {
             f
         } else {
-            self.folder_service.create_folder(year_str, Some(team_folder.id), owner_id, tenant_id).await.map_err(|e| MeetingError::Storage(e.to_string()))?
+            self.folder_service
+                .create_folder(year_str, Some(team_folder.id), owner_id, tenant_id)
+                .await
+                .map_err(|e| MeetingError::Storage(e.to_string()))?
         };
 
         Ok(year_folder)
     }
 
     /// List all meeting notes.
-    pub async fn list_meetings(&self, user_id: UserId, tenant_id: Uuid) -> Result<Vec<MeetingSummary>, MeetingError> {
+    pub async fn list_meetings(
+        &self,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Vec<MeetingSummary>, MeetingError> {
         // Meetings are folders that contain .rustshare.json with kind="meeting"
-        // This is expensive to scan everything. 
+        // This is expensive to scan everything.
         // Better to list all folders in the /Meetings subtree.
-        let folders = self.metadata_store.list_all_folders(user_id, tenant_id).await.map_err(|e| MeetingError::Database(e.to_string()))?;
-        
+        let folders = self
+            .metadata_store
+            .list_all_folders(user_id, tenant_id)
+            .await
+            .map_err(|e| MeetingError::Database(e.to_string()))?;
+
         let mut summaries = Vec::new();
         for folder in folders {
             if !folder.path.starts_with("/Meetings/") {
@@ -229,35 +287,51 @@ impl MeetingService {
         content: String,
     ) -> Result<MeetingNote, MeetingError> {
         let root = self.ensure_meetings_folder(owner_id, tenant_id).await?;
-        let parent = self.ensure_meeting_path(root.id, &team, date.year(), owner_id, tenant_id).await?;
+        let parent = self
+            .ensure_meeting_path(root.id, &team, date.year(), owner_id, tenant_id)
+            .await?;
 
         // Folder name: yyyy-mm-dd-slug
         let slug = slug::slugify(&title);
-        let folder_name = format!("{}-{}-{}", date.format("%Y-%m-%d"), slug, Uuid::new_v4().to_string()[0..8].to_string());
+        let folder_name = format!(
+            "{}-{}-{}",
+            date.format("%Y-%m-%d"),
+            slug,
+            Uuid::new_v4().to_string()[0..8].to_string()
+        );
 
-        let meeting_folder = self.folder_service.create_folder(folder_name, Some(parent.id), owner_id, tenant_id).await.map_err(|e| MeetingError::Storage(e.to_string()))?;
+        let meeting_folder = self
+            .folder_service
+            .create_folder(folder_name, Some(parent.id), owner_id, tenant_id)
+            .await
+            .map_err(|e| MeetingError::Storage(e.to_string()))?;
 
         // Create index.md
-        self.file_service.upload_file(
-            owner_id,
-            "index.md".to_string(),
-            Some(meeting_folder.id),
-            Bytes::from(content.clone()),
-            "text/markdown".to_string(),
-            tenant_id,
-        ).await?;
+        self.file_service
+            .upload_file(
+                owner_id,
+                "index.md".to_string(),
+                Some(meeting_folder.id),
+                Bytes::from(content.clone()),
+                "text/markdown".to_string(),
+                tenant_id,
+            )
+            .await?;
 
         // Create .rustshare.json
         let meta = MeetingMetadata::new(title, team, date);
-        let meta_data = serde_json::to_vec_pretty(&meta).map_err(|e| MeetingError::InvalidData(e.to_string()))?;
-        self.file_service.upload_file(
-            owner_id,
-            ".rustshare.json".to_string(),
-            Some(meeting_folder.id),
-            Bytes::from(meta_data),
-            "application/json".to_string(),
-            tenant_id,
-        ).await?;
+        let meta_data = serde_json::to_vec_pretty(&meta)
+            .map_err(|e| MeetingError::InvalidData(e.to_string()))?;
+        self.file_service
+            .upload_file(
+                owner_id,
+                ".rustshare.json".to_string(),
+                Some(meeting_folder.id),
+                Bytes::from(meta_data),
+                "application/json".to_string(),
+                tenant_id,
+            )
+            .await?;
 
         Ok(MeetingNote {
             id: meeting_folder.id,
@@ -271,12 +345,26 @@ impl MeetingService {
         })
     }
 
-    async fn load_metadata(&self, folder_id: Uuid, user_id: UserId, tenant_id: Uuid) -> Result<Option<MeetingMetadata>, MeetingError> {
-        let files = self.metadata_store.list_files(Some(folder_id), user_id, tenant_id).await.map_err(|e| MeetingError::Database(e.to_string()))?;
-        
+    async fn load_metadata(
+        &self,
+        folder_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Option<MeetingMetadata>, MeetingError> {
+        let files = self
+            .metadata_store
+            .list_files(Some(folder_id), user_id, tenant_id)
+            .await
+            .map_err(|e| MeetingError::Database(e.to_string()))?;
+
         if let Some(sidecar) = files.into_iter().find(|f| f.name == ".rustshare.json") {
-            let data = self.object_store.get(&sidecar.storage_key()).await.map_err(|e| MeetingError::Storage(e.to_string()))?;
-            let meta: MeetingMetadata = serde_json::from_slice(&data).map_err(|e| MeetingError::InvalidData(e.to_string()))?;
+            let data = self
+                .object_store
+                .get(&sidecar.storage_key())
+                .await
+                .map_err(|e| MeetingError::Storage(e.to_string()))?;
+            let meta: MeetingMetadata = serde_json::from_slice(&data)
+                .map_err(|e| MeetingError::InvalidData(e.to_string()))?;
             if meta.kind == "meeting" {
                 return Ok(Some(meta));
             }
@@ -284,20 +372,35 @@ impl MeetingService {
         Ok(None)
     }
 
-    pub async fn get_meeting(&self, id: Uuid, user_id: UserId) -> Result<MeetingNote, MeetingError> {
+    pub async fn get_meeting(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+    ) -> Result<MeetingNote, MeetingError> {
         let folder = self.folder_service.get_folder(id, user_id).await?;
-        let files = self.metadata_store.list_files(Some(id), user_id, folder.tenant_id).await.map_err(|e| MeetingError::Database(e.to_string()))?;
+        let files = self
+            .metadata_store
+            .list_files(Some(id), user_id, folder.tenant_id)
+            .await
+            .map_err(|e| MeetingError::Database(e.to_string()))?;
 
         // Load index.md
         let content = if let Some(index_file) = files.iter().find(|f| f.name == "index.md") {
-            let bytes = self.object_store.get(&index_file.storage_key()).await.map_err(|e| MeetingError::Storage(e.to_string()))?;
+            let bytes = self
+                .object_store
+                .get(&index_file.storage_key())
+                .await
+                .map_err(|e| MeetingError::Storage(e.to_string()))?;
             String::from_utf8_lossy(&bytes).to_string()
         } else {
             String::new()
         };
 
         // Load metadata
-        let meta = self.load_metadata(id, user_id, folder.tenant_id).await?.ok_or(MeetingError::NotFound(id))?;
+        let meta = self
+            .load_metadata(id, user_id, folder.tenant_id)
+            .await?
+            .ok_or(MeetingError::NotFound(id))?;
 
         Ok(MeetingNote {
             id: folder.id,
@@ -311,9 +414,19 @@ impl MeetingService {
         })
     }
 
-    pub async fn update_meeting(&self, id: Uuid, user_id: UserId, title: Option<String>, content: Option<String>, attendees: Option<Vec<String>>) -> Result<MeetingNote, MeetingError> {
+    pub async fn update_meeting(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        title: Option<String>,
+        content: Option<String>,
+        attendees: Option<Vec<String>>,
+    ) -> Result<MeetingNote, MeetingError> {
         let folder = self.folder_service.get_folder(id, user_id).await?;
-        let mut meta = self.load_metadata(id, user_id, folder.tenant_id).await?.ok_or(MeetingError::NotFound(id))?;
+        let mut meta = self
+            .load_metadata(id, user_id, folder.tenant_id)
+            .await?
+            .ok_or(MeetingError::NotFound(id))?;
 
         if let Some(t) = title {
             meta.title = t;
@@ -324,16 +437,31 @@ impl MeetingService {
         meta.updated_at = Utc::now();
 
         // Update sidecar
-        let files = self.metadata_store.list_files(Some(id), user_id, folder.tenant_id).await.map_err(|e| MeetingError::Database(e.to_string()))?;
+        let files = self
+            .metadata_store
+            .list_files(Some(id), user_id, folder.tenant_id)
+            .await
+            .map_err(|e| MeetingError::Database(e.to_string()))?;
         if let Some(sidecar) = files.iter().find(|f| f.name == ".rustshare.json") {
-            let meta_data = serde_json::to_vec_pretty(&meta).map_err(|e| MeetingError::InvalidData(e.to_string()))?;
-            self.file_service.edit_file(sidecar.id, user_id, Bytes::from(meta_data), "overwrite", None).await?;
+            let meta_data = serde_json::to_vec_pretty(&meta)
+                .map_err(|e| MeetingError::InvalidData(e.to_string()))?;
+            self.file_service
+                .edit_file(
+                    sidecar.id,
+                    user_id,
+                    Bytes::from(meta_data),
+                    "overwrite",
+                    None,
+                )
+                .await?;
         }
 
         // Update content
         if let Some(c) = content {
             if let Some(index_file) = files.iter().find(|f| f.name == "index.md") {
-                self.file_service.edit_file(index_file.id, user_id, Bytes::from(c), "overwrite", None).await?;
+                self.file_service
+                    .edit_file(index_file.id, user_id, Bytes::from(c), "overwrite", None)
+                    .await?;
             }
         }
 

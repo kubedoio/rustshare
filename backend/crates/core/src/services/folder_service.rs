@@ -247,8 +247,12 @@ where
             .require_folder_permission(user_id, folder_id, SharePermissions::View)
             .await;
         match &perm_result {
-            Ok(()) => tracing::info!(folder_id = %folder_id, user_id = %user_id, "folder_service::get_folder: permission check PASSED"),
-            Err(e) => tracing::info!(folder_id = %folder_id, user_id = %user_id, error = %e, "folder_service::get_folder: permission check FAILED"),
+            Ok(()) => {
+                tracing::info!(folder_id = %folder_id, user_id = %user_id, "folder_service::get_folder: permission check PASSED")
+            }
+            Err(e) => {
+                tracing::info!(folder_id = %folder_id, user_id = %user_id, error = %e, "folder_service::get_folder: permission check FAILED")
+            }
         }
         perm_result?;
 
@@ -256,10 +260,10 @@ where
     }
 
     fn is_hidden_file(name: &str) -> bool {
-        name == ".rustshare-board.json" ||
-        name == ".rustshare-column.json" ||
-        name == ".rustshare-card.json" ||
-        name == "events.jsonl"
+        name == ".rustshare-board.json"
+            || name == ".rustshare-column.json"
+            || name == ".rustshare-card.json"
+            || name == "events.jsonl"
     }
 
     /// List the contents of a folder (immediate children only).

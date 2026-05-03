@@ -8,7 +8,7 @@
 	import { goto } from '$app/navigation';
 
 	$: key = $page.params.key || '';
-	$: module = $modulesStore.find(m => m.key === key);
+	$: module = $modulesStore.find((m) => m.key === key);
 	$: user = $currentUser;
 
 	// Permissions check

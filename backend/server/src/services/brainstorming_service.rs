@@ -62,7 +62,9 @@ impl From<rustshare_core::services::FolderError> for BrainstormError {
             rustshare_core::services::FolderError::PermissionDenied { .. } => {
                 BrainstormError::PermissionDenied
             }
-            rustshare_core::services::FolderError::InvalidName(s) => BrainstormError::InvalidName(s),
+            rustshare_core::services::FolderError::InvalidName(s) => {
+                BrainstormError::InvalidName(s)
+            }
             rustshare_core::services::FolderError::Database(s) => BrainstormError::Database(s),
             _ => BrainstormError::Storage(e.to_string()),
         }
@@ -138,11 +140,7 @@ pub struct BrainstormingService {
         >,
     >,
     folder_service: Arc<
-        FolderService<
-            rustshare_storage::EventStore,
-            MetadataStore,
-            PermissionResolverRepository,
-        >,
+        FolderService<rustshare_storage::EventStore, MetadataStore, PermissionResolverRepository>,
     >,
     metadata_store: Arc<MetadataStore>,
     object_store: Arc<ObjectStore>,
@@ -274,11 +272,10 @@ impl BrainstormingService {
             })?;
         tracing::info!(file_id = %file.id, content_len = content.len(), "get_board_source: content loaded from object store");
 
-        String::from_utf8(content.to_vec())
-            .map_err(|e| {
-                tracing::info!(file_id = %file.id, error = %e, "get_board_source: invalid UTF-8");
-                BrainstormError::InvalidData(format!("Invalid UTF-8: {}", e))
-            })
+        String::from_utf8(content.to_vec()).map_err(|e| {
+            tracing::info!(file_id = %file.id, error = %e, "get_board_source: invalid UTF-8");
+            BrainstormError::InvalidData(format!("Invalid UTF-8: {}", e))
+        })
     }
 
     pub async fn save_board_source(
@@ -291,8 +288,8 @@ impl BrainstormingService {
         tracing::info!(board_id = %board_id, user_id = %user_id, tenant_id = %tenant_id, source_len = source.len(), "save_board_source: start");
 
         // Validate Excalidraw JSON structure
-        let parsed: serde_json::Value =
-            serde_json::from_str(&source).map_err(|e| BrainstormError::InvalidData(e.to_string()))?;
+        let parsed: serde_json::Value = serde_json::from_str(&source)
+            .map_err(|e| BrainstormError::InvalidData(e.to_string()))?;
 
         if parsed.get("type").and_then(|v| v.as_str()) != Some("excalidraw") {
             tracing::info!("save_board_source: validation failed - missing type field");
@@ -301,7 +298,11 @@ impl BrainstormingService {
             ));
         }
 
-        if !parsed.get("elements").map(|v| v.is_array()).unwrap_or(false) {
+        if !parsed
+            .get("elements")
+            .map(|v| v.is_array())
+            .unwrap_or(false)
+        {
             tracing::info!("save_board_source: validation failed - missing elements array");
             return Err(BrainstormError::InvalidData(
                 "Invalid Excalidraw JSON: missing elements array".to_string(),
@@ -506,11 +507,18 @@ impl BrainstormingService {
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Folder, BrainstormError> {
-        let folders = self.metadata_store.list_folders(None, user_id, tenant_id).await.map_err(|e| BrainstormError::Database(e.to_string()))?;
+        let folders = self
+            .metadata_store
+            .list_folders(None, user_id, tenant_id)
+            .await
+            .map_err(|e| BrainstormError::Database(e.to_string()))?;
         if let Some(ws) = folders.into_iter().find(|f| f.name == "Workspace") {
             return Ok(ws);
         }
-        self.folder_service.create_folder("Workspace".into(), None, user_id, tenant_id).await.map_err(BrainstormError::from)
+        self.folder_service
+            .create_folder("Workspace".into(), None, user_id, tenant_id)
+            .await
+            .map_err(BrainstormError::from)
     }
 
     pub async fn ensure_brainstorming_root(
@@ -602,7 +610,9 @@ impl BrainstormingService {
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<(), BrainstormError> {
-        let mut meta = self.load_board_metadata_from_folder(folder_id, user_id).await?;
+        let mut meta = self
+            .load_board_metadata_from_folder(folder_id, user_id)
+            .await?;
         meta.updated_at = Utc::now();
 
         let meta_json = serde_json::to_vec_pretty(&meta)?;
@@ -613,13 +623,7 @@ impl BrainstormingService {
 
         if let Some(file) = meta_file {
             self.file_service
-                .edit_file(
-                    file.id,
-                    user_id,
-                    Bytes::from(meta_json),
-                    "overwrite",
-                    None,
-                )
+                .edit_file(file.id, user_id, Bytes::from(meta_json), "overwrite", None)
                 .await
                 .map_err(BrainstormError::from)?;
         } else {

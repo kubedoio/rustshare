@@ -6,12 +6,12 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 use super::AuthenticatedUser;
-use crate::services::meeting_service::{MeetingError, MeetingSummary, MeetingNote};
+use crate::services::meeting_service::{MeetingError, MeetingNote, MeetingSummary};
 use crate::{handlers::ErrorResponse, AppState};
 
 pub fn meeting_error_response(err: MeetingError) -> Response {

@@ -74,10 +74,14 @@
 	}
 
 	$: totalSizeUsed =
-		$allFilesQuery.data?.reduce((sum: number, file: { size?: number }) => sum + (file.size || 0), 0) ?? 0;
+		$allFilesQuery.data?.reduce(
+			(sum: number, file: { size?: number }) => sum + (file.size || 0),
+			0
+		) ?? 0;
 	$: storageQuota = $currentUser?.storage_quota ?? null;
 	$: usagePercent = storageQuota ? Math.min(100, (totalSizeUsed / storageQuota) * 100) : 0;
-	$: usageColor = usagePercent > 85 ? '#b63e3e' : usagePercent > 60 ? '#a56a12' : 'var(--brand-500, #c65a1e)';
+	$: usageColor =
+		usagePercent > 85 ? '#b63e3e' : usagePercent > 60 ? '#a56a12' : 'var(--brand-500, #c65a1e)';
 
 	$: searchResults = (() => {
 		const q = $globalSearchQuery.toLowerCase().trim();
@@ -135,7 +139,8 @@
 		if (pathname === '/settings') return '/Settings';
 		if (pathname === '/profile') return '/Profile';
 		if (pathname === '/notifications') return '/Notifications';
-		if (pathname === '/shared-with-me' || pathname.startsWith('/shared-with-me/')) return '/Shared With Me';
+		if (pathname === '/shared-with-me' || pathname.startsWith('/shared-with-me/'))
+			return '/Shared With Me';
 		if (pathname === '/shares') return '/Shares';
 		return null;
 	}
@@ -218,14 +223,30 @@
 		{/if}
 
 		{#if $currentUser}
-			<div class="capacity-mini" title="Storage: {formatFileSize(totalSizeUsed)} / {storageQuota ? formatFileSize(storageQuota) : 'Unlimited'}">
+			<div
+				class="capacity-mini"
+				title="Storage: {formatFileSize(totalSizeUsed)} / {storageQuota
+					? formatFileSize(storageQuota)
+					: 'Unlimited'}"
+			>
 				<div class="relative flex h-7 w-7 shrink-0 items-center justify-center">
 					<svg class="h-full w-full -rotate-90" viewBox="0 0 36 36">
-						<circle cx="18" cy="18" r="15" fill="none" stroke="color-mix(in oklab, var(--base-300) 50%, transparent)" stroke-width="4"></circle>
+						<circle
+							cx="18"
+							cy="18"
+							r="15"
+							fill="none"
+							stroke="color-mix(in oklab, var(--base-300) 50%, transparent)"
+							stroke-width="4"
+						></circle>
 						{#if storageQuota}
 							<circle
-								cx="18" cy="18" r="15" fill="none"
-								stroke={usageColor} stroke-width="4"
+								cx="18"
+								cy="18"
+								r="15"
+								fill="none"
+								stroke={usageColor}
+								stroke-width="4"
 								stroke-dasharray="94.2 94.2"
 								stroke-dashoffset={94.2 - (usagePercent / 100) * 94.2}
 								stroke-linecap="round"
@@ -233,7 +254,10 @@
 						{/if}
 					</svg>
 				</div>
-				<span class="capacity-text">{formatFileSize(totalSizeUsed)}{#if storageQuota}<span class="capacity-divider">/</span>{formatFileSize(storageQuota)}{/if}</span>
+				<span class="capacity-text"
+					>{formatFileSize(totalSizeUsed)}{#if storageQuota}<span class="capacity-divider">/</span
+						>{formatFileSize(storageQuota)}{/if}</span
+				>
 			</div>
 		{/if}
 

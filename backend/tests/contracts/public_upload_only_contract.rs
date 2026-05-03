@@ -75,7 +75,10 @@ async fn test_anonymous_can_upload_via_upload_only_link() {
         .expect("Upload-only share should be validatable");
 
     // Verify session indicates upload-only
-    assert!(session.upload_only, "Session should indicate upload-only access");
+    assert!(
+        session.upload_only,
+        "Session should indicate upload-only access"
+    );
 
     // Cleanup
     cleanup_user(&ctx.pool, owner.id).await;
@@ -130,7 +133,10 @@ async fn test_anonymous_cannot_list_files_via_upload_only() {
     let public_info = share_service.get_public_share_info(&token).await;
 
     // The share info should be available
-    assert!(public_info.is_ok(), "Public share info should be accessible");
+    assert!(
+        public_info.is_ok(),
+        "Public share info should be accessible"
+    );
 
     let (_share, _file_info, folder_info) = public_info.unwrap();
     assert!(folder_info.is_some(), "Folder info should be available");
@@ -152,7 +158,8 @@ async fn test_upload_only_with_password_requires_password() {
 
     // Create folder service and a folder
     let folder_service = ctx.folder_service();
-    let folder = create_test_folder(&folder_service, owner.id, tenant_id, "SecureDropbox", None).await;
+    let folder =
+        create_test_folder(&folder_service, owner.id, tenant_id, "SecureDropbox", None).await;
 
     // Create share service
     let share_service = create_share_service(&ctx);
@@ -178,7 +185,9 @@ async fn test_upload_only_with_password_requires_password() {
     let token = share.share_token.unwrap();
 
     // Try to access without password
-    let result = share_service.validate_and_create_session(&token, None).await;
+    let result = share_service
+        .validate_and_create_session(&token, None)
+        .await;
     assert!(
         matches!(result, Err(ShareError::PasswordRequired)),
         "Password should be required"
@@ -219,7 +228,8 @@ async fn test_upload_only_link_expires() {
 
     // Create folder service and a folder
     let folder_service = ctx.folder_service();
-    let folder = create_test_folder(&folder_service, owner.id, tenant_id, "TempDropbox", None).await;
+    let folder =
+        create_test_folder(&folder_service, owner.id, tenant_id, "TempDropbox", None).await;
 
     // Create share service
     let share_service = create_share_service(&ctx);
@@ -246,7 +256,9 @@ async fn test_upload_only_link_expires() {
     let token = share.share_token.unwrap();
 
     // Try to validate expired share
-    let result = share_service.validate_and_create_session(&token, None).await;
+    let result = share_service
+        .validate_and_create_session(&token, None)
+        .await;
     assert!(
         matches!(result, Err(ShareError::Expired)),
         "Expired upload-only share should be rejected"
@@ -269,7 +281,14 @@ async fn test_upload_only_link_can_be_revoked() {
 
     // Create folder service and a folder
     let folder_service = ctx.folder_service();
-    let folder = create_test_folder(&folder_service, owner.id, tenant_id, "RevocableDropbox", None).await;
+    let folder = create_test_folder(
+        &folder_service,
+        owner.id,
+        tenant_id,
+        "RevocableDropbox",
+        None,
+    )
+    .await;
 
     // Create share service
     let share_service = create_share_service(&ctx);
@@ -291,7 +310,9 @@ async fn test_upload_only_link_can_be_revoked() {
     let token = share.share_token.clone().unwrap();
 
     // Verify share works before revocation
-    let session = share_service.validate_and_create_session(&token, None).await;
+    let session = share_service
+        .validate_and_create_session(&token, None)
+        .await;
     assert!(session.is_ok(), "Share should work before revocation");
 
     // Revoke the share
@@ -301,7 +322,9 @@ async fn test_upload_only_link_can_be_revoked() {
         .expect("Failed to revoke upload-only share");
 
     // Try to validate revoked share
-    let result = share_service.validate_and_create_session(&token, None).await;
+    let result = share_service
+        .validate_and_create_session(&token, None)
+        .await;
     assert!(
         matches!(result, Err(ShareError::Revoked)),
         "Revoked upload-only share should be rejected"
@@ -324,7 +347,8 @@ async fn test_upload_only_permissions() {
 
     // Create folder service and a folder
     let folder_service = ctx.folder_service();
-    let folder = create_test_folder(&folder_service, owner.id, tenant_id, "PermDropbox", None).await;
+    let folder =
+        create_test_folder(&folder_service, owner.id, tenant_id, "PermDropbox", None).await;
 
     // Create share service
     let share_service = create_share_service(&ctx);

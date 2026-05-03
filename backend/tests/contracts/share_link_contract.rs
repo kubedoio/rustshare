@@ -66,7 +66,10 @@ async fn test_internal_share_grants_access_to_recipient() {
 
     // Owner should have access
     let owner_access = file_service.get_file(file.id, owner.id).await;
-    assert!(owner_access.is_ok(), "Owner should have access to their file");
+    assert!(
+        owner_access.is_ok(),
+        "Owner should have access to their file"
+    );
 
     // Cleanup
     cleanup_user(&ctx.pool, owner.id).await;
@@ -113,7 +116,10 @@ async fn test_public_read_link_allows_anonymous_access() {
 
     // Verify share was created with correct permissions
     assert_eq!(share.permissions, SharePermissions::View);
-    assert!(share.share_token.is_some(), "Public share should have a token");
+    assert!(
+        share.share_token.is_some(),
+        "Public share should have a token"
+    );
     assert!(!share.upload_only);
 
     // Validate share and create session (simulating anonymous access)
@@ -227,7 +233,9 @@ async fn test_expired_share_denies_access() {
 
     // Try to validate the expired share
     let token = share.share_token.unwrap();
-    let result = share_service.validate_and_create_session(&token, None).await;
+    let result = share_service
+        .validate_and_create_session(&token, None)
+        .await;
 
     assert!(
         matches!(result, Err(ShareError::Expired)),
@@ -279,7 +287,9 @@ async fn test_revoked_share_denies_access() {
     let token = share.share_token.clone().unwrap();
 
     // Verify share works before revocation
-    let session = share_service.validate_and_create_session(&token, None).await;
+    let session = share_service
+        .validate_and_create_session(&token, None)
+        .await;
     assert!(session.is_ok(), "Share should work before revocation");
 
     // Revoke the share
@@ -289,7 +299,9 @@ async fn test_revoked_share_denies_access() {
         .expect("Failed to revoke share");
 
     // Try to validate the revoked share
-    let result = share_service.validate_and_create_session(&token, None).await;
+    let result = share_service
+        .validate_and_create_session(&token, None)
+        .await;
 
     assert!(
         matches!(result, Err(ShareError::Revoked)),
@@ -368,10 +380,7 @@ async fn test_password_protected_share_requires_password() {
     let session = share_service
         .validate_and_create_session(&token, Some("secret123".to_string()))
         .await;
-    assert!(
-        session.is_ok(),
-        "Correct password should allow access"
-    );
+    assert!(session.is_ok(), "Correct password should allow access");
 
     // Cleanup
     cleanup_user(&ctx.pool, owner.id).await;

@@ -7,7 +7,11 @@
 </script>
 
 {#if $toastStore.length > 0}
-	<div class="toast toast-container toast-end toast-top z-[100] mt-16" role="region" aria-label="Notifications">
+	<div
+		class="toast-container toast toast-end toast-top z-[100] mt-16"
+		role="region"
+		aria-label="Notifications"
+	>
 		{#each $toastStore as toast (toast.id)}
 			<div
 				class="alert {toast.type === 'success'

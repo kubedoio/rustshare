@@ -22,12 +22,13 @@ pub fn brainstorming_error_response(err: BrainstormError) -> Response {
     let (status, message) = match &err {
         BrainstormError::BoardNotFound => (StatusCode::NOT_FOUND, err.to_string()),
         BrainstormError::PermissionDenied => (StatusCode::FORBIDDEN, err.to_string()),
-        BrainstormError::InvalidName(_) | BrainstormError::InvalidSlug(_) | BrainstormError::InvalidData(_) => {
-            (StatusCode::BAD_REQUEST, err.to_string())
-        }
-        BrainstormError::Database(_) | BrainstormError::Storage(_) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
-        }
+        BrainstormError::InvalidName(_)
+        | BrainstormError::InvalidSlug(_)
+        | BrainstormError::InvalidData(_) => (StatusCode::BAD_REQUEST, err.to_string()),
+        BrainstormError::Database(_) | BrainstormError::Storage(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal server error".to_string(),
+        ),
     };
     (status, Json(ErrorResponse::new(message))).into_response()
 }

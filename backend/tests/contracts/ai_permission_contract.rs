@@ -55,10 +55,7 @@ async fn test_ai_search_returns_authorized_content() {
     // AI should only see files the user has access to
     assert_eq!(files.len(), 2);
     for file in &files {
-        assert_eq!(
-            file.owner_id, user.id,
-            "AI should only access user's files"
-        );
+        assert_eq!(file.owner_id, user.id, "AI should only access user's files");
     }
 
     // Cleanup
@@ -237,10 +234,7 @@ async fn test_ai_respects_share_permissions() {
 
     // Without share, recipient cannot access
     let no_access = file_service.get_file(file.id, recipient.id).await;
-    assert!(
-        no_access.is_err(),
-        "AI should not access unshared files"
-    );
+    assert!(no_access.is_err(), "AI should not access unshared files");
 
     // Cleanup
     cleanup_user(&ctx.pool, owner.id).await;
@@ -289,7 +283,10 @@ async fn test_ai_handles_deleted_content() {
         .await
         .expect("Failed to list files");
 
-    assert!(files.is_empty(), "Deleted files should not appear in AI search");
+    assert!(
+        files.is_empty(),
+        "Deleted files should not appear in AI search"
+    );
 
     // Cleanup
     cleanup_user(&ctx.pool, user.id).await;

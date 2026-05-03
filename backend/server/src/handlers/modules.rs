@@ -34,10 +34,7 @@ pub struct ModuleDetailResponse {
 // ---------------------------------------------------------------------------
 
 pub async fn list_enabled_modules(
-    AuthenticatedUser {
-        user_id,
-        tenant_id,
-    }: AuthenticatedUser,
+    AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
     State(state): State<AppState>,
 ) -> Result<Json<EnabledModulesResponse>, axum::response::Response> {
     let modules = state
@@ -56,10 +53,7 @@ pub async fn list_enabled_modules(
 }
 
 pub async fn get_module(
-    AuthenticatedUser {
-        user_id,
-        tenant_id,
-    }: AuthenticatedUser,
+    AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<Json<ModuleDetailResponse>, axum::response::Response> {
@@ -96,7 +90,10 @@ pub async fn get_module(
                 .into_response()
         })?;
 
-    if !visible_modules.iter().any(|visible| visible.module_key == module.module_key) {
+    if !visible_modules
+        .iter()
+        .any(|visible| visible.module_key == module.module_key)
+    {
         return Err((
             axum::http::StatusCode::FORBIDDEN,
             Json(ErrorResponse::new("Access denied".to_string())),
@@ -113,10 +110,7 @@ pub struct ModuleSummaryResponse {
 }
 
 pub async fn get_module_summary(
-    AuthenticatedUser {
-        user_id,
-        tenant_id,
-    }: AuthenticatedUser,
+    AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<Json<ModuleSummaryResponse>, axum::response::Response> {

@@ -121,17 +121,19 @@
 
 {#if open}
 	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-md animate-fade-in"
+		class="animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-md"
 	>
 		<div
-			class="rs-panel flex h-[85vh] w-full max-w-6xl flex-col overflow-hidden shadow-2xl animate-slide-in-up"
+			class="rs-panel animate-slide-in-up flex h-[85vh] w-full max-w-6xl flex-col overflow-hidden shadow-2xl"
 		>
 			<!-- Toolbar -->
 			<div
 				class="flex items-center justify-between border-b border-base-300/50 bg-base-100/80 px-6 py-4 backdrop-blur-md"
 			>
 				<div class="flex items-center gap-3">
-					<div class="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-soft text-brand">
+					<div
+						class="bg-brand-soft text-brand flex h-10 w-10 items-center justify-center rounded-xl"
+					>
 						<Palette size={20} />
 					</div>
 					<div>
@@ -141,11 +143,11 @@
 				</div>
 
 				<div class="flex gap-2">
-					<button class="btn btn-ghost btn-sm px-4" on:click={() => dispatch('close')}>
+					<button class="btn px-4 btn-ghost btn-sm" on:click={() => dispatch('close')}>
 						<X size={16} />
 						<span>Cancel</span>
 					</button>
-					<button class="btn btn-primary btn-sm px-6" on:click={handleSave}>
+					<button class="btn px-6 btn-sm btn-primary" on:click={handleSave}>
 						<Save size={16} />
 						<span>Insert Sketch</span>
 					</button>
@@ -158,7 +160,7 @@
 					{#if !ExcalidrawComp}
 						<div class="flex h-full items-center justify-center">
 							<div class="flex flex-col items-center gap-3">
-								<div class="loading loading-spinner loading-lg text-brand"></div>
+								<div class="text-brand loading loading-lg loading-spinner"></div>
 								<span class="text-sm font-medium text-base-content/40">Loading Excalidraw...</span>
 							</div>
 						</div>

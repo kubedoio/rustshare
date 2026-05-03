@@ -29,9 +29,11 @@ use tokio::sync::Mutex;
 use tracing::info;
 
 struct Services {
-    file_service: Arc<FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>>,
+    file_service:
+        Arc<FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>>,
     folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
-    share_service: Arc<ShareService<EventStore, MetadataStore, JwtManager, ShareNotificationRepoImpl>>,
+    share_service:
+        Arc<ShareService<EventStore, MetadataStore, JwtManager, ShareNotificationRepoImpl>>,
     note_service: Arc<crate::services::note_service::NoteService>,
     decision_service: Arc<crate::services::decision_service::DecisionService>,
     meeting_service: Arc<crate::services::meeting_service::MeetingService>,
@@ -155,7 +157,13 @@ async fn init_services(
     folder_repository: Arc<FolderRepository>,
     permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
 ) -> Result<Services> {
-    let (file_service, folder_service, share_notification_repo, thumbnail_service, notification_service) = tokio::join!(
+    let (
+        file_service,
+        folder_service,
+        share_notification_repo,
+        thumbnail_service,
+        notification_service,
+    ) = tokio::join!(
         async {
             Arc::new(FileService::new(
                 Arc::clone(&event_store),
@@ -183,7 +191,16 @@ async fn init_services(
         async { Arc::new(NotificationService::new(notification_repository)) },
     );
 
-    let (share_service, note_service, decision_service, meeting_service, module_service, template_service, kanban_service, brainstorming_service) = tokio::join!(
+    let (
+        share_service,
+        note_service,
+        decision_service,
+        meeting_service,
+        module_service,
+        template_service,
+        kanban_service,
+        brainstorming_service,
+    ) = tokio::join!(
         async {
             Arc::new(ShareService::new(
                 Arc::clone(&event_store),
@@ -240,12 +257,14 @@ async fn init_services(
             ))
         },
         async {
-            Arc::new(crate::services::brainstorming_service::BrainstormingService::new(
-                Arc::clone(&file_service),
-                Arc::clone(&folder_service),
-                Arc::clone(&metadata_store),
-                Arc::clone(&object_store),
-            ))
+            Arc::new(
+                crate::services::brainstorming_service::BrainstormingService::new(
+                    Arc::clone(&file_service),
+                    Arc::clone(&folder_service),
+                    Arc::clone(&metadata_store),
+                    Arc::clone(&object_store),
+                ),
+            )
         },
     );
 
@@ -433,9 +452,14 @@ pub async fn init_app() -> Result<AppState> {
 
         metadata_store.create_user(&admin_user).await?;
 
-        let pref_repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(db_pool.clone());
+        let pref_repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(
+            db_pool.clone(),
+        );
         if let Err(e) = pref_repo.seed_defaults(admin_user.id).await {
-            tracing::warn!("Failed to seed default module preferences for admin: {:?}", e);
+            tracing::warn!(
+                "Failed to seed default module preferences for admin: {:?}",
+                e
+            );
         }
 
         info!("╔══════════════════════════════════════════════════════════════════╗");

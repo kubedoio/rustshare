@@ -122,9 +122,18 @@ async fn test_restore_preserves_file_identity_and_path() {
         .expect("Failed to restore");
 
     // Verify identity and path are preserved
-    assert_eq!(restored.id, original_id, "File ID should be preserved after restore");
-    assert_eq!(restored.name, original_name, "File name should be preserved");
-    assert_eq!(restored.path, original_path, "File path should be preserved");
+    assert_eq!(
+        restored.id, original_id,
+        "File ID should be preserved after restore"
+    );
+    assert_eq!(
+        restored.name, original_name,
+        "File name should be preserved"
+    );
+    assert_eq!(
+        restored.path, original_path,
+        "File path should be preserved"
+    );
     assert_eq!(
         restored.parent_folder_id, original_parent,
         "Parent folder should be preserved"
@@ -183,7 +192,10 @@ async fn test_backup_artifacts_structure() {
         .expect("Failed to list versions");
 
     // Each file should have at least one version
-    assert!(!versions1.is_empty(), "File should have versions for backup");
+    assert!(
+        !versions1.is_empty(),
+        "File should have versions for backup"
+    );
 
     // Verify tenant_id is consistent
     assert_eq!(file1.tenant_id, tenant_id);
@@ -319,7 +331,10 @@ async fn test_restore_nonexistent_version_fails() {
     let result = file_service.restore_version(file.id, 99, user.id).await;
 
     assert!(
-        matches!(result, Err(rustshare_core::services::FileError::VersionNotFound(99))),
+        matches!(
+            result,
+            Err(rustshare_core::services::FileError::VersionNotFound(99))
+        ),
         "Restoring non-existent version should fail with VersionNotFound"
     );
 

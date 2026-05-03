@@ -10,8 +10,8 @@ use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use crate::services::icon_registry::is_approved_icon_key;
+use rustshare_infrastructure::repositories::PermissionResolverRepository;
 
 /// Errors that can occur in module operations.
 #[derive(Debug, thiserror::Error)]
@@ -329,7 +329,8 @@ impl ModuleService {
                 .collect::<Vec<_>>();
 
             for module in enabled_modules {
-                self.ensure_module_root_folder(&module, admin_id, tenant_id).await?;
+                self.ensure_module_root_folder(&module, admin_id, tenant_id)
+                    .await?;
             }
         }
 
@@ -453,7 +454,10 @@ impl ModuleService {
             Some(module.ui_config),
         );
 
-        Module { ui_config, ..module }
+        Module {
+            ui_config,
+            ..module
+        }
     }
 
     /// Update module config (admin only). Only certain fields are mutable.
@@ -482,19 +486,25 @@ impl ModuleService {
             if let Some(sidebar) = ui.get("sidebar").and_then(|v| v.as_object()) {
                 if let Some(order) = sidebar.get("order").and_then(|v| v.as_i64()) {
                     if order < 0 || order > 1000 {
-                        return Err(ModuleError::InvalidData("Sidebar order must be between 0 and 1000".to_string()));
+                        return Err(ModuleError::InvalidData(
+                            "Sidebar order must be between 0 and 1000".to_string(),
+                        ));
                     }
                 }
             }
             if let Some(dashboard) = ui.get("dashboard").and_then(|v| v.as_object()) {
                 if let Some(order) = dashboard.get("order").and_then(|v| v.as_i64()) {
                     if order < 0 || order > 1000 {
-                        return Err(ModuleError::InvalidData("Dashboard order must be between 0 and 1000".to_string()));
+                        return Err(ModuleError::InvalidData(
+                            "Dashboard order must be between 0 and 1000".to_string(),
+                        ));
                     }
                 }
                 if let Some(max) = dashboard.get("maxItems").and_then(|v| v.as_i64()) {
                     if max < 1 || max > 50 {
-                        return Err(ModuleError::InvalidData("Dashboard maxItems must be between 1 and 50".to_string()));
+                        return Err(ModuleError::InvalidData(
+                            "Dashboard maxItems must be between 1 and 50".to_string(),
+                        ));
                     }
                 }
             }
@@ -592,9 +602,16 @@ impl ModuleService {
 
         let total_items = file_count + folder_count;
 
-        let (mode, recent_items, extra) =
-            self.build_summary_for_mode(key, summary_mode, &root_path, &path_prefix, max_items, tenant_id)
-                .await?;
+        let (mode, recent_items, extra) = self
+            .build_summary_for_mode(
+                key,
+                summary_mode,
+                &root_path,
+                &path_prefix,
+                max_items,
+                tenant_id,
+            )
+            .await?;
 
         Ok(ModuleSummary {
             module_key: key.to_string(),
@@ -672,7 +689,9 @@ impl ModuleService {
     ) -> Result<(String, Vec<SummaryItem>, Option<serde_json::Value>), ModuleError> {
         match key {
             "notes" => {
-                let items = self.recent_files_under_path(path_prefix, max_items, tenant_id).await?;
+                let items = self
+                    .recent_files_under_path(path_prefix, max_items, tenant_id)
+                    .await?;
                 Ok(("recent-items".to_string(), items, None))
             }
             "meetings" => {
@@ -682,7 +701,9 @@ impl ModuleService {
                 Ok(("recent-items".to_string(), items, None))
             }
             "standups" => {
-                let items = self.recent_files_under_path(path_prefix, max_items, tenant_id).await?;
+                let items = self
+                    .recent_files_under_path(path_prefix, max_items, tenant_id)
+                    .await?;
                 let today_token = Utc::now().format("%Y-%m-%d").to_string();
                 let today_exists = items.iter().any(|item| item.name.contains(&today_token));
                 Ok((
@@ -705,7 +726,9 @@ impl ModuleService {
                 ))
             }
             "decisions" => {
-                let items = self.recent_files_under_path(path_prefix, max_items, tenant_id).await?;
+                let items = self
+                    .recent_files_under_path(path_prefix, max_items, tenant_id)
+                    .await?;
                 Ok(("recent-items".to_string(), items, None))
             }
             "shares" => {
@@ -734,9 +757,11 @@ impl ModuleService {
             }
             _ => {
                 let items = if summary_mode == "recent-items" {
-                    self.recent_mixed_items(path_prefix, max_items, tenant_id).await?
+                    self.recent_mixed_items(path_prefix, max_items, tenant_id)
+                        .await?
                 } else {
-                    self.recent_mixed_items(path_prefix, max_items, tenant_id).await?
+                    self.recent_mixed_items(path_prefix, max_items, tenant_id)
+                        .await?
                 };
                 Ok(("generic-file-summary".to_string(), items, None))
             }
@@ -855,7 +880,9 @@ impl ModuleService {
         max_items: i64,
         tenant_id: Uuid,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
-        let mut items = self.recent_files_under_path(path_prefix, max_items, tenant_id).await?;
+        let mut items = self
+            .recent_files_under_path(path_prefix, max_items, tenant_id)
+            .await?;
         if (items.len() as i64) < max_items {
             let remaining = max_items - items.len() as i64;
             items.extend(
@@ -880,7 +907,10 @@ impl ModuleService {
         Ok(is_admin)
     }
 
-    async fn find_admin_user_for_tenant(&self, tenant_id: Uuid) -> Result<Option<UserId>, ModuleError> {
+    async fn find_admin_user_for_tenant(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<Option<UserId>, ModuleError> {
         let admin_id = sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM users WHERE tenant_id = $1 AND is_admin = true ORDER BY created_at ASC LIMIT 1",
         )
@@ -967,7 +997,11 @@ fn normalize_module_ui_config(
     let widget_type = widget
         .get("type")
         .and_then(|value| value.as_str())
-        .or_else(|| dashboard.get("summaryMode").and_then(|value| value.as_str()))
+        .or_else(|| {
+            dashboard
+                .get("summaryMode")
+                .and_then(|value| value.as_str())
+        })
         .unwrap_or(default_widget_type(module_key));
     let widget_title = widget
         .get("title")

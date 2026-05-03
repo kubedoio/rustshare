@@ -7,7 +7,9 @@
 	$: percent = quota ? Math.min(100, Math.max(0, (used / quota) * 100)) : 0;
 	$: usedText = formatFileSize(used);
 	$: quotaText = quota ? formatFileSize(quota) : 'Unlimited';
-	$: label = quota ? `Storage usage: ${Math.round(percent)}% of ${quotaText} used` : 'Storage: unlimited';
+	$: label = quota
+		? `Storage usage: ${Math.round(percent)}% of ${quotaText} used`
+		: 'Storage: unlimited';
 
 	// Ring geometry
 	const size = 96;
@@ -22,7 +24,7 @@
 			? 'var(--rs-error, #b63e3e)'
 			: percent > 60
 				? 'var(--rs-warning, #a56a12)'
-					: 'var(--brand-500, #c65a1e)';
+				: 'var(--brand-500, #c65a1e)';
 
 	// Animate on mount
 	let mounted = false;
@@ -75,7 +77,8 @@
 	}
 
 	.ring-fill {
-		transition: stroke-dashoffset 800ms cubic-bezier(0.22, 1, 0.36, 1),
+		transition:
+			stroke-dashoffset 800ms cubic-bezier(0.22, 1, 0.36, 1),
 			stroke 300ms ease;
 	}
 

@@ -233,7 +233,10 @@ async fn test_unfurl_respects_tenant_boundaries() {
     assert!(public_info.is_ok());
 
     let (share_info, _, _) = public_info.unwrap();
-    assert_eq!(share_info.tenant_id, tenant_a, "Unfurl should respect tenant");
+    assert_eq!(
+        share_info.tenant_id, tenant_a,
+        "Unfurl should respect tenant"
+    );
 
     // Cleanup
     cleanup_user(&ctx.pool, user_a.id).await;

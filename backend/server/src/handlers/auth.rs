@@ -210,11 +210,7 @@ pub async fn login(
             .map_err(|e| AuthHandlerError::Internal(e.to_string()))?,
     );
 
-    Ok((
-        response_headers,
-        Json(build_login_response(token, user)),
-    )
-        .into_response())
+    Ok((response_headers, Json(build_login_response(token, user))).into_response())
 }
 
 pub async fn logout(

@@ -120,7 +120,7 @@ pub mod conversions {
             dashboard_config: sqlx::types::Json(
                 doc.dashboard_config
                     .and_then(|v| serde_json::from_value(v).ok())
-                    .unwrap_or_default()
+                    .unwrap_or_default(),
             ),
         }
     }

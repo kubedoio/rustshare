@@ -274,21 +274,21 @@
 
 		if (isMovingCard) return;
 		if (!dragCardId || !dragSourceColumnId || !selectedBoard) return;
-		
+
 		const container = columnRefs[targetColumnId];
 		if (!container) return;
 
 		const dropIndex = getDropIndex(container, e.clientY);
-		const targetColumn = selectedBoard.columns.find(c => c.id === targetColumnId);
+		const targetColumn = selectedBoard.columns.find((c) => c.id === targetColumnId);
 		if (!targetColumn) return;
 
-		const otherCards = targetColumn.cards.filter(c => c.id !== dragCardId);
+		const otherCards = targetColumn.cards.filter((c) => c.id !== dragCardId);
 		const beforeCardId = dropIndex > 0 ? otherCards[dropIndex - 1].id : undefined;
 		const afterCardId = dropIndex < otherCards.length ? otherCards[dropIndex].id : undefined;
 
 		// Don't move if dropped in same position
 		if (targetColumnId === dragSourceColumnId) {
-			const currentIndex = targetColumn.cards.findIndex(c => c.id === dragCardId);
+			const currentIndex = targetColumn.cards.findIndex((c) => c.id === dragCardId);
 			if (currentIndex === dropIndex || currentIndex === dropIndex - 1) {
 				handleDragEnd();
 				return;
@@ -302,12 +302,12 @@
 			// Optimistic update
 			queryClient.setQueryData<KanbanBoard>(queryKey, (old) => {
 				if (!old) return old;
-				
+
 				let movingCard: KanbanCard | undefined;
-				const newColumns = old.columns.map(col => {
+				const newColumns = old.columns.map((col) => {
 					if (col.id === dragSourceColumnId) {
-						movingCard = col.cards.find(c => c.id === dragCardId);
-						return { ...col, cards: col.cards.filter(c => c.id !== dragCardId) };
+						movingCard = col.cards.find((c) => c.id === dragCardId);
+						return { ...col, cards: col.cards.filter((c) => c.id !== dragCardId) };
 					}
 					return col;
 				});
@@ -316,7 +316,7 @@
 
 				return {
 					...old,
-					columns: newColumns.map(col => {
+					columns: newColumns.map((col) => {
 						if (col.id === targetColumnId) {
 							const newCards = [...col.cards];
 							newCards.splice(dropIndex, 0, { ...movingCard!, column_id: targetColumnId });
@@ -362,7 +362,7 @@
 		if (!name) return '??';
 		return name
 			.split(' ')
-			.filter(n => n.length > 0)
+			.filter((n) => n.length > 0)
 			.map((n) => n[0])
 			.join('')
 			.toUpperCase()
@@ -877,7 +877,7 @@
 	<div class="card-detail-drawer">
 		{#if loadingDetail}
 			<div class="flex h-64 items-center justify-center">
-				<span class="loading loading-spinner loading-lg text-brand-500"></span>
+				<span class="loading loading-lg loading-spinner text-brand-500"></span>
 			</div>
 		{:else if cardDetail}
 			<header class="detail-header">
@@ -915,12 +915,12 @@
 					<div class="detail-badges-row">
 						<div class="detail-section">
 							<h4 class="section-label">Labels</h4>
-							<div class="flex flex-wrap gap-1 items-center">
+							<div class="flex flex-wrap items-center gap-1">
 								{#each cardDetail.labels as label}
-									<span class="card-label label-{label.color} relative group">
+									<span class="card-label label-{label.color} group relative">
 										{label.name}
-										<button 
-											class="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center bg-base-content text-base-100 rounded-full w-4 h-4 shadow-sm"
+										<button
+											class="absolute -top-1.5 -right-1.5 hidden h-4 w-4 items-center justify-center rounded-full bg-base-content text-base-100 shadow-sm group-hover:flex"
 											onclick={() => toggleLabel(label.id)}
 										>
 											<X size={10} />
@@ -928,45 +928,55 @@
 									</span>
 								{/each}
 								<div class="relative">
-									<button 
-										class="btn btn-xs btn-ghost border border-dashed border-base-300 hover:border-brand-500 rounded-lg px-2 h-7"
-										onclick={() => { showLabelPicker = !showLabelPicker; showAssigneePicker = false; }}
+									<button
+										class="btn h-7 rounded-lg border border-dashed border-base-300 px-2 btn-ghost btn-xs hover:border-brand-500"
+										onclick={() => {
+											showLabelPicker = !showLabelPicker;
+											showAssigneePicker = false;
+										}}
 									>
 										<Plus size={12} class="mr-1" />
 										<span>Add</span>
 									</button>
 									{#if showLabelPicker && selectedBoard}
-										<div class="absolute left-0 top-full mt-1 z-50 bg-base-100 border border-base-300 rounded-xl shadow-xl p-3 min-w-[200px]">
-											<div class="flex items-center justify-between mb-2">
-												<div class="text-[10px] font-bold text-base-content/40 uppercase">Select Label</div>
-												<button 
-													class="btn btn-ghost btn-xs h-6 px-1 text-brand-500 hover:bg-brand-50"
-													onclick={() => showNewLabelForm = !showNewLabelForm}
+										<div
+											class="absolute top-full left-0 z-50 mt-1 min-w-[200px] rounded-xl border border-base-300 bg-base-100 p-3 shadow-xl"
+										>
+											<div class="mb-2 flex items-center justify-between">
+												<div class="text-[10px] font-bold text-base-content/40 uppercase">
+													Select Label
+												</div>
+												<button
+													class="btn h-6 px-1 text-brand-500 btn-ghost btn-xs hover:bg-brand-50"
+													onclick={() => (showNewLabelForm = !showNewLabelForm)}
 												>
 													{showNewLabelForm ? 'Cancel' : 'New'}
 												</button>
 											</div>
 
 											{#if showNewLabelForm}
-												<div class="flex flex-col gap-2 mb-3 p-2 bg-base-200/50 rounded-lg">
-													<input 
-														type="text" 
-														placeholder="Label name..." 
+												<div class="mb-3 flex flex-col gap-2 rounded-lg bg-base-200/50 p-2">
+													<input
+														type="text"
+														placeholder="Label name..."
 														class="input input-xs h-8 bg-base-100"
 														bind:value={newLabelName}
 														onkeydown={(e) => e.key === 'Enter' && handleCreateLabel()}
 													/>
 													<div class="flex flex-wrap gap-1">
 														{#each ['green', 'yellow', 'orange', 'red', 'purple', 'blue', 'gray'] as color}
-															<button 
+															<button
 																aria-label={color}
-																class="w-5 h-5 rounded-full label-{color} border-2 {newLabelColor === color ? 'border-base-content' : 'border-transparent'}"
-																onclick={() => newLabelColor = color}
+																class="h-5 w-5 rounded-full label-{color} border-2 {newLabelColor ===
+																color
+																	? 'border-base-content'
+																	: 'border-transparent'}"
+																onclick={() => (newLabelColor = color)}
 															></button>
 														{/each}
 													</div>
-													<button 
-														class="btn btn-xs btn-primary w-full h-8"
+													<button
+														class="btn h-8 w-full btn-xs btn-primary"
 														disabled={!newLabelName.trim()}
 														onclick={handleCreateLabel}
 													>
@@ -975,14 +985,14 @@
 												</div>
 											{/if}
 
-											<div class="flex flex-col gap-1 max-h-48 overflow-y-auto">
+											<div class="flex max-h-48 flex-col gap-1 overflow-y-auto">
 												{#each selectedBoard.labels as label}
-													<button 
-														class="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-base-200 text-xs text-left"
+													<button
+														class="flex items-center justify-between rounded-lg px-2 py-1.5 text-left text-xs hover:bg-base-200"
 														onclick={() => toggleLabel(label.id)}
 													>
 														<span class="card-label label-{label.color} !m-0">{label.name}</span>
-														{#if cardDetail.labels.some(l => l.id === label.id)}
+														{#if cardDetail.labels.some((l) => l.id === label.id)}
 															<Check size={12} class="text-brand-500" />
 														{/if}
 													</button>
@@ -996,16 +1006,16 @@
 
 						<div class="detail-section">
 							<h4 class="section-label">Assignees</h4>
-							<div class="flex flex-wrap gap-1 items-center">
+							<div class="flex flex-wrap items-center gap-1">
 								{#each cardDetail.assignees as assignee}
-									<div class="assignee-avatar relative group" title={assignee.display_name}>
+									<div class="assignee-avatar group relative" title={assignee.display_name}>
 										{#if assignee.avatar_url}
 											<img src={assignee.avatar_url} alt={assignee.display_name} />
 										{:else}
 											<span>{assignee.initials}</span>
 										{/if}
-										<button 
-											class="absolute -top-1 -right-1 hidden group-hover:flex items-center justify-center bg-base-content text-base-100 rounded-full w-4 h-4 shadow-sm z-10"
+										<button
+											class="absolute -top-1 -right-1 z-10 hidden h-4 w-4 items-center justify-center rounded-full bg-base-content text-base-100 shadow-sm group-hover:flex"
 											onclick={() => toggleAssignee(assignee.id)}
 										>
 											<X size={10} />
@@ -1013,22 +1023,29 @@
 									</div>
 								{/each}
 								<div class="relative">
-									<button 
-										class="btn btn-xs btn-ghost border border-dashed border-base-300 hover:border-brand-500 rounded-full w-8 h-8 p-0"
-										onclick={() => { showAssigneePicker = !showAssigneePicker; showLabelPicker = false; }}
+									<button
+										class="btn h-8 w-8 rounded-full border border-dashed border-base-300 p-0 btn-ghost btn-xs hover:border-brand-500"
+										onclick={() => {
+											showAssigneePicker = !showAssigneePicker;
+											showLabelPicker = false;
+										}}
 									>
 										<Plus size={14} />
 									</button>
 									{#if showAssigneePicker}
-										<div class="absolute left-0 top-full mt-1 z-50 bg-base-100 border border-base-300 rounded-xl shadow-xl p-2 min-w-[200px]">
-											<div class="text-[10px] font-bold text-base-content/40 uppercase px-2 mb-1">Assign Member</div>
-											<div class="flex flex-col gap-1 max-h-48 overflow-y-auto">
+										<div
+											class="absolute top-full left-0 z-50 mt-1 min-w-[200px] rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl"
+										>
+											<div class="mb-1 px-2 text-[10px] font-bold text-base-content/40 uppercase">
+												Assign Member
+											</div>
+											<div class="flex max-h-48 flex-col gap-1 overflow-y-auto">
 												{#each assignableUsers as user}
-													<button 
-														class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-base-200 text-xs text-left w-full"
+													<button
+														class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-base-200"
 														onclick={() => toggleAssignee(user.id)}
 													>
-														<div class="assignee-avatar !w-6 !h-6 !text-[10px]">
+														<div class="assignee-avatar !h-6 !w-6 !text-[10px]">
 															{#if user.avatar_url}
 																<img src={user.avatar_url} alt={user.display_name} />
 															{:else}
@@ -1036,7 +1053,7 @@
 															{/if}
 														</div>
 														<span class="flex-1 truncate">{user.display_name}</span>
-														{#if cardDetail.assignees.some(a => a.id === user.id)}
+														{#if cardDetail.assignees.some((a) => a.id === user.id)}
 															<Check size={12} class="text-brand-500" />
 														{/if}
 													</button>
@@ -1051,7 +1068,7 @@
 
 					<!-- Description -->
 					<div class="detail-section">
-						<div class="flex items-center gap-2 mb-2">
+						<div class="mb-2 flex items-center gap-2">
 							<AlignLeft size={18} class="text-base-content/60" />
 							<h4 class="section-label !mb-0">Description</h4>
 						</div>
@@ -1066,12 +1083,12 @@
 							/>
 							<div class="mt-2 flex justify-end">
 								<button
-									class="btn btn-primary btn-sm"
+									class="btn btn-sm btn-primary"
 									disabled={savingDetail}
 									onclick={saveCardDetail}
 								>
 									{#if savingDetail}
-										<span class="loading loading-spinner loading-xs"></span>
+										<span class="loading loading-xs loading-spinner"></span>
 									{/if}
 									Save Changes
 								</button>
@@ -1081,18 +1098,18 @@
 
 					<!-- Attachments -->
 					<div class="detail-section">
-						<div class="flex items-center justify-between mb-4">
+						<div class="mb-4 flex items-center justify-between">
 							<div class="flex items-center gap-2">
 								<Paperclip size={18} class="text-base-content/60" />
 								<h4 class="section-label !mb-0">Attachments</h4>
 							</div>
-							<label class="btn btn-xs btn-ghost gap-1">
+							<label class="btn gap-1 btn-ghost btn-xs">
 								<Plus size={14} />
 								Add
 								<input type="file" class="hidden" onchange={handleFileUpload} />
 							</label>
 						</div>
-						
+
 						{#if cardDetail.attachments.length > 0}
 							<div class="grid grid-cols-1 gap-2">
 								{#each cardDetail.attachments as attachment}
@@ -1108,8 +1125,8 @@
 												)}
 											</div>
 										</div>
-										<button 
-											class="btn btn-ghost btn-xs opacity-0 group-hover:opacity-100 text-error"
+										<button
+											class="btn text-error opacity-0 btn-ghost btn-xs group-hover:opacity-100"
 											onclick={() => deleteAttachment(attachment.id)}
 										>
 											<Trash2 size={14} />
@@ -1118,12 +1135,12 @@
 								{/each}
 							</div>
 						{:else}
-							<div class="text-xs text-base-content/40 italic px-2">No attachments yet.</div>
+							<div class="px-2 text-xs text-base-content/40 italic">No attachments yet.</div>
 						{/if}
-						
+
 						{#if uploadingAttachment}
 							<div class="mt-2 flex items-center gap-2 text-xs text-base-content/60">
-								<span class="loading loading-spinner loading-xs"></span>
+								<span class="loading loading-xs loading-spinner"></span>
 								Uploading...
 							</div>
 						{/if}
@@ -1131,16 +1148,16 @@
 
 					<!-- Checklists -->
 					<div class="detail-section">
-						<div class="flex items-center justify-between mb-4">
+						<div class="mb-4 flex items-center justify-between">
 							<div class="flex items-center gap-2">
 								<CheckSquare size={18} class="text-base-content/60" />
 								<h4 class="section-label !mb-0">Checklists</h4>
 							</div>
 							<div class="flex items-center gap-2">
-								<input 
-									type="text" 
-									placeholder="New checklist..." 
-									class="input input-xs input-bordered w-32"
+								<input
+									type="text"
+									placeholder="New checklist..."
+									class="input-bordered input input-xs w-32"
 									bind:value={newChecklistTitle}
 									onkeydown={(e) => e.key === 'Enter' && handleAddChecklist()}
 								/>
@@ -1149,43 +1166,58 @@
 						</div>
 
 						{#each cardDetail.checklists as checklist}
-							<div class="mb-6 last:mb-0 bg-base-200/20 p-4 rounded-xl border border-base-200/50">
-								<div class="flex items-center justify-between mb-2">
-									<h5 class="text-sm font-bold flex items-center gap-2">
+							<div class="mb-6 rounded-xl border border-base-200/50 bg-base-200/20 p-4 last:mb-0">
+								<div class="mb-2 flex items-center justify-between">
+									<h5 class="flex items-center gap-2 text-sm font-bold">
 										{checklist.title}
-										<span class="text-[10px] bg-base-200 px-1.5 py-0.5 rounded-full font-medium text-base-content/60">
-											{checklist.items.filter(i => i.done).length}/{checklist.items.length}
+										<span
+											class="rounded-full bg-base-200 px-1.5 py-0.5 text-[10px] font-medium text-base-content/60"
+										>
+											{checklist.items.filter((i) => i.done).length}/{checklist.items.length}
 										</span>
 									</h5>
-									<button 
-										class="btn btn-ghost btn-xs text-error/40 hover:text-error"
+									<button
+										class="btn text-error/40 btn-ghost btn-xs hover:text-error"
 										onclick={() => handleDeleteChecklist(checklist.id)}
 									>
 										<Trash2 size={12} />
 									</button>
 								</div>
 
-								<div class="w-full bg-base-200 h-1.5 rounded-full mb-3 overflow-hidden">
-									<div 
-										class="bg-success h-full transition-all duration-300" 
-										style="width: {(checklist.items.filter(i => i.done).length / (checklist.items.length || 1)) * 100}%"
+								<div class="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-base-200">
+									<div
+										class="h-full bg-success transition-all duration-300"
+										style="width: {(checklist.items.filter((i) => i.done).length /
+											(checklist.items.length || 1)) *
+											100}%"
 									></div>
 								</div>
 
-								<div class="flex flex-col gap-1 mb-3">
+								<div class="mb-3 flex flex-col gap-1">
 									{#each checklist.items as item}
-										<div class="flex items-center gap-2 group p-1 hover:bg-base-200/50 rounded-lg transition-colors">
-											<input 
-												type="checkbox" 
-												checked={item.done} 
+										<div
+											class="group flex items-center gap-2 rounded-lg p-1 transition-colors hover:bg-base-200/50"
+										>
+											<input
+												type="checkbox"
+												checked={item.done}
 												class="checkbox checkbox-xs checkbox-primary"
-												onchange={(e) => handleToggleItem(checklist.id, item.id, (e.target as HTMLInputElement).checked)}
+												onchange={(e) =>
+													handleToggleItem(
+														checklist.id,
+														item.id,
+														(e.target as HTMLInputElement).checked
+													)}
 											/>
-											<span class="text-sm flex-1" class:line-through={item.done} class:opacity-50={item.done}>
+											<span
+												class="flex-1 text-sm"
+												class:line-through={item.done}
+												class:opacity-50={item.done}
+											>
 												{item.text}
 											</span>
-											<button 
-												class="btn btn-ghost btn-xs opacity-0 group-hover:opacity-100 text-base-content/20 hover:text-error"
+											<button
+												class="btn text-base-content/20 opacity-0 btn-ghost btn-xs group-hover:opacity-100 hover:text-error"
 												onclick={() => handleDeleteItem(checklist.id, item.id)}
 											>
 												<X size={12} />
@@ -1195,15 +1227,15 @@
 								</div>
 
 								<div class="flex items-center gap-2">
-									<input 
-										type="text" 
-										placeholder="Add an item..." 
-										class="input input-xs input-bordered flex-1"
+									<input
+										type="text"
+										placeholder="Add an item..."
+										class="input-bordered input input-xs flex-1"
 										bind:value={newChecklistItemText[checklist.id]}
 										onkeydown={(e) => e.key === 'Enter' && handleAddChecklistItem(checklist.id)}
 									/>
-									<button 
-										class="btn btn-xs btn-ghost" 
+									<button
+										class="btn btn-ghost btn-xs"
 										onclick={() => handleAddChecklistItem(checklist.id)}
 									>
 										Add
@@ -1213,13 +1245,13 @@
 						{/each}
 
 						{#if cardDetail.checklists.length === 0}
-							<div class="text-xs text-base-content/40 italic px-2">No checklists yet.</div>
+							<div class="px-2 text-xs text-base-content/40 italic">No checklists yet.</div>
 						{/if}
 					</div>
 
 					<!-- Activity -->
 					<div class="detail-section">
-						<div class="flex items-center gap-2 mb-4">
+						<div class="mb-4 flex items-center gap-2">
 							<Activity size={18} class="text-base-content/60" />
 							<h4 class="section-label !mb-0">Activity</h4>
 						</div>
@@ -1232,7 +1264,7 @@
 									<div class="activity-body">
 										<div class="activity-header">
 											<span class="font-bold">{event.actor}</span>
-											<span class="text-base-content/40 ml-1"
+											<span class="ml-1 text-base-content/40"
 												>{formatActivityDate(event.timestamp)}</span
 											>
 										</div>

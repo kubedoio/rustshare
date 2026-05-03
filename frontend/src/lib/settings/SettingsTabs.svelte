@@ -11,7 +11,16 @@
 </script>
 
 <script lang="ts">
-	import { User, Shield, Bell, Smartphone, Palette, Share2, Activity, LayoutGrid } from 'lucide-svelte';
+	import {
+		User,
+		Shield,
+		Bell,
+		Smartphone,
+		Palette,
+		Share2,
+		Activity,
+		LayoutGrid
+	} from 'lucide-svelte';
 
 	export let activeTab: TabId = 'general';
 	export let onTabChange: (tab: TabId) => void;

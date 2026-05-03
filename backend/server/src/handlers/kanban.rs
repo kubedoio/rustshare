@@ -16,10 +16,7 @@ use crate::{
 
 use crate::services::module_service::ModuleError;
 
-async fn require_kanban_enabled(
-    state: &AppState,
-    tenant_id: Uuid,
-) -> Result<(), Response> {
+async fn require_kanban_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), Response> {
     let module = state.module_service.get_module("kanban", tenant_id).await;
     let module = match module {
         Ok(m) => m,
@@ -50,8 +47,9 @@ async fn require_kanban_enabled(
 
 use crate::services::kanban_service::{
     CreateBoardInput, CreateCardInput, CreateLabelInput, KanbanAssignee, KanbanBoard,
-    KanbanBoardSummary, KanbanCard, KanbanCardDetail, KanbanError, KanbanLabel, MoveCardInput,
-    UpdateBoardInput, UpdateCardInput, UpdateLabelInput, KanbanChecklistGroup, KanbanChecklistItem, KanbanCardAttachment
+    KanbanBoardSummary, KanbanCard, KanbanCardAttachment, KanbanCardDetail, KanbanChecklistGroup,
+    KanbanChecklistItem, KanbanError, KanbanLabel, MoveCardInput, UpdateBoardInput,
+    UpdateCardInput, UpdateLabelInput,
 };
 use axum::extract::Multipart;
 
@@ -280,7 +278,9 @@ pub async fn assign_card_member(
     require_kanban_enabled(&state, auth.tenant_id).await?;
     let assignee_id = payload["assigneeId"]
         .as_str()
-        .ok_or_else(|| kanban_error_response(KanbanError::InvalidData("assigneeId required".into())))?
+        .ok_or_else(|| {
+            kanban_error_response(KanbanError::InvalidData("assigneeId required".into()))
+        })?
         .to_string();
 
     state
@@ -470,14 +470,20 @@ pub async fn add_card_attachment(
     let mut file_name: Option<String> = None;
 
     while let Some(field) = multipart.next_field().await.map_err(|e| {
-        kanban_error_response(KanbanError::Storage(format!("Failed to read multipart field: {}", e)))
+        kanban_error_response(KanbanError::Storage(format!(
+            "Failed to read multipart field: {}",
+            e
+        )))
     })? {
         let field_name = field.name().unwrap_or("").to_string();
         match field_name.as_str() {
             "file" => {
                 file_name = field.file_name().map(|s| s.to_string());
                 file_data = Some(field.bytes().await.map_err(|e| {
-                    kanban_error_response(KanbanError::Storage(format!("Failed to read file data: {}", e)))
+                    kanban_error_response(KanbanError::Storage(format!(
+                        "Failed to read file data: {}",
+                        e
+                    )))
                 })?);
             }
             _ => {}
@@ -497,7 +503,14 @@ pub async fn add_card_attachment(
 
     let attachment = state
         .kanban_service
-        .add_card_attachment(card_id, file_name, file_data, mime_type, auth.user_id, auth.tenant_id)
+        .add_card_attachment(
+            card_id,
+            file_name,
+            file_data,
+            mime_type,
+            auth.user_id,
+            auth.tenant_id,
+        )
         .await
         .map_err(kanban_error_response)?;
 
@@ -563,7 +576,13 @@ pub async fn create_checklist_item(
     require_kanban_enabled(&state, auth.tenant_id).await?;
     let item = state
         .kanban_service
-        .add_checklist_item(card_id, checklist_id, req.text, auth.user_id, auth.tenant_id)
+        .add_checklist_item(
+            card_id,
+            checklist_id,
+            req.text,
+            auth.user_id,
+            auth.tenant_id,
+        )
         .await
         .map_err(kanban_error_response)?;
 
@@ -579,7 +598,14 @@ pub async fn toggle_checklist_item(
     require_kanban_enabled(&state, auth.tenant_id).await?;
     state
         .kanban_service
-        .toggle_checklist_item(card_id, checklist_id, item_id, req.done, auth.user_id, auth.tenant_id)
+        .toggle_checklist_item(
+            card_id,
+            checklist_id,
+            item_id,
+            req.done,
+            auth.user_id,
+            auth.tenant_id,
+        )
         .await
         .map_err(kanban_error_response)?;
 

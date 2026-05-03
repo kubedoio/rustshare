@@ -188,21 +188,22 @@ describe('KanbanModuleView', () => {
 	});
 
 	it('opens card detail when a card is clicked', async () => {
-		global.fetch = vi.fn(async () =>
-			new Response(
-				JSON.stringify({
-					id: 'card-1',
-					title: 'Define MVP',
-					content: '# Define MVP\n\nDetails here.',
-					status: 'backlog',
-					labels: [],
-					assignees: [],
-					attachments: [],
-					checklists: [],
-					activity: []
-				}),
-				{ status: 200, headers: { 'Content-Type': 'application/json' } }
-			)
+		global.fetch = vi.fn(
+			async () =>
+				new Response(
+					JSON.stringify({
+						id: 'card-1',
+						title: 'Define MVP',
+						content: '# Define MVP\n\nDetails here.',
+						status: 'backlog',
+						labels: [],
+						assignees: [],
+						attachments: [],
+						checklists: [],
+						activity: []
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
 		) as any;
 
 		render(KanbanModuleView, { module: mockModule as any });

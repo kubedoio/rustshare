@@ -67,16 +67,53 @@
 			actionLabel={emptyAction}
 			onAction={handleCreateFromTemplate}
 		/>
+	{:else if isGallery}
+		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+			{#each contents.folders ?? [] as folder}
+				<a
+					href="/files?folder={folder.id}"
+					class="group flex flex-col gap-3 rounded-xl border border-base-300/40 p-4 transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
+				>
+					<div class="flex h-10 w-10 items-center justify-center rounded-lg bg-info/10 text-info">
+						<Folder size={18} />
+					</div>
+					<div class="flex flex-col">
+						<span class="text-sm font-medium text-base-content">{folder.name}</span>
+						<span class="text-xs text-base-content/40">{folder.path}</span>
+					</div>
+				</a>
+			{/each}
+
+			{#each contents.files ?? [] as file}
+				<a
+					href="/files?preview={file.id}"
+					class="group flex flex-col gap-3 rounded-xl border border-base-300/40 p-4 transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
+				>
+					<div
+						class="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
+					>
+						<FileText size={18} />
+					</div>
+					<div class="flex flex-col">
+						<span class="text-sm font-medium text-base-content">{file.name}</span>
+						<span class="text-xs text-base-content/40">{file.path}</span>
+					</div>
+				</a>
+			{/each}
+		</div>
 	{:else}
-		{#if isGallery}
-			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-				{#each contents.folders ?? [] as folder}
+		<div class="flex flex-col gap-2">
+			{#if contents.folders?.length > 0}
+				<div class="mb-2 text-xs font-semibold tracking-wider text-base-content/40 uppercase">
+					Folders
+				</div>
+				{#each contents.folders as folder}
 					<a
 						href="/files?folder={folder.id}"
-						class="group flex flex-col gap-3 rounded-xl border border-base-300/40 p-4 transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
+						class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
 					>
-						<div class="flex h-10 w-10 items-center justify-center rounded-lg bg-info/10 text-info">
-							<Folder size={18} />
+						<div class="flex h-9 w-9 items-center justify-center rounded-lg bg-info/10 text-info">
+							<Folder size={16} />
 						</div>
 						<div class="flex flex-col">
 							<span class="text-sm font-medium text-base-content">{folder.name}</span>
@@ -84,16 +121,21 @@
 						</div>
 					</a>
 				{/each}
+			{/if}
 
-				{#each contents.files ?? [] as file}
+			{#if contents.files?.length > 0}
+				<div class="mt-4 mb-2 text-xs font-semibold tracking-wider text-base-content/40 uppercase">
+					Files
+				</div>
+				{#each contents.files as file}
 					<a
 						href="/files?preview={file.id}"
-						class="group flex flex-col gap-3 rounded-xl border border-base-300/40 p-4 transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
+						class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
 					>
 						<div
-							class="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
+							class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
 						>
-							<FileText size={18} />
+							<FileText size={16} />
 						</div>
 						<div class="flex flex-col">
 							<span class="text-sm font-medium text-base-content">{file.name}</span>
@@ -101,52 +143,7 @@
 						</div>
 					</a>
 				{/each}
-			</div>
-		{:else}
-			<div class="flex flex-col gap-2">
-				{#if contents.folders?.length > 0}
-					<div class="mb-2 text-xs font-semibold tracking-wider text-base-content/40 uppercase">
-						Folders
-					</div>
-					{#each contents.folders as folder}
-						<a
-							href="/files?folder={folder.id}"
-							class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
-						>
-							<div class="flex h-9 w-9 items-center justify-center rounded-lg bg-info/10 text-info">
-								<Folder size={16} />
-							</div>
-							<div class="flex flex-col">
-								<span class="text-sm font-medium text-base-content">{folder.name}</span>
-								<span class="text-xs text-base-content/40">{folder.path}</span>
-							</div>
-						</a>
-					{/each}
-				{/if}
-
-				{#if contents.files?.length > 0}
-					<div class="mt-4 mb-2 text-xs font-semibold tracking-wider text-base-content/40 uppercase">
-						Files
-					</div>
-					{#each contents.files as file}
-						<a
-							href="/files?preview={file.id}"
-							class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
-						>
-							<div
-								class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
-							>
-								<FileText size={16} />
-							</div>
-							<div class="flex flex-col">
-								<span class="text-sm font-medium text-base-content">{file.name}</span>
-								<span class="text-xs text-base-content/40">{file.path}</span>
-							</div>
-						</a>
-					{/each}
-				{/if}
-			</div>
-		{/if}
+			{/if}
+		</div>
 	{/if}
 </div>
-

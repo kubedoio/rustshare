@@ -10,10 +10,7 @@ impl UserModulePreferenceRepository {
         Self { pool }
     }
 
-    pub async fn get_for_user(
-        &self,
-        user_id: UserId,
-    ) -> anyhow::Result<Vec<UserModulePreference>> {
+    pub async fn get_for_user(&self, user_id: UserId) -> anyhow::Result<Vec<UserModulePreference>> {
         let rows = sqlx::query_as::<_, UserModulePreference>(
             r#"
             SELECT user_id, module_key, enabled, created_at, updated_at

@@ -72,10 +72,7 @@ export async function updateKanbanCard(
 	return apiClient.patch<KanbanCard>(`/modules/kanban/cards/${cardId}`, input);
 }
 
-export async function updateCardDescription(
-	cardId: string,
-	content: string
-): Promise<KanbanCard> {
+export async function updateCardDescription(cardId: string, content: string): Promise<KanbanCard> {
 	return apiClient.put<KanbanCard>(`/modules/kanban/cards/${cardId}/description`, { content });
 }
 
@@ -151,7 +148,10 @@ export async function unassignCardMember(cardId: string, assigneeId: string): Pr
 export async function addCardAttachment(cardId: string, file: File): Promise<KanbanCardAttachment> {
 	const formData = new FormData();
 	formData.append('file', file);
-	return apiClient.post<KanbanCardAttachment>(`/modules/kanban/cards/${cardId}/attachments`, formData);
+	return apiClient.post<KanbanCardAttachment>(
+		`/modules/kanban/cards/${cardId}/attachments`,
+		formData
+	);
 }
 
 export async function deleteCardAttachment(cardId: string, attachmentId: string): Promise<void> {
@@ -159,8 +159,13 @@ export async function deleteCardAttachment(cardId: string, attachmentId: string)
 }
 
 // Checklists
-export async function createChecklist(cardId: string, title: string): Promise<KanbanChecklistGroup> {
-	return apiClient.post<KanbanChecklistGroup>(`/modules/kanban/cards/${cardId}/checklists`, { title });
+export async function createChecklist(
+	cardId: string,
+	title: string
+): Promise<KanbanChecklistGroup> {
+	return apiClient.post<KanbanChecklistGroup>(`/modules/kanban/cards/${cardId}/checklists`, {
+		title
+	});
 }
 
 export async function createChecklistItem(
@@ -180,9 +185,12 @@ export async function toggleChecklistItem(
 	itemId: string,
 	done: boolean
 ): Promise<void> {
-	await apiClient.patch(`/modules/kanban/cards/${cardId}/checklists/${checklistId}/items/${itemId}`, {
-		done
-	});
+	await apiClient.patch(
+		`/modules/kanban/cards/${cardId}/checklists/${checklistId}/items/${itemId}`,
+		{
+			done
+		}
+	);
 }
 
 export async function deleteChecklistItem(
@@ -190,7 +198,9 @@ export async function deleteChecklistItem(
 	checklistId: string,
 	itemId: string
 ): Promise<void> {
-	await apiClient.delete(`/modules/kanban/cards/${cardId}/checklists/${checklistId}/items/${itemId}`);
+	await apiClient.delete(
+		`/modules/kanban/cards/${cardId}/checklists/${checklistId}/items/${itemId}`
+	);
 }
 
 export async function deleteChecklist(cardId: string, checklistId: string): Promise<void> {
