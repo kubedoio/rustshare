@@ -30,7 +30,7 @@ describe('detectStorageType', () => {
 
 	it('detects folder-backed from module context', () => {
 		expect(
-			detectStorageType({ sourcePath: 'doc.md', moduleKey: 'notes', rootPath: '/Notes' })
+			detectStorageType({ sourcePath: 'doc.md', moduleKey: 'notes', rootPath: '/Workspace/Notes' })
 		).toBe('folder-backed');
 	});
 

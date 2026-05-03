@@ -24,7 +24,7 @@ const mockModule = {
 	displayName: 'Brainstorming',
 	description: 'Visual decision boards.',
 	enabled: true,
-	rootPath: '/Brainstorming',
+	rootPath: '/Workspace/Brainstorming',
 	renderer: 'brainstorming',
 	defaultTemplate: 'template_blank_brainstorm',
 	schemaVersion: '1.0',

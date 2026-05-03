@@ -6,6 +6,7 @@
 	import { FileText, Plus, Clock, Folder } from 'lucide-svelte';
 
 	import { listNotes, createNote } from '$lib/api/notes';
+	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
 	export let module: ModuleDefinition;
@@ -32,9 +33,12 @@
 		}
 	}
 
-	function handleOpenInFiles() {
+	async function handleOpenInFiles() {
 		if (module.rootPath) {
-			goto(`/files?path=${encodeURIComponent(module.rootPath)}`);
+			const folderId = await resolveModuleFolderId(module.rootPath);
+			if (folderId) {
+				goto(`/files?folder=${folderId}`);
+			}
 		}
 	}
 

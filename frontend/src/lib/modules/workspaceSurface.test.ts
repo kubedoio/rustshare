@@ -13,7 +13,7 @@ const baseModule: ModuleConfig = {
 	display_name: 'Notes',
 	description: 'Recent notes.',
 	enabled: true,
-	root_path: '/Notes',
+	root_path: '/Workspace/Notes',
 	renderer: 'notes',
 	default_template: 'template_default_note',
 	icon: 'sticky-note',

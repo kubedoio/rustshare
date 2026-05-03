@@ -5,6 +5,7 @@
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
+	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 	import { PenTool, Plus, Clock, ImageOff, Folder } from 'lucide-svelte';
 	import { formatDistanceToNow } from 'date-fns';
@@ -64,9 +65,12 @@
 		createBoardMutation.mutate({ title, templateKey: selectedTemplate });
 	}
 
-	function handleOpenInFiles() {
+	async function handleOpenInFiles() {
 		if (module.rootPath) {
-			goto(`/files?path=${encodeURIComponent(module.rootPath)}`);
+			const folderId = await resolveModuleFolderId(module.rootPath);
+			if (folderId) {
+				goto(`/files?folder=${folderId}`);
+			}
 		}
 	}
 

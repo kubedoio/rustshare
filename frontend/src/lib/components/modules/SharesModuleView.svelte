@@ -7,6 +7,7 @@
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { Folder, Plus, ArrowRight } from 'lucide-svelte';
 
+	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
 	export let module: ModuleDefinition;
@@ -42,9 +43,12 @@
 		}
 	}
 
-	function handleOpenInFiles() {
+	async function handleOpenInFiles() {
 		if (module.rootPath) {
-			goto(`/files?path=${encodeURIComponent(module.rootPath)}`);
+			const folderId = await resolveModuleFolderId(module.rootPath);
+			if (folderId) {
+				goto(`/files?folder=${folderId}`);
+			}
 		}
 	}
 

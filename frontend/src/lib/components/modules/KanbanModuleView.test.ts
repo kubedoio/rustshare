@@ -311,7 +311,7 @@ const mockModule = {
 	displayName: 'Kanban Dashboard',
 	description: 'Manage file-backed boards and track work.',
 	enabled: true,
-	rootPath: '/Kanban',
+	rootPath: '/Workspace/Kanban',
 	renderer: 'kanban',
 	defaultTemplate: 'template_default_kanban',
 	schemaVersion: '1.0',

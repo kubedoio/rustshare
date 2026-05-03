@@ -256,7 +256,9 @@ impl MeetingService {
 
         let mut summaries = Vec::new();
         for folder in folders {
-            if !folder.path.starts_with("/Meetings/") {
+            if !(folder.path.starts_with("/Meetings/")
+                || folder.path.starts_with("/Workspace/Meetings/"))
+            {
                 continue;
             }
 

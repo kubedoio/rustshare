@@ -229,7 +229,9 @@ impl DecisionService {
 
         let mut summaries = Vec::new();
         for file in files {
-            if !file.path.starts_with("/Decisions/") {
+            if !(file.path.starts_with("/Decisions/")
+                || file.path.starts_with("/Workspace/Decisions/"))
+            {
                 continue;
             }
 

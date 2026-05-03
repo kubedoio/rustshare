@@ -1,4 +1,5 @@
 import type { User } from '$lib/api/types';
+import { getModuleRoot } from './modulePaths';
 
 export interface ModuleUiSidebar {
 	enabled: boolean;
@@ -129,7 +130,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		displayName: 'Notes',
 		description: 'Capture file-backed notes and reusable knowledge.',
 		enabled: true,
-		rootPath: '/Notes',
+		rootPath: getModuleRoot('Notes'),
 		renderer: 'notes',
 		defaultTemplate: 'template_default_note',
 		schemaVersion: '1.0',
@@ -182,7 +183,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		displayName: 'Meeting Notes',
 		description: 'Structured meeting records.',
 		enabled: true,
-		rootPath: '/Meetings',
+		rootPath: getModuleRoot('Meetings'),
 		renderer: 'meetings',
 		defaultTemplate: 'template_default_meeting',
 		schemaVersion: '1.0',
@@ -235,7 +236,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		displayName: 'Standups',
 		description: 'Daily standup records.',
 		enabled: true,
-		rootPath: '/Standups',
+		rootPath: getModuleRoot('Standups'),
 		renderer: 'standups',
 		defaultTemplate: 'template_default_standup',
 		schemaVersion: '1.0',
@@ -288,7 +289,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		displayName: 'Kanban Dashboard',
 		description: 'Project boards and task tracking.',
 		enabled: true,
-		rootPath: '/Kanban',
+		rootPath: getModuleRoot('Kanban'),
 		renderer: 'kanban',
 		defaultTemplate: 'template_default_kanban',
 		schemaVersion: '1.0',
@@ -341,7 +342,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		displayName: 'Decisions',
 		description: 'Architecture and product decisions.',
 		enabled: true,
-		rootPath: '/Decisions',
+		rootPath: getModuleRoot('Decisions'),
 		renderer: 'decisions',
 		defaultTemplate: 'template_default_decision',
 		schemaVersion: '1.0',
@@ -394,7 +395,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		displayName: 'Brainstorming',
 		description: 'Visual decision boards and brainstorming whiteboards.',
 		enabled: true,
-		rootPath: '/Brainstorming',
+		rootPath: getModuleRoot('Brainstorming'),
 		renderer: 'brainstorming',
 		defaultTemplate: 'template_blank_brainstorm',
 		schemaVersion: '1.0',
@@ -447,7 +448,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		displayName: 'Shares',
 		description: 'Shared external and internal files.',
 		enabled: true,
-		rootPath: '/Shares',
+		rootPath: getModuleRoot('Shares'),
 		renderer: 'shares',
 		defaultTemplate: null,
 		schemaVersion: '1.0',

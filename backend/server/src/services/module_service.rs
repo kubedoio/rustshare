@@ -736,14 +736,14 @@ impl ModuleService {
                     .recent_folders_under_path(path_prefix, max_items, tenant_id)
                     .await?;
                 let public_count: i64 = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND path LIKE '/Shares/Public/%'",
+                    "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND (path LIKE '/Shares/Public/%' OR path LIKE '/Workspace/Shares/Public/%')",
                 )
                 .bind(tenant_id)
                 .fetch_one(self.metadata_store.pool())
                 .await
                 .unwrap_or(0);
                 let internal_count: i64 = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND path LIKE '/Shares/Internal/%'",
+                    "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND (path LIKE '/Shares/Internal/%' OR path LIKE '/Workspace/Shares/Internal/%')",
                 )
                 .bind(tenant_id)
                 .fetch_one(self.metadata_store.pool())

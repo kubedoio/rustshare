@@ -28,6 +28,7 @@
 	} from '$lib/api/kanban';
 	import { goto } from '$app/navigation';
 	import { createFromTemplate } from '$lib/api/modules';
+	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import type { KanbanBoard, KanbanCard, KanbanCardDetail, KanbanColumn } from '$lib/api/types';
 	import {
@@ -262,9 +263,12 @@
 		viewMode = 'overview';
 	}
 
-	function handleOpenInFiles() {
+	async function handleOpenInFiles() {
 		if (module.rootPath) {
-			goto(`/files?path=${encodeURIComponent(module.rootPath)}`);
+			const folderId = await resolveModuleFolderId(module.rootPath);
+			if (folderId) {
+				goto(`/files?folder=${folderId}`);
+			}
 		}
 	}
 

@@ -131,7 +131,7 @@
 			const match = pathname.match(/^\/modules\/([^/]+)/);
 			if (match) {
 				const mod = getModuleByKey(match[1]);
-				if (mod) return mod.rootPath;
+				if (mod) return mod.displayName;
 			}
 			return '/Modules';
 		}
