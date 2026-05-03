@@ -117,6 +117,10 @@ pub mod conversions {
             email_sharing_enabled: true,
             trash_retention_days: Some(30),
             tenant_id: doc.tenant_id,
+            dashboard_config: sqlx::types::Json(
+                serde_json::from_value(doc.dashboard_config)
+                    .unwrap_or_else(|_| rustshare_core::domain::DashboardConfig::default()),
+            ),
         }
     }
 
@@ -140,6 +144,7 @@ pub mod conversions {
             updated_at: user.updated_at,
             tenant_id: user.tenant_id,
             version: 1, // Will be managed by repository
+            dashboard_config: serde_json::to_value(&user.dashboard_config.0).unwrap_or_default(),
         }
     }
 }

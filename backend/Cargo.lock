@@ -3570,6 +3570,7 @@ dependencies = [
  "nonzero_ext",
  "openidconnect",
  "rand 0.8.6",
+ "regex",
  "reqwest",
  "rustshare-auth",
  "rustshare-core",

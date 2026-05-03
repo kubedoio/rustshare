@@ -18,6 +18,17 @@ use rustshare_core::{
 use super::{file_error_response, AuthenticatedUser, ErrorResponse};
 use crate::AppState;
 
+/// Hidden kanban metadata files that should never be exposed through file APIs.
+fn is_hidden_kanban_file(name: &str) -> bool {
+    matches!(
+        name,
+        ".rustshare-board.json"
+            | ".rustshare-column.json"
+            | ".rustshare-card.json"
+            | "events.jsonl"
+    )
+}
+
 // ============================================================================
 // Task 15: File Upload
 // ============================================================================
@@ -153,6 +164,9 @@ pub async fn get_file(
         .get_file(file_id, auth.user_id)
         .await
         .map_err(file_error_response)?;
+    if is_hidden_kanban_file(&file.name) {
+        return Err(file_error_response(FileError::NotFound(file_id)));
+    }
     Ok(Json(file))
 }
 
@@ -193,6 +207,10 @@ pub async fn download_file_content(
         Ok(file) => file,
         Err(e) => return file_error_response(e).into_response(),
     };
+
+    if is_hidden_kanban_file(&file.name) {
+        return file_error_response(FileError::NotFound(file_id)).into_response();
+    }
 
     // Stream the file content directly (avoids redirecting to internal storage URLs)
     let storage_key = file.storage_key();
@@ -245,6 +263,10 @@ pub async fn preview_file(
         Ok(file) => file,
         Err(e) => return file_error_response(e).into_response(),
     };
+
+    if is_hidden_kanban_file(&file.name) {
+        return file_error_response(FileError::NotFound(file_id)).into_response();
+    }
 
     // Stream the file content directly (avoids redirecting to internal storage URLs)
     let storage_key = file.storage_key();

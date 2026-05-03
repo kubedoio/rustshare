@@ -255,6 +255,13 @@ where
         Ok(folder)
     }
 
+    fn is_hidden_file(name: &str) -> bool {
+        name == ".rustshare-board.json" ||
+        name == ".rustshare-column.json" ||
+        name == ".rustshare-card.json" ||
+        name == "events.jsonl"
+    }
+
     /// List the contents of a folder (immediate children only).
     ///
     /// Returns a FolderContents structure containing the files and immediate subfolders
@@ -272,7 +279,10 @@ where
             .metadata_store
             .list_files_by_parent(Some(folder.id), folder.tenant_id)
             .await
-            .map_err(|e| FolderError::Database(e.to_string()))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?
+            .into_iter()
+            .filter(|f| !Self::is_hidden_file(&f.name))
+            .collect();
 
         // Get subfolders in this folder (filter by folder owner, not current user)
         let folders = self
@@ -313,7 +323,10 @@ where
             .metadata_store
             .list_files_by_parent(Some(folder.id), folder.tenant_id)
             .await
-            .map_err(|e| FolderError::Database(e.to_string()))?;
+            .map_err(|e| FolderError::Database(e.to_string()))?
+            .into_iter()
+            .filter(|f| !Self::is_hidden_file(&f.name))
+            .collect();
 
         // Get immediate subfolders
         let subfolders = self

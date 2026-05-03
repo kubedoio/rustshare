@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
 	import { createKanbanBoard } from '$lib/api/kanban';
 	import { createFromTemplate } from '$lib/api/modules';

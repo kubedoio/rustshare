@@ -529,8 +529,9 @@ export async function refreshModules() {
 		const enabled = await listEnabledModules();
 		modulesStore.update(current => {
 			return current.map(m => {
-				const serverModule = enabled.find(sm => sm.key === m.key);
+				const serverModule = enabled.find(sm => sm.module_key === m.key);
 				if (serverModule) {
+					const uiConfig = serverModule.ui_config;
 					// Merge server-side config into predefined definition
 					return {
 						...m,
@@ -542,30 +543,30 @@ export async function refreshModules() {
 						defaultTemplate: serverModule.default_template || m.defaultTemplate,
 						ui: {
 							sidebar: {
-								enabled: serverModule.ui_config.sidebar?.enabled ?? m.ui.sidebar.enabled,
-								order: serverModule.ui_config.sidebar?.order ?? m.ui.sidebar.order,
-								icon: serverModule.ui_config.sidebar?.icon ?? m.ui.sidebar.icon,
-								label: serverModule.ui_config.sidebar?.label ?? m.ui.sidebar.label
+								enabled: uiConfig?.sidebar?.enabled ?? m.ui.sidebar.enabled,
+								order: uiConfig?.sidebar?.order ?? m.ui.sidebar.order,
+								icon: uiConfig?.sidebar?.icon ?? m.ui.sidebar.icon,
+								label: uiConfig?.sidebar?.label ?? m.ui.sidebar.label
 							},
 							dashboard: {
-								enabled: serverModule.ui_config.dashboard?.enabled ?? m.ui.dashboard.enabled,
-								order: serverModule.ui_config.dashboard?.order ?? m.ui.dashboard.order,
+								enabled: uiConfig?.dashboard?.enabled ?? m.ui.dashboard.enabled,
+								order: uiConfig?.dashboard?.order ?? m.ui.dashboard.order,
 								widget: {
 									...m.ui.dashboard.widget,
-									enabled: serverModule.ui_config.dashboard?.widget?.enabled ?? m.ui.dashboard.widget.enabled,
-									type: serverModule.ui_config.dashboard?.widget?.type ?? m.ui.dashboard.widget.type,
-									size: serverModule.ui_config.dashboard?.widget?.size ?? m.ui.dashboard.widget.size,
-									maxItems: serverModule.ui_config.dashboard?.widget?.maxItems ?? m.ui.dashboard.widget.maxItems
+									enabled: uiConfig?.dashboard?.widget?.enabled ?? m.ui.dashboard.widget.enabled,
+									type: uiConfig?.dashboard?.widget?.type ?? m.ui.dashboard.widget.type,
+									size: uiConfig?.dashboard?.widget?.size ?? m.ui.dashboard.widget.size,
+									maxItems: uiConfig?.dashboard?.widget?.maxItems ?? m.ui.dashboard.widget.maxItems
 								}
 							},
 							page: {
-								enabled: serverModule.ui_config.page?.enabled ?? m.ui.page.enabled,
-								route: serverModule.ui_config.page?.route ?? m.ui.page.route,
-								renderer: serverModule.ui_config.page?.renderer ?? m.ui.page.renderer,
-								layout: serverModule.ui_config.page?.layout ?? m.ui.page.layout,
-								emptyStateTitle: serverModule.ui_config.page?.emptyStateTitle ?? m.ui.page.emptyStateTitle,
-								emptyStateDescription: serverModule.ui_config.page?.emptyStateDescription ?? m.ui.page.emptyStateDescription,
-								primaryAction: serverModule.ui_config.page?.primaryAction ?? m.ui.page.primaryAction
+								enabled: uiConfig?.page?.enabled ?? m.ui.page.enabled,
+								route: uiConfig?.page?.route ?? m.ui.page.route,
+								renderer: uiConfig?.page?.renderer ?? m.ui.page.renderer,
+								layout: uiConfig?.page?.layout ?? m.ui.page.layout,
+								emptyStateTitle: uiConfig?.page?.emptyStateTitle ?? m.ui.page.emptyStateTitle,
+								emptyStateDescription: uiConfig?.page?.emptyStateDescription ?? m.ui.page.emptyStateDescription,
+								primaryAction: uiConfig?.page?.primaryAction ?? m.ui.page.primaryAction
 							}
 						}
 					};

@@ -76,7 +76,7 @@
 	export let showBack: boolean = true;
 
 	const dispatch = createEventDispatcher<{
-		save: { content: string; revision?: number | string };
+		save: { content: string; revision?: number | string; color?: string | null };
 		modechange: { mode: EditorMode };
 		back: void;
 		export: { format: 'markdown' | 'print' };
@@ -366,7 +366,6 @@
 					bind:this={editorComponent}
 					{content}
 					editable={true}
-					{permissions}
 					hasAttachmentHandler={true}
 					bind:currentMarkdown
 					on:change={handleEditorChange}

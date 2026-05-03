@@ -48,8 +48,12 @@ pub use brainstorming::{
     update_brainstorm_board_preview,
 };
 pub use kanban::{
-    archive_board, archive_card, create_board, create_card, delete_card, get_board, get_card,
-    list_boards, list_cards, move_card, update_board, update_card,
+    add_card_attachment, add_card_label, archive_board, archive_card, assign_card_member,
+    create_board, create_card, create_checklist, create_checklist_item, create_label, delete_card,
+    delete_checklist, delete_checklist_item, delete_card_attachment, delete_label,
+    get_assignable_users, get_board, get_card, get_card_detail, list_boards, list_cards, move_card,
+    remove_card_label, toggle_checklist_item, unassign_card_member, update_board, update_card,
+    update_card_description, update_label,
 };
 pub use notifications::{
     count_unread_notifications, delete_notification, list_notifications, mark_notification_read,
@@ -87,9 +91,10 @@ pub use user_shares::{
     list_received_shares, remove_recipient, update_recipient_permission,
 };
 pub use users::{
-    delete_avatar, delete_user_session, get_avatar, get_user_profile, list_user_module_preferences,
-    list_user_security_events, list_user_sessions, update_user_module_preference,
-    update_user_password, update_user_theme, upload_avatar,
+    delete_avatar, delete_user_session, get_avatar, get_dashboard_config, get_user_profile,
+    list_user_module_preferences, list_user_security_events, list_user_sessions,
+    update_dashboard_config, update_user_module_preference, update_user_password,
+    update_user_theme, upload_avatar,
 };
 pub use workspace_surface::get_workspace_surface;
 

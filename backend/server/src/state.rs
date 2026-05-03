@@ -99,6 +99,7 @@ pub struct ServiceState {
     pub template_service: Arc<services::template_service::TemplateService>,
     pub kanban_service: Arc<services::kanban_service::KanbanService>,
     pub brainstorming_service: Arc<services::brainstorming_service::BrainstormingService>,
+    pub user_repository: Arc<rustshare_infrastructure::repositories::UserRepository>,
 }
 
 /// Application configuration and runtime state.
@@ -176,6 +177,7 @@ pub struct AppState {
     pub template_service: Arc<services::template_service::TemplateService>,
     pub kanban_service: Arc<services::kanban_service::KanbanService>,
     pub brainstorming_service: Arc<services::brainstorming_service::BrainstormingService>,
+    pub user_repository: Arc<rustshare_infrastructure::repositories::UserRepository>,
     pub public_base_url: String,
 }
 
@@ -209,6 +211,7 @@ impl FromRef<AppState> for ServiceState {
             template_service: state.template_service.clone(),
             kanban_service: state.kanban_service.clone(),
             brainstorming_service: state.brainstorming_service.clone(),
+            user_repository: state.user_repository.clone(),
         }
     }
 }
