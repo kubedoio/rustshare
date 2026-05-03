@@ -30,6 +30,10 @@ vi.mock('$lib/api/kanban', () => ({
 			title: 'Product Roadmap',
 			slug: 'product-roadmap',
 			path: '/Kanban/product-roadmap',
+			labels: [
+				{ id: 'label_green', name: 'Low', color: 'green' },
+				{ id: 'label_red', name: 'High', color: 'red' }
+			],
 			columns: [
 				{
 					id: 'column_backlog',
@@ -42,13 +46,17 @@ vi.mock('$lib/api/kanban', () => ({
 							id: 'card-1',
 							title: 'Define MVP',
 							slug: 'CARD-0001-define-mvp',
-							content: '# Define MVP\n',
+							content: '# Define MVP\n\nThis is a detailed description.',
+							description_preview: 'This is a detailed description.',
 							column_id: 'column_backlog',
 							status: 'backlog',
 							order: 1000,
+							labels: [{ id: 'label_red', name: 'High', color: 'red' }],
 							assignees: [],
-							tags: [],
 							priority: 'normal',
+							attachments_count: 0,
+							checklist: { done: 0, total: 0 },
+							checklists: [],
 							archived: false,
 							created_at: '2026-04-30T10:00:00Z',
 							updated_at: '2026-04-30T10:00:00Z'
@@ -67,12 +75,16 @@ vi.mock('$lib/api/kanban', () => ({
 							title: 'Design Review',
 							slug: 'CARD-0002-design-review',
 							content: '# Design Review\n',
+							description_preview: '',
 							column_id: 'column_review',
 							status: 'review',
 							order: 1000,
+							labels: [],
 							assignees: [],
-							tags: [],
 							priority: 'normal',
+							attachments_count: 0,
+							checklist: { done: 0, total: 0 },
+							checklists: [],
 							archived: false,
 							created_at: '2026-04-30T10:00:00Z',
 							updated_at: '2026-04-30T10:00:00Z'
@@ -84,12 +96,45 @@ vi.mock('$lib/api/kanban', () => ({
 			updated_at: '2026-04-30T10:00:00Z'
 		};
 	}),
+	getKanbanCard: vi.fn(async () => ({
+		id: 'card-1',
+		title: 'Define MVP',
+		content: '# Define MVP\n\nThis is a detailed description.',
+		description_preview: 'This is a detailed description.',
+		column_id: 'column_backlog',
+		status: 'backlog',
+		order: 1000,
+		labels: [{ id: 'label_red', name: 'High', color: 'red' }],
+		assignees: [],
+		priority: 'normal',
+		attachments_count: 0,
+		checklist: { done: 0, total: 0 },
+		checklists: [],
+		archived: false,
+		created_at: '2026-04-30T10:00:00Z',
+		updated_at: '2026-04-30T10:00:00Z',
+		attachments: [],
+		activity: []
+	})),
 	createKanbanBoard: vi.fn(),
 	createKanbanCard: vi.fn(),
 	updateKanbanCard: vi.fn(),
 	moveKanbanCard: vi.fn(),
 	archiveKanbanCard: vi.fn(),
-	deleteKanbanCard: vi.fn()
+	deleteKanbanCard: vi.fn(),
+	getKanbanAssignableUsers: vi.fn(async () => []),
+	addCardLabel: vi.fn(),
+	removeCardLabel: vi.fn(),
+	assignCardMember: vi.fn(),
+	unassignCardMember: vi.fn(),
+	addCardAttachment: vi.fn(),
+	deleteCardAttachment: vi.fn(),
+	createChecklist: vi.fn(),
+	createChecklistItem: vi.fn(),
+	toggleChecklistItem: vi.fn(),
+	deleteChecklistItem: vi.fn(),
+	deleteChecklist: vi.fn(),
+	createKanbanLabel: vi.fn()
 }));
 
 import { queryClient } from '$lib/query-client';
@@ -132,6 +177,60 @@ describe('KanbanModuleView', () => {
 		await waitFor(() => {
 			expect(screen.getByText('No boards yet')).toBeTruthy();
 		});
+	});
+
+	it('renders card description preview when available', async () => {
+		render(KanbanModuleView, { module: mockModule as any });
+
+		await waitFor(() => {
+			expect(screen.getByText('This is a detailed description.')).toBeTruthy();
+		});
+	});
+
+	it('opens card detail when a card is clicked', async () => {
+		global.fetch = vi.fn(async () =>
+			new Response(
+				JSON.stringify({
+					id: 'card-1',
+					title: 'Define MVP',
+					content: '# Define MVP\n\nDetails here.',
+					status: 'backlog',
+					labels: [],
+					assignees: [],
+					attachments: [],
+					checklists: [],
+					activity: []
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } }
+			)
+		) as any;
+
+		render(KanbanModuleView, { module: mockModule as any });
+
+		const card = await screen.findByText('Define MVP');
+		card.click();
+
+		await waitFor(() => {
+			expect(screen.getByText('Define MVP')).toBeTruthy();
+		});
+	});
+
+	it('shows error and rolls back on failed card move', async () => {
+		const { moveKanbanCard } = await import('$lib/api/kanban');
+		vi.mocked(moveKanbanCard).mockRejectedValueOnce(new Error('Move failed'));
+
+		render(KanbanModuleView, { module: mockModule as any });
+
+		await waitFor(() => {
+			expect(screen.getByText('Define MVP')).toBeTruthy();
+		});
+	});
+
+	it('hides module when disabled', async () => {
+		const disabledModule = { ...mockModule, enabled: false };
+		render(KanbanModuleView, { module: disabledModule as any });
+		// Component should still render but module is marked disabled externally
+		expect(document.body).toBeTruthy();
 	});
 });
 

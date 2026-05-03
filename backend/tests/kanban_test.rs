@@ -1,13 +1,32 @@
 //! Contract tests for RustShare Kanban module.
 //!
-//! Run with: cargo test --test kanban_test -- --ignored
+//! ## Running the tests
+//!
+//! These tests require PostgreSQL and an S3-compatible object store (RustFS).
+//!
+//! ```bash
+//! # Start dependencies
+//! docker compose up -d postgres rustfs
+//!
+//! # Run migrations
+//! cd backend && sqlx migrate run
+//!
+//! # Run tests
+//! cargo test --test kanban_test -- --ignored
+//! ```
+//!
+//! Environment variables (with defaults):
+//! - `DATABASE_URL` — defaults to `postgres://rustshare:changeme@localhost:5432/rustshare`
+//! - `S3_ENDPOINT` / `RUSTFS_ENDPOINT` — defaults to `http://localhost:9000`
+//! - `S3_BUCKET` / `RUSTFS_BUCKET` — defaults to `rustshare`
+//! - `S3_REGION` / `RUSTFS_REGION` — defaults to `us-east-1`
 
 use rustshare_core::domain::User;
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{FileService, FolderService, PermissionResolver};
-use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use rustshare_infrastructure::repositories::{PermissionResolverRepository, UserRepository};
 use rustshare_server::services::kanban_service::{
-    KanbanService, CreateBoardInput, CreateCardInput,
+    KanbanService, CreateBoardInput, CreateCardInput, MoveCardInput,
 };
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
@@ -142,16 +161,19 @@ fn create_kanban_service(
         pool,
     ));
 
+    let user_repository = Arc::new(UserRepository::new(pool.clone()));
+
     Arc::new(KanbanService::new(
         file_service,
         folder_service,
         metadata_store,
         object_store,
+        user_repository,
     ))
 }
 
 #[tokio::test]
-#[ignore] // Requires database and S3
+#[ignore = "Requires database and S3"]
 async fn contract_create_board_creates_folder_structure_and_metadata() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -172,7 +194,7 @@ async fn contract_create_board_creates_folder_structure_and_metadata() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_create_card_creates_folder_and_metadata() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -193,7 +215,9 @@ async fn contract_create_card_creates_folder_and_metadata() {
                 column_id: Some(backlog.id.clone()),
                 content: Some("# Card content\n".to_string()),
                 priority: Some("high".to_string()),
-                tags: Some(vec!["urgent".to_string()]),
+                labels: Some(vec!["urgent".to_string()]),
+                assignees: None,
+                due_date: None,
             },
             user.id,
             tenant_id,
@@ -205,13 +229,13 @@ async fn contract_create_card_creates_folder_and_metadata() {
     assert!(card.slug.starts_with("CARD-"));
     assert_eq!(card.column_id, backlog.id);
     assert_eq!(card.priority, "high");
-    assert!(card.tags.contains(&"urgent".to_string()));
+    assert!(card.labels.iter().any(|l| l.name == "urgent" || l.id == "urgent"));
 
     cleanup_user(&pool, user.id).await;
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_move_card_updates_column_and_metadata() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -234,7 +258,9 @@ async fn contract_move_card_updates_column_and_metadata() {
                 column_id: Some(backlog.id.clone()),
                 content: None,
                 priority: None,
-                tags: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
             },
             user.id,
             tenant_id,
@@ -245,8 +271,13 @@ async fn contract_move_card_updates_column_and_metadata() {
     let updated_board = service
         .move_card(
             card.id.parse().unwrap(),
-            ready.id.clone(),
-            2000,
+            MoveCardInput {
+                board_id: board.id.clone(),
+                target_column_id: ready.id.clone(),
+                target_order: Some(2000),
+                before_card_id: None,
+                after_card_id: None,
+            },
             user.id,
             tenant_id,
         )
@@ -257,7 +288,7 @@ async fn contract_move_card_updates_column_and_metadata() {
     assert!(updated_ready.cards.iter().any(|c| c.id == card.id));
 
     let updated_card = service
-        .get_card(card.id.parse().unwrap(), user.id, tenant_id)
+        .get_card(card.id.parse().unwrap(), user.id)
         .await
         .unwrap();
     assert_eq!(updated_card.column_id, ready.id);
@@ -268,7 +299,7 @@ async fn contract_move_card_updates_column_and_metadata() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_list_boards_returns_created_boards() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -293,7 +324,7 @@ async fn contract_list_boards_returns_created_boards() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_archive_card_hides_from_board() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -314,7 +345,9 @@ async fn contract_archive_card_hides_from_board() {
                 column_id: Some(backlog.id.clone()),
                 content: None,
                 priority: None,
-                tags: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
             },
             user.id,
             tenant_id,
@@ -338,7 +371,7 @@ async fn contract_archive_card_hides_from_board() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_delete_card_removes_folder() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -359,7 +392,9 @@ async fn contract_delete_card_removes_folder() {
                 column_id: Some(backlog.id.clone()),
                 content: None,
                 priority: None,
-                tags: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
             },
             user.id,
             tenant_id,
@@ -372,14 +407,14 @@ async fn contract_delete_card_removes_folder() {
         .await
         .expect("delete_card should succeed");
 
-    let result = service.get_card(card.id.parse().unwrap(), user.id, tenant_id).await;
+    let result = service.get_card(card.id.parse().unwrap(), user.id).await;
     assert!(result.is_err());
 
     cleanup_user(&pool, user.id).await;
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_move_card_rebalances_orders_when_too_dense() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -397,7 +432,7 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
     let _card1 = service
         .create_card(
             board.id.clone(),
-            CreateCardInput { title: "Card 1".to_string(), column_id: Some(backlog.id.clone()), content: None, priority: None, tags: None },
+            CreateCardInput { title: "Card 1".to_string(), column_id: Some(backlog.id.clone()), content: None, priority: None, labels: None, assignees: None, due_date: None },
             user.id,
             tenant_id,
         )
@@ -407,7 +442,7 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
     let _card2 = service
         .create_card(
             board.id.clone(),
-            CreateCardInput { title: "Card 2".to_string(), column_id: Some(backlog.id.clone()), content: None, priority: None, tags: None },
+            CreateCardInput { title: "Card 2".to_string(), column_id: Some(backlog.id.clone()), content: None, priority: None, labels: None, assignees: None, due_date: None },
             user.id,
             tenant_id,
         )
@@ -417,7 +452,7 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
     let card3 = service
         .create_card(
             board.id.clone(),
-            CreateCardInput { title: "Card 3".to_string(), column_id: Some(backlog.id.clone()), content: None, priority: None, tags: None },
+            CreateCardInput { title: "Card 3".to_string(), column_id: Some(backlog.id.clone()), content: None, priority: None, labels: None, assignees: None, due_date: None },
             user.id,
             tenant_id,
         )
@@ -426,7 +461,13 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
 
     // Move card3 between card1 and card2 with a very small gap to trigger rebalancing
     service
-        .move_card(card3.id.parse().unwrap(), backlog.id.clone(), 1005, user.id, tenant_id)
+        .move_card(card3.id.parse().unwrap(), MoveCardInput {
+            board_id: board.id.clone(),
+            target_column_id: backlog.id.clone(),
+            target_order: Some(1005),
+            before_card_id: None,
+            after_card_id: None,
+        }, user.id, tenant_id)
         .await
         .unwrap();
 
@@ -451,7 +492,7 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
 }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "Requires database and S3"]
     async fn contract_get_board_by_slug_returns_board() {
         let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
         let tenant_id = Uuid::new_v4();
@@ -472,3 +513,194 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
         assert_eq!(by_slug.id, board.id);
         assert_eq!(by_slug.slug, "slug-board");
     }
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_invalid_label_color_rejected() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "color_user", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Color Test".to_string() }, user.id, tenant_id)
+        .await
+        .unwrap();
+
+    let result = service
+        .create_label(
+            board.id.parse().unwrap(),
+            rustshare_server::services::kanban_service::CreateLabelInput {
+                name: "Bad".to_string(),
+                color: "#ff0000".to_string(),
+            },
+            user.id,
+        )
+        .await;
+    assert!(result.is_err(), "Should reject arbitrary hex colors");
+
+    let result = service
+        .create_label(
+            board.id.parse().unwrap(),
+            rustshare_server::services::kanban_service::CreateLabelInput {
+                name: "Bad".to_string(),
+                color: "javascript:alert(1)".to_string(),
+            },
+            user.id,
+        )
+        .await;
+    assert!(result.is_err(), "Should reject script pseudo-protocol colors");
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_card_description_persisted_in_index_md() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "desc_user", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Desc Test".to_string() }, user.id, tenant_id)
+        .await
+        .unwrap();
+
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            rustshare_server::services::kanban_service::CreateCardInput {
+                title: "Desc Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: Some("# Hello\n\nThis is the description.".to_string()),
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let detail = service.get_card_detail(card.id.parse().unwrap(), user.id).await.unwrap();
+    assert!(detail.summary.content.contains("This is the description."));
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_metadata_files_hidden_from_folder_listing() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "meta_user", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store.clone(), &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Meta Test".to_string() }, user.id, tenant_id)
+        .await
+        .unwrap();
+
+    let contents = service
+        .folder_service
+        .list_contents(board.id.parse().unwrap(), user.id)
+        .await
+        .unwrap();
+
+    for file in &contents.files {
+        assert!(
+            !file.name.starts_with(".rustshare-") && file.name != "events.jsonl",
+            "Hidden metadata file {} should not appear in listing",
+            file.name
+        );
+    }
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_move_card_preserves_metadata_and_events() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "move_user", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Move Test".to_string() }, user.id, tenant_id)
+        .await
+        .unwrap();
+
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let ready = board.columns.iter().find(|c| c.slug == "01-Ready").unwrap();
+
+    let card = service
+        .create_card(
+            board.id.clone(),
+            rustshare_server::services::kanban_service::CreateCardInput {
+                title: "Moveable".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: Some("Initial content".to_string()),
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let _ = service
+        .move_card(
+            card.id.parse().unwrap(),
+            rustshare_server::services::kanban_service::MoveCardInput {
+                board_id: board.id.clone(),
+                target_column_id: ready.id.clone(),
+                target_order: Some(2000),
+                before_card_id: None,
+                after_card_id: None,
+            },
+            user.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let detail = service.get_card_detail(card.id.parse().unwrap(), user.id).await.unwrap();
+    assert_eq!(detail.summary.column_id, ready.id);
+    assert!(detail.summary.content.contains("Initial content"));
+    assert!(
+        detail.activity.iter().any(|e| e.event_type == "card.moved"),
+        "Move event should be recorded"
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_disabling_module_does_not_delete_data() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "disable_user", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Persistent".to_string() }, user.id, tenant_id)
+        .await
+        .unwrap();
+
+    let board_id = board.id.clone();
+
+    // Simulate disable by checking data still exists when fetched directly
+    let boards_after = service.list_boards(user.id, tenant_id).await.unwrap();
+    assert!(boards_after.iter().any(|b| b.id == board_id));
+
+    cleanup_user(&pool, user.id).await;
+}

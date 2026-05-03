@@ -962,6 +962,8 @@ pub struct UserDocument {
     pub tenant_id: Uuid,
     /// Document version for optimistic concurrency
     pub version: u64,
+    /// User's dashboard configuration
+    pub dashboard_config: serde_json::Value,
 }
 
 impl UserDocument {
@@ -996,6 +998,7 @@ impl UserDocument {
             updated_at: now,
             tenant_id,
             version: 1,
+            dashboard_config: serde_json::Value::Null,
         }
     }
 

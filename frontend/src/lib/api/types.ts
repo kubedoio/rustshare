@@ -411,6 +411,46 @@ export interface ModuleSummary {
 // Kanban Types
 // ---------------------------------------------------------------------------
 
+export interface KanbanLabel {
+	id: string;
+	name: string;
+	color: 'green' | 'yellow' | 'orange' | 'red' | 'purple' | 'blue' | 'gray';
+}
+
+export interface KanbanAssignee {
+	id: string;
+	display_name: string;
+	initials: string;
+	avatar_url: string | null;
+}
+
+export interface KanbanChecklist {
+	done: number;
+	total: number;
+}
+
+export interface KanbanChecklistItem {
+	id: string;
+	text: string;
+	done: boolean;
+}
+
+export interface KanbanChecklistGroup {
+	id: string;
+	title: string;
+	items: KanbanChecklistItem[];
+}
+
+export interface KanbanSettings {
+	show_description_on_cards: boolean;
+	description_preview_lines: number;
+	show_assignees: boolean;
+	show_labels: boolean;
+	show_due_date: boolean;
+	show_attachment_badge: boolean;
+	show_checklist_badge: boolean;
+}
+
 export interface KanbanBoardSummary {
 	id: string;
 	title: string;
@@ -420,6 +460,7 @@ export interface KanbanBoardSummary {
 	card_count: number;
 	created_at: string;
 	updated_at: string;
+	archived: boolean;
 }
 
 export interface KanbanBoard {
@@ -428,8 +469,11 @@ export interface KanbanBoard {
 	slug: string;
 	path: string;
 	columns: KanbanColumn[];
+	labels: KanbanLabel[];
+	settings: KanbanSettings;
 	created_at: string;
 	updated_at: string;
+	archived: boolean;
 }
 
 export interface KanbanColumn {
@@ -438,6 +482,7 @@ export interface KanbanColumn {
 	slug: string;
 	order: number;
 	status: string;
+	wip_limit: number | null;
 	cards: KanbanCard[];
 }
 
@@ -446,13 +491,40 @@ export interface KanbanCard {
 	title: string;
 	slug: string;
 	content: string;
+	description_preview: string;
 	column_id: string;
 	status: string;
 	order: number;
-	assignees: string[];
-	tags: string[];
-	priority: string;
+	labels: KanbanLabel[];
+	assignees: KanbanAssignee[];
+	due_date: string | null;
+	priority: 'low' | 'normal' | 'high' | 'urgent';
+	attachments_count: number;
+	checklist: KanbanChecklist;
+	checklists: KanbanChecklistGroup[];
 	archived: boolean;
 	created_at: string;
 	updated_at: string;
+	path: string;
+	schema_version: string;
+}
+export interface KanbanCardAttachment {
+	id: string;
+	name: string;
+	size: number;
+	mime_type: string;
+	created_at: string;
+	created_by: string;
+}
+
+export interface KanbanEvent {
+	event_type: string;
+	timestamp: string;
+	actor: string;
+	payload: any;
+}
+
+export interface KanbanCardDetail extends KanbanCard {
+	attachments: KanbanCardAttachment[];
+	activity: KanbanEvent[];
 }

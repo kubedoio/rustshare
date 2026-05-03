@@ -36,7 +36,7 @@ pub use thumbnail::{
     SUPPORTED_DIAGRAM_EXTENSIONS, SUPPORTED_IMAGE_TYPES, SUPPORTED_PDF_TYPES,
     SUPPORTED_VIDEO_TYPES,
 };
-pub use user::{Theme, User};
+pub use user::{DashboardConfig, Theme, User};
 pub use user_module_preference::UserModulePreference;
 pub use user_session::UserSession;
 

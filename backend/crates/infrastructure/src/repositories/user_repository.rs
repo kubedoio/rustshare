@@ -31,6 +31,12 @@ impl UserRepository {
             email_sharing_enabled: row.try_get("email_sharing_enabled")?,
             trash_retention_days: row.try_get("trash_retention_days")?,
             tenant_id: row.try_get("tenant_id")?,
+            dashboard_config: row
+                .try_get::<Option<sqlx::types::Json<rustshare_core::domain::DashboardConfig>>, _>(
+                    "dashboard_config",
+                )
+                .unwrap_or_else(|_| Some(sqlx::types::Json(rustshare_core::domain::DashboardConfig::default())))
+                .unwrap_or_else(|| sqlx::types::Json(rustshare_core::domain::DashboardConfig::default())),
         })
     }
 
@@ -107,6 +113,29 @@ impl UserRepository {
             Some(r) => Ok(r.try_get("tenant_id")?),
             None => Ok(None),
         }
+    }
+
+    /// List users by tenant ID.
+    pub async fn list_by_tenant(&self, tenant_id: Uuid) -> anyhow::Result<Vec<User>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, username, display_name, password_hash, email, is_admin,
+                   storage_quota, theme, created_at, updated_at, disabled_at, 
+                   trash_retention_days, tenant_id, name, surname, avatar_path,
+                   email_sharing_enabled, dashboard_config
+            FROM users
+            WHERE tenant_id = $1
+            "#,
+        )
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut users = Vec::with_capacity(rows.len());
+        for row in rows {
+            users.push(Self::map_user_row(row)?);
+        }
+        Ok(users)
     }
 }
 
