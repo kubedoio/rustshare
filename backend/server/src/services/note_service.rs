@@ -635,6 +635,12 @@ impl NoteService {
             .unique_note_name(user_id, file.tenant_id, parent_folder_id, &new_title)
             .await?;
 
+        // Load metadata BEFORE renaming so sidecar is found by old name
+        let mut meta = self
+            .load_metadata(file_id, user_id, file.tenant_id)
+            .await?
+            .unwrap_or_else(|| NoteMetadata::new(&new_title));
+
         // Rename file
         let renamed_file = self
             .file_service
@@ -642,10 +648,6 @@ impl NoteService {
             .await?;
 
         // Update sidecar title
-        let mut meta = self
-            .load_metadata(file_id, user_id, file.tenant_id)
-            .await?
-            .unwrap_or_else(|| NoteMetadata::new(&new_title));
         meta.title = new_title;
         meta.updated_at = Utc::now();
         self.save_metadata(file_id, user_id, file.tenant_id, &meta)
