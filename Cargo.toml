@@ -47,7 +47,7 @@ toml = "0.9"
 # Crypto
 argon2 = "0.5"
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
-rand = "0.9"
+rand = "0.8"
 sha2 = "0.11"
 aes-gcm = "0.10"
 base64 = { version = "0.22", features = ["alloc"] }
@@ -89,7 +89,7 @@ clap = { version = "4.6", features = ["derive", "env"] }
 dirs = "6.0"
 
 # Security
-keyring = "4.0"
+keyring = "3.6"
 
 # Process management
 daemonize = "0.5"
