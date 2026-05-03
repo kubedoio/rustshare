@@ -2199,12 +2199,19 @@ impl KanbanService {
         user_id: UserId,
         name: &str,
     ) -> Result<Option<File>, KanbanError> {
-        let contents = self
+        // Bypass folder_service.list_contents because it filters out
+        // hidden kanban metadata files (.rustshare-board.json, etc.)
+        let folder = self
             .folder_service
-            .list_contents(folder_id, user_id)
+            .get_folder(folder_id, user_id)
             .await
             .map_err(KanbanError::from)?;
-        Ok(contents.files.into_iter().find(|f| f.name == name))
+        let files = self
+            .metadata_store
+            .list_files_by_parent(Some(folder_id), folder.tenant_id)
+            .await
+            .map_err(|e| KanbanError::Database(e.to_string()))?;
+        Ok(files.into_iter().find(|f| f.name == name))
     }
 
     async fn write_file_by_name(

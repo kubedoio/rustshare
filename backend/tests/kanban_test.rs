@@ -231,7 +231,7 @@ async fn contract_create_card_creates_folder_and_metadata() {
                 column_id: Some(backlog.id.clone()),
                 content: Some("# Card content\n".to_string()),
                 priority: Some("high".to_string()),
-                labels: Some(vec!["urgent".to_string()]),
+                labels: Some(vec!["label_red".to_string()]),
                 assignees: None,
                 due_date: None,
             },
@@ -245,10 +245,7 @@ async fn contract_create_card_creates_folder_and_metadata() {
     assert!(card.slug.starts_with("CARD-"));
     assert_eq!(card.column_id, backlog.id);
     assert_eq!(card.priority, "high");
-    assert!(card
-        .labels
-        .iter()
-        .any(|l| l.name == "urgent" || l.id == "urgent"));
+    assert!(card.labels.iter().any(|l| l.id == "label_red"));
 
     cleanup_user(&pool, user.id).await;
 }
