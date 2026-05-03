@@ -681,7 +681,7 @@ impl ModuleService {
     async fn build_summary_for_mode(
         &self,
         key: &str,
-        summary_mode: &str,
+        _summary_mode: &str,
         root_path: &str,
         path_prefix: &str,
         max_items: i64,

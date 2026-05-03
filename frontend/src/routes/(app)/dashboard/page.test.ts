@@ -94,8 +94,8 @@ vi.mock('$lib/query-compat', () => ({
 				data: {
 					total_items: 5,
 					recent_items: [
-						{ name: 'Item 1', item_type: 'file' },
-						{ name: 'Item 2', item_type: 'folder' }
+						{ name: 'Item 1', item_type: 'file', updated_at: new Date().toISOString() },
+						{ name: 'Item 2', item_type: 'folder', updated_at: new Date().toISOString() }
 					]
 				},
 				isLoading: false

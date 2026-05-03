@@ -13,11 +13,13 @@
 use crate::contracts::common::*;
 use rustshare_core::domain::SharePermissions;
 use rustshare_core::services::ShareError;
+use rustshare_storage::{EventStore, MetadataStore};
+use std::sync::Arc;
 
 // Mock JWT manager for testing
 struct MockJwtManager;
 
-impl rustshare_core::services::share_service::JwtOps for MockJwtManager {
+impl rustshare_core::services::JwtOps for MockJwtManager {
     fn encode_custom_claims<T: serde::Serialize>(&self, _claims: &T) -> Result<String, String> {
         Ok("test_jwt_token".to_string())
     }
@@ -25,13 +27,8 @@ impl rustshare_core::services::share_service::JwtOps for MockJwtManager {
 
 fn create_share_service(
     ctx: &TestContext,
-) -> rustshare_core::services::ShareService<EventStore, MetadataStore, MockJwtManager> {
-    rustshare_core::services::ShareService::new(
-        ctx.event_store.clone(),
-        ctx.metadata_store.clone(),
-        ctx.broadcaster.clone(),
-        Arc::new(MockJwtManager),
-    )
+) -> rustshare_core::services::ShareService<EventStore, MetadataStore, MockJwtManager, crate::contracts::common::MockNotificationRepo> {
+    crate::contracts::common::create_test_share_service(ctx, Arc::new(MockJwtManager))
 }
 
 /// S-01: Internal share grants access to recipient

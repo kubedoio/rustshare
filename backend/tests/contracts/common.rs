@@ -5,12 +5,34 @@
 use bytes::Bytes;
 use rustshare_core::domain::{File, Folder, Share, SharePermissions, User};
 use rustshare_core::services::PermissionResolver;
-use rustshare_core::services::{FileService, FolderService, ShareService};
+use rustshare_core::services::{FileService, FolderService, JwtOps, ShareNotificationRepo, ShareService};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// Mock notification repo for testing
+pub struct MockNotificationRepo;
+
+#[async_trait::async_trait]
+impl ShareNotificationRepo for MockNotificationRepo {
+    async fn was_notified(
+        &self,
+        _user_id: rustshare_core::domain::UserId,
+        _share_id: uuid::Uuid,
+    ) -> Result<bool, sqlx::Error> {
+        Ok(false)
+    }
+
+    async fn record_notification(
+        &self,
+        _user_id: rustshare_core::domain::UserId,
+        _share_id: uuid::Uuid,
+    ) -> Result<(), sqlx::Error> {
+        Ok(())
+    }
+}
 
 /// Test context holding all necessary services and stores
 pub struct TestContext {
@@ -139,7 +161,7 @@ pub async fn create_test_user(
 
 /// Create a test folder
 pub async fn create_test_folder(
-    folder_service: &FolderService<EventStore, MetadataStore>,
+    folder_service: &FolderService<EventStore, MetadataStore, PermissionResolverRepository>,
     owner_id: Uuid,
     tenant_id: Uuid,
     name: &str,
@@ -153,7 +175,7 @@ pub async fn create_test_folder(
 
 /// Create a test file with content
 pub async fn create_test_file(
-    file_service: &FileService<EventStore, MetadataStore, ObjectStore>,
+    file_service: &FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>,
     owner_id: Uuid,
     tenant_id: Uuid,
     folder_id: Option<Uuid>,
@@ -173,9 +195,23 @@ pub async fn create_test_file(
         .expect("Failed to create test file")
 }
 
+/// Create a test share service
+pub fn create_test_share_service<J: JwtOps>(
+    ctx: &TestContext,
+    jwt_manager: Arc<J>,
+) -> ShareService<EventStore, MetadataStore, J, MockNotificationRepo> {
+    ShareService::new(
+        ctx.event_store.clone(),
+        ctx.metadata_store.clone(),
+        ctx.broadcaster.clone(),
+        jwt_manager,
+        Arc::new(MockNotificationRepo),
+    )
+}
+
 /// Create a test share for a file
-pub async fn create_test_share<J: rustshare_core::services::share_service::JwtOps>(
-    share_service: &ShareService<EventStore, MetadataStore, J>,
+pub async fn create_test_share<J: JwtOps>(
+    share_service: &ShareService<EventStore, MetadataStore, J, MockNotificationRepo>,
     file_id: Uuid,
     user_id: Uuid,
     permissions: SharePermissions,
@@ -197,8 +233,8 @@ pub async fn create_test_share<J: rustshare_core::services::share_service::JwtOp
 }
 
 /// Create a test folder share
-pub async fn create_test_folder_share<J: rustshare_core::services::share_service::JwtOps>(
-    share_service: &ShareService<EventStore, MetadataStore, J>,
+pub async fn create_test_folder_share<J: JwtOps>(
+    share_service: &ShareService<EventStore, MetadataStore, J, MockNotificationRepo>,
     folder_id: Uuid,
     user_id: Uuid,
     permissions: SharePermissions,
