@@ -30,9 +30,9 @@ pathdiff = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 nix = { workspace = true }
-sha2 = "0.10"
+sha2 = "0.11"
 base64 = "0.22"
-md5 = "0.7"
+md5 = "0.8"
 walkdir = "2.5"
 filetime = "0.2"
 
