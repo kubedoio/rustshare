@@ -651,7 +651,13 @@ impl ModuleService {
         owner_id: UserId,
         tenant_id: Uuid,
     ) -> Result<(), ModuleError> {
-        let root_name = module.root_path.trim_start_matches('/').to_string();
+        let root_name = module
+            .root_path
+            .trim_start_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(&module.root_path)
+            .to_string();
 
         if root_name.is_empty() {
             return Err(ModuleError::InvalidName(

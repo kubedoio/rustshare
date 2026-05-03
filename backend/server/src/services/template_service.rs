@@ -827,20 +827,45 @@ impl TemplateService {
         let parent_id = if let Some(id) = parent_folder_id {
             Some(id)
         } else {
-            let root_name = root_path.trim_start_matches('/');
+            // Resolve workspace-style paths like /Workspace/Notes:
+            // ensure Workspace exists at root, then find/create module folder under it
+            let segments: Vec<&str> = root_path.trim_start_matches('/').split('/').collect();
 
-            let folders = self
+            let ws_folder = {
+                let root_folders = self
+                    .metadata_store
+                    .list_folders(None, owner_id, tenant_id)
+                    .await
+                    .map_err(|e| TemplateError::Database(e.to_string()))?;
+
+                if let Some(ws) = root_folders.into_iter().find(|f| f.name == "Workspace") {
+                    ws
+                } else {
+                    self.folder_service
+                        .create_folder("Workspace".into(), None, owner_id, tenant_id)
+                        .await?
+                }
+            };
+
+            let module_name = segments.last().copied().unwrap_or("");
+            if module_name.is_empty() {
+                return Err(TemplateError::InvalidData(
+                    "Invalid module root path".to_string(),
+                ));
+            }
+
+            let ws_children = self
                 .metadata_store
-                .list_folders(None, owner_id, tenant_id)
+                .list_folders(Some(ws_folder.id), owner_id, tenant_id)
                 .await
                 .map_err(|e| TemplateError::Database(e.to_string()))?;
 
-            if let Some(existing) = folders.into_iter().find(|f| f.name == root_name) {
+            if let Some(existing) = ws_children.into_iter().find(|f| f.name == module_name) {
                 Some(existing.id)
             } else {
                 let folder = self
                     .folder_service
-                    .create_folder(root_name.to_string(), None, owner_id, tenant_id)
+                    .create_folder(module_name.to_string(), Some(ws_folder.id), owner_id, tenant_id)
                     .await?;
                 Some(folder.id)
             }
