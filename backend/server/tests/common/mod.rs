@@ -12,7 +12,7 @@ pub fn create_test_token(state: &AppState) -> String {
     let user_id = Uuid::new_v4();
     state
         .jwt_manager
-        .generate(user_id, "test@example.com".to_string())
+        .generate(user_id, "test@example.com".to_string(), Uuid::nil())
         .unwrap()
 }
 

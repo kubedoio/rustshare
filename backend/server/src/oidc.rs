@@ -278,7 +278,7 @@ pub async fn mobile_oidc_exchange(
     let user = find_or_create_oidc_user(&state, &email, settings.auto_provision_users).await?;
     let token = state
         .jwt_manager
-        .generate(user.id, user.email.clone())
+        .generate(user.id, user.email.clone(), user.tenant_id)
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
 
     Ok(Json(MobileOidcExchangeResponse {

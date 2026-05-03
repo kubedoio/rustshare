@@ -532,6 +532,7 @@ mod tests {
             email_sharing_enabled: true,
             trash_retention_days: Some(30),
             tenant_id: Uuid::nil(),
+            dashboard_config: sqlx::types::Json(rustshare_core::domain::DashboardConfig::default()),
         }
     }
 

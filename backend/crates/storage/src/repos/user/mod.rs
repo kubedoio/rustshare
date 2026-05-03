@@ -117,6 +117,11 @@ pub mod conversions {
             email_sharing_enabled: true,
             trash_retention_days: Some(30),
             tenant_id: doc.tenant_id,
+            dashboard_config: sqlx::types::Json(
+                doc.dashboard_config
+                    .and_then(|v| serde_json::from_value(v).ok())
+                    .unwrap_or_default()
+            ),
         }
     }
 
@@ -139,6 +144,7 @@ pub mod conversions {
             created_at: user.created_at,
             updated_at: user.updated_at,
             tenant_id: user.tenant_id,
+            dashboard_config: serde_json::to_value(&*user.dashboard_config).ok(),
             version: 1, // Will be managed by repository
         }
     }
