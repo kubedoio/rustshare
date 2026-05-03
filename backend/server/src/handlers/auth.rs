@@ -182,7 +182,7 @@ pub async fn login(
         ip_address.clone(),
     )
     .await
-    .map_err(|e| AuthHandlerError::Internal(e))?;
+    .map_err(AuthHandlerError::Internal)?;
 
     if let Err(error) = log_user_security_event(
         &state,

@@ -143,6 +143,7 @@ async fn init_repositories(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn init_services(
     db_pool: PgPool,
     metadata_store: Arc<MetadataStore>,

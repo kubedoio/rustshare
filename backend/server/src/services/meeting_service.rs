@@ -297,7 +297,7 @@ impl MeetingService {
             "{}-{}-{}",
             date.format("%Y-%m-%d"),
             slug,
-            Uuid::new_v4().to_string()[0..8].to_string()
+            &Uuid::new_v4().to_string()[0..8]
         );
 
         let meeting_folder = self

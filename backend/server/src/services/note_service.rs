@@ -928,8 +928,8 @@ fn generate_share_id() -> String {
 fn extract_h1_title(content: &str) -> Option<String> {
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("# ") {
-            let title = trimmed[2..].trim();
+        if let Some(rest) = trimmed.strip_prefix("# ") {
+            let title = rest.trim();
             if !title.is_empty() {
                 return Some(title.to_string());
             }

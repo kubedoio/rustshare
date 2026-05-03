@@ -476,17 +476,14 @@ pub async fn add_card_attachment(
         )))
     })? {
         let field_name = field.name().unwrap_or("").to_string();
-        match field_name.as_str() {
-            "file" => {
-                file_name = field.file_name().map(|s| s.to_string());
-                file_data = Some(field.bytes().await.map_err(|e| {
-                    kanban_error_response(KanbanError::Storage(format!(
-                        "Failed to read file data: {}",
-                        e
-                    )))
-                })?);
-            }
-            _ => {}
+        if field_name == "file" {
+            file_name = field.file_name().map(|s| s.to_string());
+            file_data = Some(field.bytes().await.map_err(|e| {
+                kanban_error_response(KanbanError::Storage(format!(
+                    "Failed to read file data: {}",
+                    e
+                )))
+            })?);
         }
     }
 

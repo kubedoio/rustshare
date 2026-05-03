@@ -623,7 +623,7 @@ impl KanbanService {
             });
         }
 
-        boards.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+        boards.sort_by_key(|a| a.title.to_lowercase());
         Ok(boards)
     }
 
@@ -866,7 +866,7 @@ impl KanbanService {
         let mut meta = self.load_board_metadata(&board_folder, user_id).await?;
 
         let label = KanbanLabel {
-            id: format!("label_{}", Uuid::new_v4().to_string()[..8].to_string()),
+            id: format!("label_{}", &Uuid::new_v4().to_string()[..8]),
             name: input.name,
             color: input.color,
         };
@@ -2366,7 +2366,7 @@ impl KanbanService {
             }
         }
 
-        events.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        events.sort_by_key(|a| std::cmp::Reverse(a.timestamp));
         Ok(events)
     }
 
@@ -2919,8 +2919,7 @@ fn derive_preview(content: &str, title: &str) -> String {
         .replace("**", "")
         .replace("__", "")
         .replace("~~", "")
-        .replace('*', "")
-        .replace('_', "");
+        .replace(['*', '_'], "");
 
     // 4. First meaningful paragraph
     let mut preview = String::new();

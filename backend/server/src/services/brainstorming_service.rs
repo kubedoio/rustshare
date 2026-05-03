@@ -201,7 +201,7 @@ impl BrainstormingService {
             }
         }
 
-        boards.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        boards.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
         Ok(boards)
     }
 

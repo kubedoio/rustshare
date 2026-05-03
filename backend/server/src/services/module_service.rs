@@ -485,7 +485,7 @@ impl ModuleService {
         if let Some(ref ui) = input.ui_config {
             if let Some(sidebar) = ui.get("sidebar").and_then(|v| v.as_object()) {
                 if let Some(order) = sidebar.get("order").and_then(|v| v.as_i64()) {
-                    if order < 0 || order > 1000 {
+                    if !(0..=1000).contains(&order) {
                         return Err(ModuleError::InvalidData(
                             "Sidebar order must be between 0 and 1000".to_string(),
                         ));
@@ -494,14 +494,14 @@ impl ModuleService {
             }
             if let Some(dashboard) = ui.get("dashboard").and_then(|v| v.as_object()) {
                 if let Some(order) = dashboard.get("order").and_then(|v| v.as_i64()) {
-                    if order < 0 || order > 1000 {
+                    if !(0..=1000).contains(&order) {
                         return Err(ModuleError::InvalidData(
                             "Dashboard order must be between 0 and 1000".to_string(),
                         ));
                     }
                 }
                 if let Some(max) = dashboard.get("maxItems").and_then(|v| v.as_i64()) {
-                    if max < 1 || max > 50 {
+                    if !(1..=50).contains(&max) {
                         return Err(ModuleError::InvalidData(
                             "Dashboard maxItems must be between 1 and 50".to_string(),
                         ));
@@ -756,13 +756,9 @@ impl ModuleService {
                 ))
             }
             _ => {
-                let items = if summary_mode == "recent-items" {
-                    self.recent_mixed_items(path_prefix, max_items, tenant_id)
-                        .await?
-                } else {
-                    self.recent_mixed_items(path_prefix, max_items, tenant_id)
-                        .await?
-                };
+                let items = self
+                    .recent_mixed_items(path_prefix, max_items, tenant_id)
+                    .await?;
                 Ok(("generic-file-summary".to_string(), items, None))
             }
         }
@@ -890,7 +886,7 @@ impl ModuleService {
                     .await?,
             );
         }
-        items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        items.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
         items.truncate(max_items as usize);
         Ok(items)
     }
@@ -953,6 +949,7 @@ fn validate_root_path(root_path: &str) -> Result<(), ModuleError> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn normalize_module_ui_config(
     module_key: &str,
     display_name: &str,
