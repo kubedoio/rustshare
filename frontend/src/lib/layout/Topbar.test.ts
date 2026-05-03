@@ -2,6 +2,13 @@ import { render, screen } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('$app/stores', () => ({
+	page: readable({
+		url: new URL('http://localhost/dashboard'),
+		route: { id: '/(app)/dashboard' }
+	})
+}));
+
 vi.mock('$lib/stores/auth', () => ({
 	currentUser: readable({
 		id: 'user-1',

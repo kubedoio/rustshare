@@ -278,7 +278,7 @@ async fn contract_save_note_updates_content_excerpt_and_updated_at() {
     let old_updated_at = note.metadata.updated_at;
 
     let saved = service
-        .save_note(note.id, user.id, "new content".to_string())
+        .save_note(note.id, user.id, "new content".to_string(), None)
         .await
         .unwrap();
 
@@ -385,7 +385,7 @@ async fn contract_list_recent_notes_ordered_by_updated_at_desc() {
     // Touch note_a so it becomes most recent
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     service
-        .save_note(note_a.id, user.id, "updated".to_string())
+        .save_note(note_a.id, user.id, "updated".to_string(), None)
         .await
         .unwrap();
 
