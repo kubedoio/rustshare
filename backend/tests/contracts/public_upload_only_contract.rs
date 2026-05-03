@@ -24,7 +24,12 @@ impl rustshare_core::services::JwtOps for MockJwtManager {
 
 fn create_share_service(
     ctx: &TestContext,
-) -> rustshare_core::services::ShareService<EventStore, MetadataStore, MockJwtManager, crate::contracts::common::MockNotificationRepo> {
+) -> rustshare_core::services::ShareService<
+    EventStore,
+    MetadataStore,
+    MockJwtManager,
+    crate::contracts::common::MockNotificationRepo,
+> {
     crate::contracts::common::create_test_share_service(ctx, Arc::new(MockJwtManager))
 }
 

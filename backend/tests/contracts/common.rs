@@ -5,7 +5,9 @@
 use bytes::Bytes;
 use rustshare_core::domain::{File, Folder, Share, SharePermissions, User};
 use rustshare_core::services::PermissionResolver;
-use rustshare_core::services::{FileService, FolderService, JwtOps, ShareNotificationRepo, ShareService};
+use rustshare_core::services::{
+    FileService, FolderService, JwtOps, ShareNotificationRepo, ShareService,
+};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
@@ -175,7 +177,12 @@ pub async fn create_test_folder(
 
 /// Create a test file with content
 pub async fn create_test_file(
-    file_service: &FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>,
+    file_service: &FileService<
+        EventStore,
+        MetadataStore,
+        ObjectStore,
+        PermissionResolverRepository,
+    >,
     owner_id: Uuid,
     tenant_id: Uuid,
     folder_id: Option<Uuid>,
