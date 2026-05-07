@@ -3653,4 +3653,208 @@ mod tests {
             .await
             .unwrap();
     }
+
+    #[tokio::test]
+    #[ignore] // Requires DATABASE_URL
+    async fn test_cross_user_file_isolation() {
+        let (store, pool) = setup_metadata_store().await;
+        let tenant_id = Uuid::new_v4();
+
+        let user_a = User::new(
+            "user_a".to_string(),
+            "User A".to_string(),
+            "hash_a".to_string(),
+            "user_a@example.com".to_string(),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        let user_b = User::new(
+            "user_b".to_string(),
+            "User B".to_string(),
+            "hash_b".to_string(),
+            "user_b@example.com".to_string(),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        store.create_user(&user_a).await.unwrap();
+        store.create_user(&user_b).await.unwrap();
+
+        let file = File::new(
+            "secret.pdf".to_string(),
+            "/secret.pdf".to_string(),
+            "hash".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            None,
+            user_a.id,
+            tenant_id,
+        );
+        store.create_file(&file).await.unwrap();
+
+        // User B should NOT be able to find User A's file
+        let found = store.find_file_by_id(file.id, user_b.id).await.unwrap();
+        assert!(found.is_none(), "User B should not find User A's file");
+
+        // User B should NOT be able to delete User A's file
+        let result = store.delete_file(file.id, user_b.id).await;
+        assert!(
+            result.is_ok(),
+            "delete_file should not error for non-existent (to B) file"
+        );
+        // File should still exist for User A
+        let still_exists = store.find_file_by_id(file.id, user_a.id).await.unwrap();
+        assert!(still_exists.is_some(), "User A's file should still exist");
+
+        // Cleanup
+        store.delete_file(file.id, user_a.id).await.unwrap();
+        sqlx::query("DELETE FROM users WHERE id = $1 OR id = $2")
+            .bind(user_a.id)
+            .bind(user_b.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires DATABASE_URL
+    async fn test_cross_user_folder_isolation() {
+        let (store, pool) = setup_metadata_store().await;
+        let tenant_id = Uuid::new_v4();
+
+        let user_a = User::new(
+            "user_a".to_string(),
+            "User A".to_string(),
+            "hash_a".to_string(),
+            "user_a@example.com".to_string(),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        let user_b = User::new(
+            "user_b".to_string(),
+            "User B".to_string(),
+            "hash_b".to_string(),
+            "user_b@example.com".to_string(),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        store.create_user(&user_a).await.unwrap();
+        store.create_user(&user_b).await.unwrap();
+
+        let folder = Folder::new_root(user_a.id, tenant_id);
+        store.create_folder(&folder).await.unwrap();
+
+        // User B should NOT be able to find User A's folder
+        let found = store.find_folder_by_id(folder.id, user_b.id).await.unwrap();
+        assert!(found.is_none(), "User B should not find User A's folder");
+
+        // User B should NOT be able to delete User A's folder
+        let result = store.delete_folder(folder.id, user_b.id).await;
+        assert!(
+            result.is_ok(),
+            "delete_folder should not error for non-existent (to B) folder"
+        );
+        // Folder should still exist for User A
+        let still_exists = store.find_folder_by_id(folder.id, user_a.id).await.unwrap();
+        assert!(still_exists.is_some(), "User A's folder should still exist");
+
+        // Cleanup
+        store.delete_folder(folder.id, user_a.id).await.unwrap();
+        sqlx::query("DELETE FROM users WHERE id = $1 OR id = $2")
+            .bind(user_a.id)
+            .bind(user_b.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires DATABASE_URL
+    async fn test_cross_user_share_isolation() {
+        let (store, pool) = setup_metadata_store().await;
+        let tenant_id = Uuid::new_v4();
+
+        let user_a = User::new(
+            "user_a".to_string(),
+            "User A".to_string(),
+            "hash_a".to_string(),
+            "user_a@example.com".to_string(),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        let user_b = User::new(
+            "user_b".to_string(),
+            "User B".to_string(),
+            "hash_b".to_string(),
+            "user_b@example.com".to_string(),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        store.create_user(&user_a).await.unwrap();
+        store.create_user(&user_b).await.unwrap();
+
+        let file = File::new(
+            "shared.pdf".to_string(),
+            "/shared.pdf".to_string(),
+            "hash".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            None,
+            user_a.id,
+            tenant_id,
+        );
+        store.create_file(&file).await.unwrap();
+
+        let mut share = Share::new(
+            file.id,
+            "token".to_string(),
+            user_a.id,
+            rustshare_core::domain::SharePermissions::View,
+            None,
+            None,
+            tenant_id,
+        );
+        share.recipient_user_id = Some(user_b.id);
+        store.create_share(&share).await.unwrap();
+
+        // User B should NOT be able to get User A's share by ID
+        let found = store.get_share(share.id, user_b.id).await.unwrap();
+        assert!(
+            found.is_none(),
+            "User B should not get User A's share by ID"
+        );
+
+        // User B should NOT be able to revoke User A's share
+        let result = store.revoke_share(share.id, user_b.id).await;
+        assert!(
+            result.is_ok(),
+            "revoke_share should not error for non-existent (to B) share"
+        );
+        // Share should still exist
+        let still_exists = store.get_share(share.id, user_a.id).await.unwrap();
+        assert!(still_exists.is_some(), "User A's share should still exist");
+
+        // Cleanup
+        sqlx::query("DELETE FROM shares WHERE id = $1")
+            .bind(share.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM files WHERE id = $1")
+            .bind(file.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM users WHERE id = $1 OR id = $2")
+            .bind(user_a.id)
+            .bind(user_b.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 }
