@@ -162,7 +162,7 @@ async fn test_group_sharing_works_via_compat_layer() {
 
     // Test 6: Verify share was created by retrieving it
     let retrieved_share = compat
-        .get_share_by_id(share_id)
+        .get_share_by_id(share_id, owner_id)
         .await
         .expect("Should get share by ID")
         .expect("Share should exist");

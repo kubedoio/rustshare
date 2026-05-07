@@ -167,7 +167,7 @@ impl MockUploadMetadataStore {
 
 #[async_trait::async_trait]
 impl UploadMetadataStore for MockUploadMetadataStore {
-    async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<Folder>, UploadError> {
+    async fn find_folder_by_id(&self, id: Uuid, _owner_id: Uuid) -> Result<Option<Folder>, UploadError> {
         Ok(self
             .folders
             .lock()

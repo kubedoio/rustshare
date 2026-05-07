@@ -420,9 +420,9 @@ async fn should_send_event_to_user(
                 _ => return Ok(false),
             };
 
-            // Get file to check owner
+            // Get file to check owner (unchecked: we need owner info for sync filtering)
             let file = metadata_store
-                .find_file_by_id(file_id)
+                .find_file_by_id_unchecked(file_id)
                 .await
                 .map_err(|e| format!("Failed to get file: {}", e))?;
 

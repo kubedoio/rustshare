@@ -406,7 +406,7 @@ async fn publish_replication_event(
     context: ReplicationEventContext<'_>,
 ) -> Result<()> {
     let file = metadata_store
-        .find_file_by_id(context.job.file_id)
+        .find_file_by_id_unchecked(context.job.file_id)
         .await
         .with_context(|| {
             format!(

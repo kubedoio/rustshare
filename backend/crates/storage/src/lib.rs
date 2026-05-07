@@ -250,17 +250,15 @@ impl ShareMetadataStoreOps for MetadataStore {
     async fn get_file_shares(
         &self,
         file_id: uuid::Uuid,
-        actor_id: rustshare_core::domain::UserId,
     ) -> Result<Vec<rustshare_core::domain::Share>> {
-        self.get_file_shares(file_id, actor_id).await
+        self.get_file_shares(file_id).await
     }
 
     async fn get_folder_shares(
         &self,
         folder_id: uuid::Uuid,
-        actor_id: rustshare_core::domain::UserId,
     ) -> Result<Vec<rustshare_core::domain::Share>> {
-        self.get_folder_shares(folder_id, actor_id).await
+        self.get_folder_shares(folder_id).await
     }
 
     async fn list_files(

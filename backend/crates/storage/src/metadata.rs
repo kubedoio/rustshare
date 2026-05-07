@@ -941,7 +941,7 @@ impl MetadataStore {
         Ok(())
     }
 
-    /// Find file by ID
+    /// Find file by ID (owner-filtered)
     pub async fn find_file_by_id(&self, id: Uuid, owner_id: Uuid) -> Result<Option<File>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
@@ -949,6 +949,41 @@ impl MetadataStore {
         )
         .bind(id)
         .bind(owner_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let file = File {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                size: row.try_get("size")?,
+                mime_type: row.try_get("mime_type")?,
+                content_hash: row.try_get("content_hash")?,
+                owner_id: row.try_get("owner_id")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                current_version: row.try_get("current_version")?,
+                created_at: row.try_get("created_at")?,
+                modified_at: row.try_get("modified_at")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
+                tenant_id: row.try_get("tenant_id")?,
+            };
+            Ok(Some(file))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Find file by ID without owner check.
+    ///
+    /// ⚠️ WARNING: This bypasses ownership filtering. Only use for public-share
+    /// endpoints or other cases where the caller has already verified access.
+    pub async fn find_file_by_id_unchecked(&self, id: Uuid) -> Result<Option<File>> {
+        let row = sqlx::query(
+            r#"SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id FROM files WHERE id = $1 AND deleted_at IS NULL"#,
+        )
+        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -1775,6 +1810,42 @@ impl MetadataStore {
         }
     }
 
+    /// Find a folder by ID without owner filtering.
+    ///
+    /// ⚠️ WARNING: This bypasses ownership filtering. Only use for permission
+    /// resolution or other cases where the caller has already verified access.
+    pub async fn find_folder_by_id_unchecked(&self, id: Uuid) -> Result<Option<Folder>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
+            FROM folders
+            WHERE id = $1 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let folder = Folder {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                owner_id: row.try_get("owner_id")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
+                tenant_id: row.try_get("tenant_id")?,
+                ancestor_ids: None,
+            };
+            Ok(Some(folder))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Find a folder by its canonical path for a specific owner.
     pub async fn find_folder_by_path(&self, path: &str, owner_id: Uuid) -> Result<Option<Folder>> {
         let row = sqlx::query(
@@ -2441,18 +2512,17 @@ impl MetadataStore {
     }
 
     /// Get all active (non-revoked) shares for a file
-    pub async fn get_file_shares(&self, file_id: Uuid, actor_id: Uuid) -> Result<Vec<Share>> {
+    pub async fn get_file_shares(&self, file_id: Uuid) -> Result<Vec<Share>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
-            WHERE file_id = $1 AND created_by = $2 AND revoked_at IS NULL
+            WHERE file_id = $1 AND revoked_at IS NULL
             ORDER BY created_at DESC
             "#,
         )
         .bind(file_id)
-        .bind(actor_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -2485,17 +2555,16 @@ impl MetadataStore {
     }
 
     /// Get all active (non-revoked) shares for a folder.
-    pub async fn get_folder_shares(&self, folder_id: Uuid, actor_id: Uuid) -> Result<Vec<Share>> {
+    pub async fn get_folder_shares(&self, folder_id: Uuid) -> Result<Vec<Share>> {
         let rows = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
-            WHERE folder_id = $1 AND created_by = $2 AND revoked_at IS NULL
+            WHERE folder_id = $1 AND revoked_at IS NULL
             ORDER BY created_at DESC
             "#,
         )
         .bind(folder_id)
-        .bind(actor_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -2995,7 +3064,7 @@ mod tests {
         store.create_file(&file).await.unwrap();
 
         // Test: find_file_by_id
-        let found = store.find_file_by_id(file.id).await.unwrap();
+        let found = store.find_file_by_id(file.id, owner.id).await.unwrap();
         assert!(found.is_some());
         let found_file = found.unwrap();
         assert_eq!(found_file.id, file.id);
@@ -3013,7 +3082,7 @@ mod tests {
         updated_file.size = 4096;
         store.update_file(&updated_file).await.unwrap();
 
-        let found_updated = store.find_file_by_id(file.id).await.unwrap().unwrap();
+        let found_updated = store.find_file_by_id(file.id, owner.id).await.unwrap().unwrap();
         assert_eq!(found_updated.name, "renamed-document.pdf");
         assert_eq!(found_updated.size, 4096);
 
@@ -3023,8 +3092,8 @@ mod tests {
         assert!(files.iter().any(|f| f.id == file.id));
 
         // Test: delete_file
-        store.delete_file(file.id).await.unwrap();
-        let not_found = store.find_file_by_id(file.id).await.unwrap();
+        store.delete_file(file.id, owner.id).await.unwrap();
+        let not_found = store.find_file_by_id(file.id, owner.id).await.unwrap();
         assert!(not_found.is_none());
 
         // Cleanup user
@@ -3103,7 +3172,7 @@ mod tests {
         store.create_file_version(&version3).await.unwrap();
 
         // Test: list_file_versions (should be in DESC order: 3, 2, 1)
-        let versions = store.list_file_versions(file.id).await.unwrap();
+        let versions = store.list_file_versions(file.id, user.id).await.unwrap();
         assert_eq!(versions.len(), 3);
         assert_eq!(versions[0].version_number, 3);
         assert_eq!(versions[1].version_number, 2);
@@ -3113,7 +3182,7 @@ mod tests {
         assert_eq!(versions[2].content_hash, "hash1");
 
         // Test: find_file_version (find version 2)
-        let found_version = store.find_file_version(file.id, 2).await.unwrap();
+        let found_version = store.find_file_version(file.id, 2, user.id).await.unwrap();
         assert!(found_version.is_some());
         let found = found_version.unwrap();
         assert_eq!(found.version_number, 2);
@@ -3123,7 +3192,7 @@ mod tests {
         assert_eq!(found.change_description, Some("Second version".to_string()));
 
         // Test: find_file_version (non-existent version)
-        let not_found = store.find_file_version(file.id, 99).await.unwrap();
+        let not_found = store.find_file_version(file.id, 99, user.id).await.unwrap();
         assert!(not_found.is_none());
 
         // Cleanup (file_versions will cascade delete with file)
@@ -3164,7 +3233,7 @@ mod tests {
         store.create_folder(&root_folder).await.unwrap();
 
         // Test: find_folder_by_id
-        let found = store.find_folder_by_id(root_folder.id).await.unwrap();
+        let found = store.find_folder_by_id(root_folder.id, owner.id).await.unwrap();
         assert!(found.is_some());
         let found_folder = found.unwrap();
         assert_eq!(found_folder.id, root_folder.id);
@@ -3259,7 +3328,7 @@ mod tests {
         store.update_folder(&updated_photos).await.unwrap();
 
         let found_updated = store
-            .find_folder_by_id(photos_folder.id)
+            .find_folder_by_id(photos_folder.id, owner.id)
             .await
             .unwrap()
             .unwrap();
@@ -3267,8 +3336,8 @@ mod tests {
         assert_eq!(found_updated.path, "/Pictures");
 
         // Test: delete_folder (delete leaf folder first)
-        store.delete_folder(projects_folder.id).await.unwrap();
-        let not_found = store.find_folder_by_id(projects_folder.id).await.unwrap();
+        store.delete_folder(projects_folder.id, owner.id).await.unwrap();
+        let not_found = store.find_folder_by_id(projects_folder.id, owner.id).await.unwrap();
         assert!(not_found.is_none());
 
         // Verify descendants updated after deletion
@@ -3369,7 +3438,7 @@ mod tests {
         assert_eq!(found_share.access_count, 0);
 
         // Test: get_share
-        let found_by_id = store.get_share(share.id).await.unwrap();
+        let found_by_id = store.get_share(share.id, owner.id).await.unwrap();
         assert!(found_by_id.is_some());
         let found_share_by_id = found_by_id.unwrap();
         assert_eq!(found_share_by_id.id, share.id);
@@ -3400,7 +3469,7 @@ mod tests {
 
         // Test: increment_share_access
         store.increment_share_access(share.id).await.unwrap();
-        let updated = store.get_share(share.id).await.unwrap().unwrap();
+        let updated = store.get_share(share.id, owner.id).await.unwrap().unwrap();
         assert_eq!(updated.access_count, 1);
 
         // Test: log_share_access
@@ -3424,14 +3493,14 @@ mod tests {
         updated_share.password_hash = Some("new_hashed_password".to_string());
         store.update_share(&updated_share).await.unwrap();
 
-        let after_update = store.get_share(share.id).await.unwrap().unwrap();
+        let after_update = store.get_share(share.id, owner.id).await.unwrap().unwrap();
         assert_eq!(
             after_update.password_hash,
             Some("new_hashed_password".to_string())
         );
 
         // Test: revoke_share
-        store.revoke_share(share.id).await.unwrap();
+        store.revoke_share(share.id, owner.id).await.unwrap();
 
         // After revoke, share should not appear in get_file_shares (only active shares)
         let active_shares = store.get_file_shares(file.id).await.unwrap();
@@ -3441,7 +3510,7 @@ mod tests {
             .all(|s| s.share_token == Some(share_token_2.clone())));
 
         // But should still be retrievable by ID
-        let revoked_share = store.get_share(share.id).await.unwrap();
+        let revoked_share = store.get_share(share.id, owner.id).await.unwrap();
         assert!(revoked_share.is_some());
 
         // Cleanup

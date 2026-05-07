@@ -449,16 +449,15 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         }
     }
 
-    async fn get_file_shares(&self, file_id: uuid::Uuid, actor_id: uuid::Uuid) -> anyhow::Result<Vec<Share>> {
+    async fn get_file_shares(&self, file_id: uuid::Uuid) -> anyhow::Result<Vec<Share>> {
         let docs = self.repo.shares().list_by_resource("file", file_id).await?;
         Ok(docs
             .iter()
             .map(share_from_document)
-            .filter(|s| s.created_by == actor_id)
             .collect())
     }
 
-    async fn get_folder_shares(&self, folder_id: uuid::Uuid, actor_id: uuid::Uuid) -> anyhow::Result<Vec<Share>> {
+    async fn get_folder_shares(&self, folder_id: uuid::Uuid) -> anyhow::Result<Vec<Share>> {
         let docs = self
             .repo
             .shares()
@@ -467,7 +466,6 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         Ok(docs
             .iter()
             .map(share_from_document)
-            .filter(|s| s.created_by == actor_id)
             .collect())
     }
 

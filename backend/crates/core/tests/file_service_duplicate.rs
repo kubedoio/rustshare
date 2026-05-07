@@ -71,7 +71,7 @@ impl FileMetadataStoreOps for MockMetadataStore {
         Ok(())
     }
 
-    async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<Folder>> {
+    async fn find_folder_by_id(&self, id: Uuid, _owner_id: Uuid) -> Result<Option<Folder>> {
         Ok(self
             .folders
             .lock()
@@ -81,7 +81,7 @@ impl FileMetadataStoreOps for MockMetadataStore {
             .cloned())
     }
 
-    async fn find_file_by_id(&self, id: Uuid) -> Result<Option<File>> {
+    async fn find_file_by_id(&self, id: Uuid, _owner_id: Uuid) -> Result<Option<File>> {
         let existing = self.existing_file.lock().unwrap().clone();
         Ok(existing.filter(|file| file.id == id))
     }
@@ -92,11 +92,11 @@ impl FileMetadataStoreOps for MockMetadataStore {
         Ok(())
     }
 
-    async fn delete_file(&self, _id: Uuid) -> Result<()> {
+    async fn delete_file(&self, _id: Uuid, _owner_id: Uuid) -> Result<()> {
         unreachable!()
     }
 
-    async fn list_file_versions(&self, _file_id: Uuid) -> Result<Vec<FileVersion>> {
+    async fn list_file_versions(&self, _file_id: Uuid, _owner_id: Uuid) -> Result<Vec<FileVersion>> {
         Ok(Vec::new())
     }
 
@@ -104,6 +104,7 @@ impl FileMetadataStoreOps for MockMetadataStore {
         &self,
         _file_id: Uuid,
         _version: i32,
+        _owner_id: Uuid,
     ) -> Result<Option<FileVersion>> {
         Ok(None)
     }

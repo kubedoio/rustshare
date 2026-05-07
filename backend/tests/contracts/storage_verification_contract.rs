@@ -38,7 +38,7 @@ async fn test_metadata_blob_consistency() {
     // Verify metadata-store consistency
     let retrieved = ctx
         .metadata_store
-        .find_file_by_id(file.id)
+        .find_file_by_id(file.id, user.id)
         .await
         .expect("Failed to find file")
         .expect("File should exist");
@@ -102,7 +102,7 @@ async fn test_orphaned_metadata_detection() {
     // Verify metadata exists
     let metadata = ctx
         .metadata_store
-        .find_file_by_id(file.id)
+        .find_file_by_id(file.id, user.id)
         .await
         .expect("Failed to find file");
 

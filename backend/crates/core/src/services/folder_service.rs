@@ -149,7 +149,7 @@ where
             // Verify parent folder exists and user has access
             let parent = self
                 .metadata_store
-                .find_folder_by_id(parent_id, user_id)
+                .find_folder_by_id(parent_id, owner_id)
                 .await
                 .map_err(|e| FolderError::Database(e.to_string()))?
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
@@ -759,7 +759,7 @@ mod tests {
             Ok(())
         }
 
-        async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>> {
+        async fn find_folder_by_id(&self, id: FolderId, _owner_id: UserId) -> Result<Option<Folder>> {
             Ok(self.folders.lock().unwrap().get(&id).cloned())
         }
 
@@ -771,7 +771,7 @@ mod tests {
             Ok(())
         }
 
-        async fn delete_folder(&self, id: FolderId) -> Result<()> {
+        async fn delete_folder(&self, id: FolderId, _owner_id: UserId) -> Result<()> {
             self.folders.lock().unwrap().remove(&id);
             Ok(())
         }
@@ -910,7 +910,7 @@ mod tests {
 
         async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>> {
             if let Some(store) = &self.metadata_store {
-                store.find_folder_by_id(id).await
+                store.find_folder_by_id(id, Uuid::nil()).await
             } else {
                 Ok(None)
             }
@@ -1837,7 +1837,7 @@ mod tests {
 
         // Verify by fetching from store
         let stored = metadata_store
-            .find_folder_by_id(folder.id)
+            .find_folder_by_id(folder.id, owner_id)
             .await
             .unwrap()
             .unwrap();
@@ -1885,17 +1885,17 @@ mod tests {
 
         // Verify by fetching from store
         let stored_docs = metadata_store
-            .find_folder_by_id(docs.id)
+            .find_folder_by_id(docs.id, owner_id)
             .await
             .unwrap()
             .unwrap();
         let stored_work = metadata_store
-            .find_folder_by_id(work.id)
+            .find_folder_by_id(work.id, owner_id)
             .await
             .unwrap()
             .unwrap();
         let stored_projects = metadata_store
-            .find_folder_by_id(projects.id)
+            .find_folder_by_id(projects.id, owner_id)
             .await
             .unwrap()
             .unwrap();
@@ -1955,12 +1955,12 @@ mod tests {
 
         // Verify updated ancestor_ids
         let updated_work = metadata_store
-            .find_folder_by_id(work.id)
+            .find_folder_by_id(work.id, owner_id)
             .await
             .unwrap()
             .unwrap();
         let updated_projects = metadata_store
-            .find_folder_by_id(projects.id)
+            .find_folder_by_id(projects.id, owner_id)
             .await
             .unwrap()
             .unwrap();
@@ -2007,7 +2007,7 @@ mod tests {
 
         // Verify updated ancestor_ids
         let updated_work = metadata_store
-            .find_folder_by_id(work.id)
+            .find_folder_by_id(work.id, owner_id)
             .await
             .unwrap()
             .unwrap();
@@ -2119,17 +2119,17 @@ mod tests {
 
         // Verify ancestor_ids were updated for C and all descendants
         let updated_c = metadata_store
-            .find_folder_by_id(folder_c.id)
+            .find_folder_by_id(folder_c.id, owner_id)
             .await
             .unwrap()
             .unwrap();
         let updated_d = metadata_store
-            .find_folder_by_id(folder_d.id)
+            .find_folder_by_id(folder_d.id, owner_id)
             .await
             .unwrap()
             .unwrap();
         let updated_e = metadata_store
-            .find_folder_by_id(folder_e.id)
+            .find_folder_by_id(folder_e.id, owner_id)
             .await
             .unwrap()
             .unwrap();

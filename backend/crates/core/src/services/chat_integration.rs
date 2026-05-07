@@ -688,11 +688,11 @@ mod tests {
                 .cloned())
         }
 
-        async fn find_file_by_id(&self, id: Uuid) -> anyhow::Result<Option<File>> {
+        async fn find_file_by_id(&self, id: Uuid, _owner_id: Uuid) -> anyhow::Result<Option<File>> {
             Ok(self.files.lock().unwrap().iter().find(|f| f.id == id).cloned())
         }
 
-        async fn find_folder_by_id(&self, id: Uuid) -> anyhow::Result<Option<Folder>> {
+        async fn find_folder_by_id(&self, id: Uuid, _owner_id: Uuid) -> anyhow::Result<Option<Folder>> {
             Ok(self
                 .folders
                 .lock()

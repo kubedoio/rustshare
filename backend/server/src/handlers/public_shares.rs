@@ -279,7 +279,7 @@ pub async fn download_shared_file(
 
     let file = state
         .metadata_store
-        .find_file_by_id(file_id)
+        .find_file_by_id(file_id, share.created_by)
         .await
         .map_err(|e| internal_error(format!("Database error: {}", e)))?
         .ok_or_else(|| {
@@ -438,7 +438,7 @@ pub async fn download_shared_folder_file(
 
     let file = state
         .metadata_store
-        .find_file_by_id(file_id)
+        .find_file_by_id(file_id, share.created_by)
         .await
         .map_err(|e| internal_error(format!("Database error: {}", e)))?
         .ok_or_else(|| {
@@ -540,7 +540,7 @@ pub async fn upload_shared_folder_file(
 
     let root_folder = state
         .metadata_store
-        .find_folder_by_id(root_folder_id)
+        .find_folder_by_id(root_folder_id, share.created_by)
         .await
         .map_err(|e| internal_error(format!("Database error: {}", e)))?
         .ok_or_else(|| {

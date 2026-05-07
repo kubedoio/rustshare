@@ -199,11 +199,10 @@ impl NoteService {
         tenant_id: Uuid,
     ) -> Result<Option<NoteMetadata>, NoteError> {
         let file = self
-            .metadata_store
-            .find_file_by_id(file_id)
+            .file_service
+            .get_file(file_id, user_id)
             .await
-            .map_err(|e| NoteError::Database(e.to_string()))?
-            .ok_or(NoteError::NotFound(file_id))?;
+            .map_err(|e| NoteError::Database(e.to_string()))?;
 
         // 1. Try visible sidecar: {path}.rustshare.json
         let sidecar_name = format!("{}.rustshare.json", file.name);
@@ -244,11 +243,10 @@ impl NoteService {
         meta: &NoteMetadata,
     ) -> Result<(), NoteError> {
         let file = self
-            .metadata_store
-            .find_file_by_id(file_id)
+            .file_service
+            .get_file(file_id, user_id)
             .await
-            .map_err(|e| NoteError::Database(e.to_string()))?
-            .ok_or(NoteError::NotFound(file_id))?;
+            .map_err(|e| NoteError::Database(e.to_string()))?;
 
         let sidecar_name = format!("{}.rustshare.json", file.name);
         let parent_id = file.parent_folder_id;
@@ -298,11 +296,10 @@ impl NoteService {
         tenant_id: Uuid,
     ) -> Result<(), NoteError> {
         let file = self
-            .metadata_store
-            .find_file_by_id(file_id)
+            .file_service
+            .get_file(file_id, user_id)
             .await
-            .map_err(|e| NoteError::Database(e.to_string()))?
-            .ok_or(NoteError::NotFound(file_id))?;
+            .map_err(|e| NoteError::Database(e.to_string()))?;
         let sidecar_name = format!("{}.rustshare.json", file.name);
         let parent_id = file.parent_folder_id;
 
@@ -873,7 +870,7 @@ impl NoteService {
 
         let file = self
             .metadata_store
-            .find_file_by_id(file_id)
+            .find_file_by_id_unchecked(file_id)
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?
             .ok_or(NoteError::NotFound(file_id))?;

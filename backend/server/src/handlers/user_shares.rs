@@ -208,7 +208,7 @@ pub async fn list_received_shares(
         };
 
         let (resource_name, resource_path) = if let Some(file_id) = share.file_id {
-            match state.metadata_store.find_file_by_id(file_id).await {
+            match state.metadata_store.find_file_by_id_unchecked(file_id).await {
                 Ok(Some(file)) => (file.name, file.path),
                 Ok(None) => continue,
                 Err(error) => {
@@ -217,7 +217,7 @@ pub async fn list_received_shares(
                 }
             }
         } else if let Some(folder_id) = share.folder_id {
-            match state.metadata_store.find_folder_by_id(folder_id).await {
+            match state.metadata_store.find_folder_by_id_unchecked(folder_id).await {
                 Ok(Some(folder)) => (folder.name, folder.path),
                 Ok(None) => continue,
                 Err(error) => {
