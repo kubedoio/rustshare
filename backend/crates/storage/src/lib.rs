@@ -180,8 +180,9 @@ impl FolderMetadataStoreOps for MetadataStore {
     async fn find_descendant_folders(
         &self,
         folder_id: uuid::Uuid,
+        owner_id: uuid::Uuid,
     ) -> Result<Vec<rustshare_core::domain::Folder>> {
-        self.find_descendant_folders(folder_id).await
+        self.find_descendant_folders(folder_id, owner_id).await
     }
 
     async fn list_files(
@@ -298,8 +299,16 @@ impl ShareMetadataStoreOps for MetadataStore {
     async fn find_descendant_folders(
         &self,
         folder_id: uuid::Uuid,
+        owner_id: uuid::Uuid,
     ) -> Result<Vec<rustshare_core::domain::Folder>> {
-        self.find_descendant_folders(folder_id).await
+        self.find_descendant_folders(folder_id, owner_id).await
+    }
+
+    async fn find_descendant_folders_unchecked(
+        &self,
+        folder_id: uuid::Uuid,
+    ) -> Result<Vec<rustshare_core::domain::Folder>> {
+        self.find_descendant_folders_unchecked(folder_id).await
     }
 
     async fn revoke_share(&self, share_id: uuid::Uuid, actor_id: rustshare_core::domain::UserId) -> Result<()> {

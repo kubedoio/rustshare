@@ -2352,7 +2352,64 @@ impl MetadataStore {
     ///
     /// Returns all folders in the subtree rooted at the specified folder,
     /// including the folder itself and all its direct and indirect children.
-    pub async fn find_descendant_folders(&self, folder_id: Uuid) -> Result<Vec<Folder>> {
+    /// Find all descendant folders of a given folder, filtered by owner.
+    ///
+    /// Use this for operations where the caller has already verified the user
+    /// owns the root folder (e.g., delete, move).
+    pub async fn find_descendant_folders(&self, folder_id: Uuid, owner_id: Uuid) -> Result<Vec<Folder>> {
+        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
+        let rows = sqlx::query(
+            r#"
+            WITH RECURSIVE folder_tree AS (
+                -- Base case: start with the specified folder
+                SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
+                FROM folders
+                WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+
+                UNION ALL
+
+                -- Recursive case: get all direct children
+                SELECT f.id, f.name, f.path, f.parent_folder_id, f.owner_id, f.created_at, f.updated_at, f.starred_at, f.deleted_at, f.tenant_id
+                FROM folders f
+                INNER JOIN folder_tree ft ON f.parent_folder_id = ft.id
+                WHERE f.owner_id = $2 AND f.deleted_at IS NULL
+            )
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
+            FROM folder_tree
+            ORDER BY path ASC
+            "#,
+        )
+        .bind(folder_id)
+        .bind(owner_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut folders = Vec::new();
+        for row in rows {
+            let folder = Folder {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                path: row.try_get("path")?,
+                parent_folder_id: row.try_get("parent_folder_id")?,
+                owner_id: row.try_get("owner_id")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+                starred_at: row.try_get("starred_at")?,
+                deleted_at: row.try_get("deleted_at")?,
+                tenant_id: row.try_get("tenant_id")?,
+                ancestor_ids: None, // Will be populated from folder_documents if available
+            };
+            folders.push(folder);
+        }
+
+        Ok(folders)
+    }
+
+    /// Find all descendant folders of a given folder without owner filtering.
+    ///
+    /// ⚠️ WARNING: This bypasses ownership filtering. Only use for public-share
+    /// endpoints or other cases where the caller has already verified access.
+    pub async fn find_descendant_folders_unchecked(&self, folder_id: Uuid) -> Result<Vec<Folder>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
@@ -3305,7 +3362,7 @@ mod tests {
         assert_eq!(root_folders[0].name, "Root");
 
         // Test: find_descendant_folders (should find all descendants of Documents)
-        let descendants = store.find_descendant_folders(docs_folder.id).await.unwrap();
+        let descendants = store.find_descendant_folders(docs_folder.id, owner.id).await.unwrap();
         // Should include: Documents, Work, Projects (3 folders)
         assert_eq!(descendants.len(), 3);
         assert!(descendants.iter().any(|f| f.name == "Documents"));
@@ -3314,7 +3371,7 @@ mod tests {
 
         // Test: find_descendant_folders (leaf folder should only return itself)
         let leaf_descendants = store
-            .find_descendant_folders(projects_folder.id)
+            .find_descendant_folders(projects_folder.id, owner.id)
             .await
             .unwrap();
         assert_eq!(leaf_descendants.len(), 1);
@@ -3341,7 +3398,7 @@ mod tests {
         assert!(not_found.is_none());
 
         // Verify descendants updated after deletion
-        let updated_descendants = store.find_descendant_folders(docs_folder.id).await.unwrap();
+        let updated_descendants = store.find_descendant_folders(docs_folder.id, owner.id).await.unwrap();
         assert_eq!(updated_descendants.len(), 2); // Only Documents and Work remain
         assert!(!updated_descendants.iter().any(|f| f.name == "Projects"));
 

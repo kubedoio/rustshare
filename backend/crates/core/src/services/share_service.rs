@@ -112,8 +112,13 @@ pub trait MetadataStoreOps: Send + Sync {
         tenant_id: uuid::Uuid,
     ) -> Result<Vec<Folder>>;
 
-    /// List all descendant folders, including the root folder.
-    async fn find_descendant_folders(&self, folder_id: uuid::Uuid) -> Result<Vec<Folder>>;
+    /// Find all descendant folders of a given folder using recursive CTE.
+    async fn find_descendant_folders(&self, folder_id: uuid::Uuid, owner_id: UserId) -> Result<Vec<Folder>>;
+
+    /// Find all descendant folders without owner filtering.
+    ///
+    /// ⚠️ WARNING: Only use for public-share endpoints where access is already verified.
+    async fn find_descendant_folders_unchecked(&self, folder_id: uuid::Uuid) -> Result<Vec<Folder>>;
 
     /// Revoke a share by ID.
     async fn revoke_share(&self, share_id: uuid::Uuid, actor_id: UserId) -> Result<()>;
@@ -750,7 +755,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
         let descendants = self
             .metadata_store
-            .find_descendant_folders(root_folder.id)
+            .find_descendant_folders_unchecked(root_folder.id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
@@ -1497,7 +1502,27 @@ mod tests {
                 .collect())
         }
 
-        async fn find_descendant_folders(&self, folder_id: Uuid) -> Result<Vec<Folder>> {
+        async fn find_descendant_folders(&self, folder_id: Uuid, _owner_id: UserId) -> Result<Vec<Folder>> {
+            let folders = self.folders.lock().unwrap().clone();
+            let mut result = Vec::new();
+            let mut stack = vec![folder_id];
+
+            while let Some(current) = stack.pop() {
+                if let Some(folder) = folders.iter().find(|folder| folder.id == current).cloned() {
+                    stack.extend(
+                        folders
+                            .iter()
+                            .filter(|child| child.parent_folder_id == Some(current))
+                            .map(|child| child.id),
+                    );
+                    result.push(folder);
+                }
+            }
+
+            Ok(result)
+        }
+
+        async fn find_descendant_folders_unchecked(&self, folder_id: Uuid) -> Result<Vec<Folder>> {
             let folders = self.folders.lock().unwrap().clone();
             let mut result = Vec::new();
             let mut stack = vec![folder_id];

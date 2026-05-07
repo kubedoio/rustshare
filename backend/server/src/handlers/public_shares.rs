@@ -432,7 +432,7 @@ pub async fn download_shared_folder_file(
 
     let descendants = state
         .metadata_store
-        .find_descendant_folders(root_folder_id)
+        .find_descendant_folders_unchecked(root_folder_id)
         .await
         .map_err(|e| internal_error(format!("Database error: {}", e)))?;
 
@@ -561,7 +561,7 @@ pub async fn upload_shared_folder_file(
     let target_folder_id = requested_folder_id.unwrap_or(root_folder_id);
     let descendants = state
         .metadata_store
-        .find_descendant_folders(root_folder_id)
+        .find_descendant_folders_unchecked(root_folder_id)
         .await
         .map_err(|e| internal_error(format!("Database error: {}", e)))?;
 

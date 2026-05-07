@@ -309,7 +309,7 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
         }
     }
 
-    async fn find_descendant_folders(&self, folder_id: uuid::Uuid) -> anyhow::Result<Vec<Folder>> {
+    async fn find_descendant_folders(&self, folder_id: uuid::Uuid, _owner_id: uuid::Uuid) -> anyhow::Result<Vec<Folder>> {
         let docs = self.repo.folders().list_descendants(folder_id).await?;
         Ok(docs.iter().map(folder_from_document).collect())
     }
@@ -517,7 +517,12 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         .await
     }
 
-    async fn find_descendant_folders(&self, folder_id: uuid::Uuid) -> anyhow::Result<Vec<Folder>> {
+    async fn find_descendant_folders(&self, folder_id: uuid::Uuid, _owner_id: uuid::Uuid) -> anyhow::Result<Vec<Folder>> {
+        let docs = self.repo.folders().list_descendants(folder_id).await?;
+        Ok(docs.iter().map(folder_from_document).collect())
+    }
+
+    async fn find_descendant_folders_unchecked(&self, folder_id: uuid::Uuid) -> anyhow::Result<Vec<Folder>> {
         let docs = self.repo.folders().list_descendants(folder_id).await?;
         Ok(docs.iter().map(folder_from_document).collect())
     }

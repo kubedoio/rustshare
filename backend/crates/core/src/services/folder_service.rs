@@ -62,7 +62,7 @@ pub trait MetadataStoreOps: Send + Sync {
     ) -> Result<Vec<Folder>>;
 
     /// Find all descendant folders of a given folder using recursive CTE.
-    async fn find_descendant_folders(&self, folder_id: FolderId) -> Result<Vec<Folder>>;
+    async fn find_descendant_folders(&self, folder_id: FolderId, owner_id: UserId) -> Result<Vec<Folder>>;
 
     /// List files with optional parent filter.
     async fn list_files(
@@ -473,7 +473,7 @@ where
                 // Slow path: check descendants
                 let descendants = self
                     .metadata_store
-                    .find_descendant_folders(folder_id)
+                    .find_descendant_folders(folder_id, user_id)
                     .await
                     .map_err(|e| FolderError::Database(e.to_string()))?;
                 descendants.iter().any(|d| d.id == parent_id)
@@ -575,7 +575,7 @@ where
         // Get all descendant folders (including this folder)
         let descendants = self
             .metadata_store
-            .find_descendant_folders(folder_id)
+            .find_descendant_folders(folder_id, user_id)
             .await
             .map_err(|e| FolderError::Database(e.to_string()))?;
 
@@ -630,7 +630,7 @@ where
         // Get all descendants (excluding the folder itself)
         let all_descendants = self
             .metadata_store
-            .find_descendant_folders(folder_id)
+            .find_descendant_folders(folder_id, _user_id)
             .await
             .map_err(|e| FolderError::Database(e.to_string()))?;
 
@@ -791,7 +791,7 @@ mod tests {
             Ok(result)
         }
 
-        async fn find_descendant_folders(&self, folder_id: FolderId) -> Result<Vec<Folder>> {
+        async fn find_descendant_folders(&self, folder_id: FolderId, _owner_id: UserId) -> Result<Vec<Folder>> {
             let folders = self.folders.lock().unwrap();
             let mut result = Vec::new();
             let mut to_process = vec![folder_id];
