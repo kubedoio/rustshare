@@ -80,38 +80,42 @@ impl FileMetadataStoreOps for MetadataStore {
     async fn find_folder_by_id(
         &self,
         id: uuid::Uuid,
+        owner_id: uuid::Uuid,
     ) -> Result<Option<rustshare_core::domain::Folder>> {
-        self.find_folder_by_id(id).await
+        self.find_folder_by_id(id, owner_id).await
     }
 
     async fn find_file_by_id(
         &self,
         id: uuid::Uuid,
+        owner_id: uuid::Uuid,
     ) -> Result<Option<rustshare_core::domain::File>> {
-        self.find_file_by_id(id).await
+        self.find_file_by_id(id, owner_id).await
     }
 
     async fn update_file(&self, file: &rustshare_core::domain::File) -> Result<()> {
         self.update_file(file).await
     }
 
-    async fn delete_file(&self, id: uuid::Uuid) -> Result<()> {
-        self.delete_file(id).await
+    async fn delete_file(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<()> {
+        self.delete_file(id, owner_id).await
     }
 
     async fn list_file_versions(
         &self,
         file_id: uuid::Uuid,
+        owner_id: uuid::Uuid,
     ) -> Result<Vec<rustshare_core::domain::FileVersion>> {
-        self.list_file_versions(file_id).await
+        self.list_file_versions(file_id, owner_id).await
     }
 
     async fn find_file_version(
         &self,
         file_id: uuid::Uuid,
         version: i32,
+        owner_id: uuid::Uuid,
     ) -> Result<Option<rustshare_core::domain::FileVersion>> {
-        self.find_file_version(file_id, version).await
+        self.find_file_version(file_id, version, owner_id).await
     }
 
     async fn count_enabled_replication_targets(&self) -> Result<i64> {
@@ -143,16 +147,17 @@ impl FolderMetadataStoreOps for MetadataStore {
     async fn find_folder_by_id(
         &self,
         id: uuid::Uuid,
+        owner_id: uuid::Uuid,
     ) -> Result<Option<rustshare_core::domain::Folder>> {
-        self.find_folder_by_id(id).await
+        self.find_folder_by_id(id, owner_id).await
     }
 
     async fn update_folder(&self, folder: &rustshare_core::domain::Folder) -> Result<()> {
         self.update_folder(folder).await
     }
 
-    async fn delete_folder(&self, id: uuid::Uuid) -> Result<()> {
-        self.delete_folder(id).await
+    async fn delete_folder(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<()> {
+        self.delete_folder(id, owner_id).await
     }
 
     async fn list_folders(
@@ -210,15 +215,17 @@ impl ShareMetadataStoreOps for MetadataStore {
     async fn find_file_by_id(
         &self,
         id: uuid::Uuid,
+        owner_id: uuid::Uuid,
     ) -> Result<Option<rustshare_core::domain::File>> {
-        self.find_file_by_id(id).await
+        self.find_file_by_id(id, owner_id).await
     }
 
     async fn find_folder_by_id(
         &self,
         id: uuid::Uuid,
+        owner_id: uuid::Uuid,
     ) -> Result<Option<rustshare_core::domain::Folder>> {
-        self.find_folder_by_id(id).await
+        self.find_folder_by_id(id, owner_id).await
     }
 
     async fn create_share(&self, share: &rustshare_core::domain::Share) -> Result<()> {
@@ -228,8 +235,9 @@ impl ShareMetadataStoreOps for MetadataStore {
     async fn get_share_by_id(
         &self,
         id: uuid::Uuid,
+        actor_id: rustshare_core::domain::UserId,
     ) -> Result<Option<rustshare_core::domain::Share>> {
-        self.get_share(id).await
+        self.get_share(id, actor_id).await
     }
 
     async fn get_share_by_token(
@@ -242,15 +250,17 @@ impl ShareMetadataStoreOps for MetadataStore {
     async fn get_file_shares(
         &self,
         file_id: uuid::Uuid,
+        actor_id: rustshare_core::domain::UserId,
     ) -> Result<Vec<rustshare_core::domain::Share>> {
-        self.get_file_shares(file_id).await
+        self.get_file_shares(file_id, actor_id).await
     }
 
     async fn get_folder_shares(
         &self,
         folder_id: uuid::Uuid,
+        actor_id: rustshare_core::domain::UserId,
     ) -> Result<Vec<rustshare_core::domain::Share>> {
-        self.get_folder_shares(folder_id).await
+        self.get_folder_shares(folder_id, actor_id).await
     }
 
     async fn list_files(
@@ -294,8 +304,8 @@ impl ShareMetadataStoreOps for MetadataStore {
         self.find_descendant_folders(folder_id).await
     }
 
-    async fn revoke_share(&self, share_id: uuid::Uuid) -> Result<()> {
-        self.revoke_share(share_id).await
+    async fn revoke_share(&self, share_id: uuid::Uuid, actor_id: rustshare_core::domain::UserId) -> Result<()> {
+        self.revoke_share(share_id, actor_id).await
     }
 
     async fn update_share(&self, share: &rustshare_core::domain::Share) -> Result<()> {

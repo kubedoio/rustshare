@@ -207,10 +207,10 @@ pub trait MetadataStoreOps: Send + Sync {
     async fn get_share_by_token(&self, token: &str) -> anyhow::Result<Option<Share>>;
 
     /// Find a file by ID.
-    async fn find_file_by_id(&self, id: Uuid) -> anyhow::Result<Option<File>>;
+    async fn find_file_by_id(&self, id: Uuid, owner_id: Uuid) -> anyhow::Result<Option<File>>;
 
     /// Find a folder by ID.
-    async fn find_folder_by_id(&self, id: Uuid) -> anyhow::Result<Option<Folder>>;
+    async fn find_folder_by_id(&self, id: Uuid, owner_id: Uuid) -> anyhow::Result<Option<Folder>>;
 
     /// Get user shares for a user.
     async fn get_user_shares(&self, user_id: UserId) -> anyhow::Result<Vec<Share>>;
@@ -517,7 +517,7 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
         let metadata = if let Some(file_id) = share.file_id {
             let file = self
                 .metadata_store
-                .find_file_by_id(file_id)
+                .find_file_by_id(file_id, share.created_by)
                 .await
                 .map_err(|e| ChatIntegrationError::DispatchFailed(e.to_string()))?
                 .ok_or(ChatIntegrationError::FileNotFound)?;
@@ -539,7 +539,7 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
         } else if let Some(folder_id) = share.folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id)
+                .find_folder_by_id(folder_id, share.created_by)
                 .await
                 .map_err(|e| ChatIntegrationError::DispatchFailed(e.to_string()))?
                 .ok_or(ChatIntegrationError::FolderNotFound)?;

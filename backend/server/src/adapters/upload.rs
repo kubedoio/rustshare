@@ -116,9 +116,10 @@ impl rustshare_core::services::UploadMetadataStore for UploadMetadataStoreAdapte
     async fn find_folder_by_id(
         &self,
         id: Uuid,
+        owner_id: Uuid,
     ) -> Result<Option<rustshare_core::domain::Folder>, UploadError> {
         self.inner
-            .find_folder_by_id(id)
+            .find_folder_by_id(id, owner_id)
             .await
             .map_err(|e| UploadError::Database(e.to_string()))
     }

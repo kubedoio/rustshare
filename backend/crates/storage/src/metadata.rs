@@ -942,12 +942,13 @@ impl MetadataStore {
     }
 
     /// Find file by ID
-    pub async fn find_file_by_id(&self, id: Uuid) -> Result<Option<File>> {
+    pub async fn find_file_by_id(&self, id: Uuid, owner_id: Uuid) -> Result<Option<File>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
-            r#"SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id FROM files WHERE id = $1 AND deleted_at IS NULL"#,
+            r#"SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id FROM files WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL"#,
         )
         .bind(id)
+        .bind(owner_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -1019,7 +1020,7 @@ impl MetadataStore {
             UPDATE files
             SET name = $2, path = $3, size = $4, mime_type = $5, content_hash = $6,
                 storage_key = $7, parent_folder_id = $8, current_version = $9, modified_at = $10, tenant_id = $11
-            WHERE id = $1
+            WHERE id = $1 AND owner_id = $12
             "#,
         )
         .bind(file.id)
@@ -1033,6 +1034,7 @@ impl MetadataStore {
         .bind(file.current_version)
         .bind(file.modified_at)
         .bind(file.tenant_id)
+        .bind(file.owner_id)
         .execute(&self.pool)
         .await?;
 
@@ -1040,15 +1042,16 @@ impl MetadataStore {
     }
 
     /// Delete a file from the projection table
-    pub async fn delete_file(&self, id: Uuid) -> Result<()> {
+    pub async fn delete_file(&self, id: Uuid, owner_id: Uuid) -> Result<()> {
         sqlx::query(
             r#"
             UPDATE files
             SET deleted_at = NOW(), starred_at = NULL
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(owner_id)
         .execute(&self.pool)
         .await?;
 
@@ -1300,17 +1303,19 @@ impl MetadataStore {
     }
 
     /// List all versions for a file, ordered by version number descending (newest first)
-    pub async fn list_file_versions(&self, file_id: Uuid) -> Result<Vec<FileVersion>> {
+    pub async fn list_file_versions(&self, file_id: Uuid, owner_id: Uuid) -> Result<Vec<FileVersion>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
-            SELECT id, file_id, version_number, content_hash, size, replication_state, created_by, created_at, change_description, tenant_id
-            FROM file_versions
-            WHERE file_id = $1
-            ORDER BY version_number DESC
+            SELECT v.id, v.file_id, v.version_number, v.content_hash, v.size, v.replication_state, v.created_by, v.created_at, v.change_description, v.tenant_id
+            FROM file_versions v
+            JOIN files f ON v.file_id = f.id
+            WHERE v.file_id = $1 AND f.owner_id = $2
+            ORDER BY v.version_number DESC
             "#,
         )
         .bind(file_id)
+        .bind(owner_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -1340,17 +1345,20 @@ impl MetadataStore {
         &self,
         file_id: Uuid,
         version: i32,
+        owner_id: Uuid,
     ) -> Result<Option<FileVersion>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
-            SELECT id, file_id, version_number, content_hash, size, replication_state, created_by, created_at, change_description, tenant_id
-            FROM file_versions
-            WHERE file_id = $1 AND version_number = $2
+            SELECT v.id, v.file_id, v.version_number, v.content_hash, v.size, v.replication_state, v.created_by, v.created_at, v.change_description, v.tenant_id
+            FROM file_versions v
+            JOIN files f ON v.file_id = f.id
+            WHERE v.file_id = $1 AND v.version_number = $2 AND f.owner_id = $3
             "#,
         )
         .bind(file_id)
         .bind(version)
+        .bind(owner_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -1733,16 +1741,17 @@ impl MetadataStore {
     }
 
     /// Find folder by ID
-    pub async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<Folder>> {
+    pub async fn find_folder_by_id(&self, id: Uuid, owner_id: Uuid) -> Result<Option<Folder>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
             SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
             FROM folders
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(owner_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -1807,7 +1816,7 @@ impl MetadataStore {
             r#"
             UPDATE folders
             SET name = $2, path = $3, parent_folder_id = $4, updated_at = $5, tenant_id = $6
-            WHERE id = $1
+            WHERE id = $1 AND owner_id = $7
             "#,
         )
         .bind(folder.id)
@@ -1816,6 +1825,7 @@ impl MetadataStore {
         .bind(folder.parent_folder_id)
         .bind(folder.updated_at)
         .bind(folder.tenant_id)
+        .bind(folder.owner_id)
         .execute(&self.pool)
         .await?;
 
@@ -1823,15 +1833,16 @@ impl MetadataStore {
     }
 
     /// Delete a folder from the projection table
-    pub async fn delete_folder(&self, id: Uuid) -> Result<()> {
+    pub async fn delete_folder(&self, id: Uuid, owner_id: Uuid) -> Result<()> {
         sqlx::query(
             r#"
             UPDATE folders
             SET deleted_at = NOW(), starred_at = NULL
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(owner_id)
         .execute(&self.pool)
         .await?;
 
@@ -1839,10 +1850,11 @@ impl MetadataStore {
             r#"
             UPDATE files
             SET deleted_at = COALESCE(deleted_at, NOW()), starred_at = NULL
-            WHERE parent_folder_id = $1 AND deleted_at IS NULL
+            WHERE parent_folder_id = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(owner_id)
         .execute(&self.pool)
         .await?;
 
@@ -2387,16 +2399,17 @@ impl MetadataStore {
     }
 
     /// Find a share by ID
-    pub async fn get_share(&self, share_id: Uuid) -> Result<Option<Share>> {
+    pub async fn get_share(&self, share_id: Uuid, actor_id: Uuid) -> Result<Option<Share>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let row = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
-            WHERE id = $1
+            WHERE id = $1 AND created_by = $2
             "#,
         )
         .bind(share_id)
+        .bind(actor_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -2428,17 +2441,18 @@ impl MetadataStore {
     }
 
     /// Get all active (non-revoked) shares for a file
-    pub async fn get_file_shares(&self, file_id: Uuid) -> Result<Vec<Share>> {
+    pub async fn get_file_shares(&self, file_id: Uuid, actor_id: Uuid) -> Result<Vec<Share>> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         let rows = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
-            WHERE file_id = $1 AND revoked_at IS NULL
+            WHERE file_id = $1 AND created_by = $2 AND revoked_at IS NULL
             ORDER BY created_at DESC
             "#,
         )
         .bind(file_id)
+        .bind(actor_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -2471,16 +2485,17 @@ impl MetadataStore {
     }
 
     /// Get all active (non-revoked) shares for a folder.
-    pub async fn get_folder_shares(&self, folder_id: Uuid) -> Result<Vec<Share>> {
+    pub async fn get_folder_shares(&self, folder_id: Uuid, actor_id: Uuid) -> Result<Vec<Share>> {
         let rows = sqlx::query(
             r#"
             SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
-            WHERE folder_id = $1 AND revoked_at IS NULL
+            WHERE folder_id = $1 AND created_by = $2 AND revoked_at IS NULL
             ORDER BY created_at DESC
             "#,
         )
         .bind(folder_id)
+        .bind(actor_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -2711,13 +2726,14 @@ impl MetadataStore {
             r#"
             UPDATE shares
             SET password_hash = $2, expires_at = $3, tenant_id = $4
-            WHERE id = $1
+            WHERE id = $1 AND created_by = $5
             "#,
         )
         .bind(share.id)
         .bind(&share.password_hash)
         .bind(share.expires_at)
         .bind(share.tenant_id)
+        .bind(share.created_by)
         .execute(&self.pool)
         .await?;
 
@@ -2725,16 +2741,17 @@ impl MetadataStore {
     }
 
     /// Revoke a share link (soft delete)
-    pub async fn revoke_share(&self, share_id: Uuid) -> Result<()> {
+    pub async fn revoke_share(&self, share_id: Uuid, actor_id: Uuid) -> Result<()> {
         // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         sqlx::query(
             r#"
             UPDATE shares
             SET revoked_at = NOW()
-            WHERE id = $1
+            WHERE id = $1 AND created_by = $2
             "#,
         )
         .bind(share_id)
+        .bind(actor_id)
         .execute(&self.pool)
         .await?;
 

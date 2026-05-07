@@ -170,6 +170,7 @@ pub trait UploadMetadataStore: Send + Sync {
     async fn find_folder_by_id(
         &self,
         id: Uuid,
+        owner_id: UserId,
     ) -> Result<Option<crate::domain::Folder>, UploadError>;
 
     /// Find a file by canonical path for an owner
@@ -247,7 +248,7 @@ where
         if let Some(folder_id) = request.folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id)
+                .find_folder_by_id(folder_id, user_id)
                 .await?
                 .ok_or(UploadError::ParentFolderNotFound(folder_id))?;
 
@@ -489,7 +490,7 @@ where
         let parent_path = if let Some(folder_id) = session.folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id)
+                .find_folder_by_id(folder_id, user_id)
                 .await?
                 .ok_or(UploadError::ParentFolderNotFound(folder_id))?;
             folder.path.clone()
@@ -942,7 +943,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl UploadMetadataStore for MockUploadMetadataStore {
-        async fn find_folder_by_id(&self, _id: Uuid) -> Result<Option<Folder>, UploadError> {
+        async fn find_folder_by_id(&self, _id: Uuid, _owner_id: UserId) -> Result<Option<Folder>, UploadError> {
             Ok(None)
         }
 

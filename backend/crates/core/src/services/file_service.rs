@@ -67,25 +67,26 @@ pub trait MetadataStoreOps: Send + Sync {
     async fn create_file_version(&self, version: &FileVersion) -> Result<()>;
 
     /// Find a folder by ID.
-    async fn find_folder_by_id(&self, id: uuid::Uuid) -> Result<Option<Folder>>;
+    async fn find_folder_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<Option<Folder>>;
 
     /// Find a file by ID.
-    async fn find_file_by_id(&self, id: uuid::Uuid) -> Result<Option<File>>;
+    async fn find_file_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<Option<File>>;
 
     /// Update a file in the metadata store.
     async fn update_file(&self, file: &File) -> Result<()>;
 
     /// Delete a file from the metadata store.
-    async fn delete_file(&self, id: uuid::Uuid) -> Result<()>;
+    async fn delete_file(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<()>;
 
     /// List all versions of a file, ordered by version number descending.
-    async fn list_file_versions(&self, file_id: uuid::Uuid) -> Result<Vec<FileVersion>>;
+    async fn list_file_versions(&self, file_id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<Vec<FileVersion>>;
 
     /// Find a specific version of a file.
     async fn find_file_version(
         &self,
         file_id: uuid::Uuid,
         version_number: i32,
+        owner_id: uuid::Uuid,
     ) -> Result<Option<FileVersion>>;
 
     /// Count enabled replication targets.
@@ -266,7 +267,7 @@ where
         let parent_path = if let Some(folder_id) = parent_folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id)
+                .find_folder_by_id(folder_id, owner_id)
                 .await
                 .map_err(|e| FileError::Database(e.to_string()))?
                 .ok_or(FileError::ParentFolderNotFound(folder_id))?;
@@ -489,7 +490,7 @@ where
         // 2. Find file by ID
         let file = self
             .metadata_store
-            .find_file_by_id(file_id)
+            .find_file_by_id(file_id, user_id)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?
             .ok_or(FileError::NotFound(file_id))?;
@@ -681,7 +682,7 @@ where
         // 2. Get all versions from metadata store (already ordered DESC)
         let versions = self
             .metadata_store
-            .list_file_versions(file_id)
+            .list_file_versions(file_id, user_id)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
 
@@ -724,7 +725,7 @@ where
         // 2. Find the old version
         let old_file_version = self
             .metadata_store
-            .find_file_version(file_id, version_number)
+            .find_file_version(file_id, version_number, user_id)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?
             .ok_or(FileError::VersionNotFound(version_number))?;
@@ -832,7 +833,7 @@ where
         let new_path = if let Some(folder_id) = target_folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id)
+                .find_folder_by_id(folder_id, user_id)
                 .await
                 .map_err(|e| FileError::Database(e.to_string()))?
                 .ok_or(FileError::FolderNotFound(folder_id))?;
@@ -911,7 +912,7 @@ where
         let new_path = if let Some(parent_id) = file.parent_folder_id {
             let parent = self
                 .metadata_store
-                .find_folder_by_id(parent_id)
+                .find_folder_by_id(parent_id, user_id)
                 .await
                 .map_err(|e| FileError::Database(e.to_string()))?
                 .ok_or(FileError::FolderNotFound(parent_id))?;
@@ -1011,7 +1012,7 @@ where
 
         // 4. Delete file from metadata store (CASCADE will handle file_versions)
         self.metadata_store
-            .delete_file(file_id)
+            .delete_file(file_id, user_id)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
 

@@ -80,16 +80,30 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
             .map_err(|e| e.into())
     }
 
-    async fn find_folder_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
+    async fn find_folder_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
         match self.repo.folders().get(id).await? {
-            Some(doc) => Ok(Some(folder_from_document(&doc))),
+            Some(doc) => {
+                let folder = folder_from_document(&doc);
+                if folder.owner_id == owner_id {
+                    Ok(Some(folder))
+                } else {
+                    Ok(None)
+                }
+            }
             None => Ok(None),
         }
     }
 
-    async fn find_file_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<File>> {
+    async fn find_file_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<Option<File>> {
         match self.repo.files().get(id).await? {
-            Some(doc) => Ok(Some(file_from_document(&doc))),
+            Some(doc) => {
+                let file = file_from_document(&doc);
+                if file.owner_id == owner_id {
+                    Ok(Some(file))
+                } else {
+                    Ok(None)
+                }
+            }
             None => Ok(None),
         }
     }
@@ -99,22 +113,33 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
         self.repo.files().update(&doc).await.map_err(|e| e.into())
     }
 
-    async fn delete_file(&self, id: uuid::Uuid) -> anyhow::Result<()> {
-        // TODO: The trait method doesn't receive `deleted_by`, but repository requires it.
-        // Proper audit tracking requires passing the actor through the trait.
-        // For now, try to get the owner_id from the file as a fallback, otherwise use nil.
-        let deleted_by = match self.repo.files().get(id).await? {
-            Some(file) => file.owner_id,
-            None => uuid::Uuid::nil(),
-        };
-        self.repo
-            .files()
-            .delete(id, deleted_by)
-            .await
-            .map_err(|e| e.into())
+    async fn delete_file(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<()> {
+        // Verify ownership before deleting
+        match self.repo.files().get(id).await? {
+            Some(file) => {
+                if file.owner_id != owner_id {
+                    return Err(anyhow::anyhow!("File not found or access denied"));
+                }
+                self.repo
+                    .files()
+                    .delete(id, owner_id)
+                    .await
+                    .map_err(|e| e.into())
+            }
+            None => Err(anyhow::anyhow!("File not found")),
+        }
     }
 
-    async fn list_file_versions(&self, file_id: uuid::Uuid) -> anyhow::Result<Vec<FileVersion>> {
+    async fn list_file_versions(&self, file_id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<Vec<FileVersion>> {
+        // Verify file ownership first
+        match self.repo.files().get(file_id).await? {
+            Some(file) => {
+                if file.owner_id != owner_id {
+                    return Ok(Vec::new());
+                }
+            }
+            None => return Ok(Vec::new()),
+        }
         let docs = self.repo.file_versions().list_by_file(file_id).await?;
         Ok(docs.iter().map(version_from_document).collect())
     }
@@ -123,7 +148,17 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
         &self,
         file_id: uuid::Uuid,
         version: i32,
+        owner_id: uuid::Uuid,
     ) -> anyhow::Result<Option<FileVersion>> {
+        // Verify file ownership first
+        match self.repo.files().get(file_id).await? {
+            Some(file) => {
+                if file.owner_id != owner_id {
+                    return Ok(None);
+                }
+            }
+            None => return Ok(None),
+        }
         match self
             .repo
             .file_versions()
@@ -184,9 +219,16 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
         self.repo.folders().create(&doc).await.map_err(|e| e.into())
     }
 
-    async fn find_folder_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
+    async fn find_folder_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
         match self.repo.folders().get(id).await? {
-            Some(doc) => Ok(Some(folder_from_document(&doc))),
+            Some(doc) => {
+                let folder = folder_from_document(&doc);
+                if folder.owner_id == owner_id {
+                    Ok(Some(folder))
+                } else {
+                    Ok(None)
+                }
+            }
             None => Ok(None),
         }
     }
@@ -196,19 +238,21 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
         self.repo.folders().update(&doc).await.map_err(|e| e.into())
     }
 
-    async fn delete_folder(&self, id: uuid::Uuid) -> anyhow::Result<()> {
-        // TODO: The trait method doesn't receive `deleted_by`, but repository requires it.
-        // Proper audit tracking requires passing the actor through the trait.
-        // For now, try to get the owner_id from the folder as a fallback, otherwise use nil.
-        let deleted_by = match self.repo.folders().get(id).await? {
-            Some(folder) => folder.owner_id,
-            None => uuid::Uuid::nil(),
-        };
-        self.repo
-            .folders()
-            .delete(id, deleted_by)
-            .await
-            .map_err(|e| e.into())
+    async fn delete_folder(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<()> {
+        // Verify ownership before deleting
+        match self.repo.folders().get(id).await? {
+            Some(folder) => {
+                if folder.owner_id != owner_id {
+                    return Err(anyhow::anyhow!("Folder not found or access denied"));
+                }
+                self.repo
+                    .folders()
+                    .delete(id, owner_id)
+                    .await
+                    .map_err(|e| e.into())
+            }
+            None => Err(anyhow::anyhow!("Folder not found")),
+        }
     }
 
     async fn list_folders(
@@ -349,16 +393,30 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         Ok(row)
     }
 
-    async fn find_file_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<File>> {
+    async fn find_file_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<Option<File>> {
         match self.repo.files().get(id).await? {
-            Some(doc) => Ok(Some(file_from_document(&doc))),
+            Some(doc) => {
+                let file = file_from_document(&doc);
+                if file.owner_id == owner_id {
+                    Ok(Some(file))
+                } else {
+                    Ok(None)
+                }
+            }
             None => Ok(None),
         }
     }
 
-    async fn find_folder_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
+    async fn find_folder_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
         match self.repo.folders().get(id).await? {
-            Some(doc) => Ok(Some(folder_from_document(&doc))),
+            Some(doc) => {
+                let folder = folder_from_document(&doc);
+                if folder.owner_id == owner_id {
+                    Ok(Some(folder))
+                } else {
+                    Ok(None)
+                }
+            }
             None => Ok(None),
         }
     }
@@ -368,9 +426,16 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         self.repo.shares().create(&doc).await.map_err(|e| e.into())
     }
 
-    async fn get_share_by_id(&self, id: uuid::Uuid) -> anyhow::Result<Option<Share>> {
+    async fn get_share_by_id(&self, id: uuid::Uuid, actor_id: uuid::Uuid) -> anyhow::Result<Option<Share>> {
         match self.repo.shares().get(id).await? {
-            Some(doc) => Ok(Some(share_from_document(&doc))),
+            Some(doc) => {
+                let share = share_from_document(&doc);
+                if share.created_by == actor_id {
+                    Ok(Some(share))
+                } else {
+                    Ok(None)
+                }
+            }
             None => Ok(None),
         }
     }
@@ -384,18 +449,26 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         }
     }
 
-    async fn get_file_shares(&self, file_id: uuid::Uuid) -> anyhow::Result<Vec<Share>> {
+    async fn get_file_shares(&self, file_id: uuid::Uuid, actor_id: uuid::Uuid) -> anyhow::Result<Vec<Share>> {
         let docs = self.repo.shares().list_by_resource("file", file_id).await?;
-        Ok(docs.iter().map(share_from_document).collect())
+        Ok(docs
+            .iter()
+            .map(share_from_document)
+            .filter(|s| s.created_by == actor_id)
+            .collect())
     }
 
-    async fn get_folder_shares(&self, folder_id: uuid::Uuid) -> anyhow::Result<Vec<Share>> {
+    async fn get_folder_shares(&self, folder_id: uuid::Uuid, actor_id: uuid::Uuid) -> anyhow::Result<Vec<Share>> {
         let docs = self
             .repo
             .shares()
             .list_by_resource("folder", folder_id)
             .await?;
-        Ok(docs.iter().map(share_from_document).collect())
+        Ok(docs
+            .iter()
+            .map(share_from_document)
+            .filter(|s| s.created_by == actor_id)
+            .collect())
     }
 
     async fn list_files(
@@ -451,11 +524,20 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         Ok(docs.iter().map(folder_from_document).collect())
     }
 
-    async fn revoke_share(&self, share_id: uuid::Uuid) -> anyhow::Result<()> {
-        let revoked_by = uuid::Uuid::nil();
+    async fn revoke_share(&self, share_id: uuid::Uuid, actor_id: uuid::Uuid) -> anyhow::Result<()> {
+        // Verify ownership before revoking
+        match self.repo.shares().get(share_id).await? {
+            Some(doc) => {
+                let share = share_from_document(&doc);
+                if share.created_by != actor_id {
+                    return Err(anyhow::anyhow!("Share not found or access denied"));
+                }
+            }
+            None => return Err(anyhow::anyhow!("Share not found")),
+        }
         self.repo
             .shares()
-            .revoke(share_id, revoked_by)
+            .revoke(share_id, actor_id)
             .await
             .map_err(|e| e.into())
     }

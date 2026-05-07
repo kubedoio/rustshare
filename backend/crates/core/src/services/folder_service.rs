@@ -38,13 +38,13 @@ pub trait MetadataStoreOps: Send + Sync {
     async fn create_folder(&self, folder: &Folder) -> Result<()>;
 
     /// Find a folder by ID.
-    async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>>;
+    async fn find_folder_by_id(&self, id: FolderId, owner_id: UserId) -> Result<Option<Folder>>;
 
     /// Update a folder in the metadata store.
     async fn update_folder(&self, folder: &Folder) -> Result<()>;
 
     /// Delete a folder from the metadata store.
-    async fn delete_folder(&self, id: FolderId) -> Result<()>;
+    async fn delete_folder(&self, id: FolderId, owner_id: UserId) -> Result<()>;
 
     /// List folders with optional parent filter.
     async fn list_folders(
@@ -149,7 +149,7 @@ where
             // Verify parent folder exists and user has access
             let parent = self
                 .metadata_store
-                .find_folder_by_id(parent_id)
+                .find_folder_by_id(parent_id, user_id)
                 .await
                 .map_err(|e| FolderError::Database(e.to_string()))?
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
@@ -224,7 +224,7 @@ where
         // 1. Find folder by ID
         let folder = self
             .metadata_store
-            .find_folder_by_id(folder_id)
+            .find_folder_by_id(folder_id, user_id)
             .await
             .map_err(|e| {
                 tracing::info!(folder_id = %folder_id, error = %e, "folder_service::get_folder: find_folder_by_id DB error");
@@ -380,7 +380,7 @@ where
         let new_path = if let Some(parent_id) = folder.parent_folder_id {
             let parent = self
                 .metadata_store
-                .find_folder_by_id(parent_id)
+                .find_folder_by_id(parent_id, user_id)
                 .await
                 .map_err(|e| FolderError::Database(e.to_string()))?
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
@@ -604,7 +604,7 @@ where
 
             // Delete from metadata store
             self.metadata_store
-                .delete_folder(descendant.id)
+                .delete_folder(descendant.id, user_id)
                 .await
                 .map_err(|e| FolderError::Database(e.to_string()))?;
         }

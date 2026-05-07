@@ -59,10 +59,10 @@ pub struct ShareSession {
 #[allow(async_fn_in_trait)]
 pub trait MetadataStoreOps: Send + Sync {
     /// Find a file by ID.
-    async fn find_file_by_id(&self, id: uuid::Uuid) -> Result<Option<File>>;
+    async fn find_file_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<Option<File>>;
 
     /// Find a folder by ID.
-    async fn find_folder_by_id(&self, id: uuid::Uuid) -> Result<Option<Folder>>;
+    async fn find_folder_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<Option<Folder>>;
 
     /// Find a user by ID.
     async fn find_user_by_id(&self, id: uuid::Uuid) -> Result<Option<crate::domain::User>>;
@@ -71,16 +71,16 @@ pub trait MetadataStoreOps: Send + Sync {
     async fn create_share(&self, share: &Share) -> Result<()>;
 
     /// Get a share by ID.
-    async fn get_share_by_id(&self, id: uuid::Uuid) -> Result<Option<Share>>;
+    async fn get_share_by_id(&self, id: uuid::Uuid, actor_id: UserId) -> Result<Option<Share>>;
 
     /// Get a share by token.
     async fn get_share_by_token(&self, token: &str) -> Result<Option<Share>>;
 
     /// Get all shares for a file.
-    async fn get_file_shares(&self, file_id: uuid::Uuid) -> Result<Vec<Share>>;
+    async fn get_file_shares(&self, file_id: uuid::Uuid, actor_id: UserId) -> Result<Vec<Share>>;
 
     /// Get all shares for a folder.
-    async fn get_folder_shares(&self, folder_id: uuid::Uuid) -> Result<Vec<Share>>;
+    async fn get_folder_shares(&self, folder_id: uuid::Uuid, actor_id: UserId) -> Result<Vec<Share>>;
 
     /// List files in a folder for an owner.
     async fn list_files(
@@ -116,7 +116,7 @@ pub trait MetadataStoreOps: Send + Sync {
     async fn find_descendant_folders(&self, folder_id: uuid::Uuid) -> Result<Vec<Folder>>;
 
     /// Revoke a share by ID.
-    async fn revoke_share(&self, share_id: uuid::Uuid) -> Result<()>;
+    async fn revoke_share(&self, share_id: uuid::Uuid, actor_id: UserId) -> Result<()>;
 
     /// Update a share.
     async fn update_share(&self, share: &Share) -> Result<()>;
@@ -224,7 +224,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         // Verify file exists
         let file = self
             .metadata_store
-            .find_file_by_id(file_id)
+            .find_file_by_id(file_id, user_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FileNotFound(file_id))?;
@@ -302,7 +302,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     ) -> Result<Share, ShareError> {
         let folder = self
             .metadata_store
-            .find_folder_by_id(folder_id)
+            .find_folder_by_id(folder_id, user_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FolderNotFound(folder_id))?;
@@ -461,7 +461,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         // Get share by ID
         let share = self
             .metadata_store
-            .get_share_by_id(share_id)
+            .get_share_by_id(share_id, user_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
@@ -469,7 +469,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         let owner_id = if let Some(file_id) = share.file_id {
             let file = self
                 .metadata_store
-                .find_file_by_id(file_id)
+                .find_file_by_id(file_id, user_id)
                 .await
                 .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FileNotFound(file_id))?;
@@ -477,7 +477,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         } else if let Some(folder_id) = share.folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id)
+                .find_folder_by_id(folder_id, user_id)
                 .await
                 .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
@@ -497,7 +497,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
         // Revoke the share
         self.metadata_store
-            .revoke_share(share_id)
+            .revoke_share(share_id, user_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
@@ -542,7 +542,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         // Get share by ID
         let mut share = self
             .metadata_store
-            .get_share_by_id(share_id)
+            .get_share_by_id(share_id, user_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
@@ -550,7 +550,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         let owner_id = if let Some(file_id) = share.file_id {
             let file = self
                 .metadata_store
-                .find_file_by_id(file_id)
+                .find_file_by_id(file_id, user_id)
                 .await
                 .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FileNotFound(file_id))?;
@@ -558,7 +558,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         } else if let Some(folder_id) = share.folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id)
+                .find_folder_by_id(folder_id, user_id)
                 .await
                 .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
@@ -638,7 +638,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         // Get file to verify ownership
         let file = self
             .metadata_store
-            .find_file_by_id(file_id)
+            .find_file_by_id(file_id, user_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FileNotFound(file_id))?;
@@ -650,7 +650,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
         // Get all shares for the file
         self.metadata_store
-            .get_file_shares(file_id)
+            .get_file_shares(file_id, user_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))
     }
@@ -663,7 +663,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     ) -> Result<Vec<Share>, ShareError> {
         let folder = self
             .metadata_store
-            .find_folder_by_id(folder_id)
+            .find_folder_by_id(folder_id, user_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FolderNotFound(folder_id))?;
@@ -676,7 +676,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         }
 
         self.metadata_store
-            .get_folder_shares(folder_id)
+            .get_folder_shares(folder_id, user_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))
     }
@@ -714,7 +714,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         if let Some(file_id) = share.file_id {
             let file = self
                 .metadata_store
-                .find_file_by_id(file_id)
+                .find_file_by_id(file_id, share.created_by)
                 .await
                 .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FileNotFound(file_id))?;
@@ -723,7 +723,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         } else if let Some(folder_id) = share.folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id)
+                .find_folder_by_id(folder_id, share.created_by)
                 .await
                 .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
@@ -800,7 +800,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             Resource::File(file_id) => {
                 let file = self
                     .metadata_store
-                    .find_file_by_id(*file_id)
+                    .find_file_by_id(*file_id, created_by)
                     .await
                     .map_err(|e| ShareError::Database(e.to_string()))?
                     .ok_or(ShareError::FileNotFound(*file_id))?;
@@ -809,7 +809,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             Resource::Folder(folder_id) => {
                 let folder = self
                     .metadata_store
-                    .find_folder_by_id(*folder_id)
+                    .find_folder_by_id(*folder_id, created_by)
                     .await
                     .map_err(|e| ShareError::Database(e.to_string()))?
                     .ok_or(ShareError::FolderNotFound(*folder_id))?;
@@ -846,8 +846,8 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
         // Check for existing group share
         let existing_shares = match &resource {
-            Resource::File(file_id) => self.metadata_store.get_file_shares(*file_id).await,
-            Resource::Folder(folder_id) => self.metadata_store.get_folder_shares(*folder_id).await,
+            Resource::File(file_id) => self.metadata_store.get_file_shares(*file_id, created_by).await,
+            Resource::Folder(folder_id) => self.metadata_store.get_folder_shares(*folder_id, created_by).await,
         }
         .map_err(|e| ShareError::Database(e.to_string()))?;
 
@@ -935,7 +935,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         // Get the share
         let share = self
             .metadata_store
-            .get_share_by_id(share_id)
+            .get_share_by_id(share_id, requesting_user)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
@@ -969,7 +969,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
         // Revoke the share
         self.metadata_store
-            .revoke_share(share_id)
+            .revoke_share(share_id, requesting_user)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
@@ -1016,7 +1016,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         // Get the share
         let mut share = self
             .metadata_store
-            .get_share_by_id(share_id)
+            .get_share_by_id(share_id, requesting_user)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
