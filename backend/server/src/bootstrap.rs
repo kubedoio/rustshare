@@ -22,6 +22,7 @@ use rustshare_infrastructure::repositories::{
     ShareRepository, UserRepository,
 };
 use rustshare_storage::{repos::ShareNotificationRepoImpl, EventStore, MetadataStore, ObjectStore};
+use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -59,7 +60,21 @@ fn init_tracing() {
 
 async fn init_database() -> Result<PgPool> {
     let database_url = std::env::var("DATABASE_URL")?;
-    let db_pool = PgPool::connect(&database_url).await?;
+    let db_pool = PgPoolOptions::new()
+        .before_acquire(|conn, _meta| {
+            Box::pin(async move {
+                // Set a default restrictive user context.
+                // This will be overridden per-request by middleware.
+                sqlx::query(
+                    "SET LOCAL app.current_user_id = '00000000-0000-0000-0000-000000000000'"
+                )
+                .execute(&mut *conn)
+                .await?;
+                Ok(true)
+            })
+        })
+        .connect(&database_url)
+        .await?;
     info!("Connected to database");
     sqlx::migrate!("../migrations").run(&db_pool).await?;
     info!("Database migrations applied");
