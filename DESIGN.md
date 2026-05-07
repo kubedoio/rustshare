@@ -139,6 +139,103 @@
   - long: `360ms`
 - **Guideline:** Motion should explain sidebar collapse, row selection, menu opening, upload progress, and modal entry. Do not use decorative parallax, overscaled springiness, or playful bounce.
 
+## Component States
+- **Approach:** Every interactive element must have explicit, distinguishable states
+- **Hover:** Slight background shift or border intensification. Never rely on color alone.
+  - Buttons: `background-color` shifts 8% darker, or border-color intensifies
+  - Links: underline appears or color shifts to primary strong
+  - Table rows: `color-mix(in srgb, var(--rs-brand) 4%, transparent)` background
+- **Focus:** `outline: 2px solid var(--rs-brand)` with `outline-offset: 2px`. Never remove focus rings.
+  - Focus-visible only (not on mouse click)
+  - Dark mode: same ring, but ensure 3:1 contrast against dark surface
+- **Active/Pressed:** `transform: translateY(1px)` + 12% darker background
+- **Disabled:** `opacity: 0.45`, `cursor: not-allowed`, remove hover effects
+  - Never use a different color for disabled — opacity reduction preserves palette coherence
+- **Selected:** `background-color: color-mix(in srgb, var(--rs-brand) 12%, transparent)` + `box-shadow: inset 0 0 0 2px var(--rs-brand)`
+- **Error state:** `border-color: var(--rs-error)` + error text below field in `text-body-sm`
+- **Loading state:** Skeleton shimmer using `linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent)` on dark, reversed opacity on light
+
+## Form & Input Specifications
+- **Text inputs:** `height: 40px`, `padding: 0 12px`, `border: 1px solid var(--rs-border-soft)`, `background: var(--rs-surface-raised)`
+  - Focus: border transitions to `var(--rs-brand)` with `160ms` easing
+  - Error: border is `var(--rs-error)`, no shake animation
+  - Placeholder: `color: var(--rs-text-muted)` at `opacity: 0.7`
+- **Textareas:** Same border treatment, `min-height: 96px`, `padding: 12px`
+- **Selects/Dropdowns:** Trigger matches input height. Dropdown panel uses `elevation-2` shadow.
+- **Checkboxes & Radios:** 16px square, 2px border, sharp corners (0px radius). Checked state fills with `var(--rs-brand)`.
+- **Toggles:** 40px wide × 20px tall track, 16px thumb. Track uses `var(--rs-border-strong)` off, `var(--rs-brand)` on.
+- **Labels:** `text-body-sm` at `font-weight: 500`, `margin-bottom: 4px`
+- **Helper text:** `text-meta`, `color: var(--rs-text-muted)`, below field
+- **Form spacing:** `gap: 16px` between fields, `gap: 24px` between sections
+
+## File-Type Color Mapping
+- **Documents:** `var(--rs-text)` (default ink) — neutral, no distraction
+- **Images:** `var(--rs-info)` — trustworthy, associated with visual media
+- **Videos:** `var(--rs-secondary)` — warm metal, distinct from images
+- **Audio:** `var(--rs-warning)` — amber signals sound/alert
+- **Archives:** `var(--rs-text-muted)` — subdued, utility
+- **Code/Scripts:** `var(--rs-success)` — green for "executable/buildable"
+- **Spreadsheets:** `var(--rs-brand)` — copper for data/calculation
+- **Markdown/Notes:** `var(--rs-info)` — same as images, knowledge-related
+- **CAD/Design files:** `var(--rs-secondary)` — premium, engineering-related
+- **Unknown:** `var(--rs-text-muted)` — neutral fallback
+- **Rule:** Never use purple (`#8b5cf6`), bright blue (`#3b82f6`), or any color outside the semantic palette for file type indicators.
+
+## Empty States
+- **Approach:** Reassure and orient, never look like marketing cards
+- **Layout:** Centered vertically and horizontally within the viewport or panel
+- **Icon:** 48px stroke icon, `color: var(--rs-text-muted)`, no colored-circle background
+- **Title:** `text-title-md`, `font-weight: 600`, product-specific copy (not "No data yet")
+- **Body:** `text-body-sm`, `color: var(--rs-text-muted)`, max-width 320px, explains what the area is for
+- **Action:** Optional primary button below body text, only if there's a clear next step
+- **Examples:**
+  - Empty folder: "This folder is empty. Drag files here or use the upload button."
+  - Empty shares: "No active shares. Share a file to see it here."
+  - Empty search: "No results for 'query'. Try a different term or check filters."
+
+## Loading States
+- **Skeletons:** Use `IBM Plex Sans` at matching text sizes. Blocks are rectangles with `background: var(--rs-border-soft)` and `border-radius: 0px`.
+  - Shimmer: `linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent)` animated across
+  - Dark mode: reverse shimmer opacity to `rgba(0,0,0,0.10)`
+- **Spinners:** 16px or 24px rotating stroke circle, `stroke: var(--rs-brand)`, `stroke-width: 2px`, no fill.
+- **Progress bars:** 4px height, `background: var(--rs-border-soft)`, fill is `var(--rs-brand)`. No rounded caps.
+- **Button loading:** Replace text with spinner, keep button dimensions stable, disabled interaction
+
+## Toast & Notification Patterns
+- **Position:** Bottom-right on desktop, bottom-center on mobile, `z-index: 50`
+- **Container:** `elevation-3` shadow, `background: var(--rs-surface-raised)`, `border-left: 3px solid` colored by type
+- **Types:**
+  - Success: left border `var(--rs-success)`, icon checkmark
+  - Error: left border `var(--rs-error)`, icon alert-triangle
+  - Warning: left border `var(--rs-warning)`, icon alert-circle
+  - Info: left border `var(--rs-info)`, icon info-circle
+- **Typography:** Title `text-body-sm` weight 600, body `text-meta` weight 400
+- **Duration:** Auto-dismiss after 4s for success/info, 8s for error/warning
+- **Spacing:** `gap: 8px` between stacked toasts, max 3 visible
+
+## Modal & Dialog Patterns
+- **Overlay:** `background: rgba(21,21,21,0.55)` light mode, `rgba(0,0,0,0.65)` dark mode
+- **Panel:** `background: var(--rs-surface-raised)`, `elevation-4` shadow, max-width 560px (standard), 720px (wide), full-width on mobile
+- **Header:** `padding: 20px 24px`, title `text-title-md`, close button top-right
+- **Body:** `padding: 0 24px 20px`, `max-height: 70vh`, scrollable
+- **Footer:** `padding: 16px 24px`, `border-top: 1px solid var(--rs-border-soft)`, actions right-aligned with `gap: 12px`
+- **Entrance:** `opacity 0→1` + `translateY(8px)→0`, `160ms` enter easing
+- **Exit:** Reverse, `120ms` exit easing
+- **Focus trap:** First focusable element inside modal on open, restore focus on close
+
+## Focus & Accessibility
+- **Focus rings:** `outline: 2px solid var(--rs-brand)` with `outline-offset: 2px`
+  - Minimum 3:1 contrast against adjacent background
+  - Never remove on `:focus-visible`
+  - Skip on mouse clicks where appropriate (`:focus-visible` only)
+- **Contrast minimums:**
+  - Normal text (body, labels): 4.5:1 against background
+  - Large text (titles, display): 3:1 against background
+  - UI components (buttons, inputs): 3:1 for boundaries
+  - Disabled text: no minimum, but must be clearly distinguishable from active
+- **Motion respect:** Honor `prefers-reduced-motion` — replace all transitions with `instant` or `opacity-only`
+- **Scrollbar styling:** Styled scrollbars are allowed but must use `border-radius: 0px` on thumb (not 999px)
+
 ## Components
 - **Topbar:** Compact, with more visual authority in search and breadcrumbs. Sidebar toggle should feel mechanical and precise, not soft.
 - **Buttons:** Primary actions use rust copper fills. Secondary actions are surface-backed with stronger borders. Ghost buttons are for table actions and supporting controls only.
@@ -170,6 +267,22 @@
 - Audit every file-management surface against this system before introducing new visual patterns.
 - Ensure all components respect the zero border-radius rule — this is a deliberate departure from SaaS conventions.
 
+## Known Code Divergences (fix these)
+- `tailwind.config.js` defines `borderRadius` values (6px, 10px, 14px, 20px) — contradicts zero-radius rule. Remove or set all to `0px`.
+- `frontend/src/routes/layout.css` defines DaisyUI theme with `--radius-selector: 0.625rem`, `--radius-field: 0.625rem`, `--radius-box: 1.25rem` — set all to `0rem`.
+- `frontend/src/routes/layout.css` defines `--rs-accent-purple: #8b5cf6` (light) and `#a78bfa` (dark) — remove or replace with approved semantic colors.
+- `frontend/src/routes/invite/[token]/+page.svelte` has `bg-purple-500/10 blur-3xl rounded-full` decorative blob — remove or replace with approved intentional decoration.
+- `frontend/src/lib/components/modules/KanbanModuleView.svelte` uses Trello colors (`#eb5a46`, `#ff9f1a`, `#61bd4f`, `#0079bf`, `#c377e0`) — map to approved semantic palette.
+- `frontend/src/lib/components/modules/KanbanSummaryWidget.svelte` uses same Trello colors — map to approved semantic palette.
+- `frontend/src/lib/components/modals/EditFileModal.svelte` uses `text-blue-500` and `text-purple-500` for file type icons — use File-Type Color Mapping above.
+- `frontend/src/lib/components/modals/CreateFileModal.svelte` uses `text-blue-500` and `text-purple-500` for file type icons — use File-Type Color Mapping above.
+- `frontend/src/lib/components/preview/OfficePreview.svelte` uses `text-blue-500` and `bg-blue-50` — map to approved semantic colors.
+- `frontend/src/lib/files/FileTypeIcon.svelte` uses `text-blue-400` for default file type — use approved File-Type Color Mapping.
+- `frontend/src/lib/files/FileTable.svelte` uses `text-blue-400` for folder icons — use approved semantic colors.
+- `frontend/src/routes/(app)/settings/+page.svelte` uses `text-blue-400` — map to approved semantic colors.
+- `frontend/src/routes/layout.css` scrollbar thumb uses `border-radius: 999px` — change to `0px` to respect zero-radius rule.
+- `frontend/src/routes/layout.css` body background uses `radial-gradient` decorative blobs — this is acceptable as "intentional decoration" but should be documented if kept.
+
 ## Decisions Log
 | Date | Decision | Rationale |
 |------|----------|-----------|
@@ -183,3 +296,5 @@
 | 2026-04-01 | Fixed login page 3-column feature grid | Converted from symmetric 3-column cards (AI Slop Pattern #2) to vertical stack with icon+text rows — more intentional, less generic SaaS template look |
 | 2026-04-21 | Adopted zero border-radius everywhere | Deliberate risk: sharp corners signal precision engineering and depart from the rounded SaaS convention. Chosen via /design-consultation |
 | 2026-04-21 | Added breakpoints, elevation, z-index, and iconography sections | Filled structural gaps in the existing system for implementer clarity |
+| 2026-05-03 | Added component states, forms, file-type colors, empty states, loading, toasts, modals, accessibility, and focus specifications | Filled implementation gaps discovered in codebase audit |
+| 2026-05-03 | Documented known code divergences | Purple accents, Trello kanban colors, blue file-type icons, rounded corners in tailwind config and DaisyUI theme all violate the design system and need cleanup |
