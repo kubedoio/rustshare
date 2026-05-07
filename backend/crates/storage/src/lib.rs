@@ -221,12 +221,26 @@ impl ShareMetadataStoreOps for MetadataStore {
         self.find_file_by_id(id, owner_id).await
     }
 
+    async fn find_file_by_id_unchecked(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<Option<rustshare_core::domain::File>> {
+        self.find_file_by_id_unchecked(id).await
+    }
+
     async fn find_folder_by_id(
         &self,
         id: uuid::Uuid,
         owner_id: uuid::Uuid,
     ) -> Result<Option<rustshare_core::domain::Folder>> {
         self.find_folder_by_id(id, owner_id).await
+    }
+
+    async fn find_folder_by_id_unchecked(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<Option<rustshare_core::domain::Folder>> {
+        self.find_folder_by_id_unchecked(id).await
     }
 
     async fn create_share(&self, share: &rustshare_core::domain::Share) -> Result<()> {

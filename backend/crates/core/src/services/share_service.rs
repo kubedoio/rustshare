@@ -61,8 +61,18 @@ pub trait MetadataStoreOps: Send + Sync {
     /// Find a file by ID.
     async fn find_file_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<Option<File>>;
 
+    /// Find a file by ID without owner filtering.
+    ///
+    /// ⚠️ WARNING: Only use when access is already verified by the caller.
+    async fn find_file_by_id_unchecked(&self, id: uuid::Uuid) -> Result<Option<File>>;
+
     /// Find a folder by ID.
     async fn find_folder_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<Option<Folder>>;
+
+    /// Find a folder by ID without owner filtering.
+    ///
+    /// ⚠️ WARNING: Only use when access is already verified by the caller.
+    async fn find_folder_by_id_unchecked(&self, id: uuid::Uuid) -> Result<Option<Folder>>;
 
     /// Find a user by ID.
     async fn find_user_by_id(&self, id: uuid::Uuid) -> Result<Option<crate::domain::User>>;
@@ -800,12 +810,13 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         created_by: UserId,
         tenant_id: Uuid,
     ) -> Result<Share, ShareError> {
-        // Verify resource exists and get its owner/tenant
+        // Verify resource exists and get its owner/tenant.
+        // Use unchecked lookups because non-owners with Admin permission may create group shares.
         let (resource_owner, resource_tenant) = match &resource {
             Resource::File(file_id) => {
                 let file = self
                     .metadata_store
-                    .find_file_by_id(*file_id, created_by)
+                    .find_file_by_id_unchecked(*file_id)
                     .await
                     .map_err(|e| ShareError::Database(e.to_string()))?
                     .ok_or(ShareError::FileNotFound(*file_id))?;
@@ -814,7 +825,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             Resource::Folder(folder_id) => {
                 let folder = self
                     .metadata_store
-                    .find_folder_by_id(*folder_id, created_by)
+                    .find_folder_by_id_unchecked(*folder_id)
                     .await
                     .map_err(|e| ShareError::Database(e.to_string()))?
                     .ok_or(ShareError::FolderNotFound(*folder_id))?;
@@ -1401,7 +1412,27 @@ mod tests {
                 .cloned())
         }
 
+        async fn find_file_by_id_unchecked(&self, id: Uuid) -> Result<Option<File>> {
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|f| f.id == id)
+                .cloned())
+        }
+
         async fn find_folder_by_id(&self, id: Uuid, _owner_id: Uuid) -> Result<Option<Folder>> {
+            Ok(self
+                .folders
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|folder| folder.id == id)
+                .cloned())
+        }
+
+        async fn find_folder_by_id_unchecked(&self, id: Uuid) -> Result<Option<Folder>> {
             Ok(self
                 .folders
                 .lock()

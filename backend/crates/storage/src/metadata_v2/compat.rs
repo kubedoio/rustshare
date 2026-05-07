@@ -407,6 +407,13 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         }
     }
 
+    async fn find_file_by_id_unchecked(&self, id: uuid::Uuid) -> anyhow::Result<Option<File>> {
+        match self.repo.files().get(id).await? {
+            Some(doc) => Ok(Some(file_from_document(&doc))),
+            None => Ok(None),
+        }
+    }
+
     async fn find_folder_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
         match self.repo.folders().get(id).await? {
             Some(doc) => {
@@ -417,6 +424,13 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
                     Ok(None)
                 }
             }
+            None => Ok(None),
+        }
+    }
+
+    async fn find_folder_by_id_unchecked(&self, id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
+        match self.repo.folders().get(id).await? {
+            Some(doc) => Ok(Some(folder_from_document(&doc))),
             None => Ok(None),
         }
     }

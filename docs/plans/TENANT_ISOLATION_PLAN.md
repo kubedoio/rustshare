@@ -52,9 +52,13 @@ Added three integration tests in `metadata.rs` (marked `#[ignore]` — require `
 
 | Gap | Risk | Mitigation |
 |-----|------|------------|
-| `find_descendant_folders` — no owner_id | Low | All callers verify access first (delete/move after ownership check; public shares after token validation). Collaborative folders may have mixed ownership descendants. |
 | `list_files_by_parent` / `list_folders_by_parent` | Low | Intentionally tenant-scoped for collaborative folders. Must ONLY be called after parent access is verified via PermissionResolver. |
 | Per-request RLS middleware | Medium | RLS policies fall back to permissive mode when `app.current_user_id` is nil. Application-level `owner_id` filtering is the primary defense. |
+
+## Fixes after initial completion
+
+- `find_descendant_folders` — hardened with `owner_id` + `find_descendant_folders_unchecked` added for verified-access callers (`0928c9e`)
+- `create_group_share` — fixed to use `find_file_by_id_unchecked` / `find_folder_by_id_unchecked` so non-owner admins can create group shares
 
 ## NOT in scope
 - `list_files_by_parent` / `list_folders_by_parent` — intentionally tenant-scoped for collaborative folders
