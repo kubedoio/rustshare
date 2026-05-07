@@ -582,18 +582,20 @@ impl ModuleService {
         let path_prefix = format!("{root_path}/%");
 
         let file_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM files WHERE tenant_id = $1 AND deleted_at IS NULL AND path LIKE $2",
+            "SELECT COUNT(*) FROM files WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3",
         )
         .bind(tenant_id)
+        .bind(user_id)
         .bind(&path_prefix)
         .fetch_one(self.metadata_store.pool())
         .await
         .unwrap_or(0);
 
         let folder_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND path LIKE $2 AND path <> $3",
+            "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3 AND path <> $4",
         )
         .bind(tenant_id)
+        .bind(user_id)
         .bind(&path_prefix)
         .bind(&root_path)
         .fetch_one(self.metadata_store.pool())
@@ -610,6 +612,7 @@ impl ModuleService {
                 &path_prefix,
                 max_items,
                 tenant_id,
+                user_id,
             )
             .await?;
 
@@ -692,23 +695,24 @@ impl ModuleService {
         path_prefix: &str,
         max_items: i64,
         tenant_id: Uuid,
+        user_id: UserId,
     ) -> Result<(String, Vec<SummaryItem>, Option<serde_json::Value>), ModuleError> {
         match key {
             "notes" => {
                 let items = self
-                    .recent_files_under_path(path_prefix, max_items, tenant_id)
+                    .recent_files_under_path(path_prefix, max_items, tenant_id, user_id)
                     .await?;
                 Ok(("recent-items".to_string(), items, None))
             }
             "meetings" => {
                 let items = self
-                    .recent_folders_under_path(path_prefix, max_items, tenant_id)
+                    .recent_folders_under_path(path_prefix, max_items, tenant_id, user_id)
                     .await?;
                 Ok(("recent-items".to_string(), items, None))
             }
             "standups" => {
                 let items = self
-                    .recent_files_under_path(path_prefix, max_items, tenant_id)
+                    .recent_files_under_path(path_prefix, max_items, tenant_id, user_id)
                     .await?;
                 let today_token = Utc::now().format("%Y-%m-%d").to_string();
                 let today_exists = items.iter().any(|item| item.name.contains(&today_token));
@@ -720,10 +724,10 @@ impl ModuleService {
             }
             "kanban" => {
                 let boards = self
-                    .direct_child_folders(root_path, max_items, tenant_id)
+                    .direct_child_folders(root_path, max_items, tenant_id, user_id)
                     .await?;
                 let cards = self
-                    .recent_folders_matching(path_prefix, "CARD-%", max_items, tenant_id)
+                    .recent_folders_matching(path_prefix, "CARD-%", max_items, tenant_id, user_id)
                     .await?;
                 Ok((
                     "kanban-overview".to_string(),
@@ -733,25 +737,27 @@ impl ModuleService {
             }
             "decisions" => {
                 let items = self
-                    .recent_files_under_path(path_prefix, max_items, tenant_id)
+                    .recent_files_under_path(path_prefix, max_items, tenant_id, user_id)
                     .await?;
                 Ok(("recent-items".to_string(), items, None))
             }
             "shares" => {
                 let items = self
-                    .recent_folders_under_path(path_prefix, max_items, tenant_id)
+                    .recent_folders_under_path(path_prefix, max_items, tenant_id, user_id)
                     .await?;
                 let public_count: i64 = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND (path LIKE '/Shares/Public/%' OR path LIKE '/Workspace/Shares/Public/%')",
+                    "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND (path LIKE '/Shares/Public/%' OR path LIKE '/Workspace/Shares/Public/%')",
                 )
                 .bind(tenant_id)
+                .bind(user_id)
                 .fetch_one(self.metadata_store.pool())
                 .await
                 .unwrap_or(0);
                 let internal_count: i64 = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND (path LIKE '/Shares/Internal/%' OR path LIKE '/Workspace/Shares/Internal/%')",
+                    "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND (path LIKE '/Shares/Internal/%' OR path LIKE '/Workspace/Shares/Internal/%')",
                 )
                 .bind(tenant_id)
+                .bind(user_id)
                 .fetch_one(self.metadata_store.pool())
                 .await
                 .unwrap_or(0);
@@ -763,7 +769,7 @@ impl ModuleService {
             }
             _ => {
                 let items = self
-                    .recent_mixed_items(path_prefix, max_items, tenant_id)
+                    .recent_mixed_items(path_prefix, max_items, tenant_id, user_id)
                     .await?;
                 Ok(("generic-file-summary".to_string(), items, None))
             }
@@ -775,11 +781,13 @@ impl ModuleService {
         path_prefix: &str,
         max_items: i64,
         tenant_id: Uuid,
+        owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
         let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
-            "SELECT id, name, modified_at FROM files WHERE tenant_id = $1 AND deleted_at IS NULL AND path LIKE $2 ORDER BY modified_at DESC LIMIT $3",
+            "SELECT id, name, modified_at FROM files WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3 ORDER BY modified_at DESC LIMIT $4",
         )
         .bind(tenant_id)
+        .bind(owner_id)
         .bind(path_prefix)
         .bind(max_items)
         .fetch_all(self.metadata_store.pool())
@@ -801,11 +809,13 @@ impl ModuleService {
         path_prefix: &str,
         max_items: i64,
         tenant_id: Uuid,
+        owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
         let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
-            "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND path LIKE $2 ORDER BY updated_at DESC LIMIT $3",
+            "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3 ORDER BY updated_at DESC LIMIT $4",
         )
         .bind(tenant_id)
+        .bind(owner_id)
         .bind(path_prefix)
         .bind(max_items)
         .fetch_all(self.metadata_store.pool())
@@ -828,11 +838,13 @@ impl ModuleService {
         name_pattern: &str,
         max_items: i64,
         tenant_id: Uuid,
+        owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
         let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
-            "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND path LIKE $2 AND name LIKE $3 ORDER BY updated_at DESC LIMIT $4",
+            "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3 AND name LIKE $4 ORDER BY updated_at DESC LIMIT $5",
         )
         .bind(tenant_id)
+        .bind(owner_id)
         .bind(path_prefix)
         .bind(name_pattern)
         .bind(max_items)
@@ -855,11 +867,13 @@ impl ModuleService {
         root_path: &str,
         max_items: i64,
         tenant_id: Uuid,
+        owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
         let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
-            "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND deleted_at IS NULL AND parent_folder_id = (SELECT id FROM folders WHERE path = $2 AND tenant_id = $1 AND deleted_at IS NULL LIMIT 1) ORDER BY updated_at DESC LIMIT $3",
+            "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND parent_folder_id = (SELECT id FROM folders WHERE path = $3 AND tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL LIMIT 1) ORDER BY updated_at DESC LIMIT $4",
         )
         .bind(tenant_id)
+        .bind(owner_id)
         .bind(root_path)
         .bind(max_items)
         .fetch_all(self.metadata_store.pool())
@@ -881,14 +895,15 @@ impl ModuleService {
         path_prefix: &str,
         max_items: i64,
         tenant_id: Uuid,
+        owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
         let mut items = self
-            .recent_files_under_path(path_prefix, max_items, tenant_id)
+            .recent_files_under_path(path_prefix, max_items, tenant_id, owner_id)
             .await?;
         if (items.len() as i64) < max_items {
             let remaining = max_items - items.len() as i64;
             items.extend(
-                self.recent_folders_under_path(path_prefix, remaining, tenant_id)
+                self.recent_folders_under_path(path_prefix, remaining, tenant_id, owner_id)
                     .await?,
             );
         }
