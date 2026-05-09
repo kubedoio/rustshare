@@ -64,7 +64,7 @@
 	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No meeting notes yet');
 	let emptyDescription = $derived(
 		module.ui.page.emptyStateDescription ??
-			'No meeting notes yet. Create a meeting note to get started.'
+			'No meeting notes yet. Create a meeting note to capture agenda, discussion, decisions, and follow-up items.'
 	);
 	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New meeting note');
 </script>

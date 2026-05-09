@@ -370,6 +370,26 @@
 		</div>
 	</header>
 
+	<!-- Breadcrumb -->
+	{#if breadcrumb.length > 0}
+		<nav aria-label="Breadcrumb" class="doc-breadcrumb">
+			{#each breadcrumb as crumb, i}
+				{#if crumb.onClick}
+					<button class="btn btn-ghost btn-xs" on:click={crumb.onClick}>
+						{crumb.label}
+					</button>
+				{:else}
+					<span class="text-base-content/70 text-xs font-medium">
+						{crumb.label}
+					</span>
+				{/if}
+				{#if i < breadcrumb.length - 1}
+					<ChevronRight size={12} class="text-base-content/30" />
+				{/if}
+			{/each}
+		</nav>
+	{/if}
+
 	<!-- Main area with sidebar -->
 	<div class="doc-main">
 		<!-- Content -->
@@ -487,6 +507,15 @@
 		align-items: center;
 		gap: 0.5rem;
 		flex-shrink: 0;
+	}
+
+	.doc-breadcrumb {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.5rem 1rem;
+		border-bottom: 1px solid var(--color-base-300, #e5e7eb);
+		background: transparent;
 	}
 
 	.header-actions {

@@ -128,7 +128,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		id: 'module_notes',
 		key: 'notes',
 		displayName: 'Notes',
-		description: 'Capture file-backed notes and reusable knowledge.',
+		description: 'Write and keep file-backed notes in your workspace.',
 		enabled: true,
 		rootPath: getModuleRoot('Notes'),
 		renderer: 'notes',
@@ -154,7 +154,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 					columns: { desktop: 6, tablet: 12, mobile: 12 },
 					maxItems: 4,
 					primaryAction: {
-						label: 'New Note',
+						label: 'New note',
 						action: 'create-from-template',
 						template: 'template_default_note'
 					}
@@ -166,9 +166,9 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				renderer: 'notes',
 				layout: 'list-grid',
 				emptyStateTitle: 'No notes yet',
-				emptyStateDescription: 'Create your first file-backed note.',
+				emptyStateDescription: 'No notes yet. Create your first note to capture ideas, documentation, or working knowledge.',
 				primaryAction: {
-					label: 'New Note',
+					label: 'New note',
 					action: 'create-from-template',
 					template: 'template_default_note'
 				}

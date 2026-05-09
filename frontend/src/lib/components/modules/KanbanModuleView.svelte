@@ -510,7 +510,7 @@
 		<div slot="primaryAction">
 			<button class="btn gap-2 btn-sm btn-primary" onclick={handleCreateBoard}>
 				<Plus size={14} />
-				<span>New Board</span>
+				<span>New board</span>
 			</button>
 		</div>
 		<div slot="secondaryActions">
@@ -532,7 +532,7 @@
 		<div slot="primaryAction">
 			<button class="btn gap-2 btn-sm btn-primary" onclick={handleCreateBoard}>
 				<Plus size={14} />
-				<span>New Board</span>
+				<span>New board</span>
 			</button>
 		</div>
 		<div slot="secondaryActions">
@@ -547,7 +547,7 @@
 {:else if viewMode === 'board'}
 	<ModulePageShell
 		title={selectedBoard?.title ?? 'Board'}
-		breadcrumb={[{ label: 'Kanban', onClick: showAllBoards }, { label: selectedBoard?.title ?? '' }]}
+		breadcrumb={[{ label: module.displayName, onClick: showAllBoards }, { label: selectedBoard?.title ?? '' }]}
 		metadata={selectedBoard
 			? `${selectedBoard.columns.length} columns · ${selectedBoard.columns.reduce((sum, c) => sum + c.cards.length, 0)} cards`
 			: ''}
@@ -555,7 +555,7 @@
 		<div slot="primaryAction">
 			<button class="btn gap-2 btn-sm btn-primary" onclick={handleCreateBoard}>
 				<Plus size={14} />
-				<span>New Board</span>
+				<span>New board</span>
 			</button>
 		</div>
 		<div slot="secondaryActions">

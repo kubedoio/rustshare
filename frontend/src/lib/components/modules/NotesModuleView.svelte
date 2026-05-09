@@ -72,7 +72,7 @@
 			disabled={!module.defaultTemplate}
 		>
 			<Plus size={14} />
-			<span>New Note</span>
+			<span>New note</span>
 		</button>
 	</div>
 	<div slot="secondaryActions">

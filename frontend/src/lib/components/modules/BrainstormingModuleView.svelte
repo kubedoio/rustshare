@@ -26,11 +26,11 @@
 	let createError = $state('');
 	let brokenPreviews = $state(new Set<string>());
 
-	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No boards yet');
+	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No idea boards yet');
 	let emptyDescription = $derived(
-		module.ui.page.emptyStateDescription ?? 'Create your first brainstorming board to get started.'
+		module.ui.page.emptyStateDescription ?? 'No idea boards yet. Create a simple visual board to capture sketches, flows, or early thinking.'
 	);
-	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New Board');
+	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New idea board');
 
 	const boardsQuery = createQuery({
 		queryKey: ['brainstorm-boards'],
