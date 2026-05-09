@@ -9,6 +9,7 @@
 
 	export let value: string;
 	export let results: { files: SearchItem[]; folders: SearchItem[] } = { files: [], folders: [] };
+	export let loading = false;
 	export let onChange: (query: string) => void;
 	export let onClear: () => void;
 	export let onSelect: (type: 'file' | 'folder', id: string) => void;
@@ -57,7 +58,11 @@
 			role="listbox"
 			class="animate-in fade-in zoom-in absolute top-full right-0 left-0 z-50 mt-2 overflow-hidden rounded-2xl border border-base-300 bg-base-100 p-2 shadow-2xl ring-1 ring-black/5 duration-100"
 		>
-			{#if results.folders.length === 0 && results.files.length === 0}
+			{#if loading}
+				<div class="py-6 text-center" role="status">
+					<p class="text-sm font-medium text-base-content/60">Searching...</p>
+				</div>
+			{:else if results.folders.length === 0 && results.files.length === 0}
 				<div class="py-6 text-center" role="status">
 					<p class="text-sm font-medium text-base-content/60">No results found for "{value}"</p>
 				</div>

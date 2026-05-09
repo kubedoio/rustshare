@@ -8,9 +8,9 @@
 	import { createQuery } from '$lib/query-compat';
 	import { getUnreadNotificationCount } from '$lib/api/notifications';
 	import { listAllFiles } from '$lib/api/files';
-	import { getFolderTree, type FolderTree } from '$lib/api/folders';
+	import { searchResources } from '$lib/api/search';
 	import { getFeatures } from '$lib/api/features';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { Bell } from 'lucide-svelte';
 	import { formatFileSize } from '$lib/utils/format';
 	import GlobalSearch from './topbar/GlobalSearch.svelte';
@@ -51,28 +51,6 @@
 		enabled: !!$currentUser
 	});
 
-	$: folderTreeQuery = createQuery<FolderTree>({
-		queryKey: ['folder-tree'],
-		queryFn: () => getFolderTree(),
-		enabled: !!$currentUser
-	});
-
-	function flattenFolderTree(
-		node: FolderTree | undefined
-	): Array<{ id: string; name: string; path: string }> {
-		if (!node) return [];
-		const result = [];
-		if (node.folder) {
-			result.push({ id: node.folder.id, name: node.folder.name, path: node.folder.path });
-		}
-		if (node.subfolders) {
-			for (const sub of node.subfolders) {
-				result.push(...flattenFolderTree(sub));
-			}
-		}
-		return result;
-	}
-
 	$: totalSizeUsed =
 		$allFilesQuery.data?.reduce(
 			(sum: number, file: { size?: number }) => sum + (file.size || 0),
@@ -83,20 +61,107 @@
 	$: usageColor =
 		usagePercent > 85 ? '#b63e3e' : usagePercent > 60 ? '#a56a12' : 'var(--brand-500, #c65a1e)';
 
-	$: searchResults = (() => {
-		const q = $globalSearchQuery.toLowerCase().trim();
-		if (!q) return { files: [], folders: [] };
+	interface SearchItem {
+		id: string;
+		name: string;
+		path: string;
+	}
 
-		const allFiles = $allFilesQuery.data || [];
-		const allFolders = flattenFolderTree($folderTreeQuery.data);
+	interface CachedSearch {
+		files: SearchItem[];
+		folders: SearchItem[];
+		expiresAt: number;
+	}
 
-		const files = allFiles
-			.filter((f) => f.name.toLowerCase().includes(q) && !f.deleted_at)
-			.slice(0, 10);
-		const folders = allFolders.filter((f) => f.name.toLowerCase().includes(q)).slice(0, 5);
+	const searchCache = new Map<string, CachedSearch>();
+	const CACHE_TTL_MS = 30000;
+	const SEARCH_LIMIT = 50;
+	const DEBOUNCE_MS = 300;
 
-		return { files, folders };
-	})();
+	let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+	let searchAbortController: AbortController | null = null;
+	let searchLoading = false;
+	let serverSearchResults: { files: SearchItem[]; folders: SearchItem[] } = { files: [], folders: [] };
+
+	function getCachedSearch(query: string): { files: SearchItem[]; folders: SearchItem[] } | null {
+		const cached = searchCache.get(query);
+		if (cached && cached.expiresAt > Date.now()) {
+			return { files: cached.files, folders: cached.folders };
+		}
+		searchCache.delete(query);
+		return null;
+	}
+
+	function setCachedSearch(query: string, results: { files: SearchItem[]; folders: SearchItem[] }) {
+		searchCache.set(query, { ...results, expiresAt: Date.now() + CACHE_TTL_MS });
+	}
+
+	function performSearch(query: string) {
+		const q = query.trim().toLowerCase();
+		if (!q) {
+			serverSearchResults = { files: [], folders: [] };
+			searchLoading = false;
+			return;
+		}
+
+		const cached = getCachedSearch(q);
+		if (cached) {
+			serverSearchResults = cached;
+			searchLoading = false;
+			return;
+		}
+
+		searchLoading = true;
+
+		if (searchAbortController) {
+			searchAbortController.abort();
+		}
+		searchAbortController = new AbortController();
+
+		searchResources(q, SEARCH_LIMIT, searchAbortController.signal)
+			.then((response) => {
+				const files = response.results
+					.filter((r) => r.resource_type === 'file')
+					.map((r) => ({ id: r.id, name: r.name, path: r.path }));
+				const folders = response.results
+					.filter((r) => r.resource_type === 'folder')
+					.map((r) => ({ id: r.id, name: r.name, path: r.path }));
+				const results = { files, folders };
+				serverSearchResults = results;
+				setCachedSearch(q, results);
+			})
+			.catch((err) => {
+				if (err.name !== 'AbortError') {
+					console.error('Search failed:', err);
+					serverSearchResults = { files: [], folders: [] };
+				}
+			})
+			.finally(() => {
+				searchLoading = false;
+			});
+	}
+
+	$: {
+		const q = $globalSearchQuery;
+		if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+		if (!q.trim()) {
+			serverSearchResults = { files: [], folders: [] };
+			searchLoading = false;
+			if (searchAbortController) {
+				searchAbortController.abort();
+				searchAbortController = null;
+			}
+		} else {
+			searchDebounceTimer = setTimeout(() => performSearch(q), DEBOUNCE_MS);
+		}
+	}
+
+	onDestroy(() => {
+		if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+		if (searchAbortController) {
+			searchAbortController.abort();
+		}
+	});
 
 	function clearSearch() {
 		globalSearchQuery.set('');
@@ -204,7 +269,8 @@
 		<div class="global-search-container w-full max-w-[28.5rem]">
 			<GlobalSearch
 				value={$globalSearchQuery}
-				results={searchResults}
+				results={serverSearchResults}
+				loading={searchLoading}
 				onChange={(q) => globalSearchQuery.set(q)}
 				onClear={clearSearch}
 				onSelect={navigateToSearchResult}
