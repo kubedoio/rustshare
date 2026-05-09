@@ -65,6 +65,7 @@
 	// Explorer types
 	import type { ExplorerRoot, CollectionView } from '$lib/explorer';
 	import { ROOT_CONFIG } from '$lib/explorer';
+	import { findFolderPathInTree, findFolderPathInSharedTrees } from '$lib/explorer/breadcrumbs';
 
 	// Components
 	import FileExplorer from '$lib/files/FileExplorer.svelte';
@@ -307,7 +308,7 @@
 	// Derive folderPath from the full API folder tree (for my-files)
 	$: myFilesFolderPath =
 		currentFolderId && $folderTreeQuery.data && activeRoot === 'my-files'
-			? buildFolderPathFromApiTree($folderTreeQuery.data, currentFolderId).slice(1)
+			? findFolderPathInTree($folderTreeQuery.data, currentFolderId).slice(1)
 			: [];
 	$: sharedFolderPath =
 		currentFolderId && activeRoot === 'shared' && $sharedFolderTreesQuery.data
@@ -316,9 +317,7 @@
 
 	// Build breadcrumb based on current state
 	// Returns Folder-compatible objects for FileExplorer component
-	$: breadcrumbPath = buildBreadcrumb();
-
-	function buildBreadcrumb(): Folder[] {
+	$: breadcrumbPath = ((): Folder[] => {
 		// In collection mode, return empty (no breadcrumb)
 		if (isCollectionMode) {
 			return [];
@@ -332,35 +331,7 @@
 		}
 
 		return [];
-	}
-
-	function buildFolderPathFromApiTree(root: FolderTreeType, targetId: string): Folder[] {
-		function search(node: FolderTreeType): Folder[] {
-			if (node.folder.id === targetId) {
-				return [node.folder];
-			}
-			if (node.subfolders) {
-				for (const child of node.subfolders) {
-					const path = search(child);
-					if (path.length > 0) {
-						return [node.folder, ...path];
-					}
-				}
-			}
-			return [];
-		}
-		return search(root);
-	}
-
-	function findFolderPathInSharedTrees(targetId: string, trees: FolderTreeType[]): Folder[] {
-		for (const tree of trees) {
-			const path = buildFolderPathFromApiTree(tree, targetId);
-			if (path.length > 0) {
-				return path;
-			}
-		}
-		return [];
-	}
+	})();
 
 	function permissionLevel(permission: 'View' | 'Edit' | 'Admin' | null | undefined): number {
 		if (permission === 'Admin') return 3;

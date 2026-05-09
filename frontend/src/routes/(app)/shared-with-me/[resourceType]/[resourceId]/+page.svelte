@@ -3,7 +3,8 @@
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
 	import { downloadFile, getFile } from '$lib/api/files';
-	import { getFolder, getSharedFolderContents } from '$lib/api/folders';
+	import { getFolder, getSharedFolderContents, getSharedFolderTree } from '$lib/api/folders';
+	import { findFolderPathInTree } from '$lib/explorer/breadcrumbs';
 	import { listReceivedShares } from '$lib/api/shares';
 	import type { File, Folder, ReceivedShare } from '$lib/api/types';
 	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
@@ -16,8 +17,6 @@
 
 	let showPreviewModal = false;
 	let previewFile: File | null = null;
-	let currentFolderId: string | null = null;
-	let nestedPath: Folder[] = [];
 
 	$: resourceId = $page.params.resourceId ?? '';
 	$: resourceType = ($page.params.resourceType as SharedResourceType | undefined) ?? 'file';
@@ -30,25 +29,7 @@
 
 	$: shareEntry = findShare($receivedSharesQuery.data, resourceType, resourceId);
 	$: rootFolderId = resourceType === 'folder' ? resourceId : null;
-	$: activeFolderId = resourceType === 'folder' ? requestedFolderId || rootFolderId : null;
-
-	$: if (resourceType === 'folder' && activeFolderId && currentFolderId !== activeFolderId) {
-		currentFolderId = activeFolderId;
-
-		if (rootFolderId && activeFolderId === rootFolderId) {
-			nestedPath = [];
-		} else {
-			const existingIndex = nestedPath.findIndex((folder) => folder.id === activeFolderId);
-			if (existingIndex !== -1) {
-				nestedPath = nestedPath.slice(0, existingIndex + 1);
-			}
-		}
-	}
-
-	$: if (resourceType !== 'folder') {
-		currentFolderId = null;
-		nestedPath = [];
-	}
+	$: currentFolderId = resourceType === 'folder' ? (requestedFolderId || rootFolderId) : null;
 
 	$: fileQuery = createQuery({
 		queryKey: ['shared-file', resourceId],
@@ -72,6 +53,12 @@
 			currentFolderId !== rootFolderId
 	});
 
+	$: sharedFolderTreeQuery = createQuery({
+		queryKey: ['shared-folder-tree', resourceId],
+		queryFn: () => getSharedFolderTree(resourceId),
+		enabled: resourceType === 'folder' && !!resourceId
+	});
+
 	function findShare(
 		shares: ReceivedShare[] | undefined,
 		type: SharedResourceType,
@@ -86,11 +73,8 @@
 		return 'View';
 	}
 
-	function navigateWithinSharedFolder(folderId: string, nextPath: Folder[]) {
+	function navigateToSharedFolder(folderId: string) {
 		if (!rootFolderId) return;
-
-		currentFolderId = folderId;
-		nestedPath = nextPath;
 		goto(sharedResourcePath('folder', rootFolderId, { folderId }), {
 			keepFocus: true,
 			noScroll: true
@@ -99,17 +83,17 @@
 
 	function navigateToRootFolder() {
 		if (!rootFolderId) return;
-		navigateWithinSharedFolder(rootFolderId, []);
+		navigateToSharedFolder(rootFolderId);
 	}
 
 	function navigateToNestedFolder(index: number) {
 		const target = nestedPath[index];
 		if (!target) return;
-		navigateWithinSharedFolder(target.id, nestedPath.slice(0, index + 1));
+		navigateToSharedFolder(target.id);
 	}
 
 	function openNestedFolder(folder: Folder) {
-		navigateWithinSharedFolder(folder.id, [...nestedPath, folder]);
+		navigateToSharedFolder(folder.id);
 	}
 
 	function openPreview(file: File) {
@@ -149,23 +133,20 @@
 		}
 	}
 
-	$: if (
-		resourceType === 'folder' &&
-		currentFolderId &&
-		currentFolderId !== rootFolderId &&
-		$currentFolderQuery.data
-	) {
-		const existingIndex = nestedPath.findIndex((folder) => folder.id === currentFolderId);
-
-		if (existingIndex !== -1) {
-			nestedPath = nestedPath.slice(0, existingIndex + 1);
-		} else {
-			nestedPath = [$currentFolderQuery.data];
-		}
-	}
+	$: nestedPath = resourceType === 'folder' && currentFolderId
+		? currentFolderId === rootFolderId
+			? []
+			: $sharedFolderTreeQuery.data
+				? findFolderPathInTree($sharedFolderTreeQuery.data, currentFolderId).slice(1)
+				: $currentFolderQuery.data
+					? [$currentFolderQuery.data]
+					: []
+		: [];
 
 	$: currentFolderTitle =
-		nestedPath.length > 0 ? nestedPath[nestedPath.length - 1].name : shareEntry?.resource_name;
+		nestedPath.length > 0
+			? nestedPath[nestedPath.length - 1].name
+			: $currentFolderQuery.data?.name ?? shareEntry?.resource_name;
 </script>
 
 <svelte:head>

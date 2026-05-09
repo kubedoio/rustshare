@@ -43,6 +43,16 @@ export {
 	COLLECTION_CONFIG
 } from './types';
 
+// Breadcrumb utilities
+export {
+	findFolderPathInTree,
+	findFolderPathInSharedTrees,
+	findAncestorIds,
+	expandPathToFolder,
+	buildBreadcrumbItems,
+	buildBreadcrumbItemsFromFolderPath
+} from './breadcrumbs';
+
 // Store
 export { explorerStore } from './store.svelte';
 export type { ExplorerState as ExplorerStoreState } from './store.svelte';

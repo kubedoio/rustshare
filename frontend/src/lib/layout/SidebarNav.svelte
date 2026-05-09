@@ -30,6 +30,7 @@
 	import { listAllFiles } from '$lib/api/files';
 	import { formatFileSize } from '$lib/utils/format';
 	import { explorerStore, ROOT_CONFIG, type ExplorerRoot } from '$lib/explorer';
+	import { findAncestorIds, expandPathToFolder } from '$lib/explorer/breadcrumbs';
 
 	interface Props {
 		variant?: 'files' | 'admin' | 'default';
@@ -126,58 +127,17 @@
 	// NAVIGATION STATE HELPERS
 	// ============================================================================
 
-	function findAncestorIds(root: FolderTreeType, targetId: string): Set<string> {
-		const ancestors = new Set<string>();
-
-		function findPath(node: FolderTreeType, target: string, path: string[]): boolean {
-			if (node.folder.id === target) {
-				path.forEach((id) => ancestors.add(id));
-				return true;
-			}
-			if (node.subfolders) {
-				for (const child of node.subfolders) {
-					if (findPath(child, target, [...path, node.folder.id])) {
-						return true;
-					}
-				}
-			}
-			return false;
-		}
-
-		findPath(root, targetId, []);
-		return ancestors;
-	}
-
-	function expandPathToFolder(root: FolderTreeType, targetId: string): void {
-		function findAndExpand(node: FolderTreeType, target: string): boolean {
-			if (node.folder.id === target) {
-				return true;
-			}
-			if (node.subfolders) {
-				for (const child of node.subfolders) {
-					if (findAndExpand(child, target)) {
-						fileBrowserUi.expandFolder(node.folder.id);
-						return true;
-					}
-				}
-			}
-			return false;
-		}
-
-		findAndExpand(root, targetId);
-	}
-
 	// Auto-expand current folder path when it changes
 	$effect(() => {
 		if (currentFolderId && $folderTreeQuery.data && currentRoot === 'my-files') {
-			expandPathToFolder($folderTreeQuery.data, currentFolderId);
+			expandPathToFolder($folderTreeQuery.data, currentFolderId, (id) => fileBrowserUi.expandFolder(id));
 		}
 	});
 
 	$effect(() => {
 		const sharedTree = getSharedTreeData();
 		if (currentFolderId && sharedTree && currentRoot === 'shared') {
-			expandPathToFolder(sharedTree, currentFolderId);
+			expandPathToFolder(sharedTree, currentFolderId, (id) => fileBrowserUi.expandFolder(id));
 		}
 	});
 

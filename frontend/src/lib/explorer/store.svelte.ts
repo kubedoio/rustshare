@@ -39,6 +39,7 @@ import {
 	isValidCanonicalLocation,
 	ROOT_CONFIG
 } from './types';
+import { buildBreadcrumbItems } from './breadcrumbs';
 
 // ============================================================================
 // STORE CREATION
@@ -63,26 +64,6 @@ function createExplorerStore() {
 	// ============================================================================
 	// PRIVATE HELPERS
 	// ============================================================================
-
-	/**
-	 * Build breadcrumb from current state.
-	 */
-	function buildBreadcrumb(
-		root: ExplorerRoot,
-		folderPath: string[],
-		folderIds: string[]
-	): BreadcrumbItem[] {
-		const items: BreadcrumbItem[] = [{ label: ROOT_CONFIG[root].label, rootType: root }];
-
-		for (let i = 0; i < folderPath.length; i++) {
-			items.push({
-				label: folderPath[i],
-				folderId: folderIds[i] || undefined
-			});
-		}
-
-		return items;
-	}
 
 	/**
 	 * Expand all ancestors in the tree.
@@ -239,7 +220,7 @@ function createExplorerStore() {
 				// Select the folder itself
 				selectedItemId: location.itemId || location.folderId,
 				selectedItemType: 'folder',
-				breadcrumb: buildBreadcrumb(
+				breadcrumb: buildBreadcrumbItems(
 					location.rootType,
 					location.folderPath,
 					location.ancestorFolderIds
@@ -300,7 +281,7 @@ function createExplorerStore() {
 				// Select the file
 				selectedItemId: location.itemId ?? null,
 				selectedItemType: 'file',
-				breadcrumb: buildBreadcrumb(
+				breadcrumb: buildBreadcrumbItems(
 					location.rootType,
 					location.folderPath,
 					location.ancestorFolderIds
@@ -493,7 +474,7 @@ function createExplorerStore() {
 					currentFolderId: params.folder ?? null,
 					currentFolderPath: folderPath,
 					expandedTreeNodeIds: expandAncestors(ancestorIds),
-					breadcrumb: buildBreadcrumb(rootType, folderPath, ancestorIds)
+					breadcrumb: buildBreadcrumbItems(rootType, folderPath, ancestorIds)
 				};
 			});
 		} else {
