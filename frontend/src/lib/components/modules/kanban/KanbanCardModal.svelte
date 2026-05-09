@@ -255,7 +255,8 @@
 						</div>
 						<div class="description-editor">
 							<RichMarkdownEditor
-								bind:content={card.content}
+								content={card.content}
+								bind:currentMarkdown={card.content}
 								editable={true}
 								on:change={() => {
 									// saveStatus is managed by parent via saveStatus prop
