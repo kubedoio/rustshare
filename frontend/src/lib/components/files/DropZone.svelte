@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { collectFilesFromDataTransfer } from '$lib/utils/directoryUpload';
+	import UploadOverlay from '$lib/explorer/UploadOverlay.svelte';
 
 	interface Props {
 		disabled?: boolean;
@@ -87,27 +88,5 @@
 >
 	{@render children?.()}
 
-	{#if isDragging && !disabled}
-		<div
-			class="absolute inset-0 z-40 flex items-center justify-center rounded-lg border-4 border-dashed border-primary bg-primary/10"
-		>
-			<div class="pointer-events-none text-center">
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					fill="none"
-					viewBox="0 0 24 24"
-					stroke-width="1.5"
-					stroke="currentColor"
-					class="mx-auto h-16 w-16 text-primary"
-				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"
-					/>
-				</svg>
-				<p class="mt-4 text-lg font-semibold text-primary">Drop files to upload</p>
-			</div>
-		</div>
-	{/if}
+	<UploadOverlay isDragging={isDragging && !disabled} />
 </div>

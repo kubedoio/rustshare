@@ -3,8 +3,7 @@
 	import type { ReplicationStatus } from '$lib/stores/replication';
 	import FilePreview from './FilePreview.svelte';
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
-	import MenuComponent from '$lib/components/common/ContextMenu.svelte';
-	type MenuItem = any;
+	import FileContextMenu from '$lib/explorer/FileContextMenu.svelte';
 	import { replicationStateBadgeClass, formatReplicationStateLabel } from '$lib/stores/replication';
 	import { formatFileSize, formatDate } from '$lib/utils/format';
 	import { detectEditorType, canEditFileSize } from '$lib/utils/editor';
@@ -20,8 +19,6 @@
 		RefreshCw,
 		RotateCcw,
 		Star,
-		Folder as FolderIcon,
-		File as FileIcon,
 		Check,
 		X
 	} from 'lucide-svelte';
@@ -123,115 +120,45 @@
 	let renameValue = $state('');
 	let renameInputRef = $state<HTMLInputElement | undefined>(undefined);
 
-	let menuItems = $derived(buildMenuItems());
-
-	function buildMenuItems(): MenuItem[] {
-		const items: MenuItem[] = [];
-
-		if (workspaceMode === 'deleted') {
-			items.push(
-				{ id: 'restore', label: 'Restore', icon: RotateCcw, onClick: onRestore },
-				{ id: 'sep1', label: '', separator: true, onClick: () => {} },
-				{
-					id: 'delete',
-					label: 'Delete permanently',
-					icon: Trash2,
-					danger: true,
-					onClick: onPermanentDelete
-				}
-			);
-		} else {
-			if (isFolder) {
-				items.push(
-					{
-						id: 'open',
-						label: 'Open',
-						icon: FolderIcon,
-						shortcut: 'Enter',
-						onClick: () => onSelect()
-					},
-					{ id: 'sep1', label: '', separator: true, onClick: () => {} }
-				);
-			} else {
-				// Check if file is editable
-				const isEditable =
-					!isFolder &&
-					fileItem &&
-					'deleted_at' in fileItem &&
-					!fileItem.deleted_at &&
-					detectEditorType(fileItem.name, fileItem.mime_type) !== 'none' &&
-					canEditFileSize(fileItem.size);
-
-				items.push({
-					id: 'open',
-					label: 'Open',
-					icon: FileIcon,
-					shortcut: 'Enter',
-					onClick: () => onSelect()
-				});
-
-				if (isEditable) {
-					items.push({
-						id: 'edit',
-						label: 'Edit',
-						icon: Edit3,
-						onClick: () => {
-							onEdit();
-						}
-					});
-				}
-
-				items.push(
-					{
-						id: 'download',
-						label: 'Download',
-						icon: Download,
-						shortcut: '⌘D',
-						onClick: onDownload
-					},
-					{ id: 'sep1', label: '', separator: true, onClick: () => {} }
-				);
-			}
-
-			if (canManage) {
-				items.push(
-					{ id: 'rename', label: 'Rename', icon: Edit, shortcut: 'F2', onClick: startRename },
-					{ id: 'move', label: 'Move to...', icon: Move, onClick: onMove }
-				);
-			}
-			if (canShare) {
-				items.push({ id: 'share', label: 'Share', icon: Share2, onClick: onShare });
-			}
-
-			if (!isFolder && canManage) {
-				items.push(
-					{ id: 'versions', label: 'Version history', icon: History, onClick: onVersionHistory },
-					{ id: 'replace', label: 'Replace file', icon: RefreshCw, onClick: onReplace }
-				);
-			}
-
-			if (canManage) {
-				items.push(
-					{
-						id: 'star',
-						label: isStarred ? 'Remove from starred' : 'Add to starred',
-						icon: Star,
-						onClick: onToggleStar
-					},
-					{ id: 'sep2', label: '', separator: true, onClick: () => {} },
-					{
-						id: 'delete',
-						label: 'Move to trash',
-						icon: Trash2,
-						danger: true,
-						shortcut: 'Del',
-						onClick: onDelete
-					}
-				);
-			}
+	function handleContextMenuAction(action: string) {
+		switch (action) {
+			case 'open':
+				onSelect();
+				break;
+			case 'edit':
+				onEdit();
+				break;
+			case 'download':
+				onDownload();
+				break;
+			case 'rename':
+				startRename();
+				break;
+			case 'move':
+				onMove();
+				break;
+			case 'share':
+				onShare();
+				break;
+			case 'versions':
+				onVersionHistory();
+				break;
+			case 'replace':
+				onReplace();
+				break;
+			case 'star':
+				onToggleStar();
+				break;
+			case 'delete':
+				onDelete();
+				break;
+			case 'restore':
+				onRestore();
+				break;
+			case 'permanentDelete':
+				onPermanentDelete();
+				break;
 		}
-
-		return items;
 	}
 
 	function handleClick(e: MouseEvent) {
@@ -622,10 +549,11 @@
 </div>
 
 <!-- Context Menu -->
-<MenuComponent
-	items={menuItems}
-	x={contextMenuX}
-	y={contextMenuY}
-	visible={contextMenuVisible}
+<FileContextMenu
+	{item}
+	{workspaceMode}
+	isOpen={contextMenuVisible}
+	position={{ x: contextMenuX, y: contextMenuY }}
 	onClose={() => (contextMenuVisible = false)}
+	onAction={handleContextMenuAction}
 />

@@ -68,7 +68,8 @@
 	import { findFolderPathInTree, findFolderPathInSharedTrees } from '$lib/explorer/breadcrumbs';
 
 	// Components
-	import FileExplorer from '$lib/files/FileExplorer.svelte';
+	import FileBrowserToolbar from '$lib/explorer/FileBrowserToolbar.svelte';
+	import FileBrowserContent from '$lib/explorer/FileBrowserContent.svelte';
 	import DropZone from '$lib/components/files/DropZone.svelte';
 	import UploadProgress from '$lib/components/files/UploadProgress.svelte';
 	import PaginationControls from '$lib/components/common/PaginationControls.svelte';
@@ -1587,109 +1588,115 @@
 	}}
 />
 
-{#if workspaceMode === 'deleted'}
-	<div class="mb-3 flex items-center justify-between px-1">
-		<div class="text-sm text-base-content/60">
-			Items in trash are automatically deleted based on your <a
-				href="/settings"
-				class="text-brand-500 hover:underline">settings</a
-			>.
-		</div>
-		<button
-			type="button"
-			class="flex items-center gap-2 rounded-lg border border-error/30 bg-error/10 px-3 py-1.5 text-sm font-medium text-error transition-colors hover:bg-error/20"
-			on:click={openEmptyTrashModal}
-		>
-			<svg
-				xmlns="http://www.w3.org/2000/svg"
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke="currentColor"
-				stroke-width="2"
-				stroke-linecap="round"
-				stroke-linejoin="round"
-				class="h-4 w-4"
-				><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path
-					d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
-				/></svg
-			>
-			Empty Trash
-		</button>
-	</div>
-{/if}
-
 <DropZone
 	onFilesDropped={handleFilesSelected}
 	onDirectoryDropped={handleDirectoryUpload}
 	disabled={!canUpload || isUploading}
 >
-	<FileExplorer
-		folders={paginatedFolders}
-		files={paginatedFiles}
-		folderPath={breadcrumbPath}
-		rootLabel={activeRoot === 'shared' ? 'Shared' : 'My Files'}
-		title={workspaceTitle}
-		description={workspaceDescription}
-		emptyTitle={workspaceEmptyTitle}
-		emptyDescription={workspaceEmptyDescription}
-		emptyActionLabel={workspaceEmptyActionLabel}
-		{workspaceMode}
-		{showBreadcrumbs}
-		{canCreateFolder}
-		{canUpload}
-		{allowSelectionMode}
-		isLoading={$filesQuery.isLoading}
-		error={$filesQuery.error}
-		{replicationStatuses}
-		{selectionMode}
-		{isUploading}
-		{isSharedRoot}
-		activeSortField={$fileSortState.field}
-		activeSortOrder={$fileSortState.order}
-		onSort={setSortField}
-		onFolderClick={handleFolderClick}
-		onFileClick={handleFileClick}
-		onRefresh={() => $filesQuery.refetch()}
-		onNewFolder={() => (showCreateFolderModal = true)}
-		onUpload={() => document.getElementById('upload-file-input')?.click()}
-		onToggleSelection={toggleSelectionMode}
-		onSelectAll={handleSelectAll}
-		onDeselectAll={handleDeselectAll}
-		onBulkDelete={handleBulkDelete}
-		onBulkDownload={handleBulkDownload}
-		onBulkMove={handleBulkMove}
-		onRenameFile={handleRenameFileInline}
-		onDeleteFile={handleDeleteFile}
-		onToggleFileStar={handleToggleFileStar}
-		onRestoreFile={handleRestoreFile}
-		onPermanentDeleteFile={handlePermanentDeleteFile}
-		onShareFile={handleShareFile}
-		onVersionHistory={handleVersionHistory}
-		onMoveFile={handleMoveFileWithFallback}
-		onDownloadFile={handleDownloadFile}
-		onReplaceFile={handleReplaceFile}
-		onEditFile={handleEditFile}
-		onRenameFolder={handleRenameFolderInline}
-		onDeleteFolder={handleDeleteFolder}
-		onToggleFolderStar={handleToggleFolderStar}
-		onRestoreFolder={handleRestoreFolder}
-		onPermanentDeleteFolder={handlePermanentDeleteFolder}
-		onShareFolder={handleShareFolder}
-		onMoveFolder={handleMoveFolderWithFallback}
-		onbreadcrumbNavigate={handleBreadcrumbNavigate}
-	>
-		{#snippet pagination()}
-			<div class="flex justify-center">
-				<PaginationControls
-					{currentPage}
-					{totalPages}
-					pageSize={$fileSortState.pageSize}
-					onPageChange={(page) => (currentPage = page)}
-					onPageSizeChange={setPageSize}
-				/>
+	<div class="flex h-full min-h-0 flex-col bg-base-100">
+		{#if workspaceMode === 'deleted'}
+			<div class="mb-3 flex items-center justify-between px-1">
+				<div class="text-sm text-base-content/60">
+					Items in trash are automatically deleted based on your <a
+						href="/settings"
+						class="text-brand-500 hover:underline">settings</a
+					>.
+				</div>
+				<button
+					type="button"
+					class="flex items-center gap-2 rounded-lg border border-error/30 bg-error/10 px-3 py-1.5 text-sm font-medium text-error transition-colors hover:bg-error/20"
+					on:click={openEmptyTrashModal}
+				>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						class="h-4 w-4"
+						><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path
+							d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+						/></svg
+					>
+					Empty Trash
+				</button>
 			</div>
-		{/snippet}
-	</FileExplorer>
+		{/if}
+
+		<FileBrowserToolbar
+			title={workspaceTitle}
+			description={workspaceDescription}
+			breadcrumbItems={breadcrumbPath}
+			rootLabel={activeRoot === 'shared' ? 'Shared' : 'My Files'}
+			{showBreadcrumbs}
+			{canCreateFolder}
+			{canUpload}
+			{allowSelectionMode}
+			{selectionMode}
+			onToggleSelection={toggleSelectionMode}
+			onSelectAll={handleSelectAll}
+			onDeselectAll={handleDeselectAll}
+			onBulkDelete={handleBulkDelete}
+			onBulkDownload={handleBulkDownload}
+			onBulkMove={handleBulkMove}
+			onNewFolder={() => (showCreateFolderModal = true)}
+			onUpload={() => document.getElementById('upload-file-input')?.click()}
+			onBreadcrumbNavigate={handleBreadcrumbNavigate}
+			{isUploading}
+		/>
+
+		<FileBrowserContent
+			folders={paginatedFolders}
+			files={paginatedFiles}
+			{workspaceMode}
+			{isSharedRoot}
+			isLoading={$filesQuery.isLoading}
+			error={$filesQuery.error}
+			emptyTitle={workspaceEmptyTitle}
+			emptyDescription={workspaceEmptyDescription}
+			emptyActionLabel={workspaceEmptyActionLabel}
+			{replicationStatuses}
+			{selectionMode}
+			activeSortField={$fileSortState.field}
+			activeSortOrder={$fileSortState.order}
+			onSort={setSortField}
+			onRefresh={() => $filesQuery.refetch()}
+			onFolderClick={handleFolderClick}
+			onFileClick={handleFileClick}
+			onRenameFile={handleRenameFileInline}
+			onDeleteFile={handleDeleteFile}
+			onToggleFileStar={handleToggleFileStar}
+			onRestoreFile={handleRestoreFile}
+			onPermanentDeleteFile={handlePermanentDeleteFile}
+			onShareFile={handleShareFile}
+			onVersionHistory={handleVersionHistory}
+			onMoveFile={handleMoveFileWithFallback}
+			onDownloadFile={handleDownloadFile}
+			onReplaceFile={handleReplaceFile}
+			onEditFile={handleEditFile}
+			onRenameFolder={handleRenameFolderInline}
+			onDeleteFolder={handleDeleteFolder}
+			onToggleFolderStar={handleToggleFolderStar}
+			onRestoreFolder={handleRestoreFolder}
+			onPermanentDeleteFolder={handlePermanentDeleteFolder}
+			onShareFolder={handleShareFolder}
+			onMoveFolder={handleMoveFolderWithFallback}
+		>
+			{#snippet pagination()}
+				<div class="flex justify-center">
+					<PaginationControls
+						{currentPage}
+						{totalPages}
+						pageSize={$fileSortState.pageSize}
+						onPageChange={(page) => (currentPage = page)}
+						onPageSizeChange={setPageSize}
+					/>
+				</div>
+			{/snippet}
+		</FileBrowserContent>
+	</div>
 </DropZone>
 
 <!-- Upload Progress -->
