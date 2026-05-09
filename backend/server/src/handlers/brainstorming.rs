@@ -94,11 +94,7 @@ pub async fn create_brainstorm_board(
     }
 
     // Validate template key
-    let valid_templates = [
-        "template_blank_brainstorm",
-        "template_decision_making_brainstorm",
-        "template_meeting_whiteboard",
-    ];
+    let valid_templates = ["template_blank_brainstorm"];
     if !valid_templates.contains(&req.template_key.as_str()) {
         return Err(brainstorming_error_response(BrainstormError::InvalidData(
             format!("Invalid template key: {}", req.template_key),

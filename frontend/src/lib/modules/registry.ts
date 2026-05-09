@@ -393,7 +393,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		id: 'module_brainstorming',
 		key: 'brainstorming',
 		displayName: 'Brainstorming',
-		description: 'Visual decision boards and brainstorming whiteboards.',
+		description: 'Capture sketches, flows, and early ideas as visual workspace boards.',
 		enabled: true,
 		rootPath: getModuleRoot('Brainstorming'),
 		renderer: 'brainstorming',
@@ -414,12 +414,12 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 					enabled: true,
 					type: 'recent-brainstorm-boards',
 					title: 'Brainstorming',
-					description: 'Recent visual decision boards.',
+					description: 'Recent idea boards.',
 					size: 'medium',
 					columns: { desktop: 6, tablet: 12, mobile: 12 },
 					maxItems: 4,
 					primaryAction: {
-						label: 'New board',
+						label: 'New idea board',
 						action: 'create-from-template',
 						template: 'template_blank_brainstorm'
 					}
@@ -430,10 +430,10 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				route: '/modules/brainstorming',
 				renderer: 'brainstorming',
 				layout: 'gallery-grid',
-				emptyStateTitle: 'No brainstorming boards yet',
-				emptyStateDescription: 'Create your first visual decision board.',
+				emptyStateTitle: 'No idea boards yet',
+				emptyStateDescription: 'No idea boards yet. Create a simple visual board to capture sketches, flows, or early thinking.',
 				primaryAction: {
-					label: 'New Board',
+					label: 'New idea board',
 					action: 'create-from-template',
 					template: 'template_blank_brainstorm'
 				}

@@ -46,7 +46,10 @@
 				</nav>
 			{/if}
 
-			<h1 class="text-xl font-semibold text-base-content">{title}</h1>
+			<div class="flex items-center gap-2">
+				<h1 class="text-xl font-semibold text-base-content">{title}</h1>
+				<slot name="titleExtra" />
+			</div>
 
 			{#if subtitle}
 				<p class="text-sm text-base-content/60">{subtitle}</p>

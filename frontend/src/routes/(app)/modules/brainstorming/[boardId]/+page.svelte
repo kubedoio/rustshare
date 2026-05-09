@@ -103,6 +103,9 @@
 			const App = () =>
 				React.createElement(Excalidraw, {
 					initialData,
+					UIOptions: {
+						welcomeScreen: false
+					},
 					excalidrawAPI: (api: any) => {
 						excalidrawInstance = api;
 					},
@@ -262,6 +265,11 @@
 					<ChevronRight size={14} class="flex-shrink-0 text-base-content/30" />
 					<span class="rounded-md px-1.5 py-0.5 text-sm font-semibold text-base-content" aria-current="page">
 						{$boardQuery.data?.title ?? 'Untitled Board'}
+					</span>
+					<span
+						class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700"
+					>
+						Preview
 					</span>
 				</nav>
 				<h1 class="board-title">
@@ -430,5 +438,12 @@
 
 	.excalidraw-wrapper :global(.excalidraw) {
 		--ui-font: inherit;
+	}
+
+	:global(.excalidraw .layer-ui__wrapper .dropdown-menu .social-links),
+	:global(.excalidraw .layer-ui__wrapper .dropdown-menu a[href^="https://github.com"]),
+	:global(.excalidraw .layer-ui__wrapper .dropdown-menu a[href^="https://twitter.com"]),
+	:global(.excalidraw .layer-ui__wrapper .dropdown-menu a[href^="https://discord.gg"]) {
+		display: none !important;
 	}
 </style>

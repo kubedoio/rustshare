@@ -5,7 +5,6 @@
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
-	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 	import { PenTool, Plus, Clock, ImageOff, Folder } from 'lucide-svelte';
@@ -24,10 +23,7 @@
 	const queryClient = useQueryClient();
 	let showCreateModal = $state(false);
 	let newBoardTitle = $state('');
-	let selectedTemplate = $state('template_blank_brainstorm');
 	let createError = $state('');
-	let showDuplicateConfirm = $state(false);
-	let pendingTitle = $state('');
 	let brokenPreviews = $state(new Set<string>());
 
 	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No boards yet');
@@ -67,21 +63,7 @@
 			return;
 		}
 
-		const boards = $boardsQuery.data ?? [];
-		const exists = boards.some((b) => b.title?.toLowerCase() === title.toLowerCase());
-		if (exists) {
-			pendingTitle = title;
-			showDuplicateConfirm = true;
-			return;
-		}
-
-		createBoardMutation.mutate({ title, templateKey: selectedTemplate });
-	}
-
-	function handleDuplicateProceed() {
-		showDuplicateConfirm = false;
-		createBoardMutation.mutate({ title: pendingTitle, templateKey: selectedTemplate });
-		pendingTitle = '';
+		createBoardMutation.mutate({ title, templateKey: 'template_blank_brainstorm' });
 	}
 
 	async function handleOpenInFiles() {
@@ -97,19 +79,16 @@
 		if (!board.preview_file_id) return null;
 		return `/api/v1/files/${board.preview_file_id}/content`;
 	}
-
-	const templates = [
-		{ key: 'template_blank_brainstorm', label: 'Blank Board' },
-		{ key: 'template_decision_making_brainstorm', label: 'Decision Making & Brainstorming' },
-		{ key: 'template_meeting_whiteboard', label: 'Meeting Whiteboard' }
-	];
 </script>
 
-<ModulePageShell title="Brainstorming" subtitle={module.description}>
+<ModulePageShell
+	title="Brainstorming"
+	subtitle="Capture sketches, flows, and early ideas as visual workspace boards."
+>
 	<div slot="primaryAction">
 		<button class="btn gap-2 btn-sm btn-primary" onclick={handleCreateBoard}>
 			<Plus size={14} />
-			<span>New Board</span>
+			<span>New idea board</span>
 		</button>
 	</div>
 	<div slot="secondaryActions">
@@ -117,6 +96,13 @@
 			<Folder size={14} />
 			<span>Open in Files</span>
 		</button>
+	</div>
+	<div class="flex items-center gap-2" slot="titleExtra">
+		<span
+			class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700"
+		>
+			Preview
+		</span>
 	</div>
 
 	<div class="flex flex-col gap-4">
@@ -200,7 +186,7 @@
 <!-- Create Board Modal -->
 <ModalBase
 	open={showCreateModal}
-	title="New Brainstorming Board"
+	title="New idea board"
 	onClose={() => {
 		showCreateModal = false;
 		newBoardTitle = '';
@@ -213,13 +199,13 @@
 				for="board-title"
 				class="label-text mb-1 block text-xs font-semibold text-base-content/70"
 			>
-				Board Title
+				Board name
 			</label>
 			<input
 				id="board-title"
 				type="text"
 				class="input-bordered input w-full"
-				placeholder="e.g., Q3 Product Roadmap"
+				placeholder="e.g. Product launch ideas"
 				bind:value={newBoardTitle}
 				onkeydown={(e) => {
 					if (e.key === 'Enter') handleSubmit();
@@ -230,28 +216,6 @@
 					}
 				}}
 			/>
-		</div>
-
-		<div>
-			<span class="label-text mb-1 block text-xs font-semibold text-base-content/70">Template</span>
-			<div class="flex flex-col gap-2">
-				{#each templates as tmpl}
-					<label
-						class="flex cursor-pointer items-center gap-3 rounded-lg border border-base-300/40 p-3 transition-colors hover:bg-base-200/30"
-					>
-						<input
-							type="radio"
-							name="template"
-							value={tmpl.key}
-							bind:group={selectedTemplate}
-							class="radio radio-sm radio-primary"
-						/>
-						<div class="flex flex-col">
-							<span class="text-sm font-medium text-base-content">{tmpl.label}</span>
-						</div>
-					</label>
-				{/each}
-			</div>
 		</div>
 
 		{#if createError}
@@ -274,20 +238,8 @@
 				onclick={handleSubmit}
 				disabled={$createBoardMutation.isPending}
 			>
-				{$createBoardMutation.isPending ? 'Creating...' : 'Create Board'}
+				{$createBoardMutation.isPending ? 'Creating...' : 'Create board'}
 			</button>
 		</div>
 	</div>
 </ModalBase>
-
-<ConfirmModal
-	open={showDuplicateConfirm}
-	title="Duplicate Name"
-	message={`A board named "${pendingTitle}" already exists. Create anyway?`}
-	confirmLabel="Create Anyway"
-	onConfirm={handleDuplicateProceed}
-	onCancel={() => {
-		showDuplicateConfirm = false;
-		pendingTitle = '';
-	}}
-/>
