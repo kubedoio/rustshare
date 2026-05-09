@@ -24,8 +24,11 @@
 	let standups = $derived(filterUserVisibleEntries(contents?.files ?? []));
 
 	let createError = $state('');
+	let isCreating = $state(false);
 
 	async function handleNewStandup() {
+		if (isCreating) return;
+		isCreating = true;
 		createError = '';
 
 		let title = `Standup — ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
@@ -51,6 +54,8 @@
 		} catch (err) {
 			console.error('Failed to create standup:', err);
 			createError = err instanceof Error ? err.message : 'Failed to create standup';
+		} finally {
+			isCreating = false;
 		}
 	}
 
@@ -76,7 +81,7 @@
 		<button
 			class="btn gap-2 btn-sm btn-primary"
 			onclick={handleNewStandup}
-			disabled={!module.defaultTemplate}
+			disabled={isCreating || !module.defaultTemplate}
 		>
 			<Plus size={14} />
 			<span>New standup</span>

@@ -23,14 +23,17 @@
 
 	let showPromptModal = $state(false);
 	let createError = $state('');
+	let isCreating = $state(false);
 
 	async function handleCreateDecisionConfirm(title: string) {
+		if (isCreating) return;
 		const trimmed = title.trim();
 		if (!trimmed) {
 			createError = 'Title is required';
 			return;
 		}
 
+		isCreating = true;
 		createError = '';
 
 		const content = `# Decision: ${trimmed}
@@ -59,6 +62,8 @@
 		} catch (err) {
 			console.error('Failed to create decision:', err);
 			createError = err instanceof Error ? err.message : 'Failed to create decision';
+		} finally {
+			isCreating = false;
 		}
 	}
 
@@ -200,6 +205,7 @@
 	placeholder="e.g. Use file-backed workspace artifacts"
 	confirmLabel="Create decision"
 	error={createError}
+	isLoading={isCreating}
 	onConfirm={handleCreateDecisionConfirm}
 	onCancel={() => {
 		showPromptModal = false;

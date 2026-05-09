@@ -21,8 +21,11 @@
 	let meetings = $derived($meetingsQuery.data ?? []);
 
 	let createError = $state('');
+	let isCreating = $state(false);
 
 	async function handleNewMeeting() {
+		if (isCreating) return;
+		isCreating = true;
 		createError = '';
 
 		let title = 'Untitled Meeting Note';
@@ -49,6 +52,8 @@
 		} catch (err) {
 			console.error('Failed to create meeting:', err);
 			createError = err instanceof Error ? err.message : 'Failed to create meeting';
+		} finally {
+			isCreating = false;
 		}
 	}
 
@@ -74,7 +79,7 @@
 		<button
 			class="btn gap-2 btn-sm btn-primary"
 			onclick={handleNewMeeting}
-			disabled={!module.defaultTemplate}
+			disabled={isCreating || !module.defaultTemplate}
 		>
 			<Plus size={14} />
 			<span>New meeting note</span>

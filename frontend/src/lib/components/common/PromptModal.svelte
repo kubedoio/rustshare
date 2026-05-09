@@ -10,6 +10,7 @@
 		confirmLabel?: string;
 		cancelLabel?: string;
 		error?: string;
+		isLoading?: boolean;
 		onConfirm: (value: string) => void;
 		onCancel: () => void;
 	}
@@ -23,6 +24,7 @@
 		confirmLabel = 'Create',
 		cancelLabel = 'Cancel',
 		error = '',
+		isLoading = false,
 		onConfirm,
 		onCancel
 	}: Props = $props();

@@ -21,8 +21,11 @@
 	$: recentNotes = $notesQuery.data ?? [];
 
 	let createError = '';
+	let isCreating = false;
 
 	async function handleNewNote() {
+		if (isCreating) return;
+		isCreating = true;
 		createError = '';
 
 		let title = 'Untitled Note';
@@ -45,6 +48,8 @@
 		} catch (err) {
 			console.error('Failed to create note:', err);
 			createError = err instanceof Error ? err.message : 'Failed to create note';
+		} finally {
+			isCreating = false;
 		}
 	}
 
@@ -69,7 +74,7 @@
 		<button
 			class="btn gap-2 btn-sm btn-primary"
 			onclick={handleNewNote}
-			disabled={!module.defaultTemplate}
+			disabled={isCreating || !module.defaultTemplate}
 		>
 			<Plus size={14} />
 			<span>New note</span>
