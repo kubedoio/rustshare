@@ -161,10 +161,21 @@ pub async fn create_from_template(
     // Initialize kanban board metadata if created from a kanban template
     if body.template_key.starts_with("template_default_kanban") {
         if let Ok(board_id) = Uuid::parse_str(&object.object_id.to_string()) {
-            let _ = state
+            state
                 .kanban_service
                 .initialize_board(board_id, user_id, tenant_id)
-                .await;
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to initialize kanban board: {}", e);
+                    (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse::new(format!(
+                            "Board created but initialization failed: {}",
+                            e
+                        ))),
+                    )
+                        .into_response()
+                })?;
         }
     }
 

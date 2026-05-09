@@ -257,10 +257,8 @@ impl TemplateService {
                 "Creates a standard file-backed Kanban board folder structure.",
                 vec![
                     "00-Backlog".to_string(),
-                    "01-Ready".to_string(),
-                    "02-In-Progress".to_string(),
-                    "03-Review".to_string(),
-                    "04-Done".to_string(),
+                    "01-In-Progress".to_string(),
+                    "02-Done".to_string(),
                 ],
                 vec![
                     TemplateDefaultFile {

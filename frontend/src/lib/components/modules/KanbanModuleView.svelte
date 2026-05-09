@@ -17,14 +17,7 @@
 		removeCardLabel,
 		getKanbanAssignableUsers,
 		assignCardMember,
-		unassignCardMember,
-		addCardAttachment,
-		deleteCardAttachment,
-		createChecklist,
-		createChecklistItem,
-		toggleChecklistItem,
-		deleteChecklistItem,
-		deleteChecklist
+		unassignCardMember
 	} from '$lib/api/kanban';
 	import { goto } from '$app/navigation';
 	import { createFromTemplate } from '$lib/api/modules';
@@ -75,7 +68,6 @@
 	let viewMode = $state<'overview' | 'board'>('overview');
 	let showBoardMenu = $state(false);
 	let isMovingCard = $state(false);
-	let uploadingAttachment = $state(false);
 
 	// Modal state
 	let showPromptModal = $state(false);
@@ -150,60 +142,6 @@
 			boardQuery.refetch();
 			showCreateCardColumnId = null;
 			newCardTitle = '';
-		}
-	});
-
-	const moveCardMutation = createMutation({
-		mutationFn: ({
-			cardId,
-			input
-		}: {
-			cardId: string;
-			input: {
-				boardId: string;
-				targetColumnId: string;
-				targetOrder?: number;
-				beforeCardId?: string;
-				afterCardId?: string;
-			};
-		}) => moveKanbanCard(cardId, input),
-		onSuccess: () => {
-			errorMessage = '';
-			boardQuery.refetch();
-		},
-		onError: () => {
-			errorMessage = 'Card move failed. The board was restored to its previous state.';
-			boardQuery.refetch();
-		}
-	});
-
-	const updateCardMutation = createMutation({
-		mutationFn: ({
-			cardId,
-			input
-		}: {
-			cardId: string;
-			input: Parameters<typeof updateKanbanCard>[1];
-		}) => updateKanbanCard(cardId, input),
-		onSuccess: () => {
-			boardQuery.refetch();
-			editingCard = null;
-		}
-	});
-
-	const archiveCardMutation = createMutation({
-		mutationFn: archiveKanbanCard,
-		onSuccess: () => {
-			boardQuery.refetch();
-			editingCard = null;
-		}
-	});
-
-	const deleteCardMutation = createMutation({
-		mutationFn: deleteKanbanCard,
-		onSuccess: () => {
-			boardQuery.refetch();
-			editingCard = null;
 		}
 	});
 
@@ -509,147 +447,39 @@
 		}
 	}
 
-	function handleArchiveCard() {
+	async function handleArchiveCard() {
 		if (!editingCard) return;
 		const cardId = editingCard.id;
 		confirmTitle = 'Archive Card';
 		confirmMessage = 'Archive this card?';
 		confirmDanger = false;
-		confirmOnConfirm = () => {
-			archiveCardMutation.mutate(cardId);
-		};
-		showConfirmModal = true;
-	}
-
-	function handleDeleteCard() {
-		if (!editingCard) return;
-		const cardId = editingCard.id;
-		confirmTitle = 'Delete Card';
-		confirmMessage = 'Delete this card permanently?';
-		confirmDanger = true;
-		confirmOnConfirm = () => {
-			deleteCardMutation.mutate(cardId);
-		};
-		showConfirmModal = true;
-	}
-
-	async function handleFileUpload(e: Event) {
-		const target = e.target as HTMLInputElement;
-		const file = target.files?.[0];
-		if (!file || !cardDetail) return;
-
-		uploadingAttachment = true;
-		try {
-			const attachment = await addCardAttachment(cardDetail.id, file);
-			cardDetail.attachments = [...cardDetail.attachments, attachment];
-			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
-		} catch (err) {
-			console.error('Upload failed', err);
-		} finally {
-			uploadingAttachment = false;
-			target.value = '';
-		}
-	}
-
-	let pendingAttachmentId = $state('');
-
-	async function deleteAttachment(attachmentId: string) {
-		if (!cardDetail) return;
-		pendingAttachmentId = attachmentId;
-		confirmTitle = 'Delete Attachment';
-		confirmMessage = 'Delete this attachment?';
-		confirmDanger = true;
 		confirmOnConfirm = async () => {
-			if (!cardDetail) return;
 			try {
-				await deleteCardAttachment(cardDetail.id, pendingAttachmentId);
-				cardDetail.attachments = cardDetail.attachments.filter((a) => a.id !== pendingAttachmentId);
-				queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+				await archiveKanbanCard(cardId);
+				boardQuery.refetch();
+				editingCard = null;
+				cardDetail = null;
 			} catch (err) {
-				console.error('Delete attachment failed', err);
+				console.error('Failed to archive card:', err);
 			}
 		};
 		showConfirmModal = true;
 	}
 
-	async function handleAddChecklist(title: string) {
-		if (!cardDetail || !title.trim()) return;
-		try {
-			const group = await createChecklist(cardDetail.id, title.trim());
-			cardDetail.checklists = [...cardDetail.checklists, group];
-			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
-		} catch (err) {
-			console.error('Add checklist failed', err);
-		}
-	}
-
-	async function handleAddChecklistItem(checklistId: string, text: string) {
-		if (!cardDetail || !text.trim()) return;
-		try {
-			const item = await createChecklistItem(cardDetail.id, checklistId, text.trim());
-			cardDetail.checklists = cardDetail.checklists.map((c) => {
-				if (c.id === checklistId) {
-					return { ...c, items: [...c.items, item] };
-				}
-				return c;
-			});
-			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
-		} catch (err) {
-			console.error('Add checklist item failed', err);
-		}
-	}
-
-	async function handleToggleItem(checklistId: string, itemId: string, done: boolean) {
-		if (!cardDetail) return;
-		try {
-			await toggleChecklistItem(cardDetail.id, checklistId, itemId, done);
-			cardDetail.checklists = cardDetail.checklists.map((c) => {
-				if (c.id === checklistId) {
-					return {
-						...c,
-						items: c.items.map((i) => (i.id === itemId ? { ...i, done } : i))
-					};
-				}
-				return c;
-			});
-			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
-		} catch (err) {
-			console.error('Toggle item failed', err);
-		}
-	}
-
-	async function handleDeleteItem(checklistId: string, itemId: string) {
-		if (!cardDetail) return;
-		try {
-			await deleteChecklistItem(cardDetail.id, checklistId, itemId);
-			cardDetail.checklists = cardDetail.checklists.map((c) => {
-				if (c.id === checklistId) {
-					return { ...c, items: c.items.filter((i) => i.id !== itemId) };
-				}
-				return c;
-			});
-			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
-		} catch (err) {
-			console.error('Delete item failed', err);
-		}
-	}
-
-	let pendingChecklistId = $state('');
-
-	async function handleDeleteChecklist(checklistId: string) {
-		if (!cardDetail) return;
-		pendingChecklistId = checklistId;
-		confirmTitle = 'Delete Checklist';
-		confirmMessage = 'Delete this checklist?';
+	async function handleDeleteCard() {
+		if (!editingCard) return;
+		const cardId = editingCard.id;
+		confirmTitle = 'Delete Card';
+		confirmMessage = 'Delete this card permanently?';
 		confirmDanger = true;
 		confirmOnConfirm = async () => {
-			if (!cardDetail) return;
 			try {
-				await deleteChecklist(cardDetail.id, pendingChecklistId);
-				cardDetail.checklists = cardDetail.checklists.filter((c) => c.id !== pendingChecklistId);
-				queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+				await deleteKanbanCard(cardId);
+				boardQuery.refetch();
+				editingCard = null;
+				cardDetail = null;
 			} catch (err) {
-				console.error('Delete checklist failed', err);
+				console.error('Failed to delete card:', err);
 			}
 		};
 		showConfirmModal = true;
@@ -822,7 +652,6 @@
 	{loadingDetail}
 	{savingDetail}
 	{saveStatus}
-	{uploadingAttachment}
 	onClose={() => {
 		editingCard = null;
 		cardDetail = null;
@@ -832,13 +661,6 @@
 	onDelete={handleDeleteCard}
 	onToggleLabel={toggleLabel}
 	onToggleAssignee={toggleAssignee}
-	onUploadAttachment={handleFileUpload}
-	onDeleteAttachment={deleteAttachment}
-	onAddChecklist={handleAddChecklist}
-	onDeleteChecklist={handleDeleteChecklist}
-	onAddChecklistItem={handleAddChecklistItem}
-	onToggleItem={handleToggleItem}
-	onDeleteItem={handleDeleteItem}
 	onCreateLabel={handleCreateLabel}
 />
 

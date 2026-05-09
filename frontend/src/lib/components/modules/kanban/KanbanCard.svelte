@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { GripVertical, Paperclip, CheckSquare, Calendar } from 'lucide-svelte';
+	import { GripVertical } from 'lucide-svelte';
 	import type { KanbanCard } from '$lib/api/types';
 
 	interface Props {
@@ -10,25 +10,6 @@
 	}
 
 	let { card, onClick, onDragStart, onDragEnd }: Props = $props();
-
-	function formatDate(dateStr: string) {
-		const date = new Date(dateStr);
-		const now = new Date();
-		const isSameYear = date.getFullYear() === now.getFullYear();
-
-		return new Intl.DateTimeFormat('en-US', {
-			month: 'short',
-			day: 'numeric',
-			year: isSameYear ? undefined : 'numeric'
-		}).format(date);
-	}
-
-	function isOverdue(dateStr: string) {
-		const date = new Date(dateStr);
-		const now = new Date();
-		now.setHours(0, 0, 0, 0);
-		return date < now;
-	}
 </script>
 
 <div
@@ -55,13 +36,8 @@
 		</div>
 	{/if}
 
-	{#if (card.labels && card.labels.length > 0) || card.priority !== 'normal'}
+	{#if card.labels && card.labels.length > 0}
 		<div class="card-labels">
-			{#if card.priority !== 'normal'}
-				<span class="card-label label-priority priority-{card.priority}">
-					{card.priority}
-				</span>
-			{/if}
 			{#each card.labels.slice(0, 3) as label}
 				<span class="card-label label-{label.color}">
 					{label.name}
@@ -74,35 +50,6 @@
 	{/if}
 
 	<div class="card-footer">
-		<div class="card-badges">
-			{#if card.attachments_count > 0}
-				<span class="card-badge" title="Attachments">
-					<Paperclip size={12} />
-					{card.attachments_count}
-				</span>
-			{/if}
-			{#if card.checklist.total > 0}
-				<span
-					class="card-badge"
-					title="Checklist"
-					class:badge-done={card.checklist.done === card.checklist.total}
-				>
-					<CheckSquare size={12} />
-					{card.checklist.done}/{card.checklist.total}
-				</span>
-			{/if}
-			{#if card.due_date}
-				<span
-					class="card-badge"
-					title="Due Date"
-					class:badge-overdue={isOverdue(card.due_date)}
-				>
-					<Calendar size={12} />
-					{formatDate(card.due_date)}
-				</span>
-			{/if}
-		</div>
-
 		{#if card.assignees && card.assignees.length > 0}
 			<div class="card-assignees">
 				{#each card.assignees.slice(0, 3) as assignee}
@@ -223,20 +170,6 @@
 		opacity: 0.8;
 	}
 
-	.priority-urgent {
-		background: #eb5a46;
-		color: white;
-		box-shadow: 0 0 4px rgba(235, 90, 70, 0.4);
-	}
-	.priority-high {
-		background: #ff9f1a;
-		color: white;
-	}
-	.priority-low {
-		background: #b3bac5;
-		color: white;
-	}
-
 	.card-footer {
 		display: flex;
 		align-items: center;
@@ -244,32 +177,6 @@
 		margin-top: 0.75rem;
 		padding-left: 1.25rem;
 		flex-wrap: wrap;
-	}
-
-	.card-badges {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		color: color-mix(in oklab, var(--base-content) 45%, transparent);
-	}
-
-	.card-badge {
-		display: flex;
-		align-items: center;
-		gap: 0.2rem;
-		font-size: 0.68rem;
-		font-weight: 600;
-	}
-
-	.badge-done {
-		color: #61bd4f;
-	}
-
-	.badge-overdue {
-		color: #eb5a46;
-		background: color-mix(in oklab, #eb5a46 8%, transparent);
-		padding: 0 0.25rem;
-		border-radius: 0.25rem;
 	}
 
 	.card-assignees {

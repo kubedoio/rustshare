@@ -286,8 +286,8 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 	{
 		id: 'module_kanban',
 		key: 'kanban',
-		displayName: 'Kanban Dashboard',
-		description: 'Project boards and task tracking.',
+		displayName: 'Kanban',
+		description: 'Organize lightweight work boards in your workspace.',
 		enabled: true,
 		rootPath: getModuleRoot('Kanban'),
 		renderer: 'kanban',
@@ -308,12 +308,12 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 					enabled: true,
 					type: 'kanban-summary',
 					title: 'Kanban',
-					description: 'Active boards and cards.',
+					description: 'Recent boards.',
 					size: 'large',
 					columns: { desktop: 6, tablet: 12, mobile: 12 },
 					maxItems: 4,
 					primaryAction: {
-						label: 'New Board',
+						label: 'New board',
 						action: 'create-from-template',
 						template: 'template_default_kanban'
 					}
@@ -325,9 +325,9 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				renderer: 'kanban',
 				layout: 'kanban-board',
 				emptyStateTitle: 'No boards yet',
-				emptyStateDescription: 'Create your first kanban board.',
+				emptyStateDescription: 'No boards yet. Create a lightweight board to organize work, ideas, or follow-up items.',
 				primaryAction: {
-					label: 'New Board',
+					label: 'New board',
 					action: 'create-from-template',
 					template: 'template_default_kanban'
 				}
@@ -419,7 +419,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 					columns: { desktop: 6, tablet: 12, mobile: 12 },
 					maxItems: 4,
 					primaryAction: {
-						label: 'New Board',
+						label: 'New board',
 						action: 'create-from-template',
 						template: 'template_blank_brainstorm'
 					}

@@ -85,7 +85,7 @@
 	}
 </script>
 
-<ModalBase {open} {onClose} title="Create New Kanban Board">
+<ModalBase {open} {onClose} title="New board">
 	<form
 		onsubmit={(e) => {
 			e.preventDefault();
@@ -96,13 +96,13 @@
 		<div>
 			<label
 				for="board-name"
-				class="label-text mb-1 block text-xs font-semibold text-base-content/70">Board Name</label
+				class="label-text mb-1 block text-xs font-semibold text-base-content/70">Board name</label
 			>
 			<input
 				id="board-name"
 				bind:this={inputElement}
 				type="text"
-				placeholder="e.g. Project Roadmap"
+				placeholder="e.g. Product launch checklist"
 				class="input-bordered input w-full"
 				bind:value={boardName}
 				disabled={isSubmitting}
@@ -127,7 +127,7 @@
 				{#if isSubmitting}
 					<span class="loading loading-xs loading-spinner"></span>
 				{/if}
-				Create Board
+				Create board
 			</button>
 		</div>
 	</form>
