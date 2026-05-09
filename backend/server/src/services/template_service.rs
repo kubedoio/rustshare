@@ -199,7 +199,7 @@ impl TemplateService {
                     TemplateDefaultFile {
                         path: "index.md".to_string(),
                         content: Some(
-                            "# {{title}}\n\n## Agenda\n\n## Attendees\n\n## Notes\n\n## Decisions\n\n## Action Items\n".to_string(),
+                            "# Meeting Notes\n\nDate:\nPeople:\n\n## Agenda\n\n## Notes\n\n## Decisions\n\n## Next steps\n".to_string(),
                         ),
                         content_type: Some("text/markdown".to_string()),
                     },
@@ -210,11 +210,6 @@ impl TemplateService {
                                 .to_string(),
                         ),
                         content_type: Some("application/json".to_string()),
-                    },
-                    TemplateDefaultFile {
-                        path: "events.jsonl".to_string(),
-                        content: Some("".to_string()),
-                        content_type: Some("application/jsonlines".to_string()),
                     },
                 ],
                 json!({

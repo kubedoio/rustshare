@@ -181,7 +181,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		id: 'module_meeting_notes',
 		key: 'meetings',
 		displayName: 'Meeting Notes',
-		description: 'Structured meeting records.',
+		description: 'Record simple meeting notes, decisions, and follow-up items.',
 		enabled: true,
 		rootPath: getModuleRoot('Meetings'),
 		renderer: 'meetings',
@@ -202,12 +202,12 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 					enabled: true,
 					type: 'meetings-recent',
 					title: 'Meetings',
-					description: 'Recent meetings.',
+					description: 'Recent meeting notes.',
 					size: 'medium',
 					columns: { desktop: 6, tablet: 12, mobile: 12 },
 					maxItems: 4,
 					primaryAction: {
-						label: 'New Meeting',
+						label: 'New meeting note',
 						action: 'create-from-template',
 						template: 'template_default_meeting'
 					}
@@ -218,10 +218,10 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				route: '/modules/meetings',
 				renderer: 'meetings',
 				layout: 'list-grid',
-				emptyStateTitle: 'No meetings yet',
-				emptyStateDescription: 'Create your first meeting note.',
+				emptyStateTitle: 'No meeting notes yet',
+				emptyStateDescription: 'No meeting notes yet. Create a meeting note to capture agenda, discussion, decisions, and follow-up items.',
 				primaryAction: {
-					label: 'New Meeting',
+					label: 'New meeting note',
 					action: 'create-from-template',
 					template: 'template_default_meeting'
 				}

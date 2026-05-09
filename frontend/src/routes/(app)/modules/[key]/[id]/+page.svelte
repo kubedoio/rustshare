@@ -38,7 +38,13 @@
 	let item = $derived($query.data);
 	let content = $derived(item?.content ?? '');
 	let title = $derived(item?.metadata?.title || item?.name || '');
-	let modifiedAt = $derived(item?.modified_at ? new Date(item.modified_at).toLocaleString() : '');
+	let modifiedAt = $derived(
+		item?.modified_at
+			? key === 'meetings' && item?.metadata?.date
+				? `Date: ${new Date(item.metadata.date).toLocaleDateString()}${item.metadata.attendees?.length ? ` • ${item.metadata.attendees.length} attendee${item.metadata.attendees.length === 1 ? '' : 's'}` : ''} • Last edited ${new Date(item.modified_at).toLocaleString()}`
+				: `Last edited ${new Date(item.modified_at).toLocaleString()}`
+			: ''
+	);
 	let mode: EditorMode = $state('read');
 	let saveStatus: EditorSaveStatus = $state('saved');
 
