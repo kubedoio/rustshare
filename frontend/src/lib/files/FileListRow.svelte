@@ -185,7 +185,6 @@
 						icon: Edit3,
 						shortcut: '⌘E',
 						onClick: () => {
-							console.log('[FileListRow] context edit clicked, onEdit=', onEdit);
 							onEdit();
 						}
 					});
@@ -279,7 +278,6 @@
 
 	function handleAction(e: Event, action: () => void) {
 		e.stopPropagation();
-		console.log('[FileListRow] handleAction calling action');
 		action();
 		showActions = false;
 	}

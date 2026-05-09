@@ -97,8 +97,6 @@ function isOwnOrSystemEvent(event: WebSocketEvent): boolean {
 
 // File Event Handlers
 function handleFileUploaded(event: WebSocketEvent): void {
-	console.log('[WebSocket Manager] FileUploaded event:', event);
-
 	const payload = event.payload as FileUploadedPayload | undefined;
 	if (!payload) return;
 

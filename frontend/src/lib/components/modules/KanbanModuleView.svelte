@@ -475,6 +475,34 @@
 		}).format(date);
 	}
 
+	const EVENT_LABELS: Record<string, string> = {
+		'card.created': 'Card created',
+		'card.moved': 'Card moved',
+		'card.title_changed': 'Title updated',
+		'card.description_changed': 'Description updated',
+		'card.label_added': 'Label added',
+		'card.label_removed': 'Label removed',
+		'card.assignee_added': 'Assignee added',
+		'card.assignee_removed': 'Assignee removed',
+		'card.checklist_added': 'Checklist added',
+		'card.checklist_item_added': 'Checklist item added',
+		'card.checklist_item_toggled': 'Checklist item completed',
+		'card.attachment_added': 'Attachment added',
+		'card.attachment_removed': 'Attachment removed',
+		'card.due_date_changed': 'Due date updated',
+		'card.archived': 'Card archived',
+		'board.created': 'Board created',
+		'board.renamed': 'Board renamed',
+		'board.column_added': 'Column added'
+	};
+
+	function getEventLabel(eventType: string): string {
+		return (
+			EVENT_LABELS[eventType] ||
+			eventType.replace(/card\./, '').replace(/\./g, ' ').replace(/_/g, ' ')
+		);
+	}
+
 	// -------------------------------------------------------------------------
 	// Card Operations
 	// -------------------------------------------------------------------------
@@ -1481,7 +1509,7 @@
 											>
 										</div>
 										<div class="activity-text">
-											{event.event_type.replace(/card\./, '').replace(/\./g, ' ')}
+											{getEventLabel(event.event_type)}
 										</div>
 									</div>
 								</div>

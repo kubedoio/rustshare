@@ -13,7 +13,6 @@
 	// Check auth on mount
 	onMount(() => {
 		if (browser) {
-			console.log('[Layout] Checking auth state:', $authStore.isAuthenticated);
 			userModulePreferences.load();
 			refreshModules();
 		}

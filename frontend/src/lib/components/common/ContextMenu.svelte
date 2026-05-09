@@ -81,7 +81,6 @@
 					disabled={item.disabled}
 					on:click={() => {
 						if (!item.disabled) {
-							console.log('[ContextMenu] clicked item:', item.id, item.label);
 							item.onClick();
 							onClose();
 						}

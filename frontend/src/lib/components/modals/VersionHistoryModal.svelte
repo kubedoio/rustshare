@@ -117,18 +117,7 @@
 	// Get current version
 	let currentVersionNumber = $derived($fileQuery.data?.current_version);
 
-	$effect(() => {
-		console.log('[VersionHistoryModal] Props:', { open, fileId, fileName });
-	});
 
-	$effect(() => {
-		console.log('[VersionHistoryModal] Query states:', {
-			versionsLoading: $versionsQuery.isLoading,
-			versionsError: $versionsQuery.isError,
-			versionsData: $versionsQuery.data,
-			sortedVersions
-		});
-	});
 </script>
 
 {#if open && fileId}

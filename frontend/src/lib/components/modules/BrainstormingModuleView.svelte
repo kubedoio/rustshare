@@ -25,6 +25,7 @@
 	let newBoardTitle = $state('');
 	let selectedTemplate = $state('template_blank_brainstorm');
 	let createError = $state('');
+	let brokenPreviews = $state(new Set<string>());
 
 	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No boards yet');
 	let emptyDescription = $derived(
@@ -145,12 +146,13 @@
 						class="group flex flex-col gap-3 rounded-xl border border-base-300/40 p-3 transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
 					>
 						<div class="relative aspect-[4/3] overflow-hidden rounded-lg bg-base-200">
-							{#if getPreviewUrl(board)}
+							{#if getPreviewUrl(board) && !brokenPreviews.has(board.id)}
 								<img
 									src={getPreviewUrl(board)!}
 									alt={board.title}
 									class="h-full w-full object-cover transition-transform group-hover:scale-105"
 									loading="lazy"
+									onerror={() => brokenPreviews.add(board.id)}
 								/>
 							{:else}
 								<div

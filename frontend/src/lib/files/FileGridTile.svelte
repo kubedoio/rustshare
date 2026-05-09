@@ -176,7 +176,6 @@
 						label: 'Edit',
 						icon: Edit3,
 						onClick: () => {
-							console.log('[FileGridTile] context edit clicked, onEdit=', onEdit);
 							onEdit();
 						}
 					});
@@ -256,7 +255,6 @@
 	}
 
 	function handleAction(action: () => void) {
-		console.log('[FileGridTile] handleAction calling action');
 		action();
 		showActions = false;
 	}

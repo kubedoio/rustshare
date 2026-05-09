@@ -228,7 +228,6 @@
 				{onDownloadFile}
 				{onReplaceFile}
 				onEditFile={(f) => {
-					console.log('[FileBrowserPane] onEditFile for', f.name);
 					_editFile(f);
 				}}
 				{onShareFile}
@@ -266,7 +265,6 @@
 				{onDownloadFile}
 				{onReplaceFile}
 				onEditFile={(f) => {
-					console.log('[FileBrowserPane] onEditFile for', f.name);
 					_editFile(f);
 				}}
 				{onShareFile}

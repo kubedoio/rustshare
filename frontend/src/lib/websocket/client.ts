@@ -113,8 +113,6 @@ export class WebSocketClient {
 	}
 
 	private handleEvent(event: WebSocketEvent): void {
-		console.log('[WebSocket] Received event:', event);
-
 		// Backend sends 'event_type' field, not 'type'
 		const eventType = (event as any).event_type || event.type;
 
@@ -126,7 +124,6 @@ export class WebSocketClient {
 		const handlers = this.handlers.get(eventType);
 
 		if (handlers) {
-			console.log(`[WebSocket] Dispatching ${eventType} to ${handlers.size} handlers`);
 			handlers.forEach((handler) => {
 				try {
 					handler(event);
