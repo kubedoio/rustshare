@@ -233,7 +233,7 @@ impl TemplateService {
                     TemplateDefaultFile {
                         path: "__primary__.md".to_string(),
                         content: Some(
-                            "# {{title}}\n\n## Yesterday\n\n## Today\n\n## Blockers\n".to_string(),
+                            "# {{title}}\n\n## Yesterday\n\n## Today\n\n## Blockers\n\n## Follow-up\n".to_string(),
                         ),
                         content_type: Some("text/markdown".to_string()),
                     },

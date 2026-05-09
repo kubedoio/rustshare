@@ -233,8 +233,8 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 	{
 		id: 'module_standups',
 		key: 'standups',
-		displayName: 'Standups',
-		description: 'Daily standup records.',
+		displayName: 'Standup Records',
+		description: 'Capture simple daily updates, blockers, and follow-up items.',
 		enabled: true,
 		rootPath: getModuleRoot('Standups'),
 		renderer: 'standups',
@@ -247,20 +247,20 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 			allowInternalShare: true
 		},
 		ui: {
-			sidebar: { enabled: true, order: 30, icon: 'activity', label: 'Standups' },
+			sidebar: { enabled: true, order: 30, icon: 'activity', label: 'Standup Records' },
 			dashboard: {
 				enabled: true,
 				order: 30,
 				widget: {
 					enabled: true,
 					type: 'standups-recent',
-					title: 'Standups',
-					description: 'Recent standups.',
+					title: 'Standup Records',
+					description: 'Recent standup records.',
 					size: 'medium',
 					columns: { desktop: 6, tablet: 12, mobile: 12 },
 					maxItems: 4,
 					primaryAction: {
-						label: 'New Standup',
+						label: 'New standup',
 						action: 'create-from-template',
 						template: 'template_default_standup'
 					}
@@ -271,10 +271,10 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				route: '/modules/standups',
 				renderer: 'standups',
 				layout: 'list-grid',
-				emptyStateTitle: 'No standups yet',
-				emptyStateDescription: 'Create your first standup record.',
+				emptyStateTitle: 'No standup records yet',
+				emptyStateDescription: 'No standup records yet. Create a daily update to capture progress, blockers, and follow-up items.',
 				primaryAction: {
-					label: 'New Standup',
+					label: 'New standup',
 					action: 'create-from-template',
 					template: 'template_default_standup'
 				}
