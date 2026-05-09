@@ -441,7 +441,7 @@
 	);
 </script>
 
-<dialog class="modal" class:modal-open={open}>
+<dialog class="modal" class:modal-open={open} onclose={handleClose}>
 	<div class="modal-box max-w-2xl">
 		<h3 class="mb-4 text-lg font-bold">Share "{resourceName}"</h3>
 

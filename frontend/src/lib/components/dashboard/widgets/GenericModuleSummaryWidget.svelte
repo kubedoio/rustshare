@@ -28,7 +28,7 @@
 			{$summaryQuery.data.total_items} item{$summaryQuery.data.total_items === 1 ? '' : 's'}
 		</p>
 		<ul class="summary-list">
-			{#each $summaryQuery.data.recent_items.slice(0, widget.maxItems) as item}
+			{#each filterUserVisibleEntries($summaryQuery.data.recent_items).slice(0, widget.maxItems) as item}
 				<li>
 					{#if item.item_type === 'file'}
 						<FileText size={11} />

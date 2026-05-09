@@ -11,6 +11,7 @@
 	import { toastStore } from '$lib/stores/toast';
 	import { sharedResourcePath } from '$lib/utils/shared';
 	import { formatDate, formatFileSize } from '$lib/utils/format';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import FileIcon from '$lib/components/icons/FileIcon.svelte';
 
 	type SharedResourceType = 'file' | 'folder';
@@ -147,6 +148,13 @@
 		nestedPath.length > 0
 			? nestedPath[nestedPath.length - 1].name
 			: $currentFolderQuery.data?.name ?? shareEntry?.resource_name;
+
+	$: visibleFolders = $folderContentsQuery.data
+		? filterUserVisibleEntries($folderContentsQuery.data.folders ?? [])
+		: [];
+	$: visibleFiles = $folderContentsQuery.data
+		? filterUserVisibleEntries($folderContentsQuery.data.files ?? [])
+		: [];
 </script>
 
 <svelte:head>
@@ -350,7 +358,7 @@
 									</tr>
 								</thead>
 								<tbody>
-									{#each $folderContentsQuery.data.folders as folder}
+									{#each visibleFolders as folder}
 										<tr class="hover">
 											<td>
 												<button
@@ -377,7 +385,7 @@
 										</tr>
 									{/each}
 
-									{#each $folderContentsQuery.data.files as file}
+									{#each visibleFiles as file}
 										<tr class="hover">
 											<td>
 												<button
@@ -417,7 +425,7 @@
 										</tr>
 									{/each}
 
-									{#if $folderContentsQuery.data.folders.length === 0 && $folderContentsQuery.data.files.length === 0}
+									{#if visibleFolders.length === 0 && visibleFiles.length === 0}
 										<tr>
 											<td colspan="5" class="py-10 text-center text-base-content/60">
 												This folder is empty.

@@ -21,6 +21,7 @@
 	import { themeStore, type Theme } from '$lib/stores/theme';
 	import Toast from '$lib/components/common/Toast.svelte';
 	import { formatFileSize, formatDate } from '$lib/utils/format';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import { listAllFiles } from '$lib/api/files';
 	import type { File } from '$lib/api/types';
 	import { getAllModules } from '$lib/modules/registry';
@@ -152,7 +153,7 @@
 	async function loadActivity() {
 		activityLoading = true;
 		try {
-			const files = await listAllFiles();
+			const files = filterUserVisibleEntries(await listAllFiles());
 			// Get last 3 modified items
 			recentChanges = [...files]
 				.sort((a, b) => new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime())

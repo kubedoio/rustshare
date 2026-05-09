@@ -17,6 +17,7 @@
 	import { queryClient } from '$lib/query-client';
 	import { toastStore } from '$lib/stores/toast';
 	import { formatFileSize, getMimeTypeIcon } from '$lib/utils/format';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import FileIcon from '$lib/components/icons/FileIcon.svelte';
 
 	type UploadQueueItem = {
@@ -607,6 +608,8 @@
 									</span>
 								</div>
 							{:else if $folderContentsQuery.data}
+								{@const visibleFolders = filterUserVisibleEntries($folderContentsQuery.data.folders ?? [])}
+								{@const visibleFiles = filterUserVisibleEntries($folderContentsQuery.data.files ?? [])}
 								<div class="space-y-4">
 									<div class="flex items-center justify-between gap-3">
 										<div>
@@ -721,7 +724,7 @@
 												</tr>
 											</thead>
 											<tbody>
-												{#each $folderContentsQuery.data.folders as folder}
+												{#each visibleFolders as folder}
 													<tr>
 														<td>
 															<button
@@ -744,7 +747,7 @@
 														</td>
 													</tr>
 												{/each}
-												{#each $folderContentsQuery.data.files as file}
+												{#each visibleFiles as file}
 													<tr>
 														<td>📄 {file.name}</td>
 														<td>{formatFileSize(file.size)}</td>
@@ -760,7 +763,7 @@
 														</td>
 													</tr>
 												{/each}
-												{#if $folderContentsQuery.data.folders.length === 0 && $folderContentsQuery.data.files.length === 0}
+												{#if visibleFolders.length === 0 && visibleFiles.length === 0}
 													<tr>
 														<td colspan="3" class="py-8 text-center text-base-content/60">
 															This folder is empty.
