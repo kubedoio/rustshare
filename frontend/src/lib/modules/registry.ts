@@ -340,7 +340,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		id: 'module_decisions',
 		key: 'decisions',
 		displayName: 'Decisions',
-		description: 'Architecture and product decisions.',
+		description: 'Record important decisions with context and rationale.',
 		enabled: true,
 		rootPath: getModuleRoot('Decisions'),
 		renderer: 'decisions',
@@ -361,12 +361,12 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 					enabled: true,
 					type: 'decisions-recent',
 					title: 'Decisions',
-					description: 'Recent decisions.',
+					description: 'Recent decision records.',
 					size: 'medium',
 					columns: { desktop: 6, tablet: 12, mobile: 12 },
 					maxItems: 4,
 					primaryAction: {
-						label: 'New Decision',
+						label: 'New decision',
 						action: 'create-from-template',
 						template: 'template_default_decision'
 					}
@@ -378,9 +378,9 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				renderer: 'decisions',
 				layout: 'decision-registry',
 				emptyStateTitle: 'No decisions yet',
-				emptyStateDescription: 'Create your first decision record.',
+				emptyStateDescription: 'No decisions yet. Create a decision record to preserve context, rationale, and follow-up.',
 				primaryAction: {
-					label: 'New Decision',
+					label: 'New decision',
 					action: 'create-from-template',
 					template: 'template_default_decision'
 				}

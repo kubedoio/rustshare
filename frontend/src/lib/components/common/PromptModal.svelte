@@ -6,6 +6,7 @@
 		title: string;
 		message: string;
 		defaultValue?: string;
+		placeholder?: string;
 		confirmLabel?: string;
 		cancelLabel?: string;
 		error?: string;
@@ -18,6 +19,7 @@
 		title,
 		message,
 		defaultValue = '',
+		placeholder = '',
 		confirmLabel = 'Create',
 		cancelLabel = 'Cancel',
 		error = '',
@@ -64,6 +66,7 @@
 			class="input-bordered input w-full"
 			bind:this={inputRef}
 			bind:value
+			{placeholder}
 			onkeydown={handleKeydown}
 		/>
 		<div class="flex justify-end gap-2">

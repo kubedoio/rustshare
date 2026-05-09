@@ -295,7 +295,7 @@ impl TemplateService {
                     TemplateDefaultFile {
                         path: "__primary__.md".to_string(),
                         content: Some(
-                            "# {{title}}\n\n## Status\n\nProposed\n\n## Context\n\n## Decision\n\n## Consequences\n"
+                            "# Decision: {{title}}\n\n## Context\n\n## Decision\n\n## Reason\n\n## Follow-up\n\n## Date\n"
                                 .to_string(),
                         ),
                         content_type: Some("text/markdown".to_string()),
@@ -313,7 +313,6 @@ impl TemplateService {
                     "type": "decision",
                     "fields": {
                         "title": "string",
-                        "status": "string",
                         "date": "string"
                     }
                 }),

@@ -32,7 +32,7 @@ impl DecisionMetadata {
         Self {
             kind: "decision".to_string(),
             title: title.into(),
-            status: "Proposed".to_string(),
+            status: "".to_string(),
             category: category.into(),
             created_at: now,
             updated_at: now,

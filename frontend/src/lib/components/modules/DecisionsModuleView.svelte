@@ -4,57 +4,53 @@
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
-	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 	import { FileText, Plus, Clock, Folder } from 'lucide-svelte';
 
 	import { decisionsApi } from '$lib/api/decisions';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
-	export let module: ModuleDefinition;
+	let { module }: { module: ModuleDefinition } = $props();
 
-	$: isGallery = module.ui.page.layout === 'gallery-grid';
+	let isGallery = $derived(module.ui.page.layout === 'gallery-grid');
 
-	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No decisions yet';
-	$: emptyDescription =
-		module.ui.page.emptyStateDescription ?? 'Create your first decision to get started.';
-	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Decision';
-
-	// Fetch decisions via module service
-	$: decisionsQuery = createQuery({
+	const decisionsQuery = createQuery({
 		queryKey: ['decisions', module.key],
 		queryFn: () => decisionsApi.list()
 	});
 
-	$: decisions = $decisionsQuery.data ?? [];
+	let decisions = $derived($decisionsQuery.data ?? []);
 
-	let showPromptModal = false;
-	let createError = '';
-	let showDuplicateConfirm = false;
-	let pendingTitle = '';
+	let showPromptModal = $state(false);
+	let createError = $state('');
 
 	async function handleCreateDecisionConfirm(title: string) {
 		const trimmed = title.trim();
-		if (!trimmed) return;
-
-		createError = '';
-
-		const exists = decisions.some((d) => d.name?.toLowerCase() === trimmed.toLowerCase());
-		if (exists) {
-			pendingTitle = trimmed;
-			showDuplicateConfirm = true;
+		if (!trimmed) {
+			createError = 'Title is required';
 			return;
 		}
 
-		await doCreateDecision(trimmed);
-	}
+		createError = '';
 
-	async function doCreateDecision(title: string) {
+		const content = `# Decision: ${trimmed}
+
+## Context
+
+## Decision
+
+## Reason
+
+## Follow-up
+
+## Date
+`;
+
 		try {
 			const result = await decisionsApi.create({
-				title,
+				title: trimmed,
 				category: 'General',
-				content: '# ' + title + '\n\n'
+				content
 			});
 			showPromptModal = false;
 			createError = '';
@@ -64,11 +60,6 @@
 			console.error('Failed to create decision:', err);
 			createError = err instanceof Error ? err.message : 'Failed to create decision';
 		}
-	}
-
-	async function handleDuplicateProceed() {
-		showDuplicateConfirm = false;
-		await doCreateDecision(pendingTitle);
 	}
 
 	function handleCreateDecision() {
@@ -85,16 +76,23 @@
 		}
 	}
 
-	function navigateToDecision(id: string) {
-		goto(`/modules/${module.key}/${id}`);
-	}
+	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No decisions yet');
+	let emptyDescription = $derived(
+		module.ui.page.emptyStateDescription ??
+			'No decisions yet. Create a decision record to preserve context, rationale, and follow-up.'
+	);
+	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New decision');
 </script>
 
-<ModulePageShell title="Decisions" subtitle={module.description}>
+<ModulePageShell title="Decisions" subtitle="Record important decisions with context and rationale.">
 	<div slot="primaryAction">
-		<button class="btn gap-2 btn-sm btn-primary" onclick={handleCreateDecision}>
+		<button
+			class="btn gap-2 btn-sm btn-primary"
+			onclick={handleCreateDecision}
+			disabled={!module.defaultTemplate}
+		>
 			<Plus size={14} />
-			<span>New Decision</span>
+			<span>New decision</span>
 		</button>
 	</div>
 	<div slot="secondaryActions">
@@ -120,9 +118,9 @@
 		{:else if isGallery}
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
 				{#each decisions as decision}
-					<button
-						class="group flex flex-col gap-3 rounded-xl border border-base-300/40 bg-base-100 p-4 text-left transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
-						onclick={() => navigateToDecision(decision.id)}
+					<a
+						href={`/modules/${module.key}/${decision.id}`}
+						class="group flex flex-col gap-3 rounded-xl border border-base-300/40 p-4 transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
 					>
 						<div
 							class="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
@@ -130,37 +128,65 @@
 							<FileText size={18} />
 						</div>
 						<div class="flex flex-col">
-							<span class="text-sm font-medium text-base-content">{decision.name}</span>
-							<span class="flex items-center gap-1 text-xs text-base-content/40">
-								<Clock size={12} />
-								{new Date(decision.modified_at).toLocaleDateString()}
+							<span class="text-sm font-medium text-base-content">
+								{decision.metadata?.title || decision.name}
 							</span>
-						</div>
-					</button>
-				{/each}
-			</div>
-		{:else}
-			<div class="flex flex-col gap-3">
-				{#each decisions as decision}
-					<button
-						class="group flex items-center gap-4 rounded-2xl border border-base-300/50 bg-base-100 p-4 text-left shadow-sm transition-all hover:border-brand-500/40 hover:shadow-md"
-						onclick={() => navigateToDecision(decision.id)}
-					>
-						<div
-							class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500"
-						>
-							<FileText size={18} />
-						</div>
-						<div class="flex min-w-0 flex-col gap-1">
-							<span class="truncate text-sm font-medium text-base-content">{decision.name}</span>
-							<div class="flex items-center gap-3 text-xs text-base-content/50">
+							<div class="flex flex-wrap items-center gap-2 text-xs text-base-content/50">
+								{#if decision.name?.match(/^DEC-\d+/)?.[0]}
+									<span class="inline-flex items-center gap-1 rounded bg-base-200 px-1.5 py-0.5 font-mono text-[10px]">
+										{decision.name.match(/^DEC-\d+/)?.[0]}
+									</span>
+								{/if}
+								{#if decision.metadata?.decision_date}
+									<span class="inline-flex items-center gap-1">
+										<Clock size={12} />
+										{new Date(decision.metadata.decision_date).toLocaleDateString()}
+									</span>
+								{/if}
 								<span class="inline-flex items-center gap-1">
 									<Clock size={12} />
-									{new Date(decision.modified_at).toLocaleDateString()}
+									{decision.modified_at ? new Date(decision.modified_at).toLocaleDateString() : ''}
 								</span>
 							</div>
 						</div>
-					</button>
+					</a>
+				{/each}
+			</div>
+		{:else}
+			<div class="flex flex-col gap-2">
+				{#each decisions as decision}
+					<a
+						href={`/modules/${module.key}/${decision.id}`}
+						class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
+					>
+						<div
+							class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
+						>
+							<FileText size={16} />
+						</div>
+						<div class="flex min-w-0 flex-1 flex-col">
+							<span class="text-sm font-medium text-base-content">
+								{decision.metadata?.title || decision.name}
+							</span>
+							<div class="flex flex-wrap items-center gap-2 text-xs text-base-content/50">
+								{#if decision.name?.match(/^DEC-\d+/)?.[0]}
+									<span class="inline-flex items-center gap-1 rounded bg-base-200 px-1.5 py-0.5 font-mono text-[10px]">
+										{decision.name.match(/^DEC-\d+/)?.[0]}
+									</span>
+								{/if}
+								{#if decision.metadata?.decision_date}
+									<span class="inline-flex items-center gap-1">
+										<Clock size={12} />
+										{new Date(decision.metadata.decision_date).toLocaleDateString()}
+									</span>
+								{/if}
+								<span class="inline-flex items-center gap-1">
+									<Clock size={12} />
+									{decision.modified_at ? new Date(decision.modified_at).toLocaleDateString() : ''}
+								</span>
+							</div>
+						</div>
+					</a>
 				{/each}
 			</div>
 		{/if}
@@ -169,25 +195,14 @@
 
 <PromptModal
 	open={showPromptModal}
-	title="New Decision"
-	message="Enter a title for the new decision:"
-	confirmLabel="Create"
+	title="New decision"
+	message="Decision title"
+	placeholder="e.g. Use file-backed workspace artifacts"
+	confirmLabel="Create decision"
 	error={createError}
 	onConfirm={handleCreateDecisionConfirm}
 	onCancel={() => {
 		showPromptModal = false;
 		createError = '';
-	}}
-/>
-
-<ConfirmModal
-	open={showDuplicateConfirm}
-	title="Duplicate Name"
-	message={`A decision named "${pendingTitle}" already exists. Create anyway?`}
-	confirmLabel="Create Anyway"
-	onConfirm={handleDuplicateProceed}
-	onCancel={() => {
-		showDuplicateConfirm = false;
-		pendingTitle = '';
 	}}
 />

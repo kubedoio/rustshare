@@ -5,6 +5,7 @@ export interface DecisionMetadata {
 	title: string;
 	status: string;
 	category: string;
+	decision_date?: string;
 	created_at: string;
 	updated_at: string;
 }
