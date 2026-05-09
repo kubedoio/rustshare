@@ -7,6 +7,8 @@ import type {
 	ShareRecipient
 } from './types';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
+
 // Request/Response Types
 
 export interface CreateShareRequest {
@@ -215,8 +217,7 @@ export async function getShareAccessLog(
  * This endpoint does not require authentication
  */
 export async function getPublicShareInfo(token: string): Promise<ShareInfo> {
-	const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
-	const response = await fetch(`${API_URL}/public/share/${token}/info`);
+	const response = await fetch(`${API_BASE_URL}/public/share/${token}/info`);
 
 	if (!response.ok) {
 		let errorMessage = 'Failed to get share info';
@@ -250,8 +251,7 @@ export async function createShareSession(
 	token: string,
 	request: ShareSessionRequest
 ): Promise<ShareSessionResponse> {
-	const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
-	const response = await fetch(`${API_URL}/public/share/${token}/session`, {
+	const response = await fetch(`${API_BASE_URL}/public/share/${token}/session`, {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json'
@@ -279,8 +279,7 @@ export async function createShareSession(
  * Requires a valid session token (from createShareSession)
  */
 export async function downloadPublicShareFile(token: string, sessionToken: string): Promise<Blob> {
-	const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
-	const response = await fetch(`${API_URL}/public/share/${token}/file`, {
+	const response = await fetch(`${API_BASE_URL}/public/share/${token}/file`, {
 		headers: {
 			Authorization: `Bearer ${sessionToken}`
 		}
@@ -319,8 +318,7 @@ export async function getPublicFolderContents(
 	sessionToken: string,
 	folderId?: string
 ): Promise<SharedFolderContents> {
-	const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
-	const url = new URL(`${API_URL}/public/share/${token}/folder/contents`);
+	const url = new URL(`${API_BASE_URL}/public/share/${token}/folder/contents`);
 	if (folderId) {
 		url.searchParams.set('folder_id', folderId);
 	}
@@ -350,8 +348,7 @@ export async function downloadPublicFolderFile(
 	fileId: string,
 	sessionToken: string
 ): Promise<Blob> {
-	const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
-	const response = await fetch(`${API_URL}/public/share/${token}/folder/files/${fileId}`, {
+	const response = await fetch(`${API_BASE_URL}/public/share/${token}/folder/files/${fileId}`, {
 		headers: {
 			Authorization: `Bearer ${sessionToken}`
 		}
@@ -377,7 +374,6 @@ export async function uploadToPublicFolder(
 	file: globalThis.File,
 	options: PublicShareUploadOptions = {}
 ): Promise<PublicShareUploadResponse> {
-	const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
 	const formData = new FormData();
 	formData.append('file', file);
 	formData.append('name', file.name);
@@ -390,7 +386,7 @@ export async function uploadToPublicFolder(
 
 	return new Promise((resolve, reject) => {
 		const xhr = new XMLHttpRequest();
-		xhr.open('POST', `${API_URL}/public/share/${token}/folder/upload`);
+		xhr.open('POST', `${API_BASE_URL}/public/share/${token}/folder/upload`);
 		xhr.setRequestHeader('Authorization', `Bearer ${sessionToken}`);
 		xhr.responseType = 'json';
 

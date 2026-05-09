@@ -521,6 +521,9 @@ pub async fn download_shared_folder_file(
         .into_response())
 }
 
+/// Maximum file size for public share uploads (100MB).
+const MAX_PUBLIC_UPLOAD_SIZE: usize = 100 * 1024 * 1024;
+
 /// Upload a file into a shared folder using an authenticated share session.
 pub async fn upload_shared_folder_file(
     State(state): State<AppState>,
@@ -553,6 +556,21 @@ pub async fn upload_shared_folder_file(
 
     let (file_data, file_name, requested_folder_id, mime_type, uploader_name) =
         parse_upload_multipart(multipart).await?;
+
+    if file_data.len() > MAX_PUBLIC_UPLOAD_SIZE {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(super::ErrorResponse {
+                error: "File too large".to_string(),
+                details: Some(format!(
+                    "File size {} exceeds maximum allowed {} bytes",
+                    file_data.len(),
+                    MAX_PUBLIC_UPLOAD_SIZE
+                )),
+            }),
+        )
+        .into_response());
+    }
 
     let root_folder = state
         .metadata_store
