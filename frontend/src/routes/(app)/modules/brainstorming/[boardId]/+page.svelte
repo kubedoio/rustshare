@@ -9,7 +9,7 @@
 		saveBrainstormBoardSource,
 		updateBrainstormBoardPreview
 	} from '$lib/api/brainstorming';
-	import { ArrowLeft, Save, AlertCircle, CheckCircle2, Loader2 } from 'lucide-svelte';
+	import { ArrowLeft, Save, AlertCircle, CheckCircle2, Loader2, ChevronRight } from 'lucide-svelte';
 
 	let boardId = $derived($page.params.boardId || '');
 
@@ -251,12 +251,22 @@
 				<ArrowLeft size={20} />
 			</button>
 			<div class="title-block">
+				<nav aria-label="Breadcrumb" class="flex flex-wrap items-center gap-0.5">
+					<button
+						type="button"
+						class="rounded-md px-1.5 py-0.5 text-sm font-medium text-base-content/70 transition-colors hover:bg-brand-500/10 hover:text-brand-600"
+						onclick={() => goto('/modules/brainstorming')}
+					>
+						Brainstorming
+					</button>
+					<ChevronRight size={14} class="flex-shrink-0 text-base-content/30" />
+					<span class="rounded-md px-1.5 py-0.5 text-sm font-semibold text-base-content" aria-current="page">
+						{$boardQuery.data?.title ?? 'Untitled Board'}
+					</span>
+				</nav>
 				<h1 class="board-title">
 					{$boardQuery.data?.title ?? 'Untitled Board'}
 				</h1>
-				{#if $boardQuery.data}
-					<span class="path-info">{$boardQuery.data.path}</span>
-				{/if}
 			</div>
 		</div>
 

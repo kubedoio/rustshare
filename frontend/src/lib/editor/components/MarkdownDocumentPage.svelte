@@ -15,7 +15,8 @@
 		Download,
 		FileText,
 		MoreHorizontal,
-		Paperclip
+		Paperclip,
+		ChevronRight
 	} from 'lucide-svelte';
 	import type {
 		EditorMode,
@@ -63,8 +64,11 @@
 	/** Document revision/version for conflict handling */
 	export let revision: number | string | undefined = undefined;
 
-	/** Optional module/path label */
+	/** Optional module/path label (legacy, use breadcrumb instead) */
 	export let label: string = '';
+
+	/** Breadcrumb trail: [{ label, onClick? }, ...] */
+	export let breadcrumb: Array<{ label: string; onClick?: () => void }> = [];
 
 	/** Attachment list */
 	export let attachments: RichMarkdownAttachment[] = [];

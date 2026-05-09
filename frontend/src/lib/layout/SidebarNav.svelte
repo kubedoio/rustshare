@@ -15,11 +15,8 @@
 		ChevronRight,
 		Folder,
 		FolderOpen,
-		Hop as Home,
-		Users,
 		Star,
 		Image,
-		Search,
 		Plus,
 		HardDrive,
 		Trash
@@ -274,25 +271,6 @@
 >
 	<!-- Navigation Sections -->
 	<div class="relative z-10 flex-1 overflow-y-auto py-2">
-		<!-- 
-			PRIMARY NAVIGATION GROUP
-			Only My Files is in the primary group per SPEC section 1.1
-			Shared has been moved to Library
-		-->
-		<nav class="mb-2 px-2" aria-label="Quick links">
-			<button
-				type="button"
-				class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors
-					{isRootActive('my-files')
-					? 'bg-brand-500/10 font-medium text-brand-600'
-					: 'text-base-content/70 hover:bg-base-200/60'}"
-				onclick={() => navigateToRoot('my-files')}
-			>
-				<Home size={18} strokeWidth={1.75} />
-				<span>{ROOT_CONFIG['my-files'].label}</span>
-			</button>
-		</nav>
-
 		<!-- 
 			LIBRARY NAVIGATION GROUP
 			Per SPEC section 1.1:

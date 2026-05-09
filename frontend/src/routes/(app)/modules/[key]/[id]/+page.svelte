@@ -10,12 +10,12 @@
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
 	import type { EditorMode, EditorSaveStatus } from '$lib/editor/types';
 
-	$: key = ($page.params.key || '') as string;
-	$: id = ($page.params.id || '') as string;
-	$: module = getModuleByKey(key);
+	let key = $derived(($page.params.key || '') as string);
+	let id = $derived(($page.params.id || '') as string);
+	let module = $derived(getModuleByKey(key));
 
 	// Determine which API to use
-	$: api =
+	let api = $derived(
 		key === 'notes'
 			? notesApi
 			: key === 'decisions'
@@ -24,24 +24,25 @@
 					? meetingsApi
 					: key === 'standups'
 						? standupsApi
-						: null;
+						: null
+	);
 
-	$: query = createQuery<any, Error, any, any, string[]>({
+	const query = createQuery<any, Error, any, any, string[]>({
 		queryKey: ['module-item', key, id],
 		queryFn: () => api?.get(id),
 		enabled: !!api && !!id
 	});
 
-	$: item = $query.data;
-	let content = '';
-	let title = '';
-	let mode: EditorMode = 'read';
-	let saveStatus: EditorSaveStatus = 'saved';
+	let item = $derived($query.data);
+	let content = $derived(item?.content ?? '');
+	let title = $derived(item?.metadata?.title || item?.name || '');
+	let mode: EditorMode = $state('read');
+	let saveStatus: EditorSaveStatus = $state('saved');
 
-	$: if (item) {
-		content = item.content;
-		title = item.metadata?.title || item.name;
-	}
+	let breadcrumb = $derived([
+		{ label: module?.displayName || key, onClick: () => goto(`/modules/${key}`) },
+		{ label: title }
+	]);
 
 	const saveMutation = createMutation<any, Error, { title: string; content: string }>({
 		mutationFn: (data: { title: string; content: string }) => {
@@ -93,7 +94,7 @@
 			{content}
 			{mode}
 			{saveStatus}
-			label={module?.displayName || key}
+			{breadcrumb}
 			permissions={{
 				canRead: true,
 				canEdit: true,
