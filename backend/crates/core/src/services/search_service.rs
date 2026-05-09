@@ -114,6 +114,18 @@ where
             .await
             .map_err(|e| anyhow::anyhow!("Search failed: {}", e))?;
 
+        // Filter out hidden metadata files
+        let raw_results: Vec<SearchResult> = raw_results
+            .into_iter()
+            .filter(|r| {
+                !r.name.starts_with(".rustshare")
+                    && r.name != "events.jsonl"
+                    && r.name != "index.md"
+                    && r.name != "__primary__.md"
+                    && !r.name.ends_with(".editor.json")
+            })
+            .collect();
+
         // Filter results by permission
         let mut results = Vec::new();
         for result in raw_results {
@@ -167,6 +179,18 @@ where
             .search(tenant_id, query, limit)
             .await
             .map_err(|e| anyhow::anyhow!("Search failed: {}", e))?;
+
+        // Filter out hidden metadata files
+        let raw_results: Vec<SearchResult> = raw_results
+            .into_iter()
+            .filter(|r| {
+                !r.name.starts_with(".rustshare")
+                    && r.name != "events.jsonl"
+                    && r.name != "index.md"
+                    && r.name != "__primary__.md"
+                    && !r.name.ends_with(".editor.json")
+            })
+            .collect();
 
         Ok(raw_results
             .into_iter()

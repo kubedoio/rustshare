@@ -3,6 +3,7 @@
 	import { createQuery } from '$lib/query-compat';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
+	import PromptModal from '$lib/components/common/PromptModal.svelte';
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { Folder, Plus, Clock } from 'lucide-svelte';
 
@@ -27,9 +28,10 @@
 
 	$: meetings = $meetingsQuery.data ?? [];
 
-	async function handleCreateMeeting() {
-		const title = window.prompt('Enter a title for the new meeting:');
-		if (!title) return;
+	let showPromptModal = false;
+
+	async function handleCreateMeetingConfirm(title: string) {
+		showPromptModal = false;
 		try {
 			const result = await meetingsApi.create({
 				title,
@@ -42,6 +44,10 @@
 		} catch (err) {
 			console.error('Failed to create meeting:', err);
 		}
+	}
+
+	function handleCreateMeeting() {
+		showPromptModal = true;
 	}
 
 	async function handleOpenInFiles() {
@@ -130,3 +136,12 @@
 		{/if}
 	</div>
 </ModulePageShell>
+
+<PromptModal
+	open={showPromptModal}
+	title="New Meeting"
+	message="Enter a title for the new meeting:"
+	confirmLabel="Create"
+	onConfirm={handleCreateMeetingConfirm}
+	onCancel={() => (showPromptModal = false)}
+/>

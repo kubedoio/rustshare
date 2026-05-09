@@ -77,6 +77,7 @@
 	import FileModals from './FileModals.svelte';
 	import FileEditorPane from './FileEditorPane.svelte';
 	import EmptyTrashModal from '$lib/components/modals/EmptyTrashModal.svelte';
+	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 
 	// ============================================================================
 	// STATE
@@ -119,6 +120,13 @@
 	let showEmptyTrashModal = false;
 	let trashSummary = { file_count: 0, folder_count: 0, total_size: 0 };
 	let emptyingTrash = false;
+
+	// Confirm modal state
+	let showConfirmModal = false;
+	let confirmTitle = '';
+	let confirmMessage = '';
+	let confirmDanger = false;
+	let confirmOnConfirm = () => {};
 
 	// Editor state
 	let showTextEditor = false;
@@ -1159,19 +1167,23 @@
 		const fileIds = Array.from($selectionStore.selectedFileIds);
 		const folderIds = Array.from($selectionStore.selectedFolderIds);
 
-		if (!confirm(`Delete ${fileIds.length} file(s) and ${folderIds.length} folder(s)?`)) return;
-
-		try {
-			for (const fileId of fileIds) await deleteFile(fileId);
-			for (const folderId of folderIds) await deleteFolder(folderId);
-			selectionStore.clear();
-			selectionMode = false;
-			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
-			queryClient.invalidateQueries({ queryKey: ['all-files'] });
-			showNotification(`Deleted ${fileIds.length + folderIds.length} item(s)`, 'success');
-		} catch (error) {
-			showNotification('Failed to delete some items', 'error');
-		}
+		confirmTitle = 'Delete Items';
+		confirmMessage = `Delete ${fileIds.length} file(s) and ${folderIds.length} folder(s)?`;
+		confirmDanger = true;
+		confirmOnConfirm = async () => {
+			try {
+				for (const fileId of fileIds) await deleteFile(fileId);
+				for (const folderId of folderIds) await deleteFolder(folderId);
+				selectionStore.clear();
+				selectionMode = false;
+				queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+				queryClient.invalidateQueries({ queryKey: ['all-files'] });
+				showNotification(`Deleted ${fileIds.length + folderIds.length} item(s)`, 'success');
+			} catch (error) {
+				showNotification('Failed to delete some items', 'error');
+			}
+		};
+		showConfirmModal = true;
 	}
 
 	// Rename handlers
@@ -1428,16 +1440,23 @@
 	}
 
 	function handlePermanentDeleteFile(file: File) {
-		if (!confirm(`Permanently delete ${file.name}? This cannot be undone.`)) return;
-		$permanentlyDeleteFileMutation.mutate({ fileId: file.id, fileName: file.name });
+		confirmTitle = 'Permanently Delete File';
+		confirmMessage = `Permanently delete ${file.name}? This cannot be undone.`;
+		confirmDanger = true;
+		confirmOnConfirm = () => {
+			$permanentlyDeleteFileMutation.mutate({ fileId: file.id, fileName: file.name });
+		};
+		showConfirmModal = true;
 	}
 
 	function handlePermanentDeleteFolder(folder: Folder) {
-		if (
-			!confirm(`Permanently delete ${folder.name} and everything inside it? This cannot be undone.`)
-		)
-			return;
-		$permanentlyDeleteFolderMutation.mutate(folder.id);
+		confirmTitle = 'Permanently Delete Folder';
+		confirmMessage = `Permanently delete ${folder.name} and everything inside it? This cannot be undone.`;
+		confirmDanger = true;
+		confirmOnConfirm = () => {
+			$permanentlyDeleteFolderMutation.mutate(folder.id);
+		};
+		showConfirmModal = true;
 	}
 
 	async function openEmptyTrashModal() {
@@ -1809,3 +1828,17 @@
 {#if showToast}
 	<Toast message={toastMessage} type={toastType} onClose={() => (showToast = false)} />
 {/if}
+
+<ConfirmModal
+	open={showConfirmModal}
+	title={confirmTitle}
+	message={confirmMessage}
+	confirmLabel="Confirm"
+	cancelLabel="Cancel"
+	danger={confirmDanger}
+	onConfirm={() => {
+		showConfirmModal = false;
+		confirmOnConfirm();
+	}}
+	onCancel={() => (showConfirmModal = false)}
+/>

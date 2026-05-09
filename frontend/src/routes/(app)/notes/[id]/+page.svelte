@@ -92,12 +92,11 @@
 			}
 		} catch (err) {
 			console.error('Failed to upload sketch', err);
-			alert('Failed to upload sketch');
 		}
 	}
 
 	function handleBack() {
-		goto('/notes');
+		goto('/modules/notes');
 	}
 
 	function handleModeChange(event: CustomEvent<{ mode: EditorMode }>) {

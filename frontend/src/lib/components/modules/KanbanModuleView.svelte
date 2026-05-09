@@ -56,6 +56,8 @@
 
 	import RichMarkdownEditor from '../../editor/components/RichMarkdownEditor.svelte';
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
+	import PromptModal from '$lib/components/common/PromptModal.svelte';
+	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 	import CreateKanbanBoardModal from '$lib/components/modals/CreateKanbanBoardModal.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import type { ModuleDefinition } from '$lib/modules/registry';
@@ -95,22 +97,45 @@
 	let newChecklistItemText = $state<Record<string, string>>({});
 	let showBoardMenu = $state(false);
 
+	// Modal state
+	let showPromptModal = $state(false);
+	let promptTitle = $state('');
+	let promptMessage = $state('');
+	let promptDefaultValue = $state('');
+	let promptConfirmLabel = $state('Confirm');
+	let promptOnConfirm = $state<(value: string) => void>(() => {});
+
+	let showConfirmModal = $state(false);
+	let confirmTitle = $state('');
+	let confirmMessage = $state('');
+	let confirmDanger = $state(false);
+	let confirmOnConfirm = $state<() => void>(() => {});
+
 	async function handleRenameBoard() {
 		if (!selectedBoard) return;
-		const newTitle = window.prompt('Enter new board name:', selectedBoard.title);
-		if (!newTitle || !selectedBoardId) return;
-		try {
-			await updateKanbanBoard(selectedBoardId, { title: newTitle.trim() });
-			boardsQuery.refetch();
-			boardQuery.refetch();
-		} catch (err) {
-			console.error('Failed to rename board:', err);
-		}
+		promptTitle = 'Rename Board';
+		promptMessage = 'Enter new board name:';
+		promptDefaultValue = selectedBoard.title;
+		promptConfirmLabel = 'Save';
+		promptOnConfirm = async (newTitle: string) => {
+			if (!newTitle || !selectedBoardId) return;
+			try {
+				await updateKanbanBoard(selectedBoardId, { title: newTitle.trim() });
+				boardsQuery.refetch();
+				boardQuery.refetch();
+			} catch (err) {
+				console.error('Failed to rename board:', err);
+			}
+		};
+		showPromptModal = true;
 	}
 
-	async function handleArchiveBoard() {
+	function handleArchiveBoard() {
 		if (!selectedBoardId) return;
-		if (confirm('Archive this board?')) {
+		confirmTitle = 'Archive Board';
+		confirmMessage = 'Archive this board?';
+		confirmDanger = false;
+		confirmOnConfirm = async () => {
 			try {
 				await archiveKanbanBoard(selectedBoardId);
 				selectedBoardId = '';
@@ -119,7 +144,8 @@
 			} catch (err) {
 				console.error('Failed to archive board:', err);
 			}
-		}
+		};
+		showConfirmModal = true;
 	}
 
 	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No boards yet');
@@ -394,7 +420,7 @@
 			if (previousBoard) {
 				queryClient.setQueryData(queryKey, previousBoard);
 			}
-			alert('Card move failed. The board was restored to its previous state.');
+			errorMessage = 'Card move failed. The board was restored to its previous state.';
 		} finally {
 			isMovingCard = false;
 			handleDragEnd();
@@ -543,16 +569,26 @@
 
 	function handleArchiveCard() {
 		if (!editingCard) return;
-		if (confirm('Archive this card?')) {
-			archiveCardMutation.mutate(editingCard.id);
-		}
+		const cardId = editingCard.id;
+		confirmTitle = 'Archive Card';
+		confirmMessage = 'Archive this card?';
+		confirmDanger = false;
+		confirmOnConfirm = () => {
+			archiveCardMutation.mutate(cardId);
+		};
+		showConfirmModal = true;
 	}
 
 	function handleDeleteCard() {
 		if (!editingCard) return;
-		if (confirm('Delete this card permanently?')) {
-			deleteCardMutation.mutate(editingCard.id);
-		}
+		const cardId = editingCard.id;
+		confirmTitle = 'Delete Card';
+		confirmMessage = 'Delete this card permanently?';
+		confirmDanger = true;
+		confirmOnConfirm = () => {
+			deleteCardMutation.mutate(cardId);
+		};
+		showConfirmModal = true;
 	}
 
 	async function handleFileUpload(e: Event) {
@@ -573,15 +609,25 @@
 		}
 	}
 
+	let pendingAttachmentId = $state('');
+
 	async function deleteAttachment(attachmentId: string) {
-		if (!cardDetail || !confirm('Delete this attachment?')) return;
-		try {
-			await deleteCardAttachment(cardDetail.id, attachmentId);
-			cardDetail.attachments = cardDetail.attachments.filter((a) => a.id !== attachmentId);
-			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
-		} catch (err) {
-			console.error('Delete attachment failed', err);
-		}
+		if (!cardDetail) return;
+		pendingAttachmentId = attachmentId;
+		confirmTitle = 'Delete Attachment';
+		confirmMessage = 'Delete this attachment?';
+		confirmDanger = true;
+		confirmOnConfirm = async () => {
+			if (!cardDetail) return;
+			try {
+				await deleteCardAttachment(cardDetail.id, pendingAttachmentId);
+				cardDetail.attachments = cardDetail.attachments.filter((a) => a.id !== pendingAttachmentId);
+				queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+			} catch (err) {
+				console.error('Delete attachment failed', err);
+			}
+		};
+		showConfirmModal = true;
 	}
 
 	async function handleAddChecklist() {
@@ -649,15 +695,25 @@
 		}
 	}
 
+	let pendingChecklistId = $state('');
+
 	async function handleDeleteChecklist(checklistId: string) {
-		if (!cardDetail || !confirm('Delete this checklist?')) return;
-		try {
-			await deleteChecklist(cardDetail.id, checklistId);
-			cardDetail.checklists = cardDetail.checklists.filter((c) => c.id !== checklistId);
-			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
-		} catch (err) {
-			console.error('Delete checklist failed', err);
-		}
+		if (!cardDetail) return;
+		pendingChecklistId = checklistId;
+		confirmTitle = 'Delete Checklist';
+		confirmMessage = 'Delete this checklist?';
+		confirmDanger = true;
+		confirmOnConfirm = async () => {
+			if (!cardDetail) return;
+			try {
+				await deleteChecklist(cardDetail.id, pendingChecklistId);
+				cardDetail.checklists = cardDetail.checklists.filter((c) => c.id !== pendingChecklistId);
+				queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+			} catch (err) {
+				console.error('Delete checklist failed', err);
+			}
+		};
+		showConfirmModal = true;
 	}
 
 	async function handleCreateLabel() {
@@ -1443,6 +1499,33 @@
 	onClose={() => (showCreateBoardModal = false)}
 	onSuccess={handleBoardCreated}
 	defaultTemplate={module.defaultTemplate}
+/>
+
+<PromptModal
+	open={showPromptModal}
+	title={promptTitle}
+	message={promptMessage}
+	defaultValue={promptDefaultValue}
+	confirmLabel={promptConfirmLabel}
+	onConfirm={(value) => {
+		showPromptModal = false;
+		promptOnConfirm(value);
+	}}
+	onCancel={() => (showPromptModal = false)}
+/>
+
+<ConfirmModal
+	open={showConfirmModal}
+	title={confirmTitle}
+	message={confirmMessage}
+	confirmLabel="Confirm"
+	cancelLabel="Cancel"
+	danger={confirmDanger}
+	onConfirm={() => {
+		showConfirmModal = false;
+		confirmOnConfirm();
+	}}
+	onCancel={() => (showConfirmModal = false)}
 />
 
 <style>

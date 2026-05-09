@@ -26,7 +26,9 @@ fn is_hidden_kanban_file(name: &str) -> bool {
             | ".rustshare-column.json"
             | ".rustshare-card.json"
             | "events.jsonl"
-    )
+            | "index.md"
+            | "__primary__.md"
+    ) || name.ends_with(".editor.json")
 }
 
 // ============================================================================
@@ -811,6 +813,8 @@ pub async fn list_files(
           AND f.tenant_id = $2
           AND f.deleted_at IS NULL
           AND f.name NOT LIKE '.rustshare-%'
+          AND f.name NOT IN ('index.md', '__primary__.md')
+          AND f.name NOT LIKE '%.editor.json'
         ORDER BY f.created_at DESC
         "#,
     )

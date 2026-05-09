@@ -4,6 +4,7 @@
 	import { createFromTemplate } from '$lib/api/modules';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
+	import PromptModal from '$lib/components/common/PromptModal.svelte';
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { Folder, FileText, Plus } from 'lucide-svelte';
 
@@ -19,13 +20,12 @@
 
 	$: contents = $folderContentsQuery.data;
 
-	async function handleCreateFromTemplate() {
-		if (!module.defaultTemplate) {
-			alert('No default template configured for this module.');
-			return;
-		}
-		const name = window.prompt('Enter a name for the new item:');
-		if (!name) return;
+	let showPromptModal = false;
+	let templateError = '';
+
+	async function handleCreateFromTemplateConfirm(name: string) {
+		showPromptModal = false;
+		if (!module.defaultTemplate) return;
 		try {
 			const result = await createFromTemplate({
 				template_key: module.defaultTemplate,
@@ -35,8 +35,16 @@
 			goto(getModuleObjectHref(module.key, result.object_type, result.object_id));
 		} catch (err) {
 			console.error('Failed to create from template:', err);
-			alert(err instanceof Error ? err.message : 'Failed to create item');
 		}
+	}
+
+	function handleCreateFromTemplate() {
+		if (!module.defaultTemplate) {
+			templateError = 'No default template configured for this module.';
+			return;
+		}
+		templateError = '';
+		showPromptModal = true;
 	}
 
 	async function handleOpenInFiles() {
@@ -76,6 +84,11 @@
 	</div>
 
 	<div class="flex flex-col gap-4">
+		{#if templateError}
+			<div class="rounded-lg border border-error/30 bg-error/10 px-4 py-2 text-sm text-error">
+				{templateError}
+			</div>
+		{/if}
 		{#if $folderContentsQuery.isLoading}
 			<div class="flex h-32 items-center justify-center">
 				<div class="loading loading-md loading-spinner text-brand-500"></div>
@@ -171,3 +184,12 @@
 		{/if}
 	</div>
 </ModulePageShell>
+
+<PromptModal
+	open={showPromptModal}
+	title="Create from Template"
+	message="Enter a name for the new item:"
+	confirmLabel="Create"
+	onConfirm={handleCreateFromTemplateConfirm}
+	onCancel={() => (showPromptModal = false)}
+/>

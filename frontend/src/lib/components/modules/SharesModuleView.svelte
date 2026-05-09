@@ -4,6 +4,7 @@
 	import { createFromTemplate } from '$lib/api/modules';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
+	import PromptModal from '$lib/components/common/PromptModal.svelte';
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { Folder, Plus, ArrowRight } from 'lucide-svelte';
 
@@ -27,20 +28,27 @@
 	$: contents = $rootFolderQuery.data;
 	$: sharePackages = contents?.folders ?? [];
 
-	async function handleCreateShare() {
+	let showPromptModal = false;
+
+	async function handleCreateShareConfirm(name: string) {
+		showPromptModal = false;
 		if (!module.defaultTemplate) return;
-		const name = window.prompt('Enter a name for the new share package:');
-		if (!name) return;
 		try {
-			await createFromTemplate({
+			const result = await createFromTemplate({
 				template_key: module.defaultTemplate,
 				name,
 				parent_folder_id: null
 			});
+			goto(getModuleObjectHref(module.key, result.object_type, result.object_id));
 			$rootFolderQuery.refetch();
 		} catch (err) {
 			console.error('Failed to create share:', err);
 		}
+	}
+
+	function handleCreateShare() {
+		if (!module.defaultTemplate) return;
+		showPromptModal = true;
 	}
 
 	async function handleOpenInFiles() {
@@ -114,3 +122,12 @@
 		{/if}
 	</div>
 </ModulePageShell>
+
+<PromptModal
+	open={showPromptModal}
+	title="New Share Package"
+	message="Enter a name for the new share package:"
+	confirmLabel="Create"
+	onConfirm={handleCreateShareConfirm}
+	onCancel={() => (showPromptModal = false)}
+/>

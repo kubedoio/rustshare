@@ -88,9 +88,16 @@ pub async fn search(
                 .into_response()
         })?;
 
-    // Convert to response format
+    // Convert to response format, filtering out hidden metadata files
     let response_results: Vec<SearchResultResponse> = results
         .into_iter()
+        .filter(|r| {
+            !r.name.starts_with(".rustshare")
+                && r.name != "events.jsonl"
+                && r.name != "index.md"
+                && r.name != "__primary__.md"
+                && !r.name.ends_with(".editor.json")
+        })
         .map(|r| SearchResultResponse {
             id: r.id,
             resource_type: r.resource_type,

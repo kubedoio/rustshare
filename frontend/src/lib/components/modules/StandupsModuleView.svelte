@@ -4,6 +4,7 @@
 	import { createFromTemplate } from '$lib/api/modules';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
+	import PromptModal from '$lib/components/common/PromptModal.svelte';
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { FileText, Plus, Clock, Folder } from 'lucide-svelte';
 
@@ -29,10 +30,11 @@
 	$: contents = $rootFolderQuery.data;
 	$: standups = contents?.files ?? [];
 
-	async function handleCreateStandup() {
+	let showPromptModal = false;
+
+	async function handleCreateStandupConfirm(name: string) {
+		showPromptModal = false;
 		if (!module.defaultTemplate) return;
-		const name = window.prompt('Enter a name for the new standup record:');
-		if (!name) return;
 		try {
 			const result = await createFromTemplate({
 				template_key: module.defaultTemplate,
@@ -44,6 +46,11 @@
 		} catch (err) {
 			console.error('Failed to create standup:', err);
 		}
+	}
+
+	function handleCreateStandup() {
+		if (!module.defaultTemplate) return;
+		showPromptModal = true;
 	}
 
 	async function handleOpenInFiles() {
@@ -142,3 +149,12 @@
 		{/if}
 	</div>
 </ModulePageShell>
+
+<PromptModal
+	open={showPromptModal}
+	title="New Standup"
+	message="Enter a name for the new standup record:"
+	confirmLabel="Create"
+	onConfirm={handleCreateStandupConfirm}
+	onCancel={() => (showPromptModal = false)}
+/>

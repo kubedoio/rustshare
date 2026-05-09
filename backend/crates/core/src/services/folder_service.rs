@@ -264,6 +264,9 @@ where
             || name == ".rustshare-column.json"
             || name == ".rustshare-card.json"
             || name == "events.jsonl"
+            || name == "index.md"
+            || name == "__primary__.md"
+            || name.ends_with(".editor.json")
     }
 
     /// List the contents of a folder (immediate children only).

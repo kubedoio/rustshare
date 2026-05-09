@@ -4,6 +4,7 @@
 	import { getShareType, getShareTypeLabel } from '$lib/api/types';
 	import { getShareAccessLog, listAllUserShares, revokeShare } from '$lib/api/shares';
 	import Toast from '$lib/components/common/Toast.svelte';
+	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 	import { queryClient } from '$lib/query-client';
 	import {
 		Activity,
@@ -23,6 +24,11 @@
 	let toastMessage = '';
 	let toastType: 'success' | 'error' | 'info' = 'info';
 	let activeShareActivityId: string | null = null;
+
+	let showConfirmModal = false;
+	let confirmTitle = '';
+	let confirmMessage = '';
+	let confirmOnConfirm = () => {};
 	let shareActivity: ShareAccessLogEntry[] = [];
 	let shareActivityLoading = false;
 	let shareActivityError = '';
@@ -92,11 +98,12 @@
 	}
 
 	function handleRevokeShare(share: Share) {
-		if (
-			confirm(`Revoke share link for "${share.resource_name || `this ${share.resource_type}`}"?`)
-		) {
+		confirmTitle = 'Revoke Share';
+		confirmMessage = `Revoke share link for "${share.resource_name || `this ${share.resource_type}`}"?`;
+		confirmOnConfirm = () => {
 			$revokeShareMutation.mutate(share.id);
-		}
+		};
+		showConfirmModal = true;
 	}
 
 	function formatDate(dateString: string): string {
@@ -392,37 +399,31 @@
 									</div>
 								</div>
 
-								tttttttttt{#if shareUrl}nttttttttttt
+								{#if shareUrl}
 									<div class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-3">
-										ntttttttttttt
 										<p
 											class="text-xs font-semibold tracking-[0.16em] text-base-content/45 uppercase"
 										>
-											ntttttttttttttShare URLntttttttttttt
+											Share URL
 										</p>
-										ntttttttttttt
 										<p class="mt-2 truncate font-mono text-xs text-base-content/70">
-											nttttttttttttt{shareUrl}ntttttttttttt
+											{shareUrl}
 										</p>
-										nttttttttttt
 									</div>
-									ntttttttttt{:else}nttttttttttt
+								{:else}
 									<div class="rounded-2xl border border-base-300/70 bg-base-200/45 px-4 py-3">
-										ntttttttttttt
 										<p
 											class="text-xs font-semibold tracking-[0.16em] text-base-content/45 uppercase"
 										>
-											ntttttttttttttShare Typentttttttttttt
+											Share Type
 										</p>
-										ntttttttttttt
 										<p class="mt-2 truncate font-mono text-xs text-base-content/70">
-											nttttttttttttt{shareType === 'group'
+											{shareType === 'group'
 												? 'Shared with group members'
-												: 'Direct user share'}ntttttttttttt
+												: 'Direct user share'}
 										</p>
-										nttttttttttt
 									</div>
-									ntttttttttt{/if}
+								{/if}
 
 								<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
 									<div class="rounded-2xl border border-base-300/70 bg-base-100 px-4 py-3">
@@ -580,3 +581,17 @@
 {#if showToast}
 	<Toast message={toastMessage} type={toastType} onClose={() => (showToast = false)} />
 {/if}
+
+<ConfirmModal
+	open={showConfirmModal}
+	title={confirmTitle}
+	message={confirmMessage}
+	confirmLabel="Revoke"
+	cancelLabel="Cancel"
+	danger={true}
+	onConfirm={() => {
+		showConfirmModal = false;
+		confirmOnConfirm();
+	}}
+	onCancel={() => (showConfirmModal = false)}
+/>

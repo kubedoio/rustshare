@@ -156,7 +156,7 @@
 			const blob = await downloadPublicShareFile(token, sessionToken);
 			triggerFileDownload(blob, $shareQuery.data.name);
 		} catch (error) {
-			alert(error instanceof Error ? error.message : 'Failed to download file');
+			console.error('Failed to download file:', error);
 		} finally {
 			isDownloading = false;
 		}
@@ -170,7 +170,7 @@
 			const blob = await downloadPublicFolderFile(token, file.id, sessionToken);
 			triggerFileDownload(blob, file.name);
 		} catch (error) {
-			alert(error instanceof Error ? error.message : 'Failed to download file');
+			console.error('Failed to download file:', error);
 		} finally {
 			isDownloading = false;
 		}

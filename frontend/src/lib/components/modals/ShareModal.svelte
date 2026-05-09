@@ -26,6 +26,7 @@
 	import { queryClient } from '$lib/query-client';
 	import { formatDate } from '$lib/utils/format';
 	import { Users, UserPlus, Link, Loader as Loader2, Trash2, X, Mail, User } from 'lucide-svelte';
+	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 
 	interface Props {
 		open?: boolean;
@@ -44,6 +45,12 @@
 		onClose = () => {},
 		onNotification = () => {}
 	}: Props = $props();
+
+	let showConfirmModal = $state(false);
+	let confirmTitle = $state('');
+	let confirmMessage = $state('');
+	let confirmDanger = $state(false);
+	let confirmOnConfirm = $state<() => void>(() => {});
 
 	// Form state for new share
 	let permissions: 'View' | 'Edit' | 'Admin' = $state('View');
@@ -323,13 +330,16 @@
 	}
 
 	function handleRevoke(shareId: string, type: 'public' | 'group') {
-		const message =
+		confirmTitle = type === 'public' ? 'Revoke Share Link' : 'Remove Group Access';
+		confirmMessage =
 			type === 'public'
 				? 'Are you sure you want to revoke this share link?'
 				: "Are you sure you want to remove this group's access?";
-		if (confirm(message)) {
+		confirmDanger = true;
+		confirmOnConfirm = () => {
 			$revokeShareMutation.mutate(shareId);
-		}
+		};
+		showConfirmModal = true;
 	}
 
 	function handleRecipientPermissionChange(shareId: string, permission: 'View' | 'Edit' | 'Admin') {
@@ -375,9 +385,13 @@
 	}
 
 	function handleRemoveRecipient(recipient: ShareRecipient) {
-		if (confirm(`Remove access for "${recipient.email}"?`)) {
+		confirmTitle = 'Remove Access';
+		confirmMessage = `Remove access for "${recipient.email}"?`;
+		confirmDanger = true;
+		confirmOnConfirm = () => {
 			$removeRecipientMutation.mutate(recipient.share_id);
-		}
+		};
+		showConfirmModal = true;
 	}
 
 	function handleClose() {
@@ -877,6 +891,20 @@
 			<button type="button" class="btn" onclick={handleClose} disabled={isLoading}>Close</button>
 		</div>
 	</div>
+
+	<ConfirmModal
+		open={showConfirmModal}
+		title={confirmTitle}
+		message={confirmMessage}
+		confirmLabel="Confirm"
+		cancelLabel="Cancel"
+		danger={confirmDanger}
+		onConfirm={() => {
+			showConfirmModal = false;
+			confirmOnConfirm();
+		}}
+		onCancel={() => (showConfirmModal = false)}
+	/>
 
 	<form method="dialog" class="modal-backdrop">
 		<button type="button" onclick={handleClose} disabled={isLoading}>close</button>

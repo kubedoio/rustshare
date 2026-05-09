@@ -4,6 +4,7 @@
 	import { notesApi } from '$lib/api/notes';
 	import { decisionsApi } from '$lib/api/decisions';
 	import { meetingsApi } from '$lib/api/meetings';
+	import { standupsApi } from '$lib/api/standups';
 	import { getModuleByKey } from '$lib/modules/registry';
 	import { goto } from '$app/navigation';
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
@@ -21,7 +22,9 @@
 				? decisionsApi
 				: key === 'meetings'
 					? meetingsApi
-					: null;
+					: key === 'standups'
+						? standupsApi
+						: null;
 
 	$: query = createQuery<any, Error, any, any, string[]>({
 		queryKey: ['module-item', key, id],
@@ -47,6 +50,8 @@
 				return decisionsApi.update(id, { title: data.title, content: data.content });
 			if (key === 'meetings')
 				return meetingsApi.update(id, { title: data.title, content: data.content });
+			if (key === 'standups')
+				return standupsApi.update(id, { title: data.title, content: data.content });
 			return Promise.reject('Invalid module');
 		},
 		onSuccess: () => {

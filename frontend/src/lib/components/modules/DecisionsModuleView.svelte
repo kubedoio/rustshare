@@ -3,6 +3,7 @@
 	import { createQuery } from '$lib/query-compat';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
+	import PromptModal from '$lib/components/common/PromptModal.svelte';
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { FileText, Plus, Clock, Folder } from 'lucide-svelte';
 
@@ -27,9 +28,10 @@
 
 	$: decisions = $decisionsQuery.data ?? [];
 
-	async function handleCreateDecision() {
-		const title = window.prompt('Enter a title for the new decision:');
-		if (!title) return;
+	let showPromptModal = false;
+
+	async function handleCreateDecisionConfirm(title: string) {
+		showPromptModal = false;
 		try {
 			const result = await decisionsApi.create({
 				title,
@@ -41,6 +43,10 @@
 		} catch (err) {
 			console.error('Failed to create decision:', err);
 		}
+	}
+
+	function handleCreateDecision() {
+		showPromptModal = true;
 	}
 
 	async function handleOpenInFiles() {
@@ -129,3 +135,12 @@
 		{/if}
 	</div>
 </ModulePageShell>
+
+<PromptModal
+	open={showPromptModal}
+	title="New Decision"
+	message="Enter a title for the new decision:"
+	confirmLabel="Create"
+	onConfirm={handleCreateDecisionConfirm}
+	onCancel={() => (showPromptModal = false)}
+/>

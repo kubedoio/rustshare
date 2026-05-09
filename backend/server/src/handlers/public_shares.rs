@@ -286,7 +286,12 @@ pub async fn download_shared_file(
             super::share_error_response(rustshare_core::services::ShareError::FileNotFound(file_id))
         })?;
 
-    if file.name.starts_with(".rustshare") {
+    if file.name.starts_with(".rustshare")
+        || file.name == "events.jsonl"
+        || file.name == "index.md"
+        || file.name == "__primary__.md"
+        || file.name.ends_with(".editor.json")
+    {
         return Err(super::share_error_response(
             rustshare_core::services::ShareError::FileNotFound(file_id),
         ));
@@ -387,7 +392,13 @@ pub async fn get_shared_folder_contents(
     // Hide module metadata sidecar files from public share listings
     let visible_files: Vec<_> = files
         .into_iter()
-        .filter(|f| !f.name.starts_with(".rustshare"))
+        .filter(|f| {
+            !f.name.starts_with(".rustshare")
+                && f.name != "events.jsonl"
+                && f.name != "index.md"
+                && f.name != "__primary__.md"
+                && !f.name.ends_with(".editor.json")
+        })
         .collect();
 
     Ok(Json(SharedFolderContentsResponse {
@@ -445,7 +456,12 @@ pub async fn download_shared_folder_file(
             super::share_error_response(rustshare_core::services::ShareError::FileNotFound(file_id))
         })?;
 
-    if file.name.starts_with(".rustshare") {
+    if file.name.starts_with(".rustshare")
+        || file.name == "events.jsonl"
+        || file.name == "index.md"
+        || file.name == "__primary__.md"
+        || file.name.ends_with(".editor.json")
+    {
         return Err(super::share_error_response(
             rustshare_core::services::ShareError::FileNotFound(file_id),
         ));

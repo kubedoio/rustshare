@@ -25,6 +25,7 @@
 		MoreHorizontal
 	} from 'lucide-svelte';
 	import { createEventDispatcher } from 'svelte';
+	import PromptModal from '$lib/components/common/PromptModal.svelte';
 
 	export let editor: Editor | null = null;
 
@@ -65,14 +66,22 @@
 		};
 	}
 
+	let showLinkPrompt = false;
+	let linkUrl = '';
+
 	function toggleLink() {
 		if (!editor) return;
 		if (editor.isActive('link')) {
 			editor.chain().focus().unsetLink().run();
 			return;
 		}
-		const href = prompt('Enter URL:');
-		if (href) {
+		linkUrl = '';
+		showLinkPrompt = true;
+	}
+
+	function handleLinkConfirm(href: string) {
+		showLinkPrompt = false;
+		if (href && editor) {
 			editor.chain().focus().setLink({ href }).run();
 		}
 	}
@@ -290,6 +299,16 @@
 		</div>
 	</div>
 {/if}
+
+<PromptModal
+	open={showLinkPrompt}
+	title="Insert Link"
+	message="Enter URL:"
+	defaultValue={linkUrl}
+	confirmLabel="Insert"
+	onConfirm={handleLinkConfirm}
+	onCancel={() => (showLinkPrompt = false)}
+/>
 
 <style>
 	.editor-toolbar {

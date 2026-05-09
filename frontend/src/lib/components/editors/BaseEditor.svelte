@@ -2,6 +2,7 @@
 	import { createEventDispatcher } from 'svelte';
 	import type { File } from '$lib/api/types';
 	import { formatFileSize } from '$lib/utils/format';
+	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 
 	export let open = false;
 	export let file: File | null = null;
@@ -20,13 +21,18 @@
 
 	let changeDescription = '';
 	let showSaveOptions = false;
+	let showConfirmModal = false;
 
 	function handleClose() {
 		if (hasChanges) {
-			if (!confirm('You have unsaved changes. Are you sure you want to close?')) {
-				return;
-			}
+			showConfirmModal = true;
+			return;
 		}
+		dispatch('close');
+	}
+
+	function handleConfirmClose() {
+		showConfirmModal = false;
 		dispatch('close');
 	}
 
@@ -225,3 +231,14 @@
 		<button type="button" on:click={handleClose}>close</button>
 	</form>
 </dialog>
+
+<ConfirmModal
+	open={showConfirmModal}
+	title="Unsaved Changes"
+	message="You have unsaved changes. Are you sure you want to close?"
+	confirmLabel="Close"
+	cancelLabel="Cancel"
+	danger={true}
+	onConfirm={handleConfirmClose}
+	onCancel={() => (showConfirmModal = false)}
+/>
