@@ -7,7 +7,9 @@
 	import { standupsApi } from '$lib/api/standups';
 	import { getModuleByKey } from '$lib/modules/registry';
 	import { goto } from '$app/navigation';
+	import { Folder } from 'lucide-svelte';
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
+	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { EditorMode, EditorSaveStatus } from '$lib/editor/types';
 
 	let key = $derived(($page.params.key || '') as string);
@@ -36,6 +38,7 @@
 	let item = $derived($query.data);
 	let content = $derived(item?.content ?? '');
 	let title = $derived(item?.metadata?.title || item?.name || '');
+	let modifiedAt = $derived(item?.modified_at ? new Date(item.modified_at).toLocaleString() : '');
 	let mode: EditorMode = $state('read');
 	let saveStatus: EditorSaveStatus = $state('saved');
 
@@ -76,6 +79,15 @@
 	function handleModeChange(event: CustomEvent<{ mode: EditorMode }>) {
 		mode = event.detail.mode;
 	}
+
+	async function handleOpenInFiles() {
+		if (module?.rootPath) {
+			const folderId = await resolveModuleFolderId(module.rootPath);
+			if (folderId) {
+				goto(`/files?folder=${folderId}`);
+			}
+		}
+	}
 </script>
 
 <div class="module-detail-page h-full">
@@ -95,6 +107,7 @@
 			{mode}
 			{saveStatus}
 			{breadcrumb}
+			metadata={modifiedAt}
 			permissions={{
 				canRead: true,
 				canEdit: true,
@@ -106,7 +119,16 @@
 			on:save={handleSave}
 			on:back={handleBack}
 			on:modechange={handleModeChange}
-		/>
+		>
+			<button
+				slot="extraActions"
+				class="btn btn-ghost btn-sm gap-1.5"
+				on:click={handleOpenInFiles}
+			>
+				<Folder size={14} />
+				<span>Open in Files</span>
+			</button>
+		</MarkdownDocumentPage>
 	{/if}
 </div>
 

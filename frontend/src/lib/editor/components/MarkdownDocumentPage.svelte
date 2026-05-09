@@ -70,6 +70,9 @@
 	/** Breadcrumb trail: [{ label, onClick? }, ...] */
 	export let breadcrumb: Array<{ label: string; onClick?: () => void }> = [];
 
+	/** Optional metadata line (e.g. last modified date) */
+	export let metadata: string = '';
+
 	/** Attachment list */
 	export let attachments: RichMarkdownAttachment[] = [];
 
@@ -218,6 +221,9 @@
 				<span class="doc-label-sep">·</span>
 			{/if}
 			<h1 class="doc-title">{title}</h1>
+			{#if metadata}
+				<span class="doc-meta">{metadata}</span>
+			{/if}
 
 			<!-- Color Picker -->
 			{#if permissions.canEdit}
@@ -308,6 +314,9 @@
 					<span>Save</span>
 				</button>
 			{/if}
+
+			<!-- Extra actions -->
+			<slot name="extraActions" />
 
 			<!-- Export & More -->
 			<div class="header-actions">
@@ -463,6 +472,13 @@
 		margin: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.doc-meta {
+		font-size: 0.75rem;
+		color: var(--color-base-content, #9ca3af);
+		opacity: 0.5;
+		margin-top: 0.125rem;
 		white-space: nowrap;
 	}
 

@@ -3,9 +3,9 @@
 	import { createQuery } from '$lib/query-compat';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
-	import { FileText, Plus, Clock, Folder } from 'lucide-svelte';
+	import { FileText, Plus, Clock, Folder, MoreHorizontal, Trash2 } from 'lucide-svelte';
 
-	import { listNotes, createNote } from '$lib/api/notes';
+	import { listNotes, createNote, deleteNote } from '$lib/api/notes';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
@@ -59,11 +59,12 @@
 
 	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No notes yet';
 	$: emptyDescription =
-		module.ui.page.emptyStateDescription ?? 'Create your first note to get started.';
+		module.ui.page.emptyStateDescription ??
+		'No notes yet. Create your first note to capture ideas, documentation, or working knowledge.';
 	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Note';
 </script>
 
-<ModulePageShell title="Notes" subtitle="Capture file-backed notes and reusable knowledge.">
+<ModulePageShell title="Notes" subtitle="Write and keep file-backed notes in your workspace.">
 	<div slot="primaryAction">
 		<button
 			class="btn gap-2 btn-sm btn-primary"
@@ -112,7 +113,10 @@
 							<FileText size={18} />
 						</div>
 						<div class="flex flex-col">
-							<span class="text-sm font-medium text-base-content">{note.name}</span>
+							<span class="text-sm font-medium text-base-content">{note.name.replace(/\.md$/i, '')}</span>
+							{#if note.metadata?.excerpt}
+								<span class="line-clamp-1 text-xs text-base-content/50">{note.metadata.excerpt}</span>
+							{/if}
 							<span class="flex items-center gap-1 text-xs text-base-content/40">
 								<Clock size={12} />
 								{note.modified_at ? new Date(note.modified_at).toLocaleDateString() : ''}
@@ -134,7 +138,10 @@
 							<FileText size={16} />
 						</div>
 						<div class="flex flex-col">
-							<span class="text-sm font-medium text-base-content">{note.name}</span>
+							<span class="text-sm font-medium text-base-content">{note.name.replace(/\.md$/i, '')}</span>
+							{#if note.metadata?.excerpt}
+								<span class="line-clamp-1 text-xs text-base-content/50">{note.metadata.excerpt}</span>
+							{/if}
 							<span class="flex items-center gap-1 text-xs text-base-content/40">
 								<Clock size={12} />
 								{note.modified_at ? new Date(note.modified_at).toLocaleDateString() : ''}
