@@ -3,6 +3,7 @@
 	import React from 'react';
 	import { createRoot } from 'react-dom/client';
 	import { X, Save, Palette } from 'lucide-svelte';
+	import { toastStore } from '$lib/stores/toast';
 
 	export let open = false;
 
@@ -73,7 +74,7 @@
 		const files = excalidrawAPI.getFiles();
 
 		if (!elements || elements.length === 0) {
-			alert('Please draw something first.');
+			toastStore.show('Please draw something first.', 'info');
 			return;
 		}
 
@@ -97,7 +98,7 @@
 			dispatch('save', { blob, filename });
 		} catch (err) {
 			console.error('Failed to export drawing:', err);
-			alert('Failed to save drawing. Please try again.');
+			toastStore.show('Failed to save drawing. Please try again.', 'error');
 		}
 	}
 

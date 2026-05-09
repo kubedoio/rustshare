@@ -3,6 +3,7 @@
 	import { listAdminTemplates, deleteTemplate, duplicateTemplate } from '$lib/api/admin-modules';
 	import { toastStore } from '$lib/stores/toast';
 	import { Plus, Trash2, Edit, Copy } from 'lucide-svelte';
+	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 
 	const queryClient = useQueryClient();
 
@@ -29,12 +30,21 @@
 		onError: (err: Error) => toastStore.show(err.message, 'error')
 	});
 
-	$: templates = $templatesQuery.data ?? [];
+	let templates = $derived($templatesQuery.data ?? []);
+
+	let showConfirmModal = $state(false);
+	let confirmTargetKey = $state('');
+	let confirmTargetName = $state('');
 
 	function handleDelete(key: string, name: string) {
-		if (confirm(`Delete template "${name}"? This cannot be undone.`)) {
-			$deleteMutation.mutate(key);
-		}
+		confirmTargetKey = key;
+		confirmTargetName = name;
+		showConfirmModal = true;
+	}
+
+	function onConfirmDelete() {
+		$deleteMutation.mutate(confirmTargetKey);
+		showConfirmModal = false;
 	}
 
 	function handleDuplicate(key: string) {
@@ -157,4 +167,14 @@
 			</table>
 		</div>
 	{/if}
+	<ConfirmModal
+		open={showConfirmModal}
+		title="Delete Template"
+		message={`Delete template "${confirmTargetName}"? This cannot be undone.`}
+		confirmLabel="Delete"
+		cancelLabel="Cancel"
+		danger={true}
+		onConfirm={onConfirmDelete}
+		onCancel={() => showConfirmModal = false}
+	/>
 </div>

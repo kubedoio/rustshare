@@ -4,6 +4,7 @@
 	import ModuleIcon from '$lib/components/dashboard/ModuleIcon.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { ToggleLeft, ToggleRight, Edit } from 'lucide-svelte';
+	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 
 	const queryClient = useQueryClient();
 
@@ -32,16 +33,25 @@
 		onError: (err: Error) => toastStore.show(err.message, 'error')
 	});
 
-	$: modules = $modulesQuery.data ?? [];
+	let modules = $derived($modulesQuery.data ?? []);
+
+	let showConfirmModal = $state(false);
+	let confirmTargetKey = $state('');
+	let confirmTargetName = $state('');
 
 	function handleToggle(module: (typeof modules)[0]) {
 		if (module.enabled) {
-			if (confirm(`Disable "${module.display_name}"? Existing files will not be deleted.`)) {
-				$disableMutation.mutate(module.module_key);
-			}
+			confirmTargetKey = module.module_key;
+			confirmTargetName = module.display_name;
+			showConfirmModal = true;
 		} else {
 			$enableMutation.mutate(module.module_key);
 		}
+	}
+
+	function onConfirmDisable() {
+		$disableMutation.mutate(confirmTargetKey);
+		showConfirmModal = false;
 	}
 </script>
 
@@ -151,4 +161,14 @@
 			</table>
 		</div>
 	{/if}
+	<ConfirmModal
+		open={showConfirmModal}
+		title="Disable Module"
+		message={`Disable "${confirmTargetName}"? Existing files will not be deleted.`}
+		confirmLabel="Disable"
+		cancelLabel="Cancel"
+		danger={true}
+		onConfirm={onConfirmDisable}
+		onCancel={() => showConfirmModal = false}
+	/>
 </div>

@@ -2,17 +2,23 @@
 	import { activityStore, getActivityDisplay, getRelativeTime } from '$lib/stores/activity';
 	import type { Activity } from '$lib/stores/activity';
 	import { isInternalRustShareFile } from '$lib/utils/artifactVisibility';
+	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 
 	export let maxItems = 10;
 	export let showClearButton = true;
 	export let showHeader = true;
 
+	let showConfirmModal = false;
+
 	$: recentActivities = $activityStore.filter((a) => !isInternalRustShareFile(a.fileName)).slice(0, maxItems);
 
 	function handleClearHistory() {
-		if (confirm('Clear all activity history?')) {
-			activityStore.clearHistory();
-		}
+		showConfirmModal = true;
+	}
+
+	function onConfirmClear() {
+		activityStore.clearHistory();
+		showConfirmModal = false;
 	}
 
 	function handleRemoveActivity(id: string) {
@@ -106,3 +112,14 @@
 		{/if}
 	{/if}
 </div>
+
+<ConfirmModal
+	open={showConfirmModal}
+	title="Clear Activity History"
+	message="Clear all activity history? This cannot be undone."
+	confirmLabel="Clear All"
+	cancelLabel="Cancel"
+	danger={true}
+	onConfirm={onConfirmClear}
+	onCancel={() => showConfirmModal = false}
+/>
