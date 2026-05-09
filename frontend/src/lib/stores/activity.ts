@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { isInternalRustShareFile } from '$lib/utils/artifactVisibility';
 
 export type ActivityType =
 	| 'file_uploaded'
@@ -60,6 +61,10 @@ function createActivityStore() {
 		subscribe,
 
 		addActivity: (type: ActivityType, fileName: string, details?: string) => {
+			// Skip activities for internal RustShare files/metadata
+			if (isInternalRustShareFile(fileName)) {
+				return;
+			}
 			update((activities) => {
 				const newActivity: Activity = {
 					id: crypto.randomUUID(),

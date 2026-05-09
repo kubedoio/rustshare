@@ -3,6 +3,7 @@
 	import { getModuleSummary } from '$lib/api/modules';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 	import { formatDistanceToNow } from 'date-fns';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 
 	export let module: ModuleDefinition;
 
@@ -22,11 +23,11 @@
 		<span class="widget-chip">{module.rootPath}</span>
 	</div>
 
-	{#if ($summaryQuery.data?.recent_items.length ?? 0) === 0}
+	{#if (filterUserVisibleEntries($summaryQuery.data?.recent_items ?? []).length ?? 0) === 0}
 		<p class="empty-copy">No notes yet.</p>
 	{:else}
 		<ul class="note-list">
-			{#each $summaryQuery.data?.recent_items.slice(0, widget.maxItems) ?? [] as note}
+			{#each filterUserVisibleEntries($summaryQuery.data?.recent_items ?? []).slice(0, widget.maxItems) as note}
 				<li>
 					<div>
 						<strong>{note.name}</strong>

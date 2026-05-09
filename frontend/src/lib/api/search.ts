@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 
 export interface SearchResultItem {
 	id: string;
@@ -23,8 +24,12 @@ export async function searchResources(
 	const params = new URLSearchParams();
 	params.set('q', query);
 	params.set('limit', String(limit));
-	return apiClient.request<SearchResponse>(`/search?${params.toString()}`, {
+	const response = await apiClient.request<SearchResponse>(`/search?${params.toString()}`, {
 		method: 'GET',
 		signal
 	});
+	return {
+		...response,
+		results: filterUserVisibleEntries(response.results)
+	};
 }

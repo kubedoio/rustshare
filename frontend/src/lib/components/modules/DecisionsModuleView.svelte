@@ -4,7 +4,6 @@
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
-	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { FileText, Plus, Clock, Folder } from 'lucide-svelte';
 
 	import { decisionsApi } from '$lib/api/decisions';

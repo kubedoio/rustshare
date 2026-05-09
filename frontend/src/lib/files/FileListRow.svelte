@@ -24,6 +24,7 @@
 		ChevronRight
 	} from 'lucide-svelte';
 	import { tick } from 'svelte';
+	import { isInternalRustShareFile } from '$lib/utils/artifactVisibility';
 
 	// Props
 	interface Props {
@@ -359,6 +360,9 @@
 	onscroll={handleViewportChange}
 />
 
+{#if isInternalRustShareFile(item.name)}
+	<!-- hidden internal file -->
+{:else}
 <tr
 	class="group cursor-pointer transition-colors hover:bg-base-200/60
 		{selected ? 'bg-brand-500/5' : ''} 
@@ -644,3 +648,4 @@
 	onClose={() => (contextMenuVisible = false)}
 	onAction={handleContextMenuAction}
 />
+{/if}

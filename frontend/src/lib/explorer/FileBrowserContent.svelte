@@ -3,6 +3,7 @@
 	import type { ReplicationStatus } from '$lib/stores/replication';
 	import type { SortField, SortOrder } from '$lib/stores/fileSort';
 	import { viewMode } from '$lib/stores/fileBrowserUi';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import FileList from '$lib/files/FileList.svelte';
 	import FileGrid from '$lib/files/FileGrid.svelte';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
@@ -90,6 +91,8 @@
 	}: Props = $props();
 
 	let effectiveViewMode = $derived(viewModeProp ?? $viewMode ?? 'list');
+	let visibleFolders = $derived(filterUserVisibleEntries(folders));
+	let visibleFiles = $derived(filterUserVisibleEntries(files));
 </script>
 
 <div class="flex-1 overflow-auto px-3 py-3 md:px-4 lg:px-5">
@@ -130,8 +133,8 @@
 		</div>
 	{:else if effectiveViewMode === 'grid'}
 		<FileGrid
-			{folders}
-			{files}
+			folders={visibleFolders}
+			files={visibleFiles}
 			{isSharedRoot}
 			{emptyTitle}
 			{emptyDescription}
@@ -164,8 +167,8 @@
 		/>
 	{:else}
 		<FileList
-			{folders}
-			{files}
+			folders={visibleFolders}
+			files={visibleFiles}
 			{isSharedRoot}
 			{emptyTitle}
 			{emptyDescription}
@@ -202,7 +205,7 @@
 	{/if}
 </div>
 
-{#if !isLoading && !error && (folders.length > 0 || files.length > 0)}
+{#if !isLoading && !error && (visibleFolders.length > 0 || visibleFiles.length > 0)}
 	<div class="border-t border-base-300/50 px-3 py-2 md:px-4 lg:px-5">
 		{@render pagination?.()}
 	</div>

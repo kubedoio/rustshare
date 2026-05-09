@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { activityStore, getActivityDisplay, getRelativeTime } from '$lib/stores/activity';
 	import type { Activity } from '$lib/stores/activity';
+	import { isInternalRustShareFile } from '$lib/utils/artifactVisibility';
 
 	export let maxItems = 10;
 	export let showClearButton = true;
 	export let showHeader = true;
 
-	$: recentActivities = $activityStore.slice(0, maxItems);
+	$: recentActivities = $activityStore.filter((a) => !isInternalRustShareFile(a.fileName)).slice(0, maxItems);
 
 	function handleClearHistory() {
 		if (confirm('Clear all activity history?')) {

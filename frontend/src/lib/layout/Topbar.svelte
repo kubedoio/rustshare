@@ -13,6 +13,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { Bell } from 'lucide-svelte';
 	import { formatFileSize } from '$lib/utils/format';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import GlobalSearch from './topbar/GlobalSearch.svelte';
 	import NewMenuDropdown from './topbar/NewMenuDropdown.svelte';
 	import UserMenuDropdown from './topbar/UserMenuDropdown.svelte';
@@ -118,27 +119,31 @@
 		}
 		searchAbortController = new AbortController();
 
-		searchResources(q, SEARCH_LIMIT, searchAbortController.signal)
-			.then((response) => {
-				const files = response.results
-					.filter((r) => r.resource_type === 'file')
-					.map((r) => ({ id: r.id, name: r.name, path: r.path }));
-				const folders = response.results
-					.filter((r) => r.resource_type === 'folder')
-					.map((r) => ({ id: r.id, name: r.name, path: r.path }));
-				const results = { files, folders };
-				serverSearchResults = results;
-				setCachedSearch(q, results);
-			})
-			.catch((err) => {
-				if (err.name !== 'AbortError') {
-					console.error('Search failed:', err);
-					serverSearchResults = { files: [], folders: [] };
-				}
-			})
-			.finally(() => {
-				searchLoading = false;
-			});
+			searchResources(q, SEARCH_LIMIT, searchAbortController.signal)
+				.then((response) => {
+					const files = filterUserVisibleEntries(
+						response.results
+							.filter((r) => r.resource_type === 'file')
+							.map((r) => ({ id: r.id, name: r.name, path: r.path }))
+					);
+					const folders = filterUserVisibleEntries(
+						response.results
+							.filter((r) => r.resource_type === 'folder')
+							.map((r) => ({ id: r.id, name: r.name, path: r.path }))
+					);
+					const results = { files, folders };
+					serverSearchResults = results;
+					setCachedSearch(q, results);
+				})
+				.catch((err) => {
+					if (err.name !== 'AbortError') {
+						console.error('Search failed:', err);
+						serverSearchResults = { files: [], folders: [] };
+					}
+				})
+				.finally(() => {
+					searchLoading = false;
+				});
 	}
 
 	$: {

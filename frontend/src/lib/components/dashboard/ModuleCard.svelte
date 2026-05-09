@@ -5,6 +5,7 @@
 	import { createQuery } from '$lib/query-compat';
 	import { getModuleSummary } from '$lib/api/modules';
 	import { runModulePrimaryAction } from '$lib/modules/moduleActions';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 
 	export let module: ModuleConfig;
 
@@ -22,7 +23,7 @@
 
 	$: summary = $summaryQuery.data;
 	$: hasSummary = summaryMode !== 'none' && summary && !$summaryQuery.isLoading;
-	$: visibleItems = hasSummary ? summary!.recent_items.slice(0, maxItems) : [];
+	$: visibleItems = hasSummary ? filterUserVisibleEntries(summary!.recent_items).slice(0, maxItems) : [];
 	$: sharesExtra = (summary?.extra ?? {}) as { publicCount?: number; internalCount?: number };
 	$: standupsExtra = (summary?.extra ?? {}) as { todayExists?: boolean };
 	$: kanbanExtra = (summary?.extra ?? {}) as { boards?: Array<{ name: string }> };

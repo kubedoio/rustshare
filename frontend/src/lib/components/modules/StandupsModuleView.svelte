@@ -6,6 +6,7 @@
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import { FileText, Plus, Clock, Folder } from 'lucide-svelte';
 
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
@@ -28,7 +29,7 @@
 	});
 
 	$: contents = $rootFolderQuery.data;
-	$: standups = contents?.files ?? [];
+	$: standups = filterUserVisibleEntries(contents?.files ?? []);
 
 	let showPromptModal = false;
 

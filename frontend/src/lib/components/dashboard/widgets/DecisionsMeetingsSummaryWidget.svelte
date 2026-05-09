@@ -3,6 +3,7 @@
 	import { getModuleSummary } from '$lib/api/modules';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 	import { formatDistanceToNow } from 'date-fns';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 
 	export let module: ModuleDefinition;
 	export let modules: ModuleDefinition[] = [];
@@ -32,11 +33,11 @@
 	<div class="streams">
 		<section>
 			<header>Decisions</header>
-			{#if ($decisionsSummaryQuery.data?.recent_items.length ?? 0) === 0}
+			{#if (filterUserVisibleEntries($decisionsSummaryQuery.data?.recent_items ?? []).length ?? 0) === 0}
 				<p class="empty-copy">No decisions recorded yet.</p>
 			{:else}
 				<ul>
-					{#each $decisionsSummaryQuery.data?.recent_items.slice(0, 2) ?? [] as item}
+					{#each filterUserVisibleEntries($decisionsSummaryQuery.data?.recent_items ?? []).slice(0, 2) as item}
 						<li>
 							<strong>{item.name}</strong>
 							<span>{formatDistanceToNow(new Date(item.updated_at), { addSuffix: true })}</span>
@@ -48,11 +49,11 @@
 
 		<section>
 			<header>Meetings</header>
-			{#if ($meetingsSummaryQuery.data?.recent_items.length ?? 0) === 0}
+			{#if (filterUserVisibleEntries($meetingsSummaryQuery.data?.recent_items ?? []).length ?? 0) === 0}
 				<p class="empty-copy">No meeting notes yet.</p>
 			{:else}
 				<ul>
-					{#each $meetingsSummaryQuery.data?.recent_items.slice(0, 3) ?? [] as item}
+					{#each filterUserVisibleEntries($meetingsSummaryQuery.data?.recent_items ?? []).slice(0, 3) as item}
 						<li>
 							<strong>{item.name}</strong>
 							<span>{formatDistanceToNow(new Date(item.updated_at), { addSuffix: true })}</span>

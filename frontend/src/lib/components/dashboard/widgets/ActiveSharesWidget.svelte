@@ -2,6 +2,7 @@
 	import { createQuery } from '$lib/query-compat';
 	import { getModuleSummary } from '$lib/api/modules';
 	import type { ModuleDefinition } from '$lib/modules/registry';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 
 	export let module: ModuleDefinition;
 
@@ -11,6 +12,7 @@
 		queryFn: () => getModuleSummary(module.key)
 	});
 	$: extra = ($summaryQuery.data?.extra ?? {}) as { publicCount?: number; internalCount?: number };
+	$: visibleItems = filterUserVisibleEntries($summaryQuery.data?.recent_items ?? []);
 </script>
 
 <a class="widget-card widget-link" data-size={widget.size} href={`/modules/${module.key}`}>
@@ -34,7 +36,7 @@
 	</div>
 
 	<ul class="share-list">
-		{#each $summaryQuery.data?.recent_items.slice(0, widget.maxItems) ?? [] as item}
+		{#each visibleItems.slice(0, widget.maxItems) as item}
 			<li>{item.name}</li>
 		{/each}
 	</ul>

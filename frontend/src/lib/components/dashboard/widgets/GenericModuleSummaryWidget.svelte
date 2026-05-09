@@ -3,6 +3,7 @@
 	import { getModuleSummary } from '$lib/api/modules';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 	import { ArrowRight, FileText, Folder } from 'lucide-svelte';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 
 	export let module: ModuleDefinition;
 

@@ -12,6 +12,7 @@
 	} from 'lucide-svelte';
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
 	import type { KanbanCardDetail, KanbanBoard, KanbanAssignee } from '$lib/api/types';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import RichMarkdownEditor from '../../../editor/components/RichMarkdownEditor.svelte';
 
 	interface Props {
@@ -370,9 +371,9 @@
 							</label>
 						</div>
 
-						{#if card.attachments.length > 0}
+						{#if filterUserVisibleEntries(card.attachments).length > 0}
 							<div class="grid grid-cols-1 gap-2">
-								{#each card.attachments as attachment}
+								{#each filterUserVisibleEntries(card.attachments) as attachment}
 									<div class="attachment-item group">
 										<div class="attachment-icon">
 											<FolderIcon size={16} />

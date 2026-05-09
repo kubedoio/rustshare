@@ -18,6 +18,7 @@
 	import { onMount } from 'svelte';
 	import { createQuery, createMutation } from '$lib/query-compat';
 	import { truncateFilename, formatFileSize } from '$lib/utils/format';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import {
 		deleteFile,
 		downloadFile,
@@ -438,8 +439,12 @@
 		return searchTerm.length === 0 || name.toLowerCase().includes(searchTerm);
 	}
 
-	$: baseFolders = ($filesQuery.data?.folders || []).filter((folder) => matchesSearch(folder.name));
-	$: baseFiles = ($filesQuery.data?.files || []).filter((file) => matchesSearch(file.name));
+	$: baseFolders = filterUserVisibleEntries(
+		($filesQuery.data?.folders || []).filter((folder) => matchesSearch(folder.name))
+	);
+	$: baseFiles = filterUserVisibleEntries(
+		($filesQuery.data?.files || []).filter((file) => matchesSearch(file.name))
+	);
 
 	$: filteredFolders =
 		workspaceMode === 'all' || workspaceMode === 'starred' || workspaceMode === 'deleted'

@@ -141,7 +141,6 @@
 								<th>Version</th>
 								<th>Date</th>
 								<th>Size</th>
-								<th>Content Hash</th>
 								<th>Description</th>
 								<th>Action</th>
 							</tr>

@@ -22,6 +22,7 @@
 		Check,
 		X
 	} from 'lucide-svelte';
+	import { isInternalRustShareFile } from '$lib/utils/artifactVisibility';
 
 	// Props
 	interface Props {
@@ -269,6 +270,9 @@
 
 <svelte:window onclick={handleClickOutside} />
 
+{#if isInternalRustShareFile(item.name)}
+	<!-- hidden internal file -->
+{:else}
 <div
 	bind:this={tileRef}
 	role="button"
@@ -557,3 +561,4 @@
 	onClose={() => (contextMenuVisible = false)}
 	onAction={handleContextMenuAction}
 />
+{/if}

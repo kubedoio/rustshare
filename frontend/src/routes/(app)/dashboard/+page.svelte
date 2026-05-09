@@ -3,6 +3,7 @@
 	import DashboardSettingsPanel from '$lib/components/dashboard/DashboardSettingsPanel.svelte';
 	import DashboardSkeleton from '$lib/components/common/DashboardSkeleton.svelte';
 	import { listAllFiles } from '$lib/api/files';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import { currentUser } from '$lib/stores/auth';
 	import { createQuery } from '$lib/query-compat';
 	import { Settings } from 'lucide-svelte';
@@ -39,7 +40,7 @@
 	$: dashboardConfig.hydrate(dashboardModules);
 	$: visibleModules = getVisibleModules(dashboardModules, $dashboardConfig);
 	$: sharedFiles = $sharedFilesQuery.data ?? [];
-	$: totalFilesCount = $allFilesQuery.data?.length ?? 0;
+	$: totalFilesCount = filterUserVisibleEntries($allFilesQuery.data ?? []).length;
 </script>
 
 <svelte:head>

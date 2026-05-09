@@ -9,6 +9,7 @@
 	import { Folder, FileText, Plus } from 'lucide-svelte';
 
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
 	export let module: ModuleDefinition;
@@ -19,6 +20,8 @@
 	});
 
 	$: contents = $folderContentsQuery.data;
+	$: visibleFolders = filterUserVisibleEntries(contents?.folders ?? []);
+	$: visibleFiles = filterUserVisibleEntries(contents?.files ?? []);
 
 	let showPromptModal = false;
 	let templateError = '';
@@ -93,7 +96,7 @@
 			<div class="flex h-32 items-center justify-center">
 				<div class="loading loading-md loading-spinner text-brand-500"></div>
 			</div>
-		{:else if !contents || (contents.folders?.length === 0 && contents.files?.length === 0)}
+		{:else if visibleFolders.length === 0 && visibleFiles.length === 0}
 			<EmptyState
 				icon={Folder}
 				title={emptyTitle}
@@ -103,7 +106,7 @@
 			/>
 		{:else if isGallery}
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-				{#each contents.folders ?? [] as folder}
+				{#each visibleFolders as folder}
 					<a
 						href="/files?folder={folder.id}"
 						class="group flex flex-col gap-3 rounded-xl border border-base-300/40 p-4 transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
@@ -118,7 +121,7 @@
 					</a>
 				{/each}
 
-				{#each contents.files ?? [] as file}
+				{#each visibleFiles as file}
 					<a
 						href="/files?preview={file.id}"
 						class="group flex flex-col gap-3 rounded-xl border border-base-300/40 p-4 transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
@@ -137,11 +140,11 @@
 			</div>
 		{:else}
 			<div class="flex flex-col gap-2">
-				{#if contents.folders?.length > 0}
+				{#if visibleFolders.length > 0}
 					<div class="mb-2 text-xs font-semibold tracking-wider text-base-content/40 uppercase">
 						Folders
 					</div>
-					{#each contents.folders as folder}
+					{#each visibleFolders as folder}
 						<a
 							href="/files?folder={folder.id}"
 							class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
@@ -157,13 +160,13 @@
 					{/each}
 				{/if}
 
-				{#if contents.files?.length > 0}
+				{#if visibleFiles.length > 0}
 					<div
 						class="mt-4 mb-2 text-xs font-semibold tracking-wider text-base-content/40 uppercase"
 					>
 						Files
 					</div>
-					{#each contents.files as file}
+					{#each visibleFiles as file}
 						<a
 							href="/files?preview={file.id}"
 							class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
