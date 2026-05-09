@@ -17,7 +17,7 @@
 
 	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No meetings yet';
 	$: emptyDescription =
-		module.ui.page.emptyStateDescription ?? 'Create your first meeting note to get started.';
+		module.ui.page.emptyStateDescription ?? 'Create your first meeting to get started.';
 	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Meeting';
 
 	// Fetch meetings via module service
@@ -79,9 +79,13 @@
 	</div>
 
 	<div class="flex flex-col gap-4">
-		{#if meetings.length === 0}
+		{#if $meetingsQuery.isLoading}
+			<div class="flex h-32 items-center justify-center">
+				<div class="loading loading-md loading-spinner text-brand-500"></div>
+			</div>
+		{:else if meetings.length === 0}
 			<EmptyState
-				icon={Folder}
+				icon={"📅"}
 				title={emptyTitle}
 				description={emptyDescription}
 				actionLabel={emptyAction}

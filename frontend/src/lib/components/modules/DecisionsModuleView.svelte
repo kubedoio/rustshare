@@ -17,7 +17,7 @@
 
 	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No decisions yet';
 	$: emptyDescription =
-		module.ui.page.emptyStateDescription ?? 'Record your first decision to get started.';
+		module.ui.page.emptyStateDescription ?? 'Create your first decision to get started.';
 	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Decision';
 
 	// Fetch decisions via module service
@@ -78,9 +78,13 @@
 	</div>
 
 	<div class="flex flex-col gap-4">
-		{#if decisions.length === 0}
+		{#if $decisionsQuery.isLoading}
+			<div class="flex h-32 items-center justify-center">
+				<div class="loading loading-md loading-spinner text-brand-500"></div>
+			</div>
+		{:else if decisions.length === 0}
 			<EmptyState
-				icon={FileText}
+				icon={"✅"}
 				title={emptyTitle}
 				description={emptyDescription}
 				actionLabel={emptyAction}

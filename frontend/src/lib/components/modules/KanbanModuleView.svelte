@@ -150,7 +150,7 @@
 
 	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No boards yet');
 	let emptyDescription = $derived(
-		module.ui.page.emptyStateDescription ?? 'Create your first file-backed board.'
+		module.ui.page.emptyStateDescription ?? 'Create your first board to get started.'
 	);
 	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New Board');
 
@@ -752,7 +752,7 @@
 			</button>
 		</div>
 		<EmptyState
-			icon={FolderIcon}
+			icon={"📋"}
 			title={emptyTitle}
 			description={emptyDescription}
 			actionLabel={emptyAction}

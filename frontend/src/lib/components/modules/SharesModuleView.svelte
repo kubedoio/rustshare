@@ -13,7 +13,7 @@
 
 	export let module: ModuleDefinition;
 
-	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No shares yet';
+	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No share packages yet';
 	$: emptyDescription =
 		module.ui.page.emptyStateDescription ?? 'Create your first share package to get started.';
 	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Share';
@@ -84,9 +84,13 @@
 	</div>
 
 	<div class="flex flex-col gap-4">
-		{#if sharePackages.length === 0 && contents?.files?.length === 0}
+		{#if $rootFolderQuery.isLoading}
+			<div class="flex h-32 items-center justify-center">
+				<div class="loading loading-md loading-spinner text-brand-500"></div>
+			</div>
+		{:else if sharePackages.length === 0 && contents?.files?.length === 0}
 			<EmptyState
-				icon={Folder}
+				icon={"🔗"}
 				title={emptyTitle}
 				description={emptyDescription}
 				actionLabel={emptyAction}

@@ -43,6 +43,7 @@
 	let isLoadingEditor = $state(true);
 	let editorError = $state<string | null>(null);
 	let editorInitialized = $state(false);
+	let reactRoot: any = null;
 
 	// -------------------------------------------------------------------------
 	// Mutations
@@ -112,8 +113,8 @@
 					}
 				});
 
-			const root = ReactDOM.createRoot(excalidrawContainer);
-			root.render(React.createElement(App));
+			reactRoot = ReactDOM.createRoot(excalidrawContainer);
+			reactRoot.render(React.createElement(App));
 			editorInitialized = true;
 			isLoadingEditor = false;
 		} catch (err) {
@@ -167,11 +168,21 @@
 		const excalidrawModule = await import('@excalidraw/excalidraw');
 		const { exportToBlob } = excalidrawModule;
 
-		const blob = await exportToBlob({
-			elements: excalidrawInstance.getSceneElements(),
-			appState: excalidrawInstance.getAppState(),
-			files: excalidrawInstance.getFiles(),
-			mimeType: 'image/png'
+		// Defer to avoid blocking the main thread / save response
+		const blob = await new Promise<Blob>((resolve, reject) => {
+			setTimeout(async () => {
+				try {
+					const result = await exportToBlob({
+						elements: excalidrawInstance.getSceneElements(),
+						appState: excalidrawInstance.getAppState(),
+						files: excalidrawInstance.getFiles(),
+						mimeType: 'image/png'
+					});
+					resolve(result);
+				} catch (err) {
+					reject(err);
+				}
+			}, 0);
 		});
 
 		await updateBrainstormBoardPreview(boardId, blob);
@@ -196,9 +207,25 @@
 		}
 	});
 
+	function handleBeforeUnload(event: BeforeUnloadEvent) {
+		if (hasChanges && !isSaving) {
+			event.preventDefault();
+			event.returnValue = '';
+		}
+	}
+
+	onMount(() => {
+		window.addEventListener('beforeunload', handleBeforeUnload);
+	});
+
 	onDestroy(() => {
+		window.removeEventListener('beforeunload', handleBeforeUnload);
 		if (autoSaveTimer) {
 			clearTimeout(autoSaveTimer);
+		}
+		if (reactRoot) {
+			reactRoot.unmount();
+			reactRoot = null;
 		}
 		if (excalidrawContainer) {
 			excalidrawContainer.innerHTML = '';

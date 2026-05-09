@@ -73,7 +73,7 @@
 			</div>
 		{:else if recentNotes.length === 0}
 			<EmptyState
-				icon={FileText}
+				icon={"📝"}
 				title={emptyTitle}
 				description={emptyDescription}
 				actionLabel={emptyAction}

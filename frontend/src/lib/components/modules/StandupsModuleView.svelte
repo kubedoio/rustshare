@@ -15,9 +15,9 @@
 
 	$: isGallery = module.ui.page.layout === 'gallery-grid';
 
-	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No standups yet';
+	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No standup records yet';
 	$: emptyDescription =
-		module.ui.page.emptyStateDescription ?? 'Create your first standup record to get started.';
+		module.ui.page.emptyStateDescription ?? 'Create your first standup to get started.';
 	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Standup';
 
 	// Fetch module root folder contents
@@ -86,9 +86,13 @@
 	</div>
 
 	<div class="flex flex-col gap-4">
-		{#if standups.length === 0 && contents?.folders?.length === 0}
+		{#if $rootFolderQuery.isLoading}
+			<div class="flex h-32 items-center justify-center">
+				<div class="loading loading-md loading-spinner text-brand-500"></div>
+			</div>
+		{:else if standups.length === 0 && contents?.folders?.length === 0}
 			<EmptyState
-				icon={FileText}
+				icon={"📊"}
 				title={emptyTitle}
 				description={emptyDescription}
 				actionLabel={emptyAction}

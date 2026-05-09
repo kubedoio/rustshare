@@ -26,9 +26,9 @@
 	let selectedTemplate = $state('template_blank_brainstorm');
 	let createError = $state('');
 
-	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No brainstorming boards yet');
+	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No boards yet');
 	let emptyDescription = $derived(
-		module.ui.page.emptyStateDescription ?? 'Create your first visual decision board.'
+		module.ui.page.emptyStateDescription ?? 'Create your first brainstorming board to get started.'
 	);
 	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New Board');
 
@@ -107,7 +107,7 @@
 			</div>
 		{:else if ($boardsQuery.data ?? []).length === 0}
 			<EmptyState
-				icon={PenTool}
+				icon={"💡"}
 				title={emptyTitle}
 				description={emptyDescription}
 				actionLabel={emptyAction}

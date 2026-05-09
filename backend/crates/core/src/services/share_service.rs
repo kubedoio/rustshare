@@ -317,12 +317,20 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     ) -> Result<Share, ShareError> {
         let folder = self
             .metadata_store
-            .find_folder_by_id(folder_id, user_id)
+            .find_folder_by_id_unchecked(folder_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FolderNotFound(folder_id))?;
 
-        if folder.owner_id != user_id {
+        let is_owner = folder.owner_id == user_id;
+        let has_admin = if is_owner {
+            true
+        } else {
+            self.check_resource_permission(user_id, Resource::Folder(folder_id), SharePermissions::Admin)
+                .await?
+        };
+
+        if !has_admin {
             return Err(ShareError::PermissionDenied {
                 file_id: folder_id,
                 user_id,
@@ -481,29 +489,37 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
-        let owner_id = if let Some(file_id) = share.file_id {
+        // Determine resource and check permission using the same pattern as create_group_share
+        let (resource, is_owner) = if let Some(file_id) = share.file_id {
             let file = self
                 .metadata_store
-                .find_file_by_id(file_id, user_id)
+                .find_file_by_id_unchecked(file_id)
                 .await
                 .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FileNotFound(file_id))?;
-            file.owner_id
+            (Resource::File(file_id), file.owner_id == user_id)
         } else if let Some(folder_id) = share.folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id, user_id)
+                .find_folder_by_id_unchecked(folder_id)
                 .await
                 .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
-            folder.owner_id
+            (Resource::Folder(folder_id), folder.owner_id == user_id)
         } else {
             return Err(ShareError::InvalidState(
                 "share has no associated resource".to_string(),
             ));
         };
 
-        if owner_id != user_id {
+        let has_admin = if is_owner {
+            true
+        } else {
+            self.check_resource_permission(user_id, resource, SharePermissions::Admin)
+                .await?
+        };
+
+        if !has_admin {
             return Err(ShareError::PermissionDenied {
                 file_id: share.resource_id().unwrap_or(share.id),
                 user_id,
@@ -562,29 +578,37 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
-        let owner_id = if let Some(file_id) = share.file_id {
+        // Determine resource and check permission using the same pattern as create_group_share
+        let (resource, is_owner) = if let Some(file_id) = share.file_id {
             let file = self
                 .metadata_store
-                .find_file_by_id(file_id, user_id)
+                .find_file_by_id_unchecked(file_id)
                 .await
                 .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FileNotFound(file_id))?;
-            file.owner_id
+            (Resource::File(file_id), file.owner_id == user_id)
         } else if let Some(folder_id) = share.folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id, user_id)
+                .find_folder_by_id_unchecked(folder_id)
                 .await
                 .map_err(|e| ShareError::Database(e.to_string()))?
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
-            folder.owner_id
+            (Resource::Folder(folder_id), folder.owner_id == user_id)
         } else {
             return Err(ShareError::InvalidState(
                 "share has no associated resource".to_string(),
             ));
         };
 
-        if owner_id != user_id {
+        let has_admin = if is_owner {
+            true
+        } else {
+            self.check_resource_permission(user_id, resource, SharePermissions::Admin)
+                .await?
+        };
+
+        if !has_admin {
             return Err(ShareError::PermissionDenied {
                 file_id: share.resource_id().unwrap_or(share.id),
                 user_id,
@@ -650,16 +674,24 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         file_id: uuid::Uuid,
         user_id: UserId,
     ) -> Result<Vec<Share>, ShareError> {
-        // Get file to verify ownership
+        // Get file to verify it exists
         let file = self
             .metadata_store
-            .find_file_by_id(file_id, user_id)
+            .find_file_by_id_unchecked(file_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FileNotFound(file_id))?;
 
-        // Check user owns file
-        if file.owner_id != user_id {
+        // Check user owns file or has admin permission
+        let is_owner = file.owner_id == user_id;
+        let has_admin = if is_owner {
+            true
+        } else {
+            self.check_resource_permission(user_id, Resource::File(file_id), SharePermissions::Admin)
+                .await?
+        };
+
+        if !has_admin {
             return Err(ShareError::PermissionDenied { file_id, user_id });
         }
 
@@ -678,12 +710,20 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     ) -> Result<Vec<Share>, ShareError> {
         let folder = self
             .metadata_store
-            .find_folder_by_id(folder_id, user_id)
+            .find_folder_by_id_unchecked(folder_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FolderNotFound(folder_id))?;
 
-        if folder.owner_id != user_id {
+        let is_owner = folder.owner_id == user_id;
+        let has_admin = if is_owner {
+            true
+        } else {
+            self.check_resource_permission(user_id, Resource::Folder(folder_id), SharePermissions::Admin)
+                .await?
+        };
+
+        if !has_admin {
             return Err(ShareError::PermissionDenied {
                 file_id: folder_id,
                 user_id,

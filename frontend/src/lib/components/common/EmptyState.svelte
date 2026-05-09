@@ -2,7 +2,7 @@
 	import type { Component, ComponentType } from 'svelte';
 
 	interface Props {
-		icon: ComponentType | Component;
+		icon: ComponentType | Component | string;
 		title: string;
 		description?: string;
 		actionLabel?: string;
@@ -13,9 +13,13 @@
 </script>
 
 <div class="flex flex-col items-center justify-center py-16 text-center">
-	<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-base-200">
-		<Icon size={48} class="text-base-content/30" />
-	</div>
+	{#if typeof Icon === 'string'}
+		<div class="mb-4 text-4xl opacity-40">{Icon}</div>
+	{:else}
+		<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-base-200">
+			<Icon size={48} class="text-base-content/30" />
+		</div>
+	{/if}
 	<h3 class="text-title-md mb-1 font-semibold text-base-content">{title}</h3>
 	{#if description}
 		<p class="mb-4 text-body-sm text-base-content/60">{description}</p>
