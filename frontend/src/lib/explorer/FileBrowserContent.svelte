@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { File as FileType, Folder } from '$lib/api/types';
-	import type { ReplicationStatus } from '$lib/stores/replication';
+	
 	import type { SortField, SortOrder } from '$lib/stores/fileSort';
 	import { viewMode } from '$lib/stores/fileBrowserUi';
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
@@ -21,7 +21,7 @@
 		emptyTitle?: string;
 		emptyDescription?: string;
 		emptyActionLabel?: string | null;
-		replicationStatuses?: Record<string, ReplicationStatus>;
+	
 		selectionMode?: boolean;
 		activeSortField?: SortField;
 		activeSortOrder?: SortOrder;
@@ -61,7 +61,7 @@
 		emptyTitle = 'No files yet',
 		emptyDescription = 'Upload your first file to get started',
 		emptyActionLabel = 'Upload files',
-		replicationStatuses = {},
+	
 		selectionMode = false,
 		activeSortField = 'name',
 		activeSortOrder = 'asc',
@@ -91,8 +91,8 @@
 	}: Props = $props();
 
 	let effectiveViewMode = $derived(viewModeProp ?? $viewMode ?? 'list');
-	let visibleFolders = $derived(filterUserVisibleEntries(folders));
-	let visibleFiles = $derived(filterUserVisibleEntries(files));
+	let visibleFolders = $derived(folders);
+	let visibleFiles = $derived(files);
 </script>
 
 <div class="flex-1 overflow-auto px-3 py-3 md:px-4 lg:px-5">
@@ -140,7 +140,7 @@
 			{emptyDescription}
 			{emptyActionLabel}
 			{workspaceMode}
-			{replicationStatuses}
+
 			{selectionMode}
 			{onFolderClick}
 			{onFileClick}
@@ -174,7 +174,7 @@
 			{emptyDescription}
 			{emptyActionLabel}
 			{workspaceMode}
-			{replicationStatuses}
+
 			{selectionMode}
 			{activeSortField}
 			{activeSortOrder}

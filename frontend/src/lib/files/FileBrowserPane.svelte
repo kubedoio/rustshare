@@ -26,7 +26,7 @@
 		allowSelectionMode?: boolean;
 		isLoading?: boolean;
 		error?: Error | null;
-		replicationStatuses?: Record<string, ReplicationStatus>;
+	
 		selectionMode?: boolean;
 		isSharedRoot?: boolean;
 		isUploading?: boolean;
@@ -88,7 +88,7 @@
 		allowSelectionMode = true,
 		isLoading = false,
 		error = null,
-		replicationStatuses = {},
+	
 		selectionMode = false,
 		isUploading = false,
 		activeSortField = 'name',
@@ -208,7 +208,7 @@
 				{emptyDescription}
 				{emptyActionLabel}
 				{workspaceMode}
-				{replicationStatuses}
+	
 				{selectionMode}
 				{onFolderClick}
 				{onFileClick}
@@ -242,7 +242,7 @@
 				{emptyDescription}
 				{emptyActionLabel}
 				{workspaceMode}
-				{replicationStatuses}
+	
 				{selectionMode}
 				{activeSortField}
 				{activeSortOrder}

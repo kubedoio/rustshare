@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { File as FileType, Folder } from '$lib/api/types';
-	import type { ReplicationStatus } from '$lib/stores/replication';
+	
 	import FilePreview from './FilePreview.svelte';
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
 	import FileContextMenu from '$lib/explorer/FileContextMenu.svelte';
@@ -32,7 +32,7 @@
 		isSharedRoot?: boolean;
 		selected?: boolean;
 		selectionMode?: boolean;
-		replicationStatus?: ReplicationStatus | null;
+
 		isDragging?: boolean;
 		isDropTarget?: boolean;
 		onSelect?: (e?: MouseEvent) => void;
@@ -62,7 +62,7 @@
 		isSharedRoot = false,
 		selected = false,
 		selectionMode = false,
-		replicationStatus = null,
+
 		isDragging = false,
 		isDropTarget = false,
 		onSelect = () => {},

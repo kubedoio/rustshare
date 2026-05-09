@@ -3,6 +3,7 @@ export const INTERNAL_RUSTSHARE_FILES = [
 	'.rustshare-board.json',
 	'.rustshare-column.json',
 	'.rustshare-card.json',
+	'.rustshare-share.json',
 	'events.jsonl',
 	'index.md',
 	'__primary__.md',

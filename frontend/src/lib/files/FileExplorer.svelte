@@ -22,7 +22,7 @@
 		allowSelectionMode?: boolean;
 		isLoading?: boolean;
 		error?: Error | null;
-		replicationStatuses?: Record<string, ReplicationStatus>;
+	
 		selectionMode?: boolean;
 		isUploading?: boolean;
 		isSharedRoot?: boolean;
@@ -83,7 +83,7 @@
 		allowSelectionMode = true,
 		isLoading = false,
 		error = null,
-		replicationStatuses = {},
+	
 		selectionMode = false,
 		isUploading = false,
 		isSharedRoot = false,
@@ -144,7 +144,7 @@
 			{allowSelectionMode}
 			{isLoading}
 			{error}
-			{replicationStatuses}
+
 			{selectionMode}
 			{isUploading}
 			{isSharedRoot}

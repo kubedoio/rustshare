@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { File as FileType, Folder } from '$lib/api/types';
-	import type { ReplicationStatus } from '$lib/stores/replication';
+	
 	import { selectionStore } from '$lib/stores/selection';
 	import FileGridTile from './FileGridTile.svelte';
 
@@ -31,7 +31,7 @@
 	export let onReplaceFile: (file: FileType) => void = () => {};
 	export let onEditFile: (file: FileType) => void = () => {};
 	export let selectionMode = false;
-	export let replicationStatuses: Record<string, ReplicationStatus> = {};
+
 	export let isSharedRoot = false;
 
 	// Drag and drop state
@@ -235,7 +235,7 @@
 				{workspaceMode}
 				selected={selectionMode && $selectionStore.selectedFileIds.has(file.id)}
 				{selectionMode}
-				replicationStatus={replicationStatuses[file.id]}
+
 				isDragging={draggedItem?.id === file.id}
 				onSelect={() => onFileClick(file)}
 				onToggle={(e) => handleFileToggle(file, e)}

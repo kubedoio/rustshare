@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { File as FileType, Folder } from '$lib/api/types';
-	import type { ReplicationStatus } from '$lib/stores/replication';
+	
 	import type { SortField, SortOrder } from '$lib/stores/fileSort';
 	import { selectionStore } from '$lib/stores/selection';
 	import SortableTableHeader from '$lib/components/common/SortableTableHeader.svelte';
@@ -37,7 +37,7 @@
 	export let onReplaceFile: (file: FileType) => void = () => {};
 	export let onEditFile: (file: FileType) => void = () => {};
 	export let selectionMode = false;
-	export let replicationStatuses: Record<string, ReplicationStatus> = {};
+
 	export let activeSortField: SortField = 'name';
 	export let activeSortOrder: SortOrder = 'asc';
 	export let onSort: (field: SortField) => void = () => {};
@@ -241,10 +241,6 @@
 						{onSort}
 						class="hidden lg:table-cell"
 					/>
-					<th
-						class="hidden px-4 py-2 text-left text-meta font-semibold tracking-wider text-base-content/60 uppercase xl:table-cell"
-						>Status</th
-					>
 					<th class="w-10 px-4 py-2"></th>
 				</tr>
 			</thead>
@@ -292,7 +288,7 @@
 						{workspaceMode}
 						{selectionMode}
 						selected={$selectionStore.selectedFileIds.has(file.id)}
-						replicationStatus={replicationStatuses[file.id]}
+
 						isDragging={draggedItem?.id === file.id}
 						onSelect={(e) => (selectionMode ? handleFileToggle(file, e) : onFileClick(file))}
 						onToggleSelect={() => handleFileToggle(file)}

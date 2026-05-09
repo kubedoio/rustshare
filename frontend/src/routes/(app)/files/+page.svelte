@@ -57,7 +57,7 @@
 	import { fileSortState, setSortField, setPageSize } from '$lib/stores/fileSort';
 	import { selectionStore, selectionCount, hasSelection } from '$lib/stores/selection';
 	import { activityStore } from '$lib/stores/activity';
-	import { replicationStore, type ReplicationStatus } from '$lib/stores/replication';
+	
 	import { folderTreeStore } from '$lib/stores/folderTree';
 	import type { File, Folder, FolderContents as ApiFolderContents } from '$lib/api/types';
 	import { page } from '$app/stores';
@@ -381,7 +381,7 @@
 				: 'Folders shared with you by other users.'
 			: currentFolderId
 				? 'Folder contents.'
-				: 'Folders and files, tuned for quick scanning instead of dashboard theater.';
+				: 'Browse and organize files, folders, and workspace artifacts.';
 
 	$: workspaceEmptyTitle = isCollectionMode
 		? workspaceMode === 'photos'
@@ -405,7 +405,7 @@
 					: 'Deleting a folder or file moves it here instead of removing it immediately.'
 		: activeRoot === 'shared'
 			? 'Items shared with you will appear here.'
-			: 'Upload your first file or create a folder to get started.';
+			: 'This folder is empty. Upload a file or create a folder to start organizing your workspace.';
 
 	$: workspaceEmptyActionLabel =
 		!isCollectionMode && activeRoot === 'my-files' ? 'Upload files' : null;
@@ -1562,7 +1562,7 @@
 		moveType === 'file'
 			? (moveTarget as File | null)?.parent_folder_id
 			: (moveTarget as Folder | null)?.parent_folder_id;
-	$: replicationStatuses = $replicationStore;
+
 </script>
 
 <svelte:head>
@@ -1663,7 +1663,7 @@
 			emptyTitle={workspaceEmptyTitle}
 			emptyDescription={workspaceEmptyDescription}
 			emptyActionLabel={workspaceEmptyActionLabel}
-			{replicationStatuses}
+
 			{selectionMode}
 			activeSortField={$fileSortState.field}
 			activeSortOrder={$fileSortState.order}

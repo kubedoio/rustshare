@@ -1,13 +1,11 @@
 <script lang="ts">
 	import type { File as FileType, Folder } from '$lib/api/types';
-	import type { ReplicationStatus } from '$lib/stores/replication';
-	import { formatFileSize, formatDate, getFileTypeLabel } from '$lib/utils/format';
+		import { formatFileSize, formatDate, getFileTypeLabel } from '$lib/utils/format';
 	import { detectEditorType, canEditFileSize } from '$lib/utils/editor';
 	import FilePreview from './FilePreview.svelte';
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
 	import FileContextMenu from '$lib/explorer/FileContextMenu.svelte';
-	import { replicationStateBadgeClass, formatReplicationStateLabel } from '$lib/stores/replication';
-	import {
+		import {
 		MoveVertical as MoreVertical,
 		CreditCard as Edit,
 		CreditCard as Edit3,
@@ -34,7 +32,6 @@
 		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
 		selectionMode?: boolean;
 		selected?: boolean;
-		replicationStatus?: ReplicationStatus | null;
 		isDragging?: boolean;
 		isDropTarget?: boolean;
 		canDrop?: boolean;
@@ -66,7 +63,6 @@
 		workspaceMode = 'all',
 		selectionMode = false,
 		selected = false,
-		replicationStatus = null,
 		isDragging = false,
 		isDropTarget = false,
 		canDrop = true,
@@ -484,18 +480,7 @@
 		<span class="font-data text-meta text-base-content/50">{displayDate}</span>
 	</td>
 
-	<!-- Replication Status (hidden on smaller screens) -->
-	<td class="hidden w-28 px-3 py-0.5 xl:table-cell">
-		{#if !isFolder && replicationStatus}
-			<span
-				class="inline-flex items-center rounded px-1.5 py-0.5 text-2xs font-medium {replicationStateBadgeClass(
-					replicationStatus.replicationState
-				)}"
-			>
-				{formatReplicationStateLabel(replicationStatus.replicationState)}
-			</span>
-		{/if}
-	</td>
+
 
 	<!-- Actions -->
 	<td class="w-12 px-3 py-0.5">
