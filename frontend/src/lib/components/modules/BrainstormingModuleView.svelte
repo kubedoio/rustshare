@@ -5,6 +5,7 @@
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
+	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 	import { PenTool, Plus, Clock, ImageOff, Folder } from 'lucide-svelte';
@@ -25,6 +26,8 @@
 	let newBoardTitle = $state('');
 	let selectedTemplate = $state('template_blank_brainstorm');
 	let createError = $state('');
+	let showDuplicateConfirm = $state(false);
+	let pendingTitle = $state('');
 	let brokenPreviews = $state(new Set<string>());
 
 	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No boards yet');
@@ -63,7 +66,22 @@
 			createError = 'Title is required';
 			return;
 		}
+
+		const boards = $boardsQuery.data ?? [];
+		const exists = boards.some((b) => b.title?.toLowerCase() === title.toLowerCase());
+		if (exists) {
+			pendingTitle = title;
+			showDuplicateConfirm = true;
+			return;
+		}
+
 		createBoardMutation.mutate({ title, templateKey: selectedTemplate });
+	}
+
+	function handleDuplicateProceed() {
+		showDuplicateConfirm = false;
+		createBoardMutation.mutate({ title: pendingTitle, templateKey: selectedTemplate });
+		pendingTitle = '';
 	}
 
 	async function handleOpenInFiles() {
@@ -261,3 +279,15 @@
 		</div>
 	</div>
 </ModalBase>
+
+<ConfirmModal
+	open={showDuplicateConfirm}
+	title="Duplicate Name"
+	message={`A board named "${pendingTitle}" already exists. Create anyway?`}
+	confirmLabel="Create Anyway"
+	onConfirm={handleDuplicateProceed}
+	onCancel={() => {
+		showDuplicateConfirm = false;
+		pendingTitle = '';
+	}}
+/>

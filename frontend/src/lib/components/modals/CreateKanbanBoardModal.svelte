@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
+	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 	import { createKanbanBoard } from '$lib/api/kanban';
 	import { createFromTemplate } from '$lib/api/modules';
 	import { createMutation, useQueryClient } from '$lib/query-compat';
@@ -10,13 +11,15 @@
 		onClose: () => void;
 		onSuccess: (boardId: string) => void;
 		defaultTemplate: string | null;
+		existingNames?: string[];
 	}
 
-	let { open, onClose, onSuccess, defaultTemplate }: Props = $props();
+	let { open, onClose, onSuccess, defaultTemplate, existingNames = [] }: Props = $props();
 
 	let boardName = $state('');
 	let isSubmitting = $state(false);
 	let error = $state('');
+	let showDuplicateConfirm = $state(false);
 
 	let inputElement: HTMLInputElement;
 
@@ -35,7 +38,19 @@
 	const queryClient = useQueryClient();
 
 	async function handleSubmit() {
-		if (!boardName.trim()) return;
+		const trimmed = boardName.trim();
+		if (!trimmed) return;
+
+		const exists = existingNames.some((n) => n.toLowerCase() === trimmed.toLowerCase());
+		if (exists) {
+			showDuplicateConfirm = true;
+			return;
+		}
+
+		await doCreate(trimmed);
+	}
+
+	async function doCreate(name: string) {
 		isSubmitting = true;
 		error = '';
 
@@ -44,12 +59,12 @@
 			if (defaultTemplate) {
 				const result = await createFromTemplate({
 					template_key: defaultTemplate,
-					name: boardName.trim(),
+					name,
 					parent_folder_id: null
 				});
 				boardId = result.object_id;
 			} else {
-				const result = await createKanbanBoard(boardName.trim());
+				const result = await createKanbanBoard(name);
 				boardId = result.id;
 			}
 
@@ -62,6 +77,11 @@
 		} finally {
 			isSubmitting = false;
 		}
+	}
+
+	function handleDuplicateProceed() {
+		showDuplicateConfirm = false;
+		doCreate(boardName.trim());
 	}
 </script>
 
@@ -112,3 +132,14 @@
 		</div>
 	</form>
 </ModalBase>
+
+<ConfirmModal
+	open={showDuplicateConfirm}
+	title="Duplicate Name"
+	message={`A board named "${boardName.trim()}" already exists. Create anyway?`}
+	confirmLabel="Create Anyway"
+	onConfirm={handleDuplicateProceed}
+	onCancel={() => {
+		showDuplicateConfirm = false;
+	}}
+/>

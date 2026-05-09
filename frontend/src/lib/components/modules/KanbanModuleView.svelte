@@ -847,6 +847,7 @@
 	onClose={() => (showCreateBoardModal = false)}
 	onSuccess={handleBoardCreated}
 	defaultTemplate={module.defaultTemplate}
+	existingNames={($boardsQuery.data ?? []).map((b) => b.title)}
 />
 
 <PromptModal

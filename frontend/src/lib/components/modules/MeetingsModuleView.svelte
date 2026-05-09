@@ -4,6 +4,7 @@
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
+	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 	import { Folder, Plus, Clock } from 'lucide-svelte';
 
 	import { meetingsApi } from '$lib/api/meetings';
@@ -28,9 +29,27 @@
 	$: meetings = $meetingsQuery.data ?? [];
 
 	let showPromptModal = false;
+	let createError = '';
+	let showDuplicateConfirm = false;
+	let pendingTitle = '';
 
 	async function handleCreateMeetingConfirm(title: string) {
-		showPromptModal = false;
+		const trimmed = title.trim();
+		if (!trimmed) return;
+
+		createError = '';
+
+		const exists = meetings.some((m) => m.name?.toLowerCase() === trimmed.toLowerCase());
+		if (exists) {
+			pendingTitle = trimmed;
+			showDuplicateConfirm = true;
+			return;
+		}
+
+		await doCreateMeeting(trimmed);
+	}
+
+	async function doCreateMeeting(title: string) {
 		try {
 			const result = await meetingsApi.create({
 				title,
@@ -38,15 +57,24 @@
 				date: new Date().toISOString(),
 				content: '# ' + title + '\n\n'
 			});
+			showPromptModal = false;
+			createError = '';
 			goto(`/modules/${module.key}/${result.id}`);
 			$meetingsQuery.refetch();
 		} catch (err) {
 			console.error('Failed to create meeting:', err);
+			createError = err instanceof Error ? err.message : 'Failed to create meeting';
 		}
+	}
+
+	async function handleDuplicateProceed() {
+		showDuplicateConfirm = false;
+		await doCreateMeeting(pendingTitle);
 	}
 
 	function handleCreateMeeting() {
 		showPromptModal = true;
+		createError = '';
 	}
 
 	async function handleOpenInFiles() {
@@ -145,6 +173,22 @@
 	title="New Meeting"
 	message="Enter a title for the new meeting:"
 	confirmLabel="Create"
+	error={createError}
 	onConfirm={handleCreateMeetingConfirm}
-	onCancel={() => (showPromptModal = false)}
+	onCancel={() => {
+		showPromptModal = false;
+		createError = '';
+	}}
+/>
+
+<ConfirmModal
+	open={showDuplicateConfirm}
+	title="Duplicate Name"
+	message={`A meeting named "${pendingTitle}" already exists. Create anyway?`}
+	confirmLabel="Create Anyway"
+	onConfirm={handleDuplicateProceed}
+	onCancel={() => {
+		showDuplicateConfirm = false;
+		pendingTitle = '';
+	}}
 />

@@ -5,6 +5,7 @@
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
+	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import { FileText, Plus, Clock, Folder } from 'lucide-svelte';
@@ -32,26 +33,55 @@
 	$: standups = filterUserVisibleEntries(contents?.files ?? []);
 
 	let showPromptModal = false;
+	let createError = '';
+	let showDuplicateConfirm = false;
+	let pendingName = '';
 
 	async function handleCreateStandupConfirm(name: string) {
-		showPromptModal = false;
+		const trimmed = name.trim();
+		if (!trimmed) return;
 		if (!module.defaultTemplate) return;
+
+		createError = '';
+
+		const exists = standups.some((s) => s.name?.toLowerCase() === trimmed.toLowerCase());
+		if (exists) {
+			pendingName = trimmed;
+			showDuplicateConfirm = true;
+			return;
+		}
+
+		await doCreateStandup(trimmed);
+	}
+
+	async function doCreateStandup(name: string) {
+		const template = module.defaultTemplate;
+		if (!template) return;
 		try {
 			const result = await createFromTemplate({
-				template_key: module.defaultTemplate,
+				template_key: template,
 				name,
 				parent_folder_id: null
 			});
+			showPromptModal = false;
+			createError = '';
 			goto(getModuleObjectHref(module.key, result.object_type, result.object_id));
 			$rootFolderQuery.refetch();
 		} catch (err) {
 			console.error('Failed to create standup:', err);
+			createError = err instanceof Error ? err.message : 'Failed to create standup';
 		}
+	}
+
+	async function handleDuplicateProceed() {
+		showDuplicateConfirm = false;
+		await doCreateStandup(pendingName);
 	}
 
 	function handleCreateStandup() {
 		if (!module.defaultTemplate) return;
 		showPromptModal = true;
+		createError = '';
 	}
 
 	async function handleOpenInFiles() {
@@ -160,6 +190,22 @@
 	title="New Standup"
 	message="Enter a name for the new standup record:"
 	confirmLabel="Create"
+	error={createError}
 	onConfirm={handleCreateStandupConfirm}
-	onCancel={() => (showPromptModal = false)}
+	onCancel={() => {
+		showPromptModal = false;
+		createError = '';
+	}}
+/>
+
+<ConfirmModal
+	open={showDuplicateConfirm}
+	title="Duplicate Name"
+	message={`A standup named "${pendingName}" already exists. Create anyway?`}
+	confirmLabel="Create Anyway"
+	onConfirm={handleDuplicateProceed}
+	onCancel={() => {
+		showDuplicateConfirm = false;
+		pendingName = '';
+	}}
 />

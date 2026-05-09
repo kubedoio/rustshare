@@ -15,7 +15,7 @@ export function getModuleObjectHref(
 	objectId: string
 ): string {
 	if (moduleKey === 'notes' && objectType === 'file') {
-		return `/notes/${objectId}`;
+		return `/modules/notes/${objectId}`;
 	}
 
 	return objectType === 'folder' ? `/files?folder=${objectId}` : `/files?preview=${objectId}`;

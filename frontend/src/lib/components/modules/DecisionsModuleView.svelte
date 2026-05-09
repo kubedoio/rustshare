@@ -4,6 +4,7 @@
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
+	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 	import { FileText, Plus, Clock, Folder } from 'lucide-svelte';
 
 	import { decisionsApi } from '$lib/api/decisions';
@@ -28,24 +29,51 @@
 	$: decisions = $decisionsQuery.data ?? [];
 
 	let showPromptModal = false;
+	let createError = '';
+	let showDuplicateConfirm = false;
+	let pendingTitle = '';
 
 	async function handleCreateDecisionConfirm(title: string) {
-		showPromptModal = false;
+		const trimmed = title.trim();
+		if (!trimmed) return;
+
+		createError = '';
+
+		const exists = decisions.some((d) => d.name?.toLowerCase() === trimmed.toLowerCase());
+		if (exists) {
+			pendingTitle = trimmed;
+			showDuplicateConfirm = true;
+			return;
+		}
+
+		await doCreateDecision(trimmed);
+	}
+
+	async function doCreateDecision(title: string) {
 		try {
 			const result = await decisionsApi.create({
 				title,
 				category: 'General',
 				content: '# ' + title + '\n\n'
 			});
+			showPromptModal = false;
+			createError = '';
 			goto(`/modules/${module.key}/${result.id}`);
 			$decisionsQuery.refetch();
 		} catch (err) {
 			console.error('Failed to create decision:', err);
+			createError = err instanceof Error ? err.message : 'Failed to create decision';
 		}
+	}
+
+	async function handleDuplicateProceed() {
+		showDuplicateConfirm = false;
+		await doCreateDecision(pendingTitle);
 	}
 
 	function handleCreateDecision() {
 		showPromptModal = true;
+		createError = '';
 	}
 
 	async function handleOpenInFiles() {
@@ -144,6 +172,22 @@
 	title="New Decision"
 	message="Enter a title for the new decision:"
 	confirmLabel="Create"
+	error={createError}
 	onConfirm={handleCreateDecisionConfirm}
-	onCancel={() => (showPromptModal = false)}
+	onCancel={() => {
+		showPromptModal = false;
+		createError = '';
+	}}
+/>
+
+<ConfirmModal
+	open={showDuplicateConfirm}
+	title="Duplicate Name"
+	message={`A decision named "${pendingTitle}" already exists. Create anyway?`}
+	confirmLabel="Create Anyway"
+	onConfirm={handleDuplicateProceed}
+	onCancel={() => {
+		showDuplicateConfirm = false;
+		pendingTitle = '';
+	}}
 />

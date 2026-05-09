@@ -20,16 +20,31 @@
 
 	$: recentNotes = $notesQuery.data ?? [];
 
+	let createError = '';
+
 	async function handleNewNote() {
+		createError = '';
+
+		let title = 'Untitled Note';
+		const existingNames = recentNotes.map((n) => n.name?.toLowerCase() ?? '');
+		if (existingNames.includes(title.toLowerCase())) {
+			let counter = 2;
+			while (existingNames.includes(`${title} ${counter}`.toLowerCase())) {
+				counter++;
+			}
+			title = `${title} ${counter}`;
+		}
+
 		try {
 			const result = await createNote({
-				title: 'Untitled Note',
-				content: '# Untitled Note\n\n'
+				title,
+				content: `# ${title}\n\n`
 			});
 			goto(`/modules/${module.key}/${result.id}`);
 			$notesQuery.refetch();
 		} catch (err) {
 			console.error('Failed to create note:', err);
+			createError = err instanceof Error ? err.message : 'Failed to create note';
 		}
 	}
 
@@ -67,6 +82,11 @@
 	</div>
 
 	<div class="flex flex-col gap-4">
+		{#if createError}
+			<div class="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-700">
+				{createError}
+			</div>
+		{/if}
 		{#if $notesQuery.isLoading}
 			<div class="flex h-32 items-center justify-center">
 				<div class="loading loading-md loading-spinner text-brand-500"></div>

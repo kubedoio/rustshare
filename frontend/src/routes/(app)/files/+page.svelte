@@ -62,6 +62,7 @@
 	import type { File, Folder, FolderContents as ApiFolderContents } from '$lib/api/types';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { navigateToNote } from '$lib/navigation/artifactRoutes';
 
 	// Explorer types
 	import type { ExplorerRoot, CollectionView } from '$lib/explorer';
@@ -546,7 +547,7 @@
 			parent_folder_id: string | null;
 		}) => createNote({ title, content, parent_folder_id }),
 		onSuccess: (data) => {
-			goto(`/notes/${data.id}`);
+			navigateToNote(data.id);
 		}
 	});
 
@@ -787,7 +788,7 @@
 	function handleFileClick(file: File) {
 		if (workspaceMode === 'deleted') return;
 		if (detectEditorType(file.name, file.mime_type) === 'markdown') {
-			goto(`/notes/${file.id}`);
+			navigateToNote(file.id);
 			return;
 		}
 		previewTarget = file;
@@ -801,7 +802,7 @@
 	function handleEditFile(event: { file: File } | File) {
 		const file = 'file' in event ? event.file : event;
 		if (detectEditorType(file.name, file.mime_type) === 'markdown') {
-			goto(`/notes/${file.id}`);
+			navigateToNote(file.id);
 			return;
 		}
 		editorTarget = file;
@@ -1367,7 +1368,7 @@
 					parent_folder_id: targetFolderId
 				});
 				showCreateFileModal = false;
-				goto(`/notes/${note.id}`);
+				navigateToNote(note.id);
 			} else {
 				showNotification(`File creation for ${fileType} not yet implemented`, 'info');
 				showCreateFileModal = false;

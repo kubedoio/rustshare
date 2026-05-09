@@ -8,6 +8,7 @@
 		defaultValue?: string;
 		confirmLabel?: string;
 		cancelLabel?: string;
+		error?: string;
 		onConfirm: (value: string) => void;
 		onCancel: () => void;
 	}
@@ -19,6 +20,7 @@
 		defaultValue = '',
 		confirmLabel = 'Create',
 		cancelLabel = 'Cancel',
+		error = '',
 		onConfirm,
 		onCancel
 	}: Props = $props();
@@ -54,6 +56,9 @@
 <ModalBase {open} {title} onClose={onCancel}>
 	<div class="flex flex-col gap-4">
 		<p class="text-sm text-base-content/80">{message}</p>
+		{#if error}
+			<p class="text-sm text-error">{error}</p>
+		{/if}
 		<input
 			type="text"
 			class="input-bordered input w-full"

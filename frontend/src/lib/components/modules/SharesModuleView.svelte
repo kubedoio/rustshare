@@ -5,12 +5,14 @@
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
+	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import { Folder, Plus, ArrowRight } from 'lucide-svelte';
 
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
+	import { toastStore } from '$lib/stores/toast';
 
 	export let module: ModuleDefinition;
 
@@ -30,26 +32,60 @@
 	$: sharePackages = filterUserVisibleEntries(contents?.folders ?? []);
 
 	let showPromptModal = false;
+	let createError = '';
+	let showDuplicateConfirm = false;
+	let pendingName = '';
 
 	async function handleCreateShareConfirm(name: string) {
-		showPromptModal = false;
+		const trimmed = name.trim();
+		if (!trimmed) return;
 		if (!module.defaultTemplate) return;
+
+		createError = '';
+
+		const exists = sharePackages.some((p) => p.name?.toLowerCase() === trimmed.toLowerCase());
+		if (exists) {
+			pendingName = trimmed;
+			showDuplicateConfirm = true;
+			return;
+		}
+
+		await doCreateShare(trimmed);
+	}
+
+	async function doCreateShare(name: string) {
+		const template = module.defaultTemplate;
+		if (!template) return;
 		try {
 			const result = await createFromTemplate({
-				template_key: module.defaultTemplate,
+				template_key: template,
 				name,
 				parent_folder_id: null
 			});
+			showPromptModal = false;
+			createError = '';
 			goto(getModuleObjectHref(module.key, result.object_type, result.object_id));
+			toastStore.show(
+				'Share package created. Add files and folders to share.',
+				'success',
+				5000
+			);
 			$rootFolderQuery.refetch();
 		} catch (err) {
 			console.error('Failed to create share:', err);
+			createError = err instanceof Error ? err.message : 'Failed to create share';
 		}
+	}
+
+	async function handleDuplicateProceed() {
+		showDuplicateConfirm = false;
+		await doCreateShare(pendingName);
 	}
 
 	function handleCreateShare() {
 		if (!module.defaultTemplate) return;
 		showPromptModal = true;
+		createError = '';
 	}
 
 	async function handleOpenInFiles() {
@@ -133,6 +169,22 @@
 	title="New Share Package"
 	message="Enter a name for the new share package:"
 	confirmLabel="Create"
+	error={createError}
 	onConfirm={handleCreateShareConfirm}
-	onCancel={() => (showPromptModal = false)}
+	onCancel={() => {
+		showPromptModal = false;
+		createError = '';
+	}}
+/>
+
+<ConfirmModal
+	open={showDuplicateConfirm}
+	title="Duplicate Name"
+	message={`A share package named "${pendingName}" already exists. Create anyway?`}
+	confirmLabel="Create Anyway"
+	onConfirm={handleDuplicateProceed}
+	onCancel={() => {
+		showDuplicateConfirm = false;
+		pendingName = '';
+	}}
 />
