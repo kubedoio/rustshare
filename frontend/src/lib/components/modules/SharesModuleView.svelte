@@ -1,91 +1,40 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
-	import { createFromTemplate } from '$lib/api/modules';
+	import { listAllUserShares, revokeShare } from '$lib/api/shares';
+	import { getShareTypeLabel } from '$lib/api/types';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
-	import PromptModal from '$lib/components/common/PromptModal.svelte';
-	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
-	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
-	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
-	import { Folder, Plus, ArrowRight } from 'lucide-svelte';
-
+	import { FileText, Folder, Plus, Link, Copy, Trash2, Clock } from 'lucide-svelte';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 	import { toastStore } from '$lib/stores/toast';
+	import { queryClient } from '$lib/query-client';
 
-	export let module: ModuleDefinition;
+	let { module }: { module: ModuleDefinition } = $props();
 
-	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No share packages yet';
-	$: emptyDescription =
-		module.ui.page.emptyStateDescription ?? 'Create your first share package to get started.';
-	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Share';
-
-	// Fetch module root folder contents
-	$: rootFolderQuery = createQuery({
-		queryKey: ['shares-root', module.key],
-		queryFn: () => getModuleRootContents(module.rootPath),
-		enabled: true
+	const sharesQuery = createQuery({
+		queryKey: ['user-shares-module'],
+		queryFn: () => listAllUserShares()
 	});
 
-	$: contents = $rootFolderQuery.data;
-	$: sharePackages = filterUserVisibleEntries(contents?.folders ?? []);
+	let shares = $derived($sharesQuery.data ?? []);
 
-	let showPromptModal = false;
-	let createError = '';
-	let showDuplicateConfirm = false;
-	let pendingName = '';
-
-	async function handleCreateShareConfirm(name: string) {
-		const trimmed = name.trim();
-		if (!trimmed) return;
-		if (!module.defaultTemplate) return;
-
-		createError = '';
-
-		const exists = sharePackages.some((p) => p.name?.toLowerCase() === trimmed.toLowerCase());
-		if (exists) {
-			pendingName = trimmed;
-			showDuplicateConfirm = true;
-			return;
-		}
-
-		await doCreateShare(trimmed);
+	async function handleCopyLink(token: string) {
+		const url = `${window.location.origin}/share/${token}`;
+		await navigator.clipboard.writeText(url);
+		toastStore.show('Link copied', 'success');
 	}
 
-	async function doCreateShare(name: string) {
-		const template = module.defaultTemplate;
-		if (!template) return;
+	async function handleRevoke(shareId: string) {
 		try {
-			const result = await createFromTemplate({
-				template_key: template,
-				name,
-				parent_folder_id: null
-			});
-			showPromptModal = false;
-			createError = '';
-			goto(getModuleObjectHref(module.key, result.object_type, result.object_id));
-			toastStore.show(
-				'Share package created. Add files and folders to share.',
-				'success',
-				5000
-			);
-			$rootFolderQuery.refetch();
+			await revokeShare(shareId);
+			queryClient.invalidateQueries({ queryKey: ['user-shares-module'] });
+			toastStore.show('Share revoked', 'success');
 		} catch (err) {
-			console.error('Failed to create share:', err);
-			createError = err instanceof Error ? err.message : 'Failed to create share';
+			console.error('Failed to revoke share:', err);
+			toastStore.show('Failed to revoke share', 'error');
 		}
-	}
-
-	async function handleDuplicateProceed() {
-		showDuplicateConfirm = false;
-		await doCreateShare(pendingName);
-	}
-
-	function handleCreateShare() {
-		if (!module.defaultTemplate) return;
-		showPromptModal = true;
-		createError = '';
 	}
 
 	async function handleOpenInFiles() {
@@ -97,20 +46,16 @@
 		}
 	}
 
-	function navigateToShare(folderId: string) {
-		goto(getModuleObjectHref(module.key, 'folder', folderId));
+	function handleNewShare() {
+		goto('/files');
 	}
 </script>
 
-<ModulePageShell title="Shares" subtitle={module.description}>
+<ModulePageShell title="Shares" subtitle="Manage items shared from your workspace.">
 	<div slot="primaryAction">
-		<button
-			class="btn gap-2 btn-sm btn-primary"
-			onclick={handleCreateShare}
-			disabled={!module.defaultTemplate}
-		>
+		<button class="btn gap-2 btn-sm btn-primary" onclick={handleNewShare}>
 			<Plus size={14} />
-			<span>New Share</span>
+			<span>New share</span>
 		</button>
 	</div>
 	<div slot="secondaryActions">
@@ -121,70 +66,71 @@
 	</div>
 
 	<div class="flex flex-col gap-4">
-		{#if $rootFolderQuery.isLoading}
+		{#if $sharesQuery.isLoading}
 			<div class="flex h-32 items-center justify-center">
 				<div class="loading loading-md loading-spinner text-brand-500"></div>
 			</div>
-		{:else if sharePackages.length === 0 && contents?.files?.length === 0}
+		{:else if shares.length === 0}
 			<EmptyState
-				icon={"🔗"}
-				title={emptyTitle}
-				description={emptyDescription}
-				actionLabel={emptyAction}
-				onAction={handleCreateShare}
+				icon={'🔗'}
+				title={module.ui.page.emptyStateTitle}
+				description={module.ui.page.emptyStateDescription}
+				actionLabel={module.ui.page.primaryAction?.label}
+				onAction={handleNewShare}
 			/>
-		{:else if sharePackages.length > 0}
-			<div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-				{#each sharePackages as pkg}
-					<button
-						class="group flex flex-col gap-3 rounded-2xl border border-base-300/50 bg-base-100 p-5 text-left shadow-sm transition-all hover:border-brand-500/40 hover:shadow-md"
-						onclick={() => navigateToShare(pkg.id)}
-					>
-						<div class="flex items-start justify-between">
-							<div class="flex items-center gap-2">
-								<Folder size={18} class="text-brand-500" />
-								<span class="text-sm font-medium text-base-content">{pkg.name}</span>
-							</div>
-							<ArrowRight
-								size={14}
-								class="text-base-content/30 transition-transform group-hover:translate-x-0.5"
-							/>
-						</div>
-						<div class="flex items-center gap-2 text-xs text-base-content/50">
-							<span>Updated {new Date(pkg.updated_at).toLocaleDateString()}</span>
-						</div>
-					</button>
-				{/each}
-			</div>
 		{:else}
-			<p class="text-sm text-base-content/50">
-				No share packages yet. Create your first share package to get started.
-			</p>
-		{/if}
-	</div>
-</ModulePageShell>
-
-<PromptModal
-	open={showPromptModal}
-	title="New Share Package"
-	message="Enter a name for the new share package:"
-	confirmLabel="Create"
-	error={createError}
-	onConfirm={handleCreateShareConfirm}
-	onCancel={() => {
-		showPromptModal = false;
-		createError = '';
-	}}
-/>
-
-<ConfirmModal
-	open={showDuplicateConfirm}
-	title="Duplicate Name"
-	message={`A share package named "${pendingName}" already exists. Create anyway?`}
-	confirmLabel="Create Anyway"
-	onConfirm={handleDuplicateProceed}
-	onCancel={() => {
-		showDuplicateConfirm = false;
-		pendingName = '';
-	}}
-/>
+			<div class="flex flex-col gap-3">
+				{#each shares as share}
+					{@const href =
+						share.resource_type === 'file'
+							? `/files?file=${share.resource_id}`
+							: `/files?folder=${share.resource_id}`}
+					<div
+						class="flex items-center gap-3 rounded-xl border border-base-300/50 bg-base-100 p-4 shadow-sm transition-all hover:border-brand-500/40"
+					>
+						<a href={href} class="flex min-w-0 flex-1 items-center gap-3">
+							{#if share.resource_type === 'file'}
+								<FileText size={18} class="shrink-0 text-brand-500" />
+							{:else}
+								<Folder size={18} class="shrink-0 text-brand-500" />
+							{/if}
+							<div class="flex min-w-0 flex-1 flex-col gap-1">
+								<div class="flex flex-wrap items-center gap-2">
+									<span class="truncate text-sm font-medium text-base-content">
+										{share.resource_name || 'Untitled'}
+									</span>
+									<span class="badge badge-sm">{share.permissions}</span>
+									<span class="badge badge-sm badge-info">{getShareTypeLabel(share)}</span>
+								</div>
+								<div class="flex items-center gap-1 text-xs text-base-content/50">
+									<Clock size={12} />
+									<span>{new Date(share.created_at).toLocaleDateString()}</span>
+								</div>
+							</div>
+						</a>
+						<div class="flex shrink-0 items-center gap-2">
+							{#if share.share_token}
+								<button
+									type="button"
+									class="btn btn-ghost btn-xs gap-1"
+									onclick={() => handleCopyLink(share.share_token!)}
+									title="Copy link"
+								>
+									<Copy size={14} />
+								</button>
+							{/if}
+							<button
+								type="button"
+								class="btn btn-ghost btn-xs gap-1 text-error"
+								onclick={() => handleRevoke(share.id)}
+								title="Revoke share"
+							>
+									<Trash2 size={14} />
+								</button>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</div>
+	</ModulePageShell>

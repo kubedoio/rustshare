@@ -193,7 +193,7 @@
 						Shared links that feel managed, not forgotten
 					</h1>
 					<p class="mt-4 max-w-xl text-sm leading-6 text-base-content/68 lg:text-base">
-						Review every public link, see what is still active, and revoke access before stale links
+						Review every link, see what is still active, and revoke access before stale links
 						turn into clutter.
 					</p>
 				</div>
@@ -513,7 +513,7 @@
 								<div>
 									<h2 class="font-display text-2xl text-base-content">Share Activity</h2>
 									<p class="font-data text-sm text-base-content/70">
-										Recent access attempts for the selected public link
+										Recent access attempts for the selected link
 									</p>
 								</div>
 								<button

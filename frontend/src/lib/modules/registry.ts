@@ -349,7 +349,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		permissions: {
 			adminCanConfigure: true,
 			workspaceMembersCanUse: true,
-			allowPublicShare: true,
+			allowPublicShare: false,
 			allowInternalShare: true
 		},
 		ui: {
@@ -446,7 +446,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		id: 'module_shares',
 		key: 'shares',
 		displayName: 'Shares',
-		description: 'Shared external and internal files.',
+		description: 'Manage items shared from your workspace.',
 		enabled: true,
 		rootPath: getModuleRoot('Shares'),
 		renderer: 'shares',
@@ -455,7 +455,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		permissions: {
 			adminCanConfigure: true,
 			workspaceMembersCanUse: true,
-			allowPublicShare: true,
+			allowPublicShare: false,
 			allowInternalShare: true
 		},
 		ui: {
@@ -467,11 +467,11 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 					enabled: true,
 					type: 'shares-summary',
 					title: 'Shares',
-					description: 'Active shares.',
+					description: 'Recent shares.',
 					size: 'medium',
 					columns: { desktop: 6, tablet: 12, mobile: 12 },
 					maxItems: 4,
-					primaryAction: { label: 'New Share', action: 'generic-create' }
+					primaryAction: { label: 'New share', action: 'generic-create' }
 				}
 			},
 			page: {
@@ -479,9 +479,9 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				route: '/modules/shares',
 				renderer: 'shares',
 				layout: 'share-manager',
-				emptyStateTitle: 'No shares',
-				emptyStateDescription: 'You have not shared any files.',
-				primaryAction: { label: 'New Share', action: 'generic-create' }
+				emptyStateTitle: 'No active shares',
+				emptyStateDescription: 'No active shares. Share a file or folder when you are ready.',
+				primaryAction: { label: 'New share', action: 'generic-create' }
 			}
 		},
 		aiIndexing: { enabled: true },

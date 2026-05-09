@@ -470,7 +470,7 @@
 			<!-- Create new share form -->
 			<div class="mb-6">
 				<div class="card bg-base-200 p-4">
-					<h4 class="mb-3 font-semibold">Create Public Share Link</h4>
+					<h4 class="mb-3 font-semibold">Create Link</h4>
 
 					<form
 						onsubmit={(e) => {
@@ -562,7 +562,7 @@
 
 			<!-- List existing public shares -->
 			<div>
-				<h4 class="mb-3 font-semibold">Existing Share Links</h4>
+				<h4 class="mb-3 font-semibold">Existing Links</h4>
 
 				{#if $sharesQuery.isLoading}
 					<div class="flex justify-center py-8">

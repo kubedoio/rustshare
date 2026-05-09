@@ -89,11 +89,11 @@ export function getShareTypeLabel(share: Share): string {
 	const type = getShareType(share);
 	switch (type) {
 		case 'group':
-			return 'Group Share';
+			return 'Group';
 		case 'user':
-			return 'Shared with User';
+			return 'Specific people';
 		case 'public':
-			return 'Public Link';
+			return 'Link';
 	}
 }
 
