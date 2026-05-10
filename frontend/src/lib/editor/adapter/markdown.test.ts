@@ -329,3 +329,23 @@ describe('preprocessMarkdownTables', () => {
 		expect(preprocessMarkdownTables(input)).toBe(input);
 	});
 });
+
+
+describe('base64 image round-trip', () => {
+	it('preserves data URL in markdown', () => {
+		const input = '![Sketch](data:image/png;base64,iVBORw0KGgo=)';
+		const editor = createRichEditor({ content: input });
+		const md = editorToMarkdown(editor);
+
+		expect(md).toContain('data:image/png;base64');
+		editor.destroy();
+	});
+
+	it('renders data URL image in HTML', () => {
+		const input = '![Sketch](data:image/png;base64,iVBORw0KGgo=)';
+		const result = markdownToHtml(input);
+
+		expect(result.success).toBe(true);
+		expect(result.html).toContain('data:image/png;base64');
+	});
+});

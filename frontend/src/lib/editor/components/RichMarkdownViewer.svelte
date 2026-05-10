@@ -171,6 +171,14 @@
 		margin: 1.5rem 0;
 	}
 
+	/* Images */
+	.viewer-content :global(img) {
+		max-width: 100%;
+		border-radius: 0.5rem;
+		margin: 0.75rem 0;
+		height: auto;
+	}
+
 	/* Tables */
 	.viewer-content :global(table) {
 		border-collapse: collapse;

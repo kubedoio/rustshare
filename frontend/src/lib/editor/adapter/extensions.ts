@@ -14,6 +14,7 @@ import TableRow from '@tiptap/extension-table-row';
 import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
 import Placeholder from '@tiptap/extension-placeholder';
+import Image from '@tiptap/extension-image';
 import { Markdown } from 'tiptap-markdown';
 
 /**
@@ -52,6 +53,10 @@ export function getEditorExtensions(options?: { placeholder?: string }) {
 		TableRow,
 		TableCell,
 		TableHeader,
+		Image.configure({
+			allowBase64: true,
+			HTMLAttributes: { class: 'editor-image max-w-full rounded-lg my-2' }
+		}),
 		Placeholder.configure({
 			placeholder: options?.placeholder || "Type '/' for commands…"
 		}),

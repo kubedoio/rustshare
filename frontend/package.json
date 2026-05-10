@@ -53,6 +53,7 @@
 		"@monaco-editor/react": "^4.6.0",
 		"@tanstack/svelte-query": "^6.1.26",
 		"@tiptap/core": "^3.22.5",
+		"@tiptap/extension-image": "^3.22.5",
 		"@tiptap/extension-link": "^3.22.5",
 		"@tiptap/extension-placeholder": "^3.22.5",
 		"@tiptap/extension-table": "^3.22.5",
