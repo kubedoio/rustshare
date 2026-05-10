@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { Editor } from '@tiptap/core';
-import { markdownToHtml, editorToMarkdown, createRichEditor } from './markdown';
+import { markdownToHtml, editorToMarkdown, createRichEditor, preprocessMarkdownTables } from './markdown';
 import { getEditorExtensions } from './extensions';
 
 // ---------------------------------------------------------------------------
@@ -283,5 +283,49 @@ describe('Markdown round-trip: mixed formatting', () => {
 		const result = normalize(roundTrip('> **Important** note'));
 		expect(result).toContain('>');
 		expect(result).toContain('**Important**');
+	});
+});
+
+
+describe('preprocessMarkdownTables', () => {
+	it('converts a simple GFM table to HTML', () => {
+		const input = '| A | B |\n|---|---|\n| 1 | 2 |';
+		const result = preprocessMarkdownTables(input);
+		expect(result).toContain('<table');
+		expect(result).toContain('<th>A</th>');
+		expect(result).toContain('<td>1</td>');
+		expect(result).toContain('</table>');
+	});
+
+	it('ignores non-table | patterns', () => {
+		const input = 'This | that | other';
+		const result = preprocessMarkdownTables(input);
+		expect(result).toBe(input);
+	});
+
+	it('does not convert tables inside fenced code blocks', () => {
+		const input = '```\n| A | B |\n|---|---|\n| 1 | 2 |\n```';
+		const result = preprocessMarkdownTables(input);
+		expect(result).not.toContain('<table');
+		expect(result).toBe(input);
+	});
+
+	it('does not convert tables inside inline code', () => {
+		const input = 'Use `| pipe |` for tables';
+		const result = preprocessMarkdownTables(input);
+		expect(result).not.toContain('<table');
+		expect(result).toBe(input);
+	});
+
+	it('converts a table without outer pipes', () => {
+		const input = 'A | B\n---|---\n1 | 2';
+		const result = preprocessMarkdownTables(input);
+		expect(result).toContain('<table');
+		expect(result).toContain('<th>A</th>');
+	});
+
+	it('passes through markdown with no tables unchanged', () => {
+		const input = '# Hello\n\nSome **bold** text.';
+		expect(preprocessMarkdownTables(input)).toBe(input);
 	});
 });

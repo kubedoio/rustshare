@@ -261,7 +261,7 @@
 								on:change={() => {
 									// saveStatus is managed by parent via saveStatus prop
 								}}
-								hasAttachmentHandler={true}
+								hasAttachmentHandler={false}
 							/>
 							<div class="mt-2 flex justify-end">
 								<button

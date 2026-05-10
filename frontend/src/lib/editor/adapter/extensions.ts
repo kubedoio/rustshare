@@ -29,7 +29,9 @@ export function getEditorExtensions(options?: { placeholder?: string }) {
 			blockquote: { HTMLAttributes: { class: 'editor-blockquote' } },
 			bulletList: { HTMLAttributes: { class: 'editor-bullet-list' } },
 			orderedList: { HTMLAttributes: { class: 'editor-ordered-list' } },
-			horizontalRule: { HTMLAttributes: { class: 'editor-hr' } }
+			horizontalRule: { HTMLAttributes: { class: 'editor-hr' } },
+			link: false,
+			underline: false
 		}),
 		Link.configure({
 			openOnClick: false,

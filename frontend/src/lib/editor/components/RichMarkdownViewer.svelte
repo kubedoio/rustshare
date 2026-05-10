@@ -116,10 +116,16 @@
 		margin: 0 0 0.75rem;
 	}
 
-	.viewer-content :global(ul),
+	.viewer-content :global(ul) {
+		margin: 0 0 0.75rem;
+		padding-left: 1.5rem;
+		list-style-type: disc;
+	}
+
 	.viewer-content :global(ol) {
 		margin: 0 0 0.75rem;
 		padding-left: 1.5rem;
+		list-style-type: decimal;
 	}
 
 	.viewer-content :global(li) {
@@ -163,5 +169,27 @@
 		border: none;
 		border-top: 1px solid var(--color-base-300, #e5e7eb);
 		margin: 1.5rem 0;
+	}
+
+	/* Tables */
+	.viewer-content :global(table) {
+		border-collapse: collapse;
+		width: 100%;
+		margin: 0.75rem 0;
+		table-layout: fixed;
+	}
+
+	.viewer-content :global(td),
+	.viewer-content :global(th) {
+		border: 1px solid var(--color-base-300, #d1d5db);
+		padding: 0.5rem 0.75rem;
+		vertical-align: top;
+		min-width: 80px;
+	}
+
+	.viewer-content :global(th) {
+		background: var(--color-base-200, #f3f4f6);
+		font-weight: 600;
+		text-align: left;
 	}
 </style>

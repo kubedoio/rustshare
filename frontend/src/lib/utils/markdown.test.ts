@@ -51,3 +51,27 @@ describe('renderMarkdown', () => {
 		expect(html).not.toContain('<script>');
 	});
 });
+
+	describe('table rendering', () => {
+		it('renders a GFM table as HTML', () => {
+			const input = '| Name | Value |\n|------|-------|\n| Foo  | 42    |';
+			const html = renderMarkdown(input);
+			expect(html).toContain('<table');
+			expect(html).toContain('Name</th>');
+			expect(html).toContain('Foo</td>');
+			expect(html).toContain('42</td>');
+		});
+
+		it('does not render fake tables (missing separator)', () => {
+			const input = '| A | B |\n| C | D |';
+			const html = renderMarkdown(input);
+			expect(html).not.toContain('<table');
+		});
+
+		it('renders a table without outer pipes', () => {
+			const input = 'Name | Value\n-----|------\nFoo  | 42';
+			const html = renderMarkdown(input);
+			expect(html).toContain('<table');
+			expect(html).toContain('Name</th>');
+		});
+	});

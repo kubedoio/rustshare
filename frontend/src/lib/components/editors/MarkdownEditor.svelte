@@ -105,7 +105,7 @@
 			<RichMarkdownEditor
 				{content}
 				editable={true}
-				hasAttachmentHandler={true}
+				hasAttachmentHandler={false}
 				bind:currentMarkdown
 			/>
 		{/if}
