@@ -97,15 +97,15 @@
 				appState: {
 					...appState,
 					exportBackground: true,
-					viewBackgroundColor: appState.viewBackgroundColor || '#ffffff'
+					viewBackgroundColor: appState.viewBackgroundColor || '#ffffff',
+					exportEmbedScene: true
 				},
 				files,
 				mimeType: 'image/png',
 				getDimensions: (width: number, height: number) => ({
 					width: width * 2,
 					height: height * 2
-				}),
-				embedScene: true
+				})
 			});
 
 			const filename = `sketch-${Date.now()}.png`;
