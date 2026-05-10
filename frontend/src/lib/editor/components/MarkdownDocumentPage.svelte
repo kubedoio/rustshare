@@ -31,6 +31,7 @@
 	import PrintableDocumentView from './PrintableDocumentView.svelte';
 	import { insertAttachmentIntoEditor } from '../adapter/attachments';
 	import { downloadTextFile, formatExportFilename, triggerPrint } from '../adapter/export';
+	import { toastStore } from '$lib/stores/toast';
 
 	/** Purposeful Colors from CSS */
 	const PURPOSEFUL_COLORS = [
@@ -174,7 +175,45 @@
 	}
 
 	function handleAttachmentUpload(event: CustomEvent<{ files: File[] }>) {
+		// For documents without file storage (e.g. module items), file drop is not supported.
+		// Parents that support attachments should listen for the 'upload' event.
 		dispatch('upload', event.detail);
+	}
+
+	/**
+	 * Handles sketch export from Excalidraw by converting the PNG blob to a
+	 * base64 data URL and inserting it directly into the editor. This allows
+	 * sketches to work in any markdown document even when there is no file
+	 * attachment infrastructure (e.g. notes, decisions, meetings, standups).
+	 */
+	function handleSketch(event: CustomEvent<{ blob: Blob; filename: string }>) {
+		const { blob } = event.detail;
+
+		const reader = new FileReader();
+		reader.onload = () => {
+			const dataUrl = reader.result as string;
+			const editor = editorComponent?.getEditor();
+			if (editor) {
+				editor.chain().focus().insertContent(`![Sketch](${dataUrl})`).run();
+				// Mark as unsaved so autosave triggers
+				if (saveStatus !== 'unsaved') {
+					saveStatus = 'unsaved';
+				}
+				if (autosaveDelay > 0) {
+					if (autosaveTimer) clearTimeout(autosaveTimer);
+					autosaveTimer = setTimeout(() => {
+						handleSave();
+					}, autosaveDelay);
+				}
+			}
+		};
+		reader.onerror = () => {
+			toastStore.show('Failed to insert sketch. Please try again.', 'error');
+		};
+		reader.readAsDataURL(blob);
+
+		// Also dispatch to parent for any additional handling (e.g. server-side storage)
+		dispatch('sketch', event.detail);
 	}
 
 	function handleAttachmentInsert(event: CustomEvent<{ attachment: RichMarkdownAttachment }>) {
@@ -403,7 +442,7 @@
 					bind:currentMarkdown
 					on:change={handleEditorChange}
 					on:attachment={toggleAttachments}
-					on:sketch={(e) => dispatch('sketch', e.detail)}
+					on:sketch={handleSketch}
 					on:filedrop={handleAttachmentUpload}
 				/>
 			{:else}
