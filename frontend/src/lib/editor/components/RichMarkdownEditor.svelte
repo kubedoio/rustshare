@@ -6,6 +6,9 @@
 <script lang="ts">
 	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
 	import type { Editor } from '@tiptap/core';
+	import { NodeSelection } from '@tiptap/pm/state';
+	import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
+	import type { EditorView } from '@tiptap/pm/view';
 	import { createRichEditor, editorToMarkdown } from '../adapter/markdown';
 	import type { SlashCommand } from '../adapter/slash-commands';
 	import { validateAttachmentUpload } from '../adapter/attachments';
@@ -60,6 +63,34 @@
 			element: editorElement,
 			content,
 			editable,
+			editorProps: {
+				handleClickOn(view: EditorView, pos: number, node: ProseMirrorNode) {
+					if (node.type.name === 'image') {
+						view.dispatch(
+							view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos))
+						);
+						return true;
+					}
+					return false;
+				},
+				handleDoubleClickOn(view: EditorView, pos: number, node: ProseMirrorNode, nodePos: number, event: MouseEvent) {
+					if (node.type.name !== 'image') return false;
+
+					const src = node.attrs.src as string;
+					const alt = (node.attrs.alt as string) || '';
+					if (!src || !src.startsWith('data:')) return false;
+
+					const isSketch = alt === 'Sketch' || alt === 'Excalidraw Sketch';
+					if (!isSketch) return false;
+
+					event.preventDefault();
+					event.stopPropagation();
+
+					// Launch async without awaiting in the sync handler
+					launchSketchEdit(src, pos);
+					return true;
+				}
+			},
 			onUpdate: (md) => {
 				currentMarkdown = md;
 				dispatch('change', { markdown: md });
@@ -81,14 +112,11 @@
 
 		// Intercept keydown for slash menu navigation
 		editor.view.dom.addEventListener('keydown', handleEditorKeydown);
-		// Double-click to re-edit sketch images
-		editor.view.dom.addEventListener('dblclick', handleEditorDblClick);
 	});
 
 	onDestroy(() => {
 		if (editor) {
 			editor.view.dom.removeEventListener('keydown', handleEditorKeydown);
-			editor.view.dom.removeEventListener('dblclick', handleEditorDblClick);
 			editor.destroy();
 			editor = null;
 		}
@@ -209,31 +237,10 @@
 	}
 
 	/**
-	 * Handles double-click on sketch images in the editor.
-	 * Loads the embedded Excalidraw scene and re-opens the editor.
+	 * Loads an embedded Excalidraw scene from a base64 data URL and opens the editor.
 	 */
-	async function handleEditorDblClick(event: MouseEvent) {
-		if (!editor || !editable) return;
-
-		const target = event.target as HTMLElement;
-		if (target.tagName !== 'IMG') return;
-
-		const src = target.getAttribute('src');
-		const alt = target.getAttribute('alt') || '';
-		if (!src || !src.startsWith('data:')) return;
-
-		// Only re-edit images that look like sketches
-		const isSketch = alt === 'Sketch' || alt === 'Excalidraw Sketch';
-		if (!isSketch) return;
-
-		// Find the image node position in the document
-		const pos = editor.view.posAtDOM(target, 0);
-		const node = editor.state.doc.nodeAt(pos);
-		if (!node || node.type.name !== 'image') return;
-
-		event.preventDefault();
-		event.stopPropagation();
-
+	async function launchSketchEdit(src: string, pos: number) {
+		if (!editor?.isEditable) return;
 		try {
 			const blob = dataURLToBlob(src);
 			const { loadFromBlob } = await import('@excalidraw/excalidraw');

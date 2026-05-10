@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
+	import { onDestroy, createEventDispatcher } from 'svelte';
 	import React from 'react';
 	import { createRoot } from 'react-dom/client';
 	import { X, Save, Palette } from 'lucide-svelte';
@@ -115,12 +115,6 @@
 			toastStore.show('Failed to save drawing. Please try again.', 'error');
 		}
 	}
-
-	onMount(() => {
-		if (open) {
-			initExcalidraw();
-		}
-	});
 
 	$: if (open && !root && container) {
 		initExcalidraw();

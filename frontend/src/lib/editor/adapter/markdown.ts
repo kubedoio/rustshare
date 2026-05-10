@@ -201,6 +201,8 @@ export interface CreateEditorOptions {
 	onUpdate?: (markdown: string) => void;
 	onSelectionUpdate?: () => void;
 	onCreate?: () => void;
+	/** Additional ProseMirror editor props (e.g. handleDoubleClickOn) */
+	editorProps?: Record<string, any>;
 }
 
 /**
@@ -218,7 +220,8 @@ export function createRichEditor(options: CreateEditorOptions): Editor {
 		editorProps: {
 			attributes: {
 				class: 'rich-editor-content'
-			}
+			},
+			...options.editorProps
 		},
 		onCreate: () => {
 			options.onCreate?.();
