@@ -7,6 +7,13 @@
 
 	export let open = false;
 
+	/** Optional initial scene data for re-editing an existing sketch */
+	export let initialData: {
+		elements?: any[];
+		appState?: any;
+		files?: any;
+	} | null = null;
+
 	const dispatch = createEventDispatcher<{
 		save: { blob: Blob; filename: string };
 		close: void;
@@ -40,6 +47,22 @@
 	function render() {
 		if (!root || !ExcalidrawComp) return;
 
+		const props: any = {
+			excalidrawAPI: (api: any) => (excalidrawAPI = api),
+			UIOptions: {
+				canvasActions: {
+					toggleTheme: true,
+					export: false,
+					loadScene: false,
+					saveToActiveFile: false
+				}
+			}
+		};
+
+		if (initialData) {
+			props.initialData = initialData;
+		}
+
 		root.render(
 			React.createElement(
 				'div',
@@ -51,17 +74,7 @@
 						flexDirection: 'column'
 					}
 				},
-				React.createElement(ExcalidrawComp, {
-					excalidrawAPI: (api: any) => (excalidrawAPI = api),
-					UIOptions: {
-						canvasActions: {
-							toggleTheme: true,
-							export: false,
-							loadScene: false,
-							saveToActiveFile: false
-						}
-					}
-				})
+				React.createElement(ExcalidrawComp, props)
 			)
 		);
 	}
@@ -91,7 +104,8 @@
 				getDimensions: (width: number, height: number) => ({
 					width: width * 2,
 					height: height * 2
-				})
+				}),
+				embedScene: true
 			});
 
 			const filename = `sketch-${Date.now()}.png`;
@@ -110,6 +124,11 @@
 
 	$: if (open && !root && container) {
 		initExcalidraw();
+	}
+
+	// Re-render when initialData changes while open
+	$: if (open && root && ExcalidrawComp) {
+		render();
 	}
 
 	onDestroy(() => {
@@ -139,7 +158,9 @@
 					</div>
 					<div>
 						<h2 class="text-lg font-bold tracking-tight">Excalidraw Sketch</h2>
-						<p class="text-xs text-base-content/50">Draw and insert into your note</p>
+						<p class="text-xs text-base-content/50">
+							{initialData ? 'Edit your sketch' : 'Draw and insert into your note'}
+						</p>
 					</div>
 				</div>
 
@@ -150,7 +171,7 @@
 					</button>
 					<button class="btn px-6 btn-sm btn-primary" on:click={handleSave}>
 						<Save size={16} />
-						<span>Insert Sketch</span>
+						<span>{initialData ? 'Update Sketch' : 'Insert Sketch'}</span>
 					</button>
 				</div>
 			</div>

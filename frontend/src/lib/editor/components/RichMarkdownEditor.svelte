@@ -50,6 +50,8 @@
 
 	// Excalidraw state
 	let showExcalidraw = false;
+	let excalidrawInitialData: { elements?: any[]; appState?: any; files?: any } | null = null;
+	let sketchEditPos: number | null = null;
 
 	onMount(() => {
 		if (!editorElement) return;
@@ -79,11 +81,14 @@
 
 		// Intercept keydown for slash menu navigation
 		editor.view.dom.addEventListener('keydown', handleEditorKeydown);
+		// Double-click to re-edit sketch images
+		editor.view.dom.addEventListener('dblclick', handleEditorDblClick);
 	});
 
 	onDestroy(() => {
 		if (editor) {
 			editor.view.dom.removeEventListener('keydown', handleEditorKeydown);
+			editor.view.dom.removeEventListener('dblclick', handleEditorDblClick);
 			editor.destroy();
 			editor = null;
 		}
@@ -186,6 +191,106 @@
 				);
 			}
 		}
+	}
+
+	/**
+	 * Converts a base64 data URL to a Blob.
+	 */
+	function dataURLToBlob(dataURL: string): Blob {
+		const arr = dataURL.split(',');
+		const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
+		const bstr = atob(arr[1]);
+		let n = bstr.length;
+		const u8arr = new Uint8Array(n);
+		while (n--) {
+			u8arr[n] = bstr.charCodeAt(n);
+		}
+		return new Blob([u8arr], { type: mime });
+	}
+
+	/**
+	 * Handles double-click on sketch images in the editor.
+	 * Loads the embedded Excalidraw scene and re-opens the editor.
+	 */
+	async function handleEditorDblClick(event: MouseEvent) {
+		if (!editor || !editable) return;
+
+		const target = event.target as HTMLElement;
+		if (target.tagName !== 'IMG') return;
+
+		const src = target.getAttribute('src');
+		const alt = target.getAttribute('alt') || '';
+		if (!src || !src.startsWith('data:')) return;
+
+		// Only re-edit images that look like sketches
+		const isSketch = alt === 'Sketch' || alt === 'Excalidraw Sketch';
+		if (!isSketch) return;
+
+		// Find the image node position in the document
+		const pos = editor.view.posAtDOM(target, 0);
+		const node = editor.state.doc.nodeAt(pos);
+		if (!node || node.type.name !== 'image') return;
+
+		event.preventDefault();
+		event.stopPropagation();
+
+		try {
+			const blob = dataURLToBlob(src);
+			const { loadFromBlob } = await import('@excalidraw/excalidraw');
+			const scene = await loadFromBlob(blob, null, null);
+
+			excalidrawInitialData = {
+				elements: scene.elements,
+				appState: scene.appState,
+				files: scene.files
+			};
+			sketchEditPos = pos;
+			showExcalidraw = true;
+		} catch (err) {
+			console.error('Failed to load sketch for editing:', err);
+			// If loadFromBlob fails (e.g. no embedded scene), just open empty
+			excalidrawInitialData = null;
+			sketchEditPos = pos;
+			showExcalidraw = true;
+		}
+	}
+
+	/**
+	 * Handles sketch save from Excalidraw — inserts new or replaces existing.
+	 */
+	function handleSketchSave(event: CustomEvent<{ blob: Blob; filename: string }>) {
+		const reader = new FileReader();
+		reader.onload = () => {
+			const dataUrl = reader.result as string;
+			if (!editor) return;
+
+			const pos = sketchEditPos;
+			if (pos !== null) {
+				// Replace existing sketch image
+				editor
+					.chain()
+					.focus()
+					.command(({ tr }) => {
+						const node = editor!.schema.nodes.image.create({
+							src: dataUrl,
+							alt: 'Sketch',
+							title: null
+						});
+						tr.replaceWith(pos, pos + 1, node);
+						return true;
+					})
+					.run();
+			} else {
+				// New sketch — dispatch to parent for insertion
+				dispatch('sketch', event.detail);
+			}
+
+			// Reset state
+			showExcalidraw = false;
+			excalidrawInitialData = null;
+			sketchEditPos = null;
+		};
+		reader.readAsDataURL(event.detail.blob);
 	}
 
 	// --- Drag & Drop ---
@@ -296,11 +401,13 @@
 
 	<ExcalidrawEditor
 		open={showExcalidraw}
-		on:close={() => (showExcalidraw = false)}
-		on:save={(e) => {
-			dispatch('sketch', e.detail);
+		initialData={excalidrawInitialData}
+		on:close={() => {
 			showExcalidraw = false;
+			excalidrawInitialData = null;
+			sketchEditPos = null;
 		}}
+		on:save={handleSketchSave}
 	/>
 </div>
 
@@ -465,6 +572,23 @@
 		border: none;
 		border-top: 1px solid var(--color-base-300, #e5e7eb);
 		margin: 1.5rem 0;
+	}
+
+	/* Images */
+	.editor-container :global(.ProseMirror img) {
+		cursor: pointer;
+		transition: box-shadow 0.15s ease;
+		max-width: 100%;
+		height: auto;
+	}
+
+	.editor-container :global(.ProseMirror img:hover) {
+		box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-primary, #3b82f6) 25%, transparent);
+	}
+
+	.editor-container :global(.ProseMirror .ProseMirror-selectednode) {
+		outline: 3px solid var(--color-primary, #3b82f6);
+		outline-offset: 2px;
 	}
 
 	/* Table */
