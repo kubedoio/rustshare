@@ -197,7 +197,7 @@ pub struct KanbanCard {
     pub schema_version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KanbanCardAttachment {
     pub id: String,
     pub name: String,
@@ -205,6 +205,8 @@ pub struct KanbanCardAttachment {
     pub mime_type: String,
     pub created_at: DateTime<Utc>,
     pub created_by: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -341,14 +343,176 @@ pub(crate) struct CardMetadata {
     pub updated_at: DateTime<Utc>,
     pub description_preview: Option<String>,
     pub schema_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<KanbanCardAttachment>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<Vec<KanbanEvent>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KanbanEvent {
     pub event_type: String,
     pub timestamp: DateTime<Utc>,
     pub actor: String,
     pub payload: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+// ============================================================================
+// Markdown card format
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CardMarkdownFrontmatter {
+    pub id: String,
+    pub title: String,
+    pub board: String,
+    pub column: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<Vec<KanbanLabel>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assignees: Option<Vec<KanbanAssignee>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub due_date: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<KanbanCardAttachment>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checklists: Option<Vec<KanbanChecklistGroup>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity: Option<Vec<KanbanEvent>>,
+}
+
+impl CardMarkdownFrontmatter {
+    fn from_metadata(meta: &CardMetadata) -> Self {
+        Self {
+            id: meta.id.clone(),
+            title: meta.title.clone(),
+            board: meta.board_id.clone(),
+            column: meta.column_id.clone(),
+            slug: Some(meta.slug.clone()),
+            status: Some(meta.status.clone()),
+            priority: if meta.priority.is_empty() {
+                None
+            } else {
+                Some(meta.priority.clone())
+            },
+            labels: None,
+            assignees: None,
+            position: Some(meta.order),
+            due_date: meta.due_date,
+            created_at: Some(meta.created_at),
+            updated_at: Some(meta.updated_at),
+            archived: Some(meta.archived),
+            attachments: meta.attachments.clone(),
+            checklists: if meta.checklists.is_empty() {
+                None
+            } else {
+                Some(meta.checklists.clone())
+            },
+            activity: meta.activity.clone(),
+        }
+    }
+
+    fn into_metadata(self) -> CardMetadata {
+        let slug = self.slug.unwrap_or_else(|| slugify(&self.title));
+        let status = self.status.unwrap_or_else(|| "unknown".to_string());
+        CardMetadata {
+            id: self.id,
+            type_: "kanban.card".to_string(),
+            board_id: self.board,
+            column_id: self.column,
+            title: self.title,
+            slug,
+            status,
+            order: self.position.unwrap_or(0),
+            assignees: self
+                .assignees
+                .map(|a| a.into_iter().map(|x| x.id).collect())
+                .unwrap_or_default(),
+            labels: self
+                .labels
+                .map(|l| l.into_iter().map(|x| x.id).collect())
+                .unwrap_or_default(),
+            due_date: self.due_date,
+            priority: self.priority.unwrap_or_else(|| "medium".to_string()),
+            attachments_count: self.attachments.as_ref().map(|a| a.len()).unwrap_or(0),
+            checklist_done: 0,
+            checklist_total: 0,
+            checklists: self.checklists.unwrap_or_default(),
+            archived: self.archived.unwrap_or(false),
+            created_at: self.created_at.unwrap_or_else(Utc::now),
+            updated_at: self.updated_at.unwrap_or_else(Utc::now),
+            description_preview: None,
+            schema_version: "2.0".to_string(),
+            attachments: self.attachments,
+            activity: self.activity,
+        }
+    }
+}
+
+fn parse_card_markdown(content: &str, card_id: &str) -> Result<(CardMetadata, String), KanbanError> {
+    if !content.trim_start().starts_with("---") {
+        return Err(KanbanError::InvalidData(
+            "Missing YAML frontmatter".to_string(),
+        ));
+    }
+
+    let after_open = &content.trim_start()[3..];
+    let Some(end_idx) = after_open.find("---") else {
+        return Err(KanbanError::InvalidData(
+            "Unclosed YAML frontmatter".to_string(),
+        ));
+    };
+
+    let yaml_str = &after_open[..end_idx];
+    let body = after_open[end_idx + 3..].trim_start();
+
+    let frontmatter: CardMarkdownFrontmatter = serde_yaml::from_str(yaml_str)
+        .map_err(|e| KanbanError::InvalidData(format!("Invalid YAML frontmatter: {e}")))?;
+
+    if frontmatter.id != card_id {
+        return Err(KanbanError::InvalidData(format!(
+            "Card ID mismatch: expected {}, got {}",
+            card_id, frontmatter.id
+        )));
+    }
+
+    let description = extract_description_from_markdown_body(body);
+
+    let mut meta = frontmatter.into_metadata();
+    meta.description_preview = Some(derive_preview(&description, &meta.title));
+    Ok((meta, description))
+}
+
+fn extract_description_from_markdown_body(body: &str) -> String {
+    let body = body.trim();
+    if let Some(pos) = body.find("## Description") {
+        let after = &body[pos + 14..];
+        let after = after.trim_start();
+        // Find the next ## heading
+        if let Some(next_pos) = after.find("\n## ") {
+            return after[..next_pos].trim().to_string();
+        }
+        return after.trim().to_string();
+    }
+    body.to_string()
 }
 
 // ============================================================================
@@ -441,6 +605,8 @@ impl KanbanService {
                 timestamp: Utc::now(),
                 actor: user_id.to_string(),
                 payload: serde_json::json!({ "labelId": label_id }),
+                id: None,
+                text: None,
             },
             user_id,
         )
@@ -480,6 +646,8 @@ impl KanbanService {
                 timestamp: Utc::now(),
                 actor: user_id.to_string(),
                 payload: serde_json::json!({ "labelId": label_id }),
+                id: None,
+                text: None,
             },
             user_id,
         )
@@ -518,6 +686,8 @@ impl KanbanService {
                 timestamp: Utc::now(),
                 actor: user_id.to_string(),
                 payload: serde_json::json!({ "assigneeId": assignee_id }),
+                id: None,
+                text: None,
             },
             user_id,
         )
@@ -557,6 +727,8 @@ impl KanbanService {
                 timestamp: Utc::now(),
                 actor: user_id.to_string(),
                 payload: serde_json::json!({ "assigneeId": assignee_id }),
+                id: None,
+                text: None,
             },
             user_id,
         )
@@ -1201,6 +1373,8 @@ impl KanbanService {
             updated_at: Utc::now(),
             description_preview: Some(preview),
             schema_version: "1.0".to_string(),
+            attachments: None,
+            activity: None,
         };
 
         // Create attachments folder
@@ -1214,9 +1388,7 @@ impl KanbanService {
             .await
             .map_err(KanbanError::from)?;
 
-        self.write_card_index(&card_folder, &content, user_id, tenant_id)
-            .await?;
-        self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id)
+        self.write_card_markdown(&card_folder, &card_meta, &content, user_id, tenant_id)
             .await?;
         self.ensure_events_file(&card_folder, user_id, tenant_id)
             .await?;
@@ -1231,6 +1403,8 @@ impl KanbanService {
                     "columnId": col_def.id,
                     "title": input.title,
                 }),
+                id: None,
+                text: None,
             },
             user_id,
         )
@@ -1289,10 +1463,38 @@ impl KanbanService {
             .map_err(KanbanError::from)?;
 
         let summary = self.load_card(&card_folder, user_id).await?;
-        let attachments = self
-            .load_card_attachments(&card_folder, user_id, card_folder.tenant_id)
-            .await?;
-        let activity = self.load_card_activity(&card_folder, user_id).await?;
+
+        let md_filename = format!("{}.md", card_folder.id);
+        let (frontmatter_attachments, frontmatter_activity) = if let Some(file) = self
+            .find_file_in_folder(card_folder.id, user_id, &md_filename)
+            .await?
+        {
+            let bytes = self
+                .object_store
+                .get(&file.storage_key())
+                .await
+                .map_err(|e| KanbanError::Storage(e.to_string()))?;
+            let content = String::from_utf8_lossy(&bytes).to_string();
+            if let Ok((meta, _)) = parse_card_markdown(&content, &card_folder.id.to_string()) {
+                (meta.attachments, meta.activity)
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+        let attachments = match frontmatter_attachments {
+            Some(a) if !a.is_empty() => a,
+            _ => self
+                .load_card_attachments(&card_folder, user_id, card_folder.tenant_id)
+                .await?,
+        };
+
+        let activity = match frontmatter_activity {
+            Some(a) if !a.is_empty() => a,
+            _ => self.load_card_activity(&card_folder, user_id).await?,
+        };
 
         Ok(KanbanCardDetail {
             checklists: summary.checklists.clone(),
@@ -1328,20 +1530,7 @@ impl KanbanService {
             card_meta.updated_at = Utc::now();
         } else if input.title.is_some() {
             // Title changed, may need to re-derive to remove heading if it matches new title
-            // We need the content to do this
-            let content = if let Some(file) = self
-                .find_file_in_folder(card_folder.id, user_id, "index.md")
-                .await?
-            {
-                let bytes = self
-                    .object_store
-                    .get(&file.storage_key())
-                    .await
-                    .map_err(|e| KanbanError::Storage(e.to_string()))?;
-                String::from_utf8_lossy(&bytes).to_string()
-            } else {
-                String::new()
-            };
+            let content = self.load_card_description(&card_folder, user_id).await?;
             card_meta.description_preview = Some(derive_preview(&content, &card_meta.title));
         }
         if let Some(priority) = input.priority {
@@ -1409,7 +1598,7 @@ impl KanbanService {
             .await
             .map_err(KanbanError::from)?;
 
-        let mut card_meta = self.load_card_metadata(&card_folder, user_id).await?;
+        let (mut card_meta, description) = self.load_card_markdown(&card_folder, user_id).await?;
         let board_id = Uuid::parse_str(&input.board_id)
             .map_err(|_| KanbanError::InvalidData("Invalid board id".to_string()))?;
 
@@ -1472,7 +1661,28 @@ impl KanbanService {
         card_meta.order = target_order;
         card_meta.updated_at = Utc::now();
 
-        self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id)
+        // Append activity to frontmatter
+        let move_event = KanbanEvent {
+            event_type: "card.moved".to_string(),
+            timestamp: Utc::now(),
+            actor: user_id.to_string(),
+            payload: serde_json::json!({
+                "fromColumnId": old_column_id,
+                "toColumnId": input.target_column_id,
+                "oldOrder": old_order,
+                "newOrder": target_order,
+            }),
+            id: Some(format!("act_{}", &Uuid::new_v4().to_string()[..8])),
+            text: Some(format!(
+                "Moved this card from {} to {}",
+                old_column_id, input.target_column_id
+            )),
+        };
+        let mut activity = card_meta.activity.unwrap_or_default();
+        activity.push(move_event.clone());
+        card_meta.activity = Some(activity);
+
+        self.write_card_markdown(&card_folder, &card_meta, &description, user_id, tenant_id)
             .await?;
 
         // Rebalance orders if they become too dense in the target column
@@ -1492,6 +1702,8 @@ impl KanbanService {
                     "oldOrder": old_order,
                     "newOrder": target_order,
                 }),
+                id: None,
+                text: None,
             },
             user_id,
         )
@@ -1508,6 +1720,8 @@ impl KanbanService {
                     "fromColumnId": old_column_id,
                     "toColumnId": input.target_column_id,
                 }),
+                id: None,
+                text: None,
             },
             user_id,
         )
@@ -1557,6 +1771,8 @@ impl KanbanService {
                 timestamp: Utc::now(),
                 actor: user_id.to_string(),
                 payload: serde_json::json!({}),
+                id: None,
+                text: None,
             },
             user_id,
         )
@@ -1654,17 +1870,9 @@ impl KanbanService {
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<(), KanbanError> {
-        let content = serde_json::to_string_pretty(metadata)?;
-        self.write_file_by_name(
-            card_folder.id,
-            ".rustshare-card.json",
-            &content,
-            "application/json",
-            user_id,
-            tenant_id,
-        )
-        .await?;
-        Ok(())
+        let description = self.load_card_description(card_folder, user_id).await?;
+        self.write_card_markdown(card_folder, metadata, &description, user_id, tenant_id)
+            .await
     }
 
     pub(crate) async fn append_kanban_event(
@@ -2144,6 +2352,24 @@ impl KanbanService {
         card_folder: &Folder,
         user_id: UserId,
     ) -> Result<CardMetadata, KanbanError> {
+        let md_filename = format!("{}.md", card_folder.id);
+        if let Some(file) = self
+            .find_file_in_folder(card_folder.id, user_id, &md_filename)
+            .await?
+        {
+            let content = self
+                .object_store
+                .get(&file.storage_key())
+                .await
+                .map_err(|e| KanbanError::Storage(e.to_string()))?;
+            let (meta, _) = parse_card_markdown(
+                &String::from_utf8_lossy(&content),
+                &card_folder.id.to_string(),
+            )?;
+            return Ok(meta);
+        }
+
+        // Fallback to JSON
         let file = self
             .find_file_in_folder(card_folder.id, user_id, ".rustshare-card.json")
             .await?
@@ -2164,21 +2390,7 @@ impl KanbanService {
         card_folder: &Folder,
         user_id: UserId,
     ) -> Result<KanbanCard, KanbanError> {
-        let mut meta = self.load_card_metadata(card_folder, user_id).await?;
-
-        let content = if let Some(file) = self
-            .find_file_in_folder(card_folder.id, user_id, "index.md")
-            .await?
-        {
-            let bytes = self
-                .object_store
-                .get(&file.storage_key())
-                .await
-                .map_err(|e| KanbanError::Storage(e.to_string()))?;
-            String::from_utf8_lossy(&bytes).to_string()
-        } else {
-            String::new()
-        };
+        let (mut meta, content) = self.load_card_markdown(card_folder, user_id).await?;
 
         let board_id = Uuid::parse_str(&meta.board_id)
             .map_err(|_| KanbanError::InvalidData("Invalid board id".to_string()))?;
@@ -2189,15 +2401,8 @@ impl KanbanService {
             .map_err(KanbanError::from)?;
         let board_meta = self.load_board_metadata(&board_folder, user_id).await?;
 
-        let mut preview = meta.description_preview.clone().unwrap_or_default();
-        if (preview.is_empty() || preview.len() < 5) && !content.is_empty() {
-            preview = derive_preview(&content, &meta.title);
-            // Cache it back to metadata
-            meta.description_preview = Some(preview.clone());
-            self.write_card_metadata(card_folder, &meta, user_id, board_folder.tenant_id)
-                .await
-                .ok();
-        }
+        let preview = derive_preview(&content, &meta.title);
+        meta.description_preview = Some(preview.clone());
 
         Ok(KanbanCard {
             id: meta.id,
@@ -2277,16 +2482,10 @@ impl KanbanService {
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<(), KanbanError> {
-        self.write_file_by_name(
-            card_folder.id,
-            "index.md",
-            content,
-            "text/markdown",
-            user_id,
-            tenant_id,
-        )
-        .await?;
-        Ok(())
+        let mut metadata = self.load_card_metadata(card_folder, user_id).await?;
+        metadata.updated_at = Utc::now();
+        self.write_card_markdown(card_folder, &metadata, content, user_id, tenant_id)
+            .await
     }
 
     async fn ensure_events_file(
@@ -2387,6 +2586,110 @@ impl KanbanService {
                 .map_err(KanbanError::from)?;
             Ok(created)
         }
+    }
+
+    async fn load_card_markdown(
+        &self,
+        card_folder: &Folder,
+        user_id: UserId,
+    ) -> Result<(CardMetadata, String), KanbanError> {
+        let md_filename = format!("{}.md", card_folder.id);
+        if let Some(file) = self
+            .find_file_in_folder(card_folder.id, user_id, &md_filename)
+            .await?
+        {
+            let bytes = self
+                .object_store
+                .get(&file.storage_key())
+                .await
+                .map_err(|e| KanbanError::Storage(e.to_string()))?;
+            let (meta, description) = parse_card_markdown(
+                &String::from_utf8_lossy(&bytes),
+                &card_folder.id.to_string(),
+            )?;
+            return Ok((meta, description));
+        }
+
+        // Fallback to JSON + index.md
+        let meta = self.load_card_metadata(card_folder, user_id).await?;
+        let description = if let Some(file) = self
+            .find_file_in_folder(card_folder.id, user_id, "index.md")
+            .await?
+        {
+            let bytes = self
+                .object_store
+                .get(&file.storage_key())
+                .await
+                .map_err(|e| KanbanError::Storage(e.to_string()))?;
+            String::from_utf8_lossy(&bytes).to_string()
+        } else {
+            String::new()
+        };
+        Ok((meta, description))
+    }
+
+    async fn write_card_markdown(
+        &self,
+        card_folder: &Folder,
+        metadata: &CardMetadata,
+        description: &str,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), KanbanError> {
+        let frontmatter = CardMarkdownFrontmatter::from_metadata(metadata);
+        let yaml = serde_yaml::to_string(&frontmatter)
+            .map_err(|e| KanbanError::InvalidData(format!("YAML serialization error: {e}")))?;
+        let body = format!("## Description\n\n{}", description);
+        let content = format!("---\n{}---\n\n{}", yaml, body);
+
+        let filename = format!("{}.md", card_folder.id);
+        self.write_file_by_name(
+            card_folder.id,
+            &filename,
+            &content,
+            "text/markdown",
+            user_id,
+            tenant_id,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn load_card_description(
+        &self,
+        card_folder: &Folder,
+        user_id: UserId,
+    ) -> Result<String, KanbanError> {
+        let md_filename = format!("{}.md", card_folder.id);
+        if let Some(file) = self
+            .find_file_in_folder(card_folder.id, user_id, &md_filename)
+            .await?
+        {
+            let bytes = self
+                .object_store
+                .get(&file.storage_key())
+                .await
+                .map_err(|e| KanbanError::Storage(e.to_string()))?;
+            let (_, description) = parse_card_markdown(
+                &String::from_utf8_lossy(&bytes),
+                &card_folder.id.to_string(),
+            )?;
+            return Ok(description);
+        }
+
+        if let Some(file) = self
+            .find_file_in_folder(card_folder.id, user_id, "index.md")
+            .await?
+        {
+            let bytes = self
+                .object_store
+                .get(&file.storage_key())
+                .await
+                .map_err(|e| KanbanError::Storage(e.to_string()))?;
+            return Ok(String::from_utf8_lossy(&bytes).to_string());
+        }
+
+        Ok(String::new())
     }
 
     async fn rebalance_column_if_needed(
@@ -2531,6 +2834,7 @@ impl KanbanService {
                 mime_type: f.mime_type,
                 created_at: f.created_at,
                 created_by: f.owner_id.to_string(),
+                path: None,
             })
             .collect())
     }
@@ -2589,6 +2893,8 @@ impl KanbanService {
                 timestamp: Utc::now(),
                 actor: user_id.to_string(),
                 payload: serde_json::json!({ "filename": filename, "attachmentId": file.id.to_string() }),
+                id: None,
+                text: None,
             },
             user_id,
         ).await?;
@@ -2600,6 +2906,7 @@ impl KanbanService {
             mime_type: file.mime_type,
             created_at: file.created_at,
             created_by: file.owner_id.to_string(),
+            path: None,
         })
     }
 
@@ -2636,6 +2943,8 @@ impl KanbanService {
                 timestamp: Utc::now(),
                 actor: user_id.to_string(),
                 payload: serde_json::json!({ "attachmentId": attachment_id.to_string() }),
+                id: None,
+                text: None,
             },
             user_id,
         )
@@ -2704,6 +3013,8 @@ impl KanbanService {
                 timestamp: Utc::now(),
                 actor: user_id.to_string(),
                 payload: serde_json::json!({ "title": title, "checklistId": group.id }),
+                id: None,
+                text: None,
             },
             user_id,
         )
@@ -2752,6 +3063,8 @@ impl KanbanService {
                 timestamp: Utc::now(),
                 actor: user_id.to_string(),
                 payload: serde_json::json!({ "checklistId": checklist_id, "text": text, "itemId": item.id }),
+                id: None,
+                text: None,
             },
             user_id,
         ).await?;
@@ -2800,6 +3113,8 @@ impl KanbanService {
                 timestamp: Utc::now(),
                 actor: user_id.to_string(),
                 payload: serde_json::json!({ "checklistId": checklist_id, "itemId": item_id, "done": done }),
+                id: None,
+                text: None,
             },
             user_id,
         ).await?;
@@ -2841,6 +3156,8 @@ impl KanbanService {
                 timestamp: Utc::now(),
                 actor: user_id.to_string(),
                 payload: serde_json::json!({ "checklistId": checklist_id, "itemId": item_id }),
+                id: None,
+                text: None,
             },
             user_id,
         )
@@ -2876,6 +3193,8 @@ impl KanbanService {
                 timestamp: Utc::now(),
                 actor: user_id.to_string(),
                 payload: serde_json::json!({ "checklistId": checklist_id }),
+                id: None,
+                text: None,
             },
             user_id,
         )
@@ -3317,5 +3636,211 @@ mod tests {
         assert!(KanbanService::sanitize_attachment_name("").is_err());
         assert!(KanbanService::sanitize_attachment_name("   ").is_err());
         assert!(KanbanService::sanitize_attachment_name("...").is_err());
+    }
+
+    // ── Markdown card format ─────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_card_markdown_basic() {
+        let content = r#"---
+id: 550e8400-e29b-41d4-a716-446655440000
+title: "Task title"
+board: board-slug
+column: 01-ready
+priority: medium
+position: 1000
+created_at: 2026-05-11T18:53:00Z
+updated_at: 2026-05-11T18:53:00Z
+---
+
+## Description
+
+Add a more detailed description here.
+"#;
+
+        let (meta, desc) =
+            parse_card_markdown(content, "550e8400-e29b-41d4-a716-446655440000").unwrap();
+        assert_eq!(meta.id, "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(meta.title, "Task title");
+        assert_eq!(meta.board_id, "board-slug");
+        assert_eq!(meta.column_id, "01-ready");
+        assert_eq!(meta.priority, "medium");
+        assert_eq!(meta.order, 1000);
+        assert_eq!(desc, "Add a more detailed description here.");
+    }
+
+    #[test]
+    fn test_parse_card_markdown_with_sections() {
+        let content = r#"---
+id: 550e8400-e29b-41d4-a716-446655440000
+title: "Task title"
+board: board-slug
+column: 01-ready
+---
+
+## Description
+
+First paragraph.
+
+## Notes
+
+Some notes here.
+"#;
+
+        let (_, desc) =
+            parse_card_markdown(content, "550e8400-e29b-41d4-a716-446655440000").unwrap();
+        assert!(desc.contains("First paragraph."));
+        assert!(!desc.contains("Some notes here."));
+    }
+
+    #[test]
+    fn test_parse_card_markdown_no_description_heading() {
+        let content = r#"---
+id: 550e8400-e29b-41d4-a716-446655440000
+title: "Task title"
+board: board-slug
+column: 01-ready
+---
+
+Plain body text without heading.
+"#;
+
+        let (_, desc) =
+            parse_card_markdown(content, "550e8400-e29b-41d4-a716-446655440000").unwrap();
+        assert_eq!(desc, "Plain body text without heading.");
+    }
+
+    #[test]
+    fn test_parse_card_markdown_id_mismatch() {
+        let content = r#"---
+id: wrong-id
+title: "Task title"
+board: board-slug
+column: 01-ready
+---
+
+Description.
+"#;
+
+        assert!(
+            parse_card_markdown(content, "550e8400-e29b-41d4-a716-446655440000").is_err()
+        );
+    }
+
+    #[test]
+    fn test_card_markdown_frontmatter_roundtrip() {
+        let meta = CardMetadata {
+            id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
+            type_: "kanban.card".to_string(),
+            board_id: "board-1".to_string(),
+            column_id: "col-1".to_string(),
+            title: "Test Card".to_string(),
+            slug: "test-card".to_string(),
+            status: "ready".to_string(),
+            order: 1000,
+            assignees: vec!["user-1".to_string()],
+            labels: vec!["label-1".to_string()],
+            due_date: None,
+            priority: "high".to_string(),
+            attachments_count: 1,
+            checklist_done: 1,
+            checklist_total: 3,
+            checklists: vec![KanbanChecklistGroup {
+                id: "chk-1".to_string(),
+                title: "Checklist".to_string(),
+                items: vec![
+                    KanbanChecklistItem {
+                        id: "item-1".to_string(),
+                        text: "Item 1".to_string(),
+                        done: true,
+                    },
+                    KanbanChecklistItem {
+                        id: "item-2".to_string(),
+                        text: "Item 2".to_string(),
+                        done: false,
+                    },
+                ],
+            }],
+            archived: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            description_preview: Some("Preview".to_string()),
+            schema_version: "2.0".to_string(),
+            attachments: Some(vec![KanbanCardAttachment {
+                id: "att-1".to_string(),
+                name: "file.pdf".to_string(),
+                size: 1024,
+                mime_type: "application/pdf".to_string(),
+                created_at: Utc::now(),
+                created_by: "user-1".to_string(),
+                path: Some("attachments/file.pdf".to_string()),
+            }]),
+            activity: Some(vec![KanbanEvent {
+                event_type: "card.created".to_string(),
+                timestamp: Utc::now(),
+                actor: "user-1".to_string(),
+                payload: serde_json::json!({}),
+                id: Some("act-1".to_string()),
+                text: Some("Created".to_string()),
+            }]),
+        };
+
+        let frontmatter = CardMarkdownFrontmatter::from_metadata(&meta);
+        let yaml = serde_yaml::to_string(&frontmatter).unwrap();
+        let restored: CardMarkdownFrontmatter = serde_yaml::from_str(&yaml).unwrap();
+        let restored_meta = restored.into_metadata();
+
+        assert_eq!(restored_meta.id, meta.id);
+        assert_eq!(restored_meta.title, meta.title);
+        assert_eq!(restored_meta.board_id, meta.board_id);
+        assert_eq!(restored_meta.column_id, meta.column_id);
+        assert_eq!(restored_meta.priority, meta.priority);
+        assert_eq!(restored_meta.order, meta.order);
+        assert_eq!(restored_meta.attachments_count, meta.attachments_count);
+        assert_eq!(restored_meta.checklists.len(), meta.checklists.len());
+        assert_eq!(restored_meta.attachments.as_ref().unwrap().len(), 1);
+        assert_eq!(restored_meta.activity.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_extract_description_from_markdown_body() {
+        let body = "## Description\n\nFirst paragraph.\n\n## Notes\n\nSome notes.";
+        let desc = extract_description_from_markdown_body(body);
+        assert_eq!(desc, "First paragraph.");
+
+        let body_no_heading = "Plain text here.";
+        let desc_no_heading = extract_description_from_markdown_body(body_no_heading);
+        assert_eq!(desc_no_heading, "Plain text here.");
+    }
+
+    #[test]
+    fn test_fallback_json_metadata_still_loadable() {
+        // This test verifies that a CardMetadata struct without the new optional fields
+        // can still be deserialized (backward compatibility).
+        let json = r#"{
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "type": "kanban.card",
+            "board_id": "board-1",
+            "column_id": "col-1",
+            "title": "Legacy Card",
+            "slug": "legacy-card",
+            "status": "ready",
+            "order": 1000,
+            "assignees": [],
+            "labels": [],
+            "priority": "medium",
+            "attachments_count": 0,
+            "checklist_done": 0,
+            "checklist_total": 0,
+            "checklists": [],
+            "archived": false,
+            "created_at": "2026-05-11T18:53:00Z",
+            "updated_at": "2026-05-11T18:53:00Z",
+            "schema_version": "1.0"
+        }"#;
+        let meta: CardMetadata = serde_json::from_str(json).unwrap();
+        assert_eq!(meta.id, "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(meta.attachments, None);
+        assert_eq!(meta.activity, None);
     }
 }
