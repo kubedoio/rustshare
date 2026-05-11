@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { GripVertical } from 'lucide-svelte';
+	import { GripVertical, Paperclip, CheckSquare } from 'lucide-svelte';
 	import type { KanbanCard } from '$lib/api/types';
 
 	interface Props {
@@ -50,6 +50,27 @@
 	{/if}
 
 	<div class="card-footer">
+		<div class="card-meta-left">
+			{#if card.priority && card.priority !== 'normal'}
+				<span class="meta-badge priority-badge-small priority-{card.priority}">
+					<span class="priority-dot-small"></span>
+					{card.priority}
+				</span>
+			{/if}
+			{#if card.attachments_count > 0}
+				<span class="meta-badge">
+					<Paperclip size={12} />
+					{card.attachments_count}
+				</span>
+			{/if}
+			{#if card.checklist && card.checklist.total > 0}
+				<span class="meta-badge">
+					<CheckSquare size={12} />
+					<span>{card.checklist.done}/{card.checklist.total}</span>
+				</span>
+			{/if}
+		</div>
+
 		{#if card.assignees && card.assignees.length > 0}
 			<div class="card-assignees">
 				{#each card.assignees.slice(0, 3) as assignee}
@@ -173,10 +194,65 @@
 	.card-footer {
 		display: flex;
 		align-items: center;
+		justify-content: space-between;
 		gap: 0.75rem;
 		margin-top: 0.75rem;
 		padding-left: 1.25rem;
 		flex-wrap: wrap;
+	}
+
+	.card-meta-left {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		flex-wrap: wrap;
+	}
+
+	.meta-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.15rem 0.4rem;
+		border-radius: 0.35rem;
+		background: color-mix(in oklab, var(--base-200) 60%, transparent);
+		font-size: 0.65rem;
+		font-weight: 700;
+		color: color-mix(in oklab, var(--base-content) 70%, transparent);
+		text-transform: capitalize;
+	}
+
+	.priority-badge-small {
+		text-transform: capitalize;
+	}
+
+	.priority-dot-small {
+		width: 0.35rem;
+		height: 0.35rem;
+		border-radius: 999px;
+	}
+
+	.priority-low {
+		background: #eff6ff;
+		color: #2563eb;
+	}
+	.priority-low .priority-dot-small {
+		background: #3b82f6;
+	}
+
+	.priority-high {
+		background: #fff7ed;
+		color: #ea580c;
+	}
+	.priority-high .priority-dot-small {
+		background: #f97316;
+	}
+
+	.priority-urgent {
+		background: #fef2f2;
+		color: #dc2626;
+	}
+	.priority-urgent .priority-dot-small {
+		background: #ef4444;
 	}
 
 	.card-assignees {
