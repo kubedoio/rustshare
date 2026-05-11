@@ -86,6 +86,11 @@ impl FileMetadataStoreOps for MockMetadataStore {
         Ok(existing.filter(|file| file.id == id))
     }
 
+    async fn find_file_by_id_unchecked(&self, id: Uuid) -> Result<Option<File>> {
+        let existing = self.existing_file.lock().unwrap().clone();
+        Ok(existing.filter(|file| file.id == id))
+    }
+
     async fn update_file(&self, file: &File) -> Result<()> {
         self.updated_files.lock().unwrap().push(file.clone());
         *self.existing_file.lock().unwrap() = Some(file.clone());

@@ -209,7 +209,7 @@ impl NoteService {
         let parent_id = file.parent_folder_id;
         let siblings = self
             .metadata_store
-            .list_files(parent_id, user_id, tenant_id)
+            .list_files(parent_id, file.owner_id, tenant_id)
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?;
 

@@ -33,6 +33,7 @@
 		resourceId?: string;
 		resourceName?: string;
 		resourceType?: 'file' | 'folder';
+		initialTab?: 'public' | 'share';
 		onClose?: () => void;
 		onNotification?: (payload: { message: string; type: 'success' | 'error' | 'info' }) => void;
 	}
@@ -42,6 +43,7 @@
 		resourceId = '',
 		resourceName = '',
 		resourceType = 'file',
+		initialTab = 'public',
 		onClose = () => {},
 		onNotification = () => {}
 	}: Props = $props();
@@ -67,6 +69,12 @@
 	// Group sharing state
 	let selectedGroupId = $state('');
 	let groupPermission: 'View' | 'Edit' | 'Admin' = $state('View');
+
+	$effect(() => {
+		if (open) {
+			activeTab = initialTab;
+		}
+	});
 
 	// Query for existing shares
 	let sharesQuery = $derived(

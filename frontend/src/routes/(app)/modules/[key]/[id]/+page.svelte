@@ -7,9 +7,11 @@
 	import { standupsApi } from '$lib/api/standups';
 	import { getModuleByKey } from '$lib/modules/registry';
 	import { goto } from '$app/navigation';
-	import { Folder } from 'lucide-svelte';
+	import { Folder, Share2 } from 'lucide-svelte';
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
+	import ShareModal from '$lib/components/modals/ShareModal.svelte';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
+	import { toastStore } from '$lib/stores/toast';
 	import type { EditorMode, EditorSaveStatus } from '$lib/editor/types';
 
 	let key = $derived(($page.params.key || '') as string);
@@ -49,6 +51,7 @@
 	);
 	let mode: EditorMode = $state('read');
 	let saveStatus: EditorSaveStatus = $state('saved');
+	let showShareModal = $state(false);
 
 	let breadcrumb = $derived([
 		{ label: module?.displayName || key, onClick: () => goto(`/modules/${key}`) },
@@ -96,6 +99,13 @@
 			}
 		}
 	}
+
+	function handleShareNotification(event: {
+		message: string;
+		type: 'success' | 'error' | 'info';
+	}) {
+		toastStore.show(event.message, event.type);
+	}
 </script>
 
 <div class="module-detail-page h-full">
@@ -106,7 +116,7 @@
 	{:else if $query.error}
 		<div class="flex h-full flex-col items-center justify-center p-8 text-center">
 			<p class="text-error">Failed to load item.</p>
-			<button class="btn mt-4 btn-ghost" on:click={() => $query.refetch()}>Retry</button>
+			<button class="btn mt-4 btn-ghost" onclick={() => $query.refetch()}>Retry</button>
 		</div>
 	{:else if item}
 		<MarkdownDocumentPage
@@ -128,15 +138,36 @@
 			on:back={handleBack}
 			on:modechange={handleModeChange}
 		>
-			<button
-				slot="extraActions"
-				class="btn btn-ghost btn-sm gap-1.5"
-				on:click={handleOpenInFiles}
-			>
-				<Folder size={14} />
-				<span>Open in Files</span>
-			</button>
+			<svelte:fragment slot="extraActions">
+				{#if key === 'notes'}
+					<button
+						class="btn btn-ghost btn-sm gap-1.5"
+						onclick={() => (showShareModal = true)}
+					>
+						<Share2 size={14} />
+						<span>Share</span>
+					</button>
+				{/if}
+
+				<button
+					class="btn btn-ghost btn-sm gap-1.5"
+					onclick={handleOpenInFiles}
+				>
+					<Folder size={14} />
+					<span>Open in Files</span>
+				</button>
+			</svelte:fragment>
 		</MarkdownDocumentPage>
+
+		<ShareModal
+			open={showShareModal}
+			resourceId={item.id}
+			resourceName={title}
+			resourceType="file"
+			initialTab="share"
+			onClose={() => (showShareModal = false)}
+			onNotification={handleShareNotification}
+		/>
 	{/if}
 </div>
 

@@ -72,6 +72,11 @@ pub trait MetadataStoreOps: Send + Sync {
     /// Find a file by ID.
     async fn find_file_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<Option<File>>;
 
+    /// Find a file by ID without ownership filtering.
+    ///
+    /// Callers must verify access before using this method.
+    async fn find_file_by_id_unchecked(&self, id: uuid::Uuid) -> Result<Option<File>>;
+
     /// Update a file in the metadata store.
     async fn update_file(&self, file: &File) -> Result<()>;
 
@@ -487,10 +492,11 @@ where
         self.require_file_permission(user_id, file_id, SharePermissions::View)
             .await?;
 
-        // 2. Find file by ID
+        // 2. Find file by ID. Access was verified above, so this must not be
+        // owner-filtered; shared recipients are allowed to read non-owned files.
         let file = self
             .metadata_store
-            .find_file_by_id(file_id, user_id)
+            .find_file_by_id_unchecked(file_id)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?
             .ok_or(FileError::NotFound(file_id))?;
@@ -1458,6 +1464,16 @@ mod tests {
         }
 
         async fn find_file_by_id(&self, id: uuid::Uuid, _owner_id: uuid::Uuid) -> Result<Option<File>> {
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|f| f.id == id)
+                .cloned())
+        }
+
+        async fn find_file_by_id_unchecked(&self, id: uuid::Uuid) -> Result<Option<File>> {
             Ok(self
                 .files
                 .lock()

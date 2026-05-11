@@ -93,6 +93,13 @@ impl FileMetadataStoreOps for MetadataStore {
         self.find_file_by_id(id, owner_id).await
     }
 
+    async fn find_file_by_id_unchecked(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<Option<rustshare_core::domain::File>> {
+        self.find_file_by_id_unchecked(id).await
+    }
+
     async fn update_file(&self, file: &rustshare_core::domain::File) -> Result<()> {
         self.update_file(file).await
     }

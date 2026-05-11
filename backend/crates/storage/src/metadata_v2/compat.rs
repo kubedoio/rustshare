@@ -108,6 +108,13 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
         }
     }
 
+    async fn find_file_by_id_unchecked(&self, id: uuid::Uuid) -> anyhow::Result<Option<File>> {
+        match self.repo.files().get(id).await? {
+            Some(doc) => Ok(Some(file_from_document(&doc))),
+            None => Ok(None),
+        }
+    }
+
     async fn update_file(&self, file: &File) -> anyhow::Result<()> {
         let doc = file_to_document(file);
         self.repo.files().update(&doc).await.map_err(|e| e.into())
