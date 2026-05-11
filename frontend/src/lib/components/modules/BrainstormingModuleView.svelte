@@ -7,7 +7,7 @@
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
-	import { PenTool, Plus, Clock, ImageOff, Folder } from 'lucide-svelte';
+	import { PenTool, Plus, Clock, ImageOff, Folder, Search, List, Grid3X3 } from 'lucide-svelte';
 	import { formatDistanceToNow } from 'date-fns';
 
 	interface Props {
@@ -25,17 +25,27 @@
 	let newBoardTitle = $state('');
 	let createError = $state('');
 	let brokenPreviews = $state(new Set<string>());
+	let searchTerm = $state('');
+	let viewMode = $state<'list' | 'grid'>(isList ? 'list' : 'grid');
 
 	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No idea boards yet');
 	let emptyDescription = $derived(
 		module.ui.page.emptyStateDescription ?? 'No idea boards yet. Create a simple visual board to capture sketches, flows, or early thinking.'
 	);
 	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New idea board');
+	let searchPlaceholder = $derived(module.ui.page.searchPlaceholder ?? 'Search boards...');
+	let filterLabel = $derived(module.ui.page.filterLabel ?? 'All boards');
+	let sortLabel = $derived(module.ui.page.sortLabel ?? 'Last updated');
 
 	const boardsQuery = createQuery({
 		queryKey: ['brainstorm-boards'],
 		queryFn: () => listBrainstormBoards()
 	});
+	let boards = $derived(
+		($boardsQuery.data ?? []).filter((board) =>
+			board.title.toLowerCase().includes(searchTerm.trim().toLowerCase())
+		)
+	);
 
 	const createBoardMutation = createMutation({
 		mutationFn: ({ title, templateKey }: { title: string; templateKey: string }) =>
@@ -118,38 +128,49 @@
 				actionLabel={emptyAction}
 				onAction={handleCreateBoard}
 			/>
-		{:else if isList}
-			<div class="flex flex-col gap-3">
-				{#each $boardsQuery.data ?? [] as board}
-					<a
-						href={`/modules/brainstorming/${board.id}`}
-						class="group flex items-center gap-4 rounded-2xl border border-base-300/50 bg-base-100 p-4 text-left shadow-sm transition-all hover:border-brand-500/40 hover:shadow-md"
-					>
-						<div
-							class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500"
-						>
-							<PenTool size={18} />
-						</div>
-						<div class="flex min-w-0 flex-col gap-1">
-							<span class="truncate text-sm font-medium text-base-content">{board.title}</span>
-							<span class="flex items-center gap-1 text-xs text-base-content/40">
-								<Clock size={12} />
-								{board.updated_at
-									? formatDistanceToNow(new Date(board.updated_at), { addSuffix: true })
-									: ''}
-							</span>
-						</div>
-					</a>
-				{/each}
-			</div>
 		{:else}
-			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-				{#each $boardsQuery.data ?? [] as board}
+			<div class="flex flex-col gap-4">
+				<div class="flex flex-col gap-3 lg:flex-row lg:items-center">
+					<label class="relative min-w-0 flex-1">
+						<Search size={16} class="absolute top-1/2 left-3 -translate-y-1/2 text-base-content/35" />
+						<input
+							class="input-bordered input input-sm w-full pl-9"
+							placeholder={searchPlaceholder}
+							bind:value={searchTerm}
+						/>
+					</label>
+					<button class="btn justify-between btn-sm btn-outline lg:w-36" disabled>{filterLabel}</button>
+					<div class="ml-auto flex items-center gap-2">
+						<span class="text-xs font-medium text-base-content/60">{sortLabel}</span>
+						<div class="join">
+							<button
+								class="btn join-item btn-sm {viewMode === 'list' ? 'btn-primary' : 'btn-outline'}"
+								aria-label="List view"
+								onclick={() => (viewMode = 'list')}
+							>
+								<List size={15} />
+							</button>
+							<button
+								class="btn join-item btn-sm {viewMode === 'grid' ? 'btn-primary' : 'btn-outline'}"
+								aria-label="Grid view"
+								onclick={() => (viewMode = 'grid')}
+							>
+								<Grid3X3 size={15} />
+							</button>
+						</div>
+					</div>
+				</div>
+				<div class={viewMode === 'grid' ? 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3' : 'flex flex-col gap-3'}>
+				{#each boards as board}
 					<a
 						href={`/modules/brainstorming/${board.id}`}
-						class="group flex flex-col gap-3 rounded-xl border border-base-300/40 p-3 transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
+						class={viewMode === 'grid'
+							? 'group flex flex-col gap-3 rounded-xl border border-base-300/40 p-3 transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm'
+							: 'group flex items-center gap-4 rounded-xl border border-base-300/40 p-3 transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm'}
 					>
-						<div class="relative aspect-[4/3] overflow-hidden rounded-lg bg-base-200">
+						<div class={viewMode === 'grid'
+							? 'relative aspect-[4/3] overflow-hidden rounded-lg bg-base-200'
+							: 'flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-base-200'}>
 							{#if getPreviewUrl(board) && !brokenPreviews.has(board.id)}
 								<img
 									src={getPreviewUrl(board)!}
@@ -162,8 +183,8 @@
 								<div
 									class="flex h-full w-full flex-col items-center justify-center gap-2 text-base-content/30"
 								>
-									<ImageOff size={32} />
-									<span class="text-xs">No preview</span>
+									<PenTool size={32} />
+									<span class="text-xs">Idea board</span>
 								</div>
 							{/if}
 						</div>
@@ -178,6 +199,17 @@
 						</div>
 					</a>
 				{/each}
+				{#if viewMode === 'grid'}
+					<button
+						class="flex min-h-44 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-base-300/70 p-4 text-center text-base-content/45 transition-colors hover:border-brand-500/40 hover:text-brand-500"
+						onclick={handleCreateBoard}
+					>
+						<PenTool size={34} />
+						<span class="text-sm font-semibold">No idea board yet</span>
+						<span class="max-w-40 text-xs">Create a board to start visualizing your ideas.</span>
+					</button>
+				{/if}
+				</div>
 			</div>
 		{/if}
 	</div>
@@ -221,6 +253,11 @@
 		{#if createError}
 			<p class="text-sm text-error">{createError}</p>
 		{/if}
+
+		<div class="flex flex-col items-center gap-2 py-4 text-center text-base-content/55">
+			<PenTool size={34} />
+			<p class="text-sm">You'll start with a blank board.</p>
+		</div>
 
 		<div class="flex justify-end gap-2 pt-2">
 			<button

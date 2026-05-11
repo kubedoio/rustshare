@@ -3,15 +3,23 @@
 	import { createQuery } from '$lib/query-compat';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
-	import { FileText, Plus, Clock, Folder, MoreHorizontal, Trash2 } from 'lucide-svelte';
+	import {
+		FileText,
+		Plus,
+		Clock,
+		Folder,
+		MoreHorizontal,
+		Search,
+		List,
+		Grid3X3,
+		ArrowUpDown
+	} from 'lucide-svelte';
 
 	import { listNotes, createNote, deleteNote } from '$lib/api/notes';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
 	export let module: ModuleDefinition;
-
-	$: isGallery = module.ui.page.layout === 'gallery-grid';
 
 	const notesQuery = createQuery({
 		queryKey: ['notes', module.key],
@@ -22,6 +30,26 @@
 
 	let createError = '';
 	let isCreating = false;
+	let searchTerm = '';
+	let statusFilter: 'all' | 'public' | 'private' = 'all';
+	let sortDirection: 'desc' | 'asc' = 'desc';
+	let viewMode: 'list' | 'grid' = module.ui.page.layout === 'gallery-grid' ? 'grid' : 'list';
+	let itemsPerPage = 20;
+
+	$: filteredNotes = recentNotes
+		.filter((note) =>
+			(note.metadata?.title || note.name || '').toLowerCase().includes(searchTerm.trim().toLowerCase())
+		)
+		.filter((note) => statusFilter === 'all' || note.metadata?.visibility === statusFilter)
+		.sort((a, b) => {
+			const aTime = new Date(a.modified_at ?? a.metadata?.updated_at ?? 0).getTime();
+			const bTime = new Date(b.modified_at ?? b.metadata?.updated_at ?? 0).getTime();
+			return sortDirection === 'desc' ? bTime - aTime : aTime - bTime;
+		});
+	$: visibleNotes = filteredNotes.slice(0, itemsPerPage);
+	$: filterLabel =
+		statusFilter === 'public' ? 'Public notes' : statusFilter === 'private' ? 'Private notes' : module.ui.page.filterLabel ?? 'All notes';
+	$: sortLabel = sortDirection === 'desc' ? 'Modified' : 'Oldest first';
 
 	async function handleNewNote() {
 		if (isCreating) return;
@@ -66,7 +94,9 @@
 	$: emptyDescription =
 		module.ui.page.emptyStateDescription ??
 		'No notes yet. Create your first note to capture ideas, documentation, or working knowledge.';
-	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New Note';
+	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New note';
+	$: searchPlaceholder = module.ui.page.searchPlaceholder ?? 'Search notes...';
+	$: itemPlural = module.ui.page.itemPlural ?? 'notes';
 </script>
 
 <ModulePageShell title="Notes" subtitle="Write and keep file-backed notes in your workspace.">
@@ -105,55 +135,98 @@
 				actionLabel={emptyAction}
 				onAction={handleNewNote}
 			/>
-		{:else if isGallery}
-			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-				{#each recentNotes as note}
-					<a
-						href={`/modules/${module.key}/${note.id}`}
-						class="group flex flex-col gap-3 rounded-xl border border-base-300/40 p-4 transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
-					>
-						<div
-							class="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
-						>
-							<FileText size={18} />
-						</div>
-						<div class="flex flex-col">
-							<span class="text-sm font-medium text-base-content">{note.name.replace(/\.md$/i, '')}</span>
-							{#if note.metadata?.excerpt}
-								<span class="line-clamp-1 text-xs text-base-content/50">{note.metadata.excerpt}</span>
-							{/if}
-							<span class="flex items-center gap-1 text-xs text-base-content/40">
-								<Clock size={12} />
-								{note.modified_at ? new Date(note.modified_at).toLocaleDateString() : ''}
-							</span>
-						</div>
-					</a>
-				{/each}
-			</div>
 		{:else}
-			<div class="flex flex-col gap-2">
-				{#each recentNotes as note}
-					<a
-						href={`/modules/${module.key}/${note.id}`}
-						class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
-					>
-						<div
-							class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
+			<div class="overflow-hidden rounded-xl border border-base-300/60 bg-base-100">
+				<div class="flex flex-col gap-3 border-b border-base-200 p-3 lg:flex-row lg:items-center">
+					<label class="relative min-w-0 flex-1">
+						<Search size={16} class="absolute top-1/2 left-3 -translate-y-1/2 text-base-content/35" />
+						<input
+							class="input-bordered input input-sm w-full pl-9"
+							placeholder={searchPlaceholder}
+							bind:value={searchTerm}
+						/>
+					</label>
+					<select class="select-bordered select select-sm lg:w-40" bind:value={statusFilter} aria-label="Filter notes">
+						<option value="all">{module.ui.page.filterLabel ?? 'All notes'}</option>
+						<option value="private">Private notes</option>
+						<option value="public">Public notes</option>
+					</select>
+					<div class="ml-auto flex items-center gap-2">
+						<button
+							class="btn gap-2 btn-sm btn-outline"
+							onclick={() => (sortDirection = sortDirection === 'desc' ? 'asc' : 'desc')}
 						>
-							<FileText size={16} />
+							<ArrowUpDown size={14} />
+							<span>{sortLabel}</span>
+						</button>
+						<div class="join">
+							<button
+								class="btn join-item btn-sm {viewMode === 'list' ? 'btn-primary' : 'btn-outline'}"
+								aria-label="List view"
+								onclick={() => (viewMode = 'list')}
+							>
+								<List size={15} />
+							</button>
+							<button
+								class="btn join-item btn-sm {viewMode === 'grid' ? 'btn-primary' : 'btn-outline'}"
+								aria-label="Grid view"
+								onclick={() => (viewMode = 'grid')}
+							>
+								<Grid3X3 size={15} />
+							</button>
 						</div>
-						<div class="flex flex-col">
-							<span class="text-sm font-medium text-base-content">{note.name.replace(/\.md$/i, '')}</span>
-							{#if note.metadata?.excerpt}
-								<span class="line-clamp-1 text-xs text-base-content/50">{note.metadata.excerpt}</span>
-							{/if}
-							<span class="flex items-center gap-1 text-xs text-base-content/40">
-								<Clock size={12} />
-								{note.modified_at ? new Date(note.modified_at).toLocaleDateString() : ''}
-							</span>
-						</div>
-					</a>
-				{/each}
+					</div>
+				</div>
+
+				{#if viewMode === 'grid'}
+					<div class="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3">
+						{#each visibleNotes as note}
+							<a href={`/modules/${module.key}/${note.id}`} class="rounded-xl border border-base-300/50 p-4 transition-colors hover:border-brand-500/30 hover:bg-base-200/30">
+								<div class="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-base-200 text-base-content/55">
+									<FileText size={16} />
+								</div>
+								<p class="truncate text-sm font-medium text-base-content">{(note.metadata?.title || note.name || '').replace(/\.md$/i, '')}</p>
+								<p class="mt-1 line-clamp-2 text-xs text-base-content/55">{note.metadata?.excerpt || 'No preview available'}</p>
+							</a>
+						{/each}
+					</div>
+				{:else}
+					<div class="divide-y divide-base-200">
+						{#each visibleNotes as note}
+							<a
+								href={`/modules/${module.key}/${note.id}`}
+								class="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-base-200/40"
+							>
+								<div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-200 text-base-content/55">
+									<FileText size={16} />
+								</div>
+								<div class="flex min-w-0 flex-1 flex-col">
+									<span class="truncate text-sm font-medium text-base-content">
+										{(note.metadata?.title || note.name || '').replace(/\.md$/i, '')}
+									</span>
+									<span class="line-clamp-1 text-xs text-base-content/55">
+										{note.metadata?.excerpt || 'No preview available'}
+									</span>
+								</div>
+								<span class="hidden text-xs text-base-content/55 sm:block">
+									{note.modified_at ? new Date(note.modified_at).toLocaleDateString() : ''}
+								</span>
+								<MoreHorizontal size={16} class="text-base-content/45" />
+							</a>
+						{/each}
+					</div>
+				{/if}
+
+				<div class="flex items-center justify-between border-t border-base-200 px-4 py-3 text-sm text-base-content/60">
+					<span>{filteredNotes.length} {itemPlural}</span>
+					<label class="flex items-center gap-2">
+						<span>Items per page</span>
+						<select class="select-bordered select select-sm w-20" bind:value={itemsPerPage}>
+							<option value={20}>20</option>
+							<option value={50}>50</option>
+						</select>
+					</label>
+				</div>
 			</div>
 		{/if}
 	</div>

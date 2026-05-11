@@ -6,14 +6,21 @@
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
-	import { FileText, Plus, Clock, Folder } from 'lucide-svelte';
+	import {
+		CalendarDays,
+		Plus,
+		Folder,
+		Search,
+		List,
+		Grid3X3,
+		ArrowUpDown,
+		MoreHorizontal
+	} from 'lucide-svelte';
 
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
 	let { module }: { module: ModuleDefinition } = $props();
-
-	let isGallery = $derived(module.ui.page.layout === 'gallery-grid');
 
 	const contentsQuery = createQuery({
 		queryKey: ['standups-root', module.key],
@@ -22,6 +29,27 @@
 
 	let contents = $derived($contentsQuery.data);
 	let standups = $derived(filterUserVisibleEntries(contents?.files ?? []));
+	let searchTerm = $state('');
+	let statusFilter = $state<'all' | 'recent'>('all');
+	let sortDirection = $state<'desc' | 'asc'>('desc');
+	let viewMode = $state<'list' | 'grid'>(module.ui.page.layout === 'gallery-grid' ? 'grid' : 'list');
+	let itemsPerPage = $state(20);
+	let filteredStandups = $derived(
+		standups
+			.filter((standup) =>
+				(standup.name || '').toLowerCase().includes(searchTerm.trim().toLowerCase())
+			)
+			.filter((standup) => {
+				if (statusFilter === 'all') return true;
+				return new Date(standup.modified_at).getTime() >= Date.now() - 30 * 24 * 60 * 60 * 1000;
+			})
+			.sort((a, b) => {
+				const aTime = new Date(a.modified_at).getTime();
+				const bTime = new Date(b.modified_at).getTime();
+				return sortDirection === 'desc' ? bTime - aTime : aTime - bTime;
+			})
+	);
+	let visibleStandups = $derived(filteredStandups.slice(0, itemsPerPage));
 
 	let createError = $state('');
 	let isCreating = $state(false);
@@ -41,7 +69,11 @@
 			title = `${title} ${counter}`;
 		}
 
-		if (!module.defaultTemplate) return;
+		if (!module.defaultTemplate) {
+			createError = 'No standup template is configured.';
+			isCreating = false;
+			return;
+		}
 
 		try {
 			const result = await createFromTemplate({
@@ -74,6 +106,9 @@
 			'No standup records yet. Create a daily update to capture progress, blockers, and follow-up items.'
 	);
 	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New standup');
+	let searchPlaceholder = $derived(module.ui.page.searchPlaceholder ?? 'Search standup records...');
+	let sortLabel = $derived(sortDirection === 'desc' ? 'Modified' : 'Oldest first');
+	let itemPlural = $derived(module.ui.page.itemPlural ?? 'standup records');
 </script>
 
 <ModulePageShell title="Standup Records" subtitle="Capture simple daily updates, blockers, and follow-up items.">
@@ -112,55 +147,83 @@
 				actionLabel={emptyAction}
 				onAction={handleNewStandup}
 			/>
-		{:else if isGallery}
-			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-				{#each standups as standup}
-					<a
-						href={getModuleObjectHref(module.key, 'file', standup.id)}
-						class="group flex flex-col gap-3 rounded-xl border border-base-300/40 p-4 transition-all hover:border-brand-500/30 hover:bg-base-200/30 hover:shadow-sm"
-					>
-						<div
-							class="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
+		{:else}
+			<div class="overflow-hidden rounded-xl border border-base-300/60 bg-base-100">
+				<div class="flex flex-col gap-3 border-b border-base-200 p-3 lg:flex-row lg:items-center">
+					<label class="relative min-w-0 flex-1">
+						<Search size={16} class="absolute top-1/2 left-3 -translate-y-1/2 text-base-content/35" />
+						<input
+							class="input-bordered input input-sm w-full pl-9"
+							placeholder={searchPlaceholder}
+							bind:value={searchTerm}
+						/>
+					</label>
+					<select class="select-bordered select select-sm lg:w-40" bind:value={statusFilter} aria-label="Filter standups">
+						<option value="all">{module.ui.page.filterLabel ?? 'All standups'}</option>
+						<option value="recent">Last 30 days</option>
+					</select>
+					<div class="ml-auto flex items-center gap-2">
+						<button
+							class="btn gap-2 btn-sm btn-outline"
+							onclick={() => (sortDirection = sortDirection === 'desc' ? 'asc' : 'desc')}
 						>
-							<FileText size={18} />
+							<ArrowUpDown size={14} />
+							<span>{sortLabel}</span>
+						</button>
+						<div class="join">
+							<button
+								class="btn join-item btn-sm {viewMode === 'list' ? 'btn-primary' : 'btn-outline'}"
+								aria-label="List view"
+								onclick={() => (viewMode = 'list')}
+							>
+								<List size={15} />
+							</button>
+							<button
+								class="btn join-item btn-sm {viewMode === 'grid' ? 'btn-primary' : 'btn-outline'}"
+								aria-label="Grid view"
+								onclick={() => (viewMode = 'grid')}
+							>
+								<Grid3X3 size={15} />
+							</button>
 						</div>
-						<div class="flex flex-col">
-							<span class="text-sm font-medium text-base-content">
-								{standup.name.replace(/\.md$/i, '')}
-							</span>
-							<span class="flex items-center gap-1 text-xs text-base-content/40">
-								<Clock size={12} />
+					</div>
+				</div>
+
+				<div class={viewMode === 'grid' ? 'grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3' : 'divide-y divide-base-200'}>
+					{#each visibleStandups as standup}
+						<a
+							href={getModuleObjectHref(module.key, 'file', standup.id)}
+							class={viewMode === 'grid'
+								? 'rounded-xl border border-base-300/50 p-4 transition-colors hover:border-brand-500/30 hover:bg-base-200/30'
+								: 'flex items-center gap-4 px-4 py-3 transition-colors hover:bg-base-200/40'}
+						>
+							<div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-500/10 text-brand-500 {viewMode === 'grid' ? 'mb-3' : ''}">
+								<CalendarDays size={16} />
+							</div>
+							<div class="flex min-w-0 flex-1 flex-col">
+								<span class="truncate text-sm font-medium text-base-content">
+									{standup.name.replace(/\.md$/i, '')}
+								</span>
+								<span class="text-xs text-base-content/55">{new Date(standup.modified_at).toLocaleDateString()}</span>
+							</div>
+							<span class="{viewMode === 'grid' ? 'mt-3 block' : 'hidden sm:block'} text-xs text-base-content/55">
 								{new Date(standup.modified_at).toLocaleDateString()}
 							</span>
-						</div>
-					</a>
-				{/each}
-			</div>
-		{:else}
-			<div class="flex flex-col gap-2">
-				{#each standups as standup}
-					<a
-						href={getModuleObjectHref(module.key, 'file', standup.id)}
-						class="flex items-center gap-3 rounded-xl border border-base-300/40 p-3 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
-					>
-						<div
-							class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"
-						>
-							<FileText size={16} />
-						</div>
-						<div class="flex min-w-0 flex-1 flex-col">
-							<span class="text-sm font-medium text-base-content">
-								{standup.name.replace(/\.md$/i, '')}
-							</span>
-							<div class="flex items-center gap-3 text-xs text-base-content/50">
-								<span class="inline-flex items-center gap-1">
-									<Clock size={12} />
-									{new Date(standup.modified_at).toLocaleDateString()}
-								</span>
-							</div>
-						</div>
-					</a>
-				{/each}
+							{#if viewMode === 'list'}<MoreHorizontal size={16} class="text-base-content/45" />{/if}
+						</a>
+					{/each}
+				</div>
+
+				<div class="flex items-center justify-between border-t border-base-200 px-4 py-3 text-sm text-base-content/60">
+					<span>{filteredStandups.length} {itemPlural}</span>
+					<label class="flex items-center gap-2">
+						<span>Items per page</span>
+						<select class="select-bordered select select-sm w-20" bind:value={itemsPerPage}>
+							<option value={20}>20</option>
+							<option value={50}>50</option>
+						</select>
+					</label>
+				</div>
 			</div>
 		{/if}
 	</div>

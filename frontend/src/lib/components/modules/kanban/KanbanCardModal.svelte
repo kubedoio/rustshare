@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { X, Plus, Check, AlignLeft } from 'lucide-svelte';
+	import { X, Plus, Check, AlignLeft, ChevronDown, Trash2 } from 'lucide-svelte';
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
 	import type { KanbanCardDetail, KanbanBoard, KanbanAssignee } from '$lib/api/types';
 	import RichMarkdownEditor from '../../../editor/components/RichMarkdownEditor.svelte';
@@ -36,25 +36,27 @@
 		onArchive,
 		onDelete,
 		onToggleLabel,
-		onToggleAssignee,
-		onCreateLabel
+		onToggleAssignee
 	}: Props = $props();
 
 	let showLabelPicker = $state(false);
 	let showAssigneePicker = $state(false);
-	let showNewLabelForm = $state(false);
-	let newLabelName = $state('');
-	let newLabelColor = $state('blue');
 
-	function handleCreateLabel() {
-		if (!newLabelName.trim()) return;
-		onCreateLabel(newLabelName.trim(), newLabelColor);
-		newLabelName = '';
-		showNewLabelForm = false;
+	let selectedAssignee = $derived(card?.assignees?.[0] ?? null);
+
+	function handleAssigneeSelect(userId: string) {
+		if (!card) return;
+		for (const assignee of card.assignees) {
+			if (assignee.id !== userId) onToggleAssignee(assignee.id);
+		}
+		if (!card.assignees.some((assignee) => assignee.id === userId)) {
+			onToggleAssignee(userId);
+		}
+		showAssigneePicker = false;
 	}
 </script>
 
-<ModalBase {open} {onClose} {title}>
+<ModalBase {open} {onClose} {title} class="max-w-3xl !overflow-visible">
 	<div class="card-detail-drawer">
 		{#if loadingDetail}
 			<div class="flex h-64 items-center justify-center">
@@ -72,9 +74,7 @@
 							onblur={onSave}
 						/>
 					</div>
-					<div class="detail-meta">
-						in column <span class="font-bold">{card.status}</span>
-					</div>
+					<div class="detail-meta">in column <span class="font-bold">{card.status}</span></div>
 				</div>
 				<div class="header-actions">
 					{#if saveStatus === 'saving'}
@@ -92,162 +92,98 @@
 
 			<div class="detail-content">
 				<div class="detail-main">
-					<!-- Labels & Assignees -->
-					<div class="detail-badges-row">
-						<div class="detail-section">
-							<h4 class="section-label">Labels</h4>
-							<div class="flex flex-wrap items-center gap-1">
+					<div class="detail-section property-section">
+						<h4 class="section-label">Label</h4>
+						<div class="property-anchor">
+							<div class="label-strip">
 								{#each card.labels as label}
-									<span class="card-label label-{label.color} group relative">
+									<span class="card-label label-{label.color}">
 										{label.name}
-										<button
-											class="absolute -top-1.5 -right-1.5 hidden h-4 w-4 items-center justify-center rounded-full bg-base-content text-base-100 shadow-sm group-hover:flex"
-											onclick={() => onToggleLabel(label.id)}
-										>
-											<X size={10} />
-										</button>
 									</span>
 								{/each}
-								<div class="relative">
-									<button
-										class="btn h-7 rounded-lg border border-dashed border-base-300 px-2 btn-ghost btn-xs hover:border-brand-500"
-										onclick={() => {
-											showLabelPicker = !showLabelPicker;
-											showAssigneePicker = false;
-										}}
-									>
-										<Plus size={12} class="mr-1" />
-										<span>Add</span>
-									</button>
-									{#if showLabelPicker}
-										<div
-											class="absolute top-full left-0 z-50 mt-1 min-w-[200px] rounded-xl border border-base-300 bg-base-100 p-3 shadow-xl"
-										>
-											<div class="mb-2 flex items-center justify-between">
-												<div class="text-[10px] font-bold text-base-content/40 uppercase">
-													Select Label
-												</div>
-												<button
-													class="btn h-6 px-1 text-brand-500 btn-ghost btn-xs hover:bg-brand-50"
-													onclick={() => (showNewLabelForm = !showNewLabelForm)}
-												>
-													{showNewLabelForm ? 'Cancel' : 'New'}
-												</button>
-											</div>
-
-											{#if showNewLabelForm}
-												<div class="mb-3 flex flex-col gap-2 rounded-lg bg-base-200/50 p-2">
-													<input
-														type="text"
-														placeholder="Label name..."
-														class="input input-xs h-8 bg-base-100"
-														bind:value={newLabelName}
-														onkeydown={(e) => e.key === 'Enter' && handleCreateLabel()}
-													/>
-													<div class="flex flex-wrap gap-1">
-														{#each ['green', 'yellow', 'orange', 'red', 'purple', 'blue', 'gray'] as color}
-															<button
-																aria-label={color}
-																class="h-5 w-5 rounded-full label-{color} border-2 {newLabelColor ===
-																color
-																	? 'border-base-content'
-																	: 'border-transparent'}"
-																onclick={() => (newLabelColor = color)}
-															></button>
-														{/each}
-													</div>
-													<button
-														class="btn h-8 w-full btn-xs btn-primary"
-														disabled={!newLabelName.trim()}
-														onclick={handleCreateLabel}
-													>
-														Create Label
-													</button>
-												</div>
-											{/if}
-
-											<div class="flex max-h-48 flex-col gap-1 overflow-y-auto">
-												{#each board.labels as label}
-													<button
-														class="flex items-center justify-between rounded-lg px-2 py-1.5 text-left text-xs hover:bg-base-200"
-														onclick={() => onToggleLabel(label.id)}
-													>
-														<span class="card-label label-{label.color} !m-0">{label.name}</span>
-														{#if card.labels.some((l) => l.id === label.id)}
-															<Check size={12} class="text-brand-500" />
-														{/if}
-													</button>
-												{/each}
-											</div>
-										</div>
+								<button
+									class="property-add-button"
+									aria-label="Add label"
+									onclick={() => {
+										showLabelPicker = !showLabelPicker;
+										showAssigneePicker = false;
+									}}
+								>
+									<Plus size={16} />
+								</button>
+							</div>
+							{#if showLabelPicker}
+								<div class="property-menu label-menu">
+									{#if board.labels.length === 0}
+										<div class="property-menu-empty">No labels on this board</div>
+									{:else}
+										{#each board.labels as label}
+											<button class="property-menu-item" onclick={() => onToggleLabel(label.id)}>
+												<span class="card-label label-{label.color}">{label.name}</span>
+												{#if card.labels.some((selected) => selected.id === label.id)}
+													<Check size={14} class="text-brand-600" />
+												{/if}
+											</button>
+										{/each}
 									{/if}
 								</div>
-							</div>
-						</div>
-
-						<div class="detail-section">
-							<h4 class="section-label">Assignees</h4>
-							<div class="flex flex-wrap items-center gap-1">
-								{#each card.assignees as assignee}
-									<div class="assignee-avatar group relative" title={assignee.display_name}>
-										{#if assignee.avatar_url}
-											<img src={assignee.avatar_url} alt={assignee.display_name} />
-										{:else}
-											<span>{assignee.initials}</span>
-										{/if}
-										<button
-											class="absolute -top-1 -right-1 z-10 hidden h-4 w-4 items-center justify-center rounded-full bg-base-content text-base-100 shadow-sm group-hover:flex"
-											onclick={() => onToggleAssignee(assignee.id)}
-										>
-											<X size={10} />
-										</button>
-									</div>
-								{/each}
-								<div class="relative">
-									<button
-										class="btn h-8 w-8 rounded-full border border-dashed border-base-300 p-0 btn-ghost btn-xs hover:border-brand-500"
-										onclick={() => {
-											showAssigneePicker = !showAssigneePicker;
-											showLabelPicker = false;
-										}}
-									>
-										<Plus size={14} />
-									</button>
-									{#if showAssigneePicker}
-										<div
-											class="absolute top-full left-0 z-50 mt-1 min-w-[200px] rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl"
-										>
-											<div class="mb-1 px-2 text-[10px] font-bold text-base-content/40 uppercase">
-												Assign Member
-											</div>
-											<div class="flex max-h-48 flex-col gap-1 overflow-y-auto">
-												{#each assignableUsers as user}
-													<button
-														class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-base-200"
-														onclick={() => onToggleAssignee(user.id)}
-													>
-														<div class="assignee-avatar !h-6 !w-6 !text-[10px]">
-															{#if user.avatar_url}
-																<img src={user.avatar_url} alt={user.display_name} />
-															{:else}
-																<span>{user.initials}</span>
-															{/if}
-														</div>
-														<span class="flex-1 truncate">{user.display_name}</span>
-														{#if card.assignees.some((a) => a.id === user.id)}
-															<Check size={12} class="text-brand-500" />
-														{/if}
-													</button>
-												{/each}
-											</div>
-										</div>
-									{/if}
-								</div>
-							</div>
+							{/if}
 						</div>
 					</div>
 
-					<!-- Description -->
+					<div class="detail-section property-section">
+						<h4 class="section-label">Assignee</h4>
+						<div class="property-anchor">
+							<button
+								class="assignee-select"
+								onclick={() => {
+									showAssigneePicker = !showAssigneePicker;
+									showLabelPicker = false;
+								}}
+							>
+								{#if selectedAssignee}
+									<span class="assignee-avatar">
+										{#if selectedAssignee.avatar_url}
+											<img src={selectedAssignee.avatar_url} alt={selectedAssignee.display_name} />
+										{:else}
+											<span>{selectedAssignee.initials}</span>
+										{/if}
+									</span>
+									<span>{selectedAssignee.display_name}</span>
+								{:else}
+									<span class="assignee-avatar empty-avatar">
+										<Plus size={13} />
+									</span>
+									<span>Choose assignee</span>
+								{/if}
+								<ChevronDown size={16} class="ml-auto text-base-content/45" />
+							</button>
+							{#if showAssigneePicker}
+								<div class="property-menu assignee-menu">
+									{#if assignableUsers.length === 0}
+										<div class="property-menu-empty">No assignable members</div>
+									{:else}
+										{#each assignableUsers as user}
+											<button class="property-menu-item" onclick={() => handleAssigneeSelect(user.id)}>
+												<span class="assignee-avatar">
+													{#if user.avatar_url}
+														<img src={user.avatar_url} alt={user.display_name} />
+													{:else}
+														<span>{user.initials}</span>
+													{/if}
+												</span>
+												<span class="flex-1 truncate">{user.display_name}</span>
+												{#if card.assignees.some((assignee) => assignee.id === user.id)}
+													<Check size={14} class="text-brand-600" />
+												{/if}
+											</button>
+										{/each}
+									{/if}
+								</div>
+							{/if}
+						</div>
+					</div>
+
 					<div class="detail-section">
 						<div class="mb-2 flex items-center gap-2">
 							<AlignLeft size={18} class="text-base-content/60" />
@@ -272,16 +208,17 @@
 									{#if savingDetail}
 										<span class="loading loading-xs loading-spinner"></span>
 									{/if}
-									Save Changes
+									Save changes
 								</button>
 							</div>
 						</div>
 					</div>
 
-					<!-- Card Actions -->
-					<div class="detail-section flex gap-2">
+					<div class="detail-section flex items-center justify-between gap-2">
+						<button class="delete-icon-button" aria-label="Delete card" onclick={onDelete}>
+							<Trash2 size={17} />
+						</button>
 						<button class="btn btn-sm btn-outline" onclick={onArchive}>Archive</button>
-						<button class="btn btn-sm btn-error btn-outline" onclick={onDelete}>Delete</button>
 					</div>
 				</div>
 			</div>
@@ -295,10 +232,11 @@
 		max-width: 48rem;
 		min-height: 30rem;
 		max-height: 90vh;
-		overflow-y: auto;
+		overflow-y: visible;
 		background: var(--rs-surface-primary, white);
 		display: flex;
 		flex-direction: column;
+		border-radius: 0.75rem;
 	}
 
 	.detail-header {
@@ -349,26 +287,195 @@
 		display: grid;
 		grid-template-columns: 1fr;
 		gap: 2rem;
+		overflow: visible;
 	}
 
 	.detail-section {
-		margin-bottom: 2rem;
+		margin-bottom: 1.5rem;
+	}
+
+	.property-section {
+		border-bottom: 1px solid var(--base-200);
+		padding-bottom: 1rem;
+		overflow: visible;
 	}
 
 	.section-label {
 		font-size: 0.85rem;
 		font-weight: 700;
 		color: color-mix(in oklab, var(--base-content) 70%, transparent);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
+		text-transform: none;
+		letter-spacing: 0;
 		margin-bottom: 0.75rem;
 	}
 
-	.detail-badges-row {
+	.property-anchor {
+		position: relative;
+		width: 100%;
+		overflow: visible;
+	}
+
+	.label-strip {
 		display: flex;
+		min-height: 2.25rem;
 		flex-wrap: wrap;
-		gap: 2rem;
-		margin-bottom: 1rem;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.property-add-button {
+		display: inline-flex;
+		width: 2rem;
+		height: 2rem;
+		flex-shrink: 0;
+		align-items: center;
+		justify-content: center;
+		border-radius: 0.65rem;
+		border: 1px solid var(--base-200);
+		background: var(--base-100, #ffffff);
+		color: color-mix(in oklab, var(--base-content) 64%, transparent);
+	}
+
+	.property-add-button:hover,
+	.assignee-select:hover {
+		border-color: color-mix(in oklab, var(--brand-500) 38%, transparent);
+		background: color-mix(in oklab, var(--brand-500) 5%, white);
+	}
+
+	.property-menu {
+		position: absolute;
+		top: calc(100% + 0.5rem);
+		left: 0;
+		z-index: 80;
+		width: min(22rem, 100%);
+		min-width: 16rem;
+		max-height: 16rem;
+		overflow-y: auto;
+		border-radius: 0.75rem;
+		border: 1px solid color-mix(in oklab, var(--base-content) 12%, transparent);
+		background: var(--base-100, #ffffff);
+		padding: 0.4rem;
+		box-shadow:
+			0 24px 55px rgb(15 23 42 / 0.24),
+			0 0 0 1px rgb(255 255 255 / 0.92) inset;
+		color: var(--base-content);
+	}
+
+	.label-menu {
+		width: min(20rem, 100%);
+	}
+
+	.assignee-menu {
+		width: 100%;
+		min-width: 18rem;
+	}
+
+	.property-menu-item {
+		display: flex;
+		width: 100%;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		border-radius: 0.6rem;
+		background: transparent;
+		padding: 0.5rem 0.6rem;
+		text-align: left;
+		font-size: 0.82rem;
+		color: var(--base-content);
+	}
+
+	.property-menu-item:hover {
+		background: color-mix(in oklab, var(--brand-500) 8%, var(--base-100, #ffffff));
+	}
+
+	.property-menu-empty {
+		padding: 0.65rem 0.75rem;
+		color: color-mix(in oklab, var(--base-content) 55%, transparent);
+		font-size: 0.82rem;
+	}
+
+	.card-label {
+		display: inline-flex;
+		align-items: center;
+		min-height: 1.45rem;
+		max-width: 100%;
+		border-radius: 0.35rem;
+		padding: 0.18rem 0.45rem;
+		font-size: 0.68rem;
+		font-weight: 800;
+		line-height: 1;
+		text-transform: uppercase;
+		letter-spacing: 0.02em;
+	}
+
+	.label-green {
+		background: #d8f2dc;
+		color: #188039;
+	}
+	.label-yellow {
+		background: #fff1a8;
+		color: #826300;
+	}
+	.label-orange {
+		background: #ffe2bd;
+		color: #9a5200;
+	}
+	.label-red {
+		background: #ffd8d8;
+		color: #c02b2b;
+	}
+	.label-purple {
+		background: #eadcff;
+		color: #6941b8;
+	}
+	.label-blue {
+		background: #dce9ff;
+		color: #2f62b6;
+	}
+	.label-gray {
+		background: var(--base-200);
+		color: color-mix(in oklab, var(--base-content) 70%, transparent);
+	}
+
+	.assignee-select {
+		display: flex;
+		width: 100%;
+		align-items: center;
+		gap: 0.55rem;
+		border-radius: 0.75rem;
+		border: 1px solid var(--base-200);
+		background: var(--base-100, #ffffff);
+		padding: 0.55rem 0.65rem;
+		font-size: 0.85rem;
+		font-weight: 600;
+		text-align: left;
+		color: var(--base-content);
+	}
+
+	.assignee-avatar {
+		display: inline-flex;
+		width: 1.65rem;
+		height: 1.65rem;
+		flex-shrink: 0;
+		align-items: center;
+		justify-content: center;
+		overflow: hidden;
+		border-radius: 999px;
+		background: color-mix(in oklab, var(--brand-500) 14%, white);
+		color: var(--brand-700, #8b3d12);
+		font-size: 0.68rem;
+		font-weight: 800;
+	}
+
+	.assignee-avatar img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	.empty-avatar {
+		background: var(--base-200);
+		color: color-mix(in oklab, var(--base-content) 55%, transparent);
 	}
 
 	.description-editor {
@@ -391,70 +498,19 @@
 		opacity: 1;
 	}
 
-	.card-label {
-		font-size: 0.6rem;
-		font-weight: 700;
-		padding: 0.1rem 0.4rem;
-		border-radius: 0.25rem;
-		text-transform: uppercase;
-		letter-spacing: 0.02em;
-	}
-
-	.label-green {
-		background: #61bd4f;
-		color: white;
-	}
-	.label-yellow {
-		background: #f2d600;
-		color: #42526e;
-	}
-	.label-orange {
-		background: #ff9f1a;
-		color: white;
-	}
-	.label-red {
-		background: #eb5a46;
-		color: white;
-	}
-	.label-purple {
-		background: #c377e0;
-		color: white;
-	}
-	.label-blue {
-		background: #0079bf;
-		color: white;
-	}
-	.label-gray {
-		background: #b3bac5;
-		color: white;
-	}
-
-	.assignee-avatar {
-		width: 1.4rem;
-		height: 1.4rem;
-		border-radius: 999px;
-		background: var(--base-200);
-		border: 1.5px solid var(--rs-surface-primary, white);
-		margin-right: -0.3rem;
-		display: flex;
+	.delete-icon-button {
+		display: inline-flex;
+		width: 2.25rem;
+		height: 2.25rem;
 		align-items: center;
 		justify-content: center;
-		font-size: 0.55rem;
-		font-weight: 700;
-		color: var(--base-content);
-		overflow: hidden;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+		border-radius: 0.65rem;
+		border: 1px solid color-mix(in oklab, var(--error) 25%, transparent);
+		background: color-mix(in oklab, var(--error) 6%, white);
+		color: var(--error);
 	}
 
-	.assignee-avatar img {
-		width: 100%;
-		height: 100%;
-		object-fit: cover;
-	}
-
-	@media (max-width: 767px) {
-		.detail-badges-row {
-			gap: 1rem;
-		}
+	.delete-icon-button:hover {
+		background: color-mix(in oklab, var(--error) 10%, white);
 	}
 </style>

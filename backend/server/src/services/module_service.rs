@@ -147,14 +147,14 @@ impl ModuleService {
                 true,
                 json!({
                     "sidebar": { "enabled": true, "order": 30, "icon": "sticky-note", "label": "Notes" },
-                    "dashboard": { "enabled": true, "order": 10, "cardTitle": "Notes", "cardDescription": "Recent file-backed notes.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New Note", "action": "create-from-template", "template": "template_default_note" } },
-                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first file-backed note.", "emptyStateAction": "New Note" }
+                    "dashboard": { "enabled": true, "order": 10, "cardTitle": "Notes", "cardDescription": "Recent file-backed notes.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New note", "action": "create-from-template", "template": "template_default_note" } },
+                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first file-backed note.", "emptyStateAction": "New note" }
                 }),
             ),
             (
                 "meetings",
                 "Meeting Notes",
-                "Create structured meeting records with agenda, attendees, decisions and action items.",
+                "Record simple meeting notes, decisions, and follow-up items.",
                 "/Workspace/Meetings",
                 "meetings",
                 "template_default_meeting",
@@ -162,14 +162,14 @@ impl ModuleService {
                 false,
                 json!({
                     "sidebar": { "enabled": true, "order": 40, "icon": "calendar-days", "label": "Meeting Notes" },
-                    "dashboard": { "enabled": true, "order": 20, "cardTitle": "Meeting Notes", "cardDescription": "Structured meeting records.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New Meeting", "action": "create-from-template", "template": "template_default_meeting" } },
-                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No meetings yet", "emptyStateDescription": "Create your first meeting note.", "emptyStateAction": "New Meeting" }
+                    "dashboard": { "enabled": true, "order": 20, "cardTitle": "Meeting Notes", "cardDescription": "Recent meeting notes.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New meeting note", "action": "create-from-template", "template": "template_default_meeting" } },
+                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No meeting notes yet", "emptyStateDescription": "Create a meeting note to capture agenda, discussion, decisions, and follow-up items.", "emptyStateAction": "New meeting note" }
                 }),
             ),
             (
                 "standups",
                 "Standup Records",
-                "Track daily team updates, blockers and follow-up items.",
+                "Capture simple daily updates, blockers, and follow-up items.",
                 "/Workspace/Standups",
                 "standups",
                 "template_default_standup",
@@ -177,14 +177,14 @@ impl ModuleService {
                 false,
                 json!({
                     "sidebar": { "enabled": true, "order": 50, "icon": "clipboard-list", "label": "Standup Records" },
-                    "dashboard": { "enabled": true, "order": 30, "cardTitle": "Standup Records", "cardDescription": "Daily team updates and blockers.", "summaryMode": "today-status", "maxItems": 4, "primaryAction": { "label": "New Standup", "action": "create-from-template", "template": "template_default_standup" } },
-                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No standups yet", "emptyStateDescription": "Create your first standup record.", "emptyStateAction": "New Standup" }
+                    "dashboard": { "enabled": true, "order": 30, "cardTitle": "Standup Records", "cardDescription": "Recent standup records.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New standup", "action": "create-from-template", "template": "template_default_standup" } },
+                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No standup records yet", "emptyStateDescription": "Create a daily update to capture progress, blockers, and follow-up items.", "emptyStateAction": "New standup" }
                 }),
             ),
             (
                 "kanban",
-                "Kanban Dashboard",
-                "Manage board cards as file-backed folders and Markdown records.",
+                "Kanban",
+                "Organize lightweight work boards in your workspace.",
                 "/Workspace/Kanban",
                 "kanban",
                 "template_default_kanban",
@@ -192,14 +192,14 @@ impl ModuleService {
                 false,
                 json!({
                     "sidebar": { "enabled": true, "order": 50, "icon": "columns", "label": "Kanban" },
-                    "dashboard": { "enabled": true, "order": 10, "widget": { "enabled": true, "type": "kanban-summary", "title": "Kanban Dashboard", "description": "Active boards and cards.", "size": "large", "columns": { "desktop": 6, "tablet": 12, "mobile": 12 }, "maxItems": 8, "primaryAction": { "label": "New Board", "action": "create-from-template", "template": "template_default_kanban" } } },
-                    "page": { "enabled": true, "route": "/modules/kanban", "renderer": "kanban", "layout": "board", "emptyStateTitle": "No Kanban boards yet", "emptyStateDescription": "Create your first file-backed Kanban board.", "primaryAction": { "label": "New Board", "action": "create-from-template", "template": "template_default_kanban" } }
+                    "dashboard": { "enabled": true, "order": 40, "widget": { "enabled": true, "type": "kanban-summary", "title": "Kanban", "description": "Recent boards.", "size": "large", "columns": { "desktop": 6, "tablet": 12, "mobile": 12 }, "maxItems": 4, "primaryAction": { "label": "New board", "action": "create-from-template", "template": "template_default_kanban" } } },
+                    "page": { "enabled": true, "route": "/modules/kanban", "renderer": "kanban", "layout": "kanban-board", "emptyStateTitle": "No boards yet", "emptyStateDescription": "Create a lightweight board to organize work, ideas, or follow-up items.", "primaryAction": { "label": "New board", "action": "create-from-template", "template": "template_default_kanban" } }
                 }),
             ),
             (
                 "decisions",
                 "Decisions",
-                "Record architectural, product and business decisions.",
+                "Record important decisions with context and rationale.",
                 "/Workspace/Decisions",
                 "decisions",
                 "template_default_decision",
@@ -207,14 +207,14 @@ impl ModuleService {
                 false,
                 json!({
                     "sidebar": { "enabled": true, "order": 70, "icon": "git-branch", "label": "Decisions" },
-                    "dashboard": { "enabled": true, "order": 50, "cardTitle": "Decisions", "cardDescription": "Architectural and business decisions.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New Decision", "action": "create-from-template", "template": "template_default_decision" } },
-                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No decisions yet", "emptyStateDescription": "Record your first decision.", "emptyStateAction": "New Decision" }
+                    "dashboard": { "enabled": true, "order": 50, "cardTitle": "Decisions", "cardDescription": "Recent decision records.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New decision", "action": "create-from-template", "template": "template_default_decision" } },
+                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No decisions yet", "emptyStateDescription": "Create a decision record to preserve context, rationale, and follow-up.", "emptyStateAction": "New decision" }
                 }),
             ),
             (
                 "brainstorming",
                 "Brainstorming",
-                "Visual decision boards and brainstorming whiteboards.",
+                "Capture sketches, flows, and early ideas as visual workspace boards.",
                 "/Workspace/Brainstorming",
                 "brainstorming",
                 "template_blank_brainstorm",
@@ -222,14 +222,14 @@ impl ModuleService {
                 false,
                 json!({
                     "sidebar": { "enabled": true, "order": 55, "icon": "pen-tool", "label": "Brainstorming" },
-                    "dashboard": { "enabled": true, "order": 55, "widget": { "enabled": true, "type": "recent-brainstorm-boards", "title": "Brainstorming", "description": "Recent visual decision boards.", "size": "medium", "columns": { "desktop": 6, "tablet": 12, "mobile": 12 }, "maxItems": 4, "primaryAction": { "label": "New Board", "action": "create-from-template", "template": "template_blank_brainstorm" } } },
-                    "page": { "enabled": true, "route": "/modules/brainstorming", "renderer": "brainstorming", "layout": "gallery-grid", "emptyStateTitle": "No brainstorming boards yet", "emptyStateDescription": "Create your first visual decision board.", "primaryAction": { "label": "New Board", "action": "create-from-template", "template": "template_blank_brainstorm" } }
+                    "dashboard": { "enabled": true, "order": 55, "widget": { "enabled": true, "type": "recent-brainstorm-boards", "title": "Brainstorming", "description": "Recent idea boards.", "size": "medium", "columns": { "desktop": 6, "tablet": 12, "mobile": 12 }, "maxItems": 4, "primaryAction": { "label": "New idea board", "action": "create-from-template", "template": "template_blank_brainstorm" } } },
+                    "page": { "enabled": true, "route": "/modules/brainstorming", "renderer": "brainstorming", "layout": "gallery-grid", "emptyStateTitle": "No idea boards yet", "emptyStateDescription": "Create a simple visual board to capture sketches, flows, or early thinking.", "primaryAction": { "label": "New idea board", "action": "create-from-template", "template": "template_blank_brainstorm" } }
                 }),
             ),
             (
                 "shares",
                 "Shares",
-                "Manage public and internal share packages.",
+                "Manage items shared from your workspace.",
                 "/Workspace/Shares",
                 "shares",
                 "template_default_share",
@@ -237,8 +237,8 @@ impl ModuleService {
                 false,
                 json!({
                     "sidebar": { "enabled": true, "order": 80, "icon": "share-2", "label": "Shares" },
-                    "dashboard": { "enabled": true, "order": 60, "cardTitle": "Shares", "cardDescription": "Public and internal share packages.", "summaryMode": "shares-overview", "maxItems": 4, "primaryAction": { "label": "New Share", "action": "create-from-template", "template": "template_default_share" } },
-                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No shares yet", "emptyStateDescription": "Create your first share package.", "emptyStateAction": "New Share" }
+                    "dashboard": { "enabled": true, "order": 60, "cardTitle": "Shares", "cardDescription": "Recent shares.", "summaryMode": "shares-overview", "maxItems": 4, "primaryAction": { "label": "New share", "action": "generic-create" } },
+                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No active shares", "emptyStateDescription": "Share a file or folder when you are ready.", "emptyStateAction": "New share" }
                 }),
             ),
         ];
@@ -1106,6 +1106,31 @@ fn normalize_module_ui_config(
         .get("primaryAction")
         .cloned()
         .unwrap_or_else(|| widget_primary_action.clone());
+    let page_search_placeholder = page
+        .get("searchPlaceholder")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| format!("Search {}...", display_name.to_lowercase()));
+    let page_filter_label = page
+        .get("filterLabel")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| format!("All {}", display_name.to_lowercase()));
+    let page_sort_label = page
+        .get("sortLabel")
+        .and_then(|value| value.as_str())
+        .unwrap_or("Modified")
+        .to_string();
+    let page_item_singular = page
+        .get("itemSingular")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| display_name.to_lowercase());
+    let page_item_plural = page
+        .get("itemPlural")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| display_name.to_lowercase());
 
     json!({
         "sidebar": {
@@ -1147,7 +1172,12 @@ fn normalize_module_ui_config(
             "emptyStateTitle": page_empty_title,
             "emptyStateDescription": page_empty_description,
             "emptyStateAction": page_empty_action,
-            "primaryAction": page_primary_action
+            "primaryAction": page_primary_action,
+            "searchPlaceholder": page_search_placeholder,
+            "filterLabel": page_filter_label,
+            "sortLabel": page_sort_label,
+            "itemSingular": page_item_singular,
+            "itemPlural": page_item_plural
         }
     })
 }
@@ -1186,17 +1216,18 @@ fn default_widget_columns(widget_size: &str) -> serde_json::Map<String, serde_js
 
 fn default_primary_action(module_key: &str, default_template: Option<&str>) -> serde_json::Value {
     let label = match module_key {
-        "kanban" => "New Board",
-        "meetings" => "New Meeting",
-        "standups" => "New Standup",
-        "decisions" => "New Decision",
-        "shares" => "New Share",
-        _ => "New Note",
+        "kanban" => "New board",
+        "brainstorming" => "New idea board",
+        "meetings" => "New meeting note",
+        "standups" => "New standup",
+        "decisions" => "New decision",
+        "shares" => "New share",
+        _ => "New note",
     };
 
     json!({
         "label": label,
-        "action": "create-from-template",
+        "action": if module_key == "shares" { "generic-create" } else { "create-from-template" },
         "template": default_template
     })
 }

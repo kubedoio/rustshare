@@ -45,6 +45,11 @@ export interface ModuleUiPage {
 	emptyStateTitle: string;
 	emptyStateDescription: string;
 	primaryAction?: ModuleUiPrimaryAction;
+	searchPlaceholder?: string;
+	filterLabel?: string;
+	sortLabel?: string;
+	itemSingular?: string;
+	itemPlural?: string;
 }
 
 export interface ModuleUiDefinition {
@@ -568,7 +573,13 @@ export async function refreshModules() {
 								emptyStateTitle: uiConfig?.page?.emptyStateTitle ?? m.ui.page.emptyStateTitle,
 								emptyStateDescription:
 									uiConfig?.page?.emptyStateDescription ?? m.ui.page.emptyStateDescription,
-								primaryAction: uiConfig?.page?.primaryAction ?? m.ui.page.primaryAction
+								primaryAction: uiConfig?.page?.primaryAction ?? m.ui.page.primaryAction,
+								searchPlaceholder:
+									uiConfig?.page?.searchPlaceholder ?? m.ui.page.searchPlaceholder,
+								filterLabel: uiConfig?.page?.filterLabel ?? m.ui.page.filterLabel,
+								sortLabel: uiConfig?.page?.sortLabel ?? m.ui.page.sortLabel,
+								itemSingular: uiConfig?.page?.itemSingular ?? m.ui.page.itemSingular,
+								itemPlural: uiConfig?.page?.itemPlural ?? m.ui.page.itemPlural
 							}
 						}
 					};

@@ -19,6 +19,7 @@ pub struct Template {
     pub visibility_policy: String,
     pub ai_indexing_policy: serde_json::Value,
     pub audit_logging_policy: serde_json::Value,
+    pub module_config: serde_json::Value,
     pub created_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

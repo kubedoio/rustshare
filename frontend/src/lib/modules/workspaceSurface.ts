@@ -139,7 +139,12 @@ export function normalizeModuleUiConfig(module: ModuleConfig): ModuleUiConfig {
 		emptyStateDescription: legacyPage?.emptyStateDescription ?? module.description,
 		emptyStateAction:
 			legacyPage?.emptyStateAction ?? normalizedDashboard.primaryAction?.label ?? 'Create',
-		primaryAction: ui.page?.primaryAction ?? normalizedDashboard.primaryAction
+		primaryAction: ui.page?.primaryAction ?? normalizedDashboard.primaryAction,
+		searchPlaceholder: ui.page?.searchPlaceholder ?? `Search ${module.display_name.toLowerCase()}...`,
+		filterLabel: ui.page?.filterLabel ?? `All ${module.display_name.toLowerCase()}`,
+		sortLabel: ui.page?.sortLabel ?? 'Modified',
+		itemSingular: ui.page?.itemSingular ?? module.display_name.toLowerCase(),
+		itemPlural: ui.page?.itemPlural ?? module.display_name.toLowerCase()
 	};
 
 	return {

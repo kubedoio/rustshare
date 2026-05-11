@@ -46,6 +46,11 @@
 	let modulePageEmptyStateTitle = '';
 	let modulePageEmptyStateDescription = '';
 	let modulePageEmptyStateAction = '';
+	let pageSearchPlaceholder = '';
+	let pageFilterLabel = '';
+	let pageSortLabel = '';
+	let pageItemSingular = '';
+	let pageItemPlural = '';
 
 	let error = '';
 
@@ -100,6 +105,11 @@
 		modulePageEmptyStateDescription =
 			ui.page?.emptyStateDescription ?? ui.modulePage?.emptyStateDescription ?? '';
 		modulePageEmptyStateAction = ui.page?.emptyStateAction ?? ui.modulePage?.emptyStateAction ?? '';
+		pageSearchPlaceholder = ui.page?.searchPlaceholder ?? `Search ${displayName.toLowerCase()}...`;
+		pageFilterLabel = ui.page?.filterLabel ?? `All ${displayName.toLowerCase()}`;
+		pageSortLabel = ui.page?.sortLabel ?? 'Modified';
+		pageItemSingular = ui.page?.itemSingular ?? displayName.toLowerCase();
+		pageItemPlural = ui.page?.itemPlural ?? displayName.toLowerCase();
 	}
 
 	const updateMutation = createMutation({
@@ -152,6 +162,11 @@
 						action: string;
 						template?: string;
 					};
+					searchPlaceholder: string;
+					filterLabel: string;
+					sortLabel: string;
+					itemSingular: string;
+					itemPlural: string;
 				};
 				modulePage: {
 					layout: string;
@@ -241,7 +256,13 @@
 						label: primaryActionLabel.trim() || modulePageEmptyStateAction.trim() || 'Open',
 						action: primaryActionAction.trim() || 'create-from-template',
 						...(primaryActionTemplate.trim() ? { template: primaryActionTemplate.trim() } : {})
-					}
+					},
+					searchPlaceholder:
+						pageSearchPlaceholder.trim() || `Search ${displayName.trim().toLowerCase()}...`,
+					filterLabel: pageFilterLabel.trim() || `All ${displayName.trim().toLowerCase()}`,
+					sortLabel: pageSortLabel.trim() || 'Modified',
+					itemSingular: pageItemSingular.trim() || displayName.trim().toLowerCase(),
+					itemPlural: pageItemPlural.trim() || displayName.trim().toLowerCase()
 				},
 				modulePage: {
 					layout: modulePageLayout.trim() || 'list-grid',
@@ -615,16 +636,12 @@
 								bind:value={dashboardColumnsMobile}
 							/>
 						</div>
-						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70" for="summary-mode-legacy"
-								>Legacy Summary Mode</label
-							>
-							<input
-								id="summary-mode-legacy"
-								type="text"
-								class="input-bordered input input-sm"
-								bind:value={dashboardSummaryMode}
-							/>
+						<div class="rounded-xl border border-base-300/50 bg-base-200/30 p-3 text-xs text-base-content/60">
+							<p class="font-semibold text-base-content/70">Runtime alignment</p>
+							<p class="mt-1">
+								The dashboard uses the widget type, max items, primary action, and responsive
+								columns above. Legacy summary mode is stored from the widget type automatically.
+							</p>
 						</div>
 					</div>
 				</div>
@@ -764,6 +781,65 @@
 							bind:value={modulePageEmptyStateDescription}
 							rows={2}
 						></textarea>
+					</div>
+					<div class="grid gap-4 sm:grid-cols-3">
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="page-search"
+								>Search Placeholder</label
+							>
+							<input
+								id="page-search"
+								type="text"
+								class="input-bordered input input-sm"
+								bind:value={pageSearchPlaceholder}
+							/>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="page-filter"
+								>Filter Label</label
+							>
+							<input
+								id="page-filter"
+								type="text"
+								class="input-bordered input input-sm"
+								bind:value={pageFilterLabel}
+							/>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="page-sort"
+								>Sort Label</label
+							>
+							<input
+								id="page-sort"
+								type="text"
+								class="input-bordered input input-sm"
+								bind:value={pageSortLabel}
+							/>
+						</div>
+					</div>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="item-singular"
+								>Item Singular</label
+							>
+							<input
+								id="item-singular"
+								type="text"
+								class="input-bordered input input-sm"
+								bind:value={pageItemSingular}
+							/>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-xs font-semibold text-base-content/70" for="item-plural"
+								>Item Plural</label
+							>
+							<input
+								id="item-plural"
+								type="text"
+								class="input-bordered input input-sm"
+								bind:value={pageItemPlural}
+							/>
+						</div>
 					</div>
 				</div>
 			</div>

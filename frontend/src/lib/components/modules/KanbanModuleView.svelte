@@ -20,7 +20,6 @@
 		unassignCardMember
 	} from '$lib/api/kanban';
 	import { goto } from '$app/navigation';
-	import { createFromTemplate } from '$lib/api/modules';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import type { KanbanBoard, KanbanCard, KanbanCardDetail } from '$lib/api/types';
@@ -87,7 +86,7 @@
 	let emptyDescription = $derived(
 		module.ui.page.emptyStateDescription ?? 'Create your first board to get started.'
 	);
-	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New Board');
+	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New board');
 
 	// -------------------------------------------------------------------------
 	// Queries
@@ -365,6 +364,15 @@
 		});
 	}
 
+	function handleAddCardToFirstColumn() {
+		const firstColumn = selectedBoard?.columns?.[0];
+		if (firstColumn) {
+			handleShowAddCard(firstColumn.id);
+			return;
+		}
+		errorMessage = 'Add a column before creating cards.';
+	}
+
 	function handleCancelAddCard() {
 		showCreateCardColumnId = null;
 		newCardTitle = '';
@@ -553,9 +561,14 @@
 			: ''}
 	>
 		<div slot="primaryAction">
-			<button class="btn gap-2 btn-sm btn-primary" onclick={handleCreateBoard}>
+			<button
+				class="btn gap-2 btn-sm btn-primary"
+				onclick={handleAddCardToFirstColumn}
+				disabled={!selectedBoard || selectedBoard.columns.length === 0}
+				title={!selectedBoard || selectedBoard.columns.length === 0 ? 'Add a column before creating cards' : 'Add card'}
+			>
 				<Plus size={14} />
-				<span>New board</span>
+				<span>Add card</span>
 			</button>
 		</div>
 		<div slot="secondaryActions">

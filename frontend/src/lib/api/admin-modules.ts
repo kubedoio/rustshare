@@ -27,6 +27,7 @@ export interface CreateTemplateRequest {
 	metadata_schema: Record<string, unknown>;
 	renderer?: string | null;
 	visibility_policy: string;
+	module_config?: Record<string, unknown>;
 }
 
 export interface UpdateModuleRequest {

@@ -182,14 +182,14 @@ describe('KanbanModuleView', () => {
 		render(KanbanModuleView, { module: mockModule as any });
 
 		await waitFor(() => {
-			expect(screen.getByRole('button', { name: /New Board/i })).toBeTruthy();
+			expect(screen.getByRole('button', { name: /New board/i })).toBeTruthy();
 		});
 
-		const newBoardBtn = screen.getByRole('button', { name: /New Board/i });
+		const newBoardBtn = screen.getByRole('button', { name: /New board/i });
 		newBoardBtn.click();
 
 		await waitFor(() => {
-			expect(screen.getByText('Create New Kanban Board')).toBeTruthy();
+			expect(screen.getByText('New board')).toBeTruthy();
 		});
 	});
 
@@ -308,8 +308,8 @@ describe('KanbanModuleView', () => {
 const mockModule = {
 	id: 'module_kanban',
 	key: 'kanban',
-	displayName: 'Kanban Dashboard',
-	description: 'Manage file-backed boards and track work.',
+	displayName: 'Kanban',
+	description: 'Organize lightweight work boards in your workspace.',
 	enabled: true,
 	rootPath: '/Workspace/Kanban',
 	renderer: 'kanban',
@@ -343,7 +343,7 @@ const mockModule = {
 			layout: 'kanban-board',
 			emptyStateTitle: 'No boards yet',
 			emptyStateDescription: 'Create your first file-backed board.',
-			primaryAction: { label: 'New Board', action: 'create-from-template' }
+			primaryAction: { label: 'New board', action: 'create-from-template' }
 		}
 	},
 	aiIndexing: { enabled: true },

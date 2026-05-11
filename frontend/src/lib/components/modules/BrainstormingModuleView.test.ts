@@ -22,7 +22,7 @@ const mockModule = {
 	id: 'module_brainstorming',
 	key: 'brainstorming',
 	displayName: 'Brainstorming',
-	description: 'Visual decision boards.',
+	description: 'Capture sketches, flows, and early ideas as visual workspace boards.',
 	enabled: true,
 	rootPath: '/Workspace/Brainstorming',
 	renderer: 'brainstorming',
@@ -43,12 +43,12 @@ const mockModule = {
 				enabled: true,
 				type: 'recent-brainstorm-boards',
 				title: 'Brainstorming',
-				description: 'Recent boards.',
+				description: 'Recent idea boards.',
 				size: 'medium' as const,
 				columns: { desktop: 6, tablet: 12, mobile: 12 },
 				maxItems: 4,
 				primaryAction: {
-					label: 'New Board',
+					label: 'New idea board',
 					action: 'create-from-template',
 					template: 'template_blank_brainstorm'
 				}
@@ -59,10 +59,10 @@ const mockModule = {
 			route: '/modules/brainstorming',
 			renderer: 'brainstorming',
 			layout: 'gallery-grid',
-			emptyStateTitle: 'No brainstorming boards yet',
-			emptyStateDescription: 'Create your first visual decision board.',
+			emptyStateTitle: 'No idea boards yet',
+			emptyStateDescription: 'Create a simple visual board to capture sketches, flows, or early thinking.',
 			primaryAction: {
-				label: 'New Board',
+				label: 'New idea board',
 				action: 'create-from-template',
 				template: 'template_blank_brainstorm'
 			}
@@ -84,9 +84,11 @@ describe('BrainstormingModuleView', () => {
 		render(BrainstormingModuleView, { module: mockModule });
 
 		await waitFor(() => {
-			expect(screen.getByText('No brainstorming boards yet')).toBeTruthy();
+			expect(screen.getByText('No idea boards yet')).toBeTruthy();
 		});
-		expect(screen.getByText('Create your first visual decision board.')).toBeTruthy();
+		expect(
+			screen.getByText('Create a simple visual board to capture sketches, flows, or early thinking.')
+		).toBeTruthy();
 	});
 
 	it('renders board gallery with thumbnails', async () => {
@@ -128,7 +130,7 @@ describe('BrainstormingModuleView', () => {
 		render(BrainstormingModuleView, { module: mockModule });
 
 		await screen.findByText('No Preview Board');
-		expect(screen.getByText('No preview')).toBeTruthy();
+		expect(screen.getByText('Idea board')).toBeTruthy();
 	});
 
 	it('navigates to editor when board card is clicked', async () => {

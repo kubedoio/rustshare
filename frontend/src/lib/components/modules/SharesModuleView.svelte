@@ -5,13 +5,30 @@
 	import { getShareTypeLabel } from '$lib/api/types';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
-	import { FileText, Folder, Plus, Link, Copy, Trash2, Clock } from 'lucide-svelte';
+	import ModalBase from '$lib/components/common/ModalBase.svelte';
+	import {
+		FileText,
+		Folder,
+		Plus,
+		Link,
+		Copy,
+		Trash2,
+		Clock,
+		MoreHorizontal,
+		X,
+		Lock,
+		Users
+	} from 'lucide-svelte';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 	import { toastStore } from '$lib/stores/toast';
 	import { queryClient } from '$lib/query-client';
 
 	let { module }: { module: ModuleDefinition } = $props();
+	let selectedShareId = $state<string | null>(null);
+	let showNewShareModal = $state(false);
+	let shareFilter = $state<'all' | 'internal' | 'links'>('all');
+	let sortDirection = $state<'desc' | 'asc'>('desc');
 
 	const sharesQuery = createQuery({
 		queryKey: ['user-shares-module'],
@@ -19,6 +36,24 @@
 	});
 
 	let shares = $derived($sharesQuery.data ?? []);
+	let filteredShares = $derived(
+		shares
+			.filter((share) => {
+				if (shareFilter === 'links') return !!share.share_token;
+				if (shareFilter === 'internal') return !share.share_token;
+				return true;
+			})
+			.sort((a, b) => {
+				const aTime = new Date(a.created_at).getTime();
+				const bTime = new Date(b.created_at).getTime();
+				return sortDirection === 'desc' ? bTime - aTime : aTime - bTime;
+			})
+	);
+	let selectedShare = $derived(
+		selectedShareId ? shares.find((share) => share.id === selectedShareId) ?? null : null
+	);
+	let linkShareCount = $derived(shares.filter((share) => share.share_token).length);
+	let internalShareCount = $derived(shares.filter((share) => !share.share_token).length);
 
 	async function handleCopyLink(token: string) {
 		const url = `${window.location.origin}/share/${token}`;
@@ -47,7 +82,19 @@
 	}
 
 	function handleNewShare() {
+		showNewShareModal = true;
+	}
+
+	function handleBrowseFiles() {
+		showNewShareModal = false;
 		goto('/files');
+	}
+
+	function shareAccessSummary(share: (typeof shares)[number]) {
+		if (share.share_token) {
+			return share.password_protected ? 'Link with password' : 'Link';
+		}
+		return getShareTypeLabel(share);
 	}
 </script>
 
@@ -79,58 +126,188 @@
 				onAction={handleNewShare}
 			/>
 		{:else}
-			<div class="flex flex-col gap-3">
-				{#each shares as share}
-					{@const href =
-						share.resource_type === 'file'
-							? `/files?file=${share.resource_id}`
-							: `/files?folder=${share.resource_id}`}
-					<div
-						class="flex items-center gap-3 rounded-xl border border-base-300/50 bg-base-100 p-4 shadow-sm transition-all hover:border-brand-500/40"
-					>
-						<a href={href} class="flex min-w-0 flex-1 items-center gap-3">
-							{#if share.resource_type === 'file'}
-								<FileText size={18} class="shrink-0 text-brand-500" />
-							{:else}
-								<Folder size={18} class="shrink-0 text-brand-500" />
-							{/if}
-							<div class="flex min-w-0 flex-1 flex-col gap-1">
-								<div class="flex flex-wrap items-center gap-2">
-									<span class="truncate text-sm font-medium text-base-content">
-										{share.resource_name || 'Untitled'}
-									</span>
-									<span class="badge badge-sm">{share.permissions}</span>
-									<span class="badge badge-sm badge-info">{getShareTypeLabel(share)}</span>
-								</div>
-								<div class="flex items-center gap-1 text-xs text-base-content/50">
-									<Clock size={12} />
-									<span>{new Date(share.created_at).toLocaleDateString()}</span>
-								</div>
-							</div>
-						</a>
-						<div class="flex shrink-0 items-center gap-2">
-							{#if share.share_token}
-								<button
-									type="button"
-									class="btn btn-ghost btn-xs gap-1"
-									onclick={() => handleCopyLink(share.share_token!)}
-									title="Copy link"
-								>
-									<Copy size={14} />
-								</button>
-							{/if}
+			<div class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
+				<div class="flex flex-col gap-4">
+					<div class="flex flex-wrap items-center justify-between gap-3">
+						<div class="flex flex-wrap gap-2">
+							<button
+								class="btn rounded-full btn-sm {shareFilter === 'all' ? 'btn-outline text-brand-600' : 'btn-ghost'}"
+								onclick={() => (shareFilter = 'all')}
+							>
+								All shares <span class="badge badge-sm">{shares.length}</span>
+							</button>
+							<button
+								class="btn rounded-full btn-sm {shareFilter === 'internal' ? 'btn-outline text-brand-600' : 'btn-ghost'}"
+								onclick={() => (shareFilter = shareFilter === 'internal' ? 'all' : 'internal')}
+							>
+								Internal <span class="badge badge-sm">{internalShareCount}</span>
+							</button>
+							<button
+								class="btn rounded-full btn-sm {shareFilter === 'links' ? 'btn-outline text-brand-600' : 'btn-ghost'}"
+								onclick={() => (shareFilter = shareFilter === 'links' ? 'all' : 'links')}
+							>
+								Links <span class="badge badge-sm">{linkShareCount}</span>
+							</button>
+						</div>
+						<button
+							class="btn btn-sm btn-ghost"
+							onclick={() => (sortDirection = sortDirection === 'desc' ? 'asc' : 'desc')}
+						>
+							Sort by: {sortDirection === 'desc' ? 'Newest' : 'Oldest'}
+						</button>
+					</div>
+					<div class="flex flex-col gap-3">
+						{#each filteredShares as share}
 							<button
 								type="button"
-								class="btn btn-ghost btn-xs gap-1 text-error"
-								onclick={() => handleRevoke(share.id)}
-								title="Revoke share"
+								class="flex items-center gap-4 rounded-xl border border-base-300/50 bg-base-100 p-4 text-left shadow-sm transition-all hover:border-brand-500/40 {selectedShare?.id === share.id ? 'border-brand-500/35' : ''}"
+								onclick={() => (selectedShareId = share.id)}
 							>
-									<Trash2 size={14} />
-								</button>
+								<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500">
+									{#if share.resource_type === 'file'}
+										<FileText size={22} />
+									{:else}
+										<Folder size={22} />
+									{/if}
+								</div>
+								<div class="flex min-w-0 flex-1 flex-col gap-1">
+									<span class="truncate text-sm font-semibold text-base-content">
+										{share.resource_name || 'Untitled'}
+									</span>
+									<span class="text-xs text-base-content/55">
+										{share.resource_type === 'file' ? 'File' : 'Folder'} • {shareAccessSummary(share)} • {share.permissions}
+									</span>
+									{#if share.share_token}
+										<span class="inline-flex items-center gap-1 truncate text-xs text-brand-500">
+											<Link size={12} />
+											/share/{share.share_token}
+										</span>
+									{:else}
+										<span class="inline-flex items-center gap-1 text-xs text-base-content/55">
+											<Users size={12} />
+											Specific access
+										</span>
+									{/if}
+								</div>
+								<span class="hidden text-xs text-base-content/55 md:block">
+									{new Date(share.created_at).toLocaleDateString()}
+								</span>
+								{#if share.share_token}
+									<span class="badge badge-success badge-sm">Active</span>
+								{:else}
+									<span class="badge badge-ghost badge-sm">{getShareTypeLabel(share)}</span>
+								{/if}
+								<MoreHorizontal size={16} class="text-base-content/45" />
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				{#if selectedShare}
+					<aside class="rounded-xl border border-base-300/70 bg-base-100 shadow-sm">
+						<div class="flex items-start justify-between border-b border-base-200 p-4">
+							<div>
+								<h3 class="font-semibold text-base-content">Share details</h3>
+							</div>
+							<button class="btn btn-square btn-ghost btn-sm" onclick={() => (selectedShareId = null)}>
+								<X size={16} />
+							</button>
+						</div>
+						<div class="flex items-center gap-3 border-b border-base-200 p-4">
+							<div class="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500">
+								{#if selectedShare.resource_type === 'file'}
+									<FileText size={22} />
+								{:else}
+									<Folder size={22} />
+								{/if}
+							</div>
+							<div>
+								<p class="font-semibold">{selectedShare.resource_name || 'Untitled'}</p>
+								<p class="text-xs text-base-content/55">
+									{selectedShare.resource_type === 'file' ? 'File' : 'Folder'} • {selectedShare.share_token ? 'Link' : 'Internal only'}
+								</p>
+								<p class="text-xs text-base-content/45">
+									Created {new Date(selectedShare.created_at).toLocaleDateString()}
+								</p>
 							</div>
 						</div>
-					{/each}
-				</div>
+						<div class="space-y-5 p-4">
+							<section>
+								<h4 class="mb-2 text-sm font-semibold">Access</h4>
+								<div class="flex items-center gap-2 text-sm">
+									<Lock size={16} class="text-base-content/50" />
+									<span>{selectedShare.share_token ? 'Link (view only)' : 'Internal only'}</span>
+								</div>
+								<p class="mt-1 text-xs text-base-content/50">
+									{selectedShare.share_token ? 'Anyone with the link can view.' : 'Only people in your workspace can access this.'}
+								</p>
+							</section>
+							<section>
+								<h4 class="mb-2 text-sm font-semibold">Access details</h4>
+								<div class="rounded-lg border border-base-200 p-3 text-sm">
+									<div class="flex items-center justify-between">
+										<span>Permission</span>
+										<span class="font-medium">{selectedShare.permissions}</span>
+									</div>
+									<div class="mt-2 flex items-center justify-between">
+										<span>Visits</span>
+										<span class="font-medium">{selectedShare.access_count}</span>
+									</div>
+									{#if selectedShare.expires_at}
+										<div class="mt-2 flex items-center justify-between">
+											<span>Expires</span>
+											<span class="font-medium">{new Date(selectedShare.expires_at).toLocaleDateString()}</span>
+										</div>
+									{/if}
+								</div>
+							</section>
+							<section>
+								<h4 class="mb-2 text-sm font-semibold">Activity</h4>
+								<p class="flex items-center gap-2 text-xs text-base-content/55">
+									<Clock size={14} />
+									Created {new Date(selectedShare.created_at).toLocaleDateString()}
+								</p>
+							</section>
+						</div>
+						<div class="flex items-center justify-between border-t border-base-200 p-4">
+							<button
+								class="btn gap-2 btn-sm btn-outline"
+								disabled={!selectedShare.share_token}
+								onclick={() => selectedShare.share_token && handleCopyLink(selectedShare.share_token)}
+							>
+								<Copy size={14} />
+								Copy link
+							</button>
+							<button class="btn gap-2 btn-sm btn-error btn-outline" onclick={() => handleRevoke(selectedShare.id)}>
+								<Trash2 size={14} />
+								Revoke share
+							</button>
+						</div>
+					</aside>
+				{/if}
+			</div>
 			{/if}
 		</div>
 	</ModulePageShell>
+
+<ModalBase
+	open={showNewShareModal}
+	title="New share"
+	onClose={() => (showNewShareModal = false)}
+>
+	<div class="flex min-h-56 flex-col justify-between gap-6">
+		<div class="flex flex-col items-center gap-3 py-6 text-center">
+			<Folder size={42} class="text-brand-500" />
+			<h3 class="text-base font-semibold">Choose a file or folder</h3>
+			<p class="max-w-sm text-sm text-base-content/55">
+				Shares are created from the Files view so the selected file or folder can be used as the source.
+			</p>
+		</div>
+		<div class="flex justify-between">
+			<button class="btn btn-sm btn-ghost" onclick={() => (showNewShareModal = false)}>Cancel</button>
+			<button class="btn btn-sm btn-primary" onclick={handleBrowseFiles}>
+				Open Files
+			</button>
+		</div>
+	</div>
+</ModalBase>

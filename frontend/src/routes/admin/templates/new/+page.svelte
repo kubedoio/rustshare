@@ -5,7 +5,7 @@
 	import { listAdminModules } from '$lib/api/admin-modules';
 	import { APPROVED_MODULE_ICONS } from '$lib/modules/iconRegistry';
 	import { toastStore } from '$lib/stores/toast';
-	import { ArrowLeft, Plus, AlertCircle } from 'lucide-svelte';
+	import { ArrowLeft, Plus, AlertCircle, Trash2 } from 'lucide-svelte';
 
 	const queryClient = useQueryClient();
 
@@ -22,6 +22,7 @@
 	let renderer = '';
 	let visibilityPolicy = 'workspace';
 	let error = '';
+	let moduleConfigJson = '{}';
 	const modulesQuery = createQuery({
 		queryKey: ['admin-modules'],
 		queryFn: () => listAdminModules()
@@ -49,6 +50,115 @@
 		}
 	}
 
+	function getStandardKanbanColumns() {
+		return [
+			{ id: 'column_backlog', title: 'Backlog', slug: '00-Backlog', order: 0, status: 'backlog' },
+			{ id: 'column_ready', title: 'Ready', slug: '01-Ready', order: 1, status: 'ready' },
+			{ id: 'column_in_progress', title: 'In Progress', slug: '02-In-Progress', order: 2, status: 'in_progress' },
+			{ id: 'column_review', title: 'Review', slug: '03-Review', order: 3, status: 'review' },
+			{ id: 'column_done', title: 'Done', slug: '04-Done', order: 4, status: 'done' }
+		];
+	}
+
+	function getDefaultKanbanLabels() {
+		return [
+			{ id: 'label_green', name: 'Low', color: 'green' },
+			{ id: 'label_yellow', name: 'Medium', color: 'yellow' },
+			{ id: 'label_orange', name: 'High', color: 'orange' },
+			{ id: 'label_red', name: 'Urgent', color: 'red' }
+		];
+	}
+
+	function getDefaultKanbanSettings() {
+		return {
+			show_description_on_cards: true,
+			description_preview_lines: 2,
+			show_assignees: true,
+			show_labels: true,
+			show_due_date: true,
+			show_attachment_badge: true,
+			show_checklist_badge: true
+		};
+	}
+
+	function ensureKanbanConfig() {
+		let config: any = {};
+		try {
+			config = JSON.parse(moduleConfigJson);
+		} catch {}
+		if (!config.kanban) config.kanban = {};
+		if (!config.kanban.columns || !Array.isArray(config.kanban.columns) || config.kanban.columns.length === 0) {
+			config.kanban.columns = getStandardKanbanColumns();
+		}
+		if (!config.kanban.labels || !Array.isArray(config.kanban.labels) || config.kanban.labels.length === 0) {
+			config.kanban.labels = getDefaultKanbanLabels();
+		}
+		if (!config.kanban.settings) {
+			config.kanban.settings = getDefaultKanbanSettings();
+		}
+		return config.kanban;
+	}
+
+	function syncKanbanConfig(kb: any) {
+		moduleConfigJson = JSON.stringify({ kanban: kb }, null, 2);
+	}
+
+	function addKanbanColumn() {
+		const kb = ensureKanbanConfig();
+		const order = kb.columns.length;
+		kb.columns.push({
+			id: `column_${Date.now()}`,
+			title: 'New Column',
+			slug: `${String(order).padStart(2, '0')}-new-column`,
+			order,
+			status: 'backlog'
+		});
+		syncKanbanConfig(kb);
+	}
+
+	function removeKanbanColumn(index: number) {
+		const kb = ensureKanbanConfig();
+		kb.columns.splice(index, 1);
+		kb.columns.forEach((c: any, i: number) => {
+			c.order = i;
+		});
+		syncKanbanConfig(kb);
+	}
+
+	function updateKanbanColumn(index: number, field: string, value: any) {
+		const kb = ensureKanbanConfig();
+		kb.columns[index][field] = value;
+		syncKanbanConfig(kb);
+	}
+
+	function addKanbanLabel() {
+		const kb = ensureKanbanConfig();
+		kb.labels.push({
+			id: `label_${Date.now()}`,
+			name: 'New Label',
+			color: 'gray'
+		});
+		syncKanbanConfig(kb);
+	}
+
+	function removeKanbanLabel(index: number) {
+		const kb = ensureKanbanConfig();
+		kb.labels.splice(index, 1);
+		syncKanbanConfig(kb);
+	}
+
+	function updateKanbanLabel(index: number, field: string, value: any) {
+		const kb = ensureKanbanConfig();
+		kb.labels[index][field] = value;
+		syncKanbanConfig(kb);
+	}
+
+	function updateKanbanSetting(key: string, value: boolean) {
+		const kb = ensureKanbanConfig();
+		kb.settings[key] = value;
+		syncKanbanConfig(kb);
+	}
+
 	function handleSubmit() {
 		error = '';
 
@@ -61,6 +171,7 @@
 			const folderStructure = validateJson('Folder Structure', folderStructureJson) as string[];
 			const defaultFiles = validateJson('Default Files', defaultFilesJson);
 			const metadataSchema = validateJson('Metadata Schema', metadataSchemaJson);
+			const moduleConfig = validateJson('Module Config', moduleConfigJson);
 
 			$createTemplateMutation.mutate({
 				template_key: templateKey.trim(),
@@ -75,7 +186,8 @@
 				default_files: Array.isArray(defaultFiles) ? defaultFiles : [],
 				metadata_schema: metadataSchema as Record<string, unknown>,
 				renderer: renderer.trim() || null,
-				visibility_policy: visibilityPolicy
+				visibility_policy: visibilityPolicy,
+				module_config: moduleConfig as Record<string, unknown>
 			});
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -108,7 +220,7 @@
 		</div>
 	{/if}
 
-	<form on:submit|preventDefault={handleSubmit} class="mt-6 flex flex-col gap-4">
+	<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="mt-6 flex flex-col gap-4">
 		<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6 shadow-sm">
 			<h2 class="mb-4 text-sm font-semibold tracking-wider text-base-content uppercase">
 				Basic Information
@@ -267,6 +379,151 @@
 					></textarea>
 				</div>
 			</div>
+		</div>
+
+		<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6 shadow-sm">
+			<h2 class="mb-4 text-sm font-semibold tracking-wider text-base-content uppercase">
+				Module Configuration
+			</h2>
+			{#if moduleKey === 'kanban'}
+				<div class="flex flex-col gap-5">
+					<!-- Columns -->
+					<div>
+						<div class="mb-2 flex items-center justify-between">
+							<label class="text-xs font-semibold text-base-content/70">Columns</label>
+							<button
+								type="button"
+								class="btn btn-ghost btn-xs gap-1"
+								onclick={addKanbanColumn}
+							>
+								<Plus size={12} />
+								<span>Add Column</span>
+							</button>
+						</div>
+						<div class="flex flex-col gap-2">
+							{#each ensureKanbanConfig().columns as column, i}
+								<div class="flex items-center gap-2">
+									<input
+										class="input-bordered input input-sm w-28"
+										value={column.title}
+										oninput={(e) => updateKanbanColumn(i, 'title', e.currentTarget.value)}
+										placeholder="Title"
+									/>
+									<input
+										class="input-bordered input input-sm w-28"
+										value={column.slug}
+										oninput={(e) => updateKanbanColumn(i, 'slug', e.currentTarget.value)}
+										placeholder="Slug"
+									/>
+									<input
+										class="input-bordered input input-sm w-16"
+										type="number"
+										value={column.order}
+										oninput={(e) => updateKanbanColumn(i, 'order', parseInt(e.currentTarget.value) || 0)}
+										placeholder="Order"
+									/>
+									<select
+										class="select-bordered select select-sm w-28"
+										value={column.status}
+										onchange={(e) => updateKanbanColumn(i, 'status', e.currentTarget.value)}
+									>
+										<option value="backlog">Backlog</option>
+										<option value="ready">Ready</option>
+										<option value="in_progress">In Progress</option>
+										<option value="review">Review</option>
+										<option value="done">Done</option>
+									</select>
+									<button
+										type="button"
+										class="btn btn-ghost btn-xs text-error"
+										onclick={() => removeKanbanColumn(i)}
+									>
+										<Trash2 size={12} />
+									</button>
+								</div>
+							{/each}
+						</div>
+					</div>
+
+					<!-- Labels -->
+					<div>
+						<div class="mb-2 flex items-center justify-between">
+							<label class="text-xs font-semibold text-base-content/70">Labels</label>
+							<button
+								type="button"
+								class="btn btn-ghost btn-xs gap-1"
+								onclick={addKanbanLabel}
+							>
+								<Plus size={12} />
+								<span>Add Label</span>
+							</button>
+						</div>
+						<div class="flex flex-col gap-2">
+							{#each ensureKanbanConfig().labels as label, i}
+								<div class="flex items-center gap-2">
+									<input
+										class="input-bordered input input-sm w-32"
+										value={label.name}
+										oninput={(e) => updateKanbanLabel(i, 'name', e.currentTarget.value)}
+										placeholder="Name"
+									/>
+									<select
+										class="select-bordered select select-sm w-24"
+										value={label.color}
+										onchange={(e) => updateKanbanLabel(i, 'color', e.currentTarget.value)}
+									>
+										<option value="green">Green</option>
+										<option value="yellow">Yellow</option>
+										<option value="orange">Orange</option>
+										<option value="red">Red</option>
+										<option value="purple">Purple</option>
+										<option value="blue">Blue</option>
+										<option value="gray">Gray</option>
+									</select>
+									<button
+										type="button"
+										class="btn btn-ghost btn-xs text-error"
+										onclick={() => removeKanbanLabel(i)}
+									>
+										<Trash2 size={12} />
+									</button>
+								</div>
+							{/each}
+						</div>
+					</div>
+
+					<!-- Settings -->
+					<div>
+						<label class="text-xs font-semibold text-base-content/70">Settings</label>
+						<div class="mt-2 grid gap-2 sm:grid-cols-2">
+							{#each Object.entries(ensureKanbanConfig().settings) as [key, value]}
+								<div class="flex items-center gap-2">
+									<input
+										type="checkbox"
+										class="checkbox checkbox-sm"
+										checked={value as boolean}
+										onchange={(e) => updateKanbanSetting(key, e.currentTarget.checked)}
+									/>
+									<label class="text-xs text-base-content/80 capitalize">{key.replace(/_/g, ' ')}</label>
+								</div>
+							{/each}
+						</div>
+					</div>
+				</div>
+			{:else}
+				<div class="flex flex-col gap-1">
+					<label
+						class="text-xs font-semibold text-base-content/70"
+						for="module-config-json-object">Module Config (JSON object)</label
+					>
+					<textarea
+						id="module-config-json-object"
+						class="textarea-bordered textarea font-mono text-xs textarea-sm"
+						bind:value={moduleConfigJson}
+						rows={4}
+					></textarea>
+				</div>
+			{/if}
 		</div>
 
 		<div class="flex items-center justify-end gap-3">

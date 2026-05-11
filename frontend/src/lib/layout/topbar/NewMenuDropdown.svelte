@@ -64,7 +64,7 @@
 				class="mt-1 flex w-full items-center gap-3 rounded-xl border-t border-base-200 px-4 py-2.5 pt-2.5 text-sm font-medium transition-colors hover:bg-base-200"
 				on:click={() => handleAction('create-note-requested')}
 			>
-				<FileText size={16} class="text-brand-500" /> New Note
+				<FileText size={16} class="text-brand-500" /> New note
 			</button>
 			<button
 				role="menuitem"

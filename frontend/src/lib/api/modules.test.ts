@@ -129,8 +129,8 @@ describe('modules API', () => {
 		const module = {
 			id: 'legacy-1',
 			module_key: 'kanban',
-			display_name: 'Kanban Dashboard',
-			description: 'Manage board cards as folders and files.',
+			display_name: 'Kanban',
+			description: 'Organize lightweight work boards in your workspace.',
 			enabled: true,
 			root_path: '/Workspace/Kanban',
 			renderer: 'kanban',

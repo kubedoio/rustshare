@@ -216,6 +216,7 @@ pub async fn duplicate_template(
         metadata_schema: template.metadata_schema,
         renderer: template.renderer,
         visibility_policy: template.visibility_policy,
+        module_config: Some(template.module_config),
     };
 
     let new_template = state

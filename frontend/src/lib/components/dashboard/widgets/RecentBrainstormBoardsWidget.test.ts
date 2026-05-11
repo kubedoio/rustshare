@@ -46,7 +46,7 @@ const mockModule = {
 				columns: { desktop: 6, tablet: 12, mobile: 12 },
 				maxItems: 4,
 				primaryAction: {
-					label: 'New Board',
+					label: 'New idea board',
 					action: 'create-from-template',
 					template: 'template_blank_brainstorm'
 				}
@@ -60,7 +60,7 @@ const mockModule = {
 			emptyStateTitle: 'No brainstorming boards yet',
 			emptyStateDescription: 'Create your first visual decision board.',
 			primaryAction: {
-				label: 'New Board',
+				label: 'New idea board',
 				action: 'create-from-template',
 				template: 'template_blank_brainstorm'
 			}

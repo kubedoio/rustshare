@@ -286,6 +286,11 @@ export interface ModulePageDefinition {
 	emptyStateDescription: string;
 	emptyStateAction: string;
 	primaryAction?: PrimaryActionConfig;
+	searchPlaceholder?: string;
+	filterLabel?: string;
+	sortLabel?: string;
+	itemSingular?: string;
+	itemPlural?: string;
 }
 
 export type WorkspaceWidgetSize = 'small' | 'medium' | 'large';
@@ -361,6 +366,7 @@ export interface TemplateConfig {
 	metadata_schema: Record<string, unknown>;
 	renderer: string | null;
 	visibility_policy: string;
+	module_config?: Record<string, unknown>;
 	enabled: boolean;
 	system_template: boolean;
 	created_by: string | null;

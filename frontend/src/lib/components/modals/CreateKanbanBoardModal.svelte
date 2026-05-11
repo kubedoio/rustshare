@@ -55,18 +55,15 @@
 		error = '';
 
 		try {
-			let boardId: string;
-			if (defaultTemplate) {
-				const result = await createFromTemplate({
-					template_key: defaultTemplate,
-					name,
-					parent_folder_id: null
-				});
-				boardId = result.object_id;
-			} else {
-				const result = await createKanbanBoard(name);
-				boardId = result.id;
-			}
+			const boardId = defaultTemplate
+				? (
+						await createFromTemplate({
+							template_key: defaultTemplate,
+							name,
+							parent_folder_id: null
+						})
+					).object_id
+				: (await createKanbanBoard(name)).id;
 
 			queryClient.invalidateQueries({ queryKey: ['kanban-boards'] });
 			onSuccess(boardId);

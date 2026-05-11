@@ -81,7 +81,7 @@ describe('NotesModuleView', () => {
 						layout: 'list-grid',
 						emptyStateTitle: 'No notes yet',
 						emptyStateDescription: 'Create your first note.',
-						primaryAction: { label: 'New Note', action: 'create-from-template' }
+						primaryAction: { label: 'New note', action: 'create-from-template' }
 					}
 				},
 				aiIndexing: { enabled: true },
@@ -89,7 +89,7 @@ describe('NotesModuleView', () => {
 			}
 		});
 
-		await fireEvent.click(screen.getByRole('button', { name: 'New Note' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'New note' }));
 
 		await waitFor(() => {
 			expect(mocks.goto).toHaveBeenCalledWith('/modules/notes/note-123');
@@ -136,7 +136,7 @@ describe('NotesModuleView', () => {
 						layout: 'list-grid',
 						emptyStateTitle: 'No notes yet',
 						emptyStateDescription: 'Create your first note.',
-						primaryAction: { label: 'New Note', action: 'create-from-template' }
+						primaryAction: { label: 'New note', action: 'create-from-template' }
 					}
 				},
 				aiIndexing: { enabled: true },
@@ -144,7 +144,7 @@ describe('NotesModuleView', () => {
 			}
 		});
 
-		const link = await screen.findByRole('link', { name: /Architecture\.md/i });
+		const link = await screen.findByRole('link', { name: /Architecture/i });
 		expect(link.getAttribute('href')).toBe('/modules/notes/note-1');
 	});
 });

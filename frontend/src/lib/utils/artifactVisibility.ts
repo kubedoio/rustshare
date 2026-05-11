@@ -7,7 +7,9 @@ export const INTERNAL_RUSTSHARE_FILES = [
 	'events.jsonl',
 	'index.md',
 	'__primary__.md',
-	'index.editor.json'
+	'index.editor.json',
+	'metadata.json',
+	'.metadata.json'
 ];
 
 export function isInternalRustShareFile(name: string): boolean {
@@ -17,7 +19,10 @@ export function isInternalRustShareFile(name: string): boolean {
 		INTERNAL_RUSTSHARE_FILES.includes(lower) ||
 		lower.endsWith('.rustshare.json') ||
 		lower.endsWith('.editor.json') ||
-		lower.startsWith('.rustshare-')
+		lower.endsWith('.metadata.json') ||
+		lower.startsWith('.rustshare-') ||
+		lower.startsWith('__') ||
+		lower === 'attachments'
 	);
 }
 

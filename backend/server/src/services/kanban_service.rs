@@ -293,7 +293,7 @@ pub(crate) struct BoardMetadata {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ColumnDef {
     pub id: String,
     pub title: String,
@@ -734,7 +734,9 @@ impl KanbanService {
             .await
             .map_err(KanbanError::from)?;
 
-        let board_meta = self.load_board_metadata(&board_folder, user_id).await?;
+        let mut board_meta = self.load_board_metadata(&board_folder, user_id).await?;
+        self.ensure_standard_board_columns(&board_folder, &mut board_meta, user_id, tenant_id)
+            .await?;
 
         let mut columns = Vec::new();
         for col_def in &board_meta.columns {
@@ -1724,6 +1726,7 @@ impl KanbanService {
         board_folder_id: Uuid,
         user_id: UserId,
         tenant_id: Uuid,
+        module_config: Option<serde_json::Value>,
     ) -> Result<(), KanbanError> {
         let board_folder = self
             .folder_service
@@ -1731,18 +1734,31 @@ impl KanbanService {
             .await
             .map_err(KanbanError::from)?;
 
-        // If board metadata already exists and looks valid, skip
-        if self
-            .find_file_in_folder(board_folder.id, user_id, ".rustshare-board.json")
-            .await?
-            .is_some()
-        {
-            return Ok(());
-        }
-
         let title = board_folder.name.replace('-', " ");
         let slug = slugify(&title);
-        let columns = standard_columns();
+
+        // Try to extract kanban config from template module_config
+        let (columns, labels, settings) = if let Some(config) = module_config {
+            if let Some(kanban_config) = config.get("kanban") {
+                let columns: Vec<ColumnDef> = kanban_config
+                    .get("columns")
+                    .and_then(|c| serde_json::from_value(c.clone()).ok())
+                    .unwrap_or_else(standard_columns);
+                let labels: Vec<KanbanLabel> = kanban_config
+                    .get("labels")
+                    .and_then(|l| serde_json::from_value(l.clone()).ok())
+                    .unwrap_or_else(default_labels);
+                let settings: KanbanSettings = kanban_config
+                    .get("settings")
+                    .and_then(|s| serde_json::from_value(s.clone()).ok())
+                    .unwrap_or_else(default_settings);
+                (columns, labels, settings)
+            } else {
+                (standard_columns(), default_labels(), default_settings())
+            }
+        } else {
+            (standard_columns(), default_labels(), default_settings())
+        };
 
         let board_meta = BoardMetadata {
             id: board_folder.id.to_string(),
@@ -1755,8 +1771,8 @@ impl KanbanService {
             created_at: board_folder.created_at,
             updated_at: Utc::now(),
             archived: false,
-            labels: default_labels(),
-            settings: default_settings(),
+            labels,
+            settings,
         };
 
         self.write_board_metadata(&board_folder, &board_meta, user_id, tenant_id)
@@ -1766,26 +1782,33 @@ impl KanbanService {
 
         for col in &columns {
             let col_path = format!("{}/{}", board_folder.path.trim_end_matches('/'), col.slug);
-            if let Some(col_folder) = self
+            let col_folder = match self
                 .metadata_store
                 .find_folder_by_path(&col_path, board_folder.owner_id)
                 .await
                 .map_err(|e| KanbanError::Database(e.to_string()))?
             {
-                let col_meta = ColumnMetadata {
-                    id: col.id.clone(),
-                    type_: "kanban.column".to_string(),
-                    title: col.title.clone(),
-                    slug: col.slug.clone(),
-                    order: col.order,
-                    status: col.status.clone(),
-                    board_id: board_folder.id.to_string(),
-                    wip_limit: col.wip_limit,
-                    schema_version: "1.0".to_string(),
-                };
-                self.write_column_metadata(&col_folder, &col_meta, user_id, tenant_id)
-                    .await?;
-            }
+                Some(folder) => folder,
+                None => self
+                    .folder_service
+                    .create_folder(col.slug.clone(), Some(board_folder.id), user_id, tenant_id)
+                    .await
+                    .map_err(KanbanError::from)?,
+            };
+
+            let col_meta = ColumnMetadata {
+                id: col.id.clone(),
+                type_: "kanban.column".to_string(),
+                title: col.title.clone(),
+                slug: col.slug.clone(),
+                order: col.order,
+                status: col.status.clone(),
+                board_id: board_folder.id.to_string(),
+                wip_limit: col.wip_limit,
+                schema_version: "1.0".to_string(),
+            };
+            self.write_column_metadata(&col_folder, &col_meta, user_id, tenant_id)
+                .await?;
         }
 
         Ok(())
@@ -1841,6 +1864,105 @@ impl KanbanService {
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    async fn ensure_standard_board_columns(
+        &self,
+        board_folder: &Folder,
+        board_meta: &mut BoardMetadata,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), KanbanError> {
+        let standards = standard_columns();
+        let board_path = board_folder.path.trim_end_matches('/');
+        let mut changed = false;
+        let legacy_slugs: std::collections::HashSet<&str> =
+            ["00-Backlog", "01-In-Progress", "02-Done"]
+                .iter()
+                .cloned()
+                .collect();
+        let current_slugs: std::collections::HashSet<&str> =
+            board_meta.columns.iter().map(|c| c.slug.as_str()).collect();
+        let looks_like_legacy = !board_meta.columns.is_empty()
+            && current_slugs.len() == 3
+            && current_slugs == legacy_slugs;
+        let should_upgrade_to_standard = board_meta.columns.is_empty() || looks_like_legacy;
+
+        if looks_like_legacy {
+            for (legacy_slug, standard_slug) in
+                [("01-In-Progress", "02-In-Progress"), ("02-Done", "04-Done")]
+            {
+                let legacy_path = format!("{}/{}", board_path, legacy_slug);
+                let standard_path = format!("{}/{}", board_path, standard_slug);
+                let standard_exists = self
+                    .metadata_store
+                    .find_folder_by_path(&standard_path, board_folder.owner_id)
+                    .await
+                    .map_err(|e| KanbanError::Database(e.to_string()))?
+                    .is_some();
+
+                if !standard_exists {
+                    if let Some(legacy_folder) = self
+                        .metadata_store
+                        .find_folder_by_path(&legacy_path, board_folder.owner_id)
+                        .await
+                        .map_err(|e| KanbanError::Database(e.to_string()))?
+                    {
+                        self.folder_service
+                            .rename_folder(legacy_folder.id, standard_slug.to_string(), user_id)
+                            .await
+                            .map_err(KanbanError::from)?;
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        if should_upgrade_to_standard {
+            board_meta.columns = standards;
+            board_meta.updated_at = Utc::now();
+            changed = true;
+        }
+
+        for col in &board_meta.columns {
+            let col_path = format!("{}/{}", board_path, col.slug);
+            let col_folder = match self
+                .metadata_store
+                .find_folder_by_path(&col_path, board_folder.owner_id)
+                .await
+                .map_err(|e| KanbanError::Database(e.to_string()))?
+            {
+                Some(folder) => folder,
+                None => {
+                    changed = true;
+                    self.folder_service
+                        .create_folder(col.slug.clone(), Some(board_folder.id), user_id, tenant_id)
+                        .await
+                        .map_err(KanbanError::from)?
+                }
+            };
+
+            let col_meta = ColumnMetadata {
+                id: col.id.clone(),
+                type_: "kanban.column".to_string(),
+                title: col.title.clone(),
+                slug: col.slug.clone(),
+                order: col.order,
+                status: col.status.clone(),
+                board_id: board_folder.id.to_string(),
+                wip_limit: col.wip_limit,
+                schema_version: "1.0".to_string(),
+            };
+            self.write_column_metadata(&col_folder, &col_meta, user_id, tenant_id)
+                .await?;
+        }
+
+        if changed {
+            self.write_board_metadata(board_folder, board_meta, user_id, tenant_id)
+                .await?;
+        }
+
+        Ok(())
+    }
 
     async fn find_kanban_root(
         &self,
@@ -2793,18 +2915,34 @@ fn standard_columns() -> Vec<ColumnDef> {
             wip_limit: None,
         },
         ColumnDef {
+            id: "column_ready".to_string(),
+            title: "Ready".to_string(),
+            slug: "01-Ready".to_string(),
+            order: 1,
+            status: "ready".to_string(),
+            wip_limit: None,
+        },
+        ColumnDef {
             id: "column_in_progress".to_string(),
             title: "In Progress".to_string(),
-            slug: "01-In-Progress".to_string(),
-            order: 1,
+            slug: "02-In-Progress".to_string(),
+            order: 2,
             status: "in_progress".to_string(),
+            wip_limit: None,
+        },
+        ColumnDef {
+            id: "column_review".to_string(),
+            title: "Review".to_string(),
+            slug: "03-Review".to_string(),
+            order: 3,
+            status: "review".to_string(),
             wip_limit: None,
         },
         ColumnDef {
             id: "column_done".to_string(),
             title: "Done".to_string(),
-            slug: "02-Done".to_string(),
-            order: 2,
+            slug: "04-Done".to_string(),
+            order: 4,
             status: "done".to_string(),
             wip_limit: None,
         },

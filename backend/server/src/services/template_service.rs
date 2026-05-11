@@ -103,6 +103,7 @@ pub struct CreateTemplateRequest {
     pub metadata_schema: serde_json::Value,
     pub renderer: Option<String>,
     pub visibility_policy: String,
+    pub module_config: Option<serde_json::Value>,
 }
 
 /// Request to update a template.
@@ -117,6 +118,7 @@ pub struct UpdateTemplateRequest {
     pub renderer: Option<String>,
     pub visibility_policy: Option<String>,
     pub enabled: Option<bool>,
+    pub module_config: Option<serde_json::Value>,
 }
 
 /// Service for managing templates and instantiating objects from them.
@@ -257,8 +259,10 @@ impl TemplateService {
                 "Creates a standard file-backed Kanban board folder structure.",
                 vec![
                     "00-Backlog".to_string(),
-                    "01-In-Progress".to_string(),
-                    "02-Done".to_string(),
+                    "01-Ready".to_string(),
+                    "02-In-Progress".to_string(),
+                    "03-Review".to_string(),
+                    "04-Done".to_string(),
                 ],
                 vec![
                     TemplateDefaultFile {
@@ -441,25 +445,31 @@ impl TemplateService {
             .fetch_one(self.metadata_store.pool())
             .await?;
 
+            let ui_config = if key == "template_default_kanban" {
+                json!({
+                    "createLabel": "New board",
+                    "icon": "columns",
+                    "form": {
+                        "fields": [
+                            {
+                                "key": "title",
+                                "label": "Board title",
+                                "type": "text",
+                                "required": true
+                            }
+                        ]
+                    }
+                })
+            } else {
+                json!({})
+            };
+            let module_config = if key == "template_default_kanban" {
+                default_kanban_module_config()
+            } else {
+                json!({})
+            };
+
             if !exists {
-                let ui_config = if key == "template_default_kanban" {
-                    json!({
-                        "createLabel": "New Board",
-                        "icon": "columns",
-                        "form": {
-                            "fields": [
-                                {
-                                    "key": "title",
-                                    "label": "Board title",
-                                    "type": "text",
-                                    "required": true
-                                }
-                            ]
-                        }
-                    })
-                } else {
-                    json!({})
-                };
                 let template = Template {
                     id: Uuid::new_v4(),
                     template_key: key.to_string(),
@@ -475,6 +485,7 @@ impl TemplateService {
                     visibility_policy: "workspace".to_string(),
                     ai_indexing_policy: json!("enabled"),
                     audit_logging_policy: json!("enabled"),
+                    module_config,
                     created_by: None,
                     created_at: Utc::now(),
                     updated_at: Utc::now(),
@@ -488,9 +499,9 @@ impl TemplateService {
                     INSERT INTO templates (
                         id, template_key, name, module_key, version, description, ui_config,
                         folder_structure, default_files, metadata_schema, renderer,
-                        visibility_policy, ai_indexing_policy, audit_logging_policy,
+                        visibility_policy, ai_indexing_policy, audit_logging_policy, module_config,
                         created_by, created_at, updated_at, enabled, system_template, tenant_id
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
                     "#,
                 )
                 .bind(template.id)
@@ -507,12 +518,40 @@ impl TemplateService {
                 .bind(&template.visibility_policy)
                 .bind(&template.ai_indexing_policy)
                 .bind(&template.audit_logging_policy)
+                .bind(&template.module_config)
                 .bind(template.created_by)
                 .bind(template.created_at)
                 .bind(template.updated_at)
                 .bind(template.enabled)
                 .bind(template.system_template)
                 .bind(template.tenant_id)
+                .execute(self.metadata_store.pool())
+                .await?;
+            } else if key == "template_default_kanban" {
+                sqlx::query(
+                    r#"
+                    UPDATE templates
+                    SET folder_structure = $1,
+                        default_files = $2,
+                        metadata_schema = $3,
+                        renderer = $4,
+                        ui_config = $5,
+                        module_config = $6,
+                        updated_at = $7
+                    WHERE template_key = $8
+                      AND tenant_id = $9
+                      AND system_template = true
+                    "#,
+                )
+                .bind(serde_json::to_value(&folder_structure)?)
+                .bind(serde_json::to_value(&default_files)?)
+                .bind(metadata_schema.clone())
+                .bind(renderer.map(|s| s.to_string()))
+                .bind(ui_config)
+                .bind(module_config)
+                .bind(Utc::now())
+                .bind(key)
+                .bind(tenant_id)
                 .execute(self.metadata_store.pool())
                 .await?;
             }
@@ -562,6 +601,9 @@ impl TemplateService {
         if let Some(ui_config) = request.ui_config.as_ref() {
             validate_template_ui_config(ui_config)?;
         }
+        if let Some(module_config) = request.module_config.as_ref() {
+            validate_template_module_config(&request.module_key, module_config)?;
+        }
 
         // Validate default files
         for file in &request.default_files {
@@ -583,6 +625,7 @@ impl TemplateService {
             visibility_policy: request.visibility_policy,
             ai_indexing_policy: json!({"enabled": true}),
             audit_logging_policy: json!({"enabled": true}),
+            module_config: request.module_config.unwrap_or_else(|| json!({})),
             created_by: Some(created_by),
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -596,9 +639,9 @@ impl TemplateService {
             INSERT INTO templates (
                 id, template_key, name, module_key, version, description, ui_config,
                 folder_structure, default_files, metadata_schema, renderer,
-                visibility_policy, ai_indexing_policy, audit_logging_policy,
+                visibility_policy, ai_indexing_policy, audit_logging_policy, module_config,
                 created_by, created_at, updated_at, enabled, system_template, tenant_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
             "#,
         )
         .bind(template.id)
@@ -615,6 +658,7 @@ impl TemplateService {
         .bind(&template.visibility_policy)
         .bind(&template.ai_indexing_policy)
         .bind(&template.audit_logging_policy)
+        .bind(&template.module_config)
         .bind(template.created_by)
         .bind(template.created_at)
         .bind(template.updated_at)
@@ -697,6 +741,9 @@ impl TemplateService {
         if let Some(ui_config) = request.ui_config.as_ref() {
             validate_template_ui_config(ui_config)?;
         }
+        if let Some(module_config) = request.module_config.as_ref() {
+            validate_template_module_config(&template.module_key, module_config)?;
+        }
 
         let modifies_structure = request.description.is_some()
             || request.folder_structure.is_some()
@@ -704,7 +751,8 @@ impl TemplateService {
             || request.metadata_schema.is_some()
             || request.renderer.is_some()
             || request.visibility_policy.is_some()
-            || request.ui_config.is_some();
+            || request.ui_config.is_some()
+            || request.module_config.is_some();
 
         let name = request.name.unwrap_or(template.name);
         let description = request.description.unwrap_or(template.description);
@@ -725,6 +773,7 @@ impl TemplateService {
             .visibility_policy
             .unwrap_or(template.visibility_policy);
         let enabled = request.enabled.unwrap_or(template.enabled);
+        let module_config = request.module_config.unwrap_or(template.module_config);
 
         let system_template = template.system_template;
         if system_template && modifies_structure {
@@ -738,8 +787,8 @@ impl TemplateService {
             UPDATE templates
             SET name = $1, description = $2, ui_config = $3, folder_structure = $4,
                 default_files = $5, metadata_schema = $6, renderer = $7,
-                visibility_policy = $8, enabled = $9, updated_at = now()
-            WHERE template_key = $10 AND tenant_id = $11
+                visibility_policy = $8, enabled = $9, module_config = $10, updated_at = now()
+            WHERE template_key = $11 AND tenant_id = $12
             "#,
         )
         .bind(name)
@@ -751,6 +800,7 @@ impl TemplateService {
         .bind(renderer)
         .bind(visibility_policy)
         .bind(enabled)
+        .bind(module_config)
         .bind(key)
         .bind(tenant_id)
         .execute(self.metadata_store.pool())
@@ -857,7 +907,12 @@ impl TemplateService {
             } else {
                 let folder = self
                     .folder_service
-                    .create_folder(module_name.to_string(), Some(ws_folder.id), owner_id, tenant_id)
+                    .create_folder(
+                        module_name.to_string(),
+                        Some(ws_folder.id),
+                        owner_id,
+                        tenant_id,
+                    )
                     .await?;
                 Some(folder.id)
             }
@@ -1053,6 +1108,35 @@ fn resolve_creation_mode(module_key: &str) -> TemplateCreationMode {
     }
 }
 
+fn default_kanban_module_config() -> serde_json::Value {
+    json!({
+        "kanban": {
+            "columns": [
+                { "id": "column_backlog", "title": "Backlog", "slug": "00-Backlog", "order": 0, "status": "backlog", "wip_limit": null },
+                { "id": "column_ready", "title": "Ready", "slug": "01-Ready", "order": 1, "status": "ready", "wip_limit": null },
+                { "id": "column_in_progress", "title": "In Progress", "slug": "02-In-Progress", "order": 2, "status": "in_progress", "wip_limit": null },
+                { "id": "column_review", "title": "Review", "slug": "03-Review", "order": 3, "status": "review", "wip_limit": null },
+                { "id": "column_done", "title": "Done", "slug": "04-Done", "order": 4, "status": "done", "wip_limit": null }
+            ],
+            "labels": [
+                { "id": "label_green", "name": "Low", "color": "green" },
+                { "id": "label_yellow", "name": "Medium", "color": "yellow" },
+                { "id": "label_orange", "name": "High", "color": "orange" },
+                { "id": "label_red", "name": "Urgent", "color": "red" }
+            ],
+            "settings": {
+                "show_description_on_cards": true,
+                "description_preview_lines": 2,
+                "show_assignees": true,
+                "show_labels": true,
+                "show_due_date": true,
+                "show_attachment_badge": true,
+                "show_checklist_badge": true
+            }
+        }
+    })
+}
+
 fn validate_folder_path(path: &str) -> Result<(), TemplateError> {
     validate_relative_template_path(path, false)
 }
@@ -1128,6 +1212,99 @@ fn validate_template_ui_config(ui_config: &serde_json::Value) -> Result<(), Temp
                 if let Some(label) = field.get("label").and_then(|value| value.as_str()) {
                     validate_plain_text("form.label", label)?;
                 }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_template_module_config(
+    module_key: &str,
+    module_config: &serde_json::Value,
+) -> Result<(), TemplateError> {
+    if module_key != "kanban" {
+        return Ok(());
+    }
+
+    let Some(kanban) = module_config
+        .get("kanban")
+        .and_then(|value| value.as_object())
+    else {
+        return Ok(());
+    };
+
+    if let Some(columns) = kanban.get("columns").and_then(|value| value.as_array()) {
+        if columns.is_empty() {
+            return Err(TemplateError::InvalidData(
+                "Kanban templates must define at least one column".to_string(),
+            ));
+        }
+
+        let mut ids = std::collections::HashSet::new();
+        let mut slugs = std::collections::HashSet::new();
+        for column in columns {
+            let id = column
+                .get("id")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            let title = column
+                .get("title")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            let slug = column
+                .get("slug")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            let status = column
+                .get("status")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+
+            if id.trim().is_empty()
+                || title.trim().is_empty()
+                || slug.trim().is_empty()
+                || status.trim().is_empty()
+            {
+                return Err(TemplateError::InvalidData(
+                    "Kanban columns require id, title, slug, and status".to_string(),
+                ));
+            }
+            validate_folder_path(slug)?;
+            if !ids.insert(id.to_string()) || !slugs.insert(slug.to_string()) {
+                return Err(TemplateError::InvalidData(
+                    "Kanban column ids and slugs must be unique".to_string(),
+                ));
+            }
+        }
+    }
+
+    if let Some(labels) = kanban.get("labels").and_then(|value| value.as_array()) {
+        let mut ids = std::collections::HashSet::new();
+        for label in labels {
+            let id = label
+                .get("id")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            let name = label
+                .get("name")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            let color = label
+                .get("color")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+
+            if id.trim().is_empty() || name.trim().is_empty() || color.trim().is_empty() {
+                return Err(TemplateError::InvalidData(
+                    "Kanban labels require id, name, and color".to_string(),
+                ));
+            }
+            validate_plain_text("kanban.label.name", name)?;
+            if !ids.insert(id.to_string()) {
+                return Err(TemplateError::InvalidData(
+                    "Kanban label ids must be unique".to_string(),
+                ));
             }
         }
     }
