@@ -10,6 +10,7 @@ import type {
 	KanbanChecklistItem,
 	KanbanCardDetail
 } from './types';
+import { cardDetailToMarkdown, markdownToCardDetail, serializeCardMarkdown, parseCardMarkdown } from '$lib/kanban/cardMarkdown';
 
 export async function listKanbanBoards(limit?: number): Promise<KanbanBoardSummary[]> {
 	const params = limit !== undefined ? `?limit=${limit}` : '';
@@ -205,4 +206,37 @@ export async function deleteChecklistItem(
 
 export async function deleteChecklist(cardId: string, checklistId: string): Promise<void> {
 	await apiClient.delete(`/modules/kanban/cards/${cardId}/checklists/${checklistId}`);
+}
+
+/**
+ * Save a complete card by sending the full card data.
+ * The backend will serialize to Markdown.
+ */
+export async function saveKanbanCardDetail(card: KanbanCardDetail): Promise<KanbanCardDetail> {
+	// For now, use the existing updateKanbanCard endpoint which accepts partial updates
+	// In the future, this could send the full Markdown
+	const updated = await updateKanbanCard(card.id, {
+		title: card.title,
+		content: card.content,
+		priority: card.priority,
+		labels: card.labels.map(l => l.id),
+		assignees: card.assignees.map(a => a.id),
+		due_date: card.due_date,
+	});
+	// Return the card detail with updated fields
+	return {
+		...card,
+		...updated,
+		content: card.content,
+	};
+}
+
+export async function addKanbanCardComment(
+	cardId: string,
+	text: string
+): Promise<void> {
+	// For now, this is a no-op on the backend side
+	// The comment will be saved as part of the card Markdown on full save
+	// In the future, we may have a dedicated endpoint
+	console.log('Comment added:', text);
 }

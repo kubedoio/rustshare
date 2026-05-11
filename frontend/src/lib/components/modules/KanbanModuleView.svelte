@@ -17,7 +17,10 @@
 		removeCardLabel,
 		getKanbanAssignableUsers,
 		assignCardMember,
-		unassignCardMember
+		unassignCardMember,
+		saveKanbanCardDetail,
+		addCardAttachment,
+		deleteCardAttachment
 	} from '$lib/api/kanban';
 	import { goto } from '$app/navigation';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
@@ -331,6 +334,18 @@
 				afterCardId
 			});
 
+			if (cardDetail && dragCardId === cardDetail.id) {
+				const moveEvent = {
+					event_type: 'card_moved',
+					timestamp: new Date().toISOString(),
+					actor: 'current-user',
+					payload: { fromColumn: dragSourceColumnId, toColumn: targetColumnId },
+					id: `act-${Date.now()}`,
+					text: `Moved this card from ${dragSourceColumnId} to ${targetColumnId}`,
+				} as import('$lib/api/types').KanbanEvent;
+				cardDetail.activity = [moveEvent, ...cardDetail.activity];
+			}
+
 			queryClient.invalidateQueries({ queryKey });
 		} catch (err) {
 			console.error('Failed to move card:', err);
@@ -399,10 +414,7 @@
 		savingDetail = true;
 		saveStatus = 'saving';
 		try {
-			await updateKanbanCard(cardDetail.id, {
-				title: cardDetail.title,
-				content: cardDetail.content
-			});
+			await saveKanbanCardDetail(cardDetail);
 			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
 			saveStatus = 'saved';
 			setTimeout(() => {
@@ -506,6 +518,91 @@
 		} catch (err) {
 			console.error('Failed to create label:', err);
 		}
+	}
+
+	async function handleAddAttachment(file: File) {
+		if (!cardDetail) return;
+		try {
+			const attachment = await addCardAttachment(cardDetail.id, file);
+			cardDetail.attachments = [...cardDetail.attachments, attachment];
+			cardDetail.attachments_count = cardDetail.attachments.length;
+			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+		} catch (err) {
+			console.error('Failed to add attachment:', err);
+		}
+	}
+
+	async function handleDeleteAttachment(attachmentId: string) {
+		if (!cardDetail) return;
+		try {
+			await deleteCardAttachment(cardDetail.id, attachmentId);
+			cardDetail.attachments = cardDetail.attachments.filter(a => a.id !== attachmentId);
+			cardDetail.attachments_count = cardDetail.attachments.length;
+			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
+		} catch (err) {
+			console.error('Failed to delete attachment:', err);
+		}
+	}
+
+	async function handleToggleChecklistItem(checklistId: string, itemId: string, done: boolean) {
+		if (!cardDetail) return;
+		// Update local state
+		const checklists = cardDetail.checklists.map(cl => {
+			if (cl.id !== checklistId) return cl;
+			return {
+				...cl,
+				items: cl.items.map(item => {
+					if (item.id !== itemId) return item;
+					return { ...item, done };
+				})
+			};
+		});
+		cardDetail.checklists = checklists;
+		// Update checklist summary
+		let doneCount = 0;
+		let totalCount = 0;
+		for (const cl of checklists) {
+			for (const item of cl.items) {
+				totalCount++;
+				if (item.done) doneCount++;
+			}
+		}
+		cardDetail.checklist = { done: doneCount, total: totalCount };
+	}
+
+	async function handleAddChecklistItem(checklistId: string, text: string) {
+		if (!cardDetail) return;
+		const checklists = cardDetail.checklists.map(cl => {
+			if (cl.id !== checklistId) return cl;
+			return {
+				...cl,
+				items: [...cl.items, { id: `item-${Date.now()}`, text, done: false }]
+			};
+		});
+		cardDetail.checklists = checklists;
+		// Recalculate checklist summary
+		let doneCount = 0;
+		let totalCount = 0;
+		for (const cl of checklists) {
+			for (const item of cl.items) {
+				totalCount++;
+				if (item.done) doneCount++;
+			}
+		}
+		cardDetail.checklist = { done: doneCount, total: totalCount };
+	}
+
+	async function handleAddComment(text: string) {
+		if (!cardDetail) return;
+		const newEvent = {
+			event_type: 'comment',
+			timestamp: new Date().toISOString(),
+			actor: 'current-user', // TODO: get from auth store
+			payload: { text },
+			id: `act-${Date.now()}`,
+			text,
+		} as import('$lib/api/types').KanbanEvent;
+		cardDetail.activity = [newEvent, ...cardDetail.activity];
 	}
 </script>
 
