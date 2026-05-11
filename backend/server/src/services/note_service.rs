@@ -253,7 +253,7 @@ impl NoteService {
 
         let siblings = self
             .metadata_store
-            .list_files(parent_id, user_id, tenant_id)
+            .list_files(parent_id, file.owner_id, tenant_id)
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?;
 
@@ -265,7 +265,7 @@ impl NoteService {
             self.file_service
                 .edit_file(
                     sidecar.id,
-                    user_id,
+                    file.owner_id,
                     Bytes::from(meta_data),
                     "overwrite",
                     None,
@@ -275,7 +275,7 @@ impl NoteService {
             // Create new sidecar
             self.file_service
                 .upload_file(
-                    user_id,
+                    file.owner_id,
                     sidecar_name,
                     parent_id,
                     Bytes::from(meta_data),
@@ -579,7 +579,7 @@ impl NoteService {
 
                 // Also attempt to rename the file to match the new title
                 let new_filename = self
-                    .unique_note_name(user_id, file.tenant_id, file.parent_folder_id, &new_title)
+                    .unique_note_name(file.owner_id, file.tenant_id, file.parent_folder_id, &new_title)
                     .await?;
 
                 if new_filename != updated_file.name {

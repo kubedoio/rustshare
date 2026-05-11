@@ -918,7 +918,7 @@ where
         let new_path = if let Some(parent_id) = file.parent_folder_id {
             let parent = self
                 .metadata_store
-                .find_folder_by_id(parent_id, user_id)
+                .find_folder_by_id(parent_id, file.owner_id)
                 .await
                 .map_err(|e| FileError::Database(e.to_string()))?
                 .ok_or(FileError::FolderNotFound(parent_id))?;
