@@ -134,7 +134,7 @@
 								<div class="flex items-center gap-2">
 									<button
 										class={`flex items-center gap-1.5 text-sm transition-colors ${module.enabled ? 'text-success' : 'text-base-content/40'}`}
-										on:click={() => handleToggle(module)}
+										onclick={() => handleToggle(module)}
 										disabled={$enableMutation.isPending || $disableMutation.isPending}
 									>
 										{#if module.enabled}

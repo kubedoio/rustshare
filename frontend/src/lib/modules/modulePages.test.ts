@@ -3,7 +3,7 @@ import { getModuleObjectHref } from './modulePages';
 
 describe('getModuleObjectHref', () => {
 	it('routes note files to the dedicated note editor', () => {
-		expect(getModuleObjectHref('notes', 'file', 'note-123')).toBe('/notes/note-123');
+		expect(getModuleObjectHref('notes', 'file', 'note-123')).toBe('/modules/notes/note-123');
 	});
 
 	it('routes non-note files to the file preview UI', () => {

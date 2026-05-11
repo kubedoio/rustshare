@@ -21,52 +21,37 @@ vi.mock('$lib/modules/registry', async (importOriginal) => {
 	const mod = await importOriginal<typeof import('$lib/modules/registry')>();
 	return {
 		...mod,
-		getDashboardModulesForUser: vi.fn(() => [
+		getEnabledModules: vi.fn(() => [
 			{
 				key: 'kanban',
+				displayName: 'Kanban',
 				ui: {
 					dashboard: {
 						enabled: true,
 						order: 10,
-						widget: {
-							enabled: true,
-							type: 'kanban-summary',
-							title: 'Kanban',
-							description: 'Kanban boards',
-							columns: { desktop: 6, tablet: 12, mobile: 12 }
-						}
+						widget: { enabled: true }
 					}
 				}
 			},
 			{
 				key: 'notes',
+				displayName: 'Notes',
 				ui: {
 					dashboard: {
 						enabled: true,
 						order: 20,
-						widget: {
-							enabled: true,
-							type: 'notes-recent',
-							title: 'Latest Notes',
-							description: 'Recent notes',
-							columns: { desktop: 6, tablet: 12, mobile: 12 }
-						}
+						widget: { enabled: true }
 					}
 				}
 			},
 			{
 				key: 'unknown',
+				displayName: 'Unknown',
 				ui: {
 					dashboard: {
 						enabled: true,
 						order: 30,
-						widget: {
-							enabled: true,
-							type: 'unknown-type',
-							title: 'Unknown Widget',
-							description: 'Unknown',
-							columns: { desktop: 6, tablet: 12, mobile: 12 }
-						}
+						widget: { enabled: true }
 					}
 				}
 			}
@@ -101,6 +86,40 @@ vi.mock('$lib/query-compat', () => ({
 				isLoading: false
 			});
 		}
+		if (key === 'workspace-module-summaries') {
+			return readable({
+				data: [
+					{
+						module: { key: 'kanban', displayName: 'Kanban' },
+						summary: {
+							total_items: 1,
+							recent_items: [
+								{ id: 'board-1', name: 'Kanban Board', item_type: 'folder', updated_at: new Date().toISOString() }
+							]
+						}
+					},
+					{
+						module: { key: 'notes', displayName: 'Notes' },
+						summary: {
+							total_items: 1,
+							recent_items: [
+								{ id: 'note-1', name: 'Latest Note.md', item_type: 'file', updated_at: new Date().toISOString() }
+							]
+						}
+					},
+					{
+						module: { key: 'unknown', displayName: 'Unknown' },
+						summary: {
+							total_items: 1,
+							recent_items: [
+								{ id: 'unknown-1', name: 'Unknown Widget.md', item_type: 'file', updated_at: new Date().toISOString() }
+							]
+						}
+					}
+				],
+				isLoading: false
+			});
+		}
 		if (key === 'kanban-boards-widget') {
 			return readable({ data: [], isLoading: false });
 		}
@@ -131,24 +150,26 @@ describe('Dashboard Page Workspace Surface', () => {
 		render(DashboardPage);
 
 		await vi.waitFor(() => {
-			expect(screen.getByLabelText('Workspace dashboard widgets')).toBeTruthy();
+			expect(screen.getByLabelText('Workspace summary')).toBeTruthy();
+			expect(screen.getByLabelText('Recent artifacts')).toBeTruthy();
 		});
 	});
 
-	it('enabled widgets render and order is respected', async () => {
+	it('module summaries render as recent artifacts', async () => {
 		render(DashboardPage);
 
 		await vi.waitFor(() => {
-			expect(screen.getByText('Kanban')).toBeTruthy();
-			expect(screen.getByText('Latest Notes')).toBeTruthy();
+			expect(screen.getAllByText('Kanban Board').length).toBeGreaterThan(0);
+			expect(screen.getByText('Latest Note')).toBeTruthy();
 		});
 	});
 
-	it('unknown widget falls back to generic module summary', async () => {
+	it('unknown module artifacts fall back to a generic file label', async () => {
 		render(DashboardPage);
 
 		await vi.waitFor(() => {
 			expect(screen.getByText('Unknown Widget')).toBeTruthy();
+			expect(screen.getByText('File')).toBeTruthy();
 		});
 	});
 });

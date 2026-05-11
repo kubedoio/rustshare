@@ -465,9 +465,10 @@
 				<!-- Summary cards -->
 				<section class="summary-cards" aria-label="Workspace summary">
 					{#each summaryCards as card}
+						{@const SummaryIcon = card.icon}
 						<div class="summary-card">
 							<div class="summary-icon" style="background: {card.iconBg}; color: {card.iconColor};">
-								<svelte:component this={card.icon} size={18} />
+								<SummaryIcon size={18} />
 							</div>
 							<div class="summary-body">
 								<span class="summary-value">{card.value}</span>
@@ -569,6 +570,7 @@
 					<h2 class="section-title">Quick actions</h2>
 					<div class="action-list">
 						{#each quickActions as action}
+							{@const ActionIcon = action.icon}
 							<button
 								type="button"
 								class="action-item"
@@ -576,7 +578,7 @@
 								disabled={creating}
 							>
 								<div class="action-icon" style="background: {action.iconBg}; color: {action.iconColor};">
-									<svelte:component this={action.icon} size={18} />
+									<ActionIcon size={18} />
 								</div>
 								<div class="action-body">
 									<span class="action-label">{action.label}</span>

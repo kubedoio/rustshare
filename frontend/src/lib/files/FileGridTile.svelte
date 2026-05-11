@@ -114,7 +114,7 @@
 	let contextMenuVisible = $state(false);
 	let contextMenuX = $state(0);
 	let contextMenuY = $state(0);
-	let tileRef: HTMLDivElement;
+	let tileRef = $state<HTMLDivElement | undefined>(undefined);
 
 	// Inline rename state
 	let isRenaming = $state(false);

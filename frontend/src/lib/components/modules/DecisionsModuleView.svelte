@@ -23,7 +23,7 @@
 	let { module }: { module: ModuleDefinition } = $props();
 
 	const decisionsQuery = createQuery({
-		queryKey: ['decisions', module.key],
+		queryKey: ['decisions'],
 		queryFn: () => decisionsApi.list()
 	});
 
@@ -31,8 +31,12 @@
 	let searchTerm = $state('');
 	let statusFilter = $state<'all' | 'accepted' | 'proposed' | 'superseded'>('all');
 	let sortDirection = $state<'desc' | 'asc'>('desc');
-	let viewMode = $state<'list' | 'grid'>(module.ui.page.layout === 'gallery-grid' ? 'grid' : 'list');
+	let viewMode = $state<'list' | 'grid'>('list');
 	let itemsPerPage = $state(20);
+
+	$effect(() => {
+		viewMode = module.ui.page.layout === 'gallery-grid' ? 'grid' : 'list';
+	});
 	let filteredDecisions = $derived(
 		decisions
 			.filter((decision) =>

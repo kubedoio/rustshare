@@ -144,7 +144,7 @@
 									<button
 										class="btn text-base-content/50 btn-ghost btn-xs hover:text-base-content"
 										title="Duplicate"
-										on:click={() => handleDuplicate(template.template_key)}
+										onclick={() => handleDuplicate(template.template_key)}
 										disabled={$duplicateMutation.isPending}
 									>
 										<Copy size={14} />
@@ -153,7 +153,7 @@
 										<button
 											class="btn text-error/60 btn-ghost btn-xs hover:text-error"
 											title="Delete"
-											on:click={() => handleDelete(template.template_key, template.name)}
+											onclick={() => handleDelete(template.template_key, template.name)}
 											disabled={$deleteMutation.isPending}
 										>
 											<Trash2 size={14} />

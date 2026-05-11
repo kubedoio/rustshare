@@ -390,7 +390,7 @@
 					<!-- Columns -->
 					<div>
 						<div class="mb-2 flex items-center justify-between">
-							<label class="text-xs font-semibold text-base-content/70">Columns</label>
+							<span class="text-xs font-semibold text-base-content/70">Columns</span>
 							<button
 								type="button"
 								class="btn btn-ghost btn-xs gap-1"
@@ -448,7 +448,7 @@
 					<!-- Labels -->
 					<div>
 						<div class="mb-2 flex items-center justify-between">
-							<label class="text-xs font-semibold text-base-content/70">Labels</label>
+							<span class="text-xs font-semibold text-base-content/70">Labels</span>
 							<button
 								type="button"
 								class="btn btn-ghost btn-xs gap-1"
@@ -494,18 +494,18 @@
 
 					<!-- Settings -->
 					<div>
-						<label class="text-xs font-semibold text-base-content/70">Settings</label>
+						<span class="text-xs font-semibold text-base-content/70">Settings</span>
 						<div class="mt-2 grid gap-2 sm:grid-cols-2">
 							{#each Object.entries(ensureKanbanConfig().settings) as [key, value]}
-								<div class="flex items-center gap-2">
+								<label class="flex items-center gap-2">
 									<input
 										type="checkbox"
 										class="checkbox checkbox-sm"
 										checked={value as boolean}
 										onchange={(e) => updateKanbanSetting(key, e.currentTarget.checked)}
 									/>
-									<label class="text-xs text-base-content/80 capitalize">{key.replace(/_/g, ' ')}</label>
-								</div>
+									<span class="text-xs text-base-content/80 capitalize">{key.replace(/_/g, ' ')}</span>
+								</label>
 							{/each}
 						</div>
 					</div>

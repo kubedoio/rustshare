@@ -381,13 +381,6 @@
 		text-overflow: ellipsis;
 	}
 
-	.path-info {
-		font-size: 0.75rem;
-		color: var(--base-content);
-		opacity: 0.5;
-		font-family: monospace;
-	}
-
 	.header-right {
 		display: flex;
 		align-items: center;

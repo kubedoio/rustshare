@@ -22,9 +22,13 @@
 
 	let { module }: { module: ModuleDefinition } = $props();
 
+	function getRootPath() {
+		return module.rootPath;
+	}
+
 	const contentsQuery = createQuery({
-		queryKey: ['standups-root', module.key],
-		queryFn: () => getModuleRootContents(module.rootPath)
+		queryKey: ['standups-root'],
+		queryFn: () => getModuleRootContents(getRootPath())
 	});
 
 	let contents = $derived($contentsQuery.data);
@@ -32,8 +36,12 @@
 	let searchTerm = $state('');
 	let statusFilter = $state<'all' | 'recent'>('all');
 	let sortDirection = $state<'desc' | 'asc'>('desc');
-	let viewMode = $state<'list' | 'grid'>(module.ui.page.layout === 'gallery-grid' ? 'grid' : 'list');
+	let viewMode = $state<'list' | 'grid'>('list');
 	let itemsPerPage = $state(20);
+
+	$effect(() => {
+		viewMode = module.ui.page.layout === 'gallery-grid' ? 'grid' : 'list';
+	});
 	let filteredStandups = $derived(
 		standups
 			.filter((standup) =>

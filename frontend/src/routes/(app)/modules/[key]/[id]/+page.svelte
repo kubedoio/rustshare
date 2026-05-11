@@ -31,10 +31,27 @@
 						: null
 	);
 
+	function currentKey() {
+		return $page.params.key || '';
+	}
+
+	function currentId() {
+		return $page.params.id || '';
+	}
+
+	function currentApi() {
+		const moduleKey = currentKey();
+		if (moduleKey === 'notes') return notesApi;
+		if (moduleKey === 'decisions') return decisionsApi;
+		if (moduleKey === 'meetings') return meetingsApi;
+		if (moduleKey === 'standups') return standupsApi;
+		return null;
+	}
+
 	const query = createQuery<any, Error, any, any, string[]>({
-		queryKey: ['module-item', key, id],
-		queryFn: () => api?.get(id),
-		enabled: !!api && !!id
+		queryKey: ['module-item', currentKey(), currentId()],
+		queryFn: () => currentApi()?.get(currentId()),
+		enabled: !!currentApi() && !!currentId()
 	});
 
 	let item = $derived($query.data);

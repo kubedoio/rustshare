@@ -189,7 +189,7 @@ describe('KanbanModuleView', () => {
 		newBoardBtn.click();
 
 		await waitFor(() => {
-			expect(screen.getByText('New board')).toBeTruthy();
+			expect(screen.getByRole('dialog', { name: /New board/i })).toBeTruthy();
 		});
 	});
 

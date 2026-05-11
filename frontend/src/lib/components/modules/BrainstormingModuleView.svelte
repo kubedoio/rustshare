@@ -16,17 +16,20 @@
 
 	let { module }: Props = $props();
 
-	const isList = $derived(
-		module.ui.page.layout === 'list-grid' || module.ui.page.layout === 'file-list'
-	);
-
 	const queryClient = useQueryClient();
 	let showCreateModal = $state(false);
 	let newBoardTitle = $state('');
 	let createError = $state('');
 	let brokenPreviews = $state(new Set<string>());
 	let searchTerm = $state('');
-	let viewMode = $state<'list' | 'grid'>(isList ? 'list' : 'grid');
+	let viewMode = $state<'list' | 'grid'>('grid');
+
+	$effect(() => {
+		viewMode =
+			module.ui.page.layout === 'list-grid' || module.ui.page.layout === 'file-list'
+				? 'list'
+				: 'grid';
+	});
 
 	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No idea boards yet');
 	let emptyDescription = $derived(
