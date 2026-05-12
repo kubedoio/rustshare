@@ -73,6 +73,30 @@ describe('getArtifactHref', () => {
 		);
 	});
 
+	it('returns /modules/meetings/{id} for meetings', () => {
+		expect(getArtifactHref({ moduleKey: 'meetings', item_type: 'file', id: 'meet456' })).toBe(
+			'/modules/meetings/meet456'
+		);
+	});
+
+	it('returns /modules/standups/{id} for standups', () => {
+		expect(getArtifactHref({ moduleKey: 'standups', item_type: 'file', id: 'stand789' })).toBe(
+			'/modules/standups/stand789'
+		);
+	});
+
+	it('returns /modules/brainstorming/{id} for brainstorming', () => {
+		expect(getArtifactHref({ moduleKey: 'brainstorming', item_type: 'file', id: 'brain012' })).toBe(
+			'/modules/brainstorming/brain012'
+		);
+	});
+
+	it('returns /modules/kanban?boardId={id} for kanban', () => {
+		expect(getArtifactHref({ moduleKey: 'kanban', item_type: 'file', id: 'kanban345' })).toBe(
+			'/modules/kanban?boardId=kanban345'
+		);
+	});
+
 	it('returns /files?preview={id} for default file', () => {
 		expect(getArtifactHref({ moduleKey: 'files', item_type: 'file', id: 'jkl012' })).toBe(
 			'/files?preview=jkl012'

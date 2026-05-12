@@ -35,8 +35,20 @@ export function getArtifactHref(item: { moduleKey: string; item_type: string; id
 	if (item.moduleKey === 'notes' && item.item_type === 'file') {
 		return `/modules/notes/${item.id}`;
 	}
+	if (item.moduleKey === 'meetings') {
+		return `/modules/meetings/${item.id}`;
+	}
+	if (item.moduleKey === 'standups') {
+		return `/modules/standups/${item.id}`;
+	}
 	if (item.moduleKey === 'decisions') {
 		return `/modules/decisions/${item.id}`;
+	}
+	if (item.moduleKey === 'brainstorming') {
+		return `/modules/brainstorming/${item.id}`;
+	}
+	if (item.moduleKey === 'kanban') {
+		return `/modules/kanban?boardId=${item.id}`;
 	}
 	if (item.item_type === 'folder') {
 		return `/files?folder=${item.id}`;
