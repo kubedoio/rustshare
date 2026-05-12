@@ -14,6 +14,15 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NoteAttachment {
+    pub file_id: Uuid,
+    pub name: String,
+    pub mime_type: String,
+    pub size: i64,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Note-specific metadata sidecar schema.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NoteMetadata {
@@ -32,6 +41,8 @@ pub struct NoteMetadata {
     pub icon: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<NoteAttachment>,
 }
 
 impl NoteMetadata {
@@ -50,6 +61,7 @@ impl NoteMetadata {
             pinned: Some(false),
             icon: None,
             color: None,
+            attachments: Vec::new(),
         }
     }
 }
@@ -381,7 +393,7 @@ impl NoteService {
 
         let folder = self
             .folder_service
-            .create_folder("Notes".to_string(), Some(ws.id), owner_id, tenant_id)
+            .create_folder_or_get("Notes".to_string(), Some(ws.id), owner_id, tenant_id)
             .await
             .map_err(|e| NoteError::Storage(e.to_string()))?;
 
@@ -404,7 +416,7 @@ impl NoteService {
         }
 
         self.folder_service
-            .create_folder("Workspace".into(), None, owner_id, tenant_id)
+            .create_folder_or_get("Workspace".into(), None, owner_id, tenant_id)
             .await
             .map_err(|e| NoteError::Storage(e.to_string()))
     }
@@ -544,6 +556,7 @@ impl NoteService {
         user_id: UserId,
         content: String,
         color: Option<String>,
+        attachments: Option<Vec<NoteAttachment>>,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
 
@@ -596,6 +609,10 @@ impl NoteService {
 
         if let Some(new_color) = color {
             meta.color = Some(new_color);
+        }
+
+        if let Some(new_attachments) = attachments {
+            meta.attachments = new_attachments;
         }
 
         meta.updated_at = Utc::now();
@@ -683,6 +700,11 @@ impl NoteService {
             if let Some(share_id) = meta.public_share_id {
                 let _ = self.delete_public_share_index(&share_id).await;
             }
+
+            // Delete attachment files
+            for attachment in &meta.attachments {
+                let _ = self.file_service.delete_file(attachment.file_id, user_id).await;
+            }
         }
 
         // Delete sidecar and file
@@ -740,8 +762,56 @@ impl NoteService {
         tenant_id: Uuid,
         limit: Option<usize>,
     ) -> Result<Vec<NoteSummary>, NoteError> {
-        self.list_notes_filtered(user_id, tenant_id, None, limit)
+        // Load all markdown files but filter to Notes paths only
+        let files = self
+            .metadata_store
+            .list_all_markdown_files(user_id, tenant_id)
             .await
+            .map_err(|e| NoteError::Database(e.to_string()))?;
+
+        let mut notes = Vec::new();
+        for file in files {
+            if !(file.path.starts_with("/Workspace/Notes/") || file.path.starts_with("/Notes/")) {
+                continue;
+            }
+
+            let meta = match self.load_metadata(file.id, user_id, tenant_id).await {
+                Ok(Some(m)) => {
+                    if m.kind != "note" {
+                        continue; // Skip non-note artifacts
+                    }
+                    m
+                }
+                _ => {
+                    // Treat plain markdown files without sidecars as notes
+                    let mut fallback = NoteMetadata::new(file.name.trim_end_matches(".md"));
+                    fallback.created_at = file.created_at;
+                    fallback.updated_at = file.modified_at;
+                    fallback
+                }
+            };
+
+            notes.push(NoteSummary {
+                id: file.id,
+                name: file.name,
+                path: file.path,
+                metadata: meta,
+                parent_folder_id: file.parent_folder_id,
+                owner_id: file.owner_id,
+                current_version: file.current_version,
+                size: file.size,
+                created_at: file.created_at,
+                modified_at: file.modified_at,
+            });
+        }
+
+        notes.sort_by_key(|b| std::cmp::Reverse(b.modified_at));
+
+        if let Some(limit) = limit {
+            notes.truncate(limit);
+        }
+
+        Ok(notes)
     }
 
     /// List notes for a user, optionally filtered to a specific folder path prefix.
@@ -768,7 +838,12 @@ impl NoteService {
             }
 
             let meta = match self.load_metadata(file.id, user_id, tenant_id).await {
-                Ok(Some(m)) => m,
+                Ok(Some(m)) => {
+                    if m.kind != "note" {
+                        continue; // Skip non-note artifacts (decisions, etc.)
+                    }
+                    m
+                }
                 _ => {
                     // Treat plain markdown files without sidecars as notes
                     let mut fallback = NoteMetadata::new(file.name.trim_end_matches(".md"));

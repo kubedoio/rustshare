@@ -642,7 +642,7 @@ impl ModuleService {
         }
 
         self.folder_service
-            .create_folder("Workspace".into(), None, owner_id, tenant_id)
+            .create_folder_or_get("Workspace".into(), None, owner_id, tenant_id)
             .await
             .map_err(|e| ModuleError::Storage(e.to_string()))
     }
@@ -681,7 +681,7 @@ impl ModuleService {
         }
 
         self.folder_service
-            .create_folder(root_name, Some(ws.id), owner_id, tenant_id)
+            .create_folder_or_get(root_name, Some(ws.id), owner_id, tenant_id)
             .await?;
 
         Ok(())

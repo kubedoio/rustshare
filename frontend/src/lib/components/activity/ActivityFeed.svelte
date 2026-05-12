@@ -70,12 +70,22 @@
 					class="group flex items-start gap-3 rounded-lg p-3 transition-colors hover:bg-base-200/50"
 				>
 					<div class="mt-0.5 flex-shrink-0 text-lg">
-						{display.icon}
+						{#if typeof display.icon === 'string'}
+							{display.icon}
+						{:else}
+							<svelte:component this={display.icon} size={18} style={display.color.startsWith('#') ? `color: ${display.color}` : undefined} class={!display.color.startsWith('#') ? display.color : undefined} />
+						{/if}
 					</div>
 					<div class="min-w-0 flex-1">
-						<p class="text-[13px] leading-tight font-medium {display.color}">
-							{display.title}
-						</p>
+						{#if display.color.startsWith('#')}
+							<p class="text-[13px] leading-tight font-medium" style="color: {display.color}">
+								{display.title}
+							</p>
+						{:else}
+							<p class="text-[13px] leading-tight font-medium {display.color}">
+								{display.title}
+							</p>
+						{/if}
 						<p class="mt-0.5 truncate text-[12px] text-base-content/70">
 							{display.description}
 						</p>

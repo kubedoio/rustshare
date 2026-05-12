@@ -884,7 +884,7 @@ impl TemplateService {
                     ws
                 } else {
                     self.folder_service
-                        .create_folder("Workspace".into(), None, owner_id, tenant_id)
+                        .create_folder_or_get("Workspace".into(), None, owner_id, tenant_id)
                         .await?
                 }
             };
@@ -907,7 +907,7 @@ impl TemplateService {
             } else {
                 let folder = self
                     .folder_service
-                    .create_folder(
+                    .create_folder_or_get(
                         module_name.to_string(),
                         Some(ws_folder.id),
                         owner_id,
@@ -961,6 +961,40 @@ impl TemplateService {
         Ok(is_admin)
     }
 
+    async fn unique_folder_object_name(
+        &self,
+        base_name: &str,
+        parent_id: Option<Uuid>,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<String, TemplateError> {
+        if parent_id.is_none() {
+            return Ok(base_name.to_string());
+        }
+        let parent = parent_id.unwrap();
+        let existing = self
+            .metadata_store
+            .list_folders(Some(parent), owner_id, tenant_id)
+            .await
+            .map_err(|e| TemplateError::Database(e.to_string()))?;
+
+        if !existing.iter().any(|f| f.name == base_name) {
+            return Ok(base_name.to_string());
+        }
+
+        for i in 2..=1000 {
+            let candidate = format!("{}-{}", base_name, i);
+            if !existing.iter().any(|f| f.name == candidate) {
+                return Ok(candidate);
+            }
+        }
+
+        Err(TemplateError::InvalidData(format!(
+            "Could not find unique name for '{}'",
+            base_name
+        )))
+    }
+
     async fn create_folder_object(
         &self,
         owner_id: UserId,
@@ -970,6 +1004,7 @@ impl TemplateService {
         folder_structure: &[String],
         default_files: &[TemplateDefaultFile],
     ) -> Result<CreatedObject, TemplateError> {
+        let name = self.unique_folder_object_name(&name, parent_id, owner_id, tenant_id).await?;
         let object_folder = self
             .folder_service
             .create_folder(name.clone(), parent_id, owner_id, tenant_id)

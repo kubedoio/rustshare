@@ -203,12 +203,79 @@ where
             .map_err(|e| FolderError::Database(format!("Failed to append event: {}", e)))?;
 
         // Insert into metadata store
-        self.metadata_store
-            .create_folder(&folder)
-            .await
-            .map_err(|e| FolderError::Database(e.to_string()))?;
+        if let Err(e) = self.metadata_store.create_folder(&folder).await {
+            if let Some(sqlx::Error::Database(ref db_err)) = e.downcast_ref::<sqlx::Error>() {
+                if db_err.constraint() == Some("idx_folders_unique_name") {
+                    return Err(FolderError::DuplicateName {
+                        name: folder.name.clone(),
+                        parent_id: folder.parent_folder_id.unwrap_or_else(|| folder.id),
+                    });
+                }
+            }
+            return Err(FolderError::Database(e.to_string()));
+        }
 
         Ok(folder)
+    }
+
+    /// Create a folder if it doesn't already exist under the same parent.
+    /// On duplicate-key conflict, returns the existing folder.
+    pub async fn create_folder_or_get(
+        &self,
+        name: String,
+        parent_folder_id: Option<FolderId>,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Folder, FolderError> {
+        // Try to find existing first
+        let existing = if let Some(parent_id) = parent_folder_id {
+            self.metadata_store
+                .list_folders(Some(parent_id), owner_id, tenant_id)
+                .await
+                .map_err(|e| FolderError::Database(e.to_string()))?
+                .into_iter()
+                .find(|f| f.name == name)
+        } else {
+            self.metadata_store
+                .list_folders(None, owner_id, tenant_id)
+                .await
+                .map_err(|e| FolderError::Database(e.to_string()))?
+                .into_iter()
+                .find(|f| f.name == name)
+        };
+
+        if let Some(folder) = existing {
+            return Ok(folder);
+        }
+
+        // Not found — try to create
+        match self.create_folder(name.clone(), parent_folder_id, owner_id, tenant_id).await {
+            Ok(folder) => Ok(folder),
+            Err(FolderError::DuplicateName { .. }) => {
+                // We lost the race — fetch the existing folder
+                let existing = if let Some(parent_id) = parent_folder_id {
+                    self.metadata_store
+                        .list_folders(Some(parent_id), owner_id, tenant_id)
+                        .await
+                        .map_err(|e| FolderError::Database(e.to_string()))?
+                        .into_iter()
+                        .find(|f| f.name == name)
+                } else {
+                    self.metadata_store
+                        .list_folders(None, owner_id, tenant_id)
+                        .await
+                        .map_err(|e| FolderError::Database(e.to_string()))?
+                        .into_iter()
+                        .find(|f| f.name == name)
+                };
+                existing.ok_or_else(|| {
+                    FolderError::Database(
+                        "Race condition: folder was created by another request but cannot be found".to_string(),
+                    )
+                })
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Get a folder by ID.
@@ -2140,5 +2207,117 @@ mod tests {
         assert_eq!(updated_c.ancestor_ids, Some(Vec::new()));
         assert_eq!(updated_d.ancestor_ids, Some(vec![folder_c.id]));
         assert_eq!(updated_e.ancestor_ids, Some(vec![folder_c.id, folder_d.id]));
+    }
+
+    // ── create_folder_or_get idempotency ─────────────────────────────────
+
+    #[tokio::test]
+    async fn test_create_folder_or_get_creates_when_not_exists() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(
+            event_store.clone(),
+            metadata_store.clone(),
+            Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
+        );
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let folder = service
+            .create_folder_or_get("Workspace".to_string(), None, owner_id, tenant_id)
+            .await
+            .unwrap();
+
+        assert_eq!(folder.name, "Workspace");
+        assert_eq!(folder.path, "/Workspace");
+
+        // Event should be emitted because creation happened
+        let events = event_store.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, EventType::FolderCreated);
+    }
+
+    #[tokio::test]
+    async fn test_create_folder_or_get_returns_existing() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(
+            event_store.clone(),
+            metadata_store.clone(),
+            Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
+        );
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        // Pre-create the folder directly
+        let existing = service
+            .create_folder("Notes".to_string(), None, owner_id, tenant_id)
+            .await
+            .unwrap();
+
+        // Reset event store to distinguish
+        event_store.events.lock().unwrap().clear();
+
+        // create_folder_or_get should return the existing folder
+        let result = service
+            .create_folder_or_get("Notes".to_string(), None, owner_id, tenant_id)
+            .await
+            .unwrap();
+
+        assert_eq!(result.id, existing.id);
+        assert_eq!(result.name, "Notes");
+
+        // No new event should be emitted
+        let events = event_store.events.lock().unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_create_folder_or_get_idempotent_under_parent() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(
+            event_store.clone(),
+            metadata_store.clone(),
+            Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
+        );
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        // Create parent Workspace folder
+        let workspace = service
+            .create_folder_or_get("Workspace".to_string(), None, owner_id, tenant_id)
+            .await
+            .unwrap();
+
+        // First call creates Kanban under Workspace
+        let first = service
+            .create_folder_or_get("Kanban".to_string(), Some(workspace.id), owner_id, tenant_id)
+            .await
+            .unwrap();
+
+        // Second call returns the same folder
+        let second = service
+            .create_folder_or_get("Kanban".to_string(), Some(workspace.id), owner_id, tenant_id)
+            .await
+            .unwrap();
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(first.name, "Kanban");
+
+        // Only one event for the child folder (plus one for Workspace)
+        let events = event_store.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
     }
 }

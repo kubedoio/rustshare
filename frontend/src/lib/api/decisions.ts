@@ -44,5 +44,9 @@ export const decisionsApi = {
 
 	update: async (id: string, req: { title?: string; content?: string; status?: string }) => {
 		return apiClient.put<Decision>(`/decisions/${id}`, req);
+	},
+
+	rename: async (id: string, req: { title: string }) => {
+		return apiClient.post<Decision>(`/decisions/${id}/rename`, req);
 	}
 };

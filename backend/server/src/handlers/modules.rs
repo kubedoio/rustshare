@@ -152,10 +152,17 @@ pub async fn create_from_template(
                 axum::http::StatusCode::NOT_FOUND
             } else if e.to_string().contains("disabled") || e.to_string().contains("denied") {
                 axum::http::StatusCode::FORBIDDEN
+            } else if e.to_string().contains("already exists") {
+                axum::http::StatusCode::CONFLICT
             } else {
-                axum::http::StatusCode::BAD_REQUEST
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR
             };
-            (status, Json(ErrorResponse::new(e.to_string()))).into_response()
+            let message = if status == axum::http::StatusCode::INTERNAL_SERVER_ERROR {
+                "Internal server error".to_string()
+            } else {
+                e.to_string()
+            };
+            (status, Json(ErrorResponse::new(message))).into_response()
         })?;
 
     // Initialize kanban board metadata if created from a kanban template

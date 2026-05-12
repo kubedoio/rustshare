@@ -5,14 +5,17 @@
 	import { decisionsApi } from '$lib/api/decisions';
 	import { meetingsApi } from '$lib/api/meetings';
 	import { standupsApi } from '$lib/api/standups';
+	import { uploadFile, deleteFile } from '$lib/api/files';
 	import { getModuleByKey } from '$lib/modules/registry';
 	import { goto } from '$app/navigation';
-	import { Folder, Share2 } from 'lucide-svelte';
+	import { Folder, Share2, Pencil } from 'lucide-svelte';
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
 	import ShareModal from '$lib/components/modals/ShareModal.svelte';
+	import PromptModal from '$lib/components/common/PromptModal.svelte';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import { toastStore } from '$lib/stores/toast';
-	import type { EditorMode, EditorSaveStatus } from '$lib/editor/types';
+	import type { EditorMode, EditorSaveStatus, RichMarkdownAttachment } from '$lib/editor/types';
+	import { classifyAttachmentKind } from '$lib/editor/validation';
 
 	let key = $derived(($page.params.key || '') as string);
 	let id = $derived(($page.params.id || '') as string);
@@ -69,6 +72,29 @@
 	let mode: EditorMode = $state('read');
 	let saveStatus: EditorSaveStatus = $state('saved');
 	let showShareModal = $state(false);
+	let showRenameModal = $state(false);
+	let renameError = $state('');
+	let isRenaming = $state(false);
+	let attachments = $state<RichMarkdownAttachment[]>([]);
+
+	$effect(() => {
+		if (item?.metadata?.attachments) {
+			attachments = item.metadata.attachments.map((a: any) => ({
+				id: a.file_id,
+				filename: a.name,
+				path: a.mime_type?.startsWith('image/')
+					? `/api/v1/files/${a.file_id}/preview`
+					: `/api/v1/files/${a.file_id}/content`,
+				mimeType: a.mime_type,
+				size: a.size,
+				kind: classifyAttachmentKind(a.mime_type),
+				createdAt: a.created_at,
+				createdBy: ''
+			}));
+		} else {
+			attachments = [];
+		}
+	});
 
 	let breadcrumb = $derived([
 		{ label: module?.displayName || key, onClick: () => goto(`/modules/${key}`) },
@@ -77,7 +103,14 @@
 
 	const saveMutation = createMutation<any, Error, { title: string; content: string }>({
 		mutationFn: (data: { title: string; content: string }) => {
-			if (key === 'notes') return notesApi.update(id, { content: data.content });
+			const noteAttachments = attachments.map((a) => ({
+				file_id: a.id,
+				name: a.filename,
+				mime_type: a.mimeType,
+				size: a.size,
+				created_at: a.createdAt
+			}));
+			if (key === 'notes') return notesApi.update(id, { content: data.content, attachments: noteAttachments });
 			if (key === 'decisions')
 				return decisionsApi.update(id, { title: data.title, content: data.content });
 			if (key === 'meetings')
@@ -108,6 +141,47 @@
 		mode = event.detail.mode;
 	}
 
+	async function handleUpload(event: CustomEvent<{ files: File[] }>) {
+		if (!item || !item.parent_folder_id) return;
+		for (const file of event.detail.files) {
+			try {
+				const uploaded = await uploadFile(item.parent_folder_id, file);
+				const isImage = uploaded.mime_type?.startsWith('image/');
+				const attachment: RichMarkdownAttachment = {
+					id: uploaded.id,
+					filename: uploaded.name,
+					path: isImage
+						? `/api/v1/files/${uploaded.id}/preview`
+						: `/api/v1/files/${uploaded.id}/content`,
+					mimeType: uploaded.mime_type,
+					size: uploaded.size,
+					kind: classifyAttachmentKind(uploaded.mime_type),
+					createdAt: uploaded.created_at,
+					createdBy: ''
+				};
+				attachments = [...attachments, attachment];
+			} catch (err) {
+				console.error('Failed to upload attachment:', err);
+				toastStore.show('Failed to upload attachment', 'error');
+			}
+		}
+	}
+
+	async function handleDeleteAttachment(event: CustomEvent<{ attachment: RichMarkdownAttachment }>) {
+		try {
+			await deleteFile(event.detail.attachment.id);
+			attachments = attachments.filter((a) => a.id !== event.detail.attachment.id);
+		} catch (err) {
+			console.error('Failed to delete attachment:', err);
+			toastStore.show('Failed to delete attachment', 'error');
+		}
+	}
+
+	function handleSketch(event: CustomEvent<{ blob: Blob; filename: string }>) {
+		// Sketches are base64-embedded by the editor internally.
+		// This handler is a no-op for module documents.
+	}
+
 	async function handleOpenInFiles() {
 		if (module?.rootPath) {
 			const folderId = await resolveModuleFolderId(module.rootPath);
@@ -122,6 +196,29 @@
 		type: 'success' | 'error' | 'info';
 	}) {
 		toastStore.show(event.message, event.type);
+	}
+
+	async function handleRenameConfirm(newTitle: string) {
+		if (isRenaming) return;
+		const trimmed = newTitle.trim();
+		if (!trimmed) {
+			renameError = 'Title is required';
+			return;
+		}
+		isRenaming = true;
+		renameError = '';
+		try {
+			await decisionsApi.rename(id, { title: trimmed });
+			showRenameModal = false;
+			renameError = '';
+			$query.refetch();
+			toastStore.show('Decision renamed', 'success');
+		} catch (err) {
+			console.error('Failed to rename decision:', err);
+			renameError = err instanceof Error ? err.message : 'Failed to rename decision';
+		} finally {
+			isRenaming = false;
+		}
 	}
 </script>
 
@@ -142,6 +239,7 @@
 			{mode}
 			{saveStatus}
 			{breadcrumb}
+			{attachments}
 			metadata={modifiedAt}
 			permissions={{
 				canRead: true,
@@ -154,6 +252,9 @@
 			on:save={handleSave}
 			on:back={handleBack}
 			on:modechange={handleModeChange}
+			on:upload={handleUpload}
+			on:delete={handleDeleteAttachment}
+			on:sketch={handleSketch}
 		>
 			<svelte:fragment slot="extraActions">
 				{#if key === 'notes'}
@@ -163,6 +264,16 @@
 					>
 						<Share2 size={14} />
 						<span>Share</span>
+					</button>
+				{/if}
+
+				{#if key === 'decisions'}
+					<button
+						class="btn btn-ghost btn-sm gap-1.5"
+						onclick={() => { showRenameModal = true; renameError = ''; }}
+					>
+						<Pencil size={14} />
+						<span>Rename</span>
 					</button>
 				{/if}
 
@@ -185,6 +296,20 @@
 			onClose={() => (showShareModal = false)}
 			onNotification={handleShareNotification}
 		/>
+
+		{#if key === 'decisions'}
+			<PromptModal
+				open={showRenameModal}
+				title="Rename decision"
+				message="New title"
+				defaultValue={title}
+				confirmLabel="Rename"
+				error={renameError}
+				isLoading={isRenaming}
+				onConfirm={handleRenameConfirm}
+				onCancel={() => { showRenameModal = false; renameError = ''; }}
+			/>
+		{/if}
 	{/if}
 </div>
 

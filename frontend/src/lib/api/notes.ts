@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { Note, NoteMetadata, NoteSummary } from './types';
+import type { Note, NoteMetadata, NoteSummary, NoteAttachment } from './types';
 
 export interface CreateNoteRequest {
 	title?: string;
@@ -113,7 +113,7 @@ export const notesApi = {
 	get: getNote,
 	list: listNotes,
 	create: createNote,
-	update: async (id: string, req: { content: string; color?: string | null }) => saveNote(id, req),
+	update: async (id: string, req: { content: string; color?: string | null; attachments?: NoteAttachment[] }) => saveNote(id, req),
 	delete: deleteNote,
 	toggleVisibility
 };

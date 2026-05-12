@@ -17,6 +17,7 @@
 	} from 'lucide-svelte';
 
 	import { meetingsApi } from '$lib/api/meetings';
+	import { activityStore } from '$lib/stores/activity';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
@@ -83,6 +84,10 @@
 				team: 'General',
 				date: new Date().toISOString(),
 				content
+			});
+			activityStore.addActivity('meeting_created', result.name || title || 'Untitled Meeting Note', {
+				artifactId: result.id,
+				moduleKey: 'meetings'
 			});
 			goto(`/modules/${module.key}/${result.id}`);
 			$meetingsQuery.refetch();

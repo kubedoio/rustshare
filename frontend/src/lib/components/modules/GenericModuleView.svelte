@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
 	import { createFromTemplate } from '$lib/api/modules';
+	import { activityStore, type ActivityType } from '$lib/stores/activity';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
@@ -26,6 +27,25 @@
 	let showPromptModal = false;
 	let templateError = '';
 
+	function getActivityTypeForModule(key: string): ActivityType | null {
+		switch (key) {
+			case 'meetings':
+				return 'meeting_created';
+			case 'standups':
+				return 'standup_created';
+			case 'kanban':
+				return 'kanban_created';
+			case 'decisions':
+				return 'decision_created';
+			case 'brainstorming':
+				return 'brainstorm_created';
+			case 'notes':
+				return 'note_created';
+			default:
+				return null;
+		}
+	}
+
 	async function handleCreateFromTemplateConfirm(name: string) {
 		showPromptModal = false;
 		if (!module.defaultTemplate) return;
@@ -35,6 +55,13 @@
 				name,
 				parent_folder_id: null
 			});
+			const activityType = getActivityTypeForModule(module.key);
+			if (activityType) {
+				activityStore.addActivity(activityType, name || 'Untitled', {
+					artifactId: result.object_id,
+					moduleKey: module.key
+				});
+			}
 			goto(getModuleObjectHref(module.key, result.object_type, result.object_id));
 		} catch (err) {
 			console.error('Failed to create from template:', err);

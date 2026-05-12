@@ -23,6 +23,7 @@ export interface KanbanCardMarkdown {
 	attachments: KanbanCardAttachment[]
 	checklists: KanbanChecklistGroup[]
 	activity: KanbanEvent[]
+	dueDate?: string
 	description: string
 	// Allow preserving unknown frontmatter fields
 	[key: string]: any
@@ -86,6 +87,7 @@ export function parseCardMarkdown(raw: string): KanbanCardMarkdown {
 			attachments: data.attachments ?? [],
 			checklists: data.checklists ?? [],
 			activity: data.activity ?? [],
+			dueDate: data.dueDate ?? data.due_date ?? '',
 			description,
 		}
 	} catch {
@@ -127,6 +129,7 @@ export function serializeCardMarkdown(card: KanbanCardMarkdown): string {
 		attachments,
 		checklists,
 		activity,
+		dueDate,
 		description,
 		...unknown
 	} = card
@@ -145,6 +148,7 @@ export function serializeCardMarkdown(card: KanbanCardMarkdown): string {
 		attachments,
 		checklists,
 		activity,
+		...(dueDate && { due_date: dueDate }),
 		...unknown,
 	}
 
@@ -173,6 +177,7 @@ export function cardDetailToMarkdown(card: KanbanCardDetail): KanbanCardMarkdown
 		attachments: card.attachments,
 		checklists: card.checklists,
 		activity: card.activity,
+		dueDate: card.due_date ?? '',
 		description: card.content,
 	}
 }
@@ -198,7 +203,7 @@ export function markdownToCardDetail(
 		order: markdown.position,
 		labels: markdown.labels,
 		assignees: markdown.assignees,
-		due_date: base.due_date ?? null,
+		due_date: markdown.dueDate?.trim() ? markdown.dueDate : (base.due_date ?? null),
 		priority: markdown.priority ?? 'normal',
 		attachments_count: markdown.attachments?.length ?? 0,
 		checklist,

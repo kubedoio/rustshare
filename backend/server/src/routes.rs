@@ -380,6 +380,10 @@ pub fn decision_routes() -> Router<AppState> {
             "/api/v1/decisions/{id}",
             put(crate::handlers::update_decision),
         )
+        .route(
+            "/api/v1/decisions/{id}/rename",
+            post(crate::handlers::rename_decision),
+        )
 }
 
 pub fn meeting_routes() -> Router<AppState> {

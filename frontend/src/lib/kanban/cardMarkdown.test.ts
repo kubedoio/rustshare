@@ -394,4 +394,79 @@ describe('markdownToCardDetail', () => {
 		expect(detail.due_date).toBeNull()
 		expect(detail.schema_version).toBe('1.0')
 	})
+
+	it('maps dueDate from markdown to due_date', () => {
+		const markdown = parseCardMarkdown(exampleCard)
+		markdown.dueDate = '2026-06-01T12:00:00Z'
+		const detail = markdownToCardDetail(markdown, {})
+		expect(detail.due_date).toBe('2026-06-01T12:00:00Z')
+	})
+})
+
+describe('due_date support', () => {
+	it('parses and serializes due_date', () => {
+		const raw = `---
+id: card-due
+title: Due Date Test
+dueDate: 2026-06-01T12:00:00Z
+---
+
+## Description
+
+Content.
+`
+		const card = parseCardMarkdown(raw)
+		expect(card.dueDate).toBe('2026-06-01T12:00:00Z')
+
+		const serialized = serializeCardMarkdown(card)
+		expect(serialized).toContain("due_date: '2026-06-01T12:00:00Z'")
+	})
+
+	it('parses due_date from snake_case', () => {
+		const raw = `---
+id: card-due
+title: Due Date Test
+due_date: 2026-06-01T12:00:00Z
+---
+
+## Description
+
+Content.
+`
+		const card = parseCardMarkdown(raw)
+		expect(card.dueDate).toBe('2026-06-01T12:00:00Z')
+	})
+
+	it('round-trips due_date through cardDetailToMarkdown', () => {
+		const detail: KanbanCardDetail = {
+			id: 'card-004',
+			title: 'Due Date Card',
+			slug: 'due-date-card',
+			content: 'Content',
+			description_preview: 'Content',
+			column_id: 'col-001',
+			status: 'active',
+			order: 0,
+			labels: [],
+			assignees: [],
+			due_date: '2026-07-15T10:00:00Z',
+			priority: 'normal',
+			attachments_count: 0,
+			checklist: { done: 0, total: 0 },
+			checklists: [],
+			archived: false,
+			created_at: '',
+			updated_at: '',
+			path: '',
+			schema_version: '1.0',
+			attachments: [],
+			activity: [],
+		}
+
+		const markdown = cardDetailToMarkdown(detail)
+		expect(markdown.dueDate).toBe('2026-07-15T10:00:00Z')
+
+		const serialized = serializeCardMarkdown(markdown)
+		expect(serialized).toContain("due_date: '2026-07-15T10:00:00Z'")
+	})
 })

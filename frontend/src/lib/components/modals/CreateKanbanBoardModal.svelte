@@ -3,6 +3,7 @@
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
 	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 	import { createKanbanBoard } from '$lib/api/kanban';
+	import { activityStore } from '$lib/stores/activity';
 	import { createFromTemplate } from '$lib/api/modules';
 	import { createMutation, useQueryClient } from '$lib/query-compat';
 
@@ -66,6 +67,10 @@
 				: (await createKanbanBoard(name)).id;
 
 			queryClient.invalidateQueries({ queryKey: ['kanban-boards'] });
+			activityStore.addActivity('kanban_created', name || 'Untitled Board', {
+				artifactId: boardId,
+				moduleKey: 'kanban'
+			});
 			onSuccess(boardId);
 			boardName = '';
 			onClose();

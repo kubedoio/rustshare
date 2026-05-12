@@ -192,21 +192,19 @@ export function prepareAttachment(
 /**
  * Inserts an image into the editor using Markdown image syntax.
  */
-export function insertImageIntoEditor(editor: Editor, filename: string, alt?: string): void {
+export function insertImageIntoEditor(editor: Editor, filename: string, alt?: string, path?: string): void {
 	const altText = alt || filename;
-	const path = buildAttachmentMarkdownPath(filename);
-	const markdown = `![${altText}](${path})`;
-
+	const markdownPath = path || buildAttachmentMarkdownPath(filename);
+	const markdown = `![${altText}](${markdownPath})`;
 	editor.chain().focus().insertContent(markdown).run();
 }
 
 /**
  * Inserts a file link into the editor using Markdown link syntax.
  */
-export function insertFileLinkIntoEditor(editor: Editor, filename: string): void {
-	const path = buildAttachmentMarkdownPath(filename);
-	const markdown = `[${filename}](${path})`;
-
+export function insertFileLinkIntoEditor(editor: Editor, filename: string, path?: string): void {
+	const markdownPath = path || buildAttachmentMarkdownPath(filename);
+	const markdown = `[${filename}](${markdownPath})`;
 	editor.chain().focus().insertContent(markdown).run();
 }
 
@@ -221,11 +219,12 @@ export function insertAttachmentIntoEditor(
 		'sanitizedFilename' in attachment ? attachment.sanitizedFilename : attachment.filename;
 	const isImage =
 		'isImage' in attachment ? attachment.isImage : INLINE_IMAGE_MIMES.has(attachment.mimeType);
+	const path = 'path' in attachment ? attachment.path : undefined;
 
 	if (isImage) {
-		insertImageIntoEditor(editor, filename);
+		insertImageIntoEditor(editor, filename, undefined, path);
 	} else {
-		insertFileLinkIntoEditor(editor, filename);
+		insertFileLinkIntoEditor(editor, filename, path);
 	}
 }
 

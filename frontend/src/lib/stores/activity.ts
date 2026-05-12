@@ -1,5 +1,14 @@
 import { writable } from 'svelte/store';
 import { isInternalRustShareFile } from '$lib/utils/artifactVisibility';
+import {
+	StickyNote,
+	Pencil,
+	CalendarDays,
+	Activity as ActivityIcon,
+	Columns,
+	GitBranch,
+	Lightbulb
+} from 'lucide-svelte';
 
 export type ActivityType =
 	| 'file_uploaded'
@@ -13,7 +22,14 @@ export type ActivityType =
 	| 'folder_renamed'
 	| 'folder_moved'
 	| 'share_created'
-	| 'share_revoked';
+	| 'share_revoked'
+	| 'note_created'
+	| 'note_edited'
+	| 'meeting_created'
+	| 'standup_created'
+	| 'kanban_created'
+	| 'decision_created'
+	| 'brainstorm_created';
 
 export interface Activity {
 	id: string;
@@ -21,6 +37,8 @@ export interface Activity {
 	fileName: string;
 	timestamp: string; // ISO 8601
 	details?: string; // Additional context
+	artifactId?: string;
+	moduleKey?: string;
 }
 
 const MAX_ACTIVITIES = 50;
@@ -60,7 +78,11 @@ function createActivityStore() {
 	return {
 		subscribe,
 
-		addActivity: (type: ActivityType, fileName: string, details?: string) => {
+		addActivity: (
+			type: ActivityType,
+			fileName: string,
+			options?: { details?: string; artifactId?: string; moduleKey?: string }
+		) => {
 			// Skip activities for internal RustShare files/metadata
 			if (isInternalRustShareFile(fileName)) {
 				return;
@@ -71,7 +93,7 @@ function createActivityStore() {
 					type,
 					fileName,
 					timestamp: new Date().toISOString(),
-					details
+					...options
 				};
 
 				// Add new activity at the beginning
@@ -100,7 +122,7 @@ export const activityStore = createActivityStore();
 
 // Helper function to get activity display info
 export function getActivityDisplay(activity: Activity): {
-	icon: string;
+	icon: any;
 	title: string;
 	description: string;
 	color: string;
@@ -197,6 +219,55 @@ export function getActivityDisplay(activity: Activity): {
 				title: 'Share Link Revoked',
 				description: `Revoked share link for ${activity.fileName}`,
 				color: 'text-warning'
+			};
+		case 'note_created':
+			return {
+				icon: StickyNote,
+				title: 'Note created',
+				description: `Created note ${activity.fileName}`,
+				color: '#ea580c'
+			};
+		case 'note_edited':
+			return {
+				icon: Pencil,
+				title: 'Note edited',
+				description: `Edited note ${activity.fileName}`,
+				color: '#ea580c'
+			};
+		case 'meeting_created':
+			return {
+				icon: CalendarDays,
+				title: 'Meeting note created',
+				description: `Created meeting note ${activity.fileName}`,
+				color: '#7c3aed'
+			};
+		case 'standup_created':
+			return {
+				icon: ActivityIcon,
+				title: 'Standup record created',
+				description: `Created standup record ${activity.fileName}`,
+				color: '#2563eb'
+			};
+		case 'kanban_created':
+			return {
+				icon: Columns,
+				title: 'Kanban board created',
+				description: `Created kanban board ${activity.fileName}`,
+				color: '#ea580c'
+			};
+		case 'decision_created':
+			return {
+				icon: GitBranch,
+				title: 'Decision recorded',
+				description: `Recorded decision ${activity.fileName}`,
+				color: '#16a34a'
+			};
+		case 'brainstorm_created':
+			return {
+				icon: Lightbulb,
+				title: 'Idea board created',
+				description: `Created idea board ${activity.fileName}`,
+				color: '#ca8a04'
 			};
 		default:
 			return {

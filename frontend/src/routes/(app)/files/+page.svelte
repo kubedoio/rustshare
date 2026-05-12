@@ -547,6 +547,10 @@
 			parent_folder_id: string | null;
 		}) => createNote({ title, content, parent_folder_id }),
 		onSuccess: (data) => {
+			activityStore.addActivity('note_created', data.name || 'Untitled Note', {
+				artifactId: data.id,
+				moduleKey: 'notes'
+			});
 			navigateToNote(data.id);
 		}
 	});
@@ -581,7 +585,7 @@
 			showRenameModal = false;
 			renameTarget = null;
 			showNotification(`${truncateFilename(newName)} renamed`, 'success');
-			activityStore.addActivity('file_renamed', newName, oldName);
+			activityStore.addActivity('file_renamed', newName, { details: oldName });
 		}
 	});
 
@@ -597,7 +601,7 @@
 			showRenameModal = false;
 			renameTarget = null;
 			showNotification('Folder renamed', 'success');
-			activityStore.addActivity('folder_renamed', newName, oldName);
+			activityStore.addActivity('folder_renamed', newName, { details: oldName });
 		}
 	});
 

@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
 	import { createFromTemplate } from '$lib/api/modules';
+	import { activityStore } from '$lib/stores/activity';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
@@ -88,6 +89,10 @@
 				template_key: module.defaultTemplate,
 				name: title,
 				parent_folder_id: null
+			});
+			activityStore.addActivity('standup_created', title || 'Untitled Standup', {
+				artifactId: result.object_id,
+				moduleKey: 'standups'
 			});
 			goto(getModuleObjectHref(module.key, result.object_type, result.object_id));
 			$contentsQuery.refetch();

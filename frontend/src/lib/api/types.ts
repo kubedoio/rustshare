@@ -165,6 +165,14 @@ export interface FileVersion {
 	change_description?: string;
 }
 
+export interface NoteAttachment {
+	file_id: string;
+	name: string;
+	mime_type: string;
+	size: number;
+	created_at: string;
+}
+
 export interface NoteMetadata {
 	kind: 'note';
 	title: string;
@@ -178,6 +186,7 @@ export interface NoteMetadata {
 	pinned?: boolean;
 	icon?: string | null;
 	color?: string | null;
+	attachments?: NoteAttachment[];
 }
 
 export interface Note {

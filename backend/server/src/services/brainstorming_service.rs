@@ -520,7 +520,7 @@ impl BrainstormingService {
             return Ok(ws);
         }
         self.folder_service
-            .create_folder("Workspace".into(), None, user_id, tenant_id)
+            .create_folder_or_get("Workspace".into(), None, user_id, tenant_id)
             .await
             .map_err(BrainstormError::from)
     }
@@ -536,7 +536,7 @@ impl BrainstormingService {
         let ws = self.ensure_workspace_folder(user_id, tenant_id).await?;
         let folder = self
             .folder_service
-            .create_folder("Brainstorming".to_string(), Some(ws.id), user_id, tenant_id)
+            .create_folder_or_get("Brainstorming".to_string(), Some(ws.id), user_id, tenant_id)
             .await
             .map_err(BrainstormError::from)?;
         Ok(folder)

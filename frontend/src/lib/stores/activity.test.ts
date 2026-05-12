@@ -4,9 +4,18 @@ import {
 	activityStore,
 	getActivityDisplay,
 	getRelativeTime,
-	type Activity,
+	type Activity as ActivityItem,
 	type ActivityType
 } from '$lib/stores/activity';
+import {
+	StickyNote,
+	Pencil,
+	CalendarDays,
+	Activity as ActivityIcon,
+	Columns,
+	GitBranch,
+	Lightbulb
+} from 'lucide-svelte';
 
 describe('Activity Store', () => {
 	beforeEach(() => {
@@ -20,7 +29,7 @@ describe('Activity Store', () => {
 		});
 
 		it('should load from localStorage if available', async () => {
-			const mockActivities: Activity[] = [
+			const mockActivities: ActivityItem[] = [
 				{
 					id: '1',
 					type: 'file_uploaded',
@@ -61,10 +70,23 @@ describe('Activity Store', () => {
 		});
 
 		it('should add activity with details', () => {
-			activityStore.addActivity('file_renamed', 'new.txt', 'old.txt');
+			activityStore.addActivity('file_renamed', 'new.txt', { details: 'old.txt' });
 
 			const activities = get(activityStore);
 			expect(activities[0].details).toBe('old.txt');
+		});
+
+		it('should add activity with artifactId and moduleKey', () => {
+			activityStore.addActivity('note_created', 'My Note', {
+				artifactId: 'abc',
+				moduleKey: 'notes'
+			});
+
+			const activities = get(activityStore);
+			expect(activities[0].type).toBe('note_created');
+			expect(activities[0].fileName).toBe('My Note');
+			expect(activities[0].artifactId).toBe('abc');
+			expect(activities[0].moduleKey).toBe('notes');
 		});
 
 		it('should maintain chronological order (newest first)', () => {
@@ -171,7 +193,7 @@ describe('Activity Store', () => {
 			type: ActivityType;
 			fileName: string;
 			details?: string;
-			expectedIcon: string;
+			expectedIcon: any;
 			expectedTitle: string;
 		}> = [
 			{
@@ -210,12 +232,54 @@ describe('Activity Store', () => {
 				fileName: 'test.txt',
 				expectedIcon: '🔗',
 				expectedTitle: 'Share Link Created'
+			},
+			{
+				type: 'note_created',
+				fileName: 'My Note',
+				expectedIcon: StickyNote,
+				expectedTitle: 'Note created'
+			},
+			{
+				type: 'note_edited',
+				fileName: 'My Note',
+				expectedIcon: Pencil,
+				expectedTitle: 'Note edited'
+			},
+			{
+				type: 'meeting_created',
+				fileName: 'Meeting',
+				expectedIcon: CalendarDays,
+				expectedTitle: 'Meeting note created'
+			},
+			{
+				type: 'standup_created',
+				fileName: 'Standup',
+				expectedIcon: ActivityIcon,
+				expectedTitle: 'Standup record created'
+			},
+			{
+				type: 'kanban_created',
+				fileName: 'Board',
+				expectedIcon: Columns,
+				expectedTitle: 'Kanban board created'
+			},
+			{
+				type: 'decision_created',
+				fileName: 'Decision',
+				expectedIcon: GitBranch,
+				expectedTitle: 'Decision recorded'
+			},
+			{
+				type: 'brainstorm_created',
+				fileName: 'Brainstorm',
+				expectedIcon: Lightbulb,
+				expectedTitle: 'Idea board created'
 			}
 		];
 
 		testCases.forEach(({ type, fileName, details, expectedIcon, expectedTitle }) => {
 			it(`should display correct info for ${type}`, () => {
-				const activity: Activity = {
+				const activity: ActivityItem = {
 					id: '1',
 					type,
 					fileName,
@@ -232,7 +296,7 @@ describe('Activity Store', () => {
 		});
 
 		it('should include old name in rename description', () => {
-			const activity: Activity = {
+			const activity: ActivityItem = {
 				id: '1',
 				type: 'file_renamed',
 				fileName: 'new.txt',
@@ -243,6 +307,20 @@ describe('Activity Store', () => {
 			const display = getActivityDisplay(activity);
 			expect(display.description).toContain('old.txt');
 			expect(display.description).toContain('new.txt');
+		});
+
+		it('should handle old-format activity without artifactId and moduleKey', () => {
+			const oldActivity = {
+				id: 'old-1',
+				type: 'file_uploaded',
+				fileName: 'legacy.txt',
+				timestamp: new Date().toISOString()
+			};
+
+			const display = getActivityDisplay(oldActivity as ActivityItem);
+			expect(display.icon).toBe('📤');
+			expect(display.title).toBe('File Uploaded');
+			expect(display.description).toBeTruthy();
 		});
 	});
 
@@ -295,7 +373,14 @@ describe('Activity Store', () => {
 				'folder_deleted',
 				'folder_renamed',
 				'share_created',
-				'share_revoked'
+				'share_revoked',
+				'note_created',
+				'note_edited',
+				'meeting_created',
+				'standup_created',
+				'kanban_created',
+				'decision_created',
+				'brainstorm_created'
 			];
 
 			types.forEach((type) => {
@@ -303,7 +388,7 @@ describe('Activity Store', () => {
 			});
 
 			const activities = get(activityStore);
-			expect(activities).toHaveLength(10);
+			expect(activities).toHaveLength(17);
 		});
 	});
 });

@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { createQuery, createMutation, useQueryClient } from '$lib/query-compat';
 	import { listBrainstormBoards, createBrainstormBoard } from '$lib/api/brainstorming';
+	import { activityStore } from '$lib/stores/activity';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
@@ -58,6 +59,10 @@
 			showCreateModal = false;
 			newBoardTitle = '';
 			createError = '';
+			activityStore.addActivity('brainstorm_created', data.title || 'Untitled Idea Board', {
+				artifactId: data.id,
+				moduleKey: 'brainstorming'
+			});
 			goto(`/modules/brainstorming/${data.id}`);
 		},
 		onError: (err: Error) => {

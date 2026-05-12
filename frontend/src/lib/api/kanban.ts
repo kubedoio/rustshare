@@ -8,7 +8,8 @@ import type {
 	KanbanCardAttachment,
 	KanbanChecklistGroup,
 	KanbanChecklistItem,
-	KanbanCardDetail
+	KanbanCardDetail,
+	KanbanEvent
 } from './types';
 import { cardDetailToMarkdown, markdownToCardDetail, serializeCardMarkdown, parseCardMarkdown } from '$lib/kanban/cardMarkdown';
 
@@ -68,6 +69,8 @@ export async function updateKanbanCard(
 		labels?: string[];
 		assignees?: string[];
 		due_date?: string | null;
+		checklists?: KanbanChecklistGroup[];
+		activity?: KanbanEvent[];
 	}
 ): Promise<KanbanCard> {
 	return apiClient.patch<KanbanCard>(`/modules/kanban/cards/${cardId}`, input);
@@ -213,8 +216,6 @@ export async function deleteChecklist(cardId: string, checklistId: string): Prom
  * The backend will serialize to Markdown.
  */
 export async function saveKanbanCardDetail(card: KanbanCardDetail): Promise<KanbanCardDetail> {
-	// For now, use the existing updateKanbanCard endpoint which accepts partial updates
-	// In the future, this could send the full Markdown
 	const updated = await updateKanbanCard(card.id, {
 		title: card.title,
 		content: card.content,
@@ -222,12 +223,15 @@ export async function saveKanbanCardDetail(card: KanbanCardDetail): Promise<Kanb
 		labels: card.labels.map(l => l.id),
 		assignees: card.assignees.map(a => a.id),
 		due_date: card.due_date,
+		checklists: card.checklists,
+		activity: card.activity,
 	});
-	// Return the card detail with updated fields
 	return {
 		...card,
 		...updated,
 		content: card.content,
+		checklists: card.checklists,
+		activity: card.activity,
 	};
 }
 

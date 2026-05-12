@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { goto } from '$app/navigation';
+	import { goto, beforeNavigate } from '$app/navigation';
 	import { onMount, onDestroy } from 'svelte';
+	import { queryClient } from '$lib/query-client';
 	import { createQuery, createMutation } from '$lib/query-compat';
 	import {
 		getBrainstormBoard,
@@ -59,6 +60,9 @@
 		onSuccess: async () => {
 			hasChanges = false;
 			saveStatus = 'saved';
+			// Invalidate cache so returning users get fresh data
+			queryClient.invalidateQueries({ queryKey: ['brainstorm-board-source', boardId] });
+			queryClient.invalidateQueries({ queryKey: ['brainstorm-board', boardId] });
 			// Generate and upload preview
 			try {
 				await generateAndUploadPreview();
@@ -205,8 +209,24 @@
 
 	$effect(() => {
 		const source = $sourceQuery.data;
-		if (source !== undefined && excalidrawContainer && !editorInitialized) {
+		if (source === undefined || !excalidrawContainer) return;
+
+		if (!editorInitialized) {
 			initExcalidraw(source);
+		} else if (excalidrawInstance && !hasChanges) {
+			// Source data changed (e.g., returned after editing elsewhere)
+			// Update scene without overwriting local unsaved changes
+			try {
+				const data = JSON.parse(source);
+				excalidrawInstance.updateScene({
+					elements: data.elements || [],
+					appState: data.appState || {},
+					files: data.files || {},
+					commitToHistory: false
+				});
+			} catch {
+				console.warn('Failed to update Excalidraw scene with new data');
+			}
 		}
 	});
 
@@ -219,12 +239,24 @@
 
 	onMount(() => {
 		window.addEventListener('beforeunload', handleBeforeUnload);
+		beforeNavigate((navigation) => {
+			if (hasChanges && !isSaving) {
+				if (!confirm('You have unsaved changes. Leave without saving?')) {
+					navigation.cancel();
+				}
+			}
+		});
 	});
 
 	onDestroy(() => {
 		window.removeEventListener('beforeunload', handleBeforeUnload);
 		if (autoSaveTimer) {
 			clearTimeout(autoSaveTimer);
+			autoSaveTimer = null;
+		}
+		// Flush pending save before tearing down
+		if (hasChanges && !isSaving && excalidrawInstance) {
+			handleSave();
 		}
 		if (reactRoot) {
 			reactRoot.unmount();
@@ -325,7 +357,14 @@
 				<p class="text-error">{editorError}</p>
 			</div>
 		{:else}
-			<div bind:this={excalidrawContainer} class="excalidraw-wrapper"></div>
+			<div class="relative h-full w-full">
+				{#if isLoadingEditor}
+					<div class="absolute inset-0 z-10 flex items-center justify-center bg-base-100">
+						<div class="loading loading-lg loading-spinner text-brand-500"></div>
+					</div>
+				{/if}
+				<div bind:this={excalidrawContainer} class="excalidraw-wrapper h-full w-full"></div>
+			</div>
 		{/if}
 	</main>
 

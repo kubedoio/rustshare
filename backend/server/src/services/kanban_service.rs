@@ -263,6 +263,8 @@ pub struct UpdateCardInput {
     pub assignees: Option<Vec<String>>,
     pub due_date: Option<DateTime<Utc>>,
     pub archived: Option<bool>,
+    pub checklists: Option<Vec<KanbanChecklistGroup>>,
+    pub activity: Option<Vec<KanbanEvent>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -799,6 +801,36 @@ impl KanbanService {
         Ok(boards)
     }
 
+    async fn unique_board_folder_name(
+        &self,
+        base_name: &str,
+        parent_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<String, KanbanError> {
+        let existing = self
+            .metadata_store
+            .list_folders(Some(parent_id), user_id, tenant_id)
+            .await
+            .map_err(|e| KanbanError::Database(e.to_string()))?;
+
+        if !existing.iter().any(|f| f.name == base_name) {
+            return Ok(base_name.to_string());
+        }
+
+        for i in 2..=1000 {
+            let candidate = format!("{}-{}", base_name, i);
+            if !existing.iter().any(|f| f.name == candidate) {
+                return Ok(candidate);
+            }
+        }
+
+        Err(KanbanError::InvalidName(format!(
+            "Could not find unique name for board '{}'",
+            base_name
+        )))
+    }
+
     pub async fn create_board(
         &self,
         input: CreateBoardInput,
@@ -813,6 +845,8 @@ impl KanbanService {
         } else {
             slug.clone()
         };
+
+        let name = self.unique_board_folder_name(&name, root.id, user_id, tenant_id).await?;
 
         // Ensure unique name under root
         let board_folder = self
@@ -1553,6 +1587,15 @@ impl KanbanService {
             card_meta.archived = archived;
             card_meta.updated_at = Utc::now();
         }
+        if let Some(checklists) = input.checklists {
+            card_meta.checklists = checklists;
+            self.recalculate_checklist_summary(&mut card_meta);
+            card_meta.updated_at = Utc::now();
+        }
+        if let Some(activity) = input.activity {
+            card_meta.activity = Some(activity);
+            card_meta.updated_at = Utc::now();
+        }
 
         self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id)
             .await?;
@@ -2242,7 +2285,7 @@ impl KanbanService {
             return Ok(ws);
         }
         self.folder_service
-            .create_folder("Workspace".into(), None, user_id, tenant_id)
+            .create_folder_or_get("Workspace".into(), None, user_id, tenant_id)
             .await
             .map_err(KanbanError::from)
     }
@@ -2258,7 +2301,7 @@ impl KanbanService {
         let ws = self.ensure_workspace_folder(user_id, tenant_id).await?;
         let folder = self
             .folder_service
-            .create_folder("Kanban".to_string(), Some(ws.id), user_id, tenant_id)
+            .create_folder_or_get("Kanban".to_string(), Some(ws.id), user_id, tenant_id)
             .await
             .map_err(KanbanError::from)?;
         Ok(folder)

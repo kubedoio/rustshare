@@ -72,7 +72,7 @@ pub use trash::{empty_trash, get_trash_summary};
 
 pub use ai::{ask_question, semantic_search, summarize_file};
 pub use auth::{ensure_optional_seed_user, login, logout};
-pub use decisions::{create_decision, get_decision, list_decisions, update_decision};
+pub use decisions::{create_decision, get_decision, list_decisions, rename_decision, update_decision};
 pub use features::get_features;
 pub use groups::{
     create_file_group_share, create_folder_group_share, get_my_group, list_file_group_shares,

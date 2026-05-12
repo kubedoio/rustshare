@@ -65,8 +65,8 @@ vi.mock('$lib/query-compat', () => ({
 		if (key === 'all-files') {
 			return readable({
 				data: [
-					{ id: 'f1', size: 1200, deleted_at: null },
-					{ id: 'f2', size: 3400, deleted_at: null }
+					{ id: 'f1', size: 1200, deleted_at: null, mime_type: 'text/markdown' },
+					{ id: 'f2', size: 3400, deleted_at: null, mime_type: 'text/plain' }
 				],
 				isLoading: false
 			});
@@ -170,6 +170,45 @@ describe('Dashboard Page Workspace Surface', () => {
 		await vi.waitFor(() => {
 			expect(screen.getByText('Unknown Widget')).toBeTruthy();
 			expect(screen.getByText('File')).toBeTruthy();
+		});
+	});
+
+	it('renders all five metric summary cards', async () => {
+		render(DashboardPage);
+
+		await vi.waitFor(() => {
+			expect(screen.getByText('Total artifacts')).toBeTruthy();
+			expect(screen.getByText('Updated this week')).toBeTruthy();
+			expect(screen.getByText('Files and Records')).toBeTruthy();
+			expect(screen.getByText('Shared items')).toBeTruthy();
+			expect(screen.getByText('Storage used')).toBeTruthy();
+		});
+	});
+
+	it('does not render pinned folders widget', async () => {
+		render(DashboardPage);
+
+		await vi.waitFor(() => {
+			expect(screen.queryByLabelText('Pinned folders')).toBeNull();
+		});
+	});
+
+	it('renders metric values correctly', async () => {
+		render(DashboardPage);
+
+		await vi.waitFor(() => {
+			expect(screen.getByText('2')).toBeTruthy();
+			expect(screen.getByText('3')).toBeTruthy();
+			expect(screen.getByText('4.5 KB')).toBeTruthy();
+		});
+	});
+
+	it('renders New share quick action button', async () => {
+		render(DashboardPage);
+
+		await vi.waitFor(() => {
+			const newShareMatches = screen.getAllByText('New share');
+			expect(newShareMatches.length).toBeGreaterThan(0);
 		});
 	});
 });

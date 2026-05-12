@@ -101,6 +101,25 @@ pub async fn update_decision(
     Ok(Json(decision))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RenameDecisionRequest {
+    pub title: String,
+}
+
+pub async fn rename_decision(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(decision_id): Path<Uuid>,
+    Json(req): Json<RenameDecisionRequest>,
+) -> Result<Json<crate::services::decision_service::Decision>, Response> {
+    let decision = state
+        .decision_service
+        .rename_decision(decision_id, auth.user_id, req.title)
+        .await
+        .map_err(decision_error_response)?;
+    Ok(Json(decision))
+}
+
 pub async fn list_decisions(
     State(state): State<AppState>,
     auth: AuthenticatedUser,

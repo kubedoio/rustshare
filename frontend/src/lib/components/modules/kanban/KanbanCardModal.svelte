@@ -18,6 +18,7 @@
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
 	import RichMarkdownEditor from '../../../editor/components/RichMarkdownEditor.svelte';
 	import type { KanbanCardDetail, KanbanBoard, KanbanAssignee, KanbanEvent } from '$lib/api/types';
+	import { addCardAttachment, deleteCardAttachment } from '$lib/api/kanban';
 	import { currentUser } from '$lib/stores/auth';
 
 	interface Props {
@@ -157,26 +158,47 @@
 		card.checklist = { done: stats.done, total: stats.total };
 	}
 
-	function removeAttachment(index: number) {
+	async function removeAttachment(attachmentId: string) {
 		if (!card) return;
-		card.attachments = card.attachments.filter((_, i) => i !== index);
-		card.attachments_count = card.attachments.length;
-	}
-
-	function handleFileDrop(e: DragEvent) {
-		e.preventDefault();
-		isDraggingFiles = false;
-		const files = e.dataTransfer?.files;
-		if (files && files.length > 0) {
-			console.log('Dropped files:', files);
+		try {
+			await deleteCardAttachment(card.id, attachmentId);
+			card.attachments = card.attachments.filter((a) => a.id !== attachmentId);
+			card.attachments_count = card.attachments.length;
+		} catch (err) {
+			console.error('Failed to delete attachment:', err);
 		}
 	}
 
-	function handleFileSelect(e: Event) {
+	async function handleFileDrop(e: DragEvent) {
+		e.preventDefault();
+		isDraggingFiles = false;
+		const files = e.dataTransfer?.files;
+		if (files && files.length > 0 && card) {
+			for (const file of Array.from(files)) {
+				try {
+					const attachment = await addCardAttachment(card.id, file);
+					card.attachments = [...(card.attachments || []), attachment];
+					card.attachments_count = card.attachments.length;
+				} catch (err) {
+					console.error('Failed to upload attachment:', err);
+				}
+			}
+		}
+	}
+
+	async function handleFileSelect(e: Event) {
 		const input = e.target as HTMLInputElement;
 		const files = input.files;
-		if (files && files.length > 0) {
-			console.log('Selected files:', files);
+		if (files && files.length > 0 && card) {
+			for (const file of Array.from(files)) {
+				try {
+					const attachment = await addCardAttachment(card.id, file);
+					card.attachments = [...(card.attachments || []), attachment];
+					card.attachments_count = card.attachments.length;
+				} catch (err) {
+					console.error('Failed to upload attachment:', err);
+				}
+			}
 		}
 		if (input) input.value = '';
 	}
@@ -419,7 +441,7 @@
 									<button
 										class="attachment-remove"
 										aria-label="Remove attachment"
-										onclick={() => removeAttachment(i)}
+										onclick={() => removeAttachment(attachment.id)}
 									>
 										<XCircle size={16} />
 									</button>

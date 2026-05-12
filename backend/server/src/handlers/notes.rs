@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::AuthenticatedUser;
-use crate::services::note_service::{NoteError, NoteSummary, NoteVisibility};
+use crate::services::note_service::{NoteAttachment, NoteError, NoteSummary, NoteVisibility};
 use crate::{handlers::ErrorResponse, AppState};
 
 // ============================================================================
@@ -152,6 +152,7 @@ pub async fn get_note(
 pub struct SaveNoteRequest {
     pub content: String,
     pub color: Option<String>,
+    pub attachments: Option<Vec<NoteAttachment>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -170,7 +171,7 @@ pub async fn save_note(
 ) -> Result<Json<SaveNoteResponse>, Response> {
     let note = state
         .note_service
-        .save_note(note_id, auth.user_id, req.content, req.color)
+        .save_note(note_id, auth.user_id, req.content, req.color, req.attachments)
         .await
         .map_err(note_error_response)?;
 

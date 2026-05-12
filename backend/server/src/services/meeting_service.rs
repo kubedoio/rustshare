@@ -171,7 +171,7 @@ impl MeetingService {
         }
         let folder = self
             .folder_service
-            .create_folder("Meetings".to_string(), Some(ws.id), owner_id, tenant_id)
+            .create_folder_or_get("Meetings".to_string(), Some(ws.id), owner_id, tenant_id)
             .await
             .map_err(|e| MeetingError::Storage(e.to_string()))?;
         Ok(folder)
@@ -191,7 +191,7 @@ impl MeetingService {
             return Ok(ws);
         }
         self.folder_service
-            .create_folder("Workspace".into(), None, owner_id, tenant_id)
+            .create_folder_or_get("Workspace".into(), None, owner_id, tenant_id)
             .await
             .map_err(|e| MeetingError::Storage(e.to_string()))
     }

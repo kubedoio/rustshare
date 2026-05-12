@@ -165,7 +165,7 @@ impl DecisionService {
         }
         let folder = self
             .folder_service
-            .create_folder("Decisions".to_string(), Some(ws.id), owner_id, tenant_id)
+            .create_folder_or_get("Decisions".to_string(), Some(ws.id), owner_id, tenant_id)
             .await
             .map_err(|e| DecisionError::Storage(e.to_string()))?;
         Ok(folder)
@@ -185,7 +185,7 @@ impl DecisionService {
             return Ok(ws);
         }
         self.folder_service
-            .create_folder("Workspace".into(), None, owner_id, tenant_id)
+            .create_folder_or_get("Workspace".into(), None, owner_id, tenant_id)
             .await
             .map_err(|e| DecisionError::Storage(e.to_string()))
     }
@@ -445,6 +445,74 @@ impl DecisionService {
                 .await?;
         }
 
+        self.get_decision(id, user_id).await
+    }
+
+    /// Rename a decision (updates title and filename, preserving DEC-ID prefix).
+    pub async fn rename_decision(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        new_title: String,
+    ) -> Result<Decision, DecisionError> {
+        let file = self.file_service.get_file(id, user_id).await?;
+
+        // Validate title
+        let trimmed = new_title.trim();
+        if trimmed.is_empty() {
+            return Err(DecisionError::InvalidData("Title cannot be empty".to_string()));
+        }
+
+        // Extract DEC-ID prefix from current filename (e.g., "DEC-0001" from "DEC-0001-use-rust.md")
+        let stem = file.name.trim_end_matches(".md");
+        let dec_prefix = stem.split('-').take(2).collect::<Vec<_>>().join("-");
+
+        // Generate new filename preserving DEC-ID prefix
+        let slug = slug::slugify(trimmed);
+        let new_name = format!("{}-{}.md", dec_prefix, slug);
+
+        // Rename the main file
+        let renamed_file = self.file_service.rename_file(id, new_name, user_id).await?;
+
+        // Load and update metadata
+        let mut meta = self.load_metadata(&renamed_file, user_id, renamed_file.tenant_id).await?;
+        meta.title = trimmed.to_string();
+        meta.updated_at = Utc::now();
+
+        // Save metadata to sidecar
+        let new_stem = renamed_file.name.trim_end_matches(".md");
+        let new_sidecar_name = format!("{}.rustshare.json", new_stem);
+        let sidecar_data = serde_json::to_vec_pretty(&meta)
+            .map_err(|e| DecisionError::InvalidData(e.to_string()))?;
+
+        // Find old sidecar, update its content and name
+        let siblings = self
+            .metadata_store
+            .list_files(renamed_file.parent_folder_id, user_id, renamed_file.tenant_id)
+            .await
+            .map_err(|e| DecisionError::Database(e.to_string()))?;
+
+        let old_sidecar_name = format!("{}.rustshare.json", stem);
+        if let Some(sidecar_file) = siblings.into_iter().find(|f| f.name == old_sidecar_name) {
+            // Update sidecar content
+            self.file_service
+                .edit_file(
+                    sidecar_file.id,
+                    user_id,
+                    Bytes::from(sidecar_data),
+                    "overwrite",
+                    None,
+                )
+                .await?;
+            // Rename sidecar file to match new stem
+            if old_sidecar_name != new_sidecar_name {
+                self.file_service
+                    .rename_file(sidecar_file.id, new_sidecar_name, user_id)
+                    .await?;
+            }
+        }
+
+        // Return updated decision
         self.get_decision(id, user_id).await
     }
 }

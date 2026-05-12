@@ -16,6 +16,7 @@
 	} from 'lucide-svelte';
 
 	import { listNotes, createNote, deleteNote } from '$lib/api/notes';
+	import { activityStore } from '$lib/stores/activity';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
@@ -70,6 +71,10 @@
 			const result = await createNote({
 				title,
 				content: `# ${title}\n\n`
+			});
+			activityStore.addActivity('note_created', result.name || title || 'Untitled Note', {
+				artifactId: result.id,
+				moduleKey: 'notes'
 			});
 			goto(`/modules/${module.key}/${result.id}`);
 			$notesQuery.refetch();

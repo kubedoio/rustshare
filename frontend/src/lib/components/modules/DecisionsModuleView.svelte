@@ -17,6 +17,7 @@
 	} from 'lucide-svelte';
 
 	import { decisionsApi } from '$lib/api/decisions';
+	import { activityStore } from '$lib/stores/activity';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
@@ -89,6 +90,10 @@
 			});
 			showPromptModal = false;
 			createError = '';
+			activityStore.addActivity('decision_created', result.name || trimmed || 'Untitled Decision', {
+				artifactId: result.id,
+				moduleKey: 'decisions'
+			});
 			goto(`/modules/${module.key}/${result.id}`);
 			$decisionsQuery.refetch();
 		} catch (err) {
