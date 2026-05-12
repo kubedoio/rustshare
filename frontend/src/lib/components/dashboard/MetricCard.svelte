@@ -5,18 +5,32 @@
 	export let icon: any;
 	export let iconColor: string;
 	export let iconBg: string;
+	export let href: string | undefined = undefined;
 </script>
 
-<div class="summary-card">
-	<div class="summary-icon" style="background: {iconBg}; color: {iconColor};">
-		<svelte:component this={icon} size={18} />
+{#if href}
+	<a {href} class="summary-card">
+		<div class="summary-icon" style="background: {iconBg}; color: {iconColor};">
+			<svelte:component this={icon} size={18} />
+		</div>
+		<div class="summary-body">
+			<span class="summary-value">{value}</span>
+			<span class="summary-label">{label}</span>
+			<span class="summary-subtitle">{subtitle}</span>
+		</div>
+	</a>
+{:else}
+	<div class="summary-card">
+		<div class="summary-icon" style="background: {iconBg}; color: {iconColor};">
+			<svelte:component this={icon} size={18} />
+		</div>
+		<div class="summary-body">
+			<span class="summary-value">{value}</span>
+			<span class="summary-label">{label}</span>
+			<span class="summary-subtitle">{subtitle}</span>
+		</div>
 	</div>
-	<div class="summary-body">
-		<span class="summary-value">{value}</span>
-		<span class="summary-label">{label}</span>
-		<span class="summary-subtitle">{subtitle}</span>
-	</div>
-</div>
+{/if}
 
 <style>
 	.summary-card {
@@ -30,6 +44,8 @@
 		box-shadow: 0 4px 16px rgb(72 42 17 / 0.04);
 		transition: border-color 150ms ease;
 		min-width: 0;
+		text-decoration: none;
+		color: inherit;
 	}
 	.summary-card:hover {
 		border-color: color-mix(in oklab, var(--brand-500) 25%, transparent);

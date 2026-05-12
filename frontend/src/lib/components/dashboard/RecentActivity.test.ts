@@ -74,7 +74,7 @@ describe('RecentActivity', () => {
 		expect(noteLink.getAttribute('href')).toBe('/modules/notes/note-123');
 
 		const kanbanLink = screen.getByRole('link', { name: /open my board/i });
-		expect(kanbanLink.getAttribute('href')).toBe('/modules/kanban?boardId=board-456');
+		expect(kanbanLink.getAttribute('href')).toBe('/modules/kanban');
 	});
 
 	it('renders stale items for legacy activities without artifactId', () => {
@@ -183,7 +183,7 @@ describe('RecentActivity', () => {
 			'/modules/brainstorming/b-id'
 		);
 		expect(screen.getByRole('link', { name: /open kanban/i }).getAttribute('href')).toBe(
-			'/modules/kanban?boardId=k-id'
+			'/modules/kanban'
 		);
 		expect(screen.getByRole('link', { name: /open share/i }).getAttribute('href')).toBe(
 			'/modules/shares/sh-id'

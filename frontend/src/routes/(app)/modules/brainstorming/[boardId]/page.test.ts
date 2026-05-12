@@ -37,9 +37,9 @@ vi.mock('$lib/query-compat', () => ({
 		}
 		return readable({ data: null, isLoading: false });
 	}),
-	createMutation: vi.fn(() => ({
+	createMutation: vi.fn(() => readable({
 		mutate: vi.fn(),
-		isPending: readable(false)
+		isPending: false
 	}))
 }));
 
@@ -53,5 +53,11 @@ describe('Brainstorm Board Page', () => {
 	it('shows save status', async () => {
 		render(BrainstormBoardPage);
 		expect(screen.getByText('Saved')).toBeTruthy();
+	});
+
+	it('shows a share button in the header', async () => {
+		render(BrainstormBoardPage);
+		const shareButton = screen.getByRole('button', { name: /Share/i });
+		expect(shareButton).toBeTruthy();
 	});
 });

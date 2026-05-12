@@ -142,7 +142,11 @@
 	}
 
 	async function handleUpload(event: CustomEvent<{ files: File[] }>) {
-		if (!item || !item.parent_folder_id) return;
+		if (!item) return;
+		if (!item.parent_folder_id) {
+			toastStore.show('This item must be saved to a folder before adding attachments', 'error');
+			return;
+		}
 		for (const file of event.detail.files) {
 			try {
 				const uploaded = await uploadFile(item.parent_folder_id, file);

@@ -26,7 +26,7 @@
 </script>
 
 <section class="recent-artifacts" aria-label="Recent artifacts">
-	<DashboardSectionHeader title="Recent artifacts" href="/files" />
+	<DashboardSectionHeader title="Recent artifacts" href="/files?filter=recent" />
 	{#if artifacts.length === 0}
 		<DashboardEmptyState
 			title="No recent artifacts yet."
@@ -59,7 +59,7 @@
 			{/each}
 		</ul>
 		<div class="view-all-row">
-			<a href="/files" class="view-all-btn">
+			<a href="/files?filter=recent" class="view-all-btn">
 				View all recent artifacts <ArrowUpRight size={14} />
 			</a>
 		</div>

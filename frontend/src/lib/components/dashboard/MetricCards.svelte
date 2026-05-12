@@ -8,6 +8,7 @@
 		icon: any;
 		iconColor: string;
 		iconBg: string;
+		href?: string;
 	}
 
 	export let cards: Card[];
@@ -22,6 +23,7 @@
 			icon={card.icon}
 			iconColor={card.iconColor}
 			iconBg={card.iconBg}
+			href={card.href}
 		/>
 	{/each}
 </section>
@@ -29,7 +31,7 @@
 <style>
 	.summary-cards {
 		display: grid;
-		grid-template-columns: repeat(5, minmax(0, 1fr));
+		grid-template-columns: repeat(3, minmax(0, 1fr));
 		gap: 0.875rem;
 	}
 

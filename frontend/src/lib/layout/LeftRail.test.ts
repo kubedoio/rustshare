@@ -107,6 +107,7 @@ describe('LeftRail', () => {
 			notesLink.compareDocumentPosition(standupsLink) & Node.DOCUMENT_POSITION_FOLLOWING
 		).toBeTruthy();
 		expect(notesLink.getAttribute('aria-current')).toBe('page');
+		expect(foldersLink.getAttribute('aria-current')).toBeNull();
 	});
 
 	it('does not render a notifications bell entry in the left rail', () => {
@@ -123,10 +124,10 @@ describe('LeftRail', () => {
 		it('renders visible text labels for primary items', () => {
 			render(LeftRail);
 
-			const homeLink = screen.getByRole('link', { name: 'Home' });
+			const workspaceLink = screen.getByRole('link', { name: 'Workspace' });
 			const foldersLink = screen.getByRole('link', { name: 'Folders' });
 
-			expect(homeLink.querySelector('span.text-sm.font-medium')?.textContent).toBe('Home');
+			expect(workspaceLink.querySelector('span.text-sm.font-medium')?.textContent).toBe('Workspace');
 			expect(foldersLink.querySelector('span.text-sm.font-medium')?.textContent).toBe('Folders');
 		});
 
@@ -170,10 +171,10 @@ describe('LeftRail', () => {
 		it('hides visible text labels for primary items', () => {
 			render(LeftRail);
 
-			const homeLink = screen.getByRole('link', { name: 'Home' });
+			const workspaceLink = screen.getByRole('link', { name: 'Workspace' });
 			const foldersLink = screen.getByRole('link', { name: 'Folders' });
 
-			expect(homeLink.querySelector('span.text-sm.font-medium')).toBeNull();
+			expect(workspaceLink.querySelector('span.text-sm.font-medium')).toBeNull();
 			expect(foldersLink.querySelector('span.text-sm.font-medium')).toBeNull();
 		});
 
@@ -214,12 +215,12 @@ describe('LeftRail', () => {
 			(sidebarExpanded as any).set(true);
 		});
 
-		it('marks Home as active on /dashboard', () => {
+		it('marks Workspace as active on /dashboard', () => {
 			(page as any).set({ url: new URL('http://localhost/dashboard') });
 			render(LeftRail);
 
-			const homeLink = screen.getByRole('link', { name: 'Home' });
-			expect(homeLink.getAttribute('aria-current')).toBe('page');
+			const workspaceLink = screen.getByRole('link', { name: 'Workspace' });
+			expect(workspaceLink.getAttribute('aria-current')).toBe('page');
 		});
 
 		it('marks Folders as active on /files', () => {

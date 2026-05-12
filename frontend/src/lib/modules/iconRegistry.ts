@@ -7,6 +7,7 @@ export const APPROVED_MODULE_ICONS = [
 	'clipboard-list',
 	'columns',
 	'git-branch',
+	'path-separation',
 	'share-2',
 	'lock',
 	'globe',

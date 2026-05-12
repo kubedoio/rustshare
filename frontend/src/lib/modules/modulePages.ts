@@ -14,11 +14,20 @@ export function getModuleObjectHref(
 	objectType: ModuleObjectType,
 	objectId: string
 ): string {
-	if (moduleKey === 'notes' && objectType === 'file') {
-		return `/modules/notes/${objectId}`;
+	if (objectType === 'folder') {
+		return `/files?folder=${objectId}`;
 	}
-
-	return objectType === 'folder' ? `/files?folder=${objectId}` : `/files?preview=${objectId}`;
+	// Files — route to their module editor
+	const moduleRouteMap: Record<string, string> = {
+		notes: `/modules/notes/${objectId}`,
+		meetings: `/modules/meetings/${objectId}`,
+		standups: `/modules/standups/${objectId}`,
+		decisions: `/modules/decisions/${objectId}`,
+		kanban: `/modules/kanban/${objectId}`,
+		brainstorming: `/modules/brainstorming/${objectId}`,
+		shares: `/modules/shares/${objectId}`
+	};
+	return moduleRouteMap[moduleKey] ?? `/files?preview=${objectId}`;
 }
 
 /**

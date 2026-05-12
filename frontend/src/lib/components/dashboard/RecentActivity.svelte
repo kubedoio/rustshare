@@ -23,7 +23,7 @@
 			case 'brainstorming':
 				return `/modules/brainstorming/${activity.artifactId}`;
 			case 'kanban':
-				return `/modules/kanban?boardId=${activity.artifactId}`;
+				return '/modules/kanban';
 			case 'shares':
 				return `/modules/shares/${activity.artifactId}`;
 			default:

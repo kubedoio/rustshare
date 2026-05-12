@@ -116,6 +116,7 @@ const APPROVED_ICONS = new Set([
 	'clipboard-list',
 	'columns',
 	'git-branch',
+	'path-separation',
 	'share-2',
 	'lock',
 	'globe',
@@ -358,7 +359,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 			allowInternalShare: true
 		},
 		ui: {
-			sidebar: { enabled: true, order: 50, icon: 'git-branch', label: 'Decisions' },
+			sidebar: { enabled: true, order: 50, icon: 'path-separation', label: 'Decisions' },
 			dashboard: {
 				enabled: true,
 				order: 50,

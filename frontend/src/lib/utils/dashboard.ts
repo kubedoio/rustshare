@@ -31,7 +31,11 @@ export function getArtifactTypeLabel(moduleKey: string, itemType: string): strin
 	return map[moduleKey] ?? (itemType === 'folder' ? 'Folder' : 'File');
 }
 
-export function getArtifactHref(item: { moduleKey: string; item_type: string; id: string }): string {
+export function getArtifactHref(item: { moduleKey: string; item_type: string; id: string; name?: string }): string {
+	// Folders always route to the file browser regardless of module context
+	if (item.item_type === 'folder') {
+		return `/files?folder=${item.id}`;
+	}
 	if (item.moduleKey === 'notes' && item.item_type === 'file') {
 		return `/modules/notes/${item.id}`;
 	}
@@ -48,10 +52,13 @@ export function getArtifactHref(item: { moduleKey: string; item_type: string; id
 		return `/modules/brainstorming/${item.id}`;
 	}
 	if (item.moduleKey === 'kanban') {
-		return `/modules/kanban?boardId=${item.id}`;
+		return '/modules/kanban';
 	}
-	if (item.item_type === 'folder') {
-		return `/files?folder=${item.id}`;
+	if (item.moduleKey === 'shares') {
+		return `/modules/shares/${item.id}`;
+	}
+	if (item.name?.match(/\.excalidraw$/i)) {
+		return `/files?preview=${item.id}`;
 	}
 	return `/files?preview=${item.id}`;
 }

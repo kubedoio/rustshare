@@ -23,6 +23,7 @@ export interface CreateNoteResponse {
 export interface SaveNoteRequest {
 	content: string;
 	color?: string | null;
+	attachments?: NoteAttachment[];
 }
 
 export interface SaveNoteResponse {

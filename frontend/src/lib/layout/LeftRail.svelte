@@ -5,38 +5,23 @@
 	import ModuleIcon from '$lib/components/dashboard/ModuleIcon.svelte';
 	import { getEnabledSidebarModules, getModuleSidebarConfig } from '$lib/modules/workspaceSurface';
 	import { sidebarExpanded } from '$lib/stores/sidebarExpanded';
-	import { Hop as Home, FolderOpen, Settings, PanelLeftOpen, PanelLeftClose } from 'lucide-svelte';
+	import { FolderOpen, Settings, PanelLeftOpen, PanelLeftClose } from 'lucide-svelte';
+	import WorkspaceIcon from '$lib/components/dashboard/WorkspaceIcon.svelte';
 	import RailItem from './RailItem.svelte';
 
 	interface NavItem {
-		icon: typeof Home;
+		icon: typeof WorkspaceIcon;
 		label: string;
 		href: string;
-		active?: (path: string) => boolean;
 	}
 
 	const primaryItems: NavItem[] = [
-		{
-			icon: Home,
-			label: 'Home',
-			href: '/dashboard',
-			active: (path) => path === '/dashboard' || path === '/'
-		},
-		{
-			icon: FolderOpen,
-			label: 'Folders',
-			href: '/files',
-			active: (path) => path === '/files' || path.startsWith('/files')
-		}
+		{ icon: WorkspaceIcon, label: 'Workspace', href: '/dashboard' },
+		{ icon: FolderOpen, label: 'Folders', href: '/files' }
 	];
 
 	const secondaryItems: NavItem[] = [
-		{
-			icon: Settings,
-			label: 'Settings',
-			href: '/settings',
-			active: (path) => path === '/settings' || path.startsWith('/settings')
-		}
+		{ icon: Settings, label: 'Settings', href: '/settings' }
 	];
 
 	const modulesQuery = createQuery({
@@ -46,17 +31,23 @@
 
 	$: sidebarModules = getEnabledSidebarModules($modulesQuery.data ?? []);
 
-	function isActive(item: NavItem): boolean {
-		const pathname = $page.url.pathname;
-		if (item.active) {
-			return item.active(pathname);
-		}
-		return pathname === item.href || pathname.startsWith(item.href + '/');
-	}
+	// Explicitly derive pathname so template expressions reliably re-evaluate
+	// when the route changes (Svelte 5 legacy mode can miss deps inside
+	// function calls in template expressions).
+	$: pathname = $page.url.pathname;
 
-	function isModuleActive(moduleKey: string): boolean {
-		return $page.url.pathname.startsWith('/modules/' + moduleKey);
-	}
+	// Active primary/secondary item href (null when on a module page)
+	$: activePrimaryHref =
+		pathname === '/dashboard' || pathname === '/'
+			? '/dashboard'
+			: pathname === '/files' || pathname.startsWith('/files')
+				? '/files'
+				: pathname === '/settings' || pathname.startsWith('/settings')
+					? '/settings'
+					: null;
+
+	// Active module key extracted from /modules/{key}/... routes
+	$: activeModuleKey = pathname.match(/^\/modules\/([^/]+)/)?.[1] ?? null;
 
 	// Hover-based temporary expansion
 	let hoverExpanded = false;
@@ -122,7 +113,7 @@
 	<!-- Primary Navigation -->
 	<nav class="flex-1 space-y-1 overflow-y-auto px-2 py-4" aria-label="Primary">
 		{#each primaryItems as item}
-			<RailItem href={item.href} label={item.label} active={isActive(item)} expanded={railExpanded}>
+			<RailItem href={item.href} label={item.label} active={activePrimaryHref === item.href} expanded={railExpanded}>
 				<svelte:component this={item.icon} size={22} strokeWidth={1.75} />
 			</RailItem>
 		{/each}
@@ -139,7 +130,7 @@
 					<RailItem
 						href="/modules/{mod.module_key}"
 						label={getModuleSidebarConfig(mod).label}
-						active={isModuleActive(mod.module_key)}
+						active={activeModuleKey === mod.module_key}
 						expanded={railExpanded}
 					>
 						<ModuleIcon
@@ -156,7 +147,7 @@
 	<!-- Secondary Navigation -->
 	<nav class="flex-shrink-0 space-y-1 border-t border-base-300/50 px-2 py-4" aria-label="Secondary">
 		{#each secondaryItems as item}
-			<RailItem href={item.href} label={item.label} active={isActive(item)} expanded={railExpanded}>
+			<RailItem href={item.href} label={item.label} active={activePrimaryHref === item.href} expanded={railExpanded}>
 				<svelte:component this={item.icon} size={22} strokeWidth={1.75} />
 			</RailItem>
 		{/each}

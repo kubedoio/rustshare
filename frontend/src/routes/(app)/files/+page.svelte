@@ -547,7 +547,7 @@
 			parent_folder_id: string | null;
 		}) => createNote({ title, content, parent_folder_id }),
 		onSuccess: (data) => {
-			activityStore.addActivity('note_created', data.name || 'Untitled Note', {
+			activityStore.addActivity('note_created', data.name || data.title || 'Untitled Note', {
 				artifactId: data.id,
 				moduleKey: 'notes'
 			});

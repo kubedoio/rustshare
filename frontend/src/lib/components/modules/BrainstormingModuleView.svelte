@@ -8,7 +8,9 @@
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
-	import { PenTool, Plus, Clock, ImageOff, Folder, Search, List, Grid3X3 } from 'lucide-svelte';
+	import ShareModal from '$lib/components/modals/ShareModal.svelte';
+	import { toastStore } from '$lib/stores/toast';
+	import { PenTool, Plus, Clock, ImageOff, Folder, Search, List, Grid3X3, Share2 } from 'lucide-svelte';
 	import { formatDistanceToNow } from 'date-fns';
 
 	interface Props {
@@ -24,6 +26,9 @@
 	let brokenPreviews = $state(new Set<string>());
 	let searchTerm = $state('');
 	let viewMode = $state<'list' | 'grid'>('grid');
+	let showShareModal = $state(false);
+	let shareBoardId = $state('');
+	let shareBoardTitle = $state('');
 
 	$effect(() => {
 		viewMode =
@@ -91,6 +96,14 @@
 				goto(`/files?folder=${folderId}`);
 			}
 		}
+	}
+
+	function handleShareBoard(board: { id: string; title: string }, event: MouseEvent) {
+		event.preventDefault();
+		event.stopPropagation();
+		shareBoardId = board.id;
+		shareBoardTitle = board.title;
+		showShareModal = true;
 	}
 
 	function getPreviewUrl(board: { preview_file_id: string | null }): string | null {
@@ -198,12 +211,22 @@
 						</div>
 						<div class="flex flex-col gap-1 px-1">
 							<span class="text-sm font-medium text-base-content">{board.title}</span>
-							<span class="flex items-center gap-1 text-xs text-base-content/40">
-								<Clock size={12} />
-								{board.updated_at
-									? formatDistanceToNow(new Date(board.updated_at), { addSuffix: true })
-									: ''}
-							</span>
+							<div class="flex items-center justify-between">
+								<span class="flex items-center gap-1 text-xs text-base-content/40">
+									<Clock size={12} />
+									{board.updated_at
+										? formatDistanceToNow(new Date(board.updated_at), { addSuffix: true })
+										: ''}
+								</span>
+								<button
+									class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-brand-600 transition-colors hover:bg-brand-500/10"
+									onclick={(e) => handleShareBoard(board, e)}
+									type="button"
+								>
+									<Share2 size={12} />
+									Share
+								</button>
+							</div>
 						</div>
 					</a>
 				{/each}
@@ -288,3 +311,17 @@
 		</div>
 	</div>
 </ModalBase>
+
+<!-- Share Modal -->
+<ShareModal
+	open={showShareModal}
+	resourceId={shareBoardId}
+	resourceName={shareBoardTitle}
+	resourceType="folder"
+	onClose={() => {
+		showShareModal = false;
+		shareBoardId = '';
+		shareBoardTitle = '';
+	}}
+	onNotification={(payload) => toastStore.show(payload.message, payload.type)}
+/>

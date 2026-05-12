@@ -9,30 +9,26 @@
 	import { currentUser } from '$lib/stores/auth';
 	import { activityStore } from '$lib/stores/activity';
 	import { filterUserVisibleEntries, isInternalRustShareFile } from '$lib/utils/artifactVisibility';
-	import { getModuleObjectHref } from '$lib/modules/modulePages';
-	import { getEnabledModules } from '$lib/modules/registry';
-	import { formatBytes, todayDateString } from '$lib/utils/dashboard';
+	import { getModuleObjectHref, resolveModuleFolderId } from '$lib/modules/modulePages';
+	import { getEnabledModules, getModuleByKey } from '$lib/modules/registry';
+	import { todayDateString } from '$lib/utils/dashboard';
 	import type { ModuleSummary } from '$lib/api/types';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
 	import DashboardSkeleton from '$lib/components/common/DashboardSkeleton.svelte';
 	import MetricCards from '$lib/components/dashboard/MetricCards.svelte';
-	import RecentArtifacts from '$lib/components/dashboard/RecentArtifacts.svelte';
 	import RecentActivity from '$lib/components/dashboard/RecentActivity.svelte';
 	import QuickActions from '$lib/components/dashboard/QuickActions.svelte';
-	import ModalBase from '$lib/components/common/ModalBase.svelte';
+	import PromptModal from '$lib/components/common/PromptModal.svelte';
 	import {
-		StickyNote,
 		CalendarDays,
 		Columns,
 		Share2,
 		FileText,
 		Clock,
 		Package,
-		HardDrive,
 		Lightbulb,
-		CheckCircle2,
-		Folder
+		CheckCircle2
 	} from 'lucide-svelte';
 
 	// ---------------------------------------------------------------------------
@@ -91,21 +87,12 @@
 
 	let allFiles = $derived(filterUserVisibleEntries($allFilesQuery.data ?? []));
 
-	let totalArtifacts = $derived(allFiles.length);
-
 	let updatedThisWeek = $derived(() => {
 		const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 		return allFiles.filter((f) => new Date(f.modified_at) >= weekAgo).length;
 	});
 
 	let sharedItemsCount = $derived(allFiles.filter((f) => f.is_shared).length);
-
-	let moduleRecordsCount = $derived(
-		($moduleSummariesQuery.data ?? []).reduce((sum, m) => sum + (m.summary.total_items ?? 0), 0)
-	);
-
-	let storageUsed = $derived(formatBytes($currentUser?.storage_used ?? 0));
-	let storageQuota = $derived(formatBytes($currentUser?.storage_quota ?? 0));
 
 	let recentArtifacts = $derived(() => {
 		const summaries = $moduleSummariesQuery.data ?? [];
@@ -127,10 +114,30 @@
 
 		return items
 			.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-			.slice(0, 12);
+			.slice(0, 30);
 	});
 
-	let activities = $derived(($activityStore ?? []).slice(0, 10));
+	// Build a lookup map from artifact ID → current name using data already loaded
+	let nameLookup = $derived(() => {
+		const map = new Map<string, string>();
+		for (const file of allFiles) {
+			map.set(file.id, file.name);
+		}
+		for (const { summary } of ($moduleSummariesQuery.data ?? [])) {
+			for (const item of summary.recent_items) {
+				map.set(item.id, item.name);
+			}
+		}
+		return map;
+	});
+
+	// Enrich activities with current names from the lookup map
+	let enrichedActivities = $derived(
+		($activityStore ?? []).map((a) => ({
+			...a,
+			fileName: a.artifactId ? (nameLookup().get(a.artifactId) ?? a.fileName) : a.fileName
+		}))
+	);
 
 	let isLoading = $derived($allFilesQuery.isLoading || $moduleSummariesQuery.isLoading);
 
@@ -140,15 +147,25 @@
 
 	let creating = $state(false);
 	let createError = $state('');
-	let showNewShareModal = $state(false);
+	let showDecisionModal = $state(false);
+	let decisionTitle = $state('');
+	let decisionTitleError = $state('');
 
 	async function handleNewNote() {
 		if (creating) return;
 		creating = true;
 		createError = '';
 		try {
-			const result = await createNote({ title: 'Untitled Note', content: '# Untitled Note\n\n' });
-			activityStore.addActivity('note_created', result.name || 'Untitled Note', {
+			const notesModule = getModuleByKey('notes');
+			const parentFolderId = notesModule?.rootPath
+				? await resolveModuleFolderId(notesModule.rootPath)
+				: null;
+			const result = await createNote({
+				title: 'Untitled Note',
+				content: '# Untitled Note\n\n',
+				parent_folder_id: parentFolderId ?? undefined
+			});
+			activityStore.addActivity('note_created', result.name || result.title || 'Untitled Note', {
 				artifactId: result.id,
 				moduleKey: 'notes'
 			});
@@ -182,18 +199,30 @@
 		}
 	}
 
-	async function handleNewDecision() {
+	function handleNewDecision() {
+		decisionTitle = `Decision — ${todayDateString()}`;
+		decisionTitleError = '';
+		showDecisionModal = true;
+	}
+
+	async function handleDecisionConfirm(title: string) {
 		if (creating) return;
+		const trimmed = title.trim();
+		if (!trimmed) {
+			decisionTitleError = 'Title is required';
+			return;
+		}
 		creating = true;
 		createError = '';
-		const title = `Decision — ${todayDateString()}`;
-		const content = `# Decision: ${title}\n\n## Context\n\n## Decision\n\n## Reason\n\n## Follow-up\n\n## Date\n`;
+		decisionTitleError = '';
+		const content = `# Decision: ${trimmed}\n\n## Context\n\n## Decision\n\n## Reason\n\n## Follow-up\n\n## Date\n`;
 		try {
-			const result = await decisionsApi.create({ title, category: 'General', content });
-			activityStore.addActivity('decision_created', result.name || title || 'Untitled Decision', {
+			const result = await decisionsApi.create({ title: trimmed, category: 'General', content });
+			activityStore.addActivity('decision_created', result.name || trimmed || 'Untitled Decision', {
 				artifactId: result.id,
 				moduleKey: 'decisions'
 			});
+			showDecisionModal = false;
 			goto(`/modules/decisions/${result.id}`);
 		} catch (err) {
 			createError = err instanceof Error ? err.message : 'Failed to create decision';
@@ -206,17 +235,18 @@
 		if (creating) return;
 		creating = true;
 		createError = '';
+		const boardName = `Board — ${todayDateString()}`;
 		try {
 			const result = await createFromTemplate({
 				template_key: 'template_default_kanban',
-				name: `Board — ${todayDateString()}`,
+				name: boardName,
 				parent_folder_id: null
 			});
-			activityStore.addActivity('kanban_created', 'Untitled Board', {
+			activityStore.addActivity('kanban_created', boardName, {
 				artifactId: result.object_id,
 				moduleKey: 'kanban'
 			});
-			goto(`/modules/kanban?boardId=${result.object_id}`);
+			goto('/modules/kanban');
 		} catch (err) {
 			createError = err instanceof Error ? err.message : 'Failed to create board';
 		} finally {
@@ -240,15 +270,6 @@
 		} finally {
 			creating = false;
 		}
-	}
-
-	function handleNewShare() {
-		showNewShareModal = true;
-	}
-
-	function handleBrowseFiles() {
-		showNewShareModal = false;
-		goto('/files');
 	}
 
 	const quickActions: QuickAction[] = [
@@ -292,56 +313,35 @@
 			iconBg: 'rgba(202, 138, 4, 0.1)',
 			onClick: handleNewBrainstorm
 		},
-		{
-			label: 'New share',
-			subtitle: 'Share files or folders',
-			icon: Share2,
-			iconColor: '#2563eb',
-			iconBg: 'rgba(37, 99, 235, 0.1)',
-			onClick: handleNewShare
-		}
 	];
 
 	const summaryCards = $derived([
 		{
-			label: 'Total artifacts',
-			value: totalArtifacts,
-			subtitle: 'Across all sections',
+			label: 'Recent Artifacts',
+			value: recentArtifacts().length,
+			subtitle: 'Last 30 items',
 			icon: Package,
 			iconColor: '#ea580c',
-			iconBg: 'rgba(234, 88, 12, 0.1)'
+			iconBg: 'rgba(234, 88, 12, 0.1)',
+			href: '/files?filter=recent'
 		},
 		{
-			label: 'Updated this week',
+			label: 'Updated This Week',
 			value: updatedThisWeek(),
-			subtitle: 'Files and records',
+			subtitle: 'This week',
 			icon: Clock,
 			iconColor: '#16a34a',
-			iconBg: 'rgba(22, 163, 74, 0.1)'
+			iconBg: 'rgba(22, 163, 74, 0.1)',
+			href: '/files?filter=week'
 		},
 		{
-			label: 'Files and Records',
-			value: moduleRecordsCount,
-			subtitle: 'Module records',
-			icon: FileText,
-			iconColor: '#0891b2',
-			iconBg: 'rgba(8, 145, 178, 0.1)'
-		},
-		{
-			label: 'Shared items',
+			label: 'Shared Items',
 			value: sharedItemsCount,
 			subtitle: 'Active shares',
 			icon: Share2,
 			iconColor: '#7c3aed',
-			iconBg: 'rgba(124, 58, 237, 0.1)'
-		},
-		{
-			label: 'Storage used',
-			value: storageUsed,
-			subtitle: `of ${storageQuota}`,
-			icon: HardDrive,
-			iconColor: '#2563eb',
-			iconBg: 'rgba(37, 99, 235, 0.1)'
+			iconBg: 'rgba(124, 58, 237, 0.1)',
+			href: '/files?filter=shared'
 		}
 	]);
 </script>
@@ -370,8 +370,7 @@
 			<!-- Left column -->
 			<div class="dashboard-main">
 				<MetricCards cards={summaryCards} />
-				<RecentArtifacts artifacts={recentArtifacts()} userName={$currentUser?.display_name} />
-				<RecentActivity {activities} userName={$currentUser?.display_name} />
+				<RecentActivity activities={enrichedActivities.slice(0, 6)} userName={$currentUser?.display_name} />
 			</div>
 
 			<!-- Right column -->
@@ -382,27 +381,20 @@
 	</div>
 {/if}
 
-<ModalBase
-	open={showNewShareModal}
-	title="New share"
-	onClose={() => (showNewShareModal = false)}
->
-	<div class="flex min-h-56 flex-col justify-between gap-6">
-		<div class="flex flex-col items-center gap-3 py-6 text-center">
-			<Folder size={42} class="text-brand-500" />
-			<h3 class="text-base font-semibold">Choose a file or folder</h3>
-			<p class="max-w-sm text-sm text-base-content/55">
-				Shares are created from the Files view so the selected file or folder can be used as the source.
-			</p>
-		</div>
-		<div class="flex justify-between">
-			<button class="btn btn-sm btn-ghost" onclick={() => (showNewShareModal = false)}>Cancel</button>
-			<button class="btn btn-sm btn-primary" onclick={handleBrowseFiles}>
-				Open Files
-			</button>
-		</div>
-	</div>
-</ModalBase>
+<PromptModal
+	open={showDecisionModal}
+	title="New decision record"
+	message="Enter a title for the new decision record."
+	defaultValue={decisionTitle}
+	confirmLabel="Create"
+	error={decisionTitleError}
+	isLoading={creating}
+	onConfirm={handleDecisionConfirm}
+	onCancel={() => {
+		showDecisionModal = false;
+		decisionTitleError = '';
+	}}
+/>
 
 <style>
 	.workspace-overview-page {

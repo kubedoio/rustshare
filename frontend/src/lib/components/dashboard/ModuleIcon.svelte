@@ -17,6 +17,7 @@
 		PenTool
 	} from 'lucide-svelte';
 	import { DEFAULT_MODULE_ICON } from '$lib/modules/iconRegistry';
+	import PathSeparationIcon from './PathSeparationIcon.svelte';
 
 	export let name: string;
 	export let size: number = 20;
@@ -27,6 +28,7 @@
 		'layout-dashboard': LayoutDashboard,
 		columns: Columns3,
 		'git-branch': GitBranch,
+		'path-separation': PathSeparationIcon as unknown as typeof FileText,
 		'share-2': Share2,
 		'sticky-note': StickyNote,
 		'calendar-days': CalendarDays,

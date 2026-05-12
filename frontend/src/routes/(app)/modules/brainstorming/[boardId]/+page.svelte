@@ -10,7 +10,9 @@
 		saveBrainstormBoardSource,
 		updateBrainstormBoardPreview
 	} from '$lib/api/brainstorming';
-	import { ArrowLeft, Save, AlertCircle, CheckCircle2, Loader2, ChevronRight } from 'lucide-svelte';
+	import ShareModal from '$lib/components/modals/ShareModal.svelte';
+	import { toastStore } from '$lib/stores/toast';
+	import { ArrowLeft, Save, AlertCircle, CheckCircle2, Loader2, ChevronRight, Share2 } from 'lucide-svelte';
 
 	let boardId = $derived($page.params.boardId || '');
 
@@ -45,6 +47,7 @@
 	let editorError = $state<string | null>(null);
 	let editorInitialized = $state(false);
 	let reactRoot: any = null;
+	let showShareModal = $state(false);
 
 	// -------------------------------------------------------------------------
 	// Mutations
@@ -331,6 +334,13 @@
 			{/if}
 
 			<button
+				class="btn gap-2 btn-sm btn-outline"
+				onclick={() => (showShareModal = true)}
+			>
+				<Share2 size={14} />
+				<span>Share</span>
+			</button>
+			<button
 				class="btn gap-2 btn-sm btn-primary"
 				onclick={handleSave}
 				disabled={isSaving || !hasChanges}
@@ -377,6 +387,16 @@
 		</div>
 	{/if}
 </div>
+
+<!-- Share Modal -->
+<ShareModal
+	open={showShareModal}
+	resourceId={boardId}
+	resourceName={$boardQuery.data?.title ?? 'Untitled Board'}
+	resourceType="folder"
+	onClose={() => (showShareModal = false)}
+	onNotification={(payload) => toastStore.show(payload.message, payload.type)}
+/>
 
 <style>
 	.brainstorm-editor {

@@ -153,4 +153,26 @@ describe('BrainstormingModuleView', () => {
 		const link = await screen.findByRole('link', { name: /Clickable Board/i });
 		expect(link.getAttribute('href')).toBe('/modules/brainstorming/board-1');
 	});
+
+	it('shows a share button on each board card', async () => {
+		mocks.listBrainstormBoards.mockResolvedValue([
+			{
+				id: 'board-1',
+				title: 'Sharable Board',
+				slug: 'sharable-board',
+				path: '/Brainstorming/sharable-board',
+				template: 'template_blank_brainstorm',
+				source_file_id: 'file-1',
+				preview_file_id: null,
+				created_at: '2026-04-30T00:00:00Z',
+				updated_at: '2026-04-30T12:00:00Z'
+			}
+		]);
+
+		render(BrainstormingModuleView, { module: mockModule });
+
+		await screen.findByText('Sharable Board');
+		const shareButton = screen.getByRole('button', { name: /Share/i });
+		expect(shareButton).toBeTruthy();
+	});
 });

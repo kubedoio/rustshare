@@ -91,15 +91,39 @@ describe('getArtifactHref', () => {
 		);
 	});
 
-	it('returns /modules/kanban?boardId={id} for kanban', () => {
+	it('returns /modules/kanban for kanban', () => {
 		expect(getArtifactHref({ moduleKey: 'kanban', item_type: 'file', id: 'kanban345' })).toBe(
-			'/modules/kanban?boardId=kanban345'
+			'/modules/kanban'
 		);
+	});
+
+	it('returns /modules/shares/{id} for shares', () => {
+		expect(getArtifactHref({ moduleKey: 'shares', item_type: 'file', id: 'share789' })).toBe(
+			'/modules/shares/share789'
+		);
+	});
+
+	it('returns /files?preview={id} for excalidraw files', () => {
+		expect(
+			getArtifactHref({ moduleKey: 'files', item_type: 'file', id: 'exc123', name: 'diagram.excalidraw' })
+		).toBe('/files?preview=exc123');
 	});
 
 	it('returns /files?preview={id} for default file', () => {
 		expect(getArtifactHref({ moduleKey: 'files', item_type: 'file', id: 'jkl012' })).toBe(
 			'/files?preview=jkl012'
+		);
+	});
+
+	it('returns /files?folder={id} for folder', () => {
+		expect(getArtifactHref({ moduleKey: 'files', item_type: 'folder', id: 'folder456' })).toBe(
+			'/files?folder=folder456'
+		);
+	});
+
+	it('routes folders to file browser even when they have a module key', () => {
+		expect(getArtifactHref({ moduleKey: 'meetings', item_type: 'folder', id: 'meet-folder' })).toBe(
+			'/files?folder=meet-folder'
 		);
 	});
 });

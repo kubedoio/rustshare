@@ -125,6 +125,15 @@
 		render();
 	}
 
+	// Cleanup React root when modal closes so it reinitializes on next open.
+	// The component itself is not destroyed (parent always renders it), so
+	// onDestroy never runs when open toggles false.
+	$: if (!open && root) {
+		root.unmount();
+		root = null;
+		excalidrawAPI = null;
+	}
+
 	onDestroy(() => {
 		if (root) {
 			root.unmount();

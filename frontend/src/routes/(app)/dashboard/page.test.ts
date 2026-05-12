@@ -65,8 +65,8 @@ vi.mock('$lib/query-compat', () => ({
 		if (key === 'all-files') {
 			return readable({
 				data: [
-					{ id: 'f1', size: 1200, deleted_at: null, mime_type: 'text/markdown' },
-					{ id: 'f2', size: 3400, deleted_at: null, mime_type: 'text/plain' }
+					{ id: 'note-123', name: 'New Name.md', size: 1200, deleted_at: null, mime_type: 'text/markdown' },
+					{ id: 'f2', name: 'Other File.txt', size: 3400, deleted_at: null, mime_type: 'text/plain' }
 				],
 				isLoading: false
 			});
@@ -130,6 +130,26 @@ vi.mock('$lib/query-compat', () => ({
 	})
 }));
 
+vi.mock('$lib/stores/activity', () => ({
+	activityStore: readable([
+		{
+			id: 'act-1',
+			type: 'note_created',
+			fileName: 'Old Name.md',
+			timestamp: new Date().toISOString(),
+			artifactId: 'note-123',
+			moduleKey: 'notes'
+		}
+	]),
+	getActivityDisplay: vi.fn(() => ({
+		icon: '📝',
+		title: 'Note created',
+		description: '',
+		color: '#ea580c'
+	})),
+	getRelativeTime: vi.fn(() => 'Just now')
+}));
+
 vi.mock('$lib/stores/auth', () => ({
 	currentUser: readable({
 		id: 'user-1',
@@ -151,37 +171,17 @@ describe('Dashboard Page Workspace Surface', () => {
 
 		await vi.waitFor(() => {
 			expect(screen.getByLabelText('Workspace summary')).toBeTruthy();
-			expect(screen.getByLabelText('Recent artifacts')).toBeTruthy();
+			expect(screen.getByLabelText('Recent activity')).toBeTruthy();
 		});
 	});
 
-	it('module summaries render as recent artifacts', async () => {
+	it('renders three metric summary cards', async () => {
 		render(DashboardPage);
 
 		await vi.waitFor(() => {
-			expect(screen.getAllByText('Kanban Board').length).toBeGreaterThan(0);
-			expect(screen.getByText('Latest Note')).toBeTruthy();
-		});
-	});
-
-	it('unknown module artifacts fall back to a generic file label', async () => {
-		render(DashboardPage);
-
-		await vi.waitFor(() => {
-			expect(screen.getByText('Unknown Widget')).toBeTruthy();
-			expect(screen.getByText('File')).toBeTruthy();
-		});
-	});
-
-	it('renders all five metric summary cards', async () => {
-		render(DashboardPage);
-
-		await vi.waitFor(() => {
-			expect(screen.getByText('Total artifacts')).toBeTruthy();
-			expect(screen.getByText('Updated this week')).toBeTruthy();
-			expect(screen.getByText('Files and Records')).toBeTruthy();
-			expect(screen.getByText('Shared items')).toBeTruthy();
-			expect(screen.getByText('Storage used')).toBeTruthy();
+			expect(screen.getByText('Recent Artifacts')).toBeTruthy();
+			expect(screen.getByText('Updated This Week')).toBeTruthy();
+			expect(screen.getByText('Shared Items')).toBeTruthy();
 		});
 	});
 
@@ -197,18 +197,26 @@ describe('Dashboard Page Workspace Surface', () => {
 		render(DashboardPage);
 
 		await vi.waitFor(() => {
-			expect(screen.getByText('2')).toBeTruthy();
 			expect(screen.getByText('3')).toBeTruthy();
-			expect(screen.getByText('4.5 KB')).toBeTruthy();
+			expect(screen.getAllByText('0').length).toBe(2);
 		});
 	});
 
-	it('renders New share quick action button', async () => {
+	it('renders New note quick action button', async () => {
 		render(DashboardPage);
 
 		await vi.waitFor(() => {
-			const newShareMatches = screen.getAllByText('New share');
-			expect(newShareMatches.length).toBeGreaterThan(0);
+			const newNoteMatches = screen.getAllByText('New note');
+			expect(newNoteMatches.length).toBeGreaterThan(0);
+		});
+	});
+
+	it('enriches activity names from current data instead of stale store value', async () => {
+		render(DashboardPage);
+
+		await vi.waitFor(() => {
+			expect(screen.getByText('New Name.md')).toBeTruthy();
+			expect(screen.queryByText('Old Name.md')).toBeNull();
 		});
 	});
 });
