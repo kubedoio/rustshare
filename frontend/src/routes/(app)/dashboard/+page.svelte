@@ -177,26 +177,8 @@
 		}
 	}
 
-	async function handleNewMeeting() {
-		if (creating) return;
-		creating = true;
-		createError = '';
-		try {
-			const result = await createFromTemplate({
-				template_key: 'template_default_meeting',
-				name: 'Untitled Meeting Note',
-				parent_folder_id: null
-			});
-			activityStore.addActivity('meeting_created', 'Untitled Meeting Note', {
-				artifactId: result.object_id,
-				moduleKey: 'meetings'
-			});
-			goto(getModuleObjectHref('meetings', result.object_type, result.object_id));
-		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create meeting note';
-		} finally {
-			creating = false;
-		}
+	function handleNewMeeting() {
+		goto('/modules/meetings?action=new');
 	}
 
 	function handleNewDecision() {

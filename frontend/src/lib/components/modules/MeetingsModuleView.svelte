@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
 	import { createQuery } from '$lib/query-compat';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
@@ -60,6 +61,15 @@
 
 	let createError = $state('');
 	let isCreating = $state(false);
+	let autoCreateTriggered = $state(false);
+
+	$effect(() => {
+		const action = $page.url.searchParams.get('action');
+		if (action === 'new' && !autoCreateTriggered && !isCreating) {
+			autoCreateTriggered = true;
+			handleNewMeeting();
+		}
+	});
 
 	async function handleNewMeeting() {
 		if (isCreating) return;
