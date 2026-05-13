@@ -76,7 +76,7 @@
 			title = `${title} ${counter}`;
 		}
 
-		const content = `# Meeting Notes\n\nDate:\nPeople:\n\n## Agenda\n\n## Notes\n\n## Decisions\n\n## Next steps\n`;
+		const content = `# ${title}\n\n## Agenda\n- \n\n## Attendees\n- \n\n## Notes\n- \n\n## Decisions\n- \n\n## Action Items\n- [ ] \n`;
 
 		try {
 			const result = await meetingsApi.create({
