@@ -216,6 +216,44 @@ impl NoteService {
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?;
 
+        // For folder-backed notes, try manifest.json first
+        if Self::is_folder_backed_note(&file) {
+            if let Some(parent_id) = file.parent_folder_id {
+                let subfolders = self
+                    .metadata_store
+                    .list_folders(Some(parent_id), file.owner_id, tenant_id)
+                    .await
+                    .map_err(|e| NoteError::Database(e.to_string()))?;
+
+                if let Some(rustshare_folder) = subfolders.into_iter().find(|f| f.name == "_rustshare") {
+                    let manifest_files = self
+                        .metadata_store
+                        .list_files(Some(rustshare_folder.id), file.owner_id, tenant_id)
+                        .await
+                        .map_err(|e| NoteError::Database(e.to_string()))?;
+
+                    if let Some(manifest_file) = manifest_files.into_iter().find(|f| f.name == "manifest.json") {
+                        let data = self
+                            .object_store
+                            .get(&manifest_file.storage_key())
+                            .await
+                            .map_err(|e| NoteError::Storage(e.to_string()))?;
+                        if let Ok(manifest) = serde_json::from_slice::<serde_json::Value>(&data) {
+                            if let Some(title) = manifest.get("title").and_then(|v| v.as_str()) {
+                                let mut meta = NoteMetadata::new(title);
+                                meta.created_at = file.created_at;
+                                meta.updated_at = file.modified_at;
+                                meta.excerpt = generate_excerpt(&file.name);
+                                // Try to load legacy sidecar for attachments, color, etc.
+                                let _ = self.enrich_from_legacy_sidecar(&mut meta, &file, user_id, tenant_id).await;
+                                return Ok(Some(meta));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 1. Try visible sidecar: {path}.rustshare.json
         let sidecar_name = format!("{}.rustshare.json", file.name);
         let parent_id = file.parent_folder_id;
@@ -247,6 +285,39 @@ impl NoteService {
         Ok(None)
     }
 
+    /// Enrich metadata from legacy sidecar for folder-backed notes.
+    async fn enrich_from_legacy_sidecar(
+        &self,
+        meta: &mut NoteMetadata,
+        file: &rustshare_core::domain::File,
+        _user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), NoteError> {
+        let sidecar_name = format!("{}.rustshare.json", file.name);
+        let siblings = self
+            .metadata_store
+            .list_files(file.parent_folder_id, file.owner_id, tenant_id)
+            .await
+            .map_err(|e| NoteError::Database(e.to_string()))?;
+
+        if let Some(sidecar) = siblings.into_iter().find(|f| f.name == sidecar_name) {
+            let data = self
+                .object_store
+                .get(&sidecar.storage_key())
+                .await
+                .map_err(|e| NoteError::Storage(e.to_string()))?;
+            if let Ok(legacy) = serde_json::from_slice::<NoteMetadata>(&data) {
+                meta.visibility = legacy.visibility;
+                meta.public_share_id = legacy.public_share_id;
+                meta.pinned = legacy.pinned;
+                meta.icon = legacy.icon;
+                meta.color = legacy.color;
+                meta.attachments = legacy.attachments;
+            }
+        }
+        Ok(())
+    }
+
     async fn save_metadata(
         &self,
         file_id: Uuid,
@@ -259,6 +330,62 @@ impl NoteService {
             .get_file(file_id, user_id)
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?;
+
+        // For folder-backed notes, also update manifest.json
+        if Self::is_folder_backed_note(&file) {
+            if let Some(parent_id) = file.parent_folder_id {
+                if let Ok(subfolders) = self
+                    .metadata_store
+                    .list_folders(Some(parent_id), file.owner_id, tenant_id)
+                    .await
+                {
+                    if let Some(rustshare_folder) = subfolders.into_iter().find(|f| f.name == "_rustshare") {
+                        if let Ok(manifest_files) = self
+                            .metadata_store
+                            .list_files(Some(rustshare_folder.id), file.owner_id, tenant_id)
+                            .await
+                        {
+                            let manifest_data = serde_json::json!({
+                                "type": "rustshare.note",
+                                "version": 1,
+                                "id": file_id.to_string(),
+                                "title": meta.title,
+                                "main": "note.md",
+                                "created_at": meta.created_at.to_rfc3339(),
+                                "updated_at": meta.updated_at.to_rfc3339(),
+                                "attachments": meta.attachments.iter().map(|a| serde_json::json!({
+                                    "file_id": a.file_id.to_string(),
+                                    "name": a.name,
+                                    "mime_type": a.mime_type,
+                                    "size": a.size,
+                                    "created_at": a.created_at.to_rfc3339()
+                                })).collect::<Vec<_>>(),
+                                "drawings": [],
+                                "exports": []
+                            });
+                            let manifest_bytes = Bytes::from(manifest_data.to_string());
+
+                            if let Some(manifest_file) = manifest_files.into_iter().find(|f| f.name == "manifest.json") {
+                                let _ = self.file_service
+                                    .edit_file(manifest_file.id, file.owner_id, manifest_bytes, "overwrite", None)
+                                    .await;
+                            } else {
+                                let _ = self.file_service
+                                    .upload_file(
+                                        file.owner_id,
+                                        "manifest.json".to_string(),
+                                        Some(rustshare_folder.id),
+                                        manifest_bytes,
+                                        "application/json".to_string(),
+                                        tenant_id,
+                                    )
+                                    .await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         let sidecar_name = format!("{}.rustshare.json", file.name);
         let parent_id = file.parent_folder_id;
@@ -297,7 +424,6 @@ impl NoteService {
                 .await?;
         }
 
-        // Also update legacy if it exists? No, let's just move forward.
         Ok(())
     }
 
@@ -452,7 +578,66 @@ impl NoteService {
         ))
     }
 
-    /// Create a new note.
+    /// Generate a collision-safe unique folder name in the target folder.
+    async fn unique_folder_name(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        parent_folder_id: Option<Uuid>,
+        base_name: &str,
+    ) -> Result<String, NoteError> {
+        let folders = self
+            .metadata_store
+            .list_folders(parent_folder_id, owner_id, tenant_id)
+            .await
+            .map_err(|e| NoteError::Database(e.to_string()))?;
+
+        if !folders.iter().any(|f| f.name == base_name) {
+            return Ok(base_name.to_string());
+        }
+
+        for i in 2..=1000 {
+            let candidate = format!("{} {}", base_name, i);
+            if !folders.iter().any(|f| f.name == candidate) {
+                return Ok(candidate);
+            }
+        }
+
+        Err(NoteError::InvalidName(
+            "Could not find unique folder name".to_string(),
+        ))
+    }
+
+    /// Check if a file represents a folder-backed note (note.md inside a bundle).
+    fn is_folder_backed_note(file: &rustshare_core::domain::File) -> bool {
+        file.name == "note.md"
+    }
+
+    /// Get or create a subfolder inside a note bundle.
+    async fn get_or_create_subfolder(
+        &self,
+        parent_folder_id: Uuid,
+        name: &str,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Folder, NoteError> {
+        let folders = self
+            .metadata_store
+            .list_folders(Some(parent_folder_id), owner_id, tenant_id)
+            .await
+            .map_err(|e| NoteError::Database(e.to_string()))?;
+
+        if let Some(existing) = folders.into_iter().find(|f| f.name == name) {
+            return Ok(existing);
+        }
+
+        self.folder_service
+            .create_folder(name.to_string(), Some(parent_folder_id), owner_id, tenant_id)
+            .await
+            .map_err(|e| NoteError::Storage(e.to_string()))
+    }
+
+    /// Create a new note as a folder-based bundle.
     pub async fn create_note(
         &self,
         owner_id: UserId,
@@ -472,25 +657,66 @@ impl NoteService {
             Some(notes_folder.id)
         };
 
-        // Generate unique filename
-        let file_name = self
-            .unique_note_name(owner_id, tenant_id, parent_folder_id, &title)
+        // Generate collision-safe folder name
+        let folder_name = self
+            .unique_folder_name(owner_id, tenant_id, parent_folder_id, &title)
             .await?;
 
-        // Create file via FileService
+        // Create note bundle folder
+        let note_folder = self
+            .folder_service
+            .create_folder(folder_name.clone(), parent_folder_id, owner_id, tenant_id)
+            .await
+            .map_err(|e| NoteError::Storage(e.to_string()))?;
+
+        // Create subfolders
+        for subfolder in &["attachments", "drawings", "exports", "_rustshare"] {
+            self.get_or_create_subfolder(note_folder.id, subfolder, owner_id, tenant_id)
+                .await?;
+        }
+
+        // Create note.md inside the bundle
         let file = self
             .file_service
             .upload_file(
                 owner_id,
-                file_name.clone(),
-                parent_folder_id,
+                "note.md".to_string(),
+                Some(note_folder.id),
                 Bytes::from(content.clone()),
                 "text/markdown".to_string(),
                 tenant_id,
             )
             .await?;
 
-        // Build and save metadata sidecar
+        // Create manifest.json inside _rustshare/
+        let manifest_folder = self
+            .get_or_create_subfolder(note_folder.id, "_rustshare", owner_id, tenant_id)
+            .await?;
+        let manifest = serde_json::json!({
+            "type": "rustshare.note",
+            "version": 1,
+            "id": file.id.to_string(),
+            "title": title,
+            "main": "note.md",
+            "created_at": chrono::Utc::now().to_rfc3339(),
+            "updated_at": chrono::Utc::now().to_rfc3339(),
+            "attachments": [],
+            "drawings": [],
+            "exports": []
+        });
+        self.file_service
+            .upload_file(
+                owner_id,
+                "manifest.json".to_string(),
+                Some(manifest_folder.id),
+                Bytes::from(manifest.to_string()),
+                "application/json".to_string(),
+                tenant_id,
+            )
+            .await
+            .ok(); // Best-effort; don't fail note creation if manifest fails
+
+        // Build and save metadata sidecar (legacy compat)
         let mut meta = NoteMetadata::new(title.clone());
         meta.excerpt = generate_excerpt(&content);
         self.save_metadata(file.id, owner_id, tenant_id, &meta)
@@ -559,6 +785,7 @@ impl NoteService {
         attachments: Option<Vec<NoteAttachment>>,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
+        let is_folder_backed = Self::is_folder_backed_note(&file);
 
         // Extract H1 as the title if present
         let extracted_title = extract_h1_title(&content);
@@ -590,18 +817,38 @@ impl NoteService {
             if new_title != meta.title {
                 meta.title = new_title.clone();
 
-                // Also attempt to rename the file to match the new title
-                let new_filename = self
-                    .unique_note_name(file.owner_id, file.tenant_id, file.parent_folder_id, &new_title)
-                    .await?;
+                if is_folder_backed {
+                    // For folder-backed notes, rename the parent folder
+                    if let Some(parent_folder_id) = file.parent_folder_id {
+                        let parent_folder = self
+                            .folder_service
+                            .get_folder(parent_folder_id, user_id)
+                            .await
+                            .map_err(|e| NoteError::Storage(e.to_string()))?;
+                        let new_folder_name = self
+                            .unique_folder_name(file.owner_id, file.tenant_id, parent_folder.parent_folder_id, &new_title)
+                            .await?;
+                        if new_folder_name != parent_folder.name {
+                            let _ = self
+                                .folder_service
+                                .rename_folder(parent_folder_id, new_folder_name, user_id)
+                                .await;
+                        }
+                    }
+                } else {
+                    // Legacy: rename the file
+                    let new_filename = self
+                        .unique_note_name(file.owner_id, file.tenant_id, file.parent_folder_id, &new_title)
+                        .await?;
 
-                if new_filename != updated_file.name {
-                    if let Ok(renamed) = self
-                        .file_service
-                        .rename_file(file_id, new_filename, user_id)
-                        .await
-                    {
-                        updated_file = renamed;
+                    if new_filename != updated_file.name {
+                        if let Ok(renamed) = self
+                            .file_service
+                            .rename_file(file_id, new_filename, user_id)
+                            .await
+                        {
+                            updated_file = renamed;
+                        }
                     }
                 }
             }
@@ -634,7 +881,7 @@ impl NoteService {
         })
     }
 
-    /// Rename a note (updates title and filename).
+    /// Rename a note (updates title and filename/folder name).
     pub async fn rename_note(
         &self,
         file_id: Uuid,
@@ -642,12 +889,7 @@ impl NoteService {
         new_title: String,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
-
-        // Determine new filename based on target folder
-        let parent_folder_id = file.parent_folder_id;
-        let new_name = self
-            .unique_note_name(user_id, file.tenant_id, parent_folder_id, &new_title)
-            .await?;
+        let is_folder_backed = Self::is_folder_backed_note(&file);
 
         // Load metadata BEFORE renaming so sidecar is found by old name
         let mut meta = self
@@ -655,11 +897,35 @@ impl NoteService {
             .await?
             .unwrap_or_else(|| NoteMetadata::new(&new_title));
 
-        // Rename file
-        let renamed_file = self
-            .file_service
-            .rename_file(file_id, new_name, user_id)
-            .await?;
+        if is_folder_backed {
+            // For folder-backed notes, rename the parent folder
+            if let Some(parent_folder_id) = file.parent_folder_id {
+                let parent_folder = self
+                    .folder_service
+                    .get_folder(parent_folder_id, user_id)
+                    .await
+                    .map_err(|e| NoteError::Storage(e.to_string()))?;
+                let new_folder_name = self
+                    .unique_folder_name(user_id, file.tenant_id, parent_folder.parent_folder_id, &new_title)
+                    .await?;
+                if new_folder_name != parent_folder.name {
+                    self.folder_service
+                        .rename_folder(parent_folder_id, new_folder_name, user_id)
+                        .await
+                        .map_err(|e| NoteError::Storage(e.to_string()))?;
+                }
+            }
+        } else {
+            // Legacy: rename the file
+            let parent_folder_id = file.parent_folder_id;
+            let new_name = self
+                .unique_note_name(user_id, file.tenant_id, parent_folder_id, &new_title)
+                .await?;
+
+            self.file_service
+                .rename_file(file_id, new_name, user_id)
+                .await?;
+        }
 
         // Update sidecar title
         meta.title = new_title;
@@ -667,34 +933,38 @@ impl NoteService {
         self.save_metadata(file_id, user_id, file.tenant_id, &meta)
             .await?;
 
+        // Reload file after potential rename
+        let file = self.file_service.get_file(file_id, user_id).await?;
+
         // Load content for response
-        let storage_key = renamed_file.storage_key();
+        let storage_key = file.storage_key();
         let content = match self.object_store.get(&storage_key).await {
             Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
             Err(_) => String::new(),
         };
 
         Ok(Note {
-            id: renamed_file.id,
-            name: renamed_file.name,
-            path: renamed_file.path,
+            id: file.id,
+            name: file.name,
+            path: file.path,
             content,
             metadata: meta,
-            parent_folder_id: renamed_file.parent_folder_id,
-            owner_id: renamed_file.owner_id,
-            current_version: renamed_file.current_version,
-            created_at: renamed_file.created_at,
-            modified_at: renamed_file.modified_at,
+            parent_folder_id: file.parent_folder_id,
+            owner_id: file.owner_id,
+            current_version: file.current_version,
+            created_at: file.created_at,
+            modified_at: file.modified_at,
         })
     }
 
     /// Delete a note (and its sidecar).
     pub async fn delete_note(&self, file_id: Uuid, user_id: UserId) -> Result<(), NoteError> {
-        let _file = self.file_service.get_file(file_id, user_id).await?;
+        let file = self.file_service.get_file(file_id, user_id).await?;
+        let is_folder_backed = Self::is_folder_backed_note(&file);
 
         // If public, invalidate share index
         if let Some(meta) = self
-            .load_metadata(file_id, user_id, _file.tenant_id)
+            .load_metadata(file_id, user_id, file.tenant_id)
             .await?
         {
             if let Some(share_id) = meta.public_share_id {
@@ -707,10 +977,22 @@ impl NoteService {
             }
         }
 
-        // Delete sidecar and file
-        self.delete_metadata(file_id, user_id, _file.tenant_id)
-            .await?;
-        self.file_service.delete_file(file_id, user_id).await?;
+        if is_folder_backed {
+            // For folder-backed notes, delete the entire bundle folder
+            if let Some(parent_folder_id) = file.parent_folder_id {
+                // Delete metadata sidecar first
+                let _ = self.delete_metadata(file_id, user_id, file.tenant_id).await;
+                // Delete note.md file
+                let _ = self.file_service.delete_file(file_id, user_id).await;
+                // Delete the bundle folder (cascade deletes subfolders and remaining files)
+                let _ = self.folder_service.delete_folder(parent_folder_id, user_id).await;
+            }
+        } else {
+            // Legacy: delete sidecar and file
+            self.delete_metadata(file_id, user_id, file.tenant_id)
+                .await?;
+            self.file_service.delete_file(file_id, user_id).await?;
+        }
 
         Ok(())
     }
@@ -722,10 +1004,24 @@ impl NoteService {
         user_id: UserId,
         target_folder_id: Option<Uuid>,
     ) -> Result<Note, NoteError> {
-        let moved_file = self
-            .file_service
-            .move_file(file_id, target_folder_id, user_id)
-            .await?;
+        let file = self.file_service.get_file(file_id, user_id).await?;
+        let is_folder_backed = Self::is_folder_backed_note(&file);
+
+        let moved_file = if is_folder_backed {
+            // For folder-backed notes, move the parent bundle folder
+            if let Some(parent_folder_id) = file.parent_folder_id {
+                self.folder_service
+                    .move_folder(parent_folder_id, target_folder_id, user_id)
+                    .await
+                    .map_err(|e| NoteError::Storage(e.to_string()))?;
+            }
+            // Reload file after move
+            self.file_service.get_file(file_id, user_id).await?
+        } else {
+            self.file_service
+                .move_file(file_id, target_folder_id, user_id)
+                .await?
+        };
 
         let mut meta = self
             .load_metadata(file_id, user_id, moved_file.tenant_id)
@@ -791,9 +1087,26 @@ impl NoteService {
                 }
             };
 
+            // For folder-backed notes, derive display name from parent folder
+            let display_name = if Self::is_folder_backed_note(&file) {
+                if let Some(parent_id) = file.parent_folder_id {
+                    self.metadata_store
+                        .find_folder_by_id(parent_id, user_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|f| f.name)
+                        .unwrap_or_else(|| file.name.clone())
+                } else {
+                    file.name.clone()
+                }
+            } else {
+                file.name.clone()
+            };
+
             notes.push(NoteSummary {
                 id: file.id,
-                name: file.name,
+                name: display_name,
                 path: file.path,
                 metadata: meta,
                 parent_folder_id: file.parent_folder_id,
@@ -853,9 +1166,26 @@ impl NoteService {
                 }
             };
 
+            // For folder-backed notes, derive display name from parent folder
+            let display_name = if Self::is_folder_backed_note(&file) {
+                if let Some(parent_id) = file.parent_folder_id {
+                    self.metadata_store
+                        .find_folder_by_id(parent_id, user_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|f| f.name)
+                        .unwrap_or_else(|| file.name.clone())
+                } else {
+                    file.name.clone()
+                }
+            } else {
+                file.name.clone()
+            };
+
             notes.push(NoteSummary {
                 id: file.id,
-                name: file.name,
+                name: display_name,
                 path: file.path,
                 metadata: meta,
                 parent_folder_id: file.parent_folder_id,

@@ -172,17 +172,22 @@ impl TemplateService {
                 "notes",
                 "1.0",
                 "Default template for notes.",
-                Vec::<String>::new(),
+                vec![
+                    "attachments".to_string(),
+                    "drawings".to_string(),
+                    "exports".to_string(),
+                    "_rustshare".to_string(),
+                ],
                 vec![
                     TemplateDefaultFile {
-                        path: "__primary__.md".to_string(),
+                        path: "note.md".to_string(),
                         content: Some("# {{title}}\n\n".to_string()),
                         content_type: Some("text/markdown".to_string()),
                     },
                     TemplateDefaultFile {
-                        path: "{{file_stem}}.rustshare.json".to_string(),
+                        path: "_rustshare/manifest.json".to_string(),
                         content: Some(
-                            r#"{"type":"note","module_key":"notes","title":"{{title}}"}"#.to_string(),
+                            r#"{"type":"rustshare.note","version":1,"id":"{{id}}","title":"{{title}}","main":"note.md","created_at":"{{created_at}}","updated_at":"{{updated_at}}","attachments":[],"drawings":[],"exports":[]}"#.to_string(),
                         ),
                         content_type: Some("application/json".to_string()),
                     },
@@ -1148,7 +1153,7 @@ fn user_can_access_template_module(permissions: &serde_json::Value, is_admin: bo
 
 fn resolve_creation_mode(module_key: &str) -> TemplateCreationMode {
     match module_key {
-        "notes" | "decisions" => TemplateCreationMode::SingleFile,
+        "decisions" => TemplateCreationMode::SingleFile,
         _ => TemplateCreationMode::Folder,
     }
 }
@@ -1454,10 +1459,10 @@ mod tests {
     }
 
     #[test]
-    fn notes_templates_use_single_file_creation_mode() {
+    fn notes_templates_use_folder_creation_mode() {
         assert_eq!(
             resolve_creation_mode("notes"),
-            TemplateCreationMode::SingleFile
+            TemplateCreationMode::Folder
         );
     }
 

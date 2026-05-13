@@ -58,10 +58,10 @@
 		createError = '';
 
 		let title = 'Untitled Note';
-		const existingNames = recentNotes.map((n) => n.name?.toLowerCase() ?? '');
-		if (existingNames.includes(title.toLowerCase())) {
+		const existingTitles = recentNotes.map((n) => n.metadata?.title?.toLowerCase() ?? n.name?.toLowerCase() ?? '');
+		if (existingTitles.includes(title.toLowerCase())) {
 			let counter = 2;
-			while (existingNames.includes(`${title} ${counter}`.toLowerCase())) {
+			while (existingTitles.includes(`${title} ${counter}`.toLowerCase())) {
 				counter++;
 			}
 			title = `${title} ${counter}`;

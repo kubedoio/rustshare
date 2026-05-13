@@ -6,6 +6,7 @@
 	import { meetingsApi } from '$lib/api/meetings';
 	import { standupsApi } from '$lib/api/standups';
 	import { uploadFile, deleteFile } from '$lib/api/files';
+	import { getFolderContents } from '$lib/api/folders';
 	import { getModuleByKey } from '$lib/modules/registry';
 	import { goto } from '$app/navigation';
 	import { Folder, Share2, Pencil } from 'lucide-svelte';
@@ -147,9 +148,24 @@
 			toastStore.show('This item must be saved to a folder before adding attachments', 'error');
 			return;
 		}
+
+		// For folder-backed notes (note.md), upload to the attachments/ subfolder
+		let uploadFolderId = item.parent_folder_id;
+		if (item.name === 'note.md') {
+			try {
+				const contents = await getFolderContents(item.parent_folder_id);
+				const attachmentsFolder = contents.folders?.find((f: any) => f.name === 'attachments');
+				if (attachmentsFolder) {
+					uploadFolderId = attachmentsFolder.id;
+				}
+			} catch (err) {
+				console.warn('Could not resolve attachments subfolder, uploading to bundle root:', err);
+			}
+		}
+
 		for (const file of event.detail.files) {
 			try {
-				const uploaded = await uploadFile(item.parent_folder_id, file);
+				const uploaded = await uploadFile(uploadFolderId, file);
 				const isImage = uploaded.mime_type?.startsWith('image/');
 				const attachment: RichMarkdownAttachment = {
 					id: uploaded.id,
