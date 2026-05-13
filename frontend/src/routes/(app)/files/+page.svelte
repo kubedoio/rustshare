@@ -247,6 +247,10 @@
 		queryFn: async () => {
 			if (workspaceMode === 'starred') return getStarredContents();
 			if (workspaceMode === 'deleted') return getDeletedContents();
+			if (workspaceMode === 'recent') {
+				const allFiles = await listAllFiles();
+				return { folders: [], files: allFiles };
+			}
 
 			// For shared root
 			if (activeRoot === 'shared') {
@@ -371,7 +375,7 @@
 		? workspaceMode === 'photos'
 			? 'Image files in the current workspace, without the folder noise.'
 			: workspaceMode === 'recent'
-				? 'The latest changes in this workspace, sorted by most recent first.'
+				? 'The latest created files in this workspace, sorted by newest first.'
 				: workspaceMode === 'starred'
 					? 'Pinned folders and files that need fast access without digging through the tree.'
 					: 'Recently deleted items live here until you restore them or remove them permanently.'
@@ -387,7 +391,7 @@
 		? workspaceMode === 'photos'
 			? 'No photos in this view'
 			: workspaceMode === 'recent'
-				? 'No recent file activity'
+				? 'No files created yet'
 				: workspaceMode === 'starred'
 					? 'Nothing is starred yet'
 					: 'Deleted items will show up here'
@@ -399,7 +403,7 @@
 		? workspaceMode === 'photos'
 			? 'Upload an image into this folder and it will show up here.'
 			: workspaceMode === 'recent'
-				? 'Modify or upload a file and it will show up here.'
+				? 'Create or upload a file and it will show up here.'
 				: workspaceMode === 'starred'
 					? 'Star a folder or file from its action menu and it will show up here.'
 					: 'Deleting a folder or file moves it here instead of removing it immediately.'
@@ -432,7 +436,7 @@
 	// SORTING & FILTERING
 	// ============================================================================
 
-	$: activeSortField = workspaceMode === 'recent' ? 'modified_at' : $fileSortState.field;
+	$: activeSortField = workspaceMode === 'recent' ? 'created_at' : $fileSortState.field;
 	$: activeSortOrder = workspaceMode === 'recent' ? 'desc' : $fileSortState.order;
 	$: searchTerm = $searchQuery.trim().toLowerCase();
 
