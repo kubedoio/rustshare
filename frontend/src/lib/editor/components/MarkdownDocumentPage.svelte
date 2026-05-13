@@ -83,6 +83,9 @@
 	/** Whether to show the back button */
 	export let showBack: boolean = true;
 
+	/** For folder-backed notes: skip base64 sketch embedding and let parent handle file upload */
+	export let embedSketchesAsBase64: boolean = true;
+
 	const dispatch = createEventDispatcher<{
 		save: { content: string; revision?: number | string; color?: string | null };
 		modechange: { mode: EditorMode };
@@ -189,28 +192,30 @@
 	function handleSketch(event: CustomEvent<{ blob: Blob; filename: string }>) {
 		const { blob } = event.detail;
 
-		const reader = new FileReader();
-		reader.onload = () => {
-			const dataUrl = reader.result as string;
-			const editor = editorComponent?.getEditor();
-			if (editor) {
-				editor.chain().focus().insertContent(`![Sketch](${dataUrl})`).run();
-				// Mark as unsaved so autosave triggers
-				if (saveStatus !== 'unsaved') {
-					saveStatus = 'unsaved';
+		if (embedSketchesAsBase64) {
+			const reader = new FileReader();
+			reader.onload = () => {
+				const dataUrl = reader.result as string;
+				const editor = editorComponent?.getEditor();
+				if (editor) {
+					editor.chain().focus().insertContent(`![Sketch](${dataUrl})`).run();
+					// Mark as unsaved so autosave triggers
+					if (saveStatus !== 'unsaved') {
+						saveStatus = 'unsaved';
+					}
+					if (autosaveDelay > 0) {
+						if (autosaveTimer) clearTimeout(autosaveTimer);
+						autosaveTimer = setTimeout(() => {
+							handleSave();
+						}, autosaveDelay);
+					}
 				}
-				if (autosaveDelay > 0) {
-					if (autosaveTimer) clearTimeout(autosaveTimer);
-					autosaveTimer = setTimeout(() => {
-						handleSave();
-					}, autosaveDelay);
-				}
-			}
-		};
-		reader.onerror = () => {
-			toastStore.show('Failed to insert sketch. Please try again.', 'error');
-		};
-		reader.readAsDataURL(blob);
+			};
+			reader.onerror = () => {
+				toastStore.show('Failed to insert sketch. Please try again.', 'error');
+			};
+			reader.readAsDataURL(blob);
+		}
 
 		// Also dispatch to parent for any additional handling (e.g. server-side storage)
 		dispatch('sketch', event.detail);
@@ -444,9 +449,10 @@
 					on:attachment={toggleAttachments}
 					on:sketch={handleSketch}
 					on:filedrop={handleAttachmentUpload}
+					on:paste={handleAttachmentUpload}
 				/>
 			{:else}
-				<RichMarkdownViewer content={currentMarkdown || content} />
+				<RichMarkdownViewer content={currentMarkdown || content} {attachments} />
 			{/if}
 		</main>
 

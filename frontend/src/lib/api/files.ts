@@ -24,17 +24,18 @@ export type UploadProgressCallback = (progress: number) => void;
 export async function uploadFile(
 	folderId: string | null,
 	file: globalThis.File,
-	onProgress?: UploadProgressCallback
+	onProgress?: UploadProgressCallback,
+	name?: string
 ): Promise<File> {
 	// Use chunked upload for files > 10MB to bypass most proxy/Cloudflare limits (usually 100MB, but let's be safe)
 	// Actually, let's use it for > 5MB to ensure we test it properly.
 	if (file.size > 5 * 1024 * 1024) {
-		return uploadFileChunked(folderId, file, onProgress);
+		return uploadFileChunked(folderId, file, onProgress, name);
 	}
 
 	const formData = new FormData();
 	formData.append('file', file);
-	formData.append('name', file.name);
+	formData.append('name', name || file.name);
 
 	// Only append parent_folder_id if it's not null
 	if (folderId) {
@@ -54,7 +55,8 @@ export async function uploadFile(
 async function uploadFileChunked(
 	folderId: string | null,
 	file: globalThis.File,
-	onProgress?: UploadProgressCallback
+	onProgress?: UploadProgressCallback,
+	name?: string
 ): Promise<File> {
 	const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
 	const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
@@ -66,7 +68,7 @@ async function uploadFileChunked(
 		chunk_size: number;
 	}>('/uploads/sessions', {
 		folder_id: folderId,
-		file_name: file.name,
+		file_name: name || file.name,
 		mime_type: file.type || 'application/octet-stream',
 		total_size: file.size,
 		chunk_size: CHUNK_SIZE

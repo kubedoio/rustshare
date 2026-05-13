@@ -264,3 +264,78 @@ export function formatFileSize(bytes: number): string {
 	const value = bytes / Math.pow(k, i);
 	return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[i]}`;
 }
+
+// ---------------------------------------------------------------------------
+// Relative path resolution for folder-backed notes
+// ---------------------------------------------------------------------------
+
+/**
+ * For folder-backed notes: replace relative attachment paths in markdown
+ * with API URLs so the editor/viewer can render them.
+ */
+export function resolveAttachmentPaths(
+	markdown: string,
+	attachments: RichMarkdownAttachment[]
+): string {
+	if (!attachments?.length) return markdown;
+	let result = markdown;
+	for (const att of attachments) {
+		if (!att.path?.startsWith('attachments/') && !att.path?.startsWith('drawings/')) continue;
+		const apiUrl = att.mimeType?.startsWith('image/')
+			? `/api/v1/files/${att.id}/preview`
+			: `/api/v1/files/${att.id}/content`;
+		const escapedPath = att.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		result = result.replace(
+			new RegExp(`!\\[([^\\]]*)\\]\\(${escapedPath}\\)`, 'g'),
+			`![$1](${apiUrl})`
+		);
+		result = result.replace(
+			new RegExp(`\\[([^\\]]*)\\]\\(${escapedPath}\\)`, 'g'),
+			`[$1](${apiUrl})`
+		);
+	}
+	return result;
+}
+
+/**
+ * For folder-backed notes: replace API URLs in markdown with relative paths
+ * before saving.
+ */
+export function restoreRelativePaths(
+	markdown: string,
+	attachments: RichMarkdownAttachment[]
+): string {
+	if (!attachments?.length) return markdown;
+	let result = markdown;
+	for (const att of attachments) {
+		if (!att.path?.startsWith('attachments/') && !att.path?.startsWith('drawings/')) continue;
+		const apiUrl = att.mimeType?.startsWith('image/')
+			? `/api/v1/files/${att.id}/preview`
+			: `/api/v1/files/${att.id}/content`;
+		const escapedUrl = apiUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		result = result.replace(
+			new RegExp(`!\\[([^\\]]*)\\]\\(${escapedUrl}\\)`, 'g'),
+			`![$1](${att.path})`
+		);
+		result = result.replace(
+			new RegExp(`\\[([^\\]]*)\\]\\(${escapedUrl}\\)`, 'g'),
+			`[$1](${att.path})`
+		);
+	}
+	return result;
+}
+
+/**
+ * Generate a collision-safe filename in a folder.
+ */
+export function generateUniqueFilename(name: string, existingNames: string[]): string {
+	if (!existingNames.includes(name)) return name;
+	const dotIndex = name.lastIndexOf('.');
+	const base = dotIndex > 0 ? name.slice(0, dotIndex) : name;
+	const ext = dotIndex > 0 ? name.slice(dotIndex) : '';
+	for (let i = 1; i <= 1000; i++) {
+		const candidate = `${base}-${i}${ext}`;
+		if (!existingNames.includes(candidate)) return candidate;
+	}
+	return name;
+}

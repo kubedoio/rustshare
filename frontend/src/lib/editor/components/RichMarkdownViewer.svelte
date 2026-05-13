@@ -6,15 +6,21 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { markdownToHtml } from '../adapter/markdown';
 	import { sanitizeHtml } from '../adapter/security';
+	import { resolveAttachmentPaths } from '../adapter/attachments';
+	import type { RichMarkdownAttachment } from '../types';
 
 	/** Markdown content to render */
 	export let content: string = '';
+
+	/** Optional attachment list for resolving relative paths */
+	export let attachments: RichMarkdownAttachment[] = [];
 
 	let renderedHtml = '';
 	let parseError: string | null = null;
 
 	$: {
-		const result = markdownToHtml(content);
+		const resolvedContent = attachments?.length ? resolveAttachmentPaths(content, attachments) : content;
+		const result = markdownToHtml(resolvedContent);
 		if (result.success) {
 			renderedHtml = sanitizeHtml(result.html);
 			parseError = null;

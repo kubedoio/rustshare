@@ -36,6 +36,7 @@
 		attachment: { type: 'image' | 'file' };
 		sketch: { blob: Blob; filename: string };
 		filedrop: { files: File[] };
+		paste: { files: File[] };
 	}>();
 
 	let editorElement: HTMLDivElement;
@@ -112,11 +113,14 @@
 
 		// Intercept keydown for slash menu navigation
 		editor.view.dom.addEventListener('keydown', handleEditorKeydown);
+		// Intercept paste for image/file paste
+		editor.view.dom.addEventListener('paste', handlePaste);
 	});
 
 	onDestroy(() => {
 		if (editor) {
 			editor.view.dom.removeEventListener('keydown', handleEditorKeydown);
+			editor.view.dom.removeEventListener('paste', handlePaste);
 			editor.destroy();
 			editor = null;
 		}
@@ -222,6 +226,29 @@
 	}
 
 	/**
+	 * Handles paste events to intercept file pastes (e.g. images from clipboard).
+	 */
+	function handlePaste(event: ClipboardEvent) {
+		if (!editable || !hasAttachmentHandler) return;
+		const items = event.clipboardData?.items;
+		if (!items) return;
+
+		const files: File[] = [];
+		for (const item of items) {
+			if (item.kind === 'file') {
+				const file = item.getAsFile();
+				if (file) files.push(file);
+			}
+		}
+
+		if (files.length > 0) {
+			event.preventDefault();
+			event.stopPropagation();
+			dispatch('paste', { files });
+		}
+	}
+
+	/**
 	 * Converts a base64 data URL to a Blob.
 	 */
 	function dataURLToBlob(dataURL: string): Blob {
@@ -242,7 +269,13 @@
 	async function launchSketchEdit(src: string, pos: number) {
 		if (!editor?.isEditable) return;
 		try {
-			const blob = dataURLToBlob(src);
+			let blob: Blob;
+			if (src.startsWith('data:')) {
+				blob = dataURLToBlob(src);
+			} else {
+				const response = await fetch(src);
+				blob = await response.blob();
+			}
 			const { loadFromBlob } = await import('@excalidraw/excalidraw');
 			const scene = await loadFromBlob(blob, null, null);
 

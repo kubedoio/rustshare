@@ -17,6 +17,11 @@
 	import { toastStore } from '$lib/stores/toast';
 	import type { EditorMode, EditorSaveStatus, RichMarkdownAttachment } from '$lib/editor/types';
 	import { classifyAttachmentKind } from '$lib/editor/validation';
+	import {
+		resolveAttachmentPaths,
+		restoreRelativePaths,
+		generateUniqueFilename
+	} from '$lib/editor/adapter/attachments';
 
 	let key = $derived(($page.params.key || '') as string);
 	let id = $derived(($page.params.id || '') as string);
@@ -77,25 +82,42 @@
 	let renameError = $state('');
 	let isRenaming = $state(false);
 	let attachments = $state<RichMarkdownAttachment[]>([]);
+	let documentPage = $state<MarkdownDocumentPage | undefined>(undefined);
+
+	let isFolderBacked = $derived(item?.name === 'note.md');
 
 	$effect(() => {
 		if (item?.metadata?.attachments) {
-			attachments = item.metadata.attachments.map((a: any) => ({
-				id: a.file_id,
-				filename: a.name,
-				path: a.mime_type?.startsWith('image/')
-					? `/api/v1/files/${a.file_id}/preview`
-					: `/api/v1/files/${a.file_id}/content`,
-				mimeType: a.mime_type,
-				size: a.size,
-				kind: classifyAttachmentKind(a.mime_type),
-				createdAt: a.created_at,
-				createdBy: ''
-			}));
+			attachments = item.metadata.attachments.map((a: any) => {
+				const isImage = a.mime_type?.startsWith('image/');
+				// For folder-backed notes, use relative paths so markdown stays portable
+				const path = isFolderBacked
+					? `attachments/${a.name}`
+					: isImage
+						? `/api/v1/files/${a.file_id}/preview`
+						: `/api/v1/files/${a.file_id}/content`;
+				return {
+					id: a.file_id,
+					filename: a.name,
+					path,
+					mimeType: a.mime_type,
+					size: a.size,
+					kind: classifyAttachmentKind(a.mime_type),
+					createdAt: a.created_at,
+					createdBy: ''
+				};
+			});
 		} else {
 			attachments = [];
 		}
 	});
+
+	// Preprocess content for editor/viewer: resolve relative paths to API URLs
+	let editorContent = $derived(
+		isFolderBacked && attachments.length > 0
+			? resolveAttachmentPaths(item?.content ?? '', attachments)
+			: item?.content ?? ''
+	);
 
 	let breadcrumb = $derived([
 		{ label: module?.displayName || key, onClick: () => goto(`/modules/${key}`) },
@@ -131,7 +153,12 @@
 
 	async function handleSave(event: CustomEvent<{ content: string }>) {
 		saveStatus = 'saving';
-		await $saveMutation.mutateAsync({ title, content: event.detail.content });
+		// Postprocess: convert API URLs back to relative paths for folder-backed notes
+		let saveContent = event.detail.content;
+		if (isFolderBacked && attachments.length > 0) {
+			saveContent = restoreRelativePaths(saveContent, attachments);
+		}
+		await $saveMutation.mutateAsync({ title, content: saveContent });
 	}
 
 	function handleBack() {
@@ -151,7 +178,7 @@
 
 		// For folder-backed notes (note.md), upload to the attachments/ subfolder
 		let uploadFolderId = item.parent_folder_id;
-		if (item.name === 'note.md') {
+		if (isFolderBacked) {
 			try {
 				const contents = await getFolderContents(item.parent_folder_id);
 				const attachmentsFolder = contents.folders?.find((f: any) => f.name === 'attachments');
@@ -165,14 +192,28 @@
 
 		for (const file of event.detail.files) {
 			try {
-				const uploaded = await uploadFile(uploadFolderId, file);
+				// Collision-safe filename for folder-backed notes
+				let uploadName: string | undefined;
+				if (isFolderBacked && uploadFolderId) {
+					try {
+						const folderContents = await getFolderContents(uploadFolderId);
+						const existingNames = folderContents.files?.map((f: any) => f.name) || [];
+						uploadName = generateUniqueFilename(file.name, existingNames);
+					} catch (err) {
+						console.warn('Could not check for filename collisions:', err);
+					}
+				}
+
+				const uploaded = await uploadFile(uploadFolderId, file, undefined, uploadName);
 				const isImage = uploaded.mime_type?.startsWith('image/');
+				const relativePath = isFolderBacked ? `attachments/${uploaded.name}` : undefined;
+				const apiUrl = isImage
+					? `/api/v1/files/${uploaded.id}/preview`
+					: `/api/v1/files/${uploaded.id}/content`;
 				const attachment: RichMarkdownAttachment = {
 					id: uploaded.id,
 					filename: uploaded.name,
-					path: isImage
-						? `/api/v1/files/${uploaded.id}/preview`
-						: `/api/v1/files/${uploaded.id}/content`,
+					path: relativePath || apiUrl,
 					mimeType: uploaded.mime_type,
 					size: uploaded.size,
 					kind: classifyAttachmentKind(uploaded.mime_type),
@@ -180,6 +221,11 @@
 					createdBy: ''
 				};
 				attachments = [...attachments, attachment];
+
+				// Auto-insert relative link into editor for folder-backed notes
+				if (isFolderBacked && documentPage) {
+					documentPage.insertAttachment(attachment);
+				}
 			} catch (err) {
 				console.error('Failed to upload attachment:', err);
 				toastStore.show('Failed to upload attachment', 'error');
@@ -197,9 +243,42 @@
 		}
 	}
 
-	function handleSketch(event: CustomEvent<{ blob: Blob; filename: string }>) {
-		// Sketches are base64-embedded by the editor internally.
-		// This handler is a no-op for module documents.
+	async function handleSketch(event: CustomEvent<{ blob: Blob; filename: string }>) {
+		if (!item || !item.parent_folder_id) return;
+
+		if (isFolderBacked) {
+			// Upload sketch PNG to drawings/ subfolder
+			try {
+				const contents = await getFolderContents(item.parent_folder_id);
+				const drawingsFolder = contents.folders?.find((f: any) => f.name === 'drawings');
+				if (drawingsFolder) {
+					const folderContents = await getFolderContents(drawingsFolder.id);
+					const existingNames = folderContents.files?.map((f: any) => f.name) || [];
+					const uploadName = generateUniqueFilename(event.detail.filename, existingNames);
+					const sketchFile = new File([event.detail.blob], uploadName, { type: 'image/png' });
+					const uploaded = await uploadFile(drawingsFolder.id, sketchFile, undefined, uploadName);
+					const attachment: RichMarkdownAttachment = {
+						id: uploaded.id,
+						filename: uploaded.name,
+						path: `drawings/${uploaded.name}`,
+						mimeType: 'image/png',
+						size: uploaded.size,
+						kind: 'image',
+						createdAt: uploaded.created_at,
+						createdBy: ''
+					};
+					attachments = [...attachments, attachment];
+					if (documentPage) {
+						documentPage.insertAttachment(attachment);
+					}
+					return;
+				}
+			} catch (err) {
+				console.warn('Failed to upload sketch to drawings folder:', err);
+			}
+		}
+
+		// Fallback for legacy notes: base64 embedding is handled by MarkdownDocumentPage
 	}
 
 	async function handleOpenInFiles() {
@@ -254,8 +333,9 @@
 		</div>
 	{:else if item}
 		<MarkdownDocumentPage
+			bind:this={documentPage}
 			{title}
-			{content}
+			content={editorContent}
 			{mode}
 			{saveStatus}
 			{breadcrumb}
@@ -269,10 +349,12 @@
 				canExport: true,
 				canShare: true
 			}}
+			embedSketchesAsBase64={!isFolderBacked}
 			on:save={handleSave}
 			on:back={handleBack}
 			on:modechange={handleModeChange}
 			on:upload={handleUpload}
+			on:paste={handleUpload}
 			on:delete={handleDeleteAttachment}
 			on:sketch={handleSketch}
 		>
