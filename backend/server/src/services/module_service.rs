@@ -218,10 +218,10 @@ impl ModuleService {
                 "/Workspace/Brainstorming",
                 "brainstorming",
                 "template_blank_brainstorm",
-                "pen-tool",
+                "lightbulb",
                 false,
                 json!({
-                    "sidebar": { "enabled": true, "order": 55, "icon": "pen-tool", "label": "Brainstorming" },
+                    "sidebar": { "enabled": true, "order": 55, "icon": "lightbulb", "label": "Brainstorming" },
                     "dashboard": { "enabled": true, "order": 55, "widget": { "enabled": true, "type": "recent-brainstorm-boards", "title": "Brainstorming", "description": "Recent idea boards.", "size": "medium", "columns": { "desktop": 6, "tablet": 12, "mobile": 12 }, "maxItems": 4, "primaryAction": { "label": "New idea board", "action": "create-from-template", "template": "template_blank_brainstorm" } } },
                     "page": { "enabled": true, "route": "/modules/brainstorming", "renderer": "brainstorming", "layout": "gallery-grid", "emptyStateTitle": "No idea boards yet", "emptyStateDescription": "Create a simple visual board to capture sketches, flows, or early thinking.", "primaryAction": { "label": "New idea board", "action": "create-from-template", "template": "template_blank_brainstorm" } }
                 }),
@@ -319,6 +319,25 @@ impl ModuleService {
                 .await?;
             }
         }
+
+        // Fix brainstorming icon for existing installations (pen-tool → lightbulb)
+        sqlx::query(
+            r#"
+            UPDATE modules
+            SET icon = 'lightbulb',
+                ui_config = jsonb_set(
+                    COALESCE(ui_config, '{}'),
+                    '{sidebar,icon}',
+                    '"lightbulb"'
+                )
+            WHERE module_key = 'brainstorming'
+              AND tenant_id = $1
+              AND icon = 'pen-tool'
+            "#,
+        )
+        .bind(tenant_id)
+        .execute(self.metadata_store.pool())
+        .await?;
 
         if let Some(admin_id) = self.find_admin_user_for_tenant(tenant_id).await? {
             let enabled_modules = self
