@@ -10,7 +10,7 @@
 	import type { ModuleDefinition } from '$lib/modules/registry';
 	import ShareModal from '$lib/components/modals/ShareModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { PenTool, Plus, Clock, ImageOff, Folder, Search, List, Grid3X3, Share2 } from 'lucide-svelte';
+	import { Lightbulb, Plus, Clock, ImageOff, Folder, Search, List, Grid3X3, Share2 } from 'lucide-svelte';
 	import { formatDistanceToNow } from 'date-fns';
 
 	interface Props {
@@ -204,7 +204,7 @@
 								<div
 									class="flex h-full w-full flex-col items-center justify-center gap-2 text-base-content/30"
 								>
-									<PenTool size={32} />
+									<Lightbulb size={32} />
 									<span class="text-xs">Idea board</span>
 								</div>
 							{/if}
@@ -235,7 +235,7 @@
 						class="flex min-h-44 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-base-300/70 p-4 text-center text-base-content/45 transition-colors hover:border-brand-500/40 hover:text-brand-500"
 						onclick={handleCreateBoard}
 					>
-						<PenTool size={34} />
+						<Lightbulb size={34} />
 						<span class="text-sm font-semibold">No idea board yet</span>
 						<span class="max-w-40 text-xs">Create a board to start visualizing your ideas.</span>
 					</button>
@@ -286,7 +286,7 @@
 		{/if}
 
 		<div class="flex flex-col items-center gap-2 py-4 text-center text-base-content/55">
-			<PenTool size={34} />
+			<Lightbulb size={34} />
 			<p class="text-sm">You'll start with a blank board.</p>
 		</div>
 

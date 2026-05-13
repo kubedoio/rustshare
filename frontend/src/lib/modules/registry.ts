@@ -412,7 +412,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 			allowInternalShare: true
 		},
 		ui: {
-			sidebar: { enabled: true, order: 55, icon: 'pen-tool', label: 'Brainstorming' },
+			sidebar: { enabled: true, order: 55, icon: 'lightbulb', label: 'Brainstorming' },
 			dashboard: {
 				enabled: true,
 				order: 55,

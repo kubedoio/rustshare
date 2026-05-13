@@ -14,7 +14,7 @@
 		Settings,
 		Activity,
 		Users,
-		PenTool
+		Lightbulb
 	} from 'lucide-svelte';
 	import { DEFAULT_MODULE_ICON } from '$lib/modules/iconRegistry';
 	import PathSeparationIcon from './PathSeparationIcon.svelte';
@@ -39,7 +39,7 @@
 		settings: Settings,
 		activity: Activity,
 		users: Users,
-		'pen-tool': PenTool
+		'lightbulb': Lightbulb
 	};
 
 	$: IconComponent = iconMap[name] || iconMap[DEFAULT_MODULE_ICON] || Folder;

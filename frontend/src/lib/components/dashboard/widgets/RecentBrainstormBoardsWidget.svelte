@@ -3,7 +3,7 @@
 	import { listBrainstormBoards } from '$lib/api/brainstorming';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 	import { formatDistanceToNow } from 'date-fns';
-	import { Plus, ImageOff, PenTool } from 'lucide-svelte';
+	import { Plus, ImageOff, Lightbulb } from 'lucide-svelte';
 	import { goto } from '$app/navigation';
 
 	interface Props {
@@ -44,7 +44,7 @@
 		</div>
 	{:else if ($boardsQuery.data ?? []).length === 0}
 		<div class="flex flex-col items-center gap-1.5 py-3 text-base-content/40">
-			<PenTool size={18} />
+			<Lightbulb size={18} />
 			<p class="text-xs">No boards yet.</p>
 		</div>
 	{:else}
