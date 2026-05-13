@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
-	import { createFromTemplate } from '$lib/api/modules';
+	import { standupsApi } from '$lib/api/standups';
 	import { activityStore } from '$lib/stores/activity';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
-	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
-	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
+	import { resolveModuleFolderId } from '$lib/modules/modulePages';
+	import type { ModuleDefinition } from '$lib/modules/registry';
 	import {
 		CalendarDays,
 		Plus,
@@ -18,22 +18,14 @@
 		MoreHorizontal
 	} from 'lucide-svelte';
 
-	import { resolveModuleFolderId } from '$lib/modules/modulePages';
-	import type { ModuleDefinition } from '$lib/modules/registry';
-
 	let { module }: { module: ModuleDefinition } = $props();
 
-	function getRootPath() {
-		return module.rootPath;
-	}
-
-	const contentsQuery = createQuery({
-		queryKey: ['standups-root'],
-		queryFn: () => getModuleRootContents(getRootPath())
+	const standupsQuery = createQuery({
+		queryKey: ['standups'],
+		queryFn: () => standupsApi.list()
 	});
 
-	let contents = $derived($contentsQuery.data);
-	let standups = $derived(filterUserVisibleEntries(contents?.files ?? []));
+	let standups = $derived($standupsQuery.data ?? []);
 	let searchTerm = $state('');
 	let statusFilter = $state<'all' | 'recent'>('all');
 	let sortDirection = $state<'desc' | 'asc'>('desc');
@@ -46,15 +38,18 @@
 	let filteredStandups = $derived(
 		standups
 			.filter((standup) =>
-				(standup.name || '').toLowerCase().includes(searchTerm.trim().toLowerCase())
+				(standup.metadata?.title || standup.name || '')
+					.toLowerCase()
+					.includes(searchTerm.trim().toLowerCase())
 			)
 			.filter((standup) => {
 				if (statusFilter === 'all') return true;
-				return new Date(standup.modified_at).getTime() >= Date.now() - 30 * 24 * 60 * 60 * 1000;
+				const timestamp = new Date(standup.modified_at ?? standup.metadata?.updated_at ?? 0).getTime();
+				return timestamp >= Date.now() - 30 * 24 * 60 * 60 * 1000;
 			})
 			.sort((a, b) => {
-				const aTime = new Date(a.modified_at).getTime();
-				const bTime = new Date(b.modified_at).getTime();
+				const aTime = new Date(a.modified_at ?? a.metadata?.updated_at ?? 0).getTime();
+				const bTime = new Date(b.modified_at ?? b.metadata?.updated_at ?? 0).getTime();
 				return sortDirection === 'desc' ? bTime - aTime : aTime - bTime;
 			})
 	);
@@ -63,39 +58,60 @@
 	let createError = $state('');
 	let isCreating = $state(false);
 
+	function formatStandupTitle(date: Date = new Date()): string {
+		return `Standup — ${date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
+	}
+
+	function generateStandupContent(title: string): string {
+		return `# ${title}
+
+## Yesterday
+
+What did you work on yesterday?
+
+- 
+
+## Today
+
+What will you work on today?
+
+- 
+
+## Blockers
+
+What's slowing you down?
+
+- 
+
+## Follow-up
+
+What needs follow-up or support?
+
+- 
+`;
+	}
+
 	async function handleNewStandup() {
 		if (isCreating) return;
 		isCreating = true;
 		createError = '';
 
-		let title = `Standup — ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
-		const existingNames = standups.map((s) => s.name?.toLowerCase() ?? '');
-		if (existingNames.includes(title.toLowerCase())) {
-			let counter = 2;
-			while (existingNames.includes(`${title} ${counter}`.toLowerCase())) {
-				counter++;
-			}
-			title = `${title} ${counter}`;
-		}
-
-		if (!module.defaultTemplate) {
-			createError = 'No standup template is configured.';
-			isCreating = false;
-			return;
-		}
+		const now = new Date();
+		const title = formatStandupTitle(now);
+		const content = generateStandupContent(title);
 
 		try {
-			const result = await createFromTemplate({
-				template_key: module.defaultTemplate,
-				name: title,
-				parent_folder_id: null
+			const result = await standupsApi.create({
+				title,
+				date: now.toISOString(),
+				content
 			});
-			activityStore.addActivity('standup_created', title || 'Untitled Standup', {
-				artifactId: result.object_id,
+			activityStore.addActivity('standup_created', result.metadata?.title || title || 'Untitled Standup', {
+				artifactId: result.id,
 				moduleKey: 'standups'
 			});
-			goto(getModuleObjectHref(module.key, result.object_type, result.object_id));
-			$contentsQuery.refetch();
+			goto(`/modules/${module.key}/${result.id}`);
+			$standupsQuery.refetch();
 		} catch (err) {
 			console.error('Failed to create standup:', err);
 			createError = err instanceof Error ? err.message : 'Failed to create standup';
@@ -124,12 +140,12 @@
 	let itemPlural = $derived(module.ui.page.itemPlural ?? 'standup records');
 </script>
 
-<ModulePageShell title="Standup Records" subtitle="Capture simple daily updates, blockers, and follow-up items.">
+<ModulePageShell title="Standup Records" subtitle="Capture daily team updates, blockers, and follow-up items.">
 	<div slot="primaryAction">
 		<button
 			class="btn gap-2 btn-sm btn-primary"
 			onclick={handleNewStandup}
-			disabled={isCreating || !module.defaultTemplate}
+			disabled={isCreating}
 		>
 			<Plus size={14} />
 			<span>New standup</span>
@@ -148,7 +164,7 @@
 				{createError}
 			</div>
 		{/if}
-		{#if $contentsQuery.isLoading}
+		{#if $standupsQuery.isLoading}
 			<div class="flex h-32 items-center justify-center">
 				<div class="loading loading-md loading-spinner text-brand-500"></div>
 			</div>
@@ -205,7 +221,7 @@
 				<div class={viewMode === 'grid' ? 'grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3' : 'divide-y divide-base-200'}>
 					{#each visibleStandups as standup}
 						<a
-							href={getModuleObjectHref(module.key, 'file', standup.id)}
+							href={`/modules/${module.key}/${standup.id}`}
 							class={viewMode === 'grid'
 								? 'rounded-xl border border-base-300/50 p-4 transition-colors hover:border-brand-500/30 hover:bg-base-200/30'
 								: 'flex items-center gap-4 px-4 py-3 transition-colors hover:bg-base-200/40'}
@@ -215,7 +231,7 @@
 							</div>
 							<div class="flex min-w-0 flex-1 flex-col">
 								<span class="truncate text-sm font-medium text-base-content">
-									{standup.name.replace(/\.md$/i, '')}
+									{standup.metadata?.title || standup.name}
 								</span>
 								<span class="text-xs text-base-content/55">{new Date(standup.modified_at).toLocaleDateString()}</span>
 							</div>

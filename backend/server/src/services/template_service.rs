@@ -238,14 +238,19 @@ impl TemplateService {
                 vec![],
                 vec![
                     TemplateDefaultFile {
-                        path: "__primary__.md".to_string(),
+                        path: "index.md".to_string(),
                         content: Some(
-                            "# {{title}}\n\n## Yesterday\n\n## Today\n\n## Blockers\n\n## Follow-up\n".to_string(),
+                            "# {{title}}\n\n## Yesterday\n\nWhat did you work on yesterday?\n\n- \n\n## Today\n\nWhat will you work on today?\n\n- \n\n## Blockers\n\nWhat's slowing you down?\n\n- \n\n## Follow-up\n\nWhat needs follow-up or support?\n\n- \n".to_string(),
                         ),
                         content_type: Some("text/markdown".to_string()),
                     },
                     TemplateDefaultFile {
-                        path: "{{file_stem}}.rustshare.json".to_string(),
+                        path: "events.jsonl".to_string(),
+                        content: Some("".to_string()),
+                        content_type: Some("application/jsonlines".to_string()),
+                    },
+                    TemplateDefaultFile {
+                        path: ".rustshare.json".to_string(),
                         content: Some(
                             r#"{"type":"standup","module_key":"standups","title":"{{title}}"}"#
                                 .to_string(),
@@ -1143,7 +1148,7 @@ fn user_can_access_template_module(permissions: &serde_json::Value, is_admin: bo
 
 fn resolve_creation_mode(module_key: &str) -> TemplateCreationMode {
     match module_key {
-        "notes" | "standups" | "decisions" => TemplateCreationMode::SingleFile,
+        "notes" | "decisions" => TemplateCreationMode::SingleFile,
         _ => TemplateCreationMode::Folder,
     }
 }
@@ -1457,10 +1462,10 @@ mod tests {
     }
 
     #[test]
-    fn standup_templates_use_single_file_creation_mode() {
+    fn standup_templates_use_folder_creation_mode() {
         assert_eq!(
             resolve_creation_mode("standups"),
-            TemplateCreationMode::SingleFile
+            TemplateCreationMode::Folder
         );
     }
 

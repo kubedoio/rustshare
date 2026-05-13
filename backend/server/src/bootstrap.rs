@@ -38,6 +38,7 @@ struct Services {
     note_service: Arc<crate::services::note_service::NoteService>,
     decision_service: Arc<crate::services::decision_service::DecisionService>,
     meeting_service: Arc<crate::services::meeting_service::MeetingService>,
+    standup_service: Arc<crate::services::standup_service::StandupService>,
     module_service: Arc<crate::services::module_service::ModuleService>,
     template_service: Arc<crate::services::template_service::TemplateService>,
     kanban_service: Arc<crate::services::kanban_service::KanbanService>,
@@ -212,6 +213,7 @@ async fn init_services(
         note_service,
         decision_service,
         meeting_service,
+        standup_service,
         module_service,
         template_service,
         kanban_service,
@@ -244,6 +246,14 @@ async fn init_services(
         },
         async {
             Arc::new(crate::services::meeting_service::MeetingService::new(
+                Arc::clone(&file_service),
+                Arc::clone(&folder_service),
+                Arc::clone(&metadata_store),
+                Arc::clone(&object_store),
+            ))
+        },
+        async {
+            Arc::new(crate::services::standup_service::StandupService::new(
                 Arc::clone(&file_service),
                 Arc::clone(&folder_service),
                 Arc::clone(&metadata_store),
@@ -365,6 +375,7 @@ async fn init_services(
         note_service,
         decision_service,
         meeting_service,
+        standup_service,
         module_service,
         template_service,
         kanban_service,
@@ -551,6 +562,7 @@ pub async fn init_app() -> Result<AppState> {
         note_service: services.note_service,
         decision_service: services.decision_service,
         meeting_service: services.meeting_service,
+        standup_service: services.standup_service,
         module_service: services.module_service,
         template_service: services.template_service,
         kanban_service: services.kanban_service,

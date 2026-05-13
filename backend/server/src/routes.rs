@@ -398,6 +398,18 @@ pub fn meeting_routes() -> Router<AppState> {
         )
 }
 
+pub fn standup_routes() -> Router<AppState> {
+    use axum::routing::{get, post, put};
+    Router::new()
+        .route("/api/v1/standups", get(crate::handlers::list_standups))
+        .route("/api/v1/standups", post(crate::handlers::create_standup))
+        .route("/api/v1/standups/{id}", get(crate::handlers::get_standup))
+        .route(
+            "/api/v1/standups/{id}",
+            put(crate::handlers::update_standup),
+        )
+}
+
 pub fn brainstorming_routes() -> Router<AppState> {
     use axum::routing::{delete, get, post, put};
     Router::new()

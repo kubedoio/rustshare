@@ -17,6 +17,7 @@ mod kanban;
 mod meetings;
 mod modules;
 mod notes;
+mod standups;
 mod notifications;
 mod profile;
 mod public_shares;
@@ -80,6 +81,7 @@ pub use groups::{
 };
 pub use invites::{accept_invite, create_invite, get_invite};
 pub use meetings::{create_meeting, get_meeting, list_meetings, update_meeting};
+pub use standups::{create_standup, get_standup, list_standups, update_standup};
 pub use modules::{create_from_template, get_module, get_module_summary, list_enabled_modules};
 pub use notes::{
     create_note, delete_note, get_note, get_public_note, list_notes, list_recent_notes, move_note,

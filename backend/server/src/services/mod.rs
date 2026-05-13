@@ -5,4 +5,5 @@ pub mod kanban_service;
 pub mod meeting_service;
 pub mod module_service;
 pub mod note_service;
+pub mod standup_service;
 pub mod template_service;

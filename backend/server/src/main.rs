@@ -93,6 +93,7 @@ async fn main() -> Result<()> {
         .merge(routes::brainstorming_routes())
         .merge(routes::decision_routes())
         .merge(routes::meeting_routes())
+        .merge(routes::standup_routes())
         .route("/api", any(api_not_found))
         .route("/api/{*path}", any(api_not_found))
         .with_state(state.clone())
