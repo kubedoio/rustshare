@@ -301,11 +301,6 @@
 					<span class="rounded-md px-1.5 py-0.5 text-sm font-semibold text-base-content" aria-current="page">
 						{$boardQuery.data?.title ?? 'Untitled Board'}
 					</span>
-					<span
-						class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700"
-					>
-						Preview
-					</span>
 				</nav>
 				<h1 class="board-title">
 					{$boardQuery.data?.title ?? 'Untitled Board'}

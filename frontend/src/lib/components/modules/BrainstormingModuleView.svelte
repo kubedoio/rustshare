@@ -128,14 +128,6 @@
 			<span>Open in Files</span>
 		</button>
 	</div>
-	<div class="flex items-center gap-2" slot="titleExtra">
-		<span
-			class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700"
-		>
-			Preview
-		</span>
-	</div>
-
 	<div class="flex flex-col gap-4">
 		{#if $boardsQuery.isLoading}
 			<div class="flex h-32 items-center justify-center">
