@@ -341,7 +341,7 @@
 			icon: Share2,
 			iconColor: '#7c3aed',
 			iconBg: 'rgba(124, 58, 237, 0.1)',
-			href: '/files?filter=shared'
+			href: '/files?root=shared'
 		}
 	]);
 </script>
