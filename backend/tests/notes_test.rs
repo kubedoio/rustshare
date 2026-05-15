@@ -7,6 +7,7 @@ use rustshare_core::domain::User;
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{FileService, FolderService, PermissionResolver};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use rustshare_server::services::module_service::ModuleService;
 use rustshare_server::services::note_service::{NoteService, NoteVisibility};
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
@@ -516,6 +517,364 @@ async fn contract_public_note_page_does_not_leak_internal_paths() {
     // PublicNote should not contain internal identifiers
     assert!(!anon.content.contains("blobs/"));
     assert!(!anon.title.contains(".json"));
+
+    cleanup_user(&pool, user.id).await;
+}
+
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_create_note_creates_bundle_structure() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_bundle_user_1", tenant_id).await;
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let note = service
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Bundle Structure Test".to_string()),
+            None,
+            Some("# Hello".to_string()),
+        )
+        .await
+        .unwrap();
+
+    // The returned note name should be note.md
+    assert_eq!(note.name, "note.md");
+    let bundle_folder_id = note.parent_folder_id.expect("should have parent folder");
+
+    // Verify subfolders exist
+    let subfolders = metadata_store
+        .list_folders(Some(bundle_folder_id), user.id, tenant_id)
+        .await
+        .unwrap();
+    let subfolder_names: Vec<&str> = subfolders.iter().map(|f| f.name.as_str()).collect();
+    assert!(subfolder_names.contains(&"attachments"));
+    assert!(subfolder_names.contains(&"drawings"));
+    assert!(subfolder_names.contains(&"exports"));
+    assert!(subfolder_names.contains(&"_rustshare"));
+
+    // Verify note.md exists inside bundle
+    let files = metadata_store
+        .list_files(Some(bundle_folder_id), user.id, tenant_id)
+        .await
+        .unwrap();
+    let file_names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+    assert!(file_names.contains(&"note.md"));
+
+    // Verify manifest.json inside _rustshare
+    let rustshare_folder = subfolders.iter().find(|f| f.name == "_rustshare").unwrap();
+    let manifest_files = metadata_store
+        .list_files(Some(rustshare_folder.id), user.id, tenant_id)
+        .await
+        .unwrap();
+    let manifest_names: Vec<&str> = manifest_files.iter().map(|f| f.name.as_str()).collect();
+    assert!(manifest_names.contains(&"manifest.json"));
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_save_note_renames_bundle_folder_on_h1_change() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_bundle_user_2", tenant_id).await;
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let note = service
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Original Title".to_string()),
+            None,
+            Some("original body".to_string()),
+        )
+        .await
+        .unwrap();
+
+    let bundle_folder_id = note.parent_folder_id.expect("should have parent folder");
+
+    let saved = service
+        .save_note(note.id, user.id, "# New Title\n\nbody".to_string(), None, None)
+        .await
+        .unwrap();
+
+    // File name should still be note.md
+    assert_eq!(saved.name, "note.md");
+
+    // Bundle folder should be renamed to the new H1 title
+    let bundle_folder = metadata_store
+        .find_folder_by_id(bundle_folder_id, user.id)
+        .await
+        .unwrap()
+        .expect("bundle folder should exist");
+    assert_eq!(bundle_folder.name, "New Title");
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_delete_note_deletes_entire_bundle() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_bundle_user_3", tenant_id).await;
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let note = service
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Delete Bundle Test".to_string()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let bundle_folder_id = note.parent_folder_id.expect("should have parent folder");
+
+    service.delete_note(note.id, user.id).await.unwrap();
+
+    // Bundle folder should be gone
+    let folder = metadata_store
+        .find_folder_by_id(bundle_folder_id, user.id)
+        .await
+        .unwrap();
+    assert!(folder.is_none(), "bundle folder should be deleted");
+
+    // No files should remain inside the bundle
+    let files = metadata_store
+        .list_files(Some(bundle_folder_id), user.id, tenant_id)
+        .await
+        .unwrap();
+    assert!(files.is_empty(), "bundle should contain no files");
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_list_notes_includes_bundle_counts() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_bundle_user_4", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let note = service
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Counts Test".to_string()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let bundle_folder_id = note.parent_folder_id.expect("should have parent folder");
+
+    let subfolders = metadata_store
+        .list_folders(Some(bundle_folder_id), user.id, tenant_id)
+        .await
+        .unwrap();
+    let attachments_folder = subfolders
+        .iter()
+        .find(|f| f.name == "attachments")
+        .expect("attachments folder should exist");
+    let drawings_folder = subfolders
+        .iter()
+        .find(|f| f.name == "drawings")
+        .expect("drawings folder should exist");
+
+    // Upload two attachments
+    file_service
+        .upload_file(
+            user.id,
+            "attach1.txt".to_string(),
+            Some(attachments_folder.id),
+            Bytes::from("a"),
+            "text/plain".to_string(),
+            tenant_id,
+        )
+        .await
+        .unwrap();
+    file_service
+        .upload_file(
+            user.id,
+            "attach2.txt".to_string(),
+            Some(attachments_folder.id),
+            Bytes::from("b"),
+            "text/plain".to_string(),
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    // Upload one drawing
+    file_service
+        .upload_file(
+            user.id,
+            "drawing1.svg".to_string(),
+            Some(drawings_folder.id),
+            Bytes::from("<svg/>"),
+            "image/svg+xml".to_string(),
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let notes = service
+        .list_notes(user.id, tenant_id, Some(10))
+        .await
+        .unwrap();
+
+    let found = notes
+        .iter()
+        .find(|n| n.id == note.id)
+        .expect("note should be in list");
+    assert_eq!(found.attachment_count, 2);
+    assert_eq!(found.drawing_count, 1);
+    assert_eq!(found.export_count, 0);
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_standalone_md_still_works() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_bundle_user_5", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    // Create a bundle note first to ensure /Workspace/Notes exists
+    let setup_note = service
+        .create_note(user.id, tenant_id, Some("Setup".to_string()), None, None)
+        .await
+        .unwrap();
+
+    let bundle_folder = metadata_store
+        .find_folder_by_id(setup_note.parent_folder_id.unwrap(), user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let notes_folder = metadata_store
+        .find_folder_by_id(bundle_folder.parent_folder_id.unwrap(), user.id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Create a standalone markdown file directly in Notes folder
+    let standalone = file_service
+        .upload_file(
+            user.id,
+            "standalone.md".to_string(),
+            Some(notes_folder.id),
+            Bytes::from("standalone content"),
+            "text/markdown".to_string(),
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    // list_notes should include it with zero counts
+    let notes = service
+        .list_notes(user.id, tenant_id, Some(10))
+        .await
+        .unwrap();
+    let found = notes
+        .iter()
+        .find(|n| n.id == standalone.id)
+        .expect("standalone should appear in list");
+    assert_eq!(found.name, "standalone.md");
+    assert_eq!(found.attachment_count, 0);
+    assert_eq!(found.drawing_count, 0);
+    assert_eq!(found.export_count, 0);
+
+    // save_note should work (plain content update, no H1 rename)
+    let saved = service
+        .save_note(standalone.id, user.id, "updated standalone".to_string(), None, None)
+        .await
+        .unwrap();
+    assert_eq!(saved.content, "updated standalone");
+
+    // delete_note should work (file deleted, no folder cascade)
+    service.delete_note(standalone.id, user.id).await.unwrap();
+
+    let deleted = metadata_store
+        .find_file_by_id(standalone.id, user.id)
+        .await
+        .unwrap();
+    assert!(deleted.is_none(), "standalone file should be deleted");
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_recent_activity_shows_bundle_title() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_bundle_user_6", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let folder_service = Arc::new(create_folder_service(
+        event_store,
+        metadata_store.clone(),
+        &pool,
+    ));
+    let module_service = ModuleService::new(folder_service, metadata_store.clone());
+
+    // Ensure default modules exist for this tenant
+    module_service.ensure_default_modules(tenant_id).await.unwrap();
+
+    let note = service
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Activity Test Note".to_string()),
+            None,
+            Some("activity content".to_string()),
+        )
+        .await
+        .unwrap();
+
+    let summary = module_service
+        .get_module_summary("notes", tenant_id, user.id)
+        .await
+        .unwrap();
+
+    let names: Vec<&str> = summary.recent_items.iter().map(|i| i.name.as_str()).collect();
+    assert!(
+        names.iter().any(|n| *n == "Activity Test Note"),
+        "recent items should show bundle title, got: {:?}",
+        names
+    );
+    assert!(
+        !names.iter().any(|n| *n == "note.md"),
+        "recent items should not show raw note.md name, got: {:?}",
+        names
+    );
 
     cleanup_user(&pool, user.id).await;
 }

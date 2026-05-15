@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { page } from '$app/stores';
 	import { createQuery, createMutation } from '$lib/query-compat';
+	import { queryClient } from '$lib/query-client';
 	import { notesApi } from '$lib/api/notes';
 	import { decisionsApi } from '$lib/api/decisions';
 	import { meetingsApi } from '$lib/api/meetings';
@@ -75,7 +77,7 @@
 					: `Last edited ${new Date(item.modified_at).toLocaleString()}`
 			: ''
 	);
-	let mode: EditorMode = $state('read');
+	let mode: EditorMode = $state(currentKey() === 'notes' ? 'edit' : 'read');
 	let saveStatus: EditorSaveStatus = $state('saved');
 	let showShareModal = $state(false);
 	let showRenameModal = $state(false);
@@ -88,7 +90,7 @@
 
 	$effect(() => {
 		if (item?.metadata?.attachments) {
-			attachments = item.metadata.attachments.map((a: any) => {
+			const serverAttachments = item.metadata.attachments.map((a: any) => {
 				const isImage = a.mime_type?.startsWith('image/');
 				// For folder-backed notes, use relative paths so markdown stays portable
 				const path = isFolderBacked
@@ -107,7 +109,12 @@
 					createdBy: ''
 				};
 			});
-		} else {
+			// Preserve local-only attachments that haven't been saved yet
+			// (prevents background refetch from dropping unsaved uploads)
+			const serverIds = new Set(serverAttachments.map((a: RichMarkdownAttachment) => a.id));
+			const localOnly = untrack(() => attachments).filter((a) => !serverIds.has(a.id));
+			attachments = [...serverAttachments, ...localOnly];
+		} else if (untrack(() => attachments).length === 0) {
 			attachments = [];
 		}
 	});
@@ -116,7 +123,7 @@
 	let editorContent = $derived(
 		isFolderBacked && attachments.length > 0
 			? resolveAttachmentPaths(item?.content ?? '', attachments)
-			: item?.content ?? ''
+			: (item?.content ?? '')
 	);
 
 	let breadcrumb = $derived([
@@ -124,16 +131,21 @@
 		{ label: title }
 	]);
 
+	function serializeNoteAttachments() {
+		return attachments.map((a) => ({
+			file_id: a.id,
+			name: a.filename,
+			mime_type: a.mimeType,
+			size: a.size,
+			created_at: a.createdAt
+		}));
+	}
+
 	const saveMutation = createMutation<any, Error, { title: string; content: string }>({
 		mutationFn: (data: { title: string; content: string }) => {
-			const noteAttachments = attachments.map((a) => ({
-				file_id: a.id,
-				name: a.filename,
-				mime_type: a.mimeType,
-				size: a.size,
-				created_at: a.createdAt
-			}));
-			if (key === 'notes') return notesApi.update(id, { content: data.content, attachments: noteAttachments });
+			const noteAttachments = serializeNoteAttachments();
+			if (key === 'notes')
+				return notesApi.update(id, { content: data.content, attachments: noteAttachments });
 			if (key === 'decisions')
 				return decisionsApi.update(id, { title: data.title, content: data.content });
 			if (key === 'meetings')
@@ -141,24 +153,45 @@
 			if (key === 'standups')
 				return standupsApi.update(id, { title: data.title, content: data.content });
 			return Promise.reject('Invalid module');
-		},
-		onSuccess: () => {
-			saveStatus = 'saved';
-			$query.refetch();
-		},
-		onError: () => {
-			saveStatus = 'error';
 		}
 	});
 
 	async function handleSave(event: CustomEvent<{ content: string }>) {
 		saveStatus = 'saving';
+		const editorContent = event.detail.content;
 		// Postprocess: convert API URLs back to relative paths for folder-backed notes
-		let saveContent = event.detail.content;
+		let saveContent = editorContent;
 		if (isFolderBacked && attachments.length > 0) {
 			saveContent = restoreRelativePaths(saveContent, attachments);
 		}
-		await $saveMutation.mutateAsync({ title, content: saveContent });
+		try {
+			const saved = await $saveMutation.mutateAsync({ title, content: saveContent });
+			saveStatus = 'saved';
+			documentPage?.markSaved(editorContent);
+			if (key === 'notes') {
+				const noteAttachments = serializeNoteAttachments();
+				queryClient.setQueryData(['module-item', currentKey(), currentId()], (previous: any) => {
+					if (!previous) return previous;
+					const modifiedAt = saved?.modified_at ?? previous.modified_at;
+					return {
+						...previous,
+						content: saveContent,
+						current_version: saved?.current_version ?? previous.current_version,
+						modified_at: modifiedAt,
+						metadata: {
+							...previous.metadata,
+							attachments: noteAttachments,
+							updated_at: modifiedAt
+						}
+					};
+				});
+			} else {
+				await $query.refetch();
+			}
+		} catch (error) {
+			saveStatus = 'error';
+			documentPage?.markSaveError(error instanceof Error ? error.message : 'Autosave failed');
+		}
 	}
 
 	function handleBack() {
@@ -233,7 +266,9 @@
 		}
 	}
 
-	async function handleDeleteAttachment(event: CustomEvent<{ attachment: RichMarkdownAttachment }>) {
+	async function handleDeleteAttachment(
+		event: CustomEvent<{ attachment: RichMarkdownAttachment }>
+	) {
 		try {
 			await deleteFile(event.detail.attachment.id);
 			attachments = attachments.filter((a) => a.id !== event.detail.attachment.id);
@@ -290,10 +325,7 @@
 		}
 	}
 
-	function handleShareNotification(event: {
-		message: string;
-		type: 'success' | 'error' | 'info';
-	}) {
+	function handleShareNotification(event: { message: string; type: 'success' | 'error' | 'info' }) {
 		toastStore.show(event.message, event.type);
 	}
 
@@ -350,20 +382,18 @@
 				canShare: true
 			}}
 			embedSketchesAsBase64={!isFolderBacked}
+			collab={key === 'notes'}
+			docId={id}
 			on:save={handleSave}
 			on:back={handleBack}
 			on:modechange={handleModeChange}
 			on:upload={handleUpload}
-			on:paste={handleUpload}
 			on:delete={handleDeleteAttachment}
 			on:sketch={handleSketch}
 		>
 			<svelte:fragment slot="extraActions">
 				{#if key === 'notes'}
-					<button
-						class="btn btn-ghost btn-sm gap-1.5"
-						onclick={() => (showShareModal = true)}
-					>
+					<button class="btn gap-1.5 btn-ghost btn-sm" onclick={() => (showShareModal = true)}>
 						<Share2 size={14} />
 						<span>Share</span>
 					</button>
@@ -371,18 +401,18 @@
 
 				{#if key === 'decisions'}
 					<button
-						class="btn btn-ghost btn-sm gap-1.5"
-						onclick={() => { showRenameModal = true; renameError = ''; }}
+						class="btn gap-1.5 btn-ghost btn-sm"
+						onclick={() => {
+							showRenameModal = true;
+							renameError = '';
+						}}
 					>
 						<Pencil size={14} />
 						<span>Rename</span>
 					</button>
 				{/if}
 
-				<button
-					class="btn btn-ghost btn-sm gap-1.5"
-					onclick={handleOpenInFiles}
-				>
+				<button class="btn gap-1.5 btn-ghost btn-sm" onclick={handleOpenInFiles}>
 					<Folder size={14} />
 					<span>Open in Files</span>
 				</button>
@@ -409,7 +439,10 @@
 				error={renameError}
 				isLoading={isRenaming}
 				onConfirm={handleRenameConfirm}
-				onCancel={() => { showRenameModal = false; renameError = ''; }}
+				onCancel={() => {
+					showRenameModal = false;
+					renameError = '';
+				}}
 			/>
 		{/if}
 	{/if}

@@ -75,3 +75,30 @@ describe('renderMarkdown', () => {
 			expect(html).toContain('Name</th>');
 		});
 	});
+
+	describe('task list rendering', () => {
+		it('renders unchecked task items', () => {
+			const input = '- [ ] Buy groceries\n- [ ] Walk the dog';
+			const html = renderMarkdown(input);
+			expect(html).toContain('<ul class="list-none my-2 pl-0">');
+			expect(html).toContain('<input type="checkbox" disabled="" class="');
+			expect(html).toContain('Buy groceries');
+			expect(html).toContain('Walk the dog');
+			expect(html).not.toContain('checked');
+		});
+
+		it('renders checked task items', () => {
+			const input = '- [x] Buy groceries\n- [X] Walk the dog';
+			const html = renderMarkdown(input);
+			expect(html).toContain('<input type="checkbox" disabled="" checked="" class="');
+			expect(html).toContain('Buy groceries');
+			expect(html).toContain('Walk the dog');
+		});
+
+		it('does not treat regular lists as task lists', () => {
+			const input = '- Regular item\n- Another item';
+			const html = renderMarkdown(input);
+			expect(html).toContain('<ul class="list-disc my-2 pl-5">');
+			expect(html).not.toContain('<input');
+		});
+	});

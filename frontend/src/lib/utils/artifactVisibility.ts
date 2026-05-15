@@ -21,8 +21,7 @@ export function isInternalRustShareFile(name: string): boolean {
 		lower.endsWith('.editor.json') ||
 		lower.endsWith('.metadata.json') ||
 		lower.startsWith('.rustshare-') ||
-		lower.startsWith('__') ||
-		lower === 'attachments'
+		lower.startsWith('__')
 	);
 }
 

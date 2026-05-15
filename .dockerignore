@@ -20,6 +20,9 @@ Thumbs.db
 
 # Rust - Local build artifacts
 target/
+**/target/
+backend/target/
+backend/**/target/
 # Keep Cargo.lock for reproducible builds in Docker
 !Cargo.lock
 !backend/**/Cargo.lock
@@ -29,7 +32,10 @@ target/
 # Frontend - Build artifacts and dependencies
 frontend/node_modules/
 frontend/dist/
+frontend/build/
+frontend/.svelte-kit/
 frontend/.cache/
+node_modules/
 
 # Testing
 tests/

@@ -40,6 +40,7 @@ pub struct FolderWithShares {
     pub share_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effective_permission: Option<String>,
+    pub note_bundle_file_id: Option<Uuid>,
 }
 
 /// Folder contents with share indicators
@@ -68,6 +69,7 @@ pub struct FolderTreeNode {
     pub share_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effective_permission: Option<String>,
+    pub note_bundle_file_id: Option<Uuid>,
 }
 
 /// Folder tree response with share indicators
@@ -189,7 +191,13 @@ pub async fn get_folder_contents(
                 AND revoked_at IS NULL
                 AND expires_at IS NOT NULL
             ) as share_expires_at,
-            'Admin'::TEXT as effective_permission
+            'Admin'::TEXT as effective_permission,
+            (
+                SELECT fi.id
+                FROM files fi
+                WHERE fi.parent_folder_id = f.id AND fi.name = 'note.md' AND fi.deleted_at IS NULL
+                LIMIT 1
+            ) as note_bundle_file_id
         FROM folders f
         LEFT JOIN folder_sizes fs ON fs.root_id = f.id
         WHERE f.parent_folder_id = $1 AND f.owner_id = $2 AND f.tenant_id = $3 AND f.deleted_at IS NULL
@@ -298,7 +306,13 @@ pub async fn get_root_contents(
                 AND revoked_at IS NULL
                 AND expires_at IS NOT NULL
             ) as share_expires_at,
-            'Admin'::TEXT as effective_permission
+            'Admin'::TEXT as effective_permission,
+            (
+                SELECT fi.id
+                FROM files fi
+                WHERE fi.parent_folder_id = f.id AND fi.name = 'note.md' AND fi.deleted_at IS NULL
+                LIMIT 1
+            ) as note_bundle_file_id
         FROM folders f
         LEFT JOIN folder_sizes fs ON fs.root_id = f.id
         WHERE f.parent_folder_id IS NULL AND f.owner_id = $1 AND f.tenant_id = $2 AND f.deleted_at IS NULL
@@ -388,7 +402,13 @@ async fn build_folder_tree_with_shares(
                 SELECT MIN(expires_at) FROM shares
                 WHERE folder_id = f.id
                 AND revoked_at IS NULL
-            ) as share_expires_at
+            ) as share_expires_at,
+            (
+                SELECT fi.id
+                FROM files fi
+                WHERE fi.parent_folder_id = f.id AND fi.name = 'note.md' AND fi.deleted_at IS NULL
+                LIMIT 1
+            ) as note_bundle_file_id
         FROM folders f
         WHERE f.id = $1 AND f.owner_id = $2 AND f.tenant_id = $3 AND f.deleted_at IS NULL
         "#,
@@ -434,6 +454,7 @@ async fn build_folder_tree_with_shares(
             .map_err(|_| super::internal_error_response())?,
         share_expires_at: folder_row.try_get("share_expires_at").ok(),
         effective_permission: Some("Admin".to_string()),
+        note_bundle_file_id: folder_row.try_get("note_bundle_file_id").ok(),
     };
 
     // Get child folders
@@ -508,6 +529,7 @@ pub async fn get_folder_tree(
         share_count: 0,
         share_expires_at: None,
         effective_permission: Some("Admin".to_string()),
+        note_bundle_file_id: None,
     };
 
     let tree = FolderTreeWithShares {

@@ -8,8 +8,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use futures_util::{SinkExt, StreamExt};
-use rustshare_auth::ShareSessionClaims;
-use rustshare_core::domain::{FileId, ShareId, SharePermissions, UserId};
+use rustshare_core::domain::{SharePermissions, UserId};
 use rustshare_core::events::{
     Event, EventType, NotificationCreatedPayload, ReplicationStateChangedPayload,
     ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload,
@@ -21,23 +20,9 @@ use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use super::extractors::bearer_token_from_headers;
+use super::ws_auth::{resolve_ws_client_identity, ClientIdentity, WsAuthQuery};
 use super::{AuthenticatedUser, ErrorResponse};
-use crate::web_session::{extract_cookie_value, resolve_user_session};
 use crate::AppState;
-
-/// Identifies the client connected to WebSocket
-#[derive(Debug, Clone)]
-enum ClientIdentity {
-    /// Authenticated user
-    User(UserId),
-    /// Anonymous share viewer with session token
-    ShareViewer {
-        share_id: ShareId,
-        file_id: Option<FileId>,
-        permissions: SharePermissions,
-    },
-}
 
 /// Client message for requesting catch-up
 #[derive(Debug, Deserialize)]
@@ -45,12 +30,6 @@ struct SyncRequest {
     #[serde(rename = "type")]
     msg_type: String,
     last_seen_event_id: Option<String>,
-}
-
-/// Query parameters for WebSocket authentication
-#[derive(Debug, Deserialize)]
-pub struct SyncQuery {
-    pub token: Option<String>,
 }
 
 /// Notification message sent to client
@@ -118,37 +97,6 @@ struct LaggedMessage {
     message: String,
 }
 
-/// Validate client token - supports both user and share session JWTs
-async fn validate_client_token(
-    token: &str,
-    jwt_manager: &rustshare_auth::JwtManager,
-) -> Result<ClientIdentity, (StatusCode, String)> {
-    // First try to decode as user JWT
-    if let Ok(claims) = jwt_manager.validate(token) {
-        let user_id = UserId::from(
-            Uuid::parse_str(&claims.sub)
-                .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid user ID".to_string()))?,
-        );
-        return Ok(ClientIdentity::User(user_id));
-    }
-
-    // Try to decode as share session JWT
-    if let Ok(claims) = jwt_manager.decode_custom::<ShareSessionClaims>(token) {
-        // Check if expired
-        if claims.is_expired() {
-            return Err((StatusCode::UNAUTHORIZED, "Token expired".to_string()));
-        }
-
-        return Ok(ClientIdentity::ShareViewer {
-            share_id: claims.share_id,
-            file_id: claims.file_id,
-            permissions: claims.permissions,
-        });
-    }
-
-    Err((StatusCode::UNAUTHORIZED, "Invalid token".to_string()))
-}
-
 /// WebSocket handler for real-time sync
 /// Supports authentication via:
 /// - Authorization header: `Authorization: Bearer <token>`
@@ -157,30 +105,9 @@ pub async fn sync_handler(
     State(state): State<AppState>,
     ws: WebSocketUpgrade,
     headers: HeaderMap,
-    Query(query): Query<SyncQuery>,
+    Query(query): Query<WsAuthQuery>,
 ) -> Result<Response, (StatusCode, String)> {
-    let client_identity = if let Some(token) = bearer_token_from_headers(&headers) {
-        validate_client_token(&token, &state.jwt_manager).await?
-    } else if let Some(token) = query.token {
-        validate_client_token(&token, &state.jwt_manager).await?
-    } else if let Some(session_token) =
-        extract_cookie_value(&headers, rustshare_auth::WEB_SESSION_COOKIE_NAME)
-    {
-        let Some(session) = resolve_user_session(&state, &session_token)
-            .await
-            .map_err(|error| (StatusCode::UNAUTHORIZED, error))?
-        else {
-            return Err((StatusCode::UNAUTHORIZED, "Invalid session".to_string()));
-        };
-
-        ClientIdentity::User(session.user_id)
-    } else {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            "Missing authentication (cookie, Authorization header, or ?token= query parameter)"
-                .to_string(),
-        ));
-    };
+    let client_identity = resolve_ws_client_identity(&state, &headers, &query).await?;
 
     match &client_identity {
         ClientIdentity::User(user_id) => {

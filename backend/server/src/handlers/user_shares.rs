@@ -471,6 +471,7 @@ pub async fn get_user_shared_folder_contents(
             share_count: share_info.1,
             share_expires_at: share_info.2,
             effective_permission: permission_to_string(permission.permission),
+            note_bundle_file_id: None,
         });
     }
 
@@ -586,6 +587,7 @@ async fn build_user_shared_folder_tree(
             share_count: share_info.1,
             share_expires_at: share_info.2,
             effective_permission: permission_to_string(permission.permission),
+            note_bundle_file_id: None,
         },
         subfolders,
     })

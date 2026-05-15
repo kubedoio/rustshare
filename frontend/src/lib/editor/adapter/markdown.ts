@@ -199,10 +199,13 @@ export interface CreateEditorOptions {
 	content?: string;
 	editable?: boolean;
 	onUpdate?: (markdown: string) => void;
+	onDocumentUpdate?: (editor: Editor) => void;
 	onSelectionUpdate?: () => void;
 	onCreate?: () => void;
 	/** Additional ProseMirror editor props (e.g. handleDoubleClickOn) */
 	editorProps?: Record<string, any>;
+	/** Optional Yjs document for collaborative editing */
+	ydoc?: import('yjs').Doc;
 }
 
 /**
@@ -214,7 +217,7 @@ export function createRichEditor(options: CreateEditorOptions): Editor {
 
 	const editor = new Editor({
 		element: options.element,
-		extensions: getEditorExtensions(),
+		extensions: getEditorExtensions({ ydoc: options.ydoc }),
 		content: preprocessed,
 		editable: options.editable ?? true,
 		editorProps: {
@@ -227,7 +230,9 @@ export function createRichEditor(options: CreateEditorOptions): Editor {
 			options.onCreate?.();
 		},
 		onUpdate: ({ editor: e }) => {
-			if (options.onUpdate) {
+			if (options.onDocumentUpdate) {
+				options.onDocumentUpdate(e);
+			} else if (options.onUpdate) {
 				const md = editorToMarkdown(e);
 				options.onUpdate(md);
 			}

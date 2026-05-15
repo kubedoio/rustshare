@@ -121,6 +121,9 @@ pub struct NoteSummary {
     pub size: i64,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
+    pub attachment_count: i64,
+    pub drawing_count: i64,
+    pub export_count: i64,
 }
 
 /// Errors that can occur in note operations.
@@ -147,7 +150,7 @@ impl From<rustshare_core::services::FileError> for NoteError {
             }
             rustshare_core::services::FileError::InvalidName(s) => NoteError::InvalidName(s),
             rustshare_core::services::FileError::Storage(s) => NoteError::Storage(s),
-            rustshare_core::services::FileError::Database(e) => NoteError::Database(e.to_string()),
+            rustshare_core::services::FileError::Database(e) => NoteError::Database(e),
             _ => NoteError::Storage(e.to_string()),
         }
     }
@@ -611,6 +614,56 @@ impl NoteService {
     /// Check if a file represents a folder-backed note (note.md inside a bundle).
     fn is_folder_backed_note(file: &rustshare_core::domain::File) -> bool {
         file.name == "note.md"
+    }
+
+    /// Count visible files in a note bundle's attachments, drawings, and exports subfolders.
+    async fn count_bundle_contents(
+        &self,
+        bundle_folder_id: Uuid,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(i64, i64, i64), NoteError> {
+        let subfolders = self
+            .metadata_store
+            .list_folders(Some(bundle_folder_id), owner_id, tenant_id)
+            .await
+            .map_err(|e| NoteError::Database(e.to_string()))?;
+
+        let mut attachment_count = 0i64;
+        let mut drawing_count = 0i64;
+        let mut export_count = 0i64;
+
+        for subfolder in subfolders {
+            match subfolder.name.as_str() {
+                "attachments" => {
+                    let files = self
+                        .metadata_store
+                        .list_files(Some(subfolder.id), owner_id, tenant_id)
+                        .await
+                        .map_err(|e| NoteError::Database(e.to_string()))?;
+                    attachment_count = files.len() as i64;
+                }
+                "drawings" => {
+                    let files = self
+                        .metadata_store
+                        .list_files(Some(subfolder.id), owner_id, tenant_id)
+                        .await
+                        .map_err(|e| NoteError::Database(e.to_string()))?;
+                    drawing_count = files.len() as i64;
+                }
+                "exports" => {
+                    let files = self
+                        .metadata_store
+                        .list_files(Some(subfolder.id), owner_id, tenant_id)
+                        .await
+                        .map_err(|e| NoteError::Database(e.to_string()))?;
+                    export_count = files.len() as i64;
+                }
+                _ => {}
+            }
+        }
+
+        Ok((attachment_count, drawing_count, export_count))
     }
 
     /// Get or create a subfolder inside a note bundle.
@@ -1090,19 +1143,28 @@ impl NoteService {
             // For folder-backed notes, derive display name from parent folder
             let display_name = if Self::is_folder_backed_note(&file) {
                 if let Some(parent_id) = file.parent_folder_id {
-                    self.metadata_store
-                        .find_folder_by_id(parent_id, user_id)
-                        .await
-                        .ok()
-                        .flatten()
-                        .map(|f| f.name)
-                        .unwrap_or_else(|| file.name.clone())
+                    match self.metadata_store.find_folder_by_id(parent_id, user_id).await {
+                        Ok(Some(folder)) => folder.name,
+                        _ => file.name.clone(),
+                    }
                 } else {
                     file.name.clone()
                 }
             } else {
                 file.name.clone()
             };
+
+            let (attachment_count, drawing_count, export_count) =
+                if Self::is_folder_backed_note(&file) {
+                    if let Some(parent_id) = file.parent_folder_id {
+                        self.count_bundle_contents(parent_id, file.owner_id, tenant_id)
+                            .await?
+                    } else {
+                        (0, 0, 0)
+                    }
+                } else {
+                    (0, 0, 0)
+                };
 
             notes.push(NoteSummary {
                 id: file.id,
@@ -1115,6 +1177,9 @@ impl NoteService {
                 size: file.size,
                 created_at: file.created_at,
                 modified_at: file.modified_at,
+                attachment_count,
+                drawing_count,
+                export_count,
             });
         }
 
@@ -1169,19 +1234,28 @@ impl NoteService {
             // For folder-backed notes, derive display name from parent folder
             let display_name = if Self::is_folder_backed_note(&file) {
                 if let Some(parent_id) = file.parent_folder_id {
-                    self.metadata_store
-                        .find_folder_by_id(parent_id, user_id)
-                        .await
-                        .ok()
-                        .flatten()
-                        .map(|f| f.name)
-                        .unwrap_or_else(|| file.name.clone())
+                    match self.metadata_store.find_folder_by_id(parent_id, user_id).await {
+                        Ok(Some(folder)) => folder.name,
+                        _ => file.name.clone(),
+                    }
                 } else {
                     file.name.clone()
                 }
             } else {
                 file.name.clone()
             };
+
+            let (attachment_count, drawing_count, export_count) =
+                if Self::is_folder_backed_note(&file) {
+                    if let Some(parent_id) = file.parent_folder_id {
+                        self.count_bundle_contents(parent_id, file.owner_id, tenant_id)
+                            .await?
+                    } else {
+                        (0, 0, 0)
+                    }
+                } else {
+                    (0, 0, 0)
+                };
 
             notes.push(NoteSummary {
                 id: file.id,
@@ -1194,6 +1268,9 @@ impl NoteService {
                 size: file.size,
                 created_at: file.created_at,
                 modified_at: file.modified_at,
+                attachment_count,
+                drawing_count,
+                export_count,
             });
         }
 

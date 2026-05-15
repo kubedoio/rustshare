@@ -2,7 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import type { File, Folder } from '$lib/api/types';
 	import FileTypeIcon from './FileTypeIcon.svelte';
-	import { Folder as FolderIcon } from 'lucide-svelte';
+	import { Folder as FolderIcon, Settings, FileText } from 'lucide-svelte';
 
 	export let item: File | Folder;
 	export let isFolder: boolean = false;
@@ -35,6 +35,8 @@
 	$: fileItem = isFolder ? null : (item as File);
 	$: mimeType = fileItem?.mime_type || '';
 	$: fileName = item?.name || '';
+	$: isRustshareSystemFolder = isFolder && item.name === '_rustshare';
+	$: isNoteBundle = isFolder && (item as any).note_bundle_file_id != null;
 
 	const isPDF = (mime: string) => mime === 'application/pdf';
 	const isVideo = (mime: string) => mime.startsWith('video/');
@@ -96,11 +98,22 @@
 
 <div
 	class="{sizeClass} flex flex-shrink-0 items-center justify-center overflow-hidden rounded-lg {isFolder
-		? 'bg-brand-500/10'
+		? isRustshareSystemFolder
+			? 'bg-base-300/30'
+			: 'bg-brand-500/10'
 		: 'bg-base-200'}"
 >
 	{#if isFolder}
-		{#if isSharedRoot || item.is_shared}
+		{#if isRustshareSystemFolder}
+			<Settings size={iconSize} class="text-base-content/40" />
+		{:else if isNoteBundle}
+			<div class="relative">
+				<FolderIcon size={iconSize} class="text-brand-400" />
+				<div class="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-base-100 shadow-sm">
+					<FileText size={10} class="text-brand-500" />
+				</div>
+			</div>
+		{:else if isSharedRoot || item.is_shared}
 			<!-- Shared Folder Icon -->
 			<svg
 				xmlns="http://www.w3.org/2000/svg"

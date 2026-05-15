@@ -23,9 +23,11 @@ mod profile;
 mod public_shares;
 pub mod scim;
 pub mod scim_v2;
+pub mod collab;
 mod shares;
 mod sync;
 mod trash;
+pub mod ws_auth;
 pub mod upload;
 mod user_shares;
 mod users;
@@ -68,6 +70,7 @@ pub use shares::{
     create_public_file_share, create_public_folder_share, get_share_access_log,
     list_public_file_shares, list_public_folder_shares, list_user_shares, revoke_share,
 };
+pub use collab::collab_handler;
 pub use sync::{get_sync_cursor, get_sync_delta, sync_handler};
 pub use trash::{empty_trash, get_trash_summary};
 

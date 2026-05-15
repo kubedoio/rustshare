@@ -1,3 +1,4 @@
+use crate::handlers::collab::CollabRooms;
 use crate::handlers::ensure_optional_seed_user;
 use crate::oidc_runtime::{seed_oidc_config_from_env, OidcRuntimeCache};
 use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
@@ -569,6 +570,7 @@ pub async fn init_app() -> Result<AppState> {
         brainstorming_service: services.brainstorming_service,
         user_repository: services.user_repository,
         public_base_url,
+        collab_rooms: Arc::new(CollabRooms::new()),
     };
 
     Ok(state)

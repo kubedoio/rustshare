@@ -34,6 +34,21 @@ describe('Sanitization', () => {
 		const safe = sanitizeHtml(html);
 		expect(safe).toBe(html);
 	});
+
+	it('preserves checkbox inputs for task lists', () => {
+		const html = '<ul><li><input type="checkbox" checked disabled> Task</li></ul>';
+		const safe = sanitizeHtml(html);
+		expect(safe).toContain('<input');
+		expect(safe).toContain('type="checkbox"');
+		expect(safe).toContain('checked');
+		expect(safe).toContain('disabled');
+	});
+
+	it('preserves strikethrough <s> tags', () => {
+		const html = '<p>Text with <s>strikethrough</s> word</p>';
+		const safe = sanitizeHtml(html);
+		expect(safe).toContain('<s>strikethrough</s>');
+	});
 });
 
 describe('Filename Safety', () => {

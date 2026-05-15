@@ -16,13 +16,19 @@ import TableHeader from '@tiptap/extension-table-header';
 import Placeholder from '@tiptap/extension-placeholder';
 import Image from '@tiptap/extension-image';
 import { Markdown } from 'tiptap-markdown';
+import Collaboration from '@tiptap/extension-collaboration';
+
+export interface EditorExtensionsOptions {
+	placeholder?: string;
+	ydoc?: import('yjs').Doc;
+}
 
 /**
  * Returns the standard set of Tiptap extensions for the RustShare editor.
  * Both the viewer and editor must use identical extensions.
  */
-export function getEditorExtensions(options?: { placeholder?: string }) {
-	return [
+export function getEditorExtensions(options?: EditorExtensionsOptions) {
+	const extensions: any[] = [
 		StarterKit.configure({
 			heading: { levels: [1, 2, 3] },
 			codeBlock: { HTMLAttributes: { class: 'editor-code-block' } },
@@ -32,7 +38,8 @@ export function getEditorExtensions(options?: { placeholder?: string }) {
 			orderedList: { HTMLAttributes: { class: 'editor-ordered-list' } },
 			horizontalRule: { HTMLAttributes: { class: 'editor-hr' } },
 			link: false,
-			underline: false
+			underline: false,
+			undoRedo: options?.ydoc ? false : undefined // Disable native history when using collaboration
 		}),
 		Link.configure({
 			openOnClick: false,
@@ -69,4 +76,14 @@ export function getEditorExtensions(options?: { placeholder?: string }) {
 			transformCopiedText: true
 		})
 	];
+
+	if (options?.ydoc) {
+		extensions.push(
+			Collaboration.configure({
+				document: options.ydoc
+			})
+		);
+	}
+
+	return extensions;
 }

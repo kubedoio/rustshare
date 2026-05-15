@@ -26,7 +26,25 @@ export function renderMarkdown(markdown: string): string {
 	// 3. Tables (GFM-style) — process before lists to avoid conflicts
 	rawHtml = processMarkdownTables(rawHtml);
 
-	// 4. Unordered lists — match consecutive lines starting with "- "
+	// 4. Task lists — match consecutive lines starting with "- [ ] " or "- [x] "
+	rawHtml = rawHtml.replace(
+		/(^|\n)([ \t]*- \[[ xX]\] .+(?:\n[ \t]*- \[[ xX]\] .+)*)/g,
+		(_, prefix, listBlock) => {
+			const items = listBlock
+				.split('\n')
+				.map((line: string) => {
+					const match = line.match(/^[ \t]*- \[([ xX])\] (.*)$/);
+					if (!match) return '';
+					const checked = match[1].toLowerCase() === 'x' ? 'checked' : '';
+					const content = match[2];
+					return `<li class="flex items-start gap-2 mb-1"><input type="checkbox" disabled ${checked} class="mt-1 w-4 h-4 accent-primary shrink-0" />${content}</li>`;
+				})
+				.join('');
+			return prefix + `<ul class="list-none my-2 pl-0">${items}</ul>`;
+		}
+	);
+
+	// 5. Unordered lists — match consecutive lines starting with "- "
 	rawHtml = rawHtml.replace(
 		/(^|\n)([ \t]*- .+(?:\n[ \t]*- .+)*)/g,
 		(_, prefix, listBlock) => {
@@ -41,7 +59,7 @@ export function renderMarkdown(markdown: string): string {
 		}
 	);
 
-	// 5. Ordered lists — match consecutive lines starting with "digits. "
+	// 6. Ordered lists — match consecutive lines starting with "digits. "
 	rawHtml = rawHtml.replace(
 		/(^|\n)([ \t]*\d+\. .+(?:\n[ \t]*\d+\. .+)*)/g,
 		(_, prefix, listBlock) => {
@@ -56,53 +74,53 @@ export function renderMarkdown(markdown: string): string {
 		}
 	);
 
-	// 6. Blockquotes
+	// 7. Blockquotes
 	rawHtml = rawHtml.replace(
 		/^&gt; (.*$)/gim,
 		'<blockquote class="border-l-4 border-primary pl-4 my-2 italic">$1</blockquote>'
 	);
 
-	// 7. Headers
+	// 8. Headers
 	rawHtml = rawHtml
 		.replace(/^### (.*$)/gim, '<h3>$1</h3>')
 		.replace(/^## (.*$)/gim, '<h2>$1</h2>')
 		.replace(/^# (.*$)/gim, '<h1>$1</h1>');
 
-	// 8. Bold (must come before italic to avoid conflicts with ***)
+	// 9. Bold (must come before italic to avoid conflicts with ***)
 	rawHtml = rawHtml
 		.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
 		.replace(/__(.*?)__/g, '<strong>$1</strong>');
 
-	// 9. Italic
+	// 10. Italic
 	rawHtml = rawHtml
 		.replace(/\*(.*?)\*/g, '<em>$1</em>')
 		.replace(/_(.*?)_/g, '<em>$1</em>');
 
-	// 10. Inline code
+	// 11. Inline code
 	rawHtml = rawHtml.replace(
 		/`([^`]+)`/g,
 		'<code class="bg-base-300 px-1 rounded text-sm">$1</code>'
 	);
 
-	// 11. Links
+	// 12. Links
 	rawHtml = rawHtml.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text: string, url: string) => {
 		const safeUrl = url.replace(/^javascript:/i, '#');
 		return `<a href="${safeUrl}" class="text-primary hover:underline" target="_blank" rel="noopener noreferrer">${text}</a>`;
 	});
 
-	// 12. Images
+	// 13. Images
 	rawHtml = rawHtml.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt: string, url: string) => {
 		const safeUrl = url.replace(/^javascript:/i, '#');
 		return `<img src="${safeUrl}" alt="${alt}" class="max-w-full rounded-lg my-2" />`;
 	});
 
-	// 13. Horizontal rule
+	// 14. Horizontal rule
 	rawHtml = rawHtml.replace(/^---$/gim, '<hr class="my-4 border-base-300" />');
 
-	// 14. Line breaks
+	// 15. Line breaks
 	rawHtml = rawHtml.replace(/\n/g, '<br />');
 
-	// 15. Restore code blocks
+	// 16. Restore code blocks
 	codeBlocks.forEach((block, i) => {
 		rawHtml = rawHtml.replace(`<span data-code-block="${i}"></span>`, block);
 	});

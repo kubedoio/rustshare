@@ -108,6 +108,7 @@
 	let effectivePermission = $derived(item?.effective_permission || 'Admin');
 	let canManage = $derived(effectivePermission === 'Edit' || effectivePermission === 'Admin');
 	let canShare = $derived(effectivePermission === 'Admin');
+	let isRustshareSystemFolder = $derived(isFolder && item.name === '_rustshare');
 
 	// Context menu state
 	let showActions = $state(false);
@@ -516,7 +517,7 @@
 		{:else}
 			<div class="flex min-w-0 items-start gap-1.5">
 				<p
-					class="flex-1 truncate text-xs leading-4 font-medium text-base-content"
+					class="flex-1 truncate text-xs leading-4 font-medium {isRustshareSystemFolder ? 'text-base-content/40' : 'text-base-content'}"
 					title={item.name}
 					ondblclick={(e) => {
 						e.stopPropagation();

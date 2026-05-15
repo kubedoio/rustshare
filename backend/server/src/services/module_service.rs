@@ -46,7 +46,7 @@ impl From<rustshare_core::services::FolderError> for ModuleError {
                 ModuleError::AlreadyExists("folder".to_string())
             }
             rustshare_core::services::FolderError::Database(e) => {
-                ModuleError::Database(e.to_string())
+                ModuleError::Database(e)
             }
             _ => ModuleError::Storage(e.to_string()),
         }
@@ -64,7 +64,7 @@ impl From<rustshare_core::services::FileError> for ModuleError {
             }
             rustshare_core::services::FileError::InvalidName(s) => ModuleError::InvalidName(s),
             rustshare_core::services::FileError::Database(e) => {
-                ModuleError::Database(e.to_string())
+                ModuleError::Database(e)
             }
             _ => ModuleError::Storage(e.to_string()),
         }
@@ -802,8 +802,8 @@ impl ModuleService {
         tenant_id: Uuid,
         owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
-        let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
-            "SELECT id, name, modified_at FROM files WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3 ORDER BY modified_at DESC LIMIT $4",
+        let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>, Option<Uuid>, Option<String>)>(
+            "SELECT f.id, f.name, f.modified_at, f.parent_folder_id, pf.name as parent_name FROM files f LEFT JOIN folders pf ON f.parent_folder_id = pf.id WHERE f.tenant_id = $1 AND f.owner_id = $2 AND f.deleted_at IS NULL AND f.path LIKE $3 ORDER BY f.modified_at DESC LIMIT $4",
         )
         .bind(tenant_id)
         .bind(owner_id)
@@ -814,11 +814,22 @@ impl ModuleService {
 
         Ok(rows
             .into_iter()
-            .map(|(id, name, updated_at)| SummaryItem {
-                id: id.to_string(),
-                name,
-                item_type: "file".to_string(),
-                updated_at,
+            .map(|(id, name, updated_at, _parent_folder_id, parent_name)| {
+                let display_name = if name == "note.md" {
+                    if let Some(parent_name) = parent_name {
+                        parent_name
+                    } else {
+                        name
+                    }
+                } else {
+                    name
+                };
+                SummaryItem {
+                    id: id.to_string(),
+                    name: display_name,
+                    item_type: "file".to_string(),
+                    updated_at,
+                }
             })
             .collect())
     }

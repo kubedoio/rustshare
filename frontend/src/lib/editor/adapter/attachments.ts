@@ -280,17 +280,19 @@ export function resolveAttachmentPaths(
 	if (!attachments?.length) return markdown;
 	let result = markdown;
 	for (const att of attachments) {
-		if (!att.path?.startsWith('attachments/') && !att.path?.startsWith('drawings/')) continue;
+		const normalizedPath = att.path?.replace(/^\.\//, '') ?? '';
+		if (!normalizedPath.startsWith('attachments/') && !normalizedPath.startsWith('drawings/')) continue;
 		const apiUrl = att.mimeType?.startsWith('image/')
 			? `/api/v1/files/${att.id}/preview`
 			: `/api/v1/files/${att.id}/content`;
-		const escapedPath = att.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		const escapedPath = normalizedPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		// Match both ./path and path (optional leading ./)
 		result = result.replace(
-			new RegExp(`!\\[([^\\]]*)\\]\\(${escapedPath}\\)`, 'g'),
+			new RegExp(`!\\[([^\\]]*)\\]\\((?:\\.\\/)?${escapedPath}\\)`, 'g'),
 			`![$1](${apiUrl})`
 		);
 		result = result.replace(
-			new RegExp(`\\[([^\\]]*)\\]\\(${escapedPath}\\)`, 'g'),
+			new RegExp(`\\[([^\\]]*)\\]\\((?:\\.\\/)?${escapedPath}\\)`, 'g'),
 			`[$1](${apiUrl})`
 		);
 	}
@@ -308,7 +310,8 @@ export function restoreRelativePaths(
 	if (!attachments?.length) return markdown;
 	let result = markdown;
 	for (const att of attachments) {
-		if (!att.path?.startsWith('attachments/') && !att.path?.startsWith('drawings/')) continue;
+		const normalizedPath = att.path?.replace(/^\.\//, '') ?? '';
+		if (!normalizedPath.startsWith('attachments/') && !normalizedPath.startsWith('drawings/')) continue;
 		const apiUrl = att.mimeType?.startsWith('image/')
 			? `/api/v1/files/${att.id}/preview`
 			: `/api/v1/files/${att.id}/content`;

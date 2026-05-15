@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::adapters;
+use crate::handlers::collab::CollabRooms;
 use crate::middleware;
 use crate::oidc_runtime::OidcRuntimeCache;
 use crate::services;
@@ -181,6 +182,7 @@ pub struct AppState {
     pub brainstorming_service: Arc<services::brainstorming_service::BrainstormingService>,
     pub user_repository: Arc<rustshare_infrastructure::repositories::UserRepository>,
     pub public_base_url: String,
+    pub collab_rooms: Arc<CollabRooms>,
 }
 
 impl FromRef<AppState> for DatabaseState {

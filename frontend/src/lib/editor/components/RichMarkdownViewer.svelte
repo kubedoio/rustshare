@@ -138,6 +138,38 @@
 		margin-bottom: 0.25rem;
 	}
 
+	/* Task lists */
+	.viewer-content :global(ul.editor-task-list) {
+		list-style: none;
+		padding-left: 0;
+		margin: 0 0 0.75rem;
+	}
+
+	.viewer-content :global(li.editor-task-item) {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.5rem;
+		margin-bottom: 0.25rem;
+	}
+
+	.viewer-content :global(.editor-task-item label) {
+		display: flex;
+		align-items: center;
+		margin-top: 0.15rem;
+	}
+
+	.viewer-content :global(.editor-task-item input[type='checkbox']) {
+		width: 1rem;
+		height: 1rem;
+		accent-color: var(--color-primary, #3b82f6);
+	}
+
+	.viewer-content :global(.editor-task-item[data-checked='true'] > p),
+	.viewer-content :global(.editor-task-item[data-checked='true'] > div > p) {
+		text-decoration: line-through;
+		opacity: 0.6;
+	}
+
 	.viewer-content :global(blockquote) {
 		border-left: 3px solid var(--color-primary, #3b82f6);
 		padding-left: 1rem;
@@ -164,6 +196,16 @@
 		background: var(--color-base-300, #e5e7eb);
 		padding: 0.125rem 0.375rem;
 		border-radius: 0.25rem;
+	}
+
+	.viewer-content :global(pre code) {
+		background: none;
+		padding: 0;
+		font-size: 0.875rem;
+	}
+
+	.viewer-content :global(u) {
+		text-decoration: underline;
 	}
 
 	.viewer-content :global(a) {

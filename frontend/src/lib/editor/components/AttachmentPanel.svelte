@@ -34,6 +34,9 @@
 	/** Whether the panel is visible */
 	export let open: boolean = false;
 
+	/** Whether the editor is in edit mode (controls insert button visibility) */
+	export let editable: boolean = true;
+
 	const dispatch = createEventDispatcher<{
 		upload: { files: File[] };
 		insert: { attachment: RichMarkdownAttachment };
@@ -185,14 +188,16 @@
 							<span class="attachment-meta">{formatFileSize(attachment.size)}</span>
 						</div>
 						<div class="attachment-actions">
-							<button
-								class="action-btn"
-								on:click={() => handleInsert(attachment)}
-								title={isInlineableImage(attachment.mimeType) ? 'Insert image' : 'Insert link'}
-								aria-label="Insert into editor"
-							>
-								<Plus size={14} />
-							</button>
+							{#if editable}
+								<button
+									class="action-btn"
+									on:click={() => handleInsert(attachment)}
+									title={isInlineableImage(attachment.mimeType) ? 'Insert image' : 'Insert link'}
+									aria-label="Insert into editor"
+								>
+									<Plus size={14} />
+								</button>
+							{/if}
 							{#if canDelete}
 								<button
 									class="action-btn action-btn-danger"

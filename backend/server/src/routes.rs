@@ -1010,6 +1010,7 @@ pub fn sync_routes() -> Router<AppState> {
     use axum::routing::get;
     Router::new()
         .route("/api/ws", get(crate::handlers::sync_handler))
+        .route("/api/ws/collab", get(crate::handlers::collab_handler))
         .route("/api/v1/sync/cursor", get(crate::handlers::get_sync_cursor))
         .route("/api/v1/sync/delta", get(crate::handlers::get_sync_delta))
 }

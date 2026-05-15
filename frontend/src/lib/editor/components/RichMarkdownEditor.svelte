@@ -30,6 +30,9 @@
 	/** Expose current Markdown for parent reads */
 	export let currentMarkdown: string = content;
 
+	/** Optional Yjs document for collaborative editing */
+	export let ydoc: import('yjs').Doc | undefined = undefined;
+
 	const dispatch = createEventDispatcher<{
 		change: { markdown: string };
 		ready: { editor: Editor };
@@ -44,6 +47,7 @@
 	let editor: Editor | null = null;
 	let initialized = false;
 	let isDragOver = false;
+	let markdownUpdateTimer: ReturnType<typeof setTimeout> | null = null;
 
 	// Slash menu state
 	let showSlashMenu = false;
@@ -59,22 +63,28 @@
 
 	onMount(() => {
 		if (!editorElement) return;
+		editorElement.replaceChildren();
 
 		editor = createRichEditor({
 			element: editorElement,
-			content,
+			content: ydoc ? '' : content,
 			editable,
+			ydoc,
 			editorProps: {
 				handleClickOn(view: EditorView, pos: number, node: ProseMirrorNode) {
 					if (node.type.name === 'image') {
-						view.dispatch(
-							view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos))
-						);
+						view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)));
 						return true;
 					}
 					return false;
 				},
-				handleDoubleClickOn(view: EditorView, pos: number, node: ProseMirrorNode, nodePos: number, event: MouseEvent) {
+				handleDoubleClickOn(
+					view: EditorView,
+					pos: number,
+					node: ProseMirrorNode,
+					nodePos: number,
+					event: MouseEvent
+				) {
 					if (node.type.name !== 'image') return false;
 
 					const src = node.attrs.src as string;
@@ -92,9 +102,8 @@
 					return true;
 				}
 			},
-			onUpdate: (md) => {
-				currentMarkdown = md;
-				dispatch('change', { markdown: md });
+			onDocumentUpdate: () => {
+				scheduleMarkdownUpdate();
 				checkSlashTrigger();
 			},
 			onSelectionUpdate: () => {
@@ -118,17 +127,43 @@
 	});
 
 	onDestroy(() => {
+		if (markdownUpdateTimer) {
+			clearTimeout(markdownUpdateTimer);
+			markdownUpdateTimer = null;
+		}
 		if (editor) {
 			editor.view.dom.removeEventListener('keydown', handleEditorKeydown);
 			editor.view.dom.removeEventListener('paste', handlePaste);
 			editor.destroy();
 			editor = null;
 		}
+		editorElement?.replaceChildren();
 	});
 
 	// React to editable prop changes
 	$: if (editor && initialized) {
 		editor.setEditable(editable);
+	}
+
+	// React to external content changes (e.g. after save + refetch)
+	let lastExternalContent = content;
+	$: if (editor && initialized && content !== lastExternalContent) {
+		if (content !== editorToMarkdown(editor)) {
+			editor.commands.setContent(content, { emitUpdate: false });
+		}
+		lastExternalContent = content;
+		currentMarkdown = content;
+	}
+
+	function scheduleMarkdownUpdate() {
+		if (markdownUpdateTimer) clearTimeout(markdownUpdateTimer);
+		markdownUpdateTimer = setTimeout(() => {
+			markdownUpdateTimer = null;
+			if (!editor) return;
+			const md = editorToMarkdown(editor);
+			currentMarkdown = md;
+			dispatch('change', { markdown: md });
+		}, 250);
 	}
 
 	// --- Slash Menu Logic ---
@@ -358,13 +393,13 @@
 	}
 
 	function handleDrop(event: DragEvent) {
-		event.preventDefault();
 		isDragOver = false;
 		if (!editable || !hasAttachmentHandler) return;
 
 		const droppedFiles = event.dataTransfer?.files;
 		if (!droppedFiles?.length) return;
 
+		event.preventDefault();
 		const files = Array.from(droppedFiles);
 		dispatch('filedrop', { files });
 	}
@@ -376,7 +411,13 @@
 	 */
 	export function getMarkdown(): string {
 		if (!editor) return content;
-		return editorToMarkdown(editor);
+		if (markdownUpdateTimer) {
+			clearTimeout(markdownUpdateTimer);
+			markdownUpdateTimer = null;
+		}
+		const md = editorToMarkdown(editor);
+		currentMarkdown = md;
+		return md;
 	}
 
 	/**
@@ -384,8 +425,9 @@
 	 */
 	export function setContent(markdown: string): void {
 		if (editor) {
-			editor.commands.setContent(markdown);
+			editor.commands.setContent(markdown, { emitUpdate: false });
 			currentMarkdown = markdown;
+			lastExternalContent = markdown;
 		}
 	}
 

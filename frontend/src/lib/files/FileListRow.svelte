@@ -113,6 +113,7 @@
 	let effectivePermission = $derived(item?.effective_permission || 'Admin');
 	let canManage = $derived(effectivePermission === 'Edit' || effectivePermission === 'Admin');
 	let canShare = $derived(effectivePermission === 'Admin');
+	let isRustshareSystemFolder = $derived(isFolder && item.name === '_rustshare');
 
 	// Action menu state
 	let showActions = $state(false);
@@ -426,7 +427,7 @@
 			{:else if isFolder && workspaceMode === 'all'}
 				<button
 					type="button"
-					class="group/link flex min-w-0 items-center gap-1 truncate text-left text-body-sm font-medium text-base-content transition-colors hover:text-brand-500"
+					class="group/link flex min-w-0 items-center gap-1 truncate text-left text-body-sm font-medium {isRustshareSystemFolder ? 'text-base-content/40' : 'text-base-content'} transition-colors hover:text-brand-500"
 					onclick={handleNavigate}
 					ondblclick={maybeStartRename}
 				>
@@ -438,7 +439,7 @@
 				</button>
 			{:else}
 				<span
-					class="block min-w-0 truncate text-body-sm font-medium text-base-content"
+					class="block min-w-0 truncate text-body-sm font-medium {isRustshareSystemFolder ? 'text-base-content/40' : 'text-base-content'}"
 					ondblclick={maybeStartRename}
 					role="button"
 					tabindex="0"

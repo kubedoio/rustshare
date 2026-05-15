@@ -12,7 +12,9 @@
 		Search,
 		List,
 		Grid3X3,
-		ArrowUpDown
+		ArrowUpDown,
+		Paperclip,
+		Image
 	} from 'lucide-svelte';
 
 	import { listNotes, createNote, deleteNote } from '$lib/api/notes';
@@ -192,6 +194,22 @@
 								</div>
 								<p class="truncate text-sm font-medium text-base-content">{(note.metadata?.title || note.name || '').replace(/\.md$/i, '')}</p>
 								<p class="mt-1 line-clamp-2 text-xs text-base-content/55">{note.metadata?.excerpt || 'No preview available'}</p>
+								{#if note.attachment_count || note.drawing_count}
+									<div class="mt-2 flex items-center gap-3 text-xs text-base-content/50">
+										{#if note.attachment_count}
+											<span class="flex items-center gap-1">
+												<Paperclip size={12} />
+												{note.attachment_count}
+											</span>
+										{/if}
+										{#if note.drawing_count}
+											<span class="flex items-center gap-1">
+												<Image size={12} />
+												{note.drawing_count}
+											</span>
+										{/if}
+									</div>
+								{/if}
 							</a>
 						{/each}
 					</div>
@@ -212,6 +230,22 @@
 									<span class="line-clamp-1 text-xs text-base-content/55">
 										{note.metadata?.excerpt || 'No preview available'}
 									</span>
+									{#if note.attachment_count || note.drawing_count}
+										<div class="mt-1 flex items-center gap-3 text-xs text-base-content/50">
+											{#if note.attachment_count}
+												<span class="flex items-center gap-1">
+													<Paperclip size={12} />
+													{note.attachment_count}
+												</span>
+											{/if}
+											{#if note.drawing_count}
+												<span class="flex items-center gap-1">
+													<Image size={12} />
+													{note.drawing_count}
+												</span>
+											{/if}
+										</div>
+									{/if}
 								</div>
 								<span class="hidden text-xs text-base-content/55 sm:block">
 									{note.modified_at ? new Date(note.modified_at).toLocaleDateString() : ''}

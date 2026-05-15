@@ -941,7 +941,13 @@ pub async fn list_starred_items(
                 AND revoked_at IS NULL
                 AND expires_at IS NOT NULL
             ) as share_expires_at,
-            'Admin'::TEXT as effective_permission
+            'Admin'::TEXT as effective_permission,
+            (
+                SELECT fi.id
+                FROM files fi
+                WHERE fi.parent_folder_id = f.id AND fi.name = 'note.md' AND fi.deleted_at IS NULL
+                LIMIT 1
+            ) as note_bundle_file_id
         FROM folders f
         LEFT JOIN folder_sizes fs ON fs.root_id = f.id
         WHERE f.owner_id = $1
@@ -1052,7 +1058,13 @@ pub async fn list_deleted_items(
                 AND revoked_at IS NULL
                 AND expires_at IS NOT NULL
             ) as share_expires_at,
-            'Admin'::TEXT as effective_permission
+            'Admin'::TEXT as effective_permission,
+            (
+                SELECT fi.id
+                FROM files fi
+                WHERE fi.parent_folder_id = f.id AND fi.name = 'note.md' AND fi.deleted_at IS NULL
+                LIMIT 1
+            ) as note_bundle_file_id
         FROM folders f
         LEFT JOIN folder_sizes fs ON fs.root_id = f.id
         WHERE f.owner_id = $1

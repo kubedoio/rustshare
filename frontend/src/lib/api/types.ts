@@ -213,6 +213,9 @@ export interface NoteSummary {
 	size: number;
 	created_at: string;
 	modified_at: string;
+	attachment_count?: number;
+	drawing_count?: number;
+	export_count?: number;
 }
 
 export class ApiError extends Error {

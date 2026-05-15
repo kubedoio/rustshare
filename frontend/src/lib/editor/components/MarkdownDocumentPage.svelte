@@ -27,6 +27,7 @@
 	import { WRITE_PERMISSIONS, READ_ONLY_PERMISSIONS } from '../types';
 	import RichMarkdownEditor from './RichMarkdownEditor.svelte';
 	import RichMarkdownViewer from './RichMarkdownViewer.svelte';
+	import CollabEditor from './CollabEditor.svelte';
 	import AttachmentPanel from './AttachmentPanel.svelte';
 	import PrintableDocumentView from './PrintableDocumentView.svelte';
 	import { insertAttachmentIntoEditor } from '../adapter/attachments';
@@ -86,6 +87,12 @@
 	/** For folder-backed notes: skip base64 sketch embedding and let parent handle file upload */
 	export let embedSketchesAsBase64: boolean = true;
 
+	/** Enable the queued autosave editor */
+	export let collab: boolean = false;
+
+	/** Document ID for the autosave editor */
+	export let docId: string = '';
+
 	const dispatch = createEventDispatcher<{
 		save: { content: string; revision?: number | string; color?: string | null };
 		modechange: { mode: EditorMode };
@@ -96,7 +103,7 @@
 		delete: { attachment: RichMarkdownAttachment };
 	}>();
 
-	let editorComponent: RichMarkdownEditor;
+	let editorComponent: RichMarkdownEditor | CollabEditor;
 	let currentMarkdown: string = content;
 	let isAttachmentsOpen = false;
 	let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -113,8 +120,15 @@
 		const newMode: EditorMode = mode === 'read' ? 'edit' : 'read';
 
 		// If switching from edit to read, ensure any pending autosave is flushed
-		if (mode === 'edit' && saveStatus === 'unsaved') {
-			handleSave();
+		if (mode === 'edit' && editorComponent) {
+			currentMarkdown = editorComponent.getMarkdown();
+			if (saveStatus === 'unsaved' && !collab) {
+				handleSave();
+			}
+		}
+
+		if (mode === 'read') {
+			currentMarkdown = content;
 		}
 
 		mode = newMode;
@@ -137,6 +151,14 @@
 	function handleEditorChange(event: CustomEvent<{ markdown: string }>) {
 		currentMarkdown = event.detail.markdown;
 
+		// In collab mode, CollabEditor owns the autosave trigger.
+		if (collab) {
+			if (saveStatus !== 'saving') {
+				saveStatus = 'unsaved';
+			}
+			return;
+		}
+
 		if (saveStatus !== 'unsaved') {
 			saveStatus = 'unsaved';
 		}
@@ -147,6 +169,23 @@
 			autosaveTimer = setTimeout(() => {
 				handleSave();
 			}, autosaveDelay);
+		}
+	}
+
+	function handleCollabSave(event: CustomEvent<{ content: string }>) {
+		saveStatus = 'saving';
+		dispatch('save', { content: event.detail.content, revision });
+	}
+
+	export function markSaved(markdown?: string): void {
+		if (editorComponent && 'markSaved' in editorComponent) {
+			editorComponent.markSaved(markdown);
+		}
+	}
+
+	export function markSaveError(message?: string): void {
+		if (editorComponent && 'markSaveError' in editorComponent) {
+			editorComponent.markSaveError(message);
 		}
 	}
 
@@ -171,6 +210,7 @@
 	function handleKeydown(event: KeyboardEvent) {
 		if ((event.ctrlKey || event.metaKey) && event.key === 's') {
 			event.preventDefault();
+			if (collab) return;
 			if (isEditing && saveStatus === 'unsaved') {
 				handleSave();
 			}
@@ -199,15 +239,17 @@
 				const editor = editorComponent?.getEditor();
 				if (editor) {
 					editor.chain().focus().insertContent(`![Sketch](${dataUrl})`).run();
-					// Mark as unsaved so autosave triggers
-					if (saveStatus !== 'unsaved') {
-						saveStatus = 'unsaved';
-					}
-					if (autosaveDelay > 0) {
-						if (autosaveTimer) clearTimeout(autosaveTimer);
-						autosaveTimer = setTimeout(() => {
-							handleSave();
-						}, autosaveDelay);
+					// Mark as unsaved so autosave triggers (only in non-collab mode)
+					if (!collab) {
+						if (saveStatus !== 'unsaved') {
+							saveStatus = 'unsaved';
+						}
+						if (autosaveDelay > 0) {
+							if (autosaveTimer) clearTimeout(autosaveTimer);
+							autosaveTimer = setTimeout(() => {
+								handleSave();
+							}, autosaveDelay);
+						}
 					}
 				}
 			};
@@ -347,18 +389,6 @@
 				</button>
 			{/if}
 
-			<!-- Save button -->
-			{#if isEditing}
-				<button
-					class="btn btn-sm btn-primary"
-					on:click={handleSave}
-					disabled={saveStatus === 'saving' || saveStatus === 'saved'}
-				>
-					<Save size={14} />
-					<span>Save</span>
-				</button>
-			{/if}
-
 			<!-- Extra actions -->
 			<slot name="extraActions" />
 
@@ -423,7 +453,7 @@
 						{crumb.label}
 					</button>
 				{:else}
-					<span class="text-base-content/70 text-xs font-medium">
+					<span class="text-xs font-medium text-base-content/70">
 						{crumb.label}
 					</span>
 				{/if}
@@ -439,18 +469,36 @@
 		<!-- Content -->
 		<main class="doc-content">
 			{#if isEditing}
-				<RichMarkdownEditor
-					bind:this={editorComponent}
-					{content}
-					editable={true}
-					hasAttachmentHandler={true}
-					bind:currentMarkdown
-					on:change={handleEditorChange}
-					on:attachment={toggleAttachments}
-					on:sketch={handleSketch}
-					on:filedrop={handleAttachmentUpload}
-					on:paste={handleAttachmentUpload}
-				/>
+				{#if collab && docId}
+					<CollabEditor
+						bind:this={editorComponent}
+						{docId}
+						{content}
+						editable={true}
+						hasAttachmentHandler={true}
+						bind:currentMarkdown
+						on:change={handleEditorChange}
+						on:save={handleCollabSave}
+						on:ready
+						on:attachment={toggleAttachments}
+						on:sketch={handleSketch}
+						on:filedrop={handleAttachmentUpload}
+						on:paste={handleAttachmentUpload}
+					/>
+				{:else}
+					<RichMarkdownEditor
+						bind:this={editorComponent}
+						{content}
+						editable={true}
+						hasAttachmentHandler={true}
+						bind:currentMarkdown
+						on:change={handleEditorChange}
+						on:attachment={toggleAttachments}
+						on:sketch={handleSketch}
+						on:filedrop={handleAttachmentUpload}
+						on:paste={handleAttachmentUpload}
+					/>
+				{/if}
 			{:else}
 				<RichMarkdownViewer content={currentMarkdown || content} {attachments} />
 			{/if}
@@ -462,6 +510,7 @@
 				{attachments}
 				{permissions}
 				open={isAttachmentsOpen}
+				editable={isEditing}
 				on:upload={handleAttachmentUpload}
 				on:insert={handleAttachmentInsert}
 				on:delete={handleAttachmentDelete}

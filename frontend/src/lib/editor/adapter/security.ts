@@ -25,12 +25,15 @@ const SANITIZE_CONFIG = {
 		'strong',
 		'em',
 		'strike',
+		's',
 		'u',
 		'code',
 		'pre',
 		'ul',
 		'ol',
 		'li',
+		'input',
+		'label',
 		'blockquote',
 		'a',
 		'img',
@@ -56,7 +59,7 @@ const SANITIZE_CONFIG = {
 	],
 	// Ensure we block dangerous URIs by default
 	ADD_ATTR: ['target', 'rel'],
-	FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'button', 'input'],
+	FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'button'],
 	FORBID_ATTR: ['onerror', 'onclick', 'onmouseover', 'onkeydown', 'onload', 'style']
 };
 
