@@ -94,7 +94,7 @@
 	export let docId: string = '';
 
 	const dispatch = createEventDispatcher<{
-		save: { content: string; revision?: number | string; color?: string | null };
+		save: { content: string; revision?: number | string; color?: string | null; docId?: string };
 		modechange: { mode: EditorMode };
 		back: void;
 		export: { format: 'markdown' | 'print' };
@@ -107,9 +107,15 @@
 	let currentMarkdown: string = content;
 	let isAttachmentsOpen = false;
 	let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+	let lastDocId = docId;
 
 	$: canEdit = permissions.canEdit;
 	$: isEditing = mode === 'edit' && canEdit;
+	$: if (docId !== lastDocId) {
+		currentMarkdown = content;
+		saveStatus = 'saved';
+		lastDocId = docId;
+	}
 
 	// Cleanup timer on unmount
 	onDestroy(() => {
@@ -122,7 +128,9 @@
 		// If switching from edit to read, ensure any pending autosave is flushed
 		if (mode === 'edit' && editorComponent) {
 			currentMarkdown = editorComponent.getMarkdown();
-			if (saveStatus === 'unsaved' && !collab) {
+			if (collab && 'flush' in editorComponent) {
+				editorComponent.flush();
+			} else if (saveStatus === 'unsaved') {
 				handleSave();
 			}
 		}
@@ -145,7 +153,7 @@
 
 		const md = editorComponent.getMarkdown();
 		saveStatus = 'saving';
-		dispatch('save', { content: md, revision });
+		dispatch('save', { content: md, revision, docId });
 	}
 
 	function handleEditorChange(event: CustomEvent<{ markdown: string }>) {
@@ -172,9 +180,9 @@
 		}
 	}
 
-	function handleCollabSave(event: CustomEvent<{ content: string }>) {
+	function handleCollabSave(event: CustomEvent<{ content: string; docId: string }>) {
 		saveStatus = 'saving';
-		dispatch('save', { content: event.detail.content, revision });
+		dispatch('save', { content: event.detail.content, revision, docId: event.detail.docId });
 	}
 
 	export function markSaved(markdown?: string): void {
@@ -470,21 +478,23 @@
 		<main class="doc-content">
 			{#if isEditing}
 				{#if collab && docId}
-					<CollabEditor
-						bind:this={editorComponent}
-						{docId}
-						{content}
-						editable={true}
-						hasAttachmentHandler={true}
-						bind:currentMarkdown
-						on:change={handleEditorChange}
-						on:save={handleCollabSave}
-						on:ready
-						on:attachment={toggleAttachments}
-						on:sketch={handleSketch}
-						on:filedrop={handleAttachmentUpload}
-						on:paste={handleAttachmentUpload}
-					/>
+					{#key docId}
+						<CollabEditor
+							bind:this={editorComponent}
+							{docId}
+							{content}
+							editable={true}
+							hasAttachmentHandler={true}
+							bind:currentMarkdown
+							on:change={handleEditorChange}
+							on:save={handleCollabSave}
+							on:ready
+							on:attachment={toggleAttachments}
+							on:sketch={handleSketch}
+							on:filedrop={handleAttachmentUpload}
+							on:paste={handleAttachmentUpload}
+						/>
+					{/key}
 				{:else}
 					<RichMarkdownEditor
 						bind:this={editorComponent}

@@ -11,7 +11,7 @@
 
 	const dispatch = createEventDispatcher<{
 		change: { markdown: string };
-		save: { content: string };
+		save: { content: string; docId: string };
 	}>();
 
 	/** Note ID retained for compatibility with existing document page wiring */
@@ -55,7 +55,7 @@
 		pendingMarkdown = null;
 		status = 'saving';
 		lastError = null;
-		dispatch('save', { content: markdown });
+		dispatch('save', { content: markdown, docId });
 	}
 
 	function flushPendingSave(): void {
@@ -75,6 +75,14 @@
 		}
 
 		startSave(markdown);
+	}
+
+	export function flush(): void {
+		if (autosaveTimer) {
+			clearTimeout(autosaveTimer);
+			autosaveTimer = null;
+		}
+		flushPendingSave();
 	}
 
 	function handleEditorChange(event: CustomEvent<{ markdown: string }>) {
@@ -182,6 +190,7 @@
 			{content}
 			editable={resolvedEditable}
 			{hasAttachmentHandler}
+			syncExternalContent={false}
 			bind:currentMarkdown
 			on:change={handleEditorChange}
 			on:ready

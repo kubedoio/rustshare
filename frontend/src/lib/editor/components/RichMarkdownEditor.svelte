@@ -30,6 +30,9 @@
 	/** Expose current Markdown for parent reads */
 	export let currentMarkdown: string = content;
 
+	/** Whether server-side content prop changes should replace the active document */
+	export let syncExternalContent: boolean = true;
+
 	/** Optional Yjs document for collaborative editing */
 	export let ydoc: import('yjs').Doc | undefined = undefined;
 
@@ -147,12 +150,15 @@
 
 	// React to external content changes (e.g. after save + refetch)
 	let lastExternalContent = content;
-	$: if (editor && initialized && content !== lastExternalContent) {
+	$: if (editor && initialized && syncExternalContent && content !== lastExternalContent) {
 		if (content !== editorToMarkdown(editor)) {
 			editor.commands.setContent(content, { emitUpdate: false });
 		}
 		lastExternalContent = content;
 		currentMarkdown = content;
+	}
+	$: if (!syncExternalContent && content !== lastExternalContent) {
+		lastExternalContent = content;
 	}
 
 	function scheduleMarkdownUpdate() {

@@ -156,7 +156,11 @@
 		}
 	});
 
-	async function handleSave(event: CustomEvent<{ content: string }>) {
+	async function handleSave(event: CustomEvent<{ content: string; docId?: string }>) {
+		if (event.detail.docId && event.detail.docId !== currentId()) {
+			return;
+		}
+
 		saveStatus = 'saving';
 		const editorContent = event.detail.content;
 		// Postprocess: convert API URLs back to relative paths for folder-backed notes
