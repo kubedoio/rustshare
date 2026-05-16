@@ -70,27 +70,27 @@ export async function getFolderTree(): Promise<FolderTree> {
 }
 
 export async function renameFolder(folderId: string, newName: string): Promise<void> {
-	return apiClient.post<void>(`/folders/${folderId}/rename`, { new_name: newName });
+	return apiClient.postVoid(`/folders/${folderId}/rename`, { new_name: newName });
 }
 
 export async function moveFolder(folderId: string, targetFolderId: string | null): Promise<void> {
-	return apiClient.post<void>(`/folders/${folderId}/move`, {
+	return apiClient.postVoid(`/folders/${folderId}/move`, {
 		target_parent_id: targetFolderId
 	});
 }
 
 export async function deleteFolder(folderId: string): Promise<void> {
-	return apiClient.delete<void>(`/folders/${folderId}`);
+	return apiClient.delete(`/folders/${folderId}`);
 }
 
 export async function permanentlyDeleteFolder(folderId: string): Promise<void> {
-	return apiClient.delete<void>(`/folders/${folderId}/permanent`);
+	return apiClient.delete(`/folders/${folderId}/permanent`);
 }
 
 export async function restoreFolderFromTrash(folderId: string): Promise<void> {
-	return apiClient.post<void>(`/folders/${folderId}/restore-from-trash`, null);
+	return apiClient.postVoid(`/folders/${folderId}/restore-from-trash`, null);
 }
 
 export async function setFolderStarred(folderId: string, starred: boolean): Promise<void> {
-	return apiClient.patch<void>(`/folders/${folderId}/star`, { starred });
+	return apiClient.patchVoid(`/folders/${folderId}/star`, { starred });
 }

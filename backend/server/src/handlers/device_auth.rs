@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use super::ErrorResponse;
+use crate::handlers::AppError;
 use crate::handlers::AuthenticatedUser;
 use crate::oidc_runtime::load_oidc_runtime_settings;
 use crate::state::{AppConfigState, DatabaseState};
@@ -90,7 +91,7 @@ impl DeviceApprovalLookup {
 /// Returns information needed for QR code generation on the device pairing page
 pub async fn device_qr_info(
     headers: HeaderMap,
-) -> Result<Json<DeviceQrInfoResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<DeviceQrInfoResponse>, AppError> {
     let instance_url = build_instance_url(&headers);
 
     Ok(Json(DeviceQrInfoResponse {
@@ -145,7 +146,7 @@ pub async fn device_approve(
     State(db): State<DatabaseState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Json(body): Json<DeviceApproveRequest>,
-) -> Result<Json<DeviceApproveResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<DeviceApproveResponse>, AppError> {
     let lookup = validate_device_approval_request(&body)?;
     approve_device_pair_request(&db.db_pool, user_id, lookup).await?;
 
@@ -159,50 +160,38 @@ pub async fn device_approve(
 async fn fetch_pair_request_for_approval(
     db_pool: &sqlx::PgPool,
     lookup: &DeviceApprovalLookup,
-) -> Result<Option<sqlx::postgres::PgRow>, (StatusCode, Json<ErrorResponse>)> {
-    sqlx::query(lookup.query())
+) -> Result<Option<sqlx::postgres::PgRow>, AppError> {
+    Ok(sqlx::query(lookup.query())
         .bind(lookup.value())
         .fetch_optional(db_pool)
-        .await
-        .map_err(|e| server_error(format!("Database error: {}", e)))
+        .await?)
 }
 
 async fn approve_device_pair_request(
     db_pool: &sqlx::PgPool,
     user_id: Uuid,
     lookup: DeviceApprovalLookup,
-) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+) -> Result<(), AppError> {
     let row = fetch_pair_request_for_approval(db_pool, &lookup).await?;
 
     let (id, is_approved, is_expired) = match row {
         Some(row) => {
-            let id: Uuid = row
-                .try_get("id")
-                .map_err(|e| server_error(format!("Failed to get id: {}", e)))?;
+            let id: Uuid = row.try_get("id")?;
             let is_approved: bool = row.try_get("is_approved").unwrap_or(false);
             let is_expired: bool = row.try_get("is_expired").unwrap_or(true);
             (id, is_approved, is_expired)
         }
         None => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse::new("code_not_found")),
-            ));
+            return Err(AppError::not_found("code_not_found"));
         }
     };
 
     if is_expired {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse::new("code_not_found")),
-        ));
+        return Err(AppError::not_found("code_not_found"));
     }
 
     if is_approved {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ErrorResponse::new("already_approved")),
-        ));
+        return Err(AppError::conflict("already_approved"));
     }
 
     sqlx::query(
@@ -215,8 +204,7 @@ async fn approve_device_pair_request(
     .bind(user_id)
     .bind(id)
     .execute(db_pool)
-    .await
-    .map_err(|e| server_error(format!("Failed to approve pair request: {}", e)))?;
+    .await?;
 
     Ok(())
 }
@@ -224,7 +212,7 @@ async fn approve_device_pair_request(
 /// Determine how a device approval request should be resolved.
 fn validate_device_approval_request(
     body: &DeviceApproveRequest,
-) -> Result<DeviceApprovalLookup, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<DeviceApprovalLookup, AppError> {
     match (&body.user_code, &body.device_code) {
         (Some(user_code), None) if !user_code.trim().is_empty() => {
             Ok(DeviceApprovalLookup::UserCode(user_code.clone()))
@@ -232,23 +220,14 @@ fn validate_device_approval_request(
         (None, Some(device_code)) if !device_code.trim().is_empty() => {
             Ok(DeviceApprovalLookup::DeviceCode(device_code.clone()))
         }
-        (Some(_), Some(_)) => Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new(
-                "approve_request_accepts_only_one_identifier",
-            )),
+        (Some(_), Some(_)) => Err(AppError::bad_request(
+            "approve_request_accepts_only_one_identifier",
         )),
-        (None, None) => Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new(
-                "approve_request_requires_user_code_or_device_code",
-            )),
+        (None, None) => Err(AppError::bad_request(
+            "approve_request_requires_user_code_or_device_code",
         )),
-        _ => Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new(
-                "approve_request_identifier_must_not_be_empty",
-            )),
+        _ => Err(AppError::bad_request(
+            "approve_request_identifier_must_not_be_empty",
         )),
     }
 }
@@ -337,20 +316,12 @@ fn hash_token(raw: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
-/// Standard server error response
-fn server_error(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse::new(msg)),
-    )
-}
-
 /// POST /api/v1/auth/device/request
 /// Generates a new device pair request with user_code and device_code
 pub async fn device_request(
     State(state): State<crate::state::AppState>,
     headers: HeaderMap,
-) -> Result<Json<DeviceRequestResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<DeviceRequestResponse>, AppError> {
     let ttl_seconds = load_oidc_runtime_settings(&state)
         .await
         .map(|settings| settings.device_pair_code_ttl_seconds())
@@ -371,8 +342,7 @@ pub async fn device_request(
     .bind(&user_code)
     .bind(f64::from(ttl_seconds))
     .execute(&state.db_pool)
-    .await
-    .map_err(|e| server_error(format!("Failed to create pair request: {}", e)))?;
+    .await?;
 
     let instance_url = build_instance_url(&headers);
     Ok(Json(build_device_request_response(
@@ -390,7 +360,7 @@ pub async fn device_poll(
     State(config): State<AppConfigState>,
     headers: HeaderMap,
     Json(req): Json<DevicePollRequest>,
-) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Response, AppError> {
     device_poll_inner(&db.db_pool, &config.poll_rate_limiter, headers, req).await
 }
 
@@ -401,7 +371,7 @@ async fn device_poll_inner(
     >,
     headers: HeaderMap,
     req: DevicePollRequest,
-) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Response, AppError> {
     // Check rate limit
     let now = Instant::now();
     let rate_limit_key = req.device_code.clone();
@@ -438,8 +408,7 @@ async fn device_poll_inner(
     )
     .bind(&req.device_code)
     .fetch_optional(db_pool)
-    .await
-    .map_err(|e| server_error(format!("Database error: {}", e)))?;
+    .await?;
 
     let (user_id_opt, is_approved, is_expired) = match row {
         Some(row) => {
@@ -474,7 +443,7 @@ async fn device_poll_inner(
     }
 
     // Approved - generate token and clean up
-    let user_id = user_id_opt.ok_or_else(|| server_error("Approved request missing user_id"))?;
+    let user_id = user_id_opt.ok_or_else(|| AppError::internal("Approved request missing user_id"))?;
 
     let raw_token = gen_token();
     let token_hash = hash_token(&raw_token);
@@ -488,10 +457,7 @@ async fn device_poll_inner(
         .to_string();
 
     // Insert token and delete pair request in a transaction
-    let mut tx = db_pool
-        .begin()
-        .await
-        .map_err(|e| server_error(format!("Transaction error: {}", e)))?;
+    let mut tx = db_pool.begin().await?;
 
     // Insert the device token
     sqlx::query(
@@ -504,19 +470,15 @@ async fn device_poll_inner(
     .bind(&token_hash)
     .bind(&device_name)
     .execute(&mut *tx)
-    .await
-    .map_err(|e| server_error(format!("Failed to create token: {}", e)))?;
+    .await?;
 
     // Delete the pair request
     sqlx::query("DELETE FROM device_pair_requests WHERE device_code = $1")
         .bind(&req.device_code)
         .execute(&mut *tx)
-        .await
-        .map_err(|e| server_error(format!("Failed to clean up pair request: {}", e)))?;
+        .await?;
 
-    tx.commit()
-        .await
-        .map_err(|e| server_error(format!("Transaction commit error: {}", e)))?;
+    tx.commit().await?;
 
     Ok(Json(DevicePollResponse::Approved { token: raw_token }).into_response())
 }
@@ -753,7 +715,7 @@ mod tests {
         ));
         assert!(matches!(
             validate_device_approval_request(&user_code_empty),
-            Err((StatusCode::BAD_REQUEST, _))
+            Err(AppError::BadRequest(_))
         ));
         assert!(matches!(
             validate_device_approval_request(&device_code_only),
@@ -761,15 +723,15 @@ mod tests {
         ));
         assert!(matches!(
             validate_device_approval_request(&device_code_empty),
-            Err((StatusCode::BAD_REQUEST, _))
+            Err(AppError::BadRequest(_))
         ));
         assert!(matches!(
             validate_device_approval_request(&both),
-            Err((StatusCode::BAD_REQUEST, _))
+            Err(AppError::BadRequest(_))
         ));
         assert!(matches!(
             validate_device_approval_request(&neither),
-            Err((StatusCode::BAD_REQUEST, _))
+            Err(AppError::BadRequest(_))
         ));
     }
 
@@ -914,7 +876,7 @@ mod tests {
         )
         .await;
 
-        assert!(matches!(result, Err((StatusCode::NOT_FOUND, _))));
+        assert!(matches!(result, Err(AppError::NotFound(_))));
         assert_eq!(device_token_count(&pool, user_id).await, 0);
 
         sqlx::query("DELETE FROM device_pair_requests WHERE device_code = $1")

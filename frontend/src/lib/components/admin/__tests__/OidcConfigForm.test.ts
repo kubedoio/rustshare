@@ -9,6 +9,10 @@ import {
 
 vi.mock('$lib/api/client', () => ({
 	apiClient: {
+			postVoid: vi.fn(),
+			patchVoid: vi.fn(),
+			requestText: vi.fn(),
+			requestVoid: vi.fn(),
 		get: vi.fn(),
 		put: vi.fn(),
 		post: vi.fn()

@@ -3,6 +3,10 @@ import { listAdminUsers, disableAdminUser, enableAdminUser, deleteAdminUser } fr
 
 vi.mock('$lib/api/client', () => ({
 	apiClient: {
+			postVoid: vi.fn(),
+			patchVoid: vi.fn(),
+			requestText: vi.fn(),
+			requestVoid: vi.fn(),
 		get: vi.fn(),
 		post: vi.fn(),
 		delete: vi.fn(),
@@ -88,7 +92,7 @@ describe('UserTable admin API functions', () => {
 
 		await disableAdminUser('u1');
 
-		expect(apiClient.post).toHaveBeenCalledWith('/admin/users/u1/disable');
+		expect(apiClient.postVoid).toHaveBeenCalledWith('/admin/users/u1/disable');
 	});
 
 	it('enables a user', async () => {
@@ -96,7 +100,7 @@ describe('UserTable admin API functions', () => {
 
 		await enableAdminUser('u1');
 
-		expect(apiClient.post).toHaveBeenCalledWith('/admin/users/u1/enable');
+		expect(apiClient.postVoid).toHaveBeenCalledWith('/admin/users/u1/enable');
 	});
 
 	it('deletes a user', async () => {

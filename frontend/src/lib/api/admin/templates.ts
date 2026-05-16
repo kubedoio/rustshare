@@ -7,14 +7,14 @@ export interface TemplateDefinition {
 	module_key: string;
 	version: string;
 	description: string;
-	ui_config: any;
+	ui_config: unknown;
 	folder_structure: string[];
-	default_files: any[];
-	metadata_schema: any;
+	default_files: unknown[];
+	metadata_schema: unknown;
 	renderer?: string;
 	visibility_policy: string;
-	ai_indexing_policy: any;
-	audit_logging_policy: any;
+	ai_indexing_policy: unknown;
+	audit_logging_policy: unknown;
 	enabled: boolean;
 	system_template: boolean;
 	created_at: string;
@@ -43,7 +43,7 @@ export async function updateTemplate(
 }
 
 export async function deleteTemplate(key: string): Promise<void> {
-	return apiClient.delete<void>(`/admin/templates/${key}`);
+	return apiClient.delete(`/admin/templates/${key}`);
 }
 
 export async function duplicateTemplate(key: string): Promise<TemplateDefinition> {

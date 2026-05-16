@@ -539,7 +539,7 @@ export interface KanbanEvent {
 	event_type: string;
 	timestamp: string;
 	actor: string;
-	payload: any;
+	payload: unknown;
 }
 
 export interface KanbanCardDetail extends KanbanCard {

@@ -86,5 +86,5 @@ export async function updateBrainstormBoardPreview(
 }
 
 export async function deleteBrainstormBoard(boardId: string): Promise<void> {
-	return apiClient.delete<void>(`/modules/brainstorming/boards/${boardId}`);
+	return apiClient.delete(`/modules/brainstorming/boards/${boardId}`);
 }

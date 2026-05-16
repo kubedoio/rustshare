@@ -3,7 +3,6 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::IntoResponse,
     Json,
 };
 use hmac::{Hmac, KeyInit, Mac};
@@ -14,7 +13,7 @@ use sha2::Sha256;
 use uuid::Uuid;
 
 use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_action};
-use crate::{handlers::AdminUser, AppState};
+use crate::{handlers::{AdminUser, AppError}, AppState};
 
 // ---------------------------------------------------------------------------
 // Supported event types
@@ -118,7 +117,7 @@ const COLS: &str = "id, name, url, secret_enc, enabled, events, created_by, crea
 pub async fn list_webhooks(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
-) -> Result<Json<Vec<WebhookResponse>>, axum::response::Response> {
+) -> Result<Json<Vec<WebhookResponse>>, AppError> {
     let rows = sqlx::query_as::<_, WebhookRow>(&format!(
         "SELECT {COLS} FROM webhook_configs ORDER BY created_at DESC"
     ))
@@ -134,7 +133,7 @@ pub async fn create_webhook(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Json(req): Json<CreateWebhookRequest>,
-) -> Result<(StatusCode, Json<WebhookResponse>), axum::response::Response> {
+) -> Result<(StatusCode, Json<WebhookResponse>), AppError> {
     // Validate
     if req.name.trim().is_empty() {
         return Err(admin_bad_request("name must not be empty"));
@@ -183,7 +182,7 @@ pub async fn update_webhook(
     AdminUser { user_id: actor_id }: AdminUser,
     Path(webhook_id): Path<Uuid>,
     Json(req): Json<UpdateWebhookRequest>,
-) -> Result<Json<WebhookResponse>, axum::response::Response> {
+) -> Result<Json<WebhookResponse>, AppError> {
     // Fetch current
     let current = sqlx::query_as::<_, WebhookRow>(&format!(
         "SELECT {COLS} FROM webhook_configs WHERE id = $1"
@@ -252,7 +251,7 @@ pub async fn delete_webhook(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(webhook_id): Path<Uuid>,
-) -> Result<StatusCode, axum::response::Response> {
+) -> Result<StatusCode, AppError> {
     let result = sqlx::query("DELETE FROM webhook_configs WHERE id = $1")
         .bind(webhook_id)
         .execute(&state.db_pool)
@@ -283,7 +282,7 @@ pub async fn test_webhook(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
     Path(webhook_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, axum::response::Response> {
+) -> Result<Json<serde_json::Value>, AppError> {
     // Fetch webhook
     let webhook = sqlx::query_as::<_, WebhookRow>(&format!(
         "SELECT {COLS} FROM webhook_configs WHERE id = $1"
@@ -333,21 +332,10 @@ pub async fn test_webhook(
             if resp.status().is_success() {
                 Ok(Json(json!({"status": "ok", "http_status": http_status})))
             } else {
-                Err((
-                    StatusCode::BAD_GATEWAY,
-                    Json(json!({
-                        "status": "error",
-                        "detail": format!("Webhook returned HTTP {http_status}")
-                    })),
-                )
-                    .into_response())
+                Err(AppError::internal(format!("Webhook returned HTTP {http_status}")))
             }
         }
-        Err(e) => Err((
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"status": "error", "detail": e.to_string()})),
-        )
-            .into_response()),
+        Err(e) => Err(AppError::internal(e.to_string())),
     }
 }
 
@@ -356,7 +344,7 @@ pub async fn test_webhook(
 // ---------------------------------------------------------------------------
 
 #[allow(clippy::result_large_err)]
-fn validate_events(events: &[String]) -> Result<(), axum::response::Response> {
+fn validate_events(events: &[String]) -> Result<(), AppError> {
     if events.is_empty() {
         return Err(admin_bad_request("events array must not be empty"));
     }
@@ -372,7 +360,7 @@ fn validate_events(events: &[String]) -> Result<(), axum::response::Response> {
 fn encrypt_optional_secret(
     secret: Option<&str>,
     state: &AppState,
-) -> Result<Option<String>, axum::response::Response> {
+) -> Result<Option<String>, AppError> {
     match secret {
         Some(s) if !s.is_empty() => {
             let enc = encrypt_secret(s, &state.secret_key)
@@ -383,7 +371,7 @@ fn encrypt_optional_secret(
     }
 }
 
-fn db_error(e: sqlx::Error) -> axum::response::Response {
+fn db_error(e: sqlx::Error) -> AppError {
     tracing::error!("Database error: {:?}", e);
     admin_internal_error("Database error")
 }

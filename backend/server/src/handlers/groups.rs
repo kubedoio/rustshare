@@ -6,13 +6,12 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{handlers::AuthenticatedUser, AppState};
+use crate::{handlers::{AuthenticatedUser, AppError}, AppState};
 
 // ============================================================================
 // Request/Response DTOs
@@ -110,7 +109,7 @@ struct MemberRow {
 pub async fn list_my_groups(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-) -> Result<Json<Vec<UserGroupResponse>>, Response> {
+) -> Result<Json<Vec<UserGroupResponse>>, AppError> {
     let rows = sqlx::query_as::<_, GroupRow>(
         r#"
         SELECT
@@ -129,15 +128,7 @@ pub async fn list_my_groups(
     )
     .bind(auth.user_id)
     .fetch_all(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to list user groups: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Failed to load groups")),
-        )
-            .into_response()
-    })?;
+    .await?;
 
     let groups = rows
         .into_iter()
@@ -160,7 +151,7 @@ pub async fn get_my_group(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(group_id): Path<Uuid>,
-) -> Result<Json<UserGroupDetailResponse>, Response> {
+) -> Result<Json<UserGroupDetailResponse>, AppError> {
     // First verify the user is a member of this group
     let is_member = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2)",
@@ -168,18 +159,10 @@ pub async fn get_my_group(
     .bind(group_id)
     .bind(auth.user_id)
     .fetch_one(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to check group membership: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Failed to verify group access")),
-        )
-            .into_response()
-    })?;
+    .await?;
 
     if !is_member {
-        return Err(forbidden("You are not a member of this group"));
+        return Err(AppError::forbidden("You are not a member of this group"));
     }
 
     // Get group details
@@ -188,16 +171,8 @@ pub async fn get_my_group(
     )
     .bind(group_id)
     .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to get group: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Failed to load group")),
-        )
-            .into_response()
-    })?
-    .ok_or_else(|| not_found("Group not found"))?;
+    .await?
+    .ok_or_else(|| AppError::not_found("Group not found"))?;
 
     // Get members
     let members = sqlx::query_as::<_, MemberRow>(
@@ -211,15 +186,7 @@ pub async fn get_my_group(
     )
     .bind(group_id)
     .fetch_all(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to get group members: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Failed to load group members")),
-        )
-            .into_response()
-    })?;
+    .await?;
 
     Ok(Json(UserGroupDetailResponse {
         id: group.0.to_string(),
@@ -246,7 +213,7 @@ pub async fn create_file_group_share(
     auth: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
     Json(req): Json<CreateFileGroupShareRequest>,
-) -> Result<(StatusCode, Json<GroupShareResponse>), Response> {
+) -> Result<(StatusCode, Json<GroupShareResponse>), AppError> {
     use rustshare_core::domain::SharePermissions;
     use rustshare_core::services::Resource;
 
@@ -256,7 +223,7 @@ pub async fn create_file_group_share(
         "Edit" => SharePermissions::Edit,
         "Admin" => SharePermissions::Admin,
         _ => {
-            return Err(bad_request(
+            return Err(AppError::bad_request(
                 "Invalid permission. Must be View, Edit, or Admin",
             ));
         }
@@ -277,38 +244,32 @@ pub async fn create_file_group_share(
     let share = match result {
         Ok(share) => share,
         Err(rustshare_core::services::ShareError::FileNotFound(_)) => {
-            return Err(not_found("File not found"));
+            return Err(AppError::not_found("File not found"));
         }
         Err(rustshare_core::services::ShareError::FolderNotFound(_)) => {
-            return Err(not_found("Folder not found"));
+            return Err(AppError::not_found("Folder not found"));
         }
         Err(rustshare_core::services::ShareError::GroupNotFound(_)) => {
-            return Err(not_found("Group not found"));
+            return Err(AppError::not_found("Group not found"));
         }
         Err(rustshare_core::services::ShareError::NotGroupMember(_)) => {
-            return Err(forbidden("You must be a group member to share"));
+            return Err(AppError::forbidden("You must be a group member to share"));
         }
         Err(rustshare_core::services::ShareError::CrossTenantSharingNotAllowed) => {
-            return Err(forbidden("Cross-tenant sharing not allowed"));
+            return Err(AppError::forbidden("Cross-tenant sharing not allowed"));
         }
         Err(rustshare_core::services::ShareError::PermissionDenied { .. }) => {
-            return Err(forbidden("Permission denied"));
+            return Err(AppError::forbidden("Permission denied"));
         }
         Err(rustshare_core::services::ShareError::GroupShareAlreadyExists) => {
-            return Err(conflict("Group already has access"));
+            return Err(AppError::conflict("Group already has access"));
         }
         Err(rustshare_core::services::ShareError::InsufficientPermission { .. }) => {
-            return Err(forbidden("Admin permission required"));
+            return Err(AppError::forbidden("Admin permission required"));
         }
         Err(e) => {
             tracing::error!("Failed to create group share: {}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new(
-                    "Failed to process share operation",
-                )),
-            )
-                .into_response());
+            return Err(AppError::internal("Failed to process share operation"));
         }
     };
 
@@ -340,7 +301,7 @@ pub async fn create_folder_group_share(
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
     Json(req): Json<CreateFolderGroupShareRequest>,
-) -> Result<(StatusCode, Json<GroupShareResponse>), Response> {
+) -> Result<(StatusCode, Json<GroupShareResponse>), AppError> {
     use rustshare_core::domain::SharePermissions;
     use rustshare_core::services::Resource;
 
@@ -350,7 +311,7 @@ pub async fn create_folder_group_share(
         "Edit" => SharePermissions::Edit,
         "Admin" => SharePermissions::Admin,
         _ => {
-            return Err(bad_request(
+            return Err(AppError::bad_request(
                 "Invalid permission. Must be View, Edit, or Admin",
             ));
         }
@@ -371,38 +332,32 @@ pub async fn create_folder_group_share(
     let share = match result {
         Ok(share) => share,
         Err(rustshare_core::services::ShareError::FileNotFound(_)) => {
-            return Err(not_found("File not found"));
+            return Err(AppError::not_found("File not found"));
         }
         Err(rustshare_core::services::ShareError::FolderNotFound(_)) => {
-            return Err(not_found("Folder not found"));
+            return Err(AppError::not_found("Folder not found"));
         }
         Err(rustshare_core::services::ShareError::GroupNotFound(_)) => {
-            return Err(not_found("Group not found"));
+            return Err(AppError::not_found("Group not found"));
         }
         Err(rustshare_core::services::ShareError::NotGroupMember(_)) => {
-            return Err(forbidden("You must be a group member to share"));
+            return Err(AppError::forbidden("You must be a group member to share"));
         }
         Err(rustshare_core::services::ShareError::CrossTenantSharingNotAllowed) => {
-            return Err(forbidden("Cross-tenant sharing not allowed"));
+            return Err(AppError::forbidden("Cross-tenant sharing not allowed"));
         }
         Err(rustshare_core::services::ShareError::PermissionDenied { .. }) => {
-            return Err(forbidden("Permission denied"));
+            return Err(AppError::forbidden("Permission denied"));
         }
         Err(rustshare_core::services::ShareError::GroupShareAlreadyExists) => {
-            return Err(conflict("Group already has access"));
+            return Err(AppError::conflict("Group already has access"));
         }
         Err(rustshare_core::services::ShareError::InsufficientPermission { .. }) => {
-            return Err(forbidden("Admin permission required"));
+            return Err(AppError::forbidden("Admin permission required"));
         }
         Err(e) => {
             tracing::error!("Failed to create group share: {}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new(
-                    "Failed to process share operation",
-                )),
-            )
-                .into_response());
+            return Err(AppError::internal("Failed to process share operation"));
         }
     };
 
@@ -433,7 +388,7 @@ pub async fn revoke_group_share(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(share_id): Path<Uuid>,
-) -> Result<StatusCode, Response> {
+) -> Result<StatusCode, AppError> {
     let result = state
         .share_service
         .revoke_group_share(share_id, auth.user_id)
@@ -442,20 +397,14 @@ pub async fn revoke_group_share(
     match result {
         Ok(_) => (),
         Err(rustshare_core::services::ShareError::ShareNotFound(_)) => {
-            return Err(not_found("Share not found"));
+            return Err(AppError::not_found("Share not found"));
         }
         Err(rustshare_core::services::ShareError::PermissionDenied { .. }) => {
-            return Err(forbidden("Permission denied"));
+            return Err(AppError::forbidden("Permission denied"));
         }
         Err(e) => {
             tracing::error!("Failed to revoke group share: {}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new(
-                    "Failed to process share operation",
-                )),
-            )
-                .into_response());
+            return Err(AppError::internal("Failed to process share operation"));
         }
     };
 
@@ -470,7 +419,7 @@ pub async fn update_group_share_permission(
     auth: AuthenticatedUser,
     Path(share_id): Path<Uuid>,
     Json(req): Json<UpdateGroupShareRequest>,
-) -> Result<Json<GroupShareResponse>, Response> {
+) -> Result<Json<GroupShareResponse>, AppError> {
     use rustshare_core::domain::SharePermissions;
 
     let permission = match req.permission.as_str() {
@@ -478,7 +427,7 @@ pub async fn update_group_share_permission(
         "Edit" => SharePermissions::Edit,
         "Admin" => SharePermissions::Admin,
         _ => {
-            return Err(bad_request("Invalid permission"));
+            return Err(AppError::bad_request("Invalid permission"));
         }
     };
 
@@ -490,20 +439,14 @@ pub async fn update_group_share_permission(
     let share = match result {
         Ok(share) => share,
         Err(rustshare_core::services::ShareError::ShareNotFound(_)) => {
-            return Err(not_found("Share not found"));
+            return Err(AppError::not_found("Share not found"));
         }
         Err(rustshare_core::services::ShareError::PermissionDenied { .. }) => {
-            return Err(forbidden("Permission denied"));
+            return Err(AppError::forbidden("Permission denied"));
         }
         Err(e) => {
             tracing::error!("Failed to update group share: {}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new(
-                    "Failed to process share operation",
-                )),
-            )
-                .into_response());
+            return Err(AppError::internal("Failed to process share operation"));
         }
     };
 
@@ -545,7 +488,7 @@ pub async fn list_file_group_shares(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
-) -> Result<Json<Vec<GroupShareResponse>>, Response> {
+) -> Result<Json<Vec<GroupShareResponse>>, AppError> {
     // Check if user has permission to view shares (must be owner or admin)
     let has_permission = sqlx::query_scalar::<_, bool>(
         r#"
@@ -570,18 +513,10 @@ pub async fn list_file_group_shares(
     .bind(file_id)
     .bind(auth.user_id)
     .fetch_one(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to check permission: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Failed to check permission")),
-        )
-            .into_response()
-    })?;
+    .await?;
 
     if !has_permission {
-        return Err(forbidden(
+        return Err(AppError::forbidden(
             "You do not have permission to view shares for this file",
         ));
     }
@@ -599,15 +534,7 @@ pub async fn list_file_group_shares(
     )
     .bind(file_id)
     .fetch_all(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to list group shares: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Failed to load group shares")),
-        )
-            .into_response()
-    })?;
+    .await?;
 
     let shares = rows
         .into_iter()
@@ -634,7 +561,7 @@ pub async fn list_folder_group_shares(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
-) -> Result<Json<Vec<GroupShareResponse>>, Response> {
+) -> Result<Json<Vec<GroupShareResponse>>, AppError> {
     // Check if user has permission to view shares (must be owner or admin)
     let has_permission = sqlx::query_scalar::<_, bool>(
         r#"
@@ -659,18 +586,10 @@ pub async fn list_folder_group_shares(
     .bind(folder_id)
     .bind(auth.user_id)
     .fetch_one(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to check permission: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Failed to check permission")),
-        )
-            .into_response()
-    })?;
+    .await?;
 
     if !has_permission {
-        return Err(forbidden(
+        return Err(AppError::forbidden(
             "You do not have permission to view shares for this folder",
         ));
     }
@@ -688,15 +607,7 @@ pub async fn list_folder_group_shares(
     )
     .bind(folder_id)
     .fetch_all(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to list group shares: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(super::ErrorResponse::new("Failed to load group shares")),
-        )
-            .into_response()
-    })?;
+    .await?;
 
     let shares = rows
         .into_iter()
@@ -714,24 +625,4 @@ pub async fn list_folder_group_shares(
         .collect();
 
     Ok(Json(shares))
-}
-
-fn bad_request(msg: impl Into<String>) -> Response {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(super::ErrorResponse::new(msg)),
-    )
-        .into_response()
-}
-
-fn forbidden(msg: impl Into<String>) -> Response {
-    (StatusCode::FORBIDDEN, Json(super::ErrorResponse::new(msg))).into_response()
-}
-
-fn not_found(msg: impl Into<String>) -> Response {
-    (StatusCode::NOT_FOUND, Json(super::ErrorResponse::new(msg))).into_response()
-}
-
-fn conflict(msg: impl Into<String>) -> Response {
-    (StatusCode::CONFLICT, Json(super::ErrorResponse::new(msg))).into_response()
 }

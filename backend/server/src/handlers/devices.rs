@@ -9,7 +9,7 @@ use serde::Serialize;
 use sqlx::FromRow;
 use uuid::Uuid;
 
-use super::ErrorResponse;
+use crate::handlers::AppError;
 use crate::handlers::AuthenticatedUser;
 use crate::state::DatabaseState;
 
@@ -65,7 +65,7 @@ impl From<DeviceRow> for DeviceListResponse {
 pub async fn list_devices(
     State(db): State<DatabaseState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-) -> Result<Json<ListDevicesResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<ListDevicesResponse>, AppError> {
     let rows: Vec<DeviceRow> = sqlx::query_as(
         r#"
         SELECT id, device_name, created_at, last_used_at
@@ -76,8 +76,7 @@ pub async fn list_devices(
     )
     .bind(user_id)
     .fetch_all(&db.db_pool)
-    .await
-    .map_err(db_error)?;
+    .await?;
 
     Ok(Json(ListDevicesResponse {
         devices: rows.into_iter().map(DeviceListResponse::from).collect(),
@@ -93,7 +92,7 @@ pub async fn revoke_device(
     State(db): State<DatabaseState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Path(device_id): Path<Uuid>,
-) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<StatusCode, AppError> {
     // First, verify the device belongs to the user and is not already revoked
     let result = sqlx::query(
         r#"
@@ -105,32 +104,15 @@ pub async fn revoke_device(
     .bind(device_id)
     .bind(user_id)
     .execute(&db.db_pool)
-    .await
-    .map_err(db_error)?;
+    .await?;
 
     // If no rows were affected, the device either doesn't exist,
     // doesn't belong to the user, or is already revoked
     if result.rows_affected() == 0 {
-        return Err(not_found("Device not found"));
+        return Err(AppError::not_found("Device not found"));
     }
 
     Ok(StatusCode::NO_CONTENT)
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-fn db_error(e: sqlx::Error) -> (StatusCode, Json<ErrorResponse>) {
-    tracing::error!("Database error: {:?}", e);
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse::new("Database error")),
-    )
-}
-
-fn not_found(msg: &str) -> (StatusCode, Json<ErrorResponse>) {
-    (StatusCode::NOT_FOUND, Json(ErrorResponse::new(msg)))
 }
 
 // ---------------------------------------------------------------------------

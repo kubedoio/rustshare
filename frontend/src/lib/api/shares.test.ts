@@ -19,6 +19,10 @@ import type { CreateShareRequest } from '$lib/api/shares';
 // Mock the API client
 vi.mock('$lib/api/client', () => ({
 	apiClient: {
+			postVoid: vi.fn(),
+			patchVoid: vi.fn(),
+			requestText: vi.fn(),
+			requestVoid: vi.fn(),
 		get: vi.fn(),
 		post: vi.fn(),
 		put: vi.fn(),
@@ -262,7 +266,7 @@ describe('shares API', () => {
 				permission: 'Edit'
 			});
 
-			expect(apiClient.post).toHaveBeenCalledWith('/files/file-1/share', {
+			expect(apiClient.postVoid).toHaveBeenCalledWith('/files/file-1/share', {
 				recipient_email: 'teammate@example.com',
 				permission: 'Edit'
 			});
@@ -318,7 +322,7 @@ describe('shares API', () => {
 				permission: 'View'
 			});
 
-			expect(apiClient.post).toHaveBeenCalledWith('/folders/folder-1/share', {
+			expect(apiClient.postVoid).toHaveBeenCalledWith('/folders/folder-1/share', {
 				recipient_email: 'teammate@example.com',
 				permission: 'View'
 			});

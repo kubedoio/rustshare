@@ -3,7 +3,6 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
     Json,
 };
 use chrono::{DateTime, Utc};
@@ -11,21 +10,9 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use super::AuthenticatedUser;
-use crate::services::meeting_service::{MeetingError, MeetingNote, MeetingSummary};
-use crate::{handlers::ErrorResponse, AppState};
-
-pub fn meeting_error_response(err: MeetingError) -> Response {
-    let (status, message) = match err {
-        MeetingError::NotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        MeetingError::PermissionDenied => (StatusCode::FORBIDDEN, err.to_string()),
-        MeetingError::InvalidData(_) => (StatusCode::BAD_REQUEST, err.to_string()),
-        MeetingError::Database(_) | MeetingError::Storage(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Internal server error".to_string(),
-        ),
-    };
-    (status, Json(ErrorResponse::new(message))).into_response()
-}
+use crate::handlers::AppError;
+use crate::services::meeting_service::{MeetingNote, MeetingSummary};
+use crate::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateMeetingRequest {
@@ -39,7 +26,7 @@ pub async fn create_meeting(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Json(req): Json<CreateMeetingRequest>,
-) -> Result<(StatusCode, Json<MeetingNote>), Response> {
+) -> Result<(StatusCode, Json<MeetingNote>), AppError> {
     let meeting = state
         .meeting_service
         .create_meeting(
@@ -50,8 +37,7 @@ pub async fn create_meeting(
             req.date,
             req.content,
         )
-        .await
-        .map_err(meeting_error_response)?;
+        .await?;
 
     Ok((StatusCode::CREATED, Json(meeting)))
 }
@@ -60,12 +46,11 @@ pub async fn get_meeting(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(meeting_id): Path<Uuid>,
-) -> Result<Json<MeetingNote>, Response> {
+) -> Result<Json<MeetingNote>, AppError> {
     let meeting = state
         .meeting_service
         .get_meeting(meeting_id, auth.user_id)
-        .await
-        .map_err(meeting_error_response)?;
+        .await?;
 
     Ok(Json(meeting))
 }
@@ -82,7 +67,7 @@ pub async fn update_meeting(
     auth: AuthenticatedUser,
     Path(meeting_id): Path<Uuid>,
     Json(req): Json<UpdateMeetingRequest>,
-) -> Result<Json<MeetingNote>, Response> {
+) -> Result<Json<MeetingNote>, AppError> {
     let meeting = state
         .meeting_service
         .update_meeting(
@@ -92,8 +77,7 @@ pub async fn update_meeting(
             req.content,
             req.attendees,
         )
-        .await
-        .map_err(meeting_error_response)?;
+        .await?;
 
     Ok(Json(meeting))
 }
@@ -101,12 +85,11 @@ pub async fn update_meeting(
 pub async fn list_meetings(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-) -> Result<Json<Vec<MeetingSummary>>, Response> {
+) -> Result<Json<Vec<MeetingSummary>>, AppError> {
     let meetings = state
         .meeting_service
         .list_meetings(auth.user_id, auth.tenant_id)
-        .await
-        .map_err(meeting_error_response)?;
+        .await?;
 
     Ok(Json(meetings))
 }

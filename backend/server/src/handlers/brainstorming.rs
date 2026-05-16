@@ -4,34 +4,15 @@ use axum::{
     body::Bytes,
     extract::{Path, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::AuthenticatedUser;
-use crate::services::brainstorming_service::{BrainstormBoard, BrainstormError};
-use crate::{handlers::ErrorResponse, AppState};
-
-// ============================================================================
-// Error Response Mapping
-// ============================================================================
-
-pub fn brainstorming_error_response(err: BrainstormError) -> Response {
-    let (status, message) = match &err {
-        BrainstormError::BoardNotFound => (StatusCode::NOT_FOUND, err.to_string()),
-        BrainstormError::PermissionDenied => (StatusCode::FORBIDDEN, err.to_string()),
-        BrainstormError::InvalidName(_)
-        | BrainstormError::InvalidSlug(_)
-        | BrainstormError::InvalidData(_) => (StatusCode::BAD_REQUEST, err.to_string()),
-        BrainstormError::Database(_) | BrainstormError::Storage(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Internal server error".to_string(),
-        ),
-    };
-    (status, Json(ErrorResponse::new(message))).into_response()
-}
+use crate::handlers::AppError;
+use crate::services::brainstorming_service::BrainstormBoard;
+use crate::AppState;
 
 // ============================================================================
 // List Boards
@@ -45,12 +26,11 @@ pub struct ListBoardsResponse {
 pub async fn list_brainstorm_boards(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-) -> Result<Json<ListBoardsResponse>, Response> {
+) -> Result<Json<ListBoardsResponse>, AppError> {
     let boards = state
         .brainstorming_service
         .list_boards(auth.user_id, auth.tenant_id)
-        .await
-        .map_err(brainstorming_error_response)?;
+        .await?;
 
     Ok(Json(ListBoardsResponse { boards }))
 }
@@ -80,24 +60,23 @@ pub async fn create_brainstorm_board(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Json(req): Json<CreateBoardRequest>,
-) -> Result<(StatusCode, Json<CreateBoardResponse>), Response> {
+) -> Result<(StatusCode, Json<CreateBoardResponse>), AppError> {
     // Validate title
     if req.title.trim().is_empty() {
-        return Err(brainstorming_error_response(BrainstormError::InvalidName(
-            "Title cannot be empty".to_string(),
-        )));
+        return Err(AppError::bad_request("Title cannot be empty"));
     }
     if req.title.contains('/') || req.title.contains('\0') {
-        return Err(brainstorming_error_response(BrainstormError::InvalidName(
-            "Title cannot contain slashes or null characters".to_string(),
-        )));
+        return Err(AppError::bad_request(
+            "Title cannot contain slashes or null characters",
+        ));
     }
 
     // Validate template key
     let valid_templates = ["template_blank_brainstorm"];
     if !valid_templates.contains(&req.template_key.as_str()) {
-        return Err(brainstorming_error_response(BrainstormError::InvalidData(
-            format!("Invalid template key: {}", req.template_key),
+        return Err(AppError::bad_request(format!(
+            "Invalid template key: {}",
+            req.template_key
         )));
     }
 
@@ -113,29 +92,22 @@ pub async fn create_brainstorm_board(
         )
         .await
         .map_err(|e| {
-            let status = if e.to_string().contains("not found") {
-                StatusCode::NOT_FOUND
+            if e.to_string().contains("not found") {
+                AppError::not_found(e.to_string())
             } else if e.to_string().contains("disabled") || e.to_string().contains("denied") {
-                StatusCode::FORBIDDEN
+                AppError::forbidden(e.to_string())
             } else if e.to_string().contains("already exists") {
-                StatusCode::CONFLICT
+                AppError::conflict(e.to_string())
             } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            };
-            let message = if status == StatusCode::INTERNAL_SERVER_ERROR {
-                "Internal server error".to_string()
-            } else {
-                e.to_string()
-            };
-            (status, Json(ErrorResponse::new(message))).into_response()
+                AppError::internal("Internal server error")
+            }
         })?;
 
     // Parse created board
     let board = state
         .brainstorming_service
         .get_board(object.object_id, auth.user_id, auth.tenant_id)
-        .await
-        .map_err(brainstorming_error_response)?;
+        .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -172,12 +144,11 @@ pub async fn get_brainstorm_board(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(board_id): Path<Uuid>,
-) -> Result<Json<GetBoardResponse>, Response> {
+) -> Result<Json<GetBoardResponse>, AppError> {
     let board = state
         .brainstorming_service
         .get_board(board_id, auth.user_id, auth.tenant_id)
-        .await
-        .map_err(brainstorming_error_response)?;
+        .await?;
 
     Ok(Json(GetBoardResponse {
         id: board.id,
@@ -205,7 +176,7 @@ pub async fn get_brainstorm_board_source(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(board_id): Path<Uuid>,
-) -> Result<Json<GetBoardSourceResponse>, Response> {
+) -> Result<Json<GetBoardSourceResponse>, AppError> {
     tracing::info!(
         board_id = %board_id,
         user_id = %auth.user_id,
@@ -215,8 +186,7 @@ pub async fn get_brainstorm_board_source(
     let source = state
         .brainstorming_service
         .get_board_source(board_id, auth.user_id, auth.tenant_id)
-        .await
-        .map_err(brainstorming_error_response)?;
+        .await?;
 
     Ok(Json(GetBoardSourceResponse { source }))
 }
@@ -235,7 +205,7 @@ pub async fn save_brainstorm_board_source(
     auth: AuthenticatedUser,
     Path(board_id): Path<Uuid>,
     Json(req): Json<SaveBoardSourceRequest>,
-) -> Result<Json<GetBoardResponse>, Response> {
+) -> Result<Json<GetBoardResponse>, AppError> {
     tracing::info!(
         board_id = %board_id,
         user_id = %auth.user_id,
@@ -245,8 +215,7 @@ pub async fn save_brainstorm_board_source(
     let board = state
         .brainstorming_service
         .save_board_source(board_id, auth.user_id, auth.tenant_id, req.source)
-        .await
-        .map_err(brainstorming_error_response)?;
+        .await?;
 
     Ok(Json(GetBoardResponse {
         id: board.id,
@@ -270,12 +239,11 @@ pub async fn update_brainstorm_board_preview(
     auth: AuthenticatedUser,
     Path(board_id): Path<Uuid>,
     body: Bytes,
-) -> Result<Json<GetBoardResponse>, Response> {
+) -> Result<Json<GetBoardResponse>, AppError> {
     let board = state
         .brainstorming_service
         .update_board_preview(board_id, auth.user_id, auth.tenant_id, body)
-        .await
-        .map_err(brainstorming_error_response)?;
+        .await?;
 
     Ok(Json(GetBoardResponse {
         id: board.id,
@@ -298,12 +266,11 @@ pub async fn delete_brainstorm_board(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(board_id): Path<Uuid>,
-) -> Result<StatusCode, Response> {
+) -> Result<StatusCode, AppError> {
     state
         .brainstorming_service
         .delete_board(board_id, auth.user_id, auth.tenant_id)
-        .await
-        .map_err(brainstorming_error_response)?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

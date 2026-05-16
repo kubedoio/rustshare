@@ -16,15 +16,14 @@ use uuid::Uuid;
 
 use rustshare_core::{
     domain::SharePermissions,
-    services::{FileError, FileUploadActor},
+    services::{FileUploadActor},
 };
 use rustshare_storage::ShareAccessLogEntry;
 
 use crate::{handlers::ShareSessionAuth, AppState};
 
 use super::files::FileUploadResponse;
-
-type HandlerResponseError = Box<Response>;
+use crate::handlers::AppError;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
@@ -74,12 +73,11 @@ pub async fn create_session(
     State(state): State<AppState>,
     Path(token): Path<String>,
     Json(req): Json<CreateSessionRequest>,
-) -> Result<Response, Response> {
+) -> Result<Response, AppError> {
     let session = state
         .share_service
         .validate_and_create_session(&token, req.password)
-        .await
-        .map_err(super::share_error_response)?;
+        .await?;
 
     Ok((
         StatusCode::OK,
@@ -97,12 +95,11 @@ pub async fn create_session(
 pub async fn get_share_info(
     State(state): State<AppState>,
     Path(token): Path<String>,
-) -> Result<Response, Response> {
+) -> Result<Response, AppError> {
     let (share, file, folder) = state
         .share_service
         .get_public_share_info(&token)
-        .await
-        .map_err(super::share_error_response)?;
+        .await?;
 
     if let Some(file) = file {
         Ok(Json(ShareInfoResponse {
@@ -131,16 +128,16 @@ pub async fn get_share_info(
         })
         .into_response())
     } else {
-        Err(internal_error("Share resource is missing"))
+        Err(AppError::internal("Share resource is missing"))
     }
 }
 
 fn ensure_share_session_matches(
     share: &rustshare_core::domain::Share,
     claims: &rustshare_auth::ShareSessionClaims,
-) -> Result<(), HandlerResponseError> {
+) -> Result<(), AppError> {
     if share.id != claims.share_id {
-        return Err(Box::new(forbidden("Token is not valid for this share")));
+        return Err(AppError::forbidden("Token is not valid for this share"));
     }
 
     Ok(())
@@ -148,7 +145,7 @@ fn ensure_share_session_matches(
 
 async fn parse_upload_multipart(
     mut multipart: Multipart,
-) -> Result<(Bytes, String, Option<Uuid>, String, Option<String>), Response> {
+) -> Result<(Bytes, String, Option<Uuid>, String, Option<String>), AppError> {
     let mut file_data: Option<Bytes> = None;
     let mut file_name: Option<String> = None;
     let mut parent_folder_id: Option<Uuid> = None;
@@ -156,10 +153,10 @@ async fn parse_upload_multipart(
     let mut mime_type = "application/octet-stream".to_string();
 
     while let Some(field) = multipart.next_field().await.map_err(|e| {
-        super::file_error_response(FileError::Storage(format!(
+        AppError::internal(format!(
             "Failed to read multipart field: {}",
             e
-        )))
+        ))
     })? {
         let field_name = field.name().unwrap_or("").to_string();
 
@@ -174,50 +171,48 @@ async fn parse_upload_multipart(
                     }
                 }
                 file_data = Some(field.bytes().await.map_err(|e| {
-                    super::file_error_response(FileError::Storage(format!(
+                    AppError::internal(format!(
                         "Failed to read file data: {}",
                         e
-                    )))
+                    ))
                 })?);
             }
             "name" => {
                 file_name = Some(field.text().await.map_err(|e| {
-                    super::file_error_response(FileError::Storage(format!(
+                    AppError::internal(format!(
                         "Failed to read name field: {}",
                         e
-                    )))
+                    ))
                 })?);
             }
             "parent_folder_id" => {
                 let text = field.text().await.map_err(|e| {
-                    super::file_error_response(FileError::Storage(format!(
+                    AppError::internal(format!(
                         "Failed to read parent_folder_id field: {}",
                         e
-                    )))
+                    ))
                 })?;
 
                 if !text.is_empty() {
                     parent_folder_id = Some(Uuid::parse_str(&text).map_err(|_| {
-                        super::file_error_response(FileError::InvalidName(
-                            "Invalid parent_folder_id".to_string(),
-                        ))
+                        AppError::bad_request("Invalid parent_folder_id")
                     })?);
                 }
             }
             "uploader_name" => {
                 let text = field.text().await.map_err(|e| {
-                    super::file_error_response(FileError::Storage(format!(
+                    AppError::internal(format!(
                         "Failed to read uploader_name field: {}",
                         e
-                    )))
+                    ))
                 })?;
 
                 let trimmed = text.trim();
                 if !trimmed.is_empty() {
                     if trimmed.len() > 120 {
-                        return Err(super::file_error_response(FileError::InvalidName(
-                            "Uploader name must be 120 characters or fewer".to_string(),
-                        )));
+                        return Err(AppError::bad_request(
+                            "Uploader name must be 120 characters or fewer",
+                        ));
                     }
                     uploader_name = Some(trimmed.to_string());
                 }
@@ -227,10 +222,10 @@ async fn parse_upload_multipart(
     }
 
     let file_data = file_data.ok_or_else(|| {
-        super::file_error_response(FileError::InvalidName("Missing file data".to_string()))
+        AppError::bad_request("Missing file data")
     })?;
     let file_name = file_name.ok_or_else(|| {
-        super::file_error_response(FileError::InvalidName("Missing file name".to_string()))
+        AppError::bad_request("Missing file name")
     })?;
 
     // If mime_type is generic or not provided, guess from file extension
@@ -256,34 +251,34 @@ pub async fn download_shared_file(
     ShareSessionAuth(claims): ShareSessionAuth,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-) -> Result<Response, Response> {
+) -> Result<Response, AppError> {
     // Get share to verify token matches
     let share = state
         .metadata_store
         .get_share_by_token(&token)
         .await
-        .map_err(|e| internal_error(format!("Database error: {}", e)))?
+        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(
+            AppError::from(rustshare_core::services::ShareError::ShareNotFoundByToken(
                 token.clone(),
             ))
         })?;
 
     // Verify JWT share_id matches the share we're accessing
-    ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
+    ensure_share_session_matches(&share, &claims)?;
 
     // Get file metadata
     let file_id = share
         .file_id
-        .ok_or_else(|| bad_request("This share is not for a file"))?;
+        .ok_or_else(|| AppError::bad_request("This share is not for a file"))?;
 
     let file = state
         .metadata_store
         .find_file_by_id(file_id, share.created_by)
         .await
-        .map_err(|e| internal_error(format!("Database error: {}", e)))?
+        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::FileNotFound(file_id))
+            AppError::from(rustshare_core::services::ShareError::FileNotFound(file_id))
         })?;
 
     if file.name.starts_with(".rustshare")
@@ -292,7 +287,7 @@ pub async fn download_shared_file(
         || file.name == "__primary__.md"
         || file.name.ends_with(".editor.json")
     {
-        return Err(super::share_error_response(
+        return Err(AppError::from(
             rustshare_core::services::ShareError::FileNotFound(file_id),
         ));
     }
@@ -302,7 +297,7 @@ pub async fn download_shared_file(
         .object_store
         .get(&file.storage_key())
         .await
-        .map_err(|e| internal_error(format!("Failed to retrieve file: {}", e)))?;
+        .map_err(|e| AppError::internal(format!("Failed to retrieve file: {}", e)))?;
 
     // Extract request metadata
     let ip_address = Some(addr.ip().to_string());
@@ -357,37 +352,36 @@ pub async fn get_shared_folder_contents(
     Path(token): Path<String>,
     ShareSessionAuth(claims): ShareSessionAuth,
     Query(query): Query<SharedFolderContentsQuery>,
-) -> Result<Response, Response> {
+) -> Result<Response, AppError> {
     let share = state
         .metadata_store
         .get_share_by_token(&token)
         .await
-        .map_err(|e| internal_error(format!("Database error: {}", e)))?
+        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(
+            AppError::from(rustshare_core::services::ShareError::ShareNotFoundByToken(
                 token.clone(),
             ))
         })?;
 
-    ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
+    ensure_share_session_matches(&share, &claims)?;
 
     if share.folder_id.is_none() {
-        return Err(bad_request("This share is not for a folder"));
+        return Err(AppError::bad_request("This share is not for a folder"));
     }
 
     if share.upload_only {
-        return Err(forbidden("This share is upload-only"));
+        return Err(AppError::forbidden("This share is upload-only"));
     }
 
     let (_share, current_folder, folders, files) = state
         .share_service
         .list_public_folder_contents(&token, query.folder_id)
-        .await
-        .map_err(super::share_error_response)?;
+        .await?;
 
     let root_folder_id = share
         .folder_id
-        .ok_or_else(|| internal_error("Invalid share: missing folder_id"))?;
+        .ok_or_else(|| AppError::internal("Invalid share: missing folder_id"))?;
 
     // Hide module metadata sidecar files from public share listings
     let visible_files: Vec<_> = files
@@ -419,41 +413,41 @@ pub async fn download_shared_folder_file(
     ShareSessionAuth(claims): ShareSessionAuth,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-) -> Result<Response, Response> {
+) -> Result<Response, AppError> {
     let share = state
         .metadata_store
         .get_share_by_token(&token)
         .await
-        .map_err(|e| internal_error(format!("Database error: {}", e)))?
+        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(
+            AppError::from(rustshare_core::services::ShareError::ShareNotFoundByToken(
                 token.clone(),
             ))
         })?;
 
-    ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
+    ensure_share_session_matches(&share, &claims)?;
 
     let root_folder_id = share
         .folder_id
-        .ok_or_else(|| bad_request("This share is not for a folder"))?;
+        .ok_or_else(|| AppError::bad_request("This share is not for a folder"))?;
 
     if share.upload_only {
-        return Err(forbidden("This share is upload-only"));
+        return Err(AppError::forbidden("This share is upload-only"));
     }
 
     let descendants = state
         .metadata_store
         .find_descendant_folders_unchecked(root_folder_id)
         .await
-        .map_err(|e| internal_error(format!("Database error: {}", e)))?;
+        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?;
 
     let file = state
         .metadata_store
         .find_file_by_id(file_id, share.created_by)
         .await
-        .map_err(|e| internal_error(format!("Database error: {}", e)))?
+        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::FileNotFound(file_id))
+            AppError::from(rustshare_core::services::ShareError::FileNotFound(file_id))
         })?;
 
     if file.name.starts_with(".rustshare")
@@ -462,21 +456,21 @@ pub async fn download_shared_folder_file(
         || file.name == "__primary__.md"
         || file.name.ends_with(".editor.json")
     {
-        return Err(super::share_error_response(
+        return Err(AppError::from(
             rustshare_core::services::ShareError::FileNotFound(file_id),
         ));
     }
 
     let allowed_folder_ids: Vec<Uuid> = descendants.into_iter().map(|folder| folder.id).collect();
     if !allowed_folder_ids.contains(&file.parent_folder_id.unwrap_or(Uuid::nil())) {
-        return Err(forbidden("File is not inside the shared folder"));
+        return Err(AppError::forbidden("File is not inside the shared folder"));
     }
 
     let content = state
         .object_store
         .get(&file.storage_key())
         .await
-        .map_err(|e| internal_error(format!("Failed to retrieve file: {}", e)))?;
+        .map_err(|e| AppError::internal(format!("Failed to retrieve file: {}", e)))?;
 
     let ip_address = Some(addr.ip().to_string());
     let user_agent = headers
@@ -532,53 +526,46 @@ pub async fn upload_shared_folder_file(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     multipart: Multipart,
-) -> Result<Response, Response> {
+) -> Result<Response, AppError> {
     let share = state
         .metadata_store
         .get_share_by_token(&token)
         .await
-        .map_err(|e| internal_error(format!("Database error: {}", e)))?
+        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::ShareNotFoundByToken(
+            AppError::from(rustshare_core::services::ShareError::ShareNotFoundByToken(
                 token.clone(),
             ))
         })?;
 
-    ensure_share_session_matches(&share, &claims).map_err(|error| *error)?;
+    ensure_share_session_matches(&share, &claims)?;
 
     let root_folder_id = share
         .folder_id
-        .ok_or_else(|| bad_request("This share is not for a folder"))?;
+        .ok_or_else(|| AppError::bad_request("This share is not for a folder"))?;
 
     if !share.upload_only && claims.permissions < SharePermissions::Edit {
-        return Err(forbidden("This share does not allow uploads"));
+        return Err(AppError::forbidden("This share does not allow uploads"));
     }
 
     let (file_data, file_name, requested_folder_id, mime_type, uploader_name) =
         parse_upload_multipart(multipart).await?;
 
     if file_data.len() > MAX_PUBLIC_UPLOAD_SIZE {
-        return Err((
-            StatusCode::PAYLOAD_TOO_LARGE,
-            Json(super::ErrorResponse {
-                error: "File too large".to_string(),
-                details: Some(format!(
-                    "File size {} exceeds maximum allowed {} bytes",
-                    file_data.len(),
-                    MAX_PUBLIC_UPLOAD_SIZE
-                )),
-            }),
-        )
-        .into_response());
+        return Err(AppError::payload_too_large(format!(
+            "File size {} exceeds maximum allowed {} bytes",
+            file_data.len(),
+            MAX_PUBLIC_UPLOAD_SIZE
+        )));
     }
 
     let root_folder = state
         .metadata_store
         .find_folder_by_id(root_folder_id, share.created_by)
         .await
-        .map_err(|e| internal_error(format!("Database error: {}", e)))?
+        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
         .ok_or_else(|| {
-            super::share_error_response(rustshare_core::services::ShareError::FolderNotFound(
+            AppError::from(rustshare_core::services::ShareError::FolderNotFound(
                 root_folder_id,
             ))
         })?;
@@ -587,7 +574,7 @@ pub async fn upload_shared_folder_file(
         && requested_folder_id.is_some()
         && requested_folder_id != Some(root_folder_id)
     {
-        return Err(forbidden(
+        return Err(AppError::forbidden(
             "Upload-only shares can only upload to the shared root folder",
         ));
     }
@@ -597,13 +584,13 @@ pub async fn upload_shared_folder_file(
         .metadata_store
         .find_descendant_folders_unchecked(root_folder_id)
         .await
-        .map_err(|e| internal_error(format!("Database error: {}", e)))?;
+        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?;
 
     if !descendants
         .iter()
         .any(|folder| folder.id == target_folder_id)
     {
-        return Err(forbidden("Target folder is outside the shared folder"));
+        return Err(AppError::forbidden("Target folder is outside the shared folder"));
     }
 
     let file = state
@@ -623,8 +610,7 @@ pub async fn upload_shared_folder_file(
             mime_type,
             share.tenant_id,
         )
-        .await
-        .map_err(super::file_error_response)?;
+        .await?;
 
     let ip_address = Some(addr.ip().to_string());
     let user_agent = headers
@@ -666,24 +652,6 @@ pub async fn upload_shared_folder_file(
         }),
     )
         .into_response())
-}
-
-fn bad_request(msg: impl Into<String>) -> Response {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(super::ErrorResponse::new(msg)),
-    )
-        .into_response()
-}
-
-fn forbidden(msg: impl Into<String>) -> Response {
-    (StatusCode::FORBIDDEN, Json(super::ErrorResponse::new(msg))).into_response()
-}
-
-fn internal_error(msg: impl Into<String>) -> Response {
-    let msg = msg.into();
-    tracing::error!("Public shares internal error: {}", msg);
-    super::internal_error_response()
 }
 
 #[cfg(test)]

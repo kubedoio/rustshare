@@ -1,6 +1,5 @@
 use axum::{
     extract::{Path, Query, State},
-    response::{IntoResponse, Response},
     Json,
 };
 use chrono::{DateTime, Utc};
@@ -9,7 +8,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::{
-    handlers::{file_error_response, AuthenticatedUser, ErrorResponse},
+    handlers::{AuthenticatedUser, AppError},
     AppState,
 };
 
@@ -105,12 +104,11 @@ pub async fn get_file_replication_status(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
-) -> Result<Json<FileReplicationStatusResponse>, Response> {
+) -> Result<Json<FileReplicationStatusResponse>, AppError> {
     let file = state
         .file_service
         .get_file(file_id, auth.user_id)
-        .await
-        .map_err(file_error_response)?;
+        .await?;
 
     let row = sqlx::query(
         r#"
@@ -134,7 +132,7 @@ pub async fn get_file_replication_status(
     .bind(file.current_version)
     .fetch_optional(&state.db_pool)
     .await
-    .map_err(internal_error)?;
+    ?;
 
     let (
         replication_state,
@@ -145,12 +143,12 @@ pub async fn get_file_replication_status(
         last_error,
     ) = if let Some(row) = row {
         (
-            row.try_get("replication_state").map_err(internal_error)?,
-            row.try_get("job_status").map_err(internal_error)?,
-            row.try_get("attempt_count").map_err(internal_error)?,
-            row.try_get("next_attempt_at").map_err(internal_error)?,
-            row.try_get("last_attempt_at").map_err(internal_error)?,
-            row.try_get("last_error").map_err(internal_error)?,
+            row.try_get("replication_state")?,
+            row.try_get("job_status")?,
+            row.try_get("attempt_count")?,
+            row.try_get("next_attempt_at")?,
+            row.try_get("last_attempt_at")?,
+            row.try_get("last_error")?,
         )
     } else {
         ("primary_written".to_string(), None, None, None, None, None)
@@ -172,7 +170,7 @@ pub async fn get_file_replication_status(
 pub async fn get_replication_summary(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-) -> Result<Json<ReplicationSummaryResponse>, Response> {
+) -> Result<Json<ReplicationSummaryResponse>, AppError> {
     require_admin(&state, auth.user_id).await?;
 
     let version_counts_row = sqlx::query(
@@ -189,7 +187,7 @@ pub async fn get_replication_summary(
     )
     .fetch_one(&state.db_pool)
     .await
-    .map_err(internal_error)?;
+    ?;
 
     let job_counts_row = sqlx::query(
         r#"
@@ -206,7 +204,7 @@ pub async fn get_replication_summary(
     )
     .fetch_one(&state.db_pool)
     .await
-    .map_err(internal_error)?;
+    ?;
 
     let target_counts_row = sqlx::query(
         r#"
@@ -221,7 +219,7 @@ pub async fn get_replication_summary(
     )
     .fetch_one(&state.db_pool)
     .await
-    .map_err(internal_error)?;
+    ?;
 
     Ok(Json(ReplicationSummaryResponse {
         generated_at: to_rfc3339(Utc::now()),
@@ -262,7 +260,7 @@ pub async fn list_replication_jobs(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Query(query): Query<AdminJobsQuery>,
-) -> Result<Json<Vec<ReplicationJobResponse>>, Response> {
+) -> Result<Json<Vec<ReplicationJobResponse>>, AppError> {
     require_admin(&state, auth.user_id).await?;
 
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
@@ -288,7 +286,7 @@ pub async fn list_replication_jobs(
     .bind(limit)
     .fetch_all(&state.db_pool)
     .await
-    .map_err(internal_error)?;
+    ?;
 
     let jobs = rows
         .into_iter()
@@ -310,7 +308,7 @@ pub async fn list_replication_jobs(
             })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()
-        .map_err(internal_error)?;
+        ?;
 
     Ok(Json(jobs))
 }
@@ -318,7 +316,7 @@ pub async fn list_replication_jobs(
 pub async fn list_replication_targets(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-) -> Result<Json<Vec<ReplicationTargetHealthResponse>>, Response> {
+) -> Result<Json<Vec<ReplicationTargetHealthResponse>>, AppError> {
     require_admin(&state, auth.user_id).await?;
 
     let rows = sqlx::query(
@@ -343,7 +341,7 @@ pub async fn list_replication_targets(
     )
     .fetch_all(&state.db_pool)
     .await
-    .map_err(internal_error)?;
+    ?;
 
     let targets = rows
         .into_iter()
@@ -367,7 +365,7 @@ pub async fn list_replication_targets(
             })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()
-        .map_err(internal_error)?;
+        ?;
 
     Ok(Json(targets))
 }
@@ -376,46 +374,27 @@ fn to_rfc3339(value: DateTime<Utc>) -> String {
     value.to_rfc3339()
 }
 
-async fn require_admin(state: &AppState, user_id: Uuid) -> Result<(), Response> {
+async fn require_admin(state: &AppState, user_id: Uuid) -> Result<(), AppError> {
     let user = state
         .metadata_store
         .find_user_by_id(user_id)
-        .await
-        .map_err(internal_error)?
-        .ok_or_else(|| internal_error(anyhow::anyhow!("authenticated user not found")))?;
+        .await?
+        .ok_or_else(|| AppError::internal("authenticated user not found"))?;
 
     if !user.is_admin {
-        return Err(forbidden_error("Admin access required"));
+        return Err(AppError::forbidden("Admin access required"));
     }
 
     Ok(())
 }
 
 #[allow(clippy::result_large_err)]
-fn row_i64(row: &sqlx::postgres::PgRow, column: &str) -> Result<i64, Response> {
-    row.try_get::<i64, _>(column).map_err(internal_error)
+fn row_i64(row: &sqlx::postgres::PgRow, column: &str) -> Result<i64, AppError> {
+    row.try_get::<i64, _>(column).map_err(|e| AppError::internal(format!("Database error: {e}")))
 }
 
 #[allow(clippy::result_large_err)]
-fn row_optional_i64(row: &sqlx::postgres::PgRow, column: &str) -> Result<Option<i64>, Response> {
+fn row_optional_i64(row: &sqlx::postgres::PgRow, column: &str) -> Result<Option<i64>, AppError> {
     row.try_get::<Option<i64>, _>(column)
-        .map_err(internal_error)
-}
-
-fn internal_error(error: impl std::fmt::Display) -> Response {
-    (
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse::new(format!(
-            "Internal server error: {error}"
-        ))),
-    )
-        .into_response()
-}
-
-fn forbidden_error(message: &str) -> Response {
-    (
-        axum::http::StatusCode::FORBIDDEN,
-        Json(ErrorResponse::new(message)),
-    )
-        .into_response()
+        .map_err(|e| AppError::internal(format!("Database error: {e}")))
 }

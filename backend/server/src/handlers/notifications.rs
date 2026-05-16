@@ -6,16 +6,16 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::IntoResponse,
     Json,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use rustshare_core::domain::Notification;
-use rustshare_core::services::NotificationError;
 
-use super::{AuthenticatedUser, ErrorResponse};
+use super::AuthenticatedUser;
+use crate::handlers::AppError;
 use crate::AppState;
 
 // ============================================================================
@@ -85,25 +85,6 @@ pub struct UnreadNotificationCountResponse {
 }
 
 // ============================================================================
-// Error Handler
-// ============================================================================
-
-/// Map NotificationError to HTTP response.
-pub fn notification_error_response(err: NotificationError) -> Response {
-    let (status, message) = match err {
-        NotificationError::NotFound => (StatusCode::NOT_FOUND, err.to_string()),
-        NotificationError::NotFoundById(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        NotificationError::NotOwned { .. } => (StatusCode::FORBIDDEN, err.to_string()),
-        NotificationError::Database(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Internal server error".to_string(),
-        ),
-    };
-
-    (status, Json(ErrorResponse::new(message))).into_response()
-}
-
-// ============================================================================
 // 1. GET /api/notifications - List notifications (paginated, optional unread filter)
 // ============================================================================
 
@@ -117,18 +98,16 @@ pub async fn list_notifications(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Query(query): Query<ListNotificationsQuery>,
-) -> Result<Response, Response> {
+) -> Result<axum::response::Response, AppError> {
     let notifications = state
         .notification_service
         .list_notifications(auth.user_id, query.unread_only, query.limit, query.offset)
-        .await
-        .map_err(notification_error_response)?;
+        .await?;
 
     let total = state
         .notification_service
         .count_notifications(auth.user_id, query.unread_only)
-        .await
-        .map_err(notification_error_response)? as usize;
+        .await? as usize;
     let response_list: Vec<NotificationResponse> = notifications
         .into_iter()
         .map(NotificationResponse::from)
@@ -148,12 +127,11 @@ pub async fn list_notifications(
 pub async fn count_unread_notifications(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-) -> Result<Response, Response> {
+) -> Result<axum::response::Response, AppError> {
     let count = state
         .notification_service
         .count_unread(auth.user_id)
-        .await
-        .map_err(notification_error_response)?;
+        .await?;
 
     Ok(Json(UnreadNotificationCountResponse { count }).into_response())
 }
@@ -172,12 +150,11 @@ pub async fn mark_notification_read(
     State(state): State<AppState>,
     Path(notification_id): Path<Uuid>,
     auth: AuthenticatedUser,
-) -> Result<Response, Response> {
+) -> Result<axum::response::Response, AppError> {
     let notification = state
         .notification_service
         .mark_as_read(notification_id, auth.user_id)
-        .await
-        .map_err(notification_error_response)?;
+        .await?;
 
     let response = NotificationResponse::from(notification);
 
@@ -198,12 +175,11 @@ pub async fn delete_notification(
     State(state): State<AppState>,
     Path(notification_id): Path<Uuid>,
     auth: AuthenticatedUser,
-) -> Result<Response, Response> {
+) -> Result<axum::response::Response, AppError> {
     state
         .notification_service
         .delete_notification(notification_id, auth.user_id)
-        .await
-        .map_err(notification_error_response)?;
+        .await?;
 
     Ok((StatusCode::NO_CONTENT, ()).into_response())
 }

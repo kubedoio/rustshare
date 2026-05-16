@@ -1,6 +1,5 @@
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
     Json,
 };
 use rand::RngCore;
@@ -10,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    handlers::{AuthenticatedUser, ErrorResponse},
+    handlers::{AuthenticatedUser, AppError},
     AppState,
 };
 
@@ -31,37 +30,22 @@ pub async fn create_invite(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Json(req): Json<CreateInviteRequest>,
-) -> Result<Json<CreateInviteResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<CreateInviteResponse>, AppError> {
     let workflow = sqlx::query_as::<_, WorkflowRow>(
         "SELECT id, subject, body, terms_enabled, terms_text
          FROM workflows
          WHERE key = 'invite_email' AND status = 'active'",
     )
     .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-    })?
+    .await?
     .ok_or_else(|| {
-        (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(ErrorResponse::new("Invite workflow is not active")),
-        )
+        AppError::bad_request("Invite workflow is not active")
     })?;
 
     let sender = sqlx::query_as::<_, SenderRow>("SELECT display_name FROM users WHERE id = $1")
         .bind(user_id)
         .fetch_one(&state.db_pool)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-        })?;
+        .await?;
 
     let mut token_bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut token_bytes);
@@ -86,8 +70,7 @@ pub async fn create_invite(
     .bind(workflow.id)
     .bind(expires_at)
     .execute(&state.db_pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?;
+    .await?;
 
     let origin = req
         .origin
@@ -115,13 +98,10 @@ pub async fn create_invite(
             .execute(&state.db_pool)
             .await
             .ok();
-        return Err((
-            StatusCode::BAD_GATEWAY,
-            Json(ErrorResponse::new(format!(
-                "Failed to send invite email: {}",
-                e
-            ))),
-        ));
+        return Err(AppError::internal(format!(
+            "Failed to send invite email: {}",
+            e
+        )));
     }
 
     Ok(Json(CreateInviteResponse {
@@ -145,7 +125,7 @@ pub struct InviteDetailResponse {
 pub async fn get_invite(
     State(state): State<AppState>,
     Path(token): Path<String>,
-) -> Result<Json<InviteDetailResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<InviteDetailResponse>, AppError> {
     let row = sqlx::query_as::<_, InviteTokenRow>(
         "SELECT it.sender_id, it.recipient_email, it.expires_at, it.used_at, it.revoked_at,
                 w.subject, w.body, w.terms_enabled, w.terms_text
@@ -155,41 +135,23 @@ pub async fn get_invite(
     )
     .bind(&token)
     .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-    })?
+    .await?
     .ok_or_else(|| {
-        (
-            StatusCode::GONE,
-            Json(ErrorResponse::new(
-                "Invite link has expired or already been used",
-            )),
+        AppError::gone(
+            "Invite link has expired or already been used",
         )
     })?;
 
     if row.used_at.is_some() || row.revoked_at.is_some() || row.expires_at < chrono::Utc::now() {
-        return Err((
-            StatusCode::GONE,
-            Json(ErrorResponse::new(
-                "Invite link has expired or already been used",
-            )),
+        return Err(AppError::gone(
+            "Invite link has expired or already been used",
         ));
     }
 
     let sender = sqlx::query_as::<_, SenderRow>("SELECT display_name FROM users WHERE id = $1")
         .bind(row.sender_id)
         .fetch_one(&state.db_pool)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-        })?;
+        .await?;
 
     Ok(Json(InviteDetailResponse {
         sender_name: sender.display_name,
@@ -224,7 +186,7 @@ pub async fn accept_invite(
     State(state): State<AppState>,
     Path(token): Path<String>,
     Json(req): Json<AcceptInviteRequest>,
-) -> Result<Json<AcceptInviteResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<AcceptInviteResponse>, AppError> {
     let row = sqlx::query_as::<_, InviteAcceptRow>(
         "SELECT it.id as token_id, it.recipient_email, it.expires_at, it.used_at, it.revoked_at,
                 w.terms_enabled, w.terms_text
@@ -234,79 +196,50 @@ pub async fn accept_invite(
     )
     .bind(&token)
     .fetch_optional(&state.db_pool)
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-    })?
+    .await?
     .ok_or_else(|| {
-        (
-            StatusCode::GONE,
-            Json(ErrorResponse::new(
-                "Invite link has expired or already been used",
-            )),
+        AppError::gone(
+            "Invite link has expired or already been used",
         )
     })?;
 
     if row.used_at.is_some() || row.revoked_at.is_some() || row.expires_at < chrono::Utc::now() {
-        return Err((
-            StatusCode::GONE,
-            Json(ErrorResponse::new(
-                "Invite link has expired or already been used",
-            )),
+        return Err(AppError::gone(
+            "Invite link has expired or already been used",
         ));
     }
 
     if req.email != row.recipient_email {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new(
-                "Email does not match the invited address",
-            )),
+        return Err(AppError::bad_request(
+            "Email does not match the invited address",
         ));
     }
 
     if req.password.len() < 8 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new("Password must be at least 8 characters")),
+        return Err(AppError::bad_request(
+            "Password must be at least 8 characters",
         ));
     }
 
     if row.terms_enabled && !req.terms_accepted.unwrap_or(false) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new("You must accept the Terms & Conditions")),
+        return Err(AppError::bad_request(
+            "You must accept the Terms & Conditions",
         ));
     }
 
     let existing: Option<Uuid> = sqlx::query_scalar("SELECT id FROM users WHERE email = $1")
         .bind(&req.email)
         .fetch_optional(&state.db_pool)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-        })?;
+        .await?;
 
     if existing.is_some() {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ErrorResponse::new(
-                "An account with this email already exists",
-            )),
+        return Err(AppError::conflict(
+            "An account with this email already exists",
         ));
     }
 
     let password_hash = PasswordHasher::hash(&req.password).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
+        AppError::internal(e.to_string())
     })?;
 
     let user_id = Uuid::new_v4();
@@ -324,8 +257,7 @@ pub async fn accept_invite(
     .bind(&req.display_name)
     .bind(now)
     .execute(&state.db_pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))?;
+    .await?;
 
     // Seed default module preferences
     let pref_repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(
@@ -336,13 +268,7 @@ pub async fn accept_invite(
     sqlx::query("UPDATE invite_tokens SET used_at = NOW() WHERE id = $1")
         .bind(row.token_id)
         .execute(&state.db_pool)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-        })?;
+        .await?;
 
     Ok(Json(AcceptInviteResponse {
         id: user_id.to_string(),

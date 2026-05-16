@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use rustshare_core::domain::SharePermissions;
 
-use super::{internal_error_response, share_error_response, AuthenticatedUser, ErrorResponse};
+use super::{AuthenticatedUser, AppError};
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -43,15 +43,11 @@ pub async fn create_public_file_share(
     Path(file_id): Path<Uuid>,
     auth: AuthenticatedUser,
     Json(req): Json<CreateShareRequest>,
-) -> Result<Response, Response> {
+) -> Result<Response, AppError> {
     if req.upload_only {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new(
-                "Upload-only links are only supported for folders",
-            )),
-        )
-            .into_response());
+        return Err(AppError::bad_request(
+            "Upload-only links are only supported for folders",
+        ));
     }
 
     let share = state
@@ -64,8 +60,7 @@ pub async fn create_public_file_share(
             req.expires_at,
             auth.tenant_id,
         )
-        .await
-        .map_err(share_error_response)?;
+        .await?;
 
     // Extract share_token - it should always be Some for public shares
     let share_token = share.share_token.ok_or_else(|| {
@@ -73,12 +68,12 @@ pub async fn create_public_file_share(
             "Share token is None after create_share for share {}",
             share.id
         );
-        internal_error_response()
+        AppError::internal("Share token is missing after create_share")
     })?;
 
     let resource_id = share.file_id.ok_or_else(|| {
         tracing::error!("File ID is None after create_share for share {}", share.id);
-        internal_error_response()
+        AppError::internal("File ID is missing after create_share")
     })?;
 
     Ok((
@@ -103,7 +98,7 @@ pub async fn create_public_folder_share(
     Path(folder_id): Path<Uuid>,
     auth: AuthenticatedUser,
     Json(req): Json<CreateShareRequest>,
-) -> Result<Response, Response> {
+) -> Result<Response, AppError> {
     let share = state
         .share_service
         .create_folder_share(
@@ -115,15 +110,14 @@ pub async fn create_public_folder_share(
             req.upload_only,
             auth.tenant_id,
         )
-        .await
-        .map_err(share_error_response)?;
+        .await?;
 
     let share_token = share.share_token.ok_or_else(|| {
         tracing::error!(
             "Share token is None after create_folder_share for share {}",
             share.id
         );
-        internal_error_response()
+        AppError::internal("Share token is missing after create_folder_share")
     })?;
 
     let resource_id = share.folder_id.ok_or_else(|| {
@@ -131,7 +125,7 @@ pub async fn create_public_folder_share(
             "Folder ID is None after create_folder_share for share {}",
             share.id
         );
-        internal_error_response()
+        AppError::internal("Folder ID is missing after create_folder_share")
     })?;
 
     Ok((
@@ -155,12 +149,11 @@ pub async fn list_public_file_shares(
     State(state): State<AppState>,
     Path(file_id): Path<Uuid>,
     auth: AuthenticatedUser,
-) -> Result<Response, Response> {
+) -> Result<Response, AppError> {
     let shares = state
         .share_service
         .list_file_shares(file_id, auth.user_id)
-        .await
-        .map_err(share_error_response)?;
+        .await?;
 
     let response: Vec<ShareResponse> = shares
         .into_iter()
@@ -191,12 +184,11 @@ pub async fn list_public_folder_shares(
     State(state): State<AppState>,
     Path(folder_id): Path<Uuid>,
     auth: AuthenticatedUser,
-) -> Result<Response, Response> {
+) -> Result<Response, AppError> {
     let shares = state
         .share_service
         .list_folder_shares(folder_id, auth.user_id)
-        .await
-        .map_err(share_error_response)?;
+        .await?;
 
     let response: Vec<ShareResponse> = shares
         .into_iter()
@@ -260,14 +252,14 @@ pub struct ShareAccessLogResponse {
 pub async fn list_user_shares(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-) -> Result<Json<Vec<OwnedShareResponse>>, Response> {
+) -> Result<Json<Vec<OwnedShareResponse>>, AppError> {
     let shares = state
         .metadata_store
         .get_user_all_shares(user_id)
         .await
         .map_err(|error| {
             tracing::error!("Failed to list shares: {error}");
-            internal_error_response()
+            AppError::internal("Failed to list shares")
         })?;
 
     let response = shares
@@ -299,12 +291,11 @@ pub async fn revoke_share(
     State(state): State<AppState>,
     Path(share_id): Path<uuid::Uuid>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-) -> Result<StatusCode, Response> {
+) -> Result<StatusCode, AppError> {
     state
         .share_service
         .revoke_share(share_id, user_id)
-        .await
-        .map_err(share_error_response)?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -314,7 +305,7 @@ pub async fn get_share_access_log(
     Path(share_id): Path<uuid::Uuid>,
     Query(query): Query<ShareAccessLogQuery>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-) -> Result<Json<Vec<ShareAccessLogResponse>>, Response> {
+) -> Result<Json<Vec<ShareAccessLogResponse>>, AppError> {
     let requested_limit = query.limit.unwrap_or(50);
     let limit = requested_limit.clamp(1, 200);
 
@@ -324,7 +315,7 @@ pub async fn get_share_access_log(
         .await
         .map_err(|error| {
             tracing::error!("Failed to fetch share access log: {error}");
-            internal_error_response()
+            AppError::internal("Failed to fetch share access log")
         })?;
 
     let response = entries
@@ -358,19 +349,19 @@ mod tests {
     fn test_share_error_response_mappings() {
         // Test that error mappings are correct
         let share_id = Uuid::new_v4();
-        let response = share_error_response(ShareError::ShareNotFound(share_id));
+        let _response: AppError = ShareError::ShareNotFound(share_id).into();
         // Response is created - just verify it compiles
-        drop(response);
+        drop(_response);
 
         let file_id = Uuid::new_v4();
-        let response = share_error_response(ShareError::FileNotFound(file_id));
-        drop(response);
+        let _response: AppError = ShareError::FileNotFound(file_id).into();
+        drop(_response);
 
-        let response = share_error_response(ShareError::Expired);
-        drop(response);
+        let _response: AppError = ShareError::Expired.into();
+        drop(_response);
 
-        let response = share_error_response(ShareError::PasswordRequired);
-        drop(response);
+        let _response: AppError = ShareError::PasswordRequired.into();
+        drop(_response);
     }
 
     #[test]

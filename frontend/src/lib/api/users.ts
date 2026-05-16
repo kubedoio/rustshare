@@ -94,7 +94,7 @@ export async function listUserSessions(): Promise<UserSession[]> {
  * Revoke a specific browser session.
  */
 export async function revokeUserSession(sessionId: string): Promise<void> {
-	return apiClient.delete<void>(`/me/sessions/${sessionId}`);
+	return apiClient.delete(`/me/sessions/${sessionId}`);
 }
 
 /**
@@ -196,7 +196,7 @@ export async function uploadAvatar(file: File): Promise<{ avatar_path: string }>
  * Delete the current user's avatar
  */
 export async function deleteAvatar(): Promise<void> {
-	return apiClient.delete<void>('/users/me/avatar');
+	return apiClient.delete('/users/me/avatar');
 }
 
 /**
@@ -222,7 +222,7 @@ export async function listUserDevices(): Promise<UserDevice[]> {
  * Revoke a specific device token.
  */
 export async function revokeUserDevice(deviceId: string): Promise<void> {
-	return apiClient.delete<void>(`/user/devices/${deviceId}`);
+	return apiClient.delete(`/user/devices/${deviceId}`);
 }
 
 export interface UserModulePreference {

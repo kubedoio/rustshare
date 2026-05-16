@@ -51,7 +51,7 @@ export function beginOidcLogin(redirectTo = '/files'): void {
 
 export async function logout(): Promise<void> {
 	try {
-		await apiClient.post<void>('/auth/logout', null);
+		await apiClient.postVoid('/auth/logout', null);
 	} catch (error) {
 		console.error('Failed to logout cleanly:', error);
 	}

@@ -21,7 +21,8 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::ws_auth::{resolve_ws_client_identity, ClientIdentity, WsAuthQuery};
-use super::{AuthenticatedUser, ErrorResponse};
+use super::AuthenticatedUser;
+use crate::handlers::AppError;
 use crate::AppState;
 
 /// Client message for requesting catch-up
@@ -1285,7 +1286,7 @@ pub struct DeltaResponse {
 pub async fn get_sync_cursor(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<impl IntoResponse, AppError> {
     // For now, use the user_id as the device_id if not provided
     // In a full implementation, we would get the device_id from a device auth token
     let device_id = user_id;
@@ -1296,10 +1297,7 @@ pub async fn get_sync_cursor(
         Ok(cursor) => cursor,
         Err(e) => {
             error!("Failed to get or create cursor: {}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to create sync cursor")),
-            ));
+            return Err(AppError::internal("Failed to create sync cursor"));
         }
     };
 
@@ -1327,7 +1325,7 @@ pub async fn get_sync_delta(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Query(query): Query<DeltaQuery>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<impl IntoResponse, AppError> {
     let limit = query.limit.unwrap_or(100).clamp(1, 1000);
 
     // Get delta from the event store
@@ -1335,10 +1333,7 @@ pub async fn get_sync_delta(
         Ok(result) => result,
         Err(e) => {
             error!("Failed to get delta: {}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to retrieve sync delta")),
-            ));
+            return Err(AppError::internal("Failed to retrieve sync delta"));
         }
     };
 

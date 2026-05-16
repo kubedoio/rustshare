@@ -140,7 +140,7 @@ export async function createFileUserShare(
 	fileId: string,
 	request: CreateUserShareRequest
 ): Promise<void> {
-	return apiClient.post<void>(`/files/${fileId}/share`, request);
+	return apiClient.postVoid(`/files/${fileId}/share`, request);
 }
 
 /**
@@ -151,7 +151,7 @@ export async function createFolderUserShare(
 	folderId: string,
 	request: CreateUserShareRequest
 ): Promise<void> {
-	return apiClient.post<void>(`/folders/${folderId}/share`, request);
+	return apiClient.postVoid(`/folders/${folderId}/share`, request);
 }
 
 /**
@@ -186,7 +186,7 @@ export async function updateSharePermission(
  * DELETE /api/shares/{share_id}/recipient
  */
 export async function removeShareRecipient(shareId: string): Promise<void> {
-	return apiClient.delete<void>(`/shares/${shareId}/recipient`);
+	return apiClient.delete(`/shares/${shareId}/recipient`);
 }
 
 /**
@@ -195,7 +195,7 @@ export async function removeShareRecipient(shareId: string): Promise<void> {
  * Note: This endpoint may not be implemented in the backend yet
  */
 export async function revokeShare(shareId: string): Promise<void> {
-	return apiClient.delete<void>(`/shares/${shareId}`);
+	return apiClient.delete(`/shares/${shareId}`);
 }
 
 /**

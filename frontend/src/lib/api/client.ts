@@ -5,7 +5,11 @@ const CSRF_HEADER_NAME = 'X-Rustshare-Csrf';
 export class ApiClient {
 	constructor(private baseURL: string) {}
 
-	async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
+	getBaseURL(): string {
+		return this.baseURL;
+	}
+
+	private async executeFetch(endpoint: string, options?: RequestInit): Promise<Response> {
 		const method = (options?.method || 'GET').toUpperCase();
 		const headers: Record<string, string> = {
 			...((options?.headers as Record<string, string>) || {})
@@ -61,14 +65,21 @@ export class ApiClient {
 			throw new ApiError(response.status, errorMessage);
 		}
 
-		// Handle 204 No Content and 202 Accepted (empty bodies)
-		if (response.status === 204 || response.status === 202) {
-			// TODO: empty-body responses should use a separate method to preserve type safety.
-			// Returning undefined here works for void but is a type-system lie for non-void T.
-			return undefined as unknown as T;
-		}
+		return response;
+	}
 
+	async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
+		const response = await this.executeFetch(endpoint, options);
 		return response.json();
+	}
+
+	async requestVoid(endpoint: string, options?: RequestInit): Promise<void> {
+		await this.executeFetch(endpoint, options);
+	}
+
+	async requestText(endpoint: string, options?: RequestInit): Promise<string> {
+		const response = await this.executeFetch(endpoint, options);
+		return response.text();
 	}
 
 	async get<T>(endpoint: string): Promise<T> {
@@ -82,6 +93,13 @@ export class ApiClient {
 		});
 	}
 
+	async postVoid(endpoint: string, body?: object | FormData | null): Promise<void> {
+		return this.requestVoid(endpoint, {
+			method: 'POST',
+			body: body instanceof FormData ? body : JSON.stringify(body)
+		});
+	}
+
 	async put<T>(endpoint: string, body?: object | FormData | null): Promise<T> {
 		return this.request<T>(endpoint, {
 			method: 'PUT',
@@ -89,12 +107,19 @@ export class ApiClient {
 		});
 	}
 
-	async delete<T>(endpoint: string): Promise<T> {
-		return this.request<T>(endpoint, { method: 'DELETE' });
+	async delete(endpoint: string): Promise<void> {
+		return this.requestVoid(endpoint, { method: 'DELETE' });
 	}
 
 	async patch<T>(endpoint: string, body?: object | FormData | null): Promise<T> {
 		return this.request<T>(endpoint, {
+			method: 'PATCH',
+			body: body instanceof FormData ? body : JSON.stringify(body)
+		});
+	}
+
+	async patchVoid(endpoint: string, body?: object | FormData | null): Promise<void> {
+		return this.requestVoid(endpoint, {
 			method: 'PATCH',
 			body: body instanceof FormData ? body : JSON.stringify(body)
 		});

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{admin_bad_request, admin_internal_error};
-use crate::{handlers::AdminUser, AppState};
+use crate::{handlers::{AdminUser, AppError}, AppState};
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -75,7 +75,7 @@ pub async fn list_audit_log(
     State(state): State<AppState>,
     AdminUser { user_id: _ }: AdminUser,
     Query(query): Query<AuditLogQuery>,
-) -> Result<Json<PaginatedAuditLog>, axum::response::Response> {
+) -> Result<Json<PaginatedAuditLog>, AppError> {
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.per_page.unwrap_or(20).clamp(1, 100);
     let offset = (page - 1) * per_page;
@@ -299,7 +299,7 @@ LIMIT ${limit_pos} OFFSET ${offset_pos}"
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn db_error(e: sqlx::Error) -> axum::response::Response {
+fn db_error(e: sqlx::Error) -> AppError {
     tracing::error!("Database error: {:?}", e);
     admin_internal_error("Database error")
 }

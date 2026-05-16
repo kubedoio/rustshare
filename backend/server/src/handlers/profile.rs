@@ -9,7 +9,7 @@ use axum::{
 use rustshare_core::domain::Theme;
 use serde::{Deserialize, Serialize};
 
-use crate::handlers::{AuthenticatedUser, ErrorResponse};
+use crate::handlers::{AppError, AuthenticatedUser};
 use crate::AppState;
 
 /// Response for GET /api/v1/users/me/profile
@@ -109,7 +109,7 @@ fn validate_update_request(req: &UpdateProfileRequest) -> Result<(), Vec<String>
 pub async fn get_profile(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-) -> Response {
+) -> Result<Response, AppError> {
     match state.metadata_store.find_user_by_id(user_id).await {
         Ok(Some(user)) => {
             let profile = ProfileResponse {
@@ -127,20 +127,12 @@ pub async fn get_profile(
                 created_at: user.created_at.to_rfc3339(),
             };
 
-            (StatusCode::OK, Json(profile)).into_response()
+            Ok((StatusCode::OK, Json(profile)).into_response())
         }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse::new("User not found")),
-        )
-            .into_response(),
+        Ok(None) => Err(AppError::not_found("User not found")),
         Err(e) => {
             tracing::error!("Failed to get user profile: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to get user profile")),
-            )
-                .into_response()
+            Err(AppError::internal("Failed to get user profile"))
         }
     }
 }
@@ -175,36 +167,24 @@ pub async fn update_profile(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Json(req): Json<UpdateProfileRequest>,
-) -> Response {
+) -> Result<Response, AppError> {
     // Validate request
     if let Err(errors) = validate_update_request(&req) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new(format!(
-                "Validation failed: {}",
-                errors.join(", ")
-            ))),
-        )
-            .into_response();
+        return Err(AppError::bad_request(format!(
+            "Validation failed: {}",
+            errors.join(", ")
+        )));
     }
 
     // Get current user
     let user = match state.metadata_store.find_user_by_id(user_id).await {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse::new("User not found")),
-            )
-                .into_response();
+            return Err(AppError::not_found("User not found"));
         }
         Err(e) => {
             tracing::error!("Failed to find user for profile update: {:?}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to update profile")),
-            )
-                .into_response();
+            return Err(AppError::internal("Failed to update profile"));
         }
     };
 
@@ -229,11 +209,7 @@ pub async fn update_profile(
         .await
     {
         tracing::error!("Failed to update user profile: {:?}", e);
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new("Failed to update profile")),
-        )
-            .into_response();
+        return Err(AppError::internal("Failed to update profile"));
     }
 
     // Fetch updated user to return complete profile
@@ -254,7 +230,7 @@ pub async fn update_profile(
                 created_at: updated_user.created_at.to_rfc3339(),
             };
 
-            (StatusCode::OK, Json(response)).into_response()
+            Ok((StatusCode::OK, Json(response)).into_response())
         }
         _ => {
             // If we can't fetch the updated user, return the original with updates applied
@@ -273,7 +249,7 @@ pub async fn update_profile(
                 created_at: user.created_at.to_rfc3339(),
             };
 
-            (StatusCode::OK, Json(response)).into_response()
+            Ok((StatusCode::OK, Json(response)).into_response())
         }
     }
 }
@@ -302,17 +278,13 @@ pub async fn update_trash_retention(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Json(req): Json<UpdateTrashRetentionRequest>,
-) -> Response {
+) -> Result<Response, AppError> {
     // Validate
     if let Some(days) = req.days {
         if !(1..=365).contains(&days) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse::new(
-                    "trash_retention_days must be between 1 and 365",
-                )),
-            )
-                .into_response();
+            return Err(AppError::bad_request(
+                "trash_retention_days must be between 1 and 365",
+            ));
         }
     }
 
@@ -323,11 +295,7 @@ pub async fn update_trash_retention(
         .await
     {
         tracing::error!("Failed to update trash retention: {:?}", e);
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new("Failed to update trash retention")),
-        )
-            .into_response();
+        return Err(AppError::internal("Failed to update trash retention"));
     }
 
     // Fetch updated user to return complete profile
@@ -348,12 +316,8 @@ pub async fn update_trash_retention(
                 created_at: updated_user.created_at.to_rfc3339(),
             };
 
-            (StatusCode::OK, Json(response)).into_response()
+            Ok((StatusCode::OK, Json(response)).into_response())
         }
-        _ => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new("Failed to fetch updated profile")),
-        )
-            .into_response(),
+        _ => Err(AppError::internal("Failed to fetch updated profile")),
     }
 }

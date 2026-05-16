@@ -13,7 +13,7 @@ use rustshare_storage::MetadataStore;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::ErrorResponse;
+use crate::handlers::AppError;
 use crate::{
     middleware, oidc,
     web_session::{
@@ -23,35 +23,12 @@ use crate::{
     AppState,
 };
 
-/// Dedicated error type for auth handlers to avoid stringly-typed errors.
-pub enum AuthHandlerError {
-    Internal(String),
-    Unauthorized,
-    Forbidden(&'static str),
-    TooManyRequests,
-}
-
-impl IntoResponse for AuthHandlerError {
-    fn into_response(self) -> Response {
-        let (status, message) = match self {
-            AuthHandlerError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-            AuthHandlerError::Unauthorized => {
-                (StatusCode::UNAUTHORIZED, "Invalid credentials".to_string())
-            }
-            AuthHandlerError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.to_string()),
-            AuthHandlerError::TooManyRequests => (
-                StatusCode::TOO_MANY_REQUESTS,
-                "Too many failed login attempts. Please try again later.".to_string(),
-            ),
-        };
-        (status, Json(ErrorResponse::new(&message))).into_response()
-    }
-}
-
 /// Login request
-#[derive(Deserialize)]
+#[derive(Deserialize, validator::Validate)]
 pub struct LoginRequest {
+    #[validate(email(message = "Invalid email address"))]
     pub email: String,
+    #[validate(length(min = 1, message = "Password must not be empty"))]
     pub password: String,
 }
 
@@ -72,9 +49,9 @@ pub struct UserResponse {
     pub theme: String,
 }
 
-async fn check_ip_block(state: &AppState, ip: &str) -> Result<(), AuthHandlerError> {
+async fn check_ip_block(state: &AppState, ip: &str) -> Result<(), AppError> {
     match state.metadata_store.is_ip_blocked(ip).await {
-        Ok(true) => Err(AuthHandlerError::TooManyRequests),
+        Ok(true) => Err(AppError::TooManyRequests),
         Ok(false) => Ok(()),
         Err(e) => {
             tracing::warn!("Failed to check IP block status: {}", e);
@@ -87,12 +64,12 @@ async fn validate_credentials(
     state: &AppState,
     req: &LoginRequest,
     ip: Option<&str>,
-) -> Result<User, AuthHandlerError> {
+) -> Result<User, AppError> {
     let user = state
         .metadata_store
         .find_user_by_email(&req.email)
         .await
-        .map_err(|e| AuthHandlerError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     let user = match user {
         Some(u) => u,
@@ -102,12 +79,12 @@ async fn validate_credentials(
                     tracing::warn!("Failed to record login failure: {}", e);
                 }
             }
-            return Err(AuthHandlerError::Unauthorized);
+            return Err(AppError::Unauthorized);
         }
     };
 
     let is_valid = PasswordHasher::verify(&req.password, &user.password_hash)
-        .map_err(|e| AuthHandlerError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     if !is_valid {
         if let Some(ip) = ip {
@@ -115,7 +92,7 @@ async fn validate_credentials(
                 tracing::warn!("Failed to record login failure: {}", e);
             }
         }
-        return Err(AuthHandlerError::Unauthorized);
+        return Err(AppError::Unauthorized);
     }
 
     if let Some(ip) = ip {
@@ -125,7 +102,7 @@ async fn validate_credentials(
     }
 
     if user.disabled_at.is_some() {
-        return Err(AuthHandlerError::Forbidden("account_disabled"));
+        return Err(AppError::forbidden("account_disabled"));
     }
 
     Ok(user)
@@ -149,10 +126,10 @@ fn build_login_response(token: String, user: User) -> LoginResponse {
 pub async fn login(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(req): Json<LoginRequest>,
-) -> Result<Response, AuthHandlerError> {
+    super::ValidatedJson(req): super::ValidatedJson<LoginRequest>,
+) -> Result<Response, AppError> {
     if !oidc::password_login_enabled() {
-        return Err(AuthHandlerError::Forbidden(
+        return Err(AppError::forbidden(
             "Password login is disabled for this deployment",
         ));
     }
@@ -167,7 +144,7 @@ pub async fn login(
     let token = state
         .jwt_manager
         .generate(user.id, user.email.clone(), user.tenant_id)
-        .map_err(|e| AuthHandlerError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     let user_agent = headers
         .get(header::USER_AGENT)
@@ -182,7 +159,7 @@ pub async fn login(
         ip_address.clone(),
     )
     .await
-    .map_err(AuthHandlerError::Internal)?;
+    .map_err(AppError::internal)?;
 
     if let Err(error) = log_user_security_event(
         &state,
@@ -207,7 +184,7 @@ pub async fn login(
     response_headers.insert(
         header::SET_COOKIE,
         HeaderValue::from_str(&build_session_cookie(&session_token))
-            .map_err(|e| AuthHandlerError::Internal(e.to_string()))?,
+            .map_err(|e| AppError::internal(e.to_string()))?,
     );
 
     Ok((response_headers, Json(build_login_response(token, user))).into_response())
@@ -216,7 +193,7 @@ pub async fn login(
 pub async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Response, AuthHandlerError> {
+) -> Result<Response, AppError> {
     if let Some(session_token) =
         extract_cookie_value(&headers, rustshare_auth::WEB_SESSION_COOKIE_NAME)
     {
@@ -225,7 +202,7 @@ pub async fn logout(
             .metadata_store
             .find_user_session_by_token_hash(&token_hash)
             .await
-            .map_err(|e| AuthHandlerError::Internal(e.to_string()))?;
+            .map_err(|e| AppError::internal(e.to_string()))?;
 
         let user_agent = headers
             .get(header::USER_AGENT)
@@ -237,7 +214,7 @@ pub async fn logout(
             .metadata_store
             .delete_user_session_by_token_hash(&token_hash)
             .await
-            .map_err(|e| AuthHandlerError::Internal(e.to_string()))?;
+            .map_err(|e| AppError::internal(e.to_string()))?;
 
         if let Some(session) = session {
             if let Err(error) = log_user_security_event(
@@ -262,7 +239,7 @@ pub async fn logout(
     response_headers.insert(
         header::SET_COOKIE,
         HeaderValue::from_str(&build_expired_session_cookie())
-            .map_err(|e| AuthHandlerError::Internal(e.to_string()))?,
+            .map_err(|e| AppError::internal(e.to_string()))?,
     );
 
     Ok((response_headers, StatusCode::NO_CONTENT).into_response())

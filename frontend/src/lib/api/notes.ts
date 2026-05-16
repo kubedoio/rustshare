@@ -84,7 +84,7 @@ export async function moveNote(noteId: string, request: MoveNoteRequest): Promis
 }
 
 export async function deleteNote(noteId: string): Promise<void> {
-	return apiClient.delete<void>(`/notes/${noteId}`);
+	return apiClient.delete(`/notes/${noteId}`);
 }
 
 export async function listNotes(limit?: number): Promise<NoteSummary[]> {

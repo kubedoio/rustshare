@@ -1,6 +1,5 @@
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -8,11 +7,11 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
-    handlers::{AdminUser, ErrorResponse},
+    handlers::{AdminUser, AppError},
     AppState,
 };
 
-use super::log_admin_action;
+use super::{log_admin_action};
 
 #[derive(sqlx::FromRow, Serialize)]
 pub struct WorkflowResponse {
@@ -42,7 +41,7 @@ pub struct UpdateWorkflowRequest {
 pub async fn list_workflows(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
-) -> Result<Json<Vec<WorkflowResponse>>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<Vec<WorkflowResponse>>, AppError> {
     let rows = sqlx::query_as::<_, WorkflowRow>(
         "SELECT id, key, name, trigger_type, status, subject, body, terms_enabled, terms_text,
                 created_at, updated_at, updated_by
@@ -51,12 +50,7 @@ pub async fn list_workflows(
     )
     .fetch_all(&state.db_pool)
     .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-    })?;
+    .map_err(|e| AppError::internal(e.to_string()))?;
 
     Ok(Json(rows.into_iter().map(WorkflowResponse::from).collect()))
 }
@@ -65,7 +59,7 @@ pub async fn get_workflow(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
     Path(id): Path<Uuid>,
-) -> Result<Json<WorkflowResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<WorkflowResponse>, AppError> {
     let row = sqlx::query_as::<_, WorkflowRow>(
         "SELECT id, key, name, trigger_type, status, subject, body, terms_enabled, terms_text,
                 created_at, updated_at, updated_by
@@ -75,18 +69,8 @@ pub async fn get_workflow(
     .bind(id)
     .fetch_optional(&state.db_pool)
     .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-    })?
-    .ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse::new("Workflow not found")),
-        )
-    })?;
+    .map_err(|e| AppError::internal(e.to_string()))?
+    .ok_or_else(|| AppError::not_found("Workflow not found"))?;
 
     Ok(Json(WorkflowResponse::from(row)))
 }
@@ -96,7 +80,7 @@ pub async fn update_workflow(
     AdminUser { user_id: actor_id }: AdminUser,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateWorkflowRequest>,
-) -> Result<Json<WorkflowResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<WorkflowResponse>, AppError> {
     let row = sqlx::query_as::<_, WorkflowRow>(
         "UPDATE workflows
          SET subject = COALESCE($2, subject),
@@ -119,18 +103,8 @@ pub async fn update_workflow(
     .bind(actor_id)
     .fetch_optional(&state.db_pool)
     .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-    })?
-    .ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse::new("Workflow not found")),
-        )
-    })?;
+    .map_err(|e| AppError::internal(e.to_string()))?
+    .ok_or_else(|| AppError::not_found("Workflow not found"))?;
 
     log_admin_action(
         &state.db_pool,
@@ -149,7 +123,7 @@ pub async fn enable_workflow(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(id): Path<Uuid>,
-) -> Result<Json<WorkflowResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<WorkflowResponse>, AppError> {
     let wf = sqlx::query_as::<_, WorkflowRow>(
         "SELECT id, key, name, trigger_type, status, subject, body, terms_enabled, terms_text,
                 created_at, updated_at, updated_by
@@ -159,25 +133,12 @@ pub async fn enable_workflow(
     .bind(id)
     .fetch_optional(&state.db_pool)
     .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-    })?
-    .ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse::new("Workflow not found")),
-        )
-    })?;
+    .map_err(|e| AppError::internal(e.to_string()))?
+    .ok_or_else(|| AppError::not_found("Workflow not found"))?;
 
     if wf.key != "invite_email" {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new(
-                "Only invite_email workflow can be enabled currently",
-            )),
+        return Err(AppError::bad_request(
+            "Only invite_email workflow can be enabled currently",
         ));
     }
 
@@ -193,19 +154,11 @@ pub async fn enable_workflow(
     )
     .fetch_one(&state.db_pool)
     .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-    })?;
+    .map_err(|e| AppError::internal(e.to_string()))?;
 
     if !smtp_ok {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new(
-                "SMTP must be configured and enabled before this workflow can be activated",
-            )),
+        return Err(AppError::bad_request(
+            "SMTP must be configured and enabled before this workflow can be activated",
         ));
     }
 
@@ -220,12 +173,7 @@ pub async fn enable_workflow(
     .bind(actor_id)
     .fetch_one(&state.db_pool)
     .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-    })?;
+    .map_err(|e| AppError::internal(e.to_string()))?;
 
     log_admin_action(
         &state.db_pool,
@@ -244,7 +192,7 @@ pub async fn disable_workflow(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(id): Path<Uuid>,
-) -> Result<Json<WorkflowResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<WorkflowResponse>, AppError> {
     let row = sqlx::query_as::<_, WorkflowRow>(
         "UPDATE workflows
          SET status = 'draft', updated_by = $2, updated_at = NOW()
@@ -256,18 +204,8 @@ pub async fn disable_workflow(
     .bind(actor_id)
     .fetch_optional(&state.db_pool)
     .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-    })?
-    .ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse::new("Workflow not found")),
-        )
-    })?;
+    .map_err(|e| AppError::internal(e.to_string()))?
+    .ok_or_else(|| AppError::not_found("Workflow not found"))?;
 
     log_admin_action(
         &state.db_pool,

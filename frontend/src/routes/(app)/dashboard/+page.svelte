@@ -47,7 +47,7 @@
 	interface QuickAction {
 		label: string;
 		subtitle: string;
-		icon: any;
+		icon: unknown;
 		iconColor: string;
 		iconBg: string;
 		onClick: () => void;
@@ -165,7 +165,7 @@
 				content: '# Untitled Note\n\n',
 				parent_folder_id: parentFolderId ?? undefined
 			});
-			activityStore.addActivity('note_created', result.name || result.title || 'Untitled Note', {
+			activityStore.addActivity('note_created', result.name || 'Untitled Note', {
 				artifactId: result.id,
 				moduleKey: 'notes'
 			});

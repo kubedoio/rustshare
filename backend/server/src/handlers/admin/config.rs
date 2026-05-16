@@ -1,6 +1,6 @@
 //! Admin OIDC and SMTP config handlers.
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{extract::State, http::StatusCode, Json};
 use rustshare_crypto::encrypt_secret;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -8,7 +8,7 @@ use uuid::{uuid, Uuid};
 
 use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_action};
 use crate::{
-    handlers::AdminUser,
+    handlers::{AdminUser, AppError},
     oidc_runtime::{invalidate_oidc_runtime_cache, OIDC_CONFIG_ID},
     AppState,
 };
@@ -177,7 +177,7 @@ pub struct UpdateSmtpConfigRequest {
 pub async fn get_oidc_config(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
-) -> Result<Json<OidcConfigResponse>, axum::response::Response> {
+) -> Result<Json<OidcConfigResponse>, AppError> {
     let row = sqlx::query_as::<_, OidcConfigRow>(
         "SELECT id, enabled, provider_name, client_id, client_secret_enc,
                 issuer_url, redirect_url, login_label, scopes, auto_provision_users, device_pair_code_ttl_seconds,
@@ -199,7 +199,7 @@ pub async fn update_oidc_config(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Json(req): Json<UpdateOidcConfigRequest>,
-) -> Result<Json<OidcConfigResponse>, axum::response::Response> {
+) -> Result<Json<OidcConfigResponse>, AppError> {
     // Validate TTL value
     if let Some(ttl) = req.device_pair_code_ttl_seconds {
         if ![300, 600, 1800].contains(&ttl) {
@@ -306,7 +306,7 @@ pub async fn update_oidc_config(
 pub async fn test_oidc_config(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
-) -> Result<Json<serde_json::Value>, axum::response::Response> {
+) -> Result<Json<serde_json::Value>, AppError> {
     // Read current issuer_url
     let row = sqlx::query_as::<_, OidcConfigRow>(
         "SELECT id, enabled, provider_name, client_id, client_secret_enc,
@@ -349,24 +349,10 @@ pub async fn test_oidc_config(
                 })))
             } else {
                 let status_code = resp.status();
-                Err((
-                    StatusCode::BAD_GATEWAY,
-                    Json(json!({
-                        "success": false,
-                        "message": format!("Discovery URL returned HTTP {}", status_code)
-                    })),
-                )
-                    .into_response())
+                Err(AppError::internal(format!("Discovery URL returned HTTP {}", status_code)))
             }
         }
-        Err(e) => Err((
-            StatusCode::BAD_GATEWAY,
-            Json(json!({
-                "success": false,
-                "message": format!("{}", e)
-            })),
-        )
-            .into_response()),
+        Err(e) => Err(AppError::internal(format!("{}", e))),
     }
 }
 
@@ -378,7 +364,7 @@ pub async fn test_oidc_config(
 pub async fn get_smtp_config(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
-) -> Result<Json<SmtpConfigResponse>, axum::response::Response> {
+) -> Result<Json<SmtpConfigResponse>, AppError> {
     let row = sqlx::query_as::<_, SmtpConfigRow>(
         "SELECT id, enabled, host, port, username, password_enc,
                 from_address, from_name, tls_mode, updated_by, updated_at
@@ -399,7 +385,7 @@ pub async fn update_smtp_config(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Json(req): Json<UpdateSmtpConfigRequest>,
-) -> Result<Json<SmtpConfigResponse>, axum::response::Response> {
+) -> Result<Json<SmtpConfigResponse>, AppError> {
     // Fetch current row to preserve unset fields
     let current = sqlx::query_as::<_, SmtpConfigRow>(
         "SELECT id, enabled, host, port, username, password_enc,
@@ -521,7 +507,7 @@ pub struct UpdateSecurityConfigRequest {
 pub async fn get_security_config(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
-) -> Result<Json<SecurityConfigResponse>, axum::response::Response> {
+) -> Result<Json<SecurityConfigResponse>, AppError> {
     let config = state
         .metadata_store
         .get_security_config()
@@ -544,7 +530,7 @@ pub async fn update_security_config(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Json(req): Json<UpdateSecurityConfigRequest>,
-) -> Result<Json<SecurityConfigResponse>, axum::response::Response> {
+) -> Result<Json<SecurityConfigResponse>, AppError> {
     if let Some(max) = req.max_login_attempts {
         if !(1..=100).contains(&max) {
             return Err(admin_bad_request(
@@ -600,7 +586,7 @@ pub async fn update_security_config(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn db_error(e: sqlx::Error) -> axum::response::Response {
+fn db_error(e: sqlx::Error) -> AppError {
     tracing::error!("Database error: {:?}", e);
     admin_internal_error("Database error")
 }

@@ -90,7 +90,7 @@ export async function updateTemplate(
 }
 
 export async function deleteTemplate(key: string): Promise<void> {
-	return apiClient.delete<void>(`/admin/templates/${key}`);
+	return apiClient.delete(`/admin/templates/${key}`);
 }
 
 export async function duplicateTemplate(key: string): Promise<TemplateConfig> {

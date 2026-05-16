@@ -2,7 +2,6 @@
 
 use axum::{
     extract::{Path, State},
-    response::IntoResponse,
     Json,
 };
 use rustshare_core::domain::{CreateFromTemplateRequest, CreatedObject, Module};
@@ -11,7 +10,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
-    handlers::{admin::log_admin_action, extractors::AuthenticatedUser, ErrorResponse},
+    handlers::{admin::log_admin_action, extractors::AuthenticatedUser, AppError},
     state::AppState,
 };
 
@@ -36,18 +35,11 @@ pub struct ModuleDetailResponse {
 pub async fn list_enabled_modules(
     AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
     State(state): State<AppState>,
-) -> Result<Json<EnabledModulesResponse>, axum::response::Response> {
+) -> Result<Json<EnabledModulesResponse>, AppError> {
     let modules = state
         .module_service
         .list_enabled_modules(tenant_id, user_id)
-        .await
-        .map_err(|e| {
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-                .into_response()
-        })?;
+        .await?;
 
     Ok(Json(EnabledModulesResponse { modules }))
 }
@@ -56,49 +48,26 @@ pub async fn get_module(
     AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
-) -> Result<Json<ModuleDetailResponse>, axum::response::Response> {
+) -> Result<Json<ModuleDetailResponse>, AppError> {
     let module = state
         .module_service
         .get_module(&key, tenant_id)
-        .await
-        .map_err(|e| {
-            let status = if e.to_string().contains("not found") {
-                axum::http::StatusCode::NOT_FOUND
-            } else {
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR
-            };
-            (status, Json(ErrorResponse::new(e.to_string()))).into_response()
-        })?;
+        .await?;
 
     if !module.enabled {
-        return Err((
-            axum::http::StatusCode::FORBIDDEN,
-            Json(ErrorResponse::new("Module disabled".to_string())),
-        )
-            .into_response());
+        return Err(AppError::forbidden("Module disabled"));
     }
 
     let visible_modules = state
         .module_service
         .list_enabled_modules(tenant_id, user_id)
-        .await
-        .map_err(|e| {
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-                .into_response()
-        })?;
+        .await?;
 
     if !visible_modules
         .iter()
         .any(|visible| visible.module_key == module.module_key)
     {
-        return Err((
-            axum::http::StatusCode::FORBIDDEN,
-            Json(ErrorResponse::new("Access denied".to_string())),
-        )
-            .into_response());
+        return Err(AppError::forbidden("Access denied"));
     }
 
     Ok(Json(ModuleDetailResponse { module }))
@@ -113,21 +82,11 @@ pub async fn get_module_summary(
     AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
-) -> Result<Json<ModuleSummaryResponse>, axum::response::Response> {
+) -> Result<Json<ModuleSummaryResponse>, AppError> {
     let summary = state
         .module_service
         .get_module_summary(&key, tenant_id, user_id)
-        .await
-        .map_err(|e| {
-            let status = if e.to_string().contains("not found") {
-                axum::http::StatusCode::NOT_FOUND
-            } else if e.to_string().contains("Permission denied") {
-                axum::http::StatusCode::FORBIDDEN
-            } else {
-                axum::http::StatusCode::BAD_REQUEST
-            };
-            (status, Json(ErrorResponse::new(e.to_string()))).into_response()
-        })?;
+        .await?;
 
     Ok(Json(ModuleSummaryResponse { summary }))
 }
@@ -136,7 +95,7 @@ pub async fn create_from_template(
     AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
     State(state): State<AppState>,
     Json(body): Json<CreateFromTemplateRequest>,
-) -> Result<Json<CreatedObject>, axum::response::Response> {
+) -> Result<Json<CreatedObject>, AppError> {
     let object = state
         .template_service
         .create_from_template(
@@ -146,37 +105,13 @@ pub async fn create_from_template(
             body.name,
             body.parent_folder_id,
         )
-        .await
-        .map_err(|e| {
-            let status = if e.to_string().contains("not found") {
-                axum::http::StatusCode::NOT_FOUND
-            } else if e.to_string().contains("disabled") || e.to_string().contains("denied") {
-                axum::http::StatusCode::FORBIDDEN
-            } else if e.to_string().contains("already exists") {
-                axum::http::StatusCode::CONFLICT
-            } else {
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR
-            };
-            let message = if status == axum::http::StatusCode::INTERNAL_SERVER_ERROR {
-                "Internal server error".to_string()
-            } else {
-                e.to_string()
-            };
-            (status, Json(ErrorResponse::new(message))).into_response()
-        })?;
+        .await?;
 
     // Initialize kanban board metadata if created from a kanban template
     let template = state
         .template_service
         .get_template(&body.template_key, tenant_id)
-        .await
-        .map_err(|e| {
-            (
-                axum::http::StatusCode::BAD_REQUEST,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-                .into_response()
-        })?;
+        .await?;
 
     if template.module_key == "kanban" {
         if let Ok(board_id) = Uuid::parse_str(&object.object_id.to_string()) {
@@ -186,14 +121,10 @@ pub async fn create_from_template(
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to initialize kanban board: {}", e);
-                    (
-                        axum::http::StatusCode::BAD_REQUEST,
-                        Json(ErrorResponse::new(format!(
-                            "Board created but initialization failed: {}",
-                            e
-                        ))),
-                    )
-                        .into_response()
+                    AppError::bad_request(format!(
+                        "Board created but initialization failed: {}",
+                        e
+                    ))
                 })?;
         }
     }

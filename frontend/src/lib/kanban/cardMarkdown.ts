@@ -26,7 +26,28 @@ export interface KanbanCardMarkdown {
 	dueDate?: string
 	description: string
 	// Allow preserving unknown frontmatter fields
-	[key: string]: any
+	[key: string]: unknown
+}
+
+interface FrontmatterData {
+	id?: string
+	title?: string
+	board?: string
+	column?: string
+	priority?: 'low' | 'medium' | 'high' | 'urgent'
+	labels?: KanbanLabel[]
+	assignees?: KanbanAssignee[]
+	position?: number
+	createdAt?: string
+	created_at?: string
+	updatedAt?: string
+	updated_at?: string
+	attachments?: KanbanCardAttachment[]
+	checklists?: KanbanChecklistGroup[]
+	activity?: KanbanEvent[]
+	dueDate?: string
+	due_date?: string
+	[key: string]: unknown
 }
 
 const DESCRIPTION_REGEX = /^## Description\s*\n?([\s\S]*?)(?=^## |(?![\s\S]))/im
@@ -63,12 +84,12 @@ export function parseCardMarkdown(raw: string): KanbanCardMarkdown {
 		const parsed = matter(raw, {
 			engines: {
 				yaml: {
-					parse: (str: string) => yaml.load(str, { schema: yaml.JSON_SCHEMA }),
-					stringify: (data: any) => yaml.dump(data, { lineWidth: -1 }),
+					parse: (str: string) => yaml.load(str, { schema: yaml.JSON_SCHEMA }) as object,
+					stringify: (data: unknown) => yaml.dump(data, { lineWidth: -1 }),
 				},
 			},
 		})
-		const data = (parsed.data as Record<string, any>) || {}
+		const data = (parsed.data as FrontmatterData | undefined) || {}
 
 		const description = extractDescription(parsed.content)
 
@@ -195,7 +216,7 @@ export function markdownToCardDetail(
 		...base,
 		id: markdown.id,
 		title: markdown.title,
-		slug: base.slug ?? markdown.slug ?? '',
+		slug: base.slug ?? (markdown.slug as string) ?? '',
 		content: markdown.description,
 		description_preview: markdown.description.slice(0, 200),
 		column_id: markdown.column,

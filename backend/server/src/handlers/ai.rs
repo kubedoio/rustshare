@@ -11,13 +11,13 @@
 use axum::{
     extract::State,
     http::StatusCode,
-    response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{handlers::AuthenticatedUser, AppState};
+use crate::handlers::{AppError, AuthenticatedUser};
+use crate::AppState;
 
 // ============================================================================
 // Request/Response Types
@@ -99,14 +99,6 @@ pub struct AskQuestionResponse {
     pub confidence: f32,
 }
 
-/// AI service error response.
-#[derive(Debug, Serialize)]
-pub struct AiErrorResponse {
-    pub error: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<String>,
-}
-
 // ============================================================================
 // Handlers
 // ============================================================================
@@ -121,16 +113,13 @@ pub async fn semantic_search(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Json(request): Json<SemanticSearchRequest>,
-) -> Result<(StatusCode, Json<SemanticSearchResponse>), Response> {
+) -> Result<(StatusCode, Json<SemanticSearchResponse>), AppError> {
     // Contract A-04: Rate limiting enforced by middleware
 
     // Contract A-05: Input validation
     let query = request.query.trim();
     if query.is_empty() {
-        return Err(ai_error_response(
-            StatusCode::BAD_REQUEST,
-            "Query cannot be empty",
-        ));
+        return Err(AppError::bad_request("Query cannot be empty"));
     }
 
     let limit = request.limit.clamp(1, 50);
@@ -140,8 +129,7 @@ pub async fn semantic_search(
     let results = if let Some(ref ai_service) = state.ai_service {
         ai_service
             .semantic_search(query, auth.user_id, auth.tenant_id, limit)
-            .await
-            .map_err(ai_service_error_response)?
+            .await?
     } else {
         // AI service not configured - return empty results for now
         Vec::new()
@@ -182,20 +170,16 @@ pub async fn summarize_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Json(request): Json<SummarizeRequest>,
-) -> Result<(StatusCode, Json<SummarizeResponse>), Response> {
+) -> Result<(StatusCode, Json<SummarizeResponse>), AppError> {
     // Contract A-04: Rate limiting enforced by middleware
 
     // Get AI service from state or return not implemented
     let summary = if let Some(ref ai_service) = state.ai_service {
         ai_service
             .summarize_file(request.file_id, auth.user_id, auth.tenant_id)
-            .await
-            .map_err(ai_service_error_response)?
+            .await?
     } else {
-        return Err(ai_error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "AI service not configured",
-        ));
+        return Err(AppError::internal("AI service not configured"));
     };
 
     let response = SummarizeResponse {
@@ -227,29 +211,22 @@ pub async fn ask_question(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Json(request): Json<AskQuestionRequest>,
-) -> Result<(StatusCode, Json<AskQuestionResponse>), Response> {
+) -> Result<(StatusCode, Json<AskQuestionResponse>), AppError> {
     // Contract A-04: Rate limiting enforced by middleware
 
     // Contract A-05: Input validation
     let question = request.question.trim();
     if question.is_empty() {
-        return Err(ai_error_response(
-            StatusCode::BAD_REQUEST,
-            "Question cannot be empty",
-        ));
+        return Err(AppError::bad_request("Question cannot be empty"));
     }
 
     // Get AI service from state or return not implemented
     let answer = if let Some(ref ai_service) = state.ai_service {
         ai_service
             .ask_question(question, auth.user_id, auth.tenant_id)
-            .await
-            .map_err(ai_service_error_response)?
+            .await?
     } else {
-        return Err(ai_error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "AI service not configured",
-        ));
+        return Err(AppError::internal("AI service not configured"));
     };
 
     let citations: Vec<SourceCitation> = answer
@@ -271,41 +248,4 @@ pub async fn ask_question(
     };
 
     Ok((StatusCode::OK, Json(response)))
-}
-
-// ============================================================================
-// Error Handling
-// ============================================================================
-
-/// Create an AI error response.
-fn ai_error_response(status: StatusCode, message: &str) -> Response {
-    let error = AiErrorResponse {
-        error: message.to_string(),
-        details: None,
-    };
-    (status, Json(error)).into_response()
-}
-
-/// Convert AI service error to HTTP response.
-fn ai_service_error_response(err: rustshare_core::services::AiError) -> Response {
-    use rustshare_core::services::AiError;
-
-    let (status, message) = match err {
-        AiError::PermissionDenied { .. } => (StatusCode::FORBIDDEN, err.to_string()),
-        AiError::FileNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        AiError::ContentNotExtractable(_) => (StatusCode::UNPROCESSABLE_ENTITY, err.to_string()),
-        AiError::RateLimitExceeded => (StatusCode::TOO_MANY_REQUESTS, err.to_string()),
-        AiError::InvalidQuery(_) => (StatusCode::BAD_REQUEST, err.to_string()),
-        AiError::Internal(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Internal AI service error".to_string(),
-        ),
-    };
-
-    let error = AiErrorResponse {
-        error: message,
-        details: Some(err.to_string()),
-    };
-
-    (status, Json(error)).into_response()
 }

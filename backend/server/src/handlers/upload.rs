@@ -11,15 +11,15 @@ use axum::{
     body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use rustshare_core::services::{CreateSessionRequest, SessionStatusResponse, UploadError};
+use rustshare_core::services::{CreateSessionRequest, SessionStatusResponse};
 
-use super::{AuthenticatedUser, ErrorResponse};
+use super::AuthenticatedUser;
+use crate::handlers::AppError;
 use crate::AppState;
 
 // ============================================================================
@@ -161,15 +161,11 @@ pub async fn create_upload_session(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Json(request): Json<CreateUploadSessionRequest>,
-) -> Result<(StatusCode, Json<CreateUploadSessionResponse>), Response> {
+) -> Result<(StatusCode, Json<CreateUploadSessionResponse>), AppError> {
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ErrorResponse::new("Upload service not available")),
-            )
-                .into_response());
+            return Err(AppError::internal("Upload service not available"));
         }
     };
 
@@ -184,8 +180,7 @@ pub async fn create_upload_session(
 
     let response = service
         .create_session(auth.user_id, auth.tenant_id, create_request)
-        .await
-        .map_err(upload_error_response)?;
+        .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -209,22 +204,17 @@ pub async fn get_upload_session_status(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(session_id): Path<Uuid>,
-) -> Result<Json<UploadSessionStatusResponse>, Response> {
+) -> Result<Json<UploadSessionStatusResponse>, AppError> {
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ErrorResponse::new("Upload service not available")),
-            )
-                .into_response());
+            return Err(AppError::internal("Upload service not available"));
         }
     };
 
     let status = service
         .get_session_status(session_id, auth.user_id)
-        .await
-        .map_err(upload_error_response)?;
+        .await?;
 
     Ok(Json(status.into()))
 }
@@ -244,15 +234,11 @@ pub async fn upload_chunk(
     Path((session_id, chunk_index)): Path<(Uuid, u32)>,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<UploadChunkResponse>, Response> {
+) -> Result<Json<UploadChunkResponse>, AppError> {
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ErrorResponse::new("Upload service not available")),
-            )
-                .into_response());
+            return Err(AppError::internal("Upload service not available"));
         }
     };
 
@@ -274,8 +260,7 @@ pub async fn upload_chunk(
 
     let response = service
         .upload_chunk(session_id, chunk_index, body, provided_hash, auth.user_id)
-        .await
-        .map_err(upload_error_response)?;
+        .await?;
 
     Ok(Json(response.into()))
 }
@@ -291,22 +276,17 @@ pub async fn complete_upload(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(session_id): Path<Uuid>,
-) -> Result<(StatusCode, Json<CompleteUploadResponse>), Response> {
+) -> Result<(StatusCode, Json<CompleteUploadResponse>), AppError> {
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ErrorResponse::new("Upload service not available")),
-            )
-                .into_response());
+            return Err(AppError::internal("Upload service not available"));
         }
     };
 
     let response = service
         .complete_upload(session_id, auth.user_id)
-        .await
-        .map_err(upload_error_response)?;
+        .await?;
 
     Ok((
         StatusCode::OK,
@@ -328,22 +308,17 @@ pub async fn abort_upload_session(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(session_id): Path<Uuid>,
-) -> Result<StatusCode, Response> {
+) -> Result<StatusCode, AppError> {
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ErrorResponse::new("Upload service not available")),
-            )
-                .into_response());
+            return Err(AppError::internal("Upload service not available"));
         }
     };
 
     service
         .abort_session(session_id, auth.user_id)
-        .await
-        .map_err(upload_error_response)?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -357,70 +332,19 @@ pub async fn abort_upload_session(
 pub async fn list_upload_sessions(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-) -> Result<Json<Vec<UploadSessionStatusResponse>>, Response> {
+) -> Result<Json<Vec<UploadSessionStatusResponse>>, AppError> {
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ErrorResponse::new("Upload service not available")),
-            )
-                .into_response());
+            return Err(AppError::internal("Upload service not available"));
         }
     };
 
     let sessions = service
         .list_user_sessions(auth.user_id)
-        .await
-        .map_err(upload_error_response)?;
+        .await?;
 
     Ok(Json(sessions.into_iter().map(|s| s.into()).collect()))
-}
-
-// ============================================================================
-// Error Handling
-// ============================================================================
-
-/// Map UploadError to HTTP response
-pub fn upload_error_response(err: UploadError) -> Response {
-    let (status, message) = match err {
-        UploadError::SessionNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        UploadError::SessionExpired(_) => (StatusCode::GONE, err.to_string()),
-        UploadError::SessionAlreadyCompleted(_) => (StatusCode::CONFLICT, err.to_string()),
-        UploadError::SessionAborted(_) => (StatusCode::GONE, err.to_string()),
-        UploadError::ChunkIndexOutOfRange { .. } => (StatusCode::BAD_REQUEST, err.to_string()),
-        UploadError::ChunkAlreadyReceived(_) => (StatusCode::CONFLICT, err.to_string()),
-        UploadError::ChunkHashVerificationFailed => (
-            StatusCode::BAD_REQUEST,
-            "Chunk hash verification failed".to_string(),
-        ),
-        UploadError::FileHashVerificationFailed => (
-            StatusCode::BAD_REQUEST,
-            "File hash verification failed".to_string(),
-        ),
-        UploadError::InvalidChunkSize { .. } => (StatusCode::BAD_REQUEST, err.to_string()),
-        UploadError::PermissionDenied { .. } => {
-            (StatusCode::FORBIDDEN, "Permission denied".to_string())
-        }
-        UploadError::ParentFolderNotFound(_) => (StatusCode::BAD_REQUEST, err.to_string()),
-        UploadError::Storage(msg) => {
-            tracing::error!("Upload storage error: {}", msg);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Storage error".to_string(),
-            )
-        }
-        UploadError::Database(msg) => {
-            tracing::error!("Upload database error: {}", msg);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Database error".to_string(),
-            )
-        }
-        UploadError::InvalidFileName(msg) => (StatusCode::BAD_REQUEST, msg),
-    };
-
-    (status, Json(ErrorResponse::new(message))).into_response()
 }
 
 // Helper for hex encoding

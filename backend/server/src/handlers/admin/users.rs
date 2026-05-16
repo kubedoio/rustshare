@@ -13,7 +13,7 @@ use uuid::Uuid;
 use super::{
     admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, log_admin_action,
 };
-use crate::{handlers::AdminUser, AppState};
+use crate::{handlers::{AdminUser, AppError}, AppState};
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -47,13 +47,29 @@ pub struct AdminUserDetailResponse {
     pub storage_used_bytes: i64,
 }
 
-#[derive(Debug, Deserialize)]
+fn validate_username(username: &str) -> Result<(), validator::ValidationError> {
+    if username.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        Ok(())
+    } else {
+        let mut err = validator::ValidationError::new("username_format");
+        err.message = Some("Username may only contain letters, numbers, underscores, and hyphens".into());
+        Err(err)
+    }
+}
+
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct CreateUserRequest {
+    #[validate(length(min = 1, max = 50, message = "Username must be between 1 and 50 characters"))]
+    #[validate(custom(function = "validate_username", message = "Username may only contain letters, numbers, underscores, and hyphens"))]
     pub username: String,
+    #[validate(email(message = "Invalid email address"))]
     pub email: String,
+    #[validate(length(min = 8, message = "Password must be at least 8 characters"))]
     pub password: String,
+    #[validate(length(min = 1, max = 100, message = "Display name must be between 1 and 100 characters"))]
     pub display_name: Option<String>,
     pub is_admin: Option<bool>,
+    #[validate(range(min = 0, message = "Storage quota must be non-negative"))]
     pub storage_quota_bytes: Option<i64>,
 }
 
@@ -116,7 +132,7 @@ pub async fn list_admin_users(
     State(state): State<AppState>,
     AdminUser { user_id: _ }: AdminUser,
     Query(query): Query<ListUsersQuery>,
-) -> Result<Json<PaginatedUsers>, axum::response::Response> {
+) -> Result<Json<PaginatedUsers>, AppError> {
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.per_page.unwrap_or(20).clamp(1, 100);
     let offset = (page - 1) * per_page;
@@ -265,18 +281,8 @@ pub async fn list_admin_users(
 pub async fn create_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
-    Json(req): Json<CreateUserRequest>,
-) -> Result<(StatusCode, Json<AdminUserResponse>), axum::response::Response> {
-    // Validate inputs
-    if req.username.trim().is_empty() {
-        return Err(admin_bad_request("Username must not be empty"));
-    }
-    if !req.email.contains('@') {
-        return Err(admin_bad_request("Invalid email address"));
-    }
-    if req.password.len() < 8 {
-        return Err(admin_bad_request("Password must be at least 8 characters"));
-    }
+    crate::handlers::ValidatedJson(req): crate::handlers::ValidatedJson<CreateUserRequest>,
+) -> Result<(StatusCode, Json<AdminUserResponse>), AppError> {
 
     // Check username uniqueness
     let username_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE username = $1")
@@ -357,7 +363,7 @@ pub async fn get_admin_user(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
     Path(user_id): Path<Uuid>,
-) -> Result<Json<AdminUserDetailResponse>, axum::response::Response> {
+) -> Result<Json<AdminUserDetailResponse>, AppError> {
     let cols = "id, username, email, display_name, is_admin, storage_quota, disabled_at, created_at, updated_at";
     let row = sqlx::query_as::<_, UserRow>(&format!("SELECT {cols} FROM users WHERE id = $1"))
         .bind(user_id)
@@ -391,7 +397,7 @@ pub async fn update_admin_user(
     AdminUser { user_id: actor_id }: AdminUser,
     Path(user_id): Path<Uuid>,
     Json(req): Json<UpdateUserRequest>,
-) -> Result<Json<AdminUserResponse>, axum::response::Response> {
+) -> Result<Json<AdminUserResponse>, AppError> {
     let cols = "id, username, email, display_name, is_admin, storage_quota, disabled_at, created_at, updated_at";
 
     // Fetch current user
@@ -508,7 +514,7 @@ pub async fn disable_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(user_id): Path<Uuid>,
-) -> Result<StatusCode, axum::response::Response> {
+) -> Result<StatusCode, AppError> {
     if user_id == actor_id {
         return Err(admin_bad_request("Cannot disable your own account"));
     }
@@ -552,7 +558,7 @@ pub async fn enable_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(user_id): Path<Uuid>,
-) -> Result<StatusCode, axum::response::Response> {
+) -> Result<StatusCode, AppError> {
     sqlx::query("UPDATE users SET disabled_at = NULL WHERE id = $1")
         .bind(user_id)
         .execute(&state.db_pool)
@@ -577,7 +583,7 @@ pub async fn delete_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(user_id): Path<Uuid>,
-) -> Result<StatusCode, axum::response::Response> {
+) -> Result<StatusCode, AppError> {
     if user_id == actor_id {
         return Err(admin_bad_request("Cannot delete your own account"));
     }
@@ -625,7 +631,7 @@ pub async fn delete_admin_user(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn db_error(e: sqlx::Error) -> axum::response::Response {
+fn db_error(e: sqlx::Error) -> AppError {
     tracing::error!("Database error: {:?}", e);
     admin_internal_error("Database error")
 }

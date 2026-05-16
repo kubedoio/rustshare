@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use rustshare_core::{domain::SharePermissions, services::Resource};
 
-use super::{share_error_response, AuthenticatedUser};
+use super::{AuthenticatedUser, AppError};
 use crate::AppState;
 
 // Re-export folder/file with shares types from folders handler
@@ -31,18 +31,20 @@ use super::folders::{
 // ============================================================================
 
 /// Request to create a file share with a specific user.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct CreateFileShareRequest {
     /// Email of the recipient user.
+    #[validate(email(message = "Invalid recipient email address"))]
     pub recipient_email: String,
     /// Permission level to grant.
     pub permission: SharePermissions,
 }
 
 /// Request to create a folder share with a specific user.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct CreateFolderShareRequest {
     /// Email of the recipient user.
+    #[validate(email(message = "Invalid recipient email address"))]
     pub recipient_email: String,
     /// Permission level to grant.
     pub permission: SharePermissions,
@@ -118,13 +120,12 @@ pub async fn create_file_share(
     State(state): State<AppState>,
     Path(file_id): Path<Uuid>,
     auth: AuthenticatedUser,
-    Json(req): Json<CreateFileShareRequest>,
-) -> Result<Response, Response> {
+    crate::handlers::ValidatedJson(req): crate::handlers::ValidatedJson<CreateFileShareRequest>,
+) -> Result<Response, AppError> {
     let share = state
         .user_share_service
         .create_file_share(file_id, &req.recipient_email, req.permission, auth.user_id)
-        .await
-        .map_err(share_error_response)?;
+        .await?;
 
     // Get recipient email for response (it was validated in the service)
     let response = UserShareResponse {
@@ -153,8 +154,8 @@ pub async fn create_folder_share(
     State(state): State<AppState>,
     Path(folder_id): Path<Uuid>,
     auth: AuthenticatedUser,
-    Json(req): Json<CreateFolderShareRequest>,
-) -> Result<Response, Response> {
+    crate::handlers::ValidatedJson(req): crate::handlers::ValidatedJson<CreateFolderShareRequest>,
+) -> Result<Response, AppError> {
     let share = state
         .user_share_service
         .create_folder_share(
@@ -163,8 +164,7 @@ pub async fn create_folder_share(
             req.permission,
             auth.user_id,
         )
-        .await
-        .map_err(share_error_response)?;
+        .await?;
 
     let response = UserShareResponse {
         share_id: share.id,
@@ -191,12 +191,11 @@ pub async fn list_received_shares(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Query(query): Query<ListReceivedSharesQuery>,
-) -> Result<Response, Response> {
+) -> Result<Response, AppError> {
     let shares = state
         .user_share_service
         .list_received_shares(auth.user_id, query.limit, query.offset)
-        .await
-        .map_err(share_error_response)?;
+        .await?;
 
     let mut response = Vec::with_capacity(shares.len());
     for share in shares {
@@ -274,12 +273,11 @@ pub async fn list_file_recipients(
     State(state): State<AppState>,
     Path(file_id): Path<Uuid>,
     auth: AuthenticatedUser,
-) -> Result<Response, Response> {
+) -> Result<Response, AppError> {
     let recipients = state
         .user_share_service
         .list_recipients(Some(file_id), None, auth.user_id)
-        .await
-        .map_err(share_error_response)?;
+        .await?;
 
     let response: Vec<ShareRecipientResponse> = recipients
         .into_iter()
@@ -310,12 +308,11 @@ pub async fn list_folder_recipients(
     State(state): State<AppState>,
     Path(folder_id): Path<Uuid>,
     auth: AuthenticatedUser,
-) -> Result<Response, Response> {
+) -> Result<Response, AppError> {
     let recipients = state
         .user_share_service
         .list_recipients(None, Some(folder_id), auth.user_id)
-        .await
-        .map_err(share_error_response)?;
+        .await?;
 
     let response: Vec<ShareRecipientResponse> = recipients
         .into_iter()
@@ -347,12 +344,11 @@ pub async fn update_recipient_permission(
     Path(share_id): Path<Uuid>,
     auth: AuthenticatedUser,
     Json(req): Json<UpdatePermissionRequest>,
-) -> Result<Response, Response> {
+) -> Result<Response, AppError> {
     let updated_share = state
         .user_share_service
         .update_recipient_permission(share_id, req.permission, auth.user_id)
-        .await
-        .map_err(share_error_response)?;
+        .await?;
 
     let resource_id = updated_share
         .file_id
@@ -389,12 +385,11 @@ pub async fn remove_recipient(
     State(state): State<AppState>,
     Path(share_id): Path<Uuid>,
     auth: AuthenticatedUser,
-) -> Result<Response, Response> {
+) -> Result<Response, AppError> {
     state
         .user_share_service
         .remove_recipient(share_id, auth.user_id)
-        .await
-        .map_err(share_error_response)?;
+        .await?;
 
     Ok((StatusCode::NO_CONTENT, ()).into_response())
 }
@@ -413,9 +408,7 @@ pub async fn get_user_shared_folder_contents(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
-) -> Result<Json<FolderContentsWithShares>, Response> {
-    use crate::handlers::folder_error_response;
-
+) -> Result<Json<FolderContentsWithShares>, AppError> {
     // 1. Get contents via FolderService (which handles permissions and visibility)
     let current_folder_permission = state
         .permission_resolver
@@ -428,14 +421,13 @@ pub async fn get_user_shared_folder_contents(
                 auth.user_id,
                 error
             );
-            crate::handlers::internal_error_response()
+            AppError::internal("failed to resolve permission")
         })?;
 
     let contents = state
         .folder_service
         .list_contents(folder_id, auth.user_id)
-        .await
-        .map_err(folder_error_response)?;
+        .await?;
 
     // 2. Decorate folders with share information
     let mut folders_with_shares = Vec::with_capacity(contents.folders.len());
@@ -453,7 +445,7 @@ pub async fn get_user_shared_folder_contents(
                     auth.user_id,
                     error
                 );
-                crate::handlers::internal_error_response()
+                AppError::internal("failed to resolve permission")
             })?;
 
         folders_with_shares.push(FolderWithShares {
@@ -490,7 +482,7 @@ pub async fn get_user_shared_folder_contents(
                     auth.user_id,
                     error
                 );
-                crate::handlers::internal_error_response()
+                AppError::internal("failed to resolve permission")
             })?;
 
         files_with_shares.push(crate::handlers::files::FileWithShares {
@@ -527,7 +519,7 @@ pub async fn get_user_shared_folder_tree(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
-) -> Result<Json<FolderTreeWithShares>, Response> {
+) -> Result<Json<FolderTreeWithShares>, AppError> {
     let tree = build_user_shared_folder_tree(&state, auth.user_id, folder_id).await?;
     Ok(Json(tree))
 }
@@ -536,14 +528,11 @@ async fn build_user_shared_folder_tree(
     state: &AppState,
     user_id: Uuid,
     folder_id: Uuid,
-) -> Result<FolderTreeWithShares, Response> {
-    use crate::handlers::folder_error_response;
-
+) -> Result<FolderTreeWithShares, AppError> {
     let folder = state
         .folder_service
         .get_folder(folder_id, user_id)
-        .await
-        .map_err(folder_error_response)?;
+        .await?;
 
     let share_info = load_folder_share_summary(&state.db_pool, folder_id).await?;
     let permission = state
@@ -557,14 +546,13 @@ async fn build_user_shared_folder_tree(
                 user_id,
                 error
             );
-            crate::handlers::internal_error_response()
+            AppError::internal("failed to resolve permission")
         })?;
 
     let contents = state
         .folder_service
         .list_contents(folder_id, user_id)
-        .await
-        .map_err(folder_error_response)?;
+        .await?;
 
     let mut subfolders = Vec::with_capacity(contents.folders.len());
     for child in contents.folders {
@@ -596,7 +584,7 @@ async fn build_user_shared_folder_tree(
 async fn load_folder_share_summary(
     pool: &sqlx::PgPool,
     folder_id: Uuid,
-) -> Result<(bool, i64, Option<chrono::DateTime<chrono::Utc>>), Response> {
+) -> Result<(bool, i64, Option<chrono::DateTime<chrono::Utc>>), AppError> {
     sqlx::query_as(
         r#"
         SELECT
@@ -610,14 +598,14 @@ async fn load_folder_share_summary(
     .await
     .map_err(|error| {
         tracing::error!("database error fetching share info for folder {}: {}", folder_id, error);
-        crate::handlers::internal_error_response()
+        AppError::internal("database error fetching share info")
     })
 }
 
 async fn load_file_share_summary(
     pool: &sqlx::PgPool,
     file_id: Uuid,
-) -> Result<(bool, i64, Option<chrono::DateTime<chrono::Utc>>), Response> {
+) -> Result<(bool, i64, Option<chrono::DateTime<chrono::Utc>>), AppError> {
     sqlx::query_as(
         r#"
         SELECT
@@ -631,11 +619,11 @@ async fn load_file_share_summary(
     .await
     .map_err(|error| {
         tracing::error!("database error fetching share info for file {}: {}", file_id, error);
-        crate::handlers::internal_error_response()
+        AppError::internal("database error fetching share info")
     })
 }
 
-async fn load_folder_size(pool: &sqlx::PgPool, folder_id: Uuid) -> Result<i64, Response> {
+async fn load_folder_size(pool: &sqlx::PgPool, folder_id: Uuid) -> Result<i64, AppError> {
     let size: i64 = sqlx::query_scalar(
         r#"
         WITH RECURSIVE folder_tree AS (
@@ -659,7 +647,7 @@ async fn load_folder_size(pool: &sqlx::PgPool, folder_id: Uuid) -> Result<i64, R
             folder_id,
             error
         );
-        crate::handlers::internal_error_response()
+        AppError::internal("database error fetching folder size")
     })?;
     Ok(size)
 }

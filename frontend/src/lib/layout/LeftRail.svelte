@@ -9,18 +9,12 @@
 	import WorkspaceIcon from '$lib/components/dashboard/WorkspaceIcon.svelte';
 	import RailItem from './RailItem.svelte';
 
-	interface NavItem {
-		icon: typeof WorkspaceIcon;
-		label: string;
-		href: string;
-	}
-
-	const primaryItems: NavItem[] = [
+	const primaryItems = [
 		{ icon: WorkspaceIcon, label: 'Workspace', href: '/dashboard' },
 		{ icon: FolderOpen, label: 'Folders', href: '/files' }
 	];
 
-	const secondaryItems: NavItem[] = [
+	const secondaryItems = [
 		{ icon: Settings, label: 'Settings', href: '/settings' }
 	];
 

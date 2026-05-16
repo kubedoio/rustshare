@@ -16,11 +16,11 @@ export const getAdminUser = (id: string) => apiClient.get<AdminUserDetail>(`/adm
 export const updateAdminUser = (id: string, data: UpdateUserRequest) =>
 	apiClient.patch<AdminUserDetail>(`/admin/users/${id}`, data);
 
-export const disableAdminUser = (id: string) => apiClient.post<void>(`/admin/users/${id}/disable`);
+export const disableAdminUser = (id: string) => apiClient.postVoid(`/admin/users/${id}/disable`);
 
-export const enableAdminUser = (id: string) => apiClient.post<void>(`/admin/users/${id}/enable`);
+export const enableAdminUser = (id: string) => apiClient.postVoid(`/admin/users/${id}/enable`);
 
-export const deleteAdminUser = (id: string) => apiClient.delete<void>(`/admin/users/${id}`);
+export const deleteAdminUser = (id: string) => apiClient.delete(`/admin/users/${id}`);
 
 // Groups
 export const listAdminGroups = () => apiClient.get<AdminGroup[]>('/admin/groups');
@@ -33,13 +33,13 @@ export const getAdminGroup = (id: string) => apiClient.get<AdminGroupDetail>(`/a
 export const updateAdminGroup = (id: string, data: { name?: string; description?: string }) =>
 	apiClient.patch<AdminGroupDetail>(`/admin/groups/${id}`, data);
 
-export const deleteAdminGroup = (id: string) => apiClient.delete<void>(`/admin/groups/${id}`);
+export const deleteAdminGroup = (id: string) => apiClient.delete(`/admin/groups/${id}`);
 
 export const addGroupMember = (groupId: string, userId: string) =>
-	apiClient.post<void>(`/admin/groups/${groupId}/members`, { user_id: userId });
+	apiClient.postVoid(`/admin/groups/${groupId}/members`, { user_id: userId });
 
 export const removeGroupMember = (groupId: string, userId: string) =>
-	apiClient.delete<void>(`/admin/groups/${groupId}/members/${userId}`);
+	apiClient.delete(`/admin/groups/${groupId}/members/${userId}`);
 
 // OIDC config
 export const getOidcConfig = () => apiClient.get<OidcConfig>('/admin/config/oidc');
@@ -71,7 +71,7 @@ export const updateWebhook = (id: string, data: UpdateWebhookRequest) =>
 	apiClient.patch<Webhook>(`/admin/integrations/webhooks/${id}`, data);
 
 export const deleteWebhook = (id: string) =>
-	apiClient.delete<void>(`/admin/integrations/webhooks/${id}`);
+	apiClient.delete(`/admin/integrations/webhooks/${id}`);
 
 export const testWebhook = (id: string) =>
 	apiClient.post<{ success: boolean; message?: string }>(`/admin/integrations/webhooks/${id}/test`);

@@ -1,3 +1,4 @@
+import { logger } from '$lib/utils/logger';
 // Example: Using WebSocket in Custom Components
 // This file shows how to use the WebSocket functionality in your own components
 
@@ -18,7 +19,7 @@ export function Example1_FileWatcher() {
 	// Handler function
 	const handleFileUploaded = (event: WebSocketEvent) => {
 		const payload = event.payload as any;
-		console.log('File uploaded:', payload.file_name);
+		logger.debug('File uploaded:', payload.file_name);
 
 		// Do something with the event
 		// e.g., update local state, show custom notification, etc.
@@ -68,14 +69,14 @@ export function Example2_CustomToast() {
 export function Example3_ConnectionMonitor() {
 	// Subscribe to connection state
 	const unsubscribe = websocketStore.subscribe((state) => {
-		console.log('WebSocket state:', state.state);
-		console.log('Reconnect attempts:', state.reconnectAttempts);
-		console.log('Error:', state.error);
+		logger.debug('WebSocket state:', state.state);
+		logger.debug('Reconnect attempts:', state.reconnectAttempts);
+		logger.debug('Error:', state.error);
 	});
 
 	// Or use derived store
 	const unsubscribe2 = isWebSocketConnected.subscribe((connected) => {
-		console.log('Connected:', connected);
+		logger.debug('Connected:', connected);
 	});
 
 	// Clean up subscriptions
@@ -95,13 +96,13 @@ export function Example4_MultipleEventListener() {
 	const handleFileEvent = (event: WebSocketEvent) => {
 		switch (event.type) {
 			case 'FileUploaded':
-				console.log('File uploaded');
+				logger.debug('File uploaded');
 				break;
 			case 'FileModified':
-				console.log('File modified');
+				logger.debug('File modified');
 				break;
 			case 'FileDeleted':
-				console.log('File deleted');
+				logger.debug('File deleted');
 				break;
 		}
 	};
@@ -135,7 +136,7 @@ export function Example5_FilteredNotifications() {
 			toastStore.show(`${payload.file_name} was uploaded by another user`, 'info');
 		} else {
 			// This is our own upload, maybe update UI differently
-			console.log('Own file uploaded');
+			logger.debug('Own file uploaded');
 		}
 	};
 
@@ -193,15 +194,15 @@ export function Example7_ManualConnection() {
 
 		try {
 			await initializeWebSocket(token, userId);
-			console.log('WebSocket connected');
+			logger.debug('WebSocket connected');
 		} catch (error) {
-			console.error('Failed to connect:', error);
+			logger.error('Failed to connect:', error);
 		}
 	}
 
 	function disconnectManually() {
 		cleanupWebSocket();
-		console.log('WebSocket disconnected');
+		logger.debug('WebSocket disconnected');
 	}
 }
 
@@ -214,10 +215,10 @@ export function Example8_CheckConnection() {
 
 	// Check if connected
 	const connected = wsClient.isConnected;
-	console.log('Connected:', connected);
+	logger.debug('Connected:', connected);
 
 	// Get raw WebSocket state
 	// 0 = CONNECTING, 1 = OPEN, 2 = CLOSING, 3 = CLOSED
 	const state = wsClient.connectionState;
-	console.log('Connection state:', state);
+	logger.debug('Connection state:', state);
 }

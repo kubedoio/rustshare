@@ -514,9 +514,12 @@
 										<strong>{event.actor}</strong>
 										<span class="text-base-content/60">{formatEventText(event)}</span>
 									</div>
-									{#if event.event_type === 'comment' && event.payload?.text}
-										<div class="activity-comment">{event.payload.text}</div>
+								{#if event.event_type === 'comment'}
+									{@const commentPayload = event.payload as { text?: string } | undefined}
+									{#if commentPayload?.text}
+										<div class="activity-comment">{commentPayload.text}</div>
 									{/if}
+								{/if}
 									<div class="activity-time">
 										{new Date(event.timestamp).toLocaleString(undefined, {
 											month: 'short',

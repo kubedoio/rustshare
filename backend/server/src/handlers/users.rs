@@ -11,7 +11,7 @@ use rustshare_core::domain::Theme;
 use serde::{Deserialize, Serialize};
 // tracing::{error, warn} are used as tracing::error! and tracing::warn! in the code
 
-use crate::handlers::{AuthenticatedSession, AuthenticatedUser, ErrorResponse};
+use crate::handlers::{AppError, AuthenticatedSession, AuthenticatedUser};
 use crate::AppState;
 
 /// Request to update user theme preference.
@@ -86,7 +86,7 @@ pub async fn update_user_theme(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Json(req): Json<UpdateThemeRequest>,
-) -> Response {
+) -> Result<Response, AppError> {
     // Update theme in database
     if let Err(e) = state
         .metadata_store
@@ -94,19 +94,15 @@ pub async fn update_user_theme(
         .await
     {
         tracing::error!("Failed to update user theme: {:?}", e);
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new("Failed to update theme")),
-        )
-            .into_response();
+        return Err(AppError::internal("Failed to update theme"));
     }
 
     // Return success response
-    (
+    Ok((
         StatusCode::OK,
         Json(UpdateThemeResponse { theme: req.theme }),
     )
-        .into_response()
+        .into_response())
 }
 
 /// Update the authenticated user's password.
@@ -118,53 +114,33 @@ pub async fn update_user_password(
     }: AuthenticatedSession,
     headers: HeaderMap,
     Json(req): Json<UpdatePasswordRequest>,
-) -> Response {
+) -> Result<Response, AppError> {
     if req.new_password != req.confirm_password {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new(
-                "New password and confirmation do not match",
-            )),
-        )
-            .into_response();
+        return Err(AppError::bad_request(
+            "New password and confirmation do not match",
+        ));
     }
 
     if req.new_password.len() < 10 {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new(
-                "New password must be at least 10 characters long",
-            )),
-        )
-            .into_response();
+        return Err(AppError::bad_request(
+            "New password must be at least 10 characters long",
+        ));
     }
 
     if req.current_password == req.new_password {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new(
-                "New password must be different from the current password",
-            )),
-        )
-            .into_response();
+        return Err(AppError::bad_request(
+            "New password must be different from the current password",
+        ));
     }
 
     let user = match state.metadata_store.find_user_by_id(user_id).await {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse::new("User not found")),
-            )
-                .into_response();
+            return Err(AppError::not_found("User not found"));
         }
         Err(error) => {
             tracing::error!("Failed to load user for password update: {:?}", error);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to update password")),
-            )
-                .into_response();
+            return Err(AppError::internal("Failed to update password"));
         }
     };
 
@@ -175,31 +151,19 @@ pub async fn update_user_password(
                 "Failed to verify password during password update: {:?}",
                 error
             );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to update password")),
-            )
-                .into_response();
+            return Err(AppError::internal("Failed to update password"));
         }
     };
 
     if !is_valid {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse::new("Current password is incorrect")),
-        )
-            .into_response();
+        return Err(AppError::Unauthorized);
     }
 
     let new_password_hash = match PasswordHasher::hash(&req.new_password) {
         Ok(hash) => hash,
         Err(error) => {
             tracing::error!("Failed to hash new password: {:?}", error);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to update password")),
-            )
-                .into_response();
+            return Err(AppError::internal("Failed to update password"));
         }
     };
 
@@ -209,11 +173,7 @@ pub async fn update_user_password(
         .await
     {
         tracing::error!("Failed to persist new password hash: {:?}", error);
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new("Failed to update password")),
-        )
-            .into_response();
+        return Err(AppError::internal("Failed to update password"));
     }
 
     let user_agent = headers
@@ -240,13 +200,13 @@ pub async fn update_user_password(
         );
     }
 
-    (
+    Ok((
         StatusCode::OK,
         Json(UpdatePasswordResponse {
             message: "Password updated successfully".to_string(),
         }),
     )
-        .into_response()
+        .into_response())
 }
 
 /// List active browser sessions for the authenticated user.
@@ -256,7 +216,7 @@ pub async fn list_user_sessions(
         user_id,
         session_id: current_session_id,
     }: AuthenticatedSession,
-) -> Response {
+) -> Result<Response, AppError> {
     match state.metadata_store.list_user_sessions(user_id).await {
         Ok(sessions) => {
             let response: Vec<UserSessionResponse> = sessions
@@ -272,15 +232,11 @@ pub async fn list_user_sessions(
                 })
                 .collect();
 
-            (StatusCode::OK, Json(response)).into_response()
+            Ok((StatusCode::OK, Json(response)).into_response())
         }
         Err(error) => {
             tracing::error!("Failed to list user sessions: {:?}", error);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to list user sessions")),
-            )
-                .into_response()
+            Err(AppError::internal("Failed to list user sessions"))
         }
     }
 }
@@ -294,15 +250,11 @@ pub async fn delete_user_session(
     }: AuthenticatedSession,
     headers: HeaderMap,
     axum::extract::Path(session_id): axum::extract::Path<uuid::Uuid>,
-) -> Response {
+) -> Result<Response, AppError> {
     if current_session_id.is_some_and(|current| current == session_id) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new(
-                "Use Sign Out to end your current browser session",
-            )),
-        )
-            .into_response();
+        return Err(AppError::bad_request(
+            "Use Sign Out to end your current browser session",
+        ));
     }
 
     let target_session = match state.metadata_store.list_user_sessions(user_id).await {
@@ -311,20 +263,12 @@ pub async fn delete_user_session(
             .find(|session| session.id == session_id),
         Err(error) => {
             tracing::error!("Failed to load user sessions before delete: {:?}", error);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to revoke session")),
-            )
-                .into_response();
+            return Err(AppError::internal("Failed to revoke session"));
         }
     };
 
     let Some(target_session) = target_session else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse::new("Session not found")),
-        )
-            .into_response();
+        return Err(AppError::not_found("Session not found"));
     };
 
     match state
@@ -365,15 +309,11 @@ pub async fn delete_user_session(
                 );
             }
 
-            StatusCode::NO_CONTENT.into_response()
+            Ok(StatusCode::NO_CONTENT.into_response())
         }
         Err(error) => {
             tracing::error!("Failed to delete user session: {:?}", error);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to revoke session")),
-            )
-                .into_response()
+            Err(AppError::internal("Failed to revoke session"))
         }
     }
 }
@@ -382,7 +322,7 @@ pub async fn delete_user_session(
 pub async fn list_user_security_events(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-) -> Response {
+) -> Result<Response, AppError> {
     match state
         .metadata_store
         .list_user_security_events(user_id, 20)
@@ -402,15 +342,11 @@ pub async fn list_user_security_events(
                 })
                 .collect();
 
-            (StatusCode::OK, Json(response)).into_response()
+            Ok((StatusCode::OK, Json(response)).into_response())
         }
         Err(error) => {
             tracing::error!("Failed to list user security events: {:?}", error);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to list security events")),
-            )
-                .into_response()
+            Err(AppError::internal("Failed to list security events"))
         }
     }
 }
@@ -445,7 +381,7 @@ pub struct UserProfile {
 pub async fn get_user_profile(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-) -> Response {
+) -> Result<Response, AppError> {
     // Get user from database
     match state.metadata_store.find_user_by_id(user_id).await {
         Ok(Some(user)) => {
@@ -462,20 +398,12 @@ pub async fn get_user_profile(
                 updated_at: user.updated_at.to_rfc3339(),
             };
 
-            (StatusCode::OK, Json(profile)).into_response()
+            Ok((StatusCode::OK, Json(profile)).into_response())
         }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse::new("User not found")),
-        )
-            .into_response(),
+        Ok(None) => Err(AppError::not_found("User not found")),
         Err(e) => {
             tracing::error!("Failed to get user profile: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to get user profile")),
-            )
-                .into_response()
+            Err(AppError::internal("Failed to get user profile"))
         }
     }
 }
@@ -513,7 +441,7 @@ pub async fn upload_avatar(
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     headers: HeaderMap,
     body: axum::body::Bytes,
-) -> Response {
+) -> Result<Response, AppError> {
     // Check content type
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
@@ -521,20 +449,12 @@ pub async fn upload_avatar(
         .unwrap_or("");
 
     if !content_type.starts_with("image/") {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new("Content-Type must be image/*")),
-        )
-            .into_response();
+        return Err(AppError::bad_request("Content-Type must be image/*"));
     }
 
     // Check file size
     if body.len() > MAX_AVATAR_SIZE {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new("Avatar must be less than 5MB")),
-        )
-            .into_response();
+        return Err(AppError::bad_request("Avatar must be less than 5MB"));
     }
 
     // Process image: resize to 256x256 and convert to WebP
@@ -566,22 +486,14 @@ pub async fn upload_avatar(
         Ok(Ok(data)) => data,
         Ok(Err(e)) => {
             tracing::error!("Image processing failed: {}", e);
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse::new(format!(
-                    "Image processing failed: {}",
-                    e
-                ))),
-            )
-                .into_response();
+            return Err(AppError::bad_request(format!(
+                "Image processing failed: {}",
+                e
+            )));
         }
         Err(e) => {
             tracing::error!("Image processing task failed: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to process image")),
-            )
-                .into_response();
+            return Err(AppError::internal("Failed to process image"));
         }
     };
 
@@ -589,11 +501,7 @@ pub async fn upload_avatar(
     let avatar_path = format!("avatars/{}.webp", user_id);
     if let Err(e) = state.object_store.put(&avatar_path, processed.into()).await {
         tracing::error!("Failed to store avatar: {:?}", e);
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new("Failed to store avatar")),
-        )
-            .into_response();
+        return Err(AppError::internal("Failed to store avatar"));
     }
 
     // Update database
@@ -607,14 +515,10 @@ pub async fn upload_avatar(
         if let Err(e) = state.object_store.delete(&avatar_path).await {
             tracing::warn!(avatar_path = %avatar_path, error = %e, "failed to delete old avatar");
         }
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new("Failed to update avatar")),
-        )
-            .into_response();
+        return Err(AppError::internal("Failed to update avatar"));
     }
 
-    (StatusCode::OK, Json(UploadAvatarResponse { avatar_path })).into_response()
+    Ok((StatusCode::OK, Json(UploadAvatarResponse { avatar_path })).into_response())
 }
 
 /// Delete avatar for the authenticated user.
@@ -632,24 +536,16 @@ pub async fn upload_avatar(
 pub async fn delete_avatar(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-) -> Response {
+) -> Result<Response, AppError> {
     // Get current avatar_path
     let user = match state.metadata_store.find_user_by_id(user_id).await {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse::new("User not found")),
-            )
-                .into_response();
+            return Err(AppError::not_found("User not found"));
         }
         Err(e) => {
             tracing::error!("Failed to find user for avatar deletion: {:?}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to delete avatar")),
-            )
-                .into_response();
+            return Err(AppError::internal("Failed to delete avatar"));
         }
     };
 
@@ -663,14 +559,10 @@ pub async fn delete_avatar(
     // Update database to clear avatar_path
     if let Err(e) = state.metadata_store.update_user_avatar(user_id, None).await {
         tracing::error!("Failed to clear user avatar_path: {:?}", e);
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new("Failed to delete avatar")),
-        )
-            .into_response();
+        return Err(AppError::internal("Failed to delete avatar"));
     }
 
-    StatusCode::NO_CONTENT.into_response()
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 /// Get avatar image for a user.
@@ -688,24 +580,16 @@ pub async fn delete_avatar(
 pub async fn get_avatar(
     State(state): State<AppState>,
     Path(user_id): Path<uuid::Uuid>,
-) -> Response {
+) -> Result<Response, AppError> {
     // Get user to find avatar_path
     let user = match state.metadata_store.find_user_by_id(user_id).await {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse::new("User not found")),
-            )
-                .into_response();
+            return Err(AppError::not_found("User not found"));
         }
         Err(e) => {
             tracing::error!("Failed to find user for avatar: {:?}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to get avatar")),
-            )
-                .into_response();
+            return Err(AppError::internal("Failed to get avatar"));
         }
     };
 
@@ -713,11 +597,7 @@ pub async fn get_avatar(
     let avatar_path = match user.avatar_path {
         Some(path) => path,
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse::new("Avatar not found")),
-            )
-                .into_response();
+            return Err(AppError::not_found("Avatar not found"));
         }
     };
 
@@ -726,21 +606,17 @@ pub async fn get_avatar(
         Ok(data) => data,
         Err(e) => {
             tracing::error!("Failed to fetch avatar from storage: {:?}", e);
-            return (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse::new("Avatar not found")),
-            )
-                .into_response();
+            return Err(AppError::not_found("Avatar not found"));
         }
     };
 
     // Return image with proper content type
-    (
+    Ok((
         StatusCode::OK,
         [(axum::http::header::CONTENT_TYPE, "image/webp")],
         data,
     )
-        .into_response()
+        .into_response())
 }
 
 // ---------------------------------------------------------------------------
@@ -762,7 +638,7 @@ pub struct UpdateModulePreferenceRequest {
 pub async fn list_user_module_preferences(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-) -> Response {
+) -> Result<Response, AppError> {
     let repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(
         state.db_pool.clone(),
     );
@@ -775,15 +651,11 @@ pub async fn list_user_module_preferences(
                     enabled: p.enabled,
                 })
                 .collect();
-            (StatusCode::OK, Json(response)).into_response()
+            Ok((StatusCode::OK, Json(response)).into_response())
         }
         Err(e) => {
             tracing::error!("Failed to list user module preferences: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to list module preferences")),
-            )
-                .into_response()
+            Err(AppError::internal("Failed to list module preferences"))
         }
     }
 }
@@ -794,7 +666,7 @@ pub async fn update_user_module_preference(
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Path(module_key): Path<String>,
     Json(req): Json<UpdateModulePreferenceRequest>,
-) -> Response {
+) -> Result<Response, AppError> {
     let repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(
         state.db_pool.clone(),
     );
@@ -804,15 +676,11 @@ pub async fn update_user_module_preference(
                 module_key: pref.module_key,
                 enabled: pref.enabled,
             };
-            (StatusCode::OK, Json(response)).into_response()
+            Ok((StatusCode::OK, Json(response)).into_response())
         }
         Err(e) => {
             tracing::error!("Failed to update user module preference: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to update module preference")),
-            )
-                .into_response()
+            Err(AppError::internal("Failed to update module preference"))
         }
     }
 }
@@ -821,21 +689,13 @@ pub async fn update_user_module_preference(
 pub async fn get_dashboard_config(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-) -> Response {
+) -> Result<Response, AppError> {
     match state.metadata_store.find_user_by_id(user_id).await {
-        Ok(Some(user)) => (StatusCode::OK, Json(user.dashboard_config.0)).into_response(),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse::new("User not found")),
-        )
-            .into_response(),
+        Ok(Some(user)) => Ok((StatusCode::OK, Json(user.dashboard_config.0)).into_response()),
+        Ok(None) => Err(AppError::not_found("User not found")),
         Err(e) => {
             tracing::error!("Failed to get dashboard config: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to get dashboard config")),
-            )
-                .into_response()
+            Err(AppError::internal("Failed to get dashboard config"))
         }
     }
 }
@@ -845,20 +705,16 @@ pub async fn update_dashboard_config(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Json(config): Json<rustshare_core::domain::DashboardConfig>,
-) -> Response {
+) -> Result<Response, AppError> {
     match state
         .metadata_store
         .update_user_dashboard_config(user_id, &config)
         .await
     {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => Ok(StatusCode::NO_CONTENT.into_response()),
         Err(e) => {
             tracing::error!("Failed to update dashboard config: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new("Failed to update dashboard config")),
-            )
-                .into_response()
+            Err(AppError::internal("Failed to update dashboard config"))
         }
     }
 }

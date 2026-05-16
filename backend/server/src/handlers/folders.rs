@@ -3,7 +3,6 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::Response,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -11,7 +10,7 @@ use uuid::Uuid;
 
 use rustshare_core::domain::Folder;
 
-use super::{folder_error_response, AuthenticatedUser};
+use super::{AuthenticatedUser, AppError};
 use crate::AppState;
 
 // ============================================================================
@@ -91,19 +90,19 @@ pub struct FolderTreeWithShares {
 pub async fn create_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-    Json(req): Json<CreateFolderRequest>,
-) -> Result<(StatusCode, Json<Folder>), Response> {
+    crate::handlers::ValidatedJson(req): crate::handlers::ValidatedJson<CreateFolderRequest>,
+) -> Result<(StatusCode, Json<Folder>), AppError> {
     let folder = state
         .folder_service
         .create_folder(req.name, req.parent_folder_id, auth.user_id, auth.tenant_id)
-        .await
-        .map_err(folder_error_response)?;
+        .await?;
 
     Ok((StatusCode::CREATED, Json(folder)))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct CreateFolderRequest {
+    #[validate(length(min = 1, max = 255, message = "Folder name must be between 1 and 255 characters"))]
     pub name: String,
     pub parent_folder_id: Option<Uuid>,
 }
@@ -115,12 +114,11 @@ pub async fn get_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
-) -> Result<Json<Folder>, Response> {
+) -> Result<Json<Folder>, AppError> {
     let folder = state
         .folder_service
         .get_folder(folder_id, auth.user_id)
-        .await
-        .map_err(folder_error_response)?;
+        .await?;
     Ok(Json(folder))
 }
 
@@ -131,12 +129,11 @@ pub async fn delete_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
-) -> Result<StatusCode, Response> {
+) -> Result<StatusCode, AppError> {
     state
         .folder_service
         .delete_folder(folder_id, auth.user_id)
-        .await
-        .map_err(folder_error_response)?;
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -151,7 +148,7 @@ pub async fn get_folder_contents(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
-) -> Result<Json<FolderContentsWithShares>, Response> {
+) -> Result<Json<FolderContentsWithShares>, AppError> {
     // Get folders in this parent with share info
     let folders = sqlx::query_as::<_, FolderWithShares>(
         r#"
@@ -211,8 +208,7 @@ pub async fn get_folder_contents(
     .bind(auth.user_id)
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
-    .await
-    .map_err(|_| super::internal_error_response())?;
+    .await?;
 
     // Get files in this parent with share info
     let files = sqlx::query_as::<_, crate::handlers::files::FileWithShares>(
@@ -250,8 +246,7 @@ pub async fn get_folder_contents(
     .bind(auth.user_id)
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
-    .await
-    .map_err(|_| super::internal_error_response())?;
+    .await?;
 
     Ok(Json(FolderContentsWithShares {
         folders,
@@ -266,7 +261,7 @@ pub async fn get_folder_contents(
 pub async fn get_root_contents(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-) -> Result<Json<FolderContentsWithShares>, Response> {
+) -> Result<Json<FolderContentsWithShares>, AppError> {
     // Get root folders with share info
     let folders = sqlx::query_as::<_, FolderWithShares>(
         r#"
@@ -325,8 +320,7 @@ pub async fn get_root_contents(
     .bind(auth.user_id)
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
-    .await
-    .map_err(|_| super::internal_error_response())?;
+    .await?;
 
     // Get root files with share info
     let files = sqlx::query_as::<_, crate::handlers::files::FileWithShares>(
@@ -363,8 +357,7 @@ pub async fn get_root_contents(
     .bind(auth.user_id)
     .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
-    .await
-    .map_err(|_| super::internal_error_response())?;
+    .await?;
 
     Ok(Json(FolderContentsWithShares {
         folders,
@@ -379,7 +372,7 @@ async fn build_folder_tree_with_shares(
     folder_id: Uuid,
     user_id: Uuid,
     tenant_id: Uuid,
-) -> Result<FolderTreeWithShares, Response> {
+) -> Result<FolderTreeWithShares, AppError> {
     use sqlx::Row;
 
     // Get folder with share info (ancestor_ids is stored in folder_documents, not folders table)
@@ -417,41 +410,30 @@ async fn build_folder_tree_with_shares(
     .bind(user_id)
     .bind(tenant_id)
     .fetch_one(state.metadata_store.pool())
-    .await
-    .map_err(|_| super::internal_error_response())?;
+    .await?;
 
     let folder_node = FolderTreeNode {
         id: folder_row
-            .try_get("id")
-            .map_err(|_| super::internal_error_response())?,
+            .try_get("id")?,
         name: folder_row
-            .try_get("name")
-            .map_err(|_| super::internal_error_response())?,
+            .try_get("name")?,
         path: folder_row
-            .try_get("path")
-            .map_err(|_| super::internal_error_response())?,
+            .try_get("path")?,
         parent_folder_id: folder_row
-            .try_get("parent_folder_id")
-            .map_err(|_| super::internal_error_response())?,
+            .try_get("parent_folder_id")?,
         owner_id: folder_row
-            .try_get("owner_id")
-            .map_err(|_| super::internal_error_response())?,
+            .try_get("owner_id")?,
         created_at: folder_row
-            .try_get("created_at")
-            .map_err(|_| super::internal_error_response())?,
+            .try_get("created_at")?,
         updated_at: folder_row
-            .try_get("updated_at")
-            .map_err(|_| super::internal_error_response())?,
+            .try_get("updated_at")?,
         tenant_id: folder_row
-            .try_get("tenant_id")
-            .map_err(|_| super::internal_error_response())?,
+            .try_get("tenant_id")?,
         ancestor_ids: None, // Not stored in folders table, would need to fetch from folder_documents
         is_shared: folder_row
-            .try_get("is_shared")
-            .map_err(|_| super::internal_error_response())?,
+            .try_get("is_shared")?,
         share_count: folder_row
-            .try_get("share_count")
-            .map_err(|_| super::internal_error_response())?,
+            .try_get("share_count")?,
         share_expires_at: folder_row.try_get("share_expires_at").ok(),
         effective_permission: Some("Admin".to_string()),
         note_bundle_file_id: folder_row.try_get("note_bundle_file_id").ok(),
@@ -469,14 +451,12 @@ async fn build_folder_tree_with_shares(
     .bind(user_id)
     .bind(tenant_id)
     .fetch_all(state.metadata_store.pool())
-    .await
-    .map_err(|_| super::internal_error_response())?;
+    .await?;
 
     let mut subfolders = Vec::new();
     for row in child_rows {
         let child_id: Uuid = row
-            .try_get("id")
-            .map_err(|_| super::internal_error_response())?;
+            .try_get("id")?;
         let subtree = Box::pin(build_folder_tree_with_shares(
             state, child_id, user_id, tenant_id,
         ))
@@ -498,13 +478,13 @@ async fn build_folder_tree_with_shares(
 pub async fn get_folder_tree(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-) -> Result<Json<FolderTreeWithShares>, Response> {
+) -> Result<Json<FolderTreeWithShares>, AppError> {
     // Find all user's root-level folders (folders with no parent)
     let root_folders = state
         .metadata_store
         .list_folders_with_shares(None, auth.user_id, auth.tenant_id)
         .await
-        .map_err(|_| super::internal_error_response())?;
+        .map_err(|_| AppError::internal("Internal server error"))?;
 
     // Build subtrees for each root folder
     let mut subfolders = Vec::new();
@@ -549,27 +529,18 @@ pub async fn toggle_folder_star(
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
     Json(req): Json<WorkspaceStarRequest>,
-) -> Result<StatusCode, Response> {
+) -> Result<StatusCode, AppError> {
     let updated = state
         .metadata_store
         .set_folder_starred(folder_id, auth.user_id, req.starred)
         .await
-        .map_err(|e| {
-            use axum::response::IntoResponse;
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new(format!(
-                    "Failed to update folder star state: {}",
-                    e
-                ))),
-            )
-                .into_response()
-        })?;
+        .map_err(|e| AppError::internal(format!(
+            "Failed to update folder star state: {}",
+            e
+        )))?;
 
     if !updated {
-        return Err(folder_error_response(
-            rustshare_core::services::FolderError::NotFound(folder_id),
-        ));
+        return Err(AppError::not_found(format!("Folder not found: {}", folder_id)));
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -579,29 +550,22 @@ pub async fn restore_folder_from_trash(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
-) -> Result<StatusCode, Response> {
+) -> Result<StatusCode, AppError> {
     let restored = state
         .metadata_store
         .restore_folder(folder_id, auth.user_id, auth.tenant_id)
         .await
         .map_err(|e| {
-            use axum::response::IntoResponse;
             let msg = e.to_string();
             if msg.contains("already exists") {
-                (StatusCode::CONFLICT, Json(super::ErrorResponse::new(msg))).into_response()
+                AppError::conflict(msg)
             } else {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(super::ErrorResponse::new(msg)),
-                )
-                    .into_response()
+                AppError::internal(msg)
             }
         })?;
 
     if !restored {
-        return Err(folder_error_response(
-            rustshare_core::services::FolderError::NotFound(folder_id),
-        ));
+        return Err(AppError::not_found(format!("Folder not found: {}", folder_id)));
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -611,27 +575,18 @@ pub async fn permanently_delete_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
-) -> Result<StatusCode, Response> {
+) -> Result<StatusCode, AppError> {
     let deleted = state
         .metadata_store
         .permanently_delete_folder(folder_id, auth.user_id)
         .await
-        .map_err(|e| {
-            use axum::response::IntoResponse;
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(super::ErrorResponse::new(format!(
-                    "Failed to permanently delete folder: {}",
-                    e
-                ))),
-            )
-                .into_response()
-        })?;
+        .map_err(|e| AppError::internal(format!(
+            "Failed to permanently delete folder: {}",
+            e
+        )))?;
 
     if !deleted {
-        return Err(folder_error_response(
-            rustshare_core::services::FolderError::NotFound(folder_id),
-        ));
+        return Err(AppError::not_found(format!("Folder not found: {}", folder_id)));
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -651,12 +606,11 @@ pub async fn move_folder(
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
     Json(req): Json<MoveFolderRequest>,
-) -> Result<Json<Folder>, Response> {
+) -> Result<Json<Folder>, AppError> {
     let folder = state
         .folder_service
         .move_folder(folder_id, req.target_parent_id, auth.user_id)
-        .await
-        .map_err(folder_error_response)?;
+        .await?;
 
     Ok(Json(folder))
 }
@@ -676,12 +630,11 @@ pub async fn rename_folder(
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
     Json(req): Json<RenameFolderRequest>,
-) -> Result<Json<Folder>, Response> {
+) -> Result<Json<Folder>, AppError> {
     let folder = state
         .folder_service
         .rename_folder(folder_id, req.new_name, auth.user_id)
-        .await
-        .map_err(folder_error_response)?;
+        .await?;
 
     Ok(Json(folder))
 }

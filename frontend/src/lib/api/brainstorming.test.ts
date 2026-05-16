@@ -11,6 +11,10 @@ import {
 
 vi.mock('$lib/api/client', () => ({
 	apiClient: {
+			postVoid: vi.fn(),
+			patchVoid: vi.fn(),
+			requestText: vi.fn(),
+			requestVoid: vi.fn(),
 		get: vi.fn(),
 		post: vi.fn(),
 		put: vi.fn(),
@@ -109,7 +113,7 @@ describe('brainstorming API', () => {
 	});
 
 	it('deletes a brainstorming board', async () => {
-		vi.mocked(apiClient.delete).mockResolvedValue(null);
+		vi.mocked(apiClient.delete).mockResolvedValue(undefined);
 
 		await deleteBrainstormBoard('board-1');
 		expect(apiClient.delete).toHaveBeenCalledWith('/modules/brainstorming/boards/board-1');

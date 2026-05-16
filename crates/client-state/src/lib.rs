@@ -202,7 +202,7 @@ impl Database {
             params![
                 root.id.as_bytes(),
                 root.remote_path,
-                root.local_path.to_str().unwrap()
+                root.local_path.to_string_lossy().to_string()
             ],
         )?;
         Ok(())
@@ -254,7 +254,7 @@ impl Database {
             "INSERT OR REPLACE INTO local_inventory (path, entry_type, size, hash, mtime_ms, last_synced_version, hydration_state) 
              VALUES (?, ?, ?, ?, ?, ?, ?)",
             params![
-                entry.path.to_str().unwrap(),
+                entry.path.to_string_lossy().to_string(),
                 entry_type,
                 entry.size as i64,
                 entry.hash,
@@ -272,7 +272,7 @@ impl Database {
         )?;
 
         let entry = stmt
-            .query_row(params![path.to_str().unwrap()], |row| {
+            .query_row(params![path.to_string_lossy().to_string()], |row| {
                 let entry_type_str: String = row.get(1)?;
                 let entry_type = if entry_type_str == "file" {
                     EntryType::File
@@ -293,7 +293,7 @@ impl Database {
                     entry_type,
                     size: row.get::<_, i64>(2)? as u64,
                     hash: row.get(3)?,
-                    mtime: Utc.timestamp_millis_opt(mtime_ms).unwrap(),
+                    mtime: Utc.timestamp_millis_opt(mtime_ms).single().unwrap_or_else(Utc::now),
                     last_synced_version: row.get(5)?,
                     hydration_state,
                 })
@@ -358,7 +358,7 @@ impl Database {
         )?;
 
         let result = stmt.query_row(
-            params![root_id.as_bytes(), relative_path.to_str().unwrap()],
+            params![root_id.as_bytes(), relative_path.to_string_lossy().to_string()],
             |row| {
                 let remote_file_id: Option<Vec<u8>> = row.get(5)?;
                 Ok(FileState {
@@ -407,7 +407,7 @@ impl Database {
              last_sync_at = excluded.last_sync_at",
             params![
                 state.root_id.as_bytes(),
-                state.relative_path.to_str().unwrap(),
+                state.relative_path.to_string_lossy().to_string(),
                 state.local_hash,
                 state.remote_hash,
                 state.remote_file_id.map(|id| id.as_bytes().to_vec()),
@@ -428,7 +428,7 @@ impl Database {
     pub fn delete_file_state(&self, root_id: Uuid, relative_path: &Path) -> Result<bool> {
         let deleted = self.conn.execute(
             "DELETE FROM file_states WHERE root_id = ? AND relative_path = ?",
-            params![root_id.as_bytes(), relative_path.to_str().unwrap()],
+            params![root_id.as_bytes(), relative_path.to_string_lossy().to_string()],
         )?;
         Ok(deleted > 0)
     }
@@ -563,7 +563,7 @@ impl Database {
              last_seen_at = excluded.last_seen_at",
             params![
                 root_id.as_bytes(),
-                relative_path.to_str().unwrap(),
+                relative_path.to_string_lossy().to_string(),
                 remote_file_id.as_bytes(),
                 error,
                 observed_at,
@@ -607,7 +607,7 @@ impl Database {
     ) -> Result<bool> {
         let deleted = self.conn.execute(
             "DELETE FROM broken_remote_entries WHERE root_id = ? AND relative_path = ?",
-            params![root_id.as_bytes(), relative_path.to_str().unwrap()],
+            params![root_id.as_bytes(), relative_path.to_string_lossy().to_string()],
         )?;
         Ok(deleted > 0)
     }
@@ -805,5 +805,63 @@ mod tests {
         assert_eq!(loaded.sync_status.as_deref(), Some("tombstone"));
         assert_eq!(loaded.tombstone_side.as_deref(), Some("local"));
         assert_eq!(loaded.tombstone_at, Some(200));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn handles_non_utf8_paths_without_panicking() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let db = Database::open(&tempdir.path().join("state.db")).unwrap();
+        let root_id = Uuid::new_v4();
+        let remote_file_id = Uuid::new_v4();
+
+        // Create a path with invalid UTF-8 bytes (0x80, 0x81, 0x82)
+        let bad_bytes = b"notes/\x80\x81\x82.txt";
+        let bad_path = Path::new(std::ffi::OsStr::from_bytes(bad_bytes));
+
+        // upsert_broken_remote_entry should not panic
+        db.upsert_broken_remote_entry(root_id, bad_path, remote_file_id, "not found", 1)
+            .unwrap();
+
+        // get_broken_remote_entries should not panic
+        let entries = db.get_broken_remote_entries(root_id).unwrap();
+        assert_eq!(entries.len(), 1);
+        // Note: SQLite TEXT stores UTF-8, so invalid bytes are replaced with U+FFFD.
+        // The key behavior we verify is that the operation does not panic.
+        assert!(!entries[0].relative_path.as_os_str().is_empty());
+
+        // clear_broken_remote_entries_for_path should not panic
+        assert!(db.clear_broken_remote_entries_for_path(root_id, bad_path).unwrap());
+        assert!(db.get_broken_remote_entries(root_id).unwrap().is_empty());
+
+        // upsert_file_state should not panic
+        let state = FileState {
+            id: None,
+            root_id,
+            relative_path: bad_path.to_path_buf(),
+            local_hash: None,
+            remote_hash: None,
+            remote_file_id: None,
+            local_modified_at: None,
+            remote_modified_at: None,
+            size: None,
+            is_directory: Some(false),
+            sync_status: None,
+            tombstone_side: None,
+            tombstone_at: None,
+            last_sync_at: None,
+        };
+        db.upsert_file_state(&state).unwrap();
+
+        // get_file_state should not panic
+        let loaded = db.get_file_state(root_id, bad_path).unwrap();
+        assert!(loaded.is_some());
+        assert!(!loaded.unwrap().relative_path.as_os_str().is_empty());
+
+        // delete_file_state should not panic
+        assert!(db.delete_file_state(root_id, bad_path).unwrap());
+        assert!(db.get_file_state(root_id, bad_path).unwrap().is_none());
     }
 }

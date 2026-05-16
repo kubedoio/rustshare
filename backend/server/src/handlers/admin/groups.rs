@@ -12,7 +12,7 @@ use uuid::Uuid;
 use super::{
     admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, log_admin_action,
 };
-use crate::{handlers::AdminUser, AppState};
+use crate::{handlers::{AdminUser, AppError}, AppState};
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -106,7 +106,7 @@ struct MemberRow {
 pub async fn list_groups(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
-) -> Result<Json<Vec<GroupResponse>>, axum::response::Response> {
+) -> Result<Json<Vec<GroupResponse>>, AppError> {
     let rows = sqlx::query_as::<_, GroupRow>(
         r#"
         SELECT
@@ -148,7 +148,7 @@ pub async fn create_group(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Json(req): Json<CreateGroupRequest>,
-) -> Result<(StatusCode, Json<GroupResponse>), axum::response::Response> {
+) -> Result<(StatusCode, Json<GroupResponse>), AppError> {
     if req.name.trim().is_empty() {
         return Err(admin_bad_request("Group name must not be empty"));
     }
@@ -206,7 +206,7 @@ pub async fn get_group(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
     Path(group_id): Path<Uuid>,
-) -> Result<Json<GroupDetailResponse>, axum::response::Response> {
+) -> Result<Json<GroupDetailResponse>, AppError> {
     let row = sqlx::query_as::<_, GroupDetailRow>(
         "SELECT id, name, description, created_by, created_at, updated_at
          FROM user_groups WHERE id = $1",
@@ -256,7 +256,7 @@ pub async fn update_group(
     AdminUser { user_id: actor_id }: AdminUser,
     Path(group_id): Path<Uuid>,
     Json(req): Json<UpdateGroupRequest>,
-) -> Result<Json<GroupResponse>, axum::response::Response> {
+) -> Result<Json<GroupResponse>, AppError> {
     // Fetch current group
     let current = sqlx::query_as::<_, GroupDetailRow>(
         "SELECT id, name, description, created_by, created_at, updated_at
@@ -335,7 +335,7 @@ pub async fn delete_group(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path(group_id): Path<Uuid>,
-) -> Result<StatusCode, axum::response::Response> {
+) -> Result<StatusCode, AppError> {
     // Verify group exists and grab name for audit log
     let row = sqlx::query_as::<_, GroupDetailRow>(
         "SELECT id, name, description, created_by, created_at, updated_at
@@ -374,7 +374,7 @@ pub async fn add_member(
     AdminUser { user_id: actor_id }: AdminUser,
     Path(group_id): Path<Uuid>,
     Json(req): Json<AddMemberRequest>,
-) -> Result<StatusCode, axum::response::Response> {
+) -> Result<StatusCode, AppError> {
     // Verify group exists
     let group_exists: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1)")
@@ -432,7 +432,7 @@ pub async fn remove_member(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     Path((group_id, user_id)): Path<(Uuid, Uuid)>,
-) -> Result<StatusCode, axum::response::Response> {
+) -> Result<StatusCode, AppError> {
     let result = sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
         .bind(group_id)
         .bind(user_id)
@@ -461,7 +461,7 @@ pub async fn remove_member(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn db_error(e: sqlx::Error) -> axum::response::Response {
+fn db_error(e: sqlx::Error) -> AppError {
     tracing::error!("Database error: {:?}", e);
     admin_internal_error("Database error")
 }

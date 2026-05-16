@@ -3,6 +3,10 @@ import { listAuditLog } from '$lib/api/admin';
 
 vi.mock('$lib/api/client', () => ({
 	apiClient: {
+			postVoid: vi.fn(),
+			patchVoid: vi.fn(),
+			requestText: vi.fn(),
+			requestVoid: vi.fn(),
 		get: vi.fn()
 	}
 }));

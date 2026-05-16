@@ -10,7 +10,7 @@ use serde_json::json;
 
 use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_action};
 use crate::services::module_service::UpdateModuleInput;
-use crate::{handlers::AdminUser, state::AppState};
+use crate::{handlers::{AdminUser, AppError}, state::AppState};
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -42,7 +42,7 @@ pub struct UpdateModuleRequest {
 pub async fn list_modules(
     AdminUser { user_id: _ }: AdminUser,
     State(state): State<AppState>,
-) -> Result<Json<ModuleListResponse>, axum::response::Response> {
+) -> Result<Json<ModuleListResponse>, AppError> {
     let modules = state
         .module_service
         .list_modules(state.default_tenant_id)
@@ -56,7 +56,7 @@ pub async fn get_module(
     AdminUser { user_id: _ }: AdminUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
-) -> Result<Json<Module>, axum::response::Response> {
+) -> Result<Json<Module>, AppError> {
     let module = state
         .module_service
         .get_module(&key, state.default_tenant_id)
@@ -73,7 +73,7 @@ pub async fn enable_module(
     AdminUser { user_id }: AdminUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
-) -> Result<Json<Module>, axum::response::Response> {
+) -> Result<Json<Module>, AppError> {
     let module = state
         .module_service
         .enable_module(&key, user_id, state.default_tenant_id)
@@ -100,7 +100,7 @@ pub async fn disable_module(
     AdminUser { user_id }: AdminUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
-) -> Result<Json<Module>, axum::response::Response> {
+) -> Result<Json<Module>, AppError> {
     let module = state
         .module_service
         .disable_module(&key, user_id, state.default_tenant_id)
@@ -128,7 +128,7 @@ pub async fn update_module(
     State(state): State<AppState>,
     Path(key): Path<String>,
     Json(body): Json<UpdateModuleRequest>,
-) -> Result<Json<Module>, axum::response::Response> {
+) -> Result<Json<Module>, AppError> {
     let module = state
         .module_service
         .update_module(

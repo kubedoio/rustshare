@@ -213,11 +213,9 @@ impl FolderMetadataStoreOps for MetadataStore {
 impl ShareMetadataStoreOps for MetadataStore {
     async fn find_user_by_id(
         &self,
-        _id: uuid::Uuid,
+        id: uuid::Uuid,
     ) -> Result<Option<rustshare_core::domain::User>> {
-        // TODO: Implement user lookup
-        // For now, return None as this is primarily used for notification purposes
-        Ok(None)
+        self.find_user_by_id(id).await
     }
 
     async fn find_file_by_id(

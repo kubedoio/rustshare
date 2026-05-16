@@ -46,32 +46,20 @@ pub async fn log_admin_action(
     }
 }
 
-use crate::handlers::ErrorResponse;
-use axum::{http::StatusCode, response::IntoResponse, Json};
+use crate::handlers::AppError;
 
-pub fn admin_ok<T>(data: T) -> axum::response::Response
-where
-    T: serde::Serialize,
-{
-    (StatusCode::OK, Json(data)).into_response()
+pub fn admin_not_found(msg: impl Into<String>) -> AppError {
+    AppError::not_found(msg)
 }
 
-pub fn admin_not_found(msg: impl Into<String>) -> axum::response::Response {
-    (StatusCode::NOT_FOUND, Json(ErrorResponse::new(msg))).into_response()
+pub fn admin_bad_request(msg: impl Into<String>) -> AppError {
+    AppError::bad_request(msg)
 }
 
-pub fn admin_bad_request(msg: impl Into<String>) -> axum::response::Response {
-    (StatusCode::BAD_REQUEST, Json(ErrorResponse::new(msg))).into_response()
+pub fn admin_conflict(msg: impl Into<String>) -> AppError {
+    AppError::conflict(msg)
 }
 
-pub fn admin_conflict(msg: impl Into<String>) -> axum::response::Response {
-    (StatusCode::CONFLICT, Json(ErrorResponse::new(msg))).into_response()
-}
-
-pub fn admin_internal_error(msg: impl Into<String>) -> axum::response::Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse::new(msg)),
-    )
-        .into_response()
+pub fn admin_internal_error(msg: impl Into<String>) -> AppError {
+    AppError::internal(msg)
 }

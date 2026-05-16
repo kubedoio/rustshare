@@ -74,16 +74,6 @@ pub extern "C" fn beNotified(notification: *mut SCNotification) {
         // For Phase 1/2 Cross-platform development, we logic-log this.
         info!("Notepad++: File Saved. Triggering RustShare Sync...");
 
-        // Trigger RPC call
-        // let client = reqwest::blocking::Client::new();
-        // let _ = client.post("http://localhost:4242/rpc")
-        //     .header("X-RustShare-Token", "SECRET_TOKEN")
-        //     .json(&serde_json::json!({
-        //         "jsonrpc": "2.0",
-        //         "method": "sync.request",
-        //         "params": {"path": "CURRENT_FILE_PATH"},
-        //         "id": 1
-        //     }))
-        //     .send();
+        // RPC trigger placeholder — implement when Windows NPP integration is active
     }
 }

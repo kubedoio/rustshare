@@ -1,4 +1,5 @@
 import { websocketStore } from '$lib/stores/websocket';
+import { logger } from '$lib/utils/logger';
 import type { WebSocketEvent, WebSocketEventType, EventHandler } from './events';
 
 export class WebSocketClient {
@@ -33,7 +34,7 @@ export class WebSocketClient {
 				this.ws = new WebSocket(wsUrlWithToken);
 
 				this.ws.onopen = () => {
-					console.log('[WebSocket] Connected');
+					logger.debug('[WebSocket] Connected');
 					websocketStore.setState('connected');
 					websocketStore.resetReconnectAttempts();
 					this.reconnectAttempts = 0;
@@ -45,31 +46,31 @@ export class WebSocketClient {
 						const data: WebSocketEvent = JSON.parse(event.data);
 						this.handleEvent(data);
 					} catch (error) {
-						console.error('[WebSocket] Failed to parse message:', error);
+						logger.error('[WebSocket] Failed to parse message:', error);
 					}
 				};
 
 				this.ws.onerror = (error) => {
-					console.error('[WebSocket] Error:', error);
+					logger.error('[WebSocket] Error:', error);
 					websocketStore.setError('WebSocket connection error');
 				};
 
 				this.ws.onclose = (event) => {
-					console.log('[WebSocket] Disconnected', event.code, event.reason);
+					logger.debug('[WebSocket] Disconnected', event.code, event.reason);
 
 					if (!this.isManualClose) {
 						// Handle different close codes
 						if (event.code === 1008 || event.code === 1002) {
 							// 1008: Policy Violation (auth failure)
 							// 1002: Protocol error
-							console.error('[WebSocket] Authentication failed or protocol error');
+							logger.error('[WebSocket] Authentication failed or protocol error');
 							websocketStore.setError('WebSocket authentication failed');
 							websocketStore.setState('error');
 						} else if (this.reconnectAttempts < this.maxReconnectAttempts) {
 							// Attempt reconnection with exponential backoff
 							this.reconnect();
 						} else {
-							console.error('[WebSocket] Max reconnection attempts reached');
+							logger.error('[WebSocket] Max reconnection attempts reached');
 							websocketStore.setError('Failed to reconnect after multiple attempts');
 							websocketStore.setState('error');
 						}
@@ -78,7 +79,7 @@ export class WebSocketClient {
 					}
 				};
 			} catch (error) {
-				console.error('[WebSocket] Failed to create connection:', error);
+				logger.error('[WebSocket] Failed to create connection:', error);
 				websocketStore.setError('Failed to create WebSocket connection');
 				reject(error);
 			}
@@ -99,7 +100,7 @@ export class WebSocketClient {
 			this.maxReconnectDelay
 		);
 
-		console.log(
+		logger.debug(
 			`[WebSocket] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`
 		);
 
@@ -107,7 +108,7 @@ export class WebSocketClient {
 
 		this.reconnectTimer = setTimeout(() => {
 			this.connect(this.token).catch((error) => {
-				console.error('[WebSocket] Reconnection failed:', error);
+				logger.error('[WebSocket] Reconnection failed:', error);
 			});
 		}, delay);
 	}
@@ -117,7 +118,7 @@ export class WebSocketClient {
 		const eventType = (event as any).event_type || event.type;
 
 		if (!eventType) {
-			console.error('[WebSocket] Event missing event_type field:', event);
+			logger.error('[WebSocket] Event missing event_type field:', event);
 			return;
 		}
 
@@ -128,11 +129,11 @@ export class WebSocketClient {
 				try {
 					handler(event);
 				} catch (error) {
-					console.error(`[WebSocket] Handler error for ${eventType}:`, error);
+					logger.error(`[WebSocket] Handler error for ${eventType}:`, error);
 				}
 			});
 		} else {
-			console.warn(`[WebSocket] No handlers registered for event type: ${eventType}`);
+			logger.warn(`[WebSocket] No handlers registered for event type: ${eventType}`);
 		}
 	}
 
@@ -222,7 +223,7 @@ function resolveCanonicalWebSocketUrl(rawWsUrl?: string, rawApiUrl?: string): st
 				return url.toString();
 			}
 		} catch (error) {
-			console.warn('[WebSocket] Ignoring invalid URL candidate:', candidate, error);
+			logger.warn('[WebSocket] Ignoring invalid URL candidate:', candidate, error);
 		}
 	}
 

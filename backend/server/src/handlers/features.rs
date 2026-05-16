@@ -1,7 +1,7 @@
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{extract::State, Json};
 use serde::Serialize;
 
-use crate::{handlers::AuthenticatedUser, state::DatabaseState};
+use crate::{handlers::{AuthenticatedUser, AppError}, state::DatabaseState};
 
 #[derive(Serialize)]
 pub struct FeaturesResponse {
@@ -11,7 +11,7 @@ pub struct FeaturesResponse {
 pub async fn get_features(
     State(db): State<DatabaseState>,
     AuthenticatedUser { .. }: AuthenticatedUser,
-) -> Result<Json<FeaturesResponse>, (StatusCode, Json<crate::handlers::ErrorResponse>)> {
+) -> Result<Json<FeaturesResponse>, AppError> {
     let active: bool = sqlx::query_scalar(
         "SELECT EXISTS(
             SELECT 1 FROM workflows
@@ -19,13 +19,7 @@ pub async fn get_features(
         )",
     )
     .fetch_one(&db.db_pool)
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(crate::handlers::ErrorResponse::new(e.to_string())),
-        )
-    })?;
+    .await?;
 
     Ok(Json(FeaturesResponse {
         invite_enabled: active,

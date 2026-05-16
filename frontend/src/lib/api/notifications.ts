@@ -44,7 +44,7 @@ export async function markNotificationRead(notificationId: string): Promise<Noti
 }
 
 export async function deleteNotification(notificationId: string): Promise<void> {
-	return apiClient.delete<void>(`/notifications/${notificationId}`);
+	return apiClient.delete(`/notifications/${notificationId}`);
 }
 
 export async function getUnreadNotificationCount(): Promise<UnreadNotificationCountResponse> {

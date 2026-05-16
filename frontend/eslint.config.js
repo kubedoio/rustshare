@@ -25,7 +25,7 @@ export default defineConfig(
 			'no-undef': 'off',
 			'no-unused-labels': 'off',
 			'no-useless-assignment': 'off',
-			'@typescript-eslint/no-explicit-any': 'off',
+			'@typescript-eslint/no-explicit-any': 'warn',
 			'@typescript-eslint/no-unused-vars': 'off',
 			'svelte/infinite-reactive-loop': 'off',
 			'svelte/no-at-html-tags': 'off',

@@ -32,6 +32,7 @@ pub mod upload;
 mod user_shares;
 mod users;
 mod workspace_surface;
+mod validated_json;
 
 pub use brainstorming::{
     create_brainstorm_board, delete_brainstorm_board, get_brainstorm_board,
@@ -39,6 +40,7 @@ pub use brainstorming::{
     update_brainstorm_board_preview,
 };
 pub use extractors::{AdminUser, AuthenticatedSession, AuthenticatedUser, ShareSessionAuth};
+pub use validated_json::ValidatedJson;
 pub use files::{
     delete_file, download_file, download_file_content, edit_file, get_file, get_file_thumbnail,
     get_file_versions, list_deleted_items, list_files, list_starred_items, move_file,
@@ -108,7 +110,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use rustshare_core::services::{FileError, FolderError, ShareError};
+use rustshare_core::services::{AiError, FileError, FolderError, NotificationError, ShareError, UploadError};
 use serde::Serialize;
 
 /// Standard error response format.
@@ -128,84 +130,340 @@ impl ErrorResponse {
     }
 }
 
-/// Map FileError to HTTP response.
-pub fn file_error_response(err: FileError) -> Response {
-    let (status, message) = match err {
-        FileError::NotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        FileError::PermissionDenied { .. } => (StatusCode::FORBIDDEN, err.to_string()),
-        FileError::VersionConflict { .. } => (StatusCode::CONFLICT, err.to_string()),
-        FileError::ParentFolderNotFound(_) => (StatusCode::BAD_REQUEST, err.to_string()),
-        FileError::FolderNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        FileError::QuotaExceeded { .. } => (StatusCode::FORBIDDEN, err.to_string()),
-        FileError::InvalidName(_) => (StatusCode::BAD_REQUEST, err.to_string()),
-        FileError::VersionNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        FileError::NotEditable(_) => (StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
-        FileError::ContentTooLarge { .. } => (StatusCode::PAYLOAD_TOO_LARGE, err.to_string()),
-        FileError::Database(_) | FileError::Storage(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Internal server error".to_string(),
-        ),
-    };
+// ============================================================================
+// Unified application error type
+// ============================================================================
 
-    (status, Json(ErrorResponse::new(message))).into_response()
+/// Unified error type for all HTTP handlers.
+///
+/// Eliminates the `Result<T, Response>` anti-pattern by providing a single
+/// error enum that implements `IntoResponse`. Domain errors convert via `From`
+/// impls, allowing natural `?` propagation instead of `.map_err(foo_error_response)?`.
+#[derive(Debug)]
+pub enum AppError {
+    NotFound(String),
+    BadRequest(String),
+    Unauthorized,
+    Forbidden(String),
+    Conflict(String),
+    Gone(String),
+    UnsupportedMediaType(String),
+    PayloadTooLarge(String),
+    TooManyRequests,
+    Internal(String),
 }
 
-/// Map FolderError to HTTP response.
-pub fn folder_error_response(err: FolderError) -> Response {
-    let (status, message) = match err {
-        FolderError::NotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        FolderError::PermissionDenied { .. } => (StatusCode::FORBIDDEN, err.to_string()),
-        FolderError::ParentFolderNotFound(_) => (StatusCode::BAD_REQUEST, err.to_string()),
-        FolderError::CircularReference { .. } => (StatusCode::BAD_REQUEST, err.to_string()),
-        FolderError::DuplicateName { .. } => (StatusCode::CONFLICT, err.to_string()),
-        FolderError::InvalidName(_) => (StatusCode::BAD_REQUEST, err.to_string()),
-        FolderError::CannotDeleteRoot(_) => (StatusCode::BAD_REQUEST, err.to_string()),
-        FolderError::Database(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Internal server error".to_string(),
-        ),
-    };
-
-    (status, Json(ErrorResponse::new(message))).into_response()
+impl AppError {
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        Self::NotFound(msg.into())
+    }
+    pub fn bad_request(msg: impl Into<String>) -> Self {
+        Self::BadRequest(msg.into())
+    }
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        Self::Forbidden(msg.into())
+    }
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        Self::Conflict(msg.into())
+    }
+    pub fn gone(msg: impl Into<String>) -> Self {
+        Self::Gone(msg.into())
+    }
+    pub fn unsupported_media_type(msg: impl Into<String>) -> Self {
+        Self::UnsupportedMediaType(msg.into())
+    }
+    pub fn payload_too_large(msg: impl Into<String>) -> Self {
+        Self::PayloadTooLarge(msg.into())
+    }
+    pub fn internal(msg: impl Into<String>) -> Self {
+        Self::Internal(msg.into())
+    }
 }
 
-/// Map ShareError to HTTP response.
-pub fn share_error_response(err: ShareError) -> Response {
-    let (status, message) = match err {
-        ShareError::ShareNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        ShareError::ShareNotFoundByToken(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        ShareError::FileNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        ShareError::FolderNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        ShareError::PermissionDenied { .. } => (StatusCode::FORBIDDEN, err.to_string()),
-        ShareError::Revoked => (StatusCode::GONE, err.to_string()),
-        ShareError::Expired => (StatusCode::GONE, err.to_string()),
-        ShareError::PasswordRequired => (StatusCode::UNAUTHORIZED, err.to_string()),
-        ShareError::InvalidPassword => (StatusCode::UNAUTHORIZED, err.to_string()),
-        ShareError::RecipientNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        ShareError::InsufficientPermission { .. } => (StatusCode::FORBIDDEN, err.to_string()),
-        ShareError::CannotShareWithSelf => (StatusCode::BAD_REQUEST, err.to_string()),
-        ShareError::ShareAlreadyExists(_) => (StatusCode::CONFLICT, err.to_string()),
-        ShareError::CannotRemoveOwner => (StatusCode::FORBIDDEN, err.to_string()),
-        ShareError::InvalidState(_) => (StatusCode::CONFLICT, err.to_string()),
-        ShareError::GroupNotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        ShareError::NotGroupMember(_) => (StatusCode::FORBIDDEN, err.to_string()),
-        ShareError::GroupShareAlreadyExists => (StatusCode::CONFLICT, err.to_string()),
-        ShareError::InvalidRecipientVisibility(_) => (StatusCode::BAD_REQUEST, err.to_string()),
-        ShareError::CrossTenantSharingNotAllowed => (StatusCode::FORBIDDEN, err.to_string()),
-        ShareError::Database(_) | ShareError::PasswordHash(_) | ShareError::Jwt(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Internal server error".to_string(),
-        ),
-    };
-
-    (status, Json(ErrorResponse::new(message))).into_response()
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let (status, message) = match self {
+            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
+            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
+            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
+            AppError::Conflict(msg) => (StatusCode::CONFLICT, msg),
+            AppError::Gone(msg) => (StatusCode::GONE, msg),
+            AppError::UnsupportedMediaType(msg) => (StatusCode::UNSUPPORTED_MEDIA_TYPE, msg),
+            AppError::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg),
+            AppError::TooManyRequests => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many requests. Please try again later.".to_string(),
+            ),
+            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+        };
+        (status, Json(ErrorResponse::new(message))).into_response()
+    }
 }
 
-/// Helper function to generate internal server error response.
-pub fn internal_error_response() -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse::new("Internal server error")),
-    )
-        .into_response()
+// -- From domain errors -----------------------------------------------------
+
+impl From<FileError> for AppError {
+    fn from(err: FileError) -> Self {
+        match err {
+            FileError::NotFound(_)
+            | FileError::FolderNotFound(_)
+            | FileError::VersionNotFound(_) => AppError::NotFound(err.to_string()),
+            FileError::PermissionDenied { .. } | FileError::QuotaExceeded { .. } => {
+                AppError::Forbidden(err.to_string())
+            }
+            FileError::VersionConflict { .. } => AppError::Conflict(err.to_string()),
+            FileError::ParentFolderNotFound(_) | FileError::InvalidName(_) => {
+                AppError::BadRequest(err.to_string())
+            }
+            FileError::NotEditable(_) => AppError::UnsupportedMediaType(err.to_string()),
+            FileError::ContentTooLarge { .. } => AppError::PayloadTooLarge(err.to_string()),
+            FileError::Database(_) | FileError::Storage(_) => {
+                AppError::Internal("Internal server error".to_string())
+            }
+        }
+    }
 }
+
+impl From<FolderError> for AppError {
+    fn from(err: FolderError) -> Self {
+        match err {
+            FolderError::NotFound(_) => AppError::NotFound(err.to_string()),
+            FolderError::PermissionDenied { .. } => AppError::Forbidden(err.to_string()),
+            FolderError::ParentFolderNotFound(_)
+            | FolderError::CircularReference { .. }
+            | FolderError::InvalidName(_)
+            | FolderError::CannotDeleteRoot(_) => AppError::BadRequest(err.to_string()),
+            FolderError::DuplicateName { .. } => AppError::Conflict(err.to_string()),
+            FolderError::Database(_) => AppError::Internal("Internal server error".to_string()),
+        }
+    }
+}
+
+impl From<ShareError> for AppError {
+    fn from(err: ShareError) -> Self {
+        match err {
+            ShareError::ShareNotFound(_)
+            | ShareError::ShareNotFoundByToken(_)
+            | ShareError::FileNotFound(_)
+            | ShareError::FolderNotFound(_)
+            | ShareError::RecipientNotFound(_)
+            | ShareError::GroupNotFound(_) => AppError::NotFound(err.to_string()),
+            ShareError::PermissionDenied { .. }
+            | ShareError::InsufficientPermission { .. }
+            | ShareError::CannotRemoveOwner
+            | ShareError::CrossTenantSharingNotAllowed
+            | ShareError::NotGroupMember(_) => AppError::Forbidden(err.to_string()),
+            ShareError::Revoked | ShareError::Expired => AppError::Gone(err.to_string()),
+            ShareError::PasswordRequired | ShareError::InvalidPassword => {
+                AppError::Unauthorized
+            }
+            ShareError::CannotShareWithSelf
+            | ShareError::InvalidState(_)
+            | ShareError::InvalidRecipientVisibility(_) => AppError::BadRequest(err.to_string()),
+            ShareError::ShareAlreadyExists(_) | ShareError::GroupShareAlreadyExists => {
+                AppError::Conflict(err.to_string())
+            }
+            ShareError::Database(_) | ShareError::PasswordHash(_) | ShareError::Jwt(_) => {
+                AppError::Internal("Internal server error".to_string())
+            }
+        }
+    }
+}
+
+impl From<UploadError> for AppError {
+    fn from(err: UploadError) -> Self {
+        match err {
+            UploadError::SessionNotFound(_) => AppError::NotFound(err.to_string()),
+            UploadError::SessionExpired(_) => AppError::Gone(err.to_string()),
+            UploadError::SessionAlreadyCompleted(_) | UploadError::SessionAborted(_) => {
+                AppError::Conflict(err.to_string())
+            }
+            UploadError::ChunkIndexOutOfRange { .. }
+            | UploadError::ChunkAlreadyReceived(_)
+            | UploadError::InvalidChunkSize { .. }
+            | UploadError::InvalidFileName(_) => AppError::BadRequest(err.to_string()),
+            UploadError::ChunkHashVerificationFailed | UploadError::FileHashVerificationFailed => {
+                AppError::BadRequest(err.to_string())
+            }
+            UploadError::PermissionDenied { .. } => AppError::Forbidden(err.to_string()),
+            UploadError::ParentFolderNotFound(_) => AppError::BadRequest(err.to_string()),
+            UploadError::Storage(_) | UploadError::Database(_) => {
+                AppError::Internal("Internal server error".to_string())
+            }
+        }
+    }
+}
+
+impl From<NotificationError> for AppError {
+    fn from(err: NotificationError) -> Self {
+        match err {
+            NotificationError::NotFound | NotificationError::NotFoundById(_) => {
+                AppError::NotFound(err.to_string())
+            }
+            NotificationError::NotOwned { .. } => AppError::Forbidden(err.to_string()),
+            NotificationError::Database(_) => AppError::Internal("Internal server error".to_string()),
+        }
+    }
+}
+
+impl From<AiError> for AppError {
+    fn from(err: AiError) -> Self {
+        match err {
+            AiError::PermissionDenied { .. } => AppError::Forbidden(err.to_string()),
+            AiError::FileNotFound(_) => AppError::NotFound(err.to_string()),
+            AiError::ContentNotExtractable(_) => AppError::UnsupportedMediaType(err.to_string()),
+            AiError::RateLimitExceeded => AppError::TooManyRequests,
+            AiError::InvalidQuery(_) => AppError::BadRequest(err.to_string()),
+            AiError::Internal(_) => AppError::Internal("Internal server error".to_string()),
+        }
+    }
+}
+
+impl From<sqlx::Error> for AppError {
+    fn from(err: sqlx::Error) -> Self {
+        tracing::error!("Database error: {:?}", err);
+        AppError::Internal("Internal server error".to_string())
+    }
+}
+
+impl From<anyhow::Error> for AppError {
+    fn from(err: anyhow::Error) -> Self {
+        tracing::error!("Internal error: {:?}", err);
+        AppError::Internal("Internal server error".to_string())
+    }
+}
+
+// -- Legacy auth error compatibility -----------------------------------------
+
+// -- Server-local domain errors ------------------------------------------------
+
+impl From<crate::services::note_service::NoteError> for AppError {
+    fn from(err: crate::services::note_service::NoteError) -> Self {
+        use crate::services::note_service::NoteError;
+        match err {
+            NoteError::NotFound(_) => AppError::NotFound(err.to_string()),
+            NoteError::PermissionDenied => AppError::Forbidden(err.to_string()),
+            NoteError::InvalidName(_) => AppError::BadRequest(err.to_string()),
+            NoteError::Database(_) | NoteError::Storage(_) => {
+                AppError::Internal("Internal server error".to_string())
+            }
+        }
+    }
+}
+
+impl From<crate::services::standup_service::StandupError> for AppError {
+    fn from(err: crate::services::standup_service::StandupError) -> Self {
+        use crate::services::standup_service::StandupError;
+        match err {
+            StandupError::NotFound(_) => AppError::NotFound(err.to_string()),
+            StandupError::PermissionDenied => AppError::Forbidden(err.to_string()),
+            StandupError::InvalidData(_) => AppError::BadRequest(err.to_string()),
+            StandupError::Database(_) | StandupError::Storage(_) => {
+                AppError::Internal("Internal server error".to_string())
+            }
+        }
+    }
+}
+
+impl From<crate::services::meeting_service::MeetingError> for AppError {
+    fn from(err: crate::services::meeting_service::MeetingError) -> Self {
+        use crate::services::meeting_service::MeetingError;
+        match err {
+            MeetingError::NotFound(_) => AppError::NotFound(err.to_string()),
+            MeetingError::PermissionDenied => AppError::Forbidden(err.to_string()),
+            MeetingError::InvalidData(_) => AppError::BadRequest(err.to_string()),
+            MeetingError::Database(_) | MeetingError::Storage(_) => {
+                AppError::Internal("Internal server error".to_string())
+            }
+        }
+    }
+}
+
+impl From<crate::services::decision_service::DecisionError> for AppError {
+    fn from(err: crate::services::decision_service::DecisionError) -> Self {
+        use crate::services::decision_service::DecisionError;
+        match err {
+            DecisionError::NotFound(_) => AppError::NotFound(err.to_string()),
+            DecisionError::PermissionDenied => AppError::Forbidden(err.to_string()),
+            DecisionError::InvalidData(_) => AppError::BadRequest(err.to_string()),
+            DecisionError::Database(_) | DecisionError::Storage(_) => {
+                AppError::Internal("Internal server error".to_string())
+            }
+        }
+    }
+}
+
+impl From<crate::services::module_service::ModuleError> for AppError {
+    fn from(err: crate::services::module_service::ModuleError) -> Self {
+        use crate::services::module_service::ModuleError;
+        match err {
+            ModuleError::NotFound(_) => AppError::NotFound(err.to_string()),
+            ModuleError::AlreadyExists(_) => AppError::Conflict(err.to_string()),
+            ModuleError::PermissionDenied => AppError::Forbidden(err.to_string()),
+            ModuleError::InvalidName(_) | ModuleError::InvalidData(_) => {
+                AppError::BadRequest(err.to_string())
+            }
+            ModuleError::Storage(_) | ModuleError::Database(_) => {
+                AppError::Internal("Internal server error".to_string())
+            }
+        }
+    }
+}
+
+impl From<crate::services::brainstorming_service::BrainstormError> for AppError {
+    fn from(err: crate::services::brainstorming_service::BrainstormError) -> Self {
+        use crate::services::brainstorming_service::BrainstormError;
+        match err {
+            BrainstormError::BoardNotFound => AppError::NotFound(err.to_string()),
+            BrainstormError::PermissionDenied => AppError::Forbidden(err.to_string()),
+            BrainstormError::InvalidName(_)
+            | BrainstormError::InvalidSlug(_)
+            | BrainstormError::InvalidData(_) => AppError::BadRequest(err.to_string()),
+            BrainstormError::Database(_) | BrainstormError::Storage(_) => {
+                AppError::Internal("Internal server error".to_string())
+            }
+        }
+    }
+}
+
+impl From<crate::services::kanban_service::KanbanError> for AppError {
+    fn from(err: crate::services::kanban_service::KanbanError) -> Self {
+        use crate::services::kanban_service::KanbanError;
+        match err {
+            KanbanError::BoardNotFound
+            | KanbanError::CardNotFound
+            | KanbanError::ColumnNotFound(_)
+            | KanbanError::NotFound(_) => AppError::NotFound(err.to_string()),
+            KanbanError::PermissionDenied => AppError::Forbidden(err.to_string()),
+            KanbanError::InvalidName(_) | KanbanError::InvalidData(_) => {
+                AppError::BadRequest(err.to_string())
+            }
+            KanbanError::Database(_) | KanbanError::Storage(_) => {
+                AppError::Internal("Internal server error".to_string())
+            }
+        }
+    }
+}
+
+impl From<crate::services::template_service::TemplateError> for AppError {
+    fn from(err: crate::services::template_service::TemplateError) -> Self {
+        use crate::services::template_service::TemplateError;
+        match err {
+            TemplateError::NotFound(_) => AppError::NotFound(err.to_string()),
+            TemplateError::AlreadyExists(_) => AppError::Conflict(err.to_string()),
+            TemplateError::ModuleNotFound(_) => AppError::NotFound(err.to_string()),
+            TemplateError::PermissionDenied => AppError::Forbidden(err.to_string()),
+            TemplateError::InvalidData(_) => AppError::BadRequest(err.to_string()),
+            TemplateError::Storage(_) | TemplateError::Database(_) => {
+                AppError::Internal("Internal server error".to_string())
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Legacy helpers (kept for backward compatibility during transition)
+// ============================================================================
+
+// TODO: Remove once all callers are confirmed migrated to AppError.

@@ -112,9 +112,6 @@ document.createElement = vi.fn((tagName: string) => {
 	return originalCreateElement(tagName);
 }) as any;
 
-// Suppress console errors in tests (optional)
-global.console = {
-	...console,
-	error: vi.fn(),
-	warn: vi.fn()
-};
+// Note: console.error and console.warn are intentionally NOT mocked here.
+// If a test triggers a console error, the test should fail or the error should be fixed.
+// Mock console methods per-test only when testing error-handling code paths explicitly.

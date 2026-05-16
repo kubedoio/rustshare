@@ -75,7 +75,6 @@ async function uploadFileChunked(
 	});
 
 	const sessionId = session.session_id;
-	const baseUrl = (apiClient as any).baseURL;
 
 	// 2. Upload chunks
 	for (let i = 0; i < totalChunks; i++) {
@@ -83,21 +82,10 @@ async function uploadFileChunked(
 		const end = Math.min(start + CHUNK_SIZE, file.size);
 		const chunk = file.slice(start, end);
 
-		// We use raw fetch here because apiClient.post expects object/FormData
-		// and we want to send the raw binary chunk.
-		const response = await fetch(`${baseUrl}/uploads/sessions/${sessionId}/chunks/${i}`, {
+		await apiClient.requestVoid(`/uploads/sessions/${sessionId}/chunks/${i}`, {
 			method: 'PUT',
-			body: chunk,
-			credentials: 'include',
-			headers: {
-				'X-Rustshare-Csrf': '1'
-			}
+			body: chunk
 		});
-
-		if (!response.ok) {
-			const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-			throw new Error(`Failed to upload chunk ${i}: ${error.error || response.statusText}`);
-		}
 
 		if (onProgress) {
 			const progress = Math.round(((i + 1) / totalChunks) * 90); // 0-90% for chunks, last 10% for complete
@@ -134,29 +122,29 @@ export async function previewFile(fileId: string): Promise<{ url: string }> {
 }
 
 export async function renameFile(fileId: string, newName: string): Promise<void> {
-	return apiClient.post<void>(`/files/${fileId}/rename`, { new_name: newName });
+	return apiClient.postVoid(`/files/${fileId}/rename`, { new_name: newName });
 }
 
 export async function moveFile(fileId: string, targetFolderId: string | null): Promise<void> {
-	return apiClient.post<void>(`/files/${fileId}/move`, {
+	return apiClient.postVoid(`/files/${fileId}/move`, {
 		target_folder_id: targetFolderId
 	});
 }
 
 export async function deleteFile(fileId: string): Promise<void> {
-	return apiClient.delete<void>(`/files/${fileId}`);
+	return apiClient.delete(`/files/${fileId}`);
 }
 
 export async function permanentlyDeleteFile(fileId: string): Promise<void> {
-	return apiClient.delete<void>(`/files/${fileId}/permanent`);
+	return apiClient.delete(`/files/${fileId}/permanent`);
 }
 
 export async function restoreFileFromTrash(fileId: string): Promise<void> {
-	return apiClient.post<void>(`/files/${fileId}/restore-from-trash`, null);
+	return apiClient.postVoid(`/files/${fileId}/restore-from-trash`, null);
 }
 
 export async function setFileStarred(fileId: string, starred: boolean): Promise<void> {
-	return apiClient.patch<void>(`/files/${fileId}/star`, { starred });
+	return apiClient.patchVoid(`/files/${fileId}/star`, { starred });
 }
 
 export async function updateFile(
@@ -167,25 +155,10 @@ export async function updateFile(
 	const formData = new FormData();
 	formData.append('file', file);
 	const headers: Record<string, string> = {
-		'If-Match': currentVersion.toString(),
-		'X-Rustshare-Csrf': '1'
+		'If-Match': currentVersion.toString()
 	};
 
-	const response = await fetch(
-		`${import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1'}/files/${fileId}`,
-		{
-			method: 'PUT',
-			headers,
-			body: formData,
-			credentials: 'include'
-		}
-	);
-
-	if (!response.ok) {
-		throw new Error(`Failed to update file: ${response.statusText}`);
-	}
-
-	return response.json();
+	return apiClient.put<File>(`/files/${fileId}`, formData);
 }
 
 export async function getFileVersions(fileId: string): Promise<FileVersion[]> {
@@ -236,15 +209,7 @@ export async function editFile(
 }
 
 export async function getFileContent(fileId: string): Promise<string> {
-	const response = await fetch(`/api/v1/files/${fileId}/content`, {
-		credentials: 'include'
-	});
-
-	if (!response.ok) {
-		throw new Error(`Failed to get file content: ${response.statusText}`);
-	}
-
-	return response.text();
+	return apiClient.requestText(`/api/v1/files/${fileId}/content`);
 }
 
 // Trash operations
@@ -260,5 +225,5 @@ export async function getTrashSummary(): Promise<TrashSummary> {
 }
 
 export async function emptyTrash(): Promise<void> {
-	return apiClient.delete<void>('/trash/empty');
+	return apiClient.delete('/trash/empty');
 }

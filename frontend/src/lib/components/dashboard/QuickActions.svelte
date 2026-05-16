@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { ChevronRight } from 'lucide-svelte';
 
+	import type { Component } from 'svelte';
+
 	interface QuickAction {
 		label: string;
 		subtitle: string;
-		icon: any;
+		icon: unknown;
 		iconColor: string;
 		iconBg: string;
 		onClick: () => void;
@@ -18,7 +20,7 @@
 	<h2 class="section-title">Quick actions</h2>
 	<div class="action-list">
 		{#each actions as action}
-			{@const ActionIcon = action.icon}
+			{@const ActionIcon = action.icon as Component}
 			<button
 				type="button"
 				class="action-item"

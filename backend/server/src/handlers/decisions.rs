@@ -3,28 +3,15 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
     Json,
 };
 use serde::Deserialize;
 use uuid::Uuid;
 
 use super::AuthenticatedUser;
-use crate::services::decision_service::{DecisionError, DecisionSummary};
-use crate::{handlers::ErrorResponse, AppState};
-
-pub fn decision_error_response(err: DecisionError) -> Response {
-    let (status, message) = match err {
-        DecisionError::NotFound(_) => (StatusCode::NOT_FOUND, err.to_string()),
-        DecisionError::PermissionDenied => (StatusCode::FORBIDDEN, err.to_string()),
-        DecisionError::InvalidData(_) => (StatusCode::BAD_REQUEST, err.to_string()),
-        DecisionError::Database(_) | DecisionError::Storage(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Internal server error".to_string(),
-        ),
-    };
-    (status, Json(ErrorResponse::new(message))).into_response()
-}
+use crate::handlers::AppError;
+use crate::services::decision_service::DecisionSummary;
+use crate::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateDecisionRequest {
@@ -42,7 +29,7 @@ pub async fn create_decision(
         StatusCode,
         Json<crate::services::decision_service::Decision>,
     ),
-    Response,
+    AppError,
 > {
     let decision = state
         .decision_service
@@ -53,8 +40,7 @@ pub async fn create_decision(
             req.category,
             req.content,
         )
-        .await
-        .map_err(decision_error_response)?;
+        .await?;
 
     Ok((StatusCode::CREATED, Json(decision)))
 }
@@ -63,12 +49,11 @@ pub async fn get_decision(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(decision_id): Path<Uuid>,
-) -> Result<Json<crate::services::decision_service::Decision>, Response> {
+) -> Result<Json<crate::services::decision_service::Decision>, AppError> {
     let decision = state
         .decision_service
         .get_decision(decision_id, auth.user_id)
-        .await
-        .map_err(decision_error_response)?;
+        .await?;
 
     Ok(Json(decision))
 }
@@ -85,7 +70,7 @@ pub async fn update_decision(
     auth: AuthenticatedUser,
     Path(decision_id): Path<Uuid>,
     Json(req): Json<UpdateDecisionRequest>,
-) -> Result<Json<crate::services::decision_service::Decision>, Response> {
+) -> Result<Json<crate::services::decision_service::Decision>, AppError> {
     let decision = state
         .decision_service
         .update_decision(
@@ -95,8 +80,7 @@ pub async fn update_decision(
             req.content,
             req.status,
         )
-        .await
-        .map_err(decision_error_response)?;
+        .await?;
 
     Ok(Json(decision))
 }
@@ -111,24 +95,22 @@ pub async fn rename_decision(
     auth: AuthenticatedUser,
     Path(decision_id): Path<Uuid>,
     Json(req): Json<RenameDecisionRequest>,
-) -> Result<Json<crate::services::decision_service::Decision>, Response> {
+) -> Result<Json<crate::services::decision_service::Decision>, AppError> {
     let decision = state
         .decision_service
         .rename_decision(decision_id, auth.user_id, req.title)
-        .await
-        .map_err(decision_error_response)?;
+        .await?;
     Ok(Json(decision))
 }
 
 pub async fn list_decisions(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-) -> Result<Json<Vec<DecisionSummary>>, Response> {
+) -> Result<Json<Vec<DecisionSummary>>, AppError> {
     let decisions = state
         .decision_service
         .list_decisions(auth.user_id, auth.tenant_id)
-        .await
-        .map_err(decision_error_response)?;
+        .await?;
 
     Ok(Json(decisions))
 }

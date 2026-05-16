@@ -2,12 +2,11 @@
 
 use axum::{
     extract::{Path, State},
-    response::IntoResponse,
     Json,
 };
 
 use crate::{
-    handlers::{admin::log_admin_action, extractors::AdminUser, ErrorResponse},
+    handlers::{admin::log_admin_action, extractors::AdminUser, AppError},
     services::template_service::{CreateTemplateRequest, UpdateTemplateRequest},
     state::AppState,
 };
@@ -16,18 +15,12 @@ use rustshare_core::domain::Template;
 pub async fn list_templates(
     _admin: AdminUser,
     State(state): State<AppState>,
-) -> Result<Json<Vec<Template>>, axum::response::Response> {
+) -> Result<Json<Vec<Template>>, AppError> {
     let templates = state
         .template_service
         .list_templates(state.default_tenant_id)
         .await
-        .map_err(|e| {
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-                .into_response()
-        })?;
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     Ok(Json(templates))
 }
@@ -36,18 +29,12 @@ pub async fn list_templates_by_module(
     _admin: AdminUser,
     State(state): State<AppState>,
     Path(module_key): Path<String>,
-) -> Result<Json<Vec<Template>>, axum::response::Response> {
+) -> Result<Json<Vec<Template>>, AppError> {
     let templates = state
         .template_service
         .list_templates_by_module(&module_key, state.default_tenant_id)
         .await
-        .map_err(|e| {
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-                .into_response()
-        })?;
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     Ok(Json(templates))
 }
@@ -56,18 +43,17 @@ pub async fn get_template(
     _admin: AdminUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
-) -> Result<Json<Template>, axum::response::Response> {
+) -> Result<Json<Template>, AppError> {
     let template = state
         .template_service
         .get_template(&key, state.default_tenant_id)
         .await
         .map_err(|e| {
-            let status = if e.to_string().contains("not found") {
-                axum::http::StatusCode::NOT_FOUND
+            if e.to_string().contains("not found") {
+                AppError::not_found(e.to_string())
             } else {
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR
-            };
-            (status, Json(ErrorResponse::new(e.to_string()))).into_response()
+                AppError::internal(e.to_string())
+            }
         })?;
 
     Ok(Json(template))
@@ -77,18 +63,12 @@ pub async fn create_template(
     AdminUser { user_id, .. }: AdminUser,
     State(state): State<AppState>,
     Json(body): Json<CreateTemplateRequest>,
-) -> Result<Json<Template>, axum::response::Response> {
+) -> Result<Json<Template>, AppError> {
     let template = state
         .template_service
         .create_template(body.clone(), user_id, state.default_tenant_id)
         .await
-        .map_err(|e| {
-            (
-                axum::http::StatusCode::BAD_REQUEST,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-                .into_response()
-        })?;
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
 
     log_admin_action(
         &state.db_pool,
@@ -108,18 +88,12 @@ pub async fn update_template(
     State(state): State<AppState>,
     Path(key): Path<String>,
     Json(body): Json<UpdateTemplateRequest>,
-) -> Result<Json<Template>, axum::response::Response> {
+) -> Result<Json<Template>, AppError> {
     let template = state
         .template_service
         .update_template(&key, body.clone(), state.default_tenant_id)
         .await
-        .map_err(|e| {
-            (
-                axum::http::StatusCode::BAD_REQUEST,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-                .into_response()
-        })?;
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
 
     log_admin_action(
         &state.db_pool,
@@ -138,30 +112,18 @@ pub async fn delete_template(
     AdminUser { user_id, .. }: AdminUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
-) -> Result<axum::http::StatusCode, axum::response::Response> {
+) -> Result<axum::http::StatusCode, AppError> {
     let template = state
         .template_service
         .get_template(&key, state.default_tenant_id)
         .await
-        .map_err(|e| {
-            (
-                axum::http::StatusCode::NOT_FOUND,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-                .into_response()
-        })?;
+        .map_err(|e| AppError::not_found(e.to_string()))?;
 
     state
         .template_service
         .delete_template(&key, state.default_tenant_id)
         .await
-        .map_err(|e| {
-            (
-                axum::http::StatusCode::BAD_REQUEST,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-                .into_response()
-        })?;
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
 
     log_admin_action(
         &state.db_pool,
@@ -180,18 +142,12 @@ pub async fn duplicate_template(
     AdminUser { user_id, .. }: AdminUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
-) -> Result<Json<Template>, axum::response::Response> {
+) -> Result<Json<Template>, AppError> {
     let template = state
         .template_service
         .get_template(&key, state.default_tenant_id)
         .await
-        .map_err(|e| {
-            (
-                axum::http::StatusCode::NOT_FOUND,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-                .into_response()
-        })?;
+        .map_err(|e| AppError::not_found(e.to_string()))?;
 
     let mut new_key = format!("{}_copy", template.template_key);
     let mut i = 1;
@@ -223,13 +179,7 @@ pub async fn duplicate_template(
         .template_service
         .create_template(request.clone(), user_id, state.default_tenant_id)
         .await
-        .map_err(|e| {
-            (
-                axum::http::StatusCode::BAD_REQUEST,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-                .into_response()
-        })?;
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
 
     log_admin_action(
         &state.db_pool,
