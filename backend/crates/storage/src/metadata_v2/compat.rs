@@ -5,7 +5,6 @@
 //! rewriting all services at once.
 
 use rustshare_core::domain::{File, FileVersion, Folder, ReplicationJob, ReplicationState, Share};
-use sqlx::Row;
 use std::sync::Arc;
 
 use crate::repos::*;
@@ -37,38 +36,34 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
         path: &str,
         owner_id: uuid::Uuid,
     ) -> anyhow::Result<Option<File>> {
-        let row = sqlx::query(
+        let row = sqlx::query!(
             r#"
             SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id
             FROM files
             WHERE path = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
+            path,
+            owner_id
         )
-        .bind(path)
-        .bind(owner_id)
         .fetch_optional(&self.pool)
         .await?;
 
-        if let Some(row) = row {
-            Ok(Some(File {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                size: row.try_get("size")?,
-                mime_type: row.try_get("mime_type")?,
-                content_hash: row.try_get("content_hash")?,
-                owner_id: row.try_get("owner_id")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                current_version: row.try_get("current_version")?,
-                created_at: row.try_get("created_at")?,
-                modified_at: row.try_get("modified_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-            }))
-        } else {
-            Ok(None)
-        }
+        Ok(row.map(|row| File {
+            id: row.id,
+            name: row.name,
+            path: row.path,
+            size: row.size,
+            mime_type: row.mime_type,
+            content_hash: row.content_hash,
+            owner_id: row.owner_id,
+            parent_folder_id: row.parent_folder_id,
+            current_version: row.current_version,
+            created_at: row.created_at,
+            modified_at: row.modified_at,
+            starred_at: row.starred_at,
+            deleted_at: row.deleted_at,
+            tenant_id: row.tenant_id,
+        }))
     }
 
     async fn create_file_version(&self, version: &FileVersion) -> anyhow::Result<()> {
@@ -383,17 +378,19 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         &self,
         id: uuid::Uuid,
     ) -> anyhow::Result<Option<rustshare_core::domain::User>> {
-        let row = sqlx::query_as::<_, rustshare_core::domain::User>(
+        let row = sqlx::query_as!(
+            rustshare_core::domain::User,
             r#"
             SELECT 
                 id, username, email, password_hash, display_name, is_admin, 
-                storage_quota, theme, created_at, updated_at, disabled_at, 
-                name, surname, avatar_path, email_sharing_enabled, tenant_id
+                storage_quota, theme as "theme: _", created_at, updated_at, disabled_at, 
+                name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id,
+                dashboard_config as "dashboard_config: _"
             FROM users 
             WHERE id = $1 AND disabled_at IS NULL
             "#,
+            id
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -576,18 +573,19 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         user_id: uuid::Uuid,
         group_id: uuid::Uuid,
     ) -> anyhow::Result<bool> {
-        let exists = sqlx::query_scalar::<_, bool>(
+        let row = sqlx::query!(
             r#"
             SELECT EXISTS(
                 SELECT 1 FROM group_members
                 WHERE group_id = $1 AND user_id = $2
-            )
+            ) as exists
             "#,
+            group_id,
+            user_id
         )
-        .bind(group_id)
-        .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
+        let exists = row.exists.unwrap_or(false);
 
         Ok(exists)
     }

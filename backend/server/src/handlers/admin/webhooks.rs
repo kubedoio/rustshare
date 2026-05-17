@@ -252,8 +252,7 @@ pub async fn delete_webhook(
     AdminUser { user_id: actor_id }: AdminUser,
     Path(webhook_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    let result = sqlx::query("DELETE FROM webhook_configs WHERE id = $1")
-        .bind(webhook_id)
+    let result = sqlx::query!("DELETE FROM webhook_configs WHERE id = $1", webhook_id)
         .execute(&state.db_pool)
         .await
         .map_err(db_error)?;

@@ -67,7 +67,7 @@ async fn init_database() -> Result<PgPool> {
             Box::pin(async move {
                 // Set a default restrictive user context.
                 // This will be overridden per-request by middleware.
-                sqlx::query(
+                sqlx::query!(
                     "SET LOCAL app.current_user_id = '00000000-0000-0000-0000-000000000000'"
                 )
                 .execute(&mut *conn)

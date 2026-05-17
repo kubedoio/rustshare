@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    INSERT INTO modules (\n                        id, module_key, display_name, description, enabled, root_path, renderer,\n                        default_template, icon, schema_version, permissions, ai_indexing, audit,\n                        ui_config, created_at, updated_at, tenant_id\n                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Bool",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Jsonb",
+        "Jsonb",
+        "Jsonb",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a83ec1dcdd0ca0620d3da57275aa26f6c23e748e0fc9021399a5f7cf6d153cc8"
+}

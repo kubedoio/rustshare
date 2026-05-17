@@ -373,10 +373,8 @@ async fn build_folder_tree_with_shares(
     user_id: Uuid,
     tenant_id: Uuid,
 ) -> Result<FolderTreeWithShares, AppError> {
-    use sqlx::Row;
-
     // Get folder with share info (ancestor_ids is stored in folder_documents, not folders table)
-    let folder_row = sqlx::query(
+    let folder_row = sqlx::query!(
         r#"
         SELECT 
             f.id, f.name, f.path, f.parent_folder_id, f.owner_id, 
@@ -405,58 +403,47 @@ async fn build_folder_tree_with_shares(
         FROM folders f
         WHERE f.id = $1 AND f.owner_id = $2 AND f.tenant_id = $3 AND f.deleted_at IS NULL
         "#,
+        folder_id,
+        user_id,
+        tenant_id
     )
-    .bind(folder_id)
-    .bind(user_id)
-    .bind(tenant_id)
     .fetch_one(state.metadata_store.pool())
     .await?;
 
     let folder_node = FolderTreeNode {
-        id: folder_row
-            .try_get("id")?,
-        name: folder_row
-            .try_get("name")?,
-        path: folder_row
-            .try_get("path")?,
-        parent_folder_id: folder_row
-            .try_get("parent_folder_id")?,
-        owner_id: folder_row
-            .try_get("owner_id")?,
-        created_at: folder_row
-            .try_get("created_at")?,
-        updated_at: folder_row
-            .try_get("updated_at")?,
-        tenant_id: folder_row
-            .try_get("tenant_id")?,
-        ancestor_ids: None, // Not stored in folders table, would need to fetch from folder_documents
-        is_shared: folder_row
-            .try_get("is_shared")?,
-        share_count: folder_row
-            .try_get("share_count")?,
-        share_expires_at: folder_row.try_get("share_expires_at").ok(),
+        id: folder_row.id,
+        name: folder_row.name,
+        path: folder_row.path,
+        parent_folder_id: folder_row.parent_folder_id,
+        owner_id: folder_row.owner_id,
+        created_at: folder_row.created_at,
+        updated_at: folder_row.updated_at,
+        tenant_id: folder_row.tenant_id,
+        ancestor_ids: None,
+        is_shared: folder_row.is_shared.unwrap_or(false),
+        share_count: folder_row.share_count.unwrap_or(0),
+        share_expires_at: folder_row.share_expires_at,
         effective_permission: Some("Admin".to_string()),
-        note_bundle_file_id: folder_row.try_get("note_bundle_file_id").ok(),
+        note_bundle_file_id: folder_row.note_bundle_file_id,
     };
 
     // Get child folders
-    let child_rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
+    let child_rows = sqlx::query!(
         r#"
         SELECT id FROM folders 
         WHERE parent_folder_id = $1 AND owner_id = $2 AND tenant_id = $3 AND deleted_at IS NULL
         ORDER BY name ASC
         "#,
+        folder_id,
+        user_id,
+        tenant_id
     )
-    .bind(folder_id)
-    .bind(user_id)
-    .bind(tenant_id)
     .fetch_all(state.metadata_store.pool())
     .await?;
 
     let mut subfolders = Vec::new();
     for row in child_rows {
-        let child_id: Uuid = row
-            .try_get("id")?;
+        let child_id = row.id;
         let subtree = Box::pin(build_folder_tree_with_shares(
             state, child_id, user_id, tenant_id,
         ))

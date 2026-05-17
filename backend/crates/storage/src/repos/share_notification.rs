@@ -43,15 +43,15 @@ impl ShareNotificationRepo for ShareNotificationRepoImpl {
     }
 
     async fn record_notification(&self, user_id: Uuid, share_id: Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO share_access_notifications (user_id, share_id, notified_at)
             VALUES ($1, $2, NOW())
             ON CONFLICT (user_id, share_id) DO NOTHING
             "#,
+            user_id,
+            share_id
         )
-        .bind(user_id)
-        .bind(share_id)
         .execute(&self.pool)
         .await?;
 

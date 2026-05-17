@@ -145,10 +145,11 @@ pub async fn list_admin_users(
         query.status.as_deref(),
     ) {
         (None, None) | (None, Some("all")) => {
-            let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+            let total = sqlx::query_scalar!("SELECT COUNT(*) FROM users")
                 .fetch_one(&state.db_pool)
                 .await
-                .map_err(db_error)?;
+                .map_err(db_error)?
+                .unwrap_or(0);
             let rows = sqlx::query_as::<_, UserRow>(&format!(
                 "SELECT {cols} FROM users {order} LIMIT $1 OFFSET $2"
             ))
@@ -160,11 +161,12 @@ pub async fn list_admin_users(
             (rows, total)
         }
         (None, Some("active")) => {
-            let total: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE disabled_at IS NULL")
+            let total =
+                sqlx::query_scalar!("SELECT COUNT(*) FROM users WHERE disabled_at IS NULL")
                     .fetch_one(&state.db_pool)
                     .await
-                    .map_err(db_error)?;
+                    .map_err(db_error)?
+                    .unwrap_or(0);
             let rows = sqlx::query_as::<_, UserRow>(&format!(
                 "SELECT {cols} FROM users WHERE disabled_at IS NULL {order} LIMIT $1 OFFSET $2"
             ))
@@ -176,11 +178,12 @@ pub async fn list_admin_users(
             (rows, total)
         }
         (None, Some("disabled")) => {
-            let total: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE disabled_at IS NOT NULL")
+            let total =
+                sqlx::query_scalar!("SELECT COUNT(*) FROM users WHERE disabled_at IS NOT NULL")
                     .fetch_one(&state.db_pool)
                     .await
-                    .map_err(db_error)?;
+                    .map_err(db_error)?
+                    .unwrap_or(0);
             let rows = sqlx::query_as::<_, UserRow>(&format!(
                 "SELECT {cols} FROM users WHERE disabled_at IS NOT NULL {order} LIMIT $1 OFFSET $2"
             ))
@@ -193,13 +196,14 @@ pub async fn list_admin_users(
         }
         (Some(search), None) | (Some(search), Some("all")) => {
             let pattern = format!("%{}%", search);
-            let total: i64 = sqlx::query_scalar(
+            let total = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM users WHERE username ILIKE $1 OR email ILIKE $1",
+                &pattern
             )
-            .bind(&pattern)
             .fetch_one(&state.db_pool)
             .await
-            .map_err(db_error)?;
+            .map_err(db_error)?
+            .unwrap_or(0);
             let rows = sqlx::query_as::<_, UserRow>(&format!(
                     "SELECT {cols} FROM users WHERE username ILIKE $1 OR email ILIKE $1 {order} LIMIT $2 OFFSET $3"
                 ))
@@ -213,13 +217,14 @@ pub async fn list_admin_users(
         }
         (Some(search), Some("active")) => {
             let pattern = format!("%{}%", search);
-            let total: i64 = sqlx::query_scalar(
+            let total = sqlx::query_scalar!(
                     "SELECT COUNT(*) FROM users WHERE (username ILIKE $1 OR email ILIKE $1) AND disabled_at IS NULL",
+                    &pattern
                 )
-                .bind(&pattern)
                 .fetch_one(&state.db_pool)
                 .await
-                .map_err(db_error)?;
+                .map_err(db_error)?
+                .unwrap_or(0);
             let rows = sqlx::query_as::<_, UserRow>(&format!(
                     "SELECT {cols} FROM users WHERE (username ILIKE $1 OR email ILIKE $1) AND disabled_at IS NULL {order} LIMIT $2 OFFSET $3"
                 ))
@@ -233,13 +238,14 @@ pub async fn list_admin_users(
         }
         (Some(search), Some("disabled")) => {
             let pattern = format!("%{}%", search);
-            let total: i64 = sqlx::query_scalar(
+            let total = sqlx::query_scalar!(
                     "SELECT COUNT(*) FROM users WHERE (username ILIKE $1 OR email ILIKE $1) AND disabled_at IS NOT NULL",
+                    &pattern
                 )
-                .bind(&pattern)
                 .fetch_one(&state.db_pool)
                 .await
-                .map_err(db_error)?;
+                .map_err(db_error)?
+                .unwrap_or(0);
             let rows = sqlx::query_as::<_, UserRow>(&format!(
                     "SELECT {cols} FROM users WHERE (username ILIKE $1 OR email ILIKE $1) AND disabled_at IS NOT NULL {order} LIMIT $2 OFFSET $3"
                 ))
@@ -253,10 +259,11 @@ pub async fn list_admin_users(
         }
         _ => {
             // Fallback: all users
-            let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+            let total = sqlx::query_scalar!("SELECT COUNT(*) FROM users")
                 .fetch_one(&state.db_pool)
                 .await
-                .map_err(db_error)?;
+                .map_err(db_error)?
+                .unwrap_or(0);
             let rows = sqlx::query_as::<_, UserRow>(&format!(
                 "SELECT {cols} FROM users {order} LIMIT $1 OFFSET $2"
             ))
@@ -285,21 +292,21 @@ pub async fn create_admin_user(
 ) -> Result<(StatusCode, Json<AdminUserResponse>), AppError> {
 
     // Check username uniqueness
-    let username_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE username = $1")
-        .bind(&req.username)
+    let username_count = sqlx::query_scalar!("SELECT COUNT(*) FROM users WHERE username = $1", &req.username)
         .fetch_one(&state.db_pool)
         .await
-        .map_err(db_error)?;
+        .map_err(db_error)?
+        .unwrap_or(0);
     if username_count > 0 {
         return Err(admin_conflict("Username already taken"));
     }
 
     // Check email uniqueness
-    let email_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE email = $1")
-        .bind(&req.email)
+    let email_count = sqlx::query_scalar!("SELECT COUNT(*) FROM users WHERE email = $1", &req.email)
         .fetch_one(&state.db_pool)
         .await
-        .map_err(db_error)?;
+        .map_err(db_error)?
+        .unwrap_or(0);
     if email_count > 0 {
         return Err(admin_conflict("Email already registered"));
     }
@@ -372,18 +379,19 @@ pub async fn get_admin_user(
         .map_err(db_error)?
         .ok_or_else(|| admin_not_found("User not found"))?;
 
-    let storage_used_bytes: i64 = sqlx::query_scalar(
+    let storage_used_bytes = sqlx::query_scalar!(
         "SELECT COALESCE(SUM(size), 0)::BIGINT FROM (
              SELECT DISTINCT ON (fv.storage_key) fv.size
              FROM file_versions fv
              JOIN files f ON f.id = fv.file_id
              WHERE f.owner_id = $1
          ) sub",
+        user_id
     )
-    .bind(user_id)
     .fetch_one(&state.db_pool)
     .await
-    .map_err(db_error)?;
+    .map_err(db_error)?
+    .unwrap_or(0);
 
     Ok(Json(AdminUserDetailResponse {
         user: AdminUserResponse::from(row),
@@ -465,17 +473,16 @@ pub async fn update_admin_user(
 
     if password_changed {
         // Invalidate all sessions for the user
-        sqlx::query("DELETE FROM user_sessions WHERE user_id = $1")
-            .bind(user_id)
+        sqlx::query!("DELETE FROM user_sessions WHERE user_id = $1", user_id)
             .execute(&state.db_pool)
             .await
             .map_err(db_error)?;
 
         // Revoke all device tokens for the user
-        sqlx::query(
+        sqlx::query!(
             "UPDATE device_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL",
+            user_id
         )
-        .bind(user_id)
         .execute(&state.db_pool)
         .await
         .map_err(db_error)?;
@@ -519,23 +526,21 @@ pub async fn disable_admin_user(
         return Err(admin_bad_request("Cannot disable your own account"));
     }
 
-    sqlx::query("UPDATE users SET disabled_at = NOW() WHERE id = $1")
-        .bind(user_id)
+    sqlx::query!("UPDATE users SET disabled_at = NOW() WHERE id = $1", user_id)
         .execute(&state.db_pool)
         .await
         .map_err(db_error)?;
 
-    sqlx::query("DELETE FROM user_sessions WHERE user_id = $1")
-        .bind(user_id)
+    sqlx::query!("DELETE FROM user_sessions WHERE user_id = $1", user_id)
         .execute(&state.db_pool)
         .await
         .map_err(db_error)?;
 
     // Revoke all device tokens for the disabled user
-    sqlx::query(
+    sqlx::query!(
         "UPDATE device_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL",
+        user_id
     )
-    .bind(user_id)
     .execute(&state.db_pool)
     .await
     .map_err(db_error)?;
@@ -559,8 +564,7 @@ pub async fn enable_admin_user(
     AdminUser { user_id: actor_id }: AdminUser,
     Path(user_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    sqlx::query("UPDATE users SET disabled_at = NULL WHERE id = $1")
-        .bind(user_id)
+    sqlx::query!("UPDATE users SET disabled_at = NULL WHERE id = $1", user_id)
         .execute(&state.db_pool)
         .await
         .map_err(db_error)?;
@@ -589,11 +593,11 @@ pub async fn delete_admin_user(
     }
 
     // Collect distinct storage keys before deletion
-    let storage_keys: Vec<String> = sqlx::query_scalar(
+    let storage_keys: Vec<String> = sqlx::query_scalar!(
         "SELECT DISTINCT storage_key FROM file_versions
          WHERE file_id IN (SELECT id FROM files WHERE owner_id = $1)",
+        user_id
     )
-    .bind(user_id)
     .fetch_all(&state.db_pool)
     .await
     .map_err(db_error)?;
@@ -610,8 +614,7 @@ pub async fn delete_admin_user(
     .await;
 
     // Delete user (CASCADE handles files, file_versions, shares, etc.)
-    sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(user_id)
+    sqlx::query!("DELETE FROM users WHERE id = $1", user_id)
         .execute(&state.db_pool)
         .await
         .map_err(db_error)?;

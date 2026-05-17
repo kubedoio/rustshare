@@ -12,7 +12,6 @@ use axum_extra::{
 };
 use rustshare_auth::ShareSessionClaims;
 use sha2::{Digest, Sha256};
-use sqlx::Row;
 use uuid::Uuid;
 
 use crate::web_session::{extract_cookie_value, resolve_user_session};
@@ -101,8 +100,7 @@ pub async fn resolve_bearer_token(
     };
 
     // Update last_used_at
-    sqlx::query("UPDATE device_tokens SET last_used_at = NOW() WHERE token_hash = $1")
-        .bind(&token_hash)
+    sqlx::query!("UPDATE device_tokens SET last_used_at = NOW() WHERE token_hash = $1", &token_hash)
         .execute(&state.db_pool)
         .await
         .map_err(|_| AuthError::DatabaseError)?;
@@ -282,19 +280,17 @@ impl FromRequestParts<AppState> for AdminUser {
     ) -> Result<Self, Self::Rejection> {
         let auth = AuthenticatedUser::from_request_parts(parts, state).await?;
 
-        let row = sqlx::query("SELECT is_admin, disabled_at FROM users WHERE id = $1")
-            .bind(auth.user_id)
-            .fetch_optional(&state.db_pool)
-            .await
-            .map_err(|_| admin_internal_error("Failed to verify admin status"))?
-            .ok_or_else(|| admin_unauthorized_error("User not found"))?;
+        let row = sqlx::query!(
+            "SELECT is_admin, disabled_at FROM users WHERE id = $1",
+            auth.user_id
+        )
+        .fetch_optional(&state.db_pool)
+        .await
+        .map_err(|_| admin_internal_error("Failed to verify admin status"))?
+        .ok_or_else(|| admin_unauthorized_error("User not found"))?;
 
-        let is_admin: bool = row
-            .try_get("is_admin")
-            .map_err(|_| admin_internal_error("Failed to read admin status"))?;
-        let disabled_at: Option<chrono::DateTime<chrono::Utc>> = row
-            .try_get("disabled_at")
-            .map_err(|_| admin_internal_error("Failed to read disabled status"))?;
+        let is_admin = row.is_admin;
+        let disabled_at = row.disabled_at;
 
         if !is_admin {
             return Err(admin_forbidden_error("Admin access required"));

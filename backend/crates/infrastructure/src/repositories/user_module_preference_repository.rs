@@ -74,16 +74,16 @@ impl UserModulePreferenceRepository {
         let defaults = [("notes", true), ("kanban", true), ("brainstorming", true)];
 
         for (key, enabled) in defaults {
-            sqlx::query(
+            sqlx::query!(
                 r#"
                 INSERT INTO user_module_preferences (user_id, module_key, enabled)
                 VALUES ($1, $2, $3)
                 ON CONFLICT (user_id, module_key) DO NOTHING
                 "#,
+                user_id,
+                key,
+                enabled
             )
-            .bind(user_id)
-            .bind(key)
-            .bind(enabled)
             .execute(&self.pool)
             .await?;
         }

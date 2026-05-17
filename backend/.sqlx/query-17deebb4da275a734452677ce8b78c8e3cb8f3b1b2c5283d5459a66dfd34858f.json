@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE templates\n            SET name = $1, description = $2, ui_config = $3, folder_structure = $4,\n                default_files = $5, metadata_schema = $6, renderer = $7,\n                visibility_policy = $8, enabled = $9, module_config = $10, updated_at = now()\n            WHERE template_key = $11 AND tenant_id = $12\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Text",
+        "Jsonb",
+        "Jsonb",
+        "Jsonb",
+        "Jsonb",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Jsonb",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "17deebb4da275a734452677ce8b78c8e3cb8f3b1b2c5283d5459a66dfd34858f"
+}

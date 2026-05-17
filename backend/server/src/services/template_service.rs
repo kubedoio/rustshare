@@ -452,13 +452,14 @@ impl TemplateService {
             renderer,
         ) in defaults
         {
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM templates WHERE template_key = $1 AND tenant_id = $2)",
+            let row = sqlx::query!(
+                "SELECT EXISTS(SELECT 1 FROM templates WHERE template_key = $1 AND tenant_id = $2) as exists",
+                key,
+                tenant_id
             )
-            .bind(key)
-            .bind(tenant_id)
             .fetch_one(self.metadata_store.pool())
             .await?;
+            let exists = row.exists.unwrap_or(false);
 
             let ui_config = if key == "template_default_kanban" {
                 json!({
@@ -509,7 +510,7 @@ impl TemplateService {
                     tenant_id,
                 };
 
-                sqlx::query(
+                sqlx::query!(
                     r#"
                     INSERT INTO templates (
                         id, template_key, name, module_key, version, description, ui_config,
@@ -518,32 +519,32 @@ impl TemplateService {
                         created_by, created_at, updated_at, enabled, system_template, tenant_id
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
                     "#,
+                    template.id,
+                    &template.template_key,
+                    &template.name,
+                    &template.module_key,
+                    &template.version,
+                    &template.description,
+                    &template.ui_config,
+                    &template.folder_structure,
+                    &template.default_files,
+                    &template.metadata_schema,
+                    template.renderer.as_deref(),
+                    &template.visibility_policy,
+                    &template.ai_indexing_policy,
+                    &template.audit_logging_policy,
+                    &template.module_config,
+                    template.created_by,
+                    template.created_at,
+                    template.updated_at,
+                    template.enabled,
+                    template.system_template,
+                    template.tenant_id
                 )
-                .bind(template.id)
-                .bind(&template.template_key)
-                .bind(&template.name)
-                .bind(&template.module_key)
-                .bind(&template.version)
-                .bind(&template.description)
-                .bind(&template.ui_config)
-                .bind(&template.folder_structure)
-                .bind(&template.default_files)
-                .bind(&template.metadata_schema)
-                .bind(&template.renderer)
-                .bind(&template.visibility_policy)
-                .bind(&template.ai_indexing_policy)
-                .bind(&template.audit_logging_policy)
-                .bind(&template.module_config)
-                .bind(template.created_by)
-                .bind(template.created_at)
-                .bind(template.updated_at)
-                .bind(template.enabled)
-                .bind(template.system_template)
-                .bind(template.tenant_id)
                 .execute(self.metadata_store.pool())
                 .await?;
             } else if key == "template_default_kanban" {
-                sqlx::query(
+                sqlx::query!(
                     r#"
                     UPDATE templates
                     SET folder_structure = $1,
@@ -557,16 +558,16 @@ impl TemplateService {
                       AND tenant_id = $9
                       AND system_template = true
                     "#,
+                    serde_json::to_value(&folder_structure)?,
+                    serde_json::to_value(&default_files)?,
+                    metadata_schema.clone(),
+                    renderer.map(|s| s.to_string()),
+                    ui_config,
+                    module_config,
+                    Utc::now(),
+                    key,
+                    tenant_id
                 )
-                .bind(serde_json::to_value(&folder_structure)?)
-                .bind(serde_json::to_value(&default_files)?)
-                .bind(metadata_schema.clone())
-                .bind(renderer.map(|s| s.to_string()))
-                .bind(ui_config)
-                .bind(module_config)
-                .bind(Utc::now())
-                .bind(key)
-                .bind(tenant_id)
                 .execute(self.metadata_store.pool())
                 .await?;
             }
@@ -583,26 +584,28 @@ impl TemplateService {
         tenant_id: Uuid,
     ) -> Result<Template, TemplateError> {
         // Validate uniqueness
-        let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM templates WHERE template_key = $1 AND tenant_id = $2)",
+        let row = sqlx::query!(
+            "SELECT EXISTS(SELECT 1 FROM templates WHERE template_key = $1 AND tenant_id = $2) as exists",
+            &request.template_key,
+            tenant_id
         )
-        .bind(&request.template_key)
-        .bind(tenant_id)
         .fetch_one(self.metadata_store.pool())
         .await?;
+        let exists = row.exists.unwrap_or(false);
 
         if exists {
             return Err(TemplateError::AlreadyExists(request.template_key));
         }
 
         // Validate module exists
-        let module_exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM modules WHERE module_key = $1 AND tenant_id = $2)",
+        let row = sqlx::query!(
+            "SELECT EXISTS(SELECT 1 FROM modules WHERE module_key = $1 AND tenant_id = $2) as exists",
+            &request.module_key,
+            tenant_id
         )
-        .bind(&request.module_key)
-        .bind(tenant_id)
         .fetch_one(self.metadata_store.pool())
         .await?;
+        let module_exists = row.exists.unwrap_or(false);
 
         if !module_exists {
             return Err(TemplateError::ModuleNotFound(request.module_key));
@@ -649,7 +652,7 @@ impl TemplateService {
             tenant_id,
         };
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO templates (
                 id, template_key, name, module_key, version, description, ui_config,
@@ -658,28 +661,28 @@ impl TemplateService {
                 created_by, created_at, updated_at, enabled, system_template, tenant_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
             "#,
+            template.id,
+            &template.template_key,
+            &template.name,
+            &template.module_key,
+            &template.version,
+            &template.description,
+            &template.ui_config,
+            &template.folder_structure,
+            &template.default_files,
+            &template.metadata_schema,
+            template.renderer.as_deref(),
+            &template.visibility_policy,
+            &template.ai_indexing_policy,
+            &template.audit_logging_policy,
+            &template.module_config,
+            template.created_by,
+            template.created_at,
+            template.updated_at,
+            template.enabled,
+            template.system_template,
+            template.tenant_id
         )
-        .bind(template.id)
-        .bind(&template.template_key)
-        .bind(&template.name)
-        .bind(&template.module_key)
-        .bind(&template.version)
-        .bind(&template.description)
-        .bind(&template.ui_config)
-        .bind(&template.folder_structure)
-        .bind(&template.default_files)
-        .bind(&template.metadata_schema)
-        .bind(&template.renderer)
-        .bind(&template.visibility_policy)
-        .bind(&template.ai_indexing_policy)
-        .bind(&template.audit_logging_policy)
-        .bind(&template.module_config)
-        .bind(template.created_by)
-        .bind(template.created_at)
-        .bind(template.updated_at)
-        .bind(template.enabled)
-        .bind(template.system_template)
-        .bind(template.tenant_id)
         .execute(self.metadata_store.pool())
         .await?;
 
@@ -688,12 +691,36 @@ impl TemplateService {
 
     /// List all templates.
     pub async fn list_templates(&self, tenant_id: Uuid) -> Result<Vec<Template>, TemplateError> {
-        let templates: Vec<Template> = sqlx::query_as::<_, Template>(
+        let rows = sqlx::query!(
             "SELECT * FROM templates WHERE tenant_id = $1 ORDER BY name",
+            tenant_id
         )
-        .bind(tenant_id)
         .fetch_all(self.metadata_store.pool())
         .await?;
+
+        let templates: Vec<Template> = rows.into_iter().map(|row| Template {
+            id: row.id,
+            template_key: row.template_key,
+            name: row.name,
+            module_key: row.module_key,
+            version: row.version.unwrap_or_default(),
+            description: row.description.unwrap_or_default(),
+            ui_config: row.ui_config,
+            folder_structure: row.folder_structure,
+            default_files: row.default_files,
+            metadata_schema: row.metadata_schema,
+            renderer: row.renderer,
+            visibility_policy: row.visibility_policy.unwrap_or_default(),
+            ai_indexing_policy: row.ai_indexing_policy,
+            audit_logging_policy: row.audit_logging_policy,
+            module_config: row.module_config,
+            created_by: row.created_by,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            enabled: row.enabled,
+            system_template: row.system_template,
+            tenant_id: row.tenant_id,
+        }).collect();
 
         Ok(templates)
     }
@@ -704,13 +731,37 @@ impl TemplateService {
         module_key: &str,
         tenant_id: Uuid,
     ) -> Result<Vec<Template>, TemplateError> {
-        let templates: Vec<Template> = sqlx::query_as::<_, Template>(
+        let rows = sqlx::query!(
             "SELECT * FROM templates WHERE module_key = $1 AND tenant_id = $2 ORDER BY name",
+            module_key,
+            tenant_id
         )
-        .bind(module_key)
-        .bind(tenant_id)
         .fetch_all(self.metadata_store.pool())
         .await?;
+
+        let templates: Vec<Template> = rows.into_iter().map(|row| Template {
+            id: row.id,
+            template_key: row.template_key,
+            name: row.name,
+            module_key: row.module_key,
+            version: row.version.unwrap_or_default(),
+            description: row.description.unwrap_or_default(),
+            ui_config: row.ui_config,
+            folder_structure: row.folder_structure,
+            default_files: row.default_files,
+            metadata_schema: row.metadata_schema,
+            renderer: row.renderer,
+            visibility_policy: row.visibility_policy.unwrap_or_default(),
+            ai_indexing_policy: row.ai_indexing_policy,
+            audit_logging_policy: row.audit_logging_policy,
+            module_config: row.module_config,
+            created_by: row.created_by,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            enabled: row.enabled,
+            system_template: row.system_template,
+            tenant_id: row.tenant_id,
+        }).collect();
 
         Ok(templates)
     }
@@ -721,13 +772,37 @@ impl TemplateService {
         key: &str,
         tenant_id: Uuid,
     ) -> Result<Template, TemplateError> {
-        let template: Option<Template> = sqlx::query_as::<_, Template>(
+        let row = sqlx::query!(
             "SELECT * FROM templates WHERE template_key = $1 AND tenant_id = $2",
+            key,
+            tenant_id
         )
-        .bind(key)
-        .bind(tenant_id)
         .fetch_optional(self.metadata_store.pool())
         .await?;
+
+        let template: Option<Template> = row.map(|row| Template {
+            id: row.id,
+            template_key: row.template_key,
+            name: row.name,
+            module_key: row.module_key,
+            version: row.version.unwrap_or_default(),
+            description: row.description.unwrap_or_default(),
+            ui_config: row.ui_config,
+            folder_structure: row.folder_structure,
+            default_files: row.default_files,
+            metadata_schema: row.metadata_schema,
+            renderer: row.renderer,
+            visibility_policy: row.visibility_policy.unwrap_or_default(),
+            ai_indexing_policy: row.ai_indexing_policy,
+            audit_logging_policy: row.audit_logging_policy,
+            module_config: row.module_config,
+            created_by: row.created_by,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            enabled: row.enabled,
+            system_template: row.system_template,
+            tenant_id: row.tenant_id,
+        });
 
         template.ok_or_else(|| TemplateError::NotFound(key.to_string()))
     }
@@ -797,7 +872,7 @@ impl TemplateService {
             ));
         }
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE templates
             SET name = $1, description = $2, ui_config = $3, folder_structure = $4,
@@ -805,19 +880,19 @@ impl TemplateService {
                 visibility_policy = $8, enabled = $9, module_config = $10, updated_at = now()
             WHERE template_key = $11 AND tenant_id = $12
             "#,
+            name,
+            description,
+            ui_config,
+            folder_structure,
+            default_files,
+            metadata_schema,
+            renderer,
+            visibility_policy,
+            enabled,
+            module_config,
+            key,
+            tenant_id
         )
-        .bind(name)
-        .bind(description)
-        .bind(ui_config)
-        .bind(folder_structure)
-        .bind(default_files)
-        .bind(metadata_schema)
-        .bind(renderer)
-        .bind(visibility_policy)
-        .bind(enabled)
-        .bind(module_config)
-        .bind(key)
-        .bind(tenant_id)
         .execute(self.metadata_store.pool())
         .await?;
 
@@ -835,9 +910,7 @@ impl TemplateService {
             ));
         }
 
-        sqlx::query("DELETE FROM templates WHERE template_key = $1 AND tenant_id = $2")
-            .bind(key)
-            .bind(tenant_id)
+        sqlx::query!("DELETE FROM templates WHERE template_key = $1 AND tenant_id = $2", key, tenant_id)
             .execute(self.metadata_store.pool())
             .await?;
 
@@ -859,17 +932,20 @@ impl TemplateService {
             return Err(TemplateError::NotFound(template_key.to_string()));
         }
 
-        let module_row = sqlx::query_as::<_, (bool, String, serde_json::Value)>(
+        let module_row = sqlx::query!(
             "SELECT enabled, root_path, permissions FROM modules WHERE module_key = $1 AND tenant_id = $2",
+            &template.module_key,
+            tenant_id
         )
-        .bind(&template.module_key)
-        .bind(tenant_id)
         .fetch_optional(self.metadata_store.pool())
         .await?;
 
-        let Some((module_enabled, root_path, permissions)) = module_row else {
+        let Some(module_row) = module_row else {
             return Err(TemplateError::ModuleNotFound(template.module_key));
         };
+        let module_enabled = module_row.enabled;
+        let root_path = module_row.root_path;
+        let permissions = module_row.permissions;
 
         if !module_enabled {
             return Err(TemplateError::ModuleNotFound(template.module_key));
@@ -965,14 +1041,14 @@ impl TemplateService {
     }
 
     async fn is_admin_user(&self, user_id: UserId, tenant_id: Uuid) -> Result<bool, TemplateError> {
-        let is_admin = sqlx::query_scalar::<_, bool>(
-            "SELECT COALESCE(is_admin, false) FROM users WHERE id = $1 AND tenant_id = $2",
+        let row = sqlx::query!(
+            "SELECT COALESCE(is_admin, false) as is_admin FROM users WHERE id = $1 AND tenant_id = $2",
+            user_id,
+            tenant_id
         )
-        .bind(user_id)
-        .bind(tenant_id)
         .fetch_optional(self.metadata_store.pool())
-        .await?
-        .unwrap_or(false);
+        .await?;
+        let is_admin = row.and_then(|r| r.is_admin).unwrap_or(false);
         Ok(is_admin)
     }
 

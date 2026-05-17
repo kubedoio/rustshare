@@ -31,7 +31,7 @@ pub async fn create_invite(
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Json(req): Json<CreateInviteRequest>,
 ) -> Result<Json<CreateInviteResponse>, AppError> {
-    let workflow = sqlx::query_as::<_, WorkflowRow>(
+    let workflow = sqlx::query_as!(WorkflowRow,
         "SELECT id, subject, body, terms_enabled, terms_text
          FROM workflows
          WHERE key = 'invite_email' AND status = 'active'",
@@ -42,8 +42,7 @@ pub async fn create_invite(
         AppError::bad_request("Invite workflow is not active")
     })?;
 
-    let sender = sqlx::query_as::<_, SenderRow>("SELECT display_name FROM users WHERE id = $1")
-        .bind(user_id)
+    let sender = sqlx::query_as!(SenderRow, "SELECT display_name FROM users WHERE id = $1", user_id)
         .fetch_one(&state.db_pool)
         .await?;
 
@@ -53,22 +52,21 @@ pub async fn create_invite(
 
     let expires_at = chrono::Utc::now() + chrono::Duration::days(7);
 
-    let tenant_id: Uuid = sqlx::query_scalar("SELECT tenant_id FROM users WHERE id = $1")
-        .bind(user_id)
+    let tenant_id: Uuid = sqlx::query_scalar!("SELECT tenant_id FROM users WHERE id = $1", user_id)
         .fetch_one(&state.db_pool)
         .await
         .unwrap_or_else(|_| Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap());
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO invite_tokens (tenant_id, token, sender_id, recipient_email, workflow_id, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6)"
+         VALUES ($1, $2, $3, $4, $5, $6)",
+        tenant_id,
+        &token,
+        user_id,
+        &req.recipient_email,
+        workflow.id,
+        expires_at
     )
-    .bind(tenant_id)
-    .bind(&token)
-    .bind(user_id)
-    .bind(&req.recipient_email)
-    .bind(workflow.id)
-    .bind(expires_at)
     .execute(&state.db_pool)
     .await?;
 
@@ -93,8 +91,7 @@ pub async fn create_invite(
         .await;
 
     if let Err(e) = result {
-        sqlx::query("DELETE FROM invite_tokens WHERE token = $1")
-            .bind(&token)
+        sqlx::query!("DELETE FROM invite_tokens WHERE token = $1", &token)
             .execute(&state.db_pool)
             .await
             .ok();
@@ -126,14 +123,14 @@ pub async fn get_invite(
     State(state): State<AppState>,
     Path(token): Path<String>,
 ) -> Result<Json<InviteDetailResponse>, AppError> {
-    let row = sqlx::query_as::<_, InviteTokenRow>(
+    let row = sqlx::query_as!(InviteTokenRow,
         "SELECT it.sender_id, it.recipient_email, it.expires_at, it.used_at, it.revoked_at,
                 w.subject, w.body, w.terms_enabled, w.terms_text
          FROM invite_tokens it
          JOIN workflows w ON it.workflow_id = w.id
          WHERE it.token = $1",
+        &token
     )
-    .bind(&token)
     .fetch_optional(&state.db_pool)
     .await?
     .ok_or_else(|| {
@@ -148,8 +145,7 @@ pub async fn get_invite(
         ));
     }
 
-    let sender = sqlx::query_as::<_, SenderRow>("SELECT display_name FROM users WHERE id = $1")
-        .bind(row.sender_id)
+    let sender = sqlx::query_as!(SenderRow, "SELECT display_name FROM users WHERE id = $1", row.sender_id)
         .fetch_one(&state.db_pool)
         .await?;
 
@@ -187,14 +183,14 @@ pub async fn accept_invite(
     Path(token): Path<String>,
     Json(req): Json<AcceptInviteRequest>,
 ) -> Result<Json<AcceptInviteResponse>, AppError> {
-    let row = sqlx::query_as::<_, InviteAcceptRow>(
+    let row = sqlx::query_as!(InviteAcceptRow,
         "SELECT it.id as token_id, it.recipient_email, it.expires_at, it.used_at, it.revoked_at,
                 w.terms_enabled, w.terms_text
          FROM invite_tokens it
          JOIN workflows w ON it.workflow_id = w.id
          WHERE it.token = $1",
+        &token
     )
-    .bind(&token)
     .fetch_optional(&state.db_pool)
     .await?
     .ok_or_else(|| {
@@ -227,8 +223,7 @@ pub async fn accept_invite(
         ));
     }
 
-    let existing: Option<Uuid> = sqlx::query_scalar("SELECT id FROM users WHERE email = $1")
-        .bind(&req.email)
+    let existing: Option<Uuid> = sqlx::query_scalar!("SELECT id FROM users WHERE email = $1", &req.email)
         .fetch_optional(&state.db_pool)
         .await?;
 
@@ -245,17 +240,17 @@ pub async fn accept_invite(
     let user_id = Uuid::new_v4();
     let now = chrono::Utc::now();
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO users (id, tenant_id, username, email, password_hash, display_name, is_admin, storage_quota, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, false, 10737418240, $7, $7)"
+         VALUES ($1, $2, $3, $4, $5, $6, false, 10737418240, $7, $7)",
+        user_id,
+        Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap(),
+        &req.email,
+        &req.email,
+        &password_hash,
+        &req.display_name,
+        now
     )
-    .bind(user_id)
-    .bind(Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap())
-    .bind(&req.email)
-    .bind(&req.email)
-    .bind(&password_hash)
-    .bind(&req.display_name)
-    .bind(now)
     .execute(&state.db_pool)
     .await?;
 
@@ -265,8 +260,7 @@ pub async fn accept_invite(
     );
     pref_repo.seed_defaults(user_id).await.ok();
 
-    sqlx::query("UPDATE invite_tokens SET used_at = NOW() WHERE id = $1")
-        .bind(row.token_id)
+    sqlx::query!("UPDATE invite_tokens SET used_at = NOW() WHERE id = $1", row.token_id)
         .execute(&state.db_pool)
         .await?;
 

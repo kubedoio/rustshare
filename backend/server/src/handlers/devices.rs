@@ -94,15 +94,15 @@ pub async fn revoke_device(
     Path(device_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     // First, verify the device belongs to the user and is not already revoked
-    let result = sqlx::query(
+    let result = sqlx::query!(
         r#"
         UPDATE device_tokens
         SET revoked_at = NOW()
         WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
         "#,
+        device_id,
+        user_id
     )
-    .bind(device_id)
-    .bind(user_id)
     .execute(&db.db_pool)
     .await?;
 

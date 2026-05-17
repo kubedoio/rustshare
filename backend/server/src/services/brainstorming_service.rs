@@ -453,55 +453,53 @@ impl BrainstormingService {
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Option<Folder>, BrainstormError> {
-        use sqlx::Row;
-
         // Legacy: check root path
-        let row = sqlx::query(
+        let row = sqlx::query!(
             "SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id FROM folders WHERE path = '/Brainstorming' AND tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL LIMIT 1",
+            tenant_id,
+            user_id
         )
-        .bind(tenant_id)
-        .bind(user_id)
         .fetch_optional(self.metadata_store.pool())
         .await
         .map_err(|e| BrainstormError::Database(e.to_string()))?;
 
         if let Some(r) = row {
             return Ok(Some(Folder {
-                id: r.get("id"),
-                name: r.get("name"),
-                path: r.get("path"),
-                parent_folder_id: r.get("parent_folder_id"),
-                owner_id: r.get("owner_id"),
-                created_at: r.get("created_at"),
-                updated_at: r.get("updated_at"),
-                starred_at: r.get("starred_at"),
-                deleted_at: r.get("deleted_at"),
-                tenant_id: r.get("tenant_id"),
+                id: r.id,
+                name: r.name,
+                path: r.path,
+                parent_folder_id: r.parent_folder_id,
+                owner_id: r.owner_id,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+                starred_at: r.starred_at,
+                deleted_at: r.deleted_at,
+                tenant_id: r.tenant_id,
                 ancestor_ids: None,
             }));
         }
 
         // New: check under /Workspace
-        let row = sqlx::query(
+        let row = sqlx::query!(
             "SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id FROM folders WHERE path = '/Workspace/Brainstorming' AND tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL LIMIT 1",
+            tenant_id,
+            user_id
         )
-        .bind(tenant_id)
-        .bind(user_id)
         .fetch_optional(self.metadata_store.pool())
         .await
         .map_err(|e| BrainstormError::Database(e.to_string()))?;
 
         Ok(row.map(|r| Folder {
-            id: r.get("id"),
-            name: r.get("name"),
-            path: r.get("path"),
-            parent_folder_id: r.get("parent_folder_id"),
-            owner_id: r.get("owner_id"),
-            created_at: r.get("created_at"),
-            updated_at: r.get("updated_at"),
-            starred_at: r.get("starred_at"),
-            deleted_at: r.get("deleted_at"),
-            tenant_id: r.get("tenant_id"),
+            id: r.id,
+            name: r.name,
+            path: r.path,
+            parent_folder_id: r.parent_folder_id,
+            owner_id: r.owner_id,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+            starred_at: r.starred_at,
+            deleted_at: r.deleted_at,
+            tenant_id: r.tenant_id,
             ancestor_ids: None,
         }))
     }

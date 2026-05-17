@@ -15,7 +15,8 @@ impl FileRepository {
 
     /// Get a file by ID.
     pub async fn get_by_id(&self, file_id: FileId) -> anyhow::Result<Option<File>> {
-        let file = sqlx::query_as::<_, File>(
+        let file = sqlx::query_as!(
+            File,
             r#"
             SELECT id, name, path, content_hash, size, mime_type,
                    parent_folder_id, owner_id, current_version,
@@ -24,8 +25,8 @@ impl FileRepository {
             WHERE id = $1
               AND deleted_at IS NULL
             "#,
+            file_id
         )
-        .bind(file_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -66,32 +67,34 @@ mod tests {
         let user_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
 
-        sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
-            .bind(tenant_id)
-            .bind(format!("test-tenant-{test_id}"))
-            .execute(&pool)
-            .await
-            .expect("create tenant");
+        sqlx::query!(
+            "INSERT INTO tenants (id, name) VALUES ($1, $2)",
+            tenant_id,
+            format!("test-tenant-{test_id}")
+        )
+        .execute(&pool)
+        .await
+        .expect("create tenant");
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, tenant_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
+            user_id,
+            format!("user-{test_id}"),
+            format!("user-{test_id}@example.com"),
+            "hash",
+            "Test User",
+            false,
+            1024_i64,
+            tenant_id
         )
-        .bind(user_id)
-        .bind(format!("user-{test_id}"))
-        .bind(format!("user-{test_id}@example.com"))
-        .bind("hash")
-        .bind("Test User")
-        .bind(false)
-        .bind(1024_i64)
-        .bind(tenant_id)
         .execute(&pool)
         .await
         .expect("create user");
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO files (
                 id, name, path, size, mime_type, content_hash, storage_key,
@@ -99,17 +102,17 @@ mod tests {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, $9, $10, NOW(), NULL)
             "#,
+            file_id,
+            "preview.png",
+            "/preview.png",
+            123_i64,
+            "image/png",
+            "abc123",
+            "blobs/abc123",
+            user_id,
+            1_i32,
+            tenant_id
         )
-        .bind(file_id)
-        .bind("preview.png")
-        .bind("/preview.png")
-        .bind(123_i64)
-        .bind("image/png")
-        .bind("abc123")
-        .bind("blobs/abc123")
-        .bind(user_id)
-        .bind(1_i32)
-        .bind(tenant_id)
         .execute(&pool)
         .await
         .expect("create file");
@@ -127,18 +130,15 @@ mod tests {
         assert!(file.starred_at.is_some());
         assert_eq!(file.deleted_at, None);
 
-        sqlx::query("DELETE FROM files WHERE id = $1")
-            .bind(file_id)
+        sqlx::query!("DELETE FROM files WHERE id = $1", file_id)
             .execute(&pool)
             .await
             .ok();
-        sqlx::query("DELETE FROM users WHERE id = $1")
-            .bind(user_id)
+        sqlx::query!("DELETE FROM users WHERE id = $1", user_id)
             .execute(&pool)
             .await
             .ok();
-        sqlx::query("DELETE FROM tenants WHERE id = $1")
-            .bind(tenant_id)
+        sqlx::query!("DELETE FROM tenants WHERE id = $1", tenant_id)
             .execute(&pool)
             .await
             .ok();

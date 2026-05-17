@@ -4,7 +4,6 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use uuid::Uuid;
 
 use crate::{
@@ -110,7 +109,7 @@ pub async fn get_file_replication_status(
         .get_file(file_id, auth.user_id)
         .await?;
 
-    let row = sqlx::query(
+    let row = sqlx::query!(
         r#"
         SELECT
             fv.replication_state,
@@ -127,12 +126,11 @@ pub async fn get_file_replication_status(
         ORDER BY rj.updated_at DESC NULLS LAST
         LIMIT 1
         "#,
+        file.id,
+        file.current_version
     )
-    .bind(file.id)
-    .bind(file.current_version)
     .fetch_optional(&state.db_pool)
-    .await
-    ?;
+    .await?;
 
     let (
         replication_state,
@@ -143,12 +141,12 @@ pub async fn get_file_replication_status(
         last_error,
     ) = if let Some(row) = row {
         (
-            row.try_get("replication_state")?,
-            row.try_get("job_status")?,
-            row.try_get("attempt_count")?,
-            row.try_get("next_attempt_at")?,
-            row.try_get("last_attempt_at")?,
-            row.try_get("last_error")?,
+            row.replication_state,
+            Some(row.job_status),
+            Some(row.attempt_count),
+            Some(row.next_attempt_at),
+            row.last_attempt_at,
+            row.last_error,
         )
     } else {
         ("primary_written".to_string(), None, None, None, None, None)
@@ -173,7 +171,7 @@ pub async fn get_replication_summary(
 ) -> Result<Json<ReplicationSummaryResponse>, AppError> {
     require_admin(&state, auth.user_id).await?;
 
-    let version_counts_row = sqlx::query(
+    let version_counts_row = sqlx::query!(
         r#"
         SELECT
             COUNT(*) FILTER (WHERE replication_state = 'primary_written') AS primary_written,
@@ -183,13 +181,12 @@ pub async fn get_replication_summary(
             COUNT(*) FILTER (WHERE replication_state = 'degraded') AS degraded,
             COUNT(*) FILTER (WHERE replication_state = 'failed') AS failed
         FROM file_versions
-        "#,
+        "#
     )
     .fetch_one(&state.db_pool)
-    .await
-    ?;
+    .await?;
 
-    let job_counts_row = sqlx::query(
+    let job_counts_row = sqlx::query!(
         r#"
         SELECT
             COUNT(*) FILTER (WHERE status = 'queued') AS queued,
@@ -200,13 +197,12 @@ pub async fn get_replication_summary(
             CAST(EXTRACT(EPOCH FROM (NOW() - (MIN(created_at) FILTER (WHERE status IN ('queued', 'retrying', 'syncing'))))) AS BIGINT) AS oldest_pending_job_age_seconds,
             CAST(EXTRACT(EPOCH FROM (NOW() - (MIN(updated_at) FILTER (WHERE status = 'failed')))) AS BIGINT) AS oldest_failed_job_age_seconds
         FROM replication_jobs
-        "#,
+        "#
     )
     .fetch_one(&state.db_pool)
-    .await
-    ?;
+    .await?;
 
-    let target_counts_row = sqlx::query(
+    let target_counts_row = sqlx::query!(
         r#"
         SELECT
             COUNT(*) FILTER (WHERE enabled = TRUE) AS enabled,
@@ -215,44 +211,37 @@ pub async fn get_replication_summary(
             COUNT(*) FILTER (WHERE enabled = TRUE AND health_status = 'degraded') AS degraded,
             COUNT(*) FILTER (WHERE enabled = TRUE AND health_status = 'failed') AS failed
         FROM replication_targets
-        "#,
+        "#
     )
     .fetch_one(&state.db_pool)
-    .await
-    ?;
+    .await?;
 
     Ok(Json(ReplicationSummaryResponse {
         generated_at: to_rfc3339(Utc::now()),
         version_states: ReplicationVersionStateCounts {
-            primary_written: row_i64(&version_counts_row, "primary_written")?,
-            queued: row_i64(&version_counts_row, "queued")?,
-            syncing: row_i64(&version_counts_row, "syncing")?,
-            fully_replicated: row_i64(&version_counts_row, "fully_replicated")?,
-            degraded: row_i64(&version_counts_row, "degraded")?,
-            failed: row_i64(&version_counts_row, "failed")?,
+            primary_written: version_counts_row.primary_written.unwrap_or(0),
+            queued: version_counts_row.queued.unwrap_or(0),
+            syncing: version_counts_row.syncing.unwrap_or(0),
+            fully_replicated: version_counts_row.fully_replicated.unwrap_or(0),
+            degraded: version_counts_row.degraded.unwrap_or(0),
+            failed: version_counts_row.failed.unwrap_or(0),
         },
         job_states: ReplicationJobStateCounts {
-            queued: row_i64(&job_counts_row, "queued")?,
-            syncing: row_i64(&job_counts_row, "syncing")?,
-            retrying: row_i64(&job_counts_row, "retrying")?,
-            completed: row_i64(&job_counts_row, "completed")?,
-            failed: row_i64(&job_counts_row, "failed")?,
+            queued: job_counts_row.queued.unwrap_or(0),
+            syncing: job_counts_row.syncing.unwrap_or(0),
+            retrying: job_counts_row.retrying.unwrap_or(0),
+            completed: job_counts_row.completed.unwrap_or(0),
+            failed: job_counts_row.failed.unwrap_or(0),
         },
         target_states: ReplicationTargetStateCounts {
-            enabled: row_i64(&target_counts_row, "enabled")?,
-            required: row_i64(&target_counts_row, "required")?,
-            healthy: row_i64(&target_counts_row, "healthy")?,
-            degraded: row_i64(&target_counts_row, "degraded")?,
-            failed: row_i64(&target_counts_row, "failed")?,
+            enabled: target_counts_row.enabled.unwrap_or(0),
+            required: target_counts_row.required.unwrap_or(0),
+            healthy: target_counts_row.healthy.unwrap_or(0),
+            degraded: target_counts_row.degraded.unwrap_or(0),
+            failed: target_counts_row.failed.unwrap_or(0),
         },
-        oldest_pending_job_age_seconds: row_optional_i64(
-            &job_counts_row,
-            "oldest_pending_job_age_seconds",
-        )?,
-        oldest_failed_job_age_seconds: row_optional_i64(
-            &job_counts_row,
-            "oldest_failed_job_age_seconds",
-        )?,
+        oldest_pending_job_age_seconds: job_counts_row.oldest_pending_job_age_seconds,
+        oldest_failed_job_age_seconds: job_counts_row.oldest_failed_job_age_seconds,
     }))
 }
 
@@ -264,7 +253,7 @@ pub async fn list_replication_jobs(
     require_admin(&state, auth.user_id).await?;
 
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
-    let rows = sqlx::query(
+    let rows = sqlx::query!(
         r#"
         SELECT
             id,
@@ -282,29 +271,28 @@ pub async fn list_replication_jobs(
         ORDER BY updated_at DESC
         LIMIT $1
         "#,
+        limit
     )
-    .bind(limit)
     .fetch_all(&state.db_pool)
-    .await
-    ?;
+    .await?;
 
     let jobs = rows
         .into_iter()
         .map(|row| {
-            let last_attempt_at: Option<DateTime<Utc>> = row.try_get("last_attempt_at")?;
+            let last_attempt_at = row.last_attempt_at;
 
             Ok(ReplicationJobResponse {
-                job_id: row.try_get("id")?,
-                file_id: row.try_get("file_id")?,
-                file_version_id: row.try_get("file_version_id")?,
-                storage_key: row.try_get("storage_key")?,
-                status: row.try_get("status")?,
-                attempt_count: row.try_get("attempt_count")?,
-                next_attempt_at: to_rfc3339(row.try_get("next_attempt_at")?),
+                job_id: row.id,
+                file_id: row.file_id,
+                file_version_id: row.file_version_id,
+                storage_key: row.storage_key,
+                status: row.status,
+                attempt_count: row.attempt_count,
+                next_attempt_at: to_rfc3339(row.next_attempt_at),
                 last_attempt_at: last_attempt_at.map(to_rfc3339),
-                last_error: row.try_get("last_error")?,
-                created_at: to_rfc3339(row.try_get("created_at")?),
-                updated_at: to_rfc3339(row.try_get("updated_at")?),
+                last_error: row.last_error,
+                created_at: to_rfc3339(row.created_at),
+                updated_at: to_rfc3339(row.updated_at),
             })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()
@@ -319,7 +307,7 @@ pub async fn list_replication_targets(
 ) -> Result<Json<Vec<ReplicationTargetHealthResponse>>, AppError> {
     require_admin(&state, auth.user_id).await?;
 
-    let rows = sqlx::query(
+    let rows = sqlx::query!(
         r#"
         SELECT
             id,
@@ -337,31 +325,30 @@ pub async fn list_replication_targets(
             updated_at
         FROM replication_targets
         ORDER BY is_required DESC, name ASC
-        "#,
+        "#
     )
     .fetch_all(&state.db_pool)
-    .await
-    ?;
+    .await?;
 
     let targets = rows
         .into_iter()
         .map(|row| {
-            let last_healthy_at: Option<DateTime<Utc>> = row.try_get("last_healthy_at")?;
+            let last_healthy_at = row.last_healthy_at;
 
             Ok(ReplicationTargetHealthResponse {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                destination_type: row.try_get("destination_type")?,
-                endpoint: row.try_get("endpoint")?,
-                bucket: row.try_get("bucket")?,
-                region: row.try_get("region")?,
-                base_path: row.try_get("base_path")?,
-                is_required: row.try_get("is_required")?,
-                enabled: row.try_get("enabled")?,
-                health_status: row.try_get("health_status")?,
+                id: row.id,
+                name: row.name,
+                destination_type: row.destination_type,
+                endpoint: row.endpoint,
+                bucket: row.bucket,
+                region: row.region,
+                base_path: row.base_path,
+                is_required: row.is_required,
+                enabled: row.enabled,
+                health_status: row.health_status,
                 last_healthy_at: last_healthy_at.map(to_rfc3339),
-                last_error: row.try_get("last_error")?,
-                updated_at: to_rfc3339(row.try_get("updated_at")?),
+                last_error: row.last_error,
+                updated_at: to_rfc3339(row.updated_at),
             })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()
@@ -386,15 +373,4 @@ async fn require_admin(state: &AppState, user_id: Uuid) -> Result<(), AppError> 
     }
 
     Ok(())
-}
-
-#[allow(clippy::result_large_err)]
-fn row_i64(row: &sqlx::postgres::PgRow, column: &str) -> Result<i64, AppError> {
-    row.try_get::<i64, _>(column).map_err(|e| AppError::internal(format!("Database error: {e}")))
-}
-
-#[allow(clippy::result_large_err)]
-fn row_optional_i64(row: &sqlx::postgres::PgRow, column: &str) -> Result<Option<i64>, AppError> {
-    row.try_get::<Option<i64>, _>(column)
-        .map_err(|e| AppError::internal(format!("Database error: {e}")))
 }

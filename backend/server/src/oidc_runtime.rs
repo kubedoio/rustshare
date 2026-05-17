@@ -351,7 +351,7 @@ pub async fn seed_oidc_config_from_env(
 
     let encrypted_secret = encrypt_secret(&seed.client_secret, secret_key)?;
 
-    sqlx::query(
+    sqlx::query!(
         "UPDATE oidc_config
          SET enabled = true,
              client_id = $2,
@@ -362,14 +362,14 @@ pub async fn seed_oidc_config_from_env(
              scopes = $7,
              updated_at = NOW()
          WHERE id = $1",
+        OIDC_CONFIG_ID,
+        seed.client_id,
+        encrypted_secret,
+        seed.issuer_url,
+        seed.redirect_url,
+        seed.login_label,
+        &seed.scopes[..]
     )
-    .bind(OIDC_CONFIG_ID)
-    .bind(seed.client_id)
-    .bind(encrypted_secret)
-    .bind(seed.issuer_url)
-    .bind(seed.redirect_url)
-    .bind(seed.login_label)
-    .bind(seed.scopes)
     .execute(pool)
     .await?;
 

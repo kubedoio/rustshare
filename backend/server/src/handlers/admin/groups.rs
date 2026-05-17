@@ -359,8 +359,7 @@ pub async fn delete_group(
     .await;
 
     // CASCADE on group_members handles membership rows
-    sqlx::query("DELETE FROM user_groups WHERE id = $1")
-        .bind(group_id)
+    sqlx::query!("DELETE FROM user_groups WHERE id = $1", group_id)
         .execute(&state.db_pool)
         .await
         .map_err(db_error)?;
@@ -376,36 +375,41 @@ pub async fn add_member(
     Json(req): Json<AddMemberRequest>,
 ) -> Result<StatusCode, AppError> {
     // Verify group exists
-    let group_exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1)")
-            .bind(group_id)
-            .fetch_one(&state.db_pool)
-            .await
-            .map_err(db_error)?;
+    let group_exists_row = sqlx::query!(
+        "SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1) as exists",
+        group_id
+    )
+    .fetch_one(&state.db_pool)
+    .await
+    .map_err(db_error)?;
+    let group_exists = group_exists_row.exists.unwrap_or(false);
     if !group_exists {
         return Err(admin_not_found("Group not found"));
     }
 
     // Verify user exists
-    let user_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
-        .bind(req.user_id)
-        .fetch_one(&state.db_pool)
-        .await
-        .map_err(db_error)?;
+    let user_exists_row = sqlx::query!(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1) as exists",
+        req.user_id
+    )
+    .fetch_one(&state.db_pool)
+    .await
+    .map_err(db_error)?;
+    let user_exists = user_exists_row.exists.unwrap_or(false);
     if !user_exists {
         return Err(admin_not_found("User not found"));
     }
 
-    let result = sqlx::query(
+    let result = sqlx::query!(
         r#"
         INSERT INTO group_members (group_id, user_id, added_by)
         VALUES ($1, $2, $3)
         ON CONFLICT (group_id, user_id) DO NOTHING
         "#,
+        group_id,
+        req.user_id,
+        actor_id
     )
-    .bind(group_id)
-    .bind(req.user_id)
-    .bind(actor_id)
     .execute(&state.db_pool)
     .await
     .map_err(db_error)?;
@@ -433,9 +437,7 @@ pub async fn remove_member(
     AdminUser { user_id: actor_id }: AdminUser,
     Path((group_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
-    let result = sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
-        .bind(group_id)
-        .bind(user_id)
+    let result = sqlx::query!("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2", group_id, user_id)
         .execute(&state.db_pool)
         .await
         .map_err(db_error)?;

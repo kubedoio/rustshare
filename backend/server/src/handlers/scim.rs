@@ -11,7 +11,6 @@ use axum::{
 use axum_extra::headers::{authorization::Bearer, Authorization, HeaderMapExt};
 use rustshare_core::services::{ScimGroup, ScimService, ScimUser};
 use serde_json::json;
-use sqlx::Row;
 use std::sync::Arc;
 
 use crate::AppState;
@@ -322,43 +321,47 @@ impl ScimRepository for ScimRepositoryImpl {
         &self,
         external_id: &str,
     ) -> Result<Option<User>, sqlx::Error> {
-        let row = sqlx::query(
+        let row = sqlx::query_as!(
+            User,
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
-                   storage_quota, theme, created_at, updated_at, disabled_at, 
-                   name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id
+                   storage_quota, theme as "theme: _", created_at, updated_at, disabled_at,
+                   name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id,
+                   dashboard_config as "dashboard_config: _"
             FROM users
             WHERE external_id = $1
             "#,
+            external_id
         )
-        .bind(external_id)
         .fetch_optional(&self.pool)
         .await?;
 
-        row.map(|r| map_user_row(&r)).transpose()
+        Ok(row)
     }
 
     async fn find_user_by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error> {
         let email_lower = email.trim().to_lowercase();
 
-        let row = sqlx::query(
+        let row = sqlx::query_as!(
+            User,
             r#"
             SELECT id, username, display_name, password_hash, email, is_admin,
-                   storage_quota, theme, created_at, updated_at, disabled_at,
-                   name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id
+                   storage_quota, theme as "theme: _", created_at, updated_at, disabled_at,
+                   name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id,
+                   dashboard_config as "dashboard_config: _"
             FROM users
             WHERE LOWER(email) = $1
             "#,
+            email_lower
         )
-        .bind(email_lower)
         .fetch_optional(&self.pool)
         .await?;
 
-        row.map(|r| map_user_row(&r)).transpose()
+        Ok(row)
     }
 
     async fn create_user(&self, user: &User, external_id: &str) -> Result<(), sqlx::Error> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO users (
                 id, username, display_name, password_hash, email, is_admin,
@@ -366,25 +369,25 @@ impl ScimRepository for ScimRepositoryImpl {
                 name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, external_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             "#,
+            user.id,
+            user.username,
+            user.display_name,
+            user.password_hash,
+            user.email,
+            user.is_admin,
+            user.storage_quota,
+            user.theme.to_string(),
+            user.created_at,
+            user.updated_at,
+            user.disabled_at,
+            user.name,
+            user.surname,
+            user.avatar_path,
+            user.email_sharing_enabled,
+            user.trash_retention_days,
+            user.tenant_id,
+            external_id
         )
-        .bind(user.id)
-        .bind(&user.username)
-        .bind(&user.display_name)
-        .bind(&user.password_hash)
-        .bind(&user.email)
-        .bind(user.is_admin)
-        .bind(user.storage_quota)
-        .bind(user.theme.to_string())
-        .bind(user.created_at)
-        .bind(user.updated_at)
-        .bind(user.disabled_at)
-        .bind(&user.name)
-        .bind(&user.surname)
-        .bind(&user.avatar_path)
-        .bind(user.email_sharing_enabled)
-        .bind(user.trash_retention_days)
-        .bind(user.tenant_id)
-        .bind(external_id)
         .execute(&self.pool)
         .await?;
 
@@ -398,9 +401,9 @@ impl ScimRepository for ScimRepositoryImpl {
         email: &str,
         name: Option<&str>,
         surname: Option<&str>,
-        disabled_at: Option<DateTime<Utc>>,
+        disabled_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE users
             SET display_name = $2,
@@ -411,13 +414,13 @@ impl ScimRepository for ScimRepositoryImpl {
                 updated_at = NOW()
             WHERE id = $1
             "#,
+            user_id,
+            display_name,
+            email,
+            name,
+            surname,
+            disabled_at
         )
-        .bind(user_id)
-        .bind(display_name)
-        .bind(email)
-        .bind(name)
-        .bind(surname)
-        .bind(disabled_at)
         .execute(&self.pool)
         .await?;
 
@@ -429,18 +432,18 @@ impl ScimRepository for ScimRepositoryImpl {
         external_id: &str,
         disabled: bool,
     ) -> Result<(), sqlx::Error> {
-        let disabled_at: Option<DateTime<Utc>> = if disabled { Some(Utc::now()) } else { None };
+        let disabled_at: Option<chrono::DateTime<chrono::Utc>> = if disabled { Some(chrono::Utc::now()) } else { None };
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE users
             SET disabled_at = $2,
                 updated_at = NOW()
             WHERE external_id = $1
             "#,
+            external_id,
+            disabled_at
         )
-        .bind(external_id)
-        .bind(disabled_at)
         .execute(&self.pool)
         .await?;
 
@@ -451,20 +454,21 @@ impl ScimRepository for ScimRepositoryImpl {
         &self,
         external_id: &str,
     ) -> Result<Option<GroupRecord>, sqlx::Error> {
-        let row = sqlx::query_as::<_, GroupRecordRow>(
+        let row = sqlx::query_as!(
+            GroupRecordRow,
             r#"
             SELECT id, external_id, name
             FROM user_groups
             WHERE external_id = $1
             "#,
+            external_id
         )
-        .bind(external_id)
         .fetch_optional(&self.pool)
         .await?;
 
         Ok(row.map(|r| GroupRecord {
             id: r.id,
-            external_id: r.external_id,
+            external_id: r.external_id.unwrap_or_default(),
             name: r.name,
         }))
     }
@@ -476,15 +480,15 @@ impl ScimRepository for ScimRepositoryImpl {
     ) -> Result<uuid::Uuid, sqlx::Error> {
         let id = uuid::Uuid::new_v4();
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO user_groups (id, name, external_id, created_by)
             VALUES ($1, $2, $3, NULL)
             "#,
+            id,
+            display_name,
+            external_id
         )
-        .bind(id)
-        .bind(display_name)
-        .bind(external_id)
         .execute(&self.pool)
         .await?;
 
@@ -492,16 +496,16 @@ impl ScimRepository for ScimRepositoryImpl {
     }
 
     async fn update_group(&self, external_id: &str, display_name: &str) -> Result<(), sqlx::Error> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE user_groups
             SET name = $2,
                 updated_at = NOW()
             WHERE external_id = $1
             "#,
+            external_id,
+            display_name
         )
-        .bind(external_id)
-        .bind(display_name)
         .execute(&self.pool)
         .await?;
 
@@ -509,10 +513,12 @@ impl ScimRepository for ScimRepositoryImpl {
     }
 
     async fn delete_group(&self, external_id: &str) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM user_groups WHERE external_id = $1")
-            .bind(external_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM user_groups WHERE external_id = $1",
+            external_id
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -522,10 +528,12 @@ impl ScimRepository for ScimRepositoryImpl {
         external_id: &str,
     ) -> Result<Option<uuid::Uuid>, sqlx::Error> {
         let id: Option<uuid::Uuid> =
-            sqlx::query_scalar("SELECT id FROM users WHERE external_id = $1")
-                .bind(external_id)
-                .fetch_optional(&self.pool)
-                .await?;
+            sqlx::query_scalar!(
+                "SELECT id FROM users WHERE external_id = $1",
+                external_id
+            )
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(id)
     }
@@ -535,10 +543,12 @@ impl ScimRepository for ScimRepositoryImpl {
         group_id: uuid::Uuid,
     ) -> Result<Vec<uuid::Uuid>, sqlx::Error> {
         let members: Vec<uuid::Uuid> =
-            sqlx::query_scalar("SELECT user_id FROM group_members WHERE group_id = $1")
-                .bind(group_id)
-                .fetch_all(&self.pool)
-                .await?;
+            sqlx::query_scalar!(
+                "SELECT user_id FROM group_members WHERE group_id = $1",
+                group_id
+            )
+            .fetch_all(&self.pool)
+            .await?;
 
         Ok(members)
     }
@@ -548,15 +558,15 @@ impl ScimRepository for ScimRepositoryImpl {
         group_id: uuid::Uuid,
         user_id: uuid::Uuid,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO group_members (group_id, user_id, added_by)
             VALUES ($1, $2, NULL)
             ON CONFLICT (group_id, user_id) DO NOTHING
             "#,
+            group_id,
+            user_id
         )
-        .bind(group_id)
-        .bind(user_id)
         .execute(&self.pool)
         .await?;
 
@@ -568,20 +578,24 @@ impl ScimRepository for ScimRepositoryImpl {
         group_id: uuid::Uuid,
         user_id: uuid::Uuid,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
-            .bind(group_id)
-            .bind(user_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM group_members WHERE group_id = $1 AND user_id = $2",
+            group_id,
+            user_id
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
 
     async fn clear_group_members(&self, group_id: uuid::Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM group_members WHERE group_id = $1")
-            .bind(group_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM group_members WHERE group_id = $1",
+            group_id
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -591,50 +605,11 @@ impl ScimRepository for ScimRepositoryImpl {
 // Helpers
 // ---------------------------------------------------------------------------
 
-use chrono::{DateTime, Utc};
-
 #[derive(sqlx::FromRow)]
 struct GroupRecordRow {
     id: uuid::Uuid,
-    external_id: String,
+    external_id: Option<String>,
     name: String,
-}
-
-fn map_user_row(row: &sqlx::postgres::PgRow) -> Result<User, sqlx::Error> {
-    Ok(User {
-        id: row.try_get("id")?,
-        username: row.try_get("username")?,
-        display_name: row.try_get("display_name")?,
-        password_hash: row.try_get("password_hash")?,
-        email: row.try_get("email")?,
-        is_admin: row.try_get("is_admin")?,
-        storage_quota: row.try_get("storage_quota")?,
-        theme: row
-            .try_get::<String, _>("theme")?
-            .parse()
-            .unwrap_or_default(),
-        created_at: row.try_get("created_at")?,
-        updated_at: row.try_get("updated_at")?,
-        disabled_at: row.try_get("disabled_at")?,
-        name: row.try_get("name")?,
-        surname: row.try_get("surname")?,
-        avatar_path: row.try_get("avatar_path")?,
-        email_sharing_enabled: row.try_get("email_sharing_enabled")?,
-        trash_retention_days: row.try_get("trash_retention_days")?,
-        tenant_id: row.try_get("tenant_id")?,
-        dashboard_config: row
-            .try_get::<Option<sqlx::types::Json<rustshare_core::domain::DashboardConfig>>, _>(
-                "dashboard_config",
-            )
-            .unwrap_or_else(|_| {
-                Some(sqlx::types::Json(
-                    rustshare_core::domain::DashboardConfig::default(),
-                ))
-            })
-            .unwrap_or_else(|| {
-                sqlx::types::Json(rustshare_core::domain::DashboardConfig::default())
-            }),
-    })
 }
 
 // Constant-time comparison for tokens

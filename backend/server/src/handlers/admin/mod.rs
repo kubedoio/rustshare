@@ -22,17 +22,17 @@ pub async fn log_admin_action(
     target_id: Option<Uuid>,
     detail: serde_json::Value,
 ) {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         r#"
         INSERT INTO admin_actions (actor_id, action_type, target_type, target_id, detail)
         VALUES ($1, $2, $3, $4, $5)
         "#,
+        actor_id,
+        action_type,
+        target_type,
+        target_id,
+        detail
     )
-    .bind(actor_id)
-    .bind(action_type)
-    .bind(target_type)
-    .bind(target_id)
-    .bind(detail)
     .execute(pool)
     .await;
 

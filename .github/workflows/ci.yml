@@ -116,12 +116,24 @@ jobs:
       - run: cargo check --workspace
       - run: cargo test --workspace --lib
 
-# BLOCKED: sqlx prepare --check
-# This job is intentionally disabled because `backend/.sqlx/` does not exist yet.
-# Before enabling this job, you MUST:
-#   1. Start Postgres: docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
-#   2. Install sqlx-cli: cargo install sqlx-cli --features postgres
-#   3. Run migrations: cd backend && sqlx migrate run
-#   4. Generate query metadata: sqlx prepare --workspace
-#   5. Commit the generated `backend/.sqlx/` directory to the repository
-# Only after `backend/.sqlx/` is committed can the sqlx-check job be re-enabled.
+  sqlx-check:
+    name: SQLx Prepare Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --features postgres
+      - name: Start PostgreSQL
+        run: |
+          docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
+          sleep 5
+      - name: Run migrations
+        run: cd backend && sqlx migrate run
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      - name: Check sqlx prepare
+        run: cd backend && cargo sqlx prepare --workspace --check
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres

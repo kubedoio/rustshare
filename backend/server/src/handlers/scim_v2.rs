@@ -11,8 +11,8 @@ use axum::{
 };
 use axum_extra::headers::{authorization::Bearer, Authorization, HeaderMapExt};
 use rustshare_core::services::{
-    ScimPatchRequest, ScimV2Error, ScimV2ErrorResponse, ScimV2Group, ScimV2ListResponse,
-    ScimV2Repository, ScimV2Service, ScimV2User,
+    ScimPatchRequest, ScimV2Error, ScimV2ErrorResponse, ScimV2Group, ScimV2GroupRecord,
+    ScimV2ListResponse, ScimV2Repository, ScimV2Service, ScimV2User, ScimV2UserRecord,
 };
 use serde::Deserialize;
 use sqlx::PgPool;
@@ -183,10 +183,12 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
 
         query.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
 
+        // DYNAMIC QUERY: count_query built at runtime
         let total: i64 = sqlx::query_scalar(&count_query)
             .fetch_one(&self.pool)
             .await?;
 
+        // DYNAMIC QUERY: query built at runtime
         let users = sqlx::query_as::<_, rustshare_core::services::ScimV2UserRecord>(&query)
             .fetch_all(&self.pool)
             .await?;
@@ -198,11 +200,14 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         &self,
         id: Uuid,
     ) -> Result<Option<rustshare_core::services::ScimV2UserRecord>, sqlx::Error> {
-        sqlx::query_as::<_, rustshare_core::services::ScimV2UserRecord>(
-            "SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at 
-             FROM users WHERE id = $1"
+        sqlx::query_as!(
+            ScimV2UserRecord,
+            r#"
+            SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at 
+            FROM users WHERE id = $1
+            "#,
+            id
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await
     }
@@ -211,11 +216,14 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         &self,
         external_id: &str,
     ) -> Result<Option<rustshare_core::services::ScimV2UserRecord>, sqlx::Error> {
-        sqlx::query_as::<_, rustshare_core::services::ScimV2UserRecord>(
-            "SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at 
-             FROM users WHERE external_id = $1"
+        sqlx::query_as!(
+            ScimV2UserRecord,
+            r#"
+            SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at 
+            FROM users WHERE external_id = $1
+            "#,
+            external_id
         )
-        .bind(external_id)
         .fetch_optional(&self.pool)
         .await
     }
@@ -255,7 +263,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         // Generate temporary password hash
         let password_hash = generate_temporary_password_hash();
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO users (
                 id, username, display_name, password_hash, email, is_admin,
@@ -263,25 +271,21 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                 name, surname, email_sharing_enabled, tenant_id, external_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), $9, $10, $11, $12, $13, $14)
             "#,
+            id,
+            user.user_name,
+            display_name,
+            password_hash,
+            email,
+            false,
+            storage_quota,
+            "system",
+            if user.active { None::<DateTime<Utc>> } else { Some(Utc::now()) },
+            name,
+            surname,
+            true,
+            tenant_id,
+            user.external_id
         )
-        .bind(id)
-        .bind(&user.user_name)
-        .bind(&display_name)
-        .bind(&password_hash)
-        .bind(&email)
-        .bind(false) // Not admin by default
-        .bind(storage_quota)
-        .bind("system")
-        .bind(if user.active {
-            None::<DateTime<Utc>>
-        } else {
-            Some(Utc::now())
-        })
-        .bind(name)
-        .bind(surname)
-        .bind(true)
-        .bind(tenant_id)
-        .bind(user.external_id.clone())
         .execute(&self.pool)
         .await?;
 
@@ -304,7 +308,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             (n.given_name.clone(), n.family_name.clone())
         });
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE users 
             SET username = $2,
@@ -317,19 +321,15 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                 updated_at = NOW()
             WHERE id = $1
             "#,
+            id,
+            user.user_name,
+            display_name,
+            email,
+            if user.active { None::<DateTime<Utc>> } else { Some(Utc::now()) },
+            name,
+            surname,
+            user.external_id
         )
-        .bind(id)
-        .bind(&user.user_name)
-        .bind(&display_name)
-        .bind(&email)
-        .bind(if user.active {
-            None::<DateTime<Utc>>
-        } else {
-            Some(Utc::now())
-        })
-        .bind(name)
-        .bind(surname)
-        .bind(user.external_id.clone())
         .execute(&self.pool)
         .await?;
 
@@ -347,11 +347,11 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                     if path.as_str() == "active" {
                         if let Some(ref value) = op.value {
                             let active = value.as_bool().unwrap_or(true);
-                            sqlx::query(
-                                "UPDATE users SET disabled_at = $2, updated_at = NOW() WHERE id = $1"
+                            sqlx::query!(
+                                "UPDATE users SET disabled_at = $2, updated_at = NOW() WHERE id = $1",
+                                id,
+                                if active { None::<DateTime<Utc>> } else { Some(Utc::now()) }
                             )
-                            .bind(id)
-                            .bind(if active { None::<DateTime<Utc>> } else { Some(Utc::now()) })
                             .execute(&self.pool)
                             .await?;
                         }
@@ -359,15 +359,11 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                 } else if let Some(ref value) = op.value {
                     // Handle value object with multiple attributes
                     if let Some(active) = value.get("active").and_then(|v| v.as_bool()) {
-                        sqlx::query(
+                        sqlx::query!(
                             "UPDATE users SET disabled_at = $2, updated_at = NOW() WHERE id = $1",
+                            id,
+                            if active { None::<DateTime<Utc>> } else { Some(Utc::now()) }
                         )
-                        .bind(id)
-                        .bind(if active {
-                            None::<DateTime<Utc>>
-                        } else {
-                            Some(Utc::now())
-                        })
                         .execute(&self.pool)
                         .await?;
                     }
@@ -378,8 +374,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
     }
 
     async fn delete_user(&self, id: Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM users WHERE id = $1")
-            .bind(id)
+        sqlx::query!("DELETE FROM users WHERE id = $1", id)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -426,10 +421,12 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
 
         query.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
 
+        // DYNAMIC QUERY: count_query built at runtime
         let total: i64 = sqlx::query_scalar(&count_query)
             .fetch_one(&self.pool)
             .await?;
 
+        // DYNAMIC QUERY: query built at runtime
         let groups = sqlx::query_as::<_, rustshare_core::services::ScimV2GroupRecord>(&query)
             .fetch_all(&self.pool)
             .await?;
@@ -441,11 +438,14 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         &self,
         id: Uuid,
     ) -> Result<Option<rustshare_core::services::ScimV2GroupRecord>, sqlx::Error> {
-        sqlx::query_as::<_, rustshare_core::services::ScimV2GroupRecord>(
-            "SELECT id, external_id, name, description, created_at, updated_at 
-             FROM user_groups WHERE id = $1",
+        sqlx::query_as!(
+            ScimV2GroupRecord,
+            r#"
+            SELECT id, external_id, name, description, created_at, updated_at 
+            FROM user_groups WHERE id = $1
+            "#,
+            id
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await
     }
@@ -454,11 +454,14 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         &self,
         external_id: &str,
     ) -> Result<Option<rustshare_core::services::ScimV2GroupRecord>, sqlx::Error> {
-        sqlx::query_as::<_, rustshare_core::services::ScimV2GroupRecord>(
-            "SELECT id, external_id, name, description, created_at, updated_at 
-             FROM user_groups WHERE external_id = $1",
+        sqlx::query_as!(
+            ScimV2GroupRecord,
+            r#"
+            SELECT id, external_id, name, description, created_at, updated_at 
+            FROM user_groups WHERE external_id = $1
+            "#,
+            external_id
         )
-        .bind(external_id)
         .fetch_optional(&self.pool)
         .await
     }
@@ -466,13 +469,13 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
     async fn create_group(&self, group: &ScimV2Group) -> Result<Uuid, sqlx::Error> {
         let id = Uuid::new_v4();
 
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO user_groups (id, name, external_id, created_at, updated_at) 
              VALUES ($1, $2, $3, NOW(), NOW())",
+            id,
+            group.display_name,
+            group.external_id
         )
-        .bind(id)
-        .bind(&group.display_name)
-        .bind(group.external_id.clone())
         .execute(&self.pool)
         .await?;
 
@@ -480,12 +483,12 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
     }
 
     async fn update_group(&self, id: Uuid, group: &ScimV2Group) -> Result<(), sqlx::Error> {
-        sqlx::query(
+        sqlx::query!(
             "UPDATE user_groups SET name = $2, external_id = $3, updated_at = NOW() WHERE id = $1",
+            id,
+            group.display_name,
+            group.external_id
         )
-        .bind(id)
-        .bind(&group.display_name)
-        .bind(group.external_id.clone())
         .execute(&self.pool)
         .await?;
 
@@ -562,55 +565,54 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
     }
 
     async fn delete_group(&self, id: Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM user_groups WHERE id = $1")
-            .bind(id)
+        sqlx::query!("DELETE FROM user_groups WHERE id = $1", id)
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
     async fn get_group_members(&self, group_id: Uuid) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
-        let rows: Vec<(Uuid, String)> = sqlx::query_as(
+        let rows = sqlx::query!(
             r#"
             SELECT u.id, u.display_name 
             FROM users u
             JOIN group_members gm ON u.id = gm.user_id
             WHERE gm.group_id = $1
             "#,
+            group_id
         )
-        .bind(group_id)
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows)
+        Ok(rows.into_iter().map(|r| (r.id, r.display_name)).collect())
     }
 
     async fn get_user_groups(&self, user_id: Uuid) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
-        let rows: Vec<(Uuid, String)> = sqlx::query_as(
+        let rows = sqlx::query!(
             r#"
             SELECT g.id, g.name 
             FROM user_groups g
             JOIN group_members gm ON g.id = gm.group_id
             WHERE gm.user_id = $1
             "#,
+            user_id
         )
-        .bind(user_id)
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows)
+        Ok(rows.into_iter().map(|r| (r.id, r.name)).collect())
     }
 
     async fn add_group_member(&self, group_id: Uuid, user_id: Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO group_members (group_id, user_id, added_at)
             VALUES ($1, $2, NOW())
             ON CONFLICT (group_id, user_id) DO NOTHING
             "#,
+            group_id,
+            user_id
         )
-        .bind(group_id)
-        .bind(user_id)
         .execute(&self.pool)
         .await?;
 
@@ -618,11 +620,13 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
     }
 
     async fn remove_group_member(&self, group_id: Uuid, user_id: Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
-            .bind(group_id)
-            .bind(user_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM group_members WHERE group_id = $1 AND user_id = $2",
+            group_id,
+            user_id
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -631,15 +635,18 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         &self,
         external_id: &str,
     ) -> Result<Option<Uuid>, sqlx::Error> {
-        sqlx::query_scalar("SELECT id FROM users WHERE external_id = $1")
-            .bind(external_id)
-            .fetch_optional(&self.pool)
-            .await
+        let row = sqlx::query!(
+            "SELECT id FROM users WHERE external_id = $1",
+            external_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| r.id))
     }
 
     async fn clear_group_members(&self, group_id: Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM group_members WHERE group_id = $1")
-            .bind(group_id)
+        sqlx::query!("DELETE FROM group_members WHERE group_id = $1", group_id)
             .execute(&self.pool)
             .await?;
 

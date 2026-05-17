@@ -1,13 +1,9 @@
 //! Event store implementation.
-//!
-//! NOTE: Currently uses runtime queries (`sqlx::query()`) instead of compile-time
-//! queries (`sqlx::query!()`) because offline mode setup requires a running database.
-//! This will be migrated to compile-time queries after Docker Compose is set up in Task 11.
 
 use anyhow::Result;
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::events::*;
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 /// Event store for append-only event log
@@ -22,21 +18,20 @@ impl EventStore {
 
     /// Append a new event to the event store
     pub async fn append(&self, event: &Event, broadcaster: &EventBroadcaster) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO events (event_id, event_type, aggregate_id, aggregate_type, payload, user_id, timestamp, version)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
+            event.id,
+            serde_json::to_string(&event.event_type)?,
+            event.aggregate_id,
+            serde_json::to_string(&event.aggregate_type)?,
+            &event.payload,
+            event.user_id,
+            event.timestamp,
+            event.version
         )
-        .bind(event.id)
-        .bind(serde_json::to_string(&event.event_type)?)
-        .bind(event.aggregate_id)
-        .bind(serde_json::to_string(&event.aggregate_type)?)
-        .bind(&event.payload)
-        .bind(event.user_id)
-        .bind(event.timestamp)
-        .bind(event.version)
         .execute(&self.pool)
         .await?;
 
@@ -53,17 +48,16 @@ impl EventStore {
     ) -> Result<Vec<Event>> {
         let aggregate_type_str = serde_json::to_string(&aggregate_type)?;
 
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             SELECT event_id, event_type, aggregate_id, aggregate_type, payload, user_id, timestamp, version
             FROM events
             WHERE aggregate_id = $1 AND aggregate_type = $2
             ORDER BY timestamp ASC
             "#,
+            aggregate_id,
+            &aggregate_type_str
         )
-        .bind(aggregate_id)
-        .bind(&aggregate_type_str)
         .fetch_all(&self.pool)
         .await?;
 
@@ -71,16 +65,14 @@ impl EventStore {
             .into_iter()
             .map(|row| {
                 Ok(Event {
-                    id: row.try_get("event_id")?,
-                    event_type: serde_json::from_str(&row.try_get::<String, _>("event_type")?)?,
-                    aggregate_id: row.try_get("aggregate_id")?,
-                    aggregate_type: serde_json::from_str(
-                        &row.try_get::<String, _>("aggregate_type")?,
-                    )?,
-                    payload: row.try_get("payload")?,
-                    user_id: row.try_get("user_id")?,
-                    timestamp: row.try_get("timestamp")?,
-                    version: row.try_get("version")?,
+                    id: row.event_id,
+                    event_type: serde_json::from_str(&row.event_type)?,
+                    aggregate_id: row.aggregate_id,
+                    aggregate_type: serde_json::from_str(&row.aggregate_type)?,
+                    payload: row.payload,
+                    user_id: row.user_id,
+                    timestamp: row.timestamp,
+                    version: row.version,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -104,8 +96,7 @@ impl EventStore {
         last_seen_event_id: Option<Uuid>,
         limit: i64,
     ) -> Result<Vec<Event>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             SELECT event_id, event_type, aggregate_id, aggregate_type, payload, user_id, timestamp, version
             FROM events
@@ -116,10 +107,10 @@ impl EventStore {
             ORDER BY timestamp ASC, event_id ASC
             LIMIT $3
             "#,
+            user_id,
+            last_seen_event_id,
+            limit
         )
-        .bind(user_id)
-        .bind(last_seen_event_id)
-        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
 
@@ -127,16 +118,14 @@ impl EventStore {
             .into_iter()
             .map(|row| {
                 Ok(Event {
-                    id: row.try_get("event_id")?,
-                    event_type: serde_json::from_str(&row.try_get::<String, _>("event_type")?)?,
-                    aggregate_id: row.try_get("aggregate_id")?,
-                    aggregate_type: serde_json::from_str(
-                        &row.try_get::<String, _>("aggregate_type")?,
-                    )?,
-                    payload: row.try_get("payload")?,
-                    user_id: row.try_get("user_id")?,
-                    timestamp: row.try_get("timestamp")?,
-                    version: row.try_get("version")?,
+                    id: row.event_id,
+                    event_type: serde_json::from_str(&row.event_type)?,
+                    aggregate_id: row.aggregate_id,
+                    aggregate_type: serde_json::from_str(&row.aggregate_type)?,
+                    payload: row.payload,
+                    user_id: row.user_id,
+                    timestamp: row.timestamp,
+                    version: row.version,
                 })
             })
             .collect::<Result<Vec<_>>>()?;

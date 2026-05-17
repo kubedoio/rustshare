@@ -255,13 +255,14 @@ impl ModuleService {
             ui_config,
         ) in defaults
         {
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM modules WHERE module_key = $1 AND tenant_id = $2)",
+            let row = sqlx::query!(
+                "SELECT EXISTS(SELECT 1 FROM modules WHERE module_key = $1 AND tenant_id = $2) as exists",
+                key,
+                tenant_id
             )
-            .bind(key)
-            .bind(tenant_id)
             .fetch_one(self.metadata_store.pool())
             .await?;
+            let exists = row.exists.unwrap_or(false);
 
             if !exists {
                 let module = Module {
@@ -289,7 +290,7 @@ impl ModuleService {
                     tenant_id,
                 };
 
-                sqlx::query(
+                sqlx::query!(
                     r#"
                     INSERT INTO modules (
                         id, module_key, display_name, description, enabled, root_path, renderer,
@@ -297,31 +298,31 @@ impl ModuleService {
                         ui_config, created_at, updated_at, tenant_id
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
                     "#,
+                    module.id,
+                    &module.module_key,
+                    &module.display_name,
+                    &module.description,
+                    module.enabled,
+                    &module.root_path,
+                    &module.renderer,
+                    module.default_template.as_deref(),
+                    &module.icon,
+                    &module.schema_version,
+                    &module.permissions,
+                    &module.ai_indexing,
+                    &module.audit,
+                    &module.ui_config,
+                    module.created_at,
+                    module.updated_at,
+                    module.tenant_id
                 )
-                .bind(module.id)
-                .bind(&module.module_key)
-                .bind(&module.display_name)
-                .bind(&module.description)
-                .bind(module.enabled)
-                .bind(&module.root_path)
-                .bind(&module.renderer)
-                .bind(&module.default_template)
-                .bind(&module.icon)
-                .bind(&module.schema_version)
-                .bind(&module.permissions)
-                .bind(&module.ai_indexing)
-                .bind(&module.audit)
-                .bind(&module.ui_config)
-                .bind(module.created_at)
-                .bind(module.updated_at)
-                .bind(module.tenant_id)
                 .execute(self.metadata_store.pool())
                 .await?;
             }
         }
 
         // Fix brainstorming icon for existing installations (pen-tool → lightbulb)
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE modules
             SET icon = 'lightbulb',
@@ -334,8 +335,8 @@ impl ModuleService {
               AND tenant_id = $1
               AND icon = 'pen-tool'
             "#,
+            tenant_id
         )
-        .bind(tenant_id)
         .execute(self.metadata_store.pool())
         .await?;
 
@@ -374,11 +375,11 @@ impl ModuleService {
             .await?;
 
         // Mark enabled
-        sqlx::query(
+        sqlx::query!(
             "UPDATE modules SET enabled = true, updated_at = now() WHERE module_key = $1 AND tenant_id = $2",
+            key,
+            tenant_id
         )
-        .bind(key)
-        .bind(tenant_id)
         .execute(self.metadata_store.pool())
         .await?;
 
@@ -398,11 +399,11 @@ impl ModuleService {
             return Ok(module);
         }
 
-        sqlx::query(
+        sqlx::query!(
             "UPDATE modules SET enabled = false, updated_at = now() WHERE module_key = $1 AND tenant_id = $2",
+            key,
+            tenant_id
         )
-        .bind(key)
-        .bind(tenant_id)
         .execute(self.metadata_store.pool())
         .await?;
 
@@ -411,12 +412,32 @@ impl ModuleService {
 
     /// List all modules (for admin).
     pub async fn list_modules(&self, tenant_id: Uuid) -> Result<Vec<Module>, ModuleError> {
-        let modules: Vec<Module> = sqlx::query_as::<_, Module>(
+        let rows = sqlx::query!(
             "SELECT * FROM modules WHERE tenant_id = $1 ORDER BY display_name",
+            tenant_id
         )
-        .bind(tenant_id)
         .fetch_all(self.metadata_store.pool())
         .await?;
+
+        let modules: Vec<Module> = rows.into_iter().map(|row| Module {
+            id: row.id,
+            module_key: row.module_key,
+            display_name: row.display_name,
+            description: row.description.unwrap_or_default(),
+            enabled: row.enabled,
+            root_path: row.root_path,
+            renderer: row.renderer,
+            default_template: row.default_template,
+            icon: row.icon.unwrap_or_default(),
+            schema_version: row.schema_version.unwrap_or_default(),
+            permissions: row.permissions,
+            ai_indexing: row.ai_indexing,
+            audit: row.audit,
+            ui_config: row.ui_config,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            tenant_id: row.tenant_id,
+        }).collect();
 
         Ok(modules
             .into_iter()
@@ -431,12 +452,32 @@ impl ModuleService {
         user_id: UserId,
     ) -> Result<Vec<Module>, ModuleError> {
         let is_admin = self.is_admin_user(user_id, tenant_id).await?;
-        let modules: Vec<Module> = sqlx::query_as::<_, Module>(
+        let rows = sqlx::query!(
             "SELECT * FROM modules WHERE enabled = true AND tenant_id = $1 ORDER BY display_name",
+            tenant_id
         )
-        .bind(tenant_id)
         .fetch_all(self.metadata_store.pool())
         .await?;
+
+        let modules: Vec<Module> = rows.into_iter().map(|row| Module {
+            id: row.id,
+            module_key: row.module_key,
+            display_name: row.display_name,
+            description: row.description.unwrap_or_default(),
+            enabled: row.enabled,
+            root_path: row.root_path,
+            renderer: row.renderer,
+            default_template: row.default_template,
+            icon: row.icon.unwrap_or_default(),
+            schema_version: row.schema_version.unwrap_or_default(),
+            permissions: row.permissions,
+            ai_indexing: row.ai_indexing,
+            audit: row.audit,
+            ui_config: row.ui_config,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            tenant_id: row.tenant_id,
+        }).collect();
 
         Ok(modules
             .into_iter()
@@ -447,13 +488,33 @@ impl ModuleService {
 
     /// Get a single module by key.
     pub async fn get_module(&self, key: &str, tenant_id: Uuid) -> Result<Module, ModuleError> {
-        let module: Option<Module> = sqlx::query_as::<_, Module>(
+        let row = sqlx::query!(
             "SELECT * FROM modules WHERE module_key = $1 AND tenant_id = $2",
+            key,
+            tenant_id
         )
-        .bind(key)
-        .bind(tenant_id)
         .fetch_optional(self.metadata_store.pool())
         .await?;
+
+        let module: Option<Module> = row.map(|row| Module {
+            id: row.id,
+            module_key: row.module_key,
+            display_name: row.display_name,
+            description: row.description.unwrap_or_default(),
+            enabled: row.enabled,
+            root_path: row.root_path,
+            renderer: row.renderer,
+            default_template: row.default_template,
+            icon: row.icon.unwrap_or_default(),
+            schema_version: row.schema_version.unwrap_or_default(),
+            permissions: row.permissions,
+            ai_indexing: row.ai_indexing,
+            audit: row.audit,
+            ui_config: row.ui_config,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            tenant_id: row.tenant_id,
+        });
 
         module
             .map(|m| self.normalize_module(m))
@@ -540,7 +601,7 @@ impl ModuleService {
             Some(input.ui_config.unwrap_or(module.ui_config)),
         );
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE modules
             SET display_name = $1, description = $2, icon = $3, root_path = $4,
@@ -548,19 +609,19 @@ impl ModuleService {
                 ai_indexing = $8, audit = $9, ui_config = $10, updated_at = now()
             WHERE module_key = $11 AND tenant_id = $12
             "#,
+            display_name,
+            description,
+            icon,
+            root_path,
+            renderer,
+            default_template,
+            permissions,
+            ai_indexing,
+            audit,
+            ui_config,
+            key,
+            tenant_id
         )
-        .bind(display_name)
-        .bind(description)
-        .bind(icon)
-        .bind(root_path)
-        .bind(renderer)
-        .bind(default_template)
-        .bind(permissions)
-        .bind(ai_indexing)
-        .bind(audit)
-        .bind(ui_config)
-        .bind(key)
-        .bind(tenant_id)
         .execute(self.metadata_store.pool())
         .await?;
 
@@ -600,26 +661,26 @@ impl ModuleService {
         let root_path = module.root_path.trim_end_matches('/').to_string();
         let path_prefix = format!("{root_path}/%");
 
-        let file_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM files WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3",
+        let row = sqlx::query!(
+            "SELECT COUNT(*) as count FROM files WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3",
+            tenant_id,
+            user_id,
+            &path_prefix
         )
-        .bind(tenant_id)
-        .bind(user_id)
-        .bind(&path_prefix)
         .fetch_one(self.metadata_store.pool())
-        .await
-        .unwrap_or(0);
+        .await;
+        let file_count = row.map(|r| r.count.unwrap_or(0)).unwrap_or(0);
 
-        let folder_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3 AND path <> $4",
+        let row = sqlx::query!(
+            "SELECT COUNT(*) as count FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3 AND path <> $4",
+            tenant_id,
+            user_id,
+            &path_prefix,
+            &root_path
         )
-        .bind(tenant_id)
-        .bind(user_id)
-        .bind(&path_prefix)
-        .bind(&root_path)
         .fetch_one(self.metadata_store.pool())
-        .await
-        .unwrap_or(0);
+        .await;
+        let folder_count = row.map(|r| r.count.unwrap_or(0)).unwrap_or(0);
 
         let total_items = file_count + folder_count;
 
@@ -764,22 +825,22 @@ impl ModuleService {
                 let items = self
                     .recent_folders_under_path(path_prefix, max_items, tenant_id, user_id)
                     .await?;
-                let public_count: i64 = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND (path LIKE '/Shares/Public/%' OR path LIKE '/Workspace/Shares/Public/%')",
+                let row = sqlx::query!(
+                    "SELECT COUNT(*) as count FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND (path LIKE '/Shares/Public/%' OR path LIKE '/Workspace/Shares/Public/%')",
+                    tenant_id,
+                    user_id
                 )
-                .bind(tenant_id)
-                .bind(user_id)
                 .fetch_one(self.metadata_store.pool())
-                .await
-                .unwrap_or(0);
-                let internal_count: i64 = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND (path LIKE '/Shares/Internal/%' OR path LIKE '/Workspace/Shares/Internal/%')",
+                .await;
+                let public_count = row.map(|r| r.count.unwrap_or(0)).unwrap_or(0);
+                let row = sqlx::query!(
+                    "SELECT COUNT(*) as count FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND (path LIKE '/Shares/Internal/%' OR path LIKE '/Workspace/Shares/Internal/%')",
+                    tenant_id,
+                    user_id
                 )
-                .bind(tenant_id)
-                .bind(user_id)
                 .fetch_one(self.metadata_store.pool())
-                .await
-                .unwrap_or(0);
+                .await;
+                let internal_count = row.map(|r| r.count.unwrap_or(0)).unwrap_or(0);
                 Ok((
                     "shares-overview".to_string(),
                     items,
@@ -802,33 +863,29 @@ impl ModuleService {
         tenant_id: Uuid,
         owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
-        let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>, Option<Uuid>, Option<String>)>(
+        let rows = sqlx::query!(
             "SELECT f.id, f.name, f.modified_at, f.parent_folder_id, pf.name as parent_name FROM files f LEFT JOIN folders pf ON f.parent_folder_id = pf.id WHERE f.tenant_id = $1 AND f.owner_id = $2 AND f.deleted_at IS NULL AND f.path LIKE $3 ORDER BY f.modified_at DESC LIMIT $4",
+            tenant_id,
+            owner_id,
+            path_prefix,
+            max_items
         )
-        .bind(tenant_id)
-        .bind(owner_id)
-        .bind(path_prefix)
-        .bind(max_items)
         .fetch_all(self.metadata_store.pool())
         .await?;
 
         Ok(rows
             .into_iter()
-            .map(|(id, name, updated_at, _parent_folder_id, parent_name)| {
-                let display_name = if name == "note.md" {
-                    if let Some(parent_name) = parent_name {
-                        parent_name
-                    } else {
-                        name
-                    }
+            .map(|row| {
+                let display_name = if row.name == "note.md" {
+                    row.parent_name
                 } else {
-                    name
+                    row.name
                 };
                 SummaryItem {
-                    id: id.to_string(),
+                    id: row.id.to_string(),
                     name: display_name,
                     item_type: "file".to_string(),
-                    updated_at,
+                    updated_at: row.modified_at,
                 }
             })
             .collect())
@@ -841,23 +898,23 @@ impl ModuleService {
         tenant_id: Uuid,
         owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
-        let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
+        let rows = sqlx::query!(
             "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3 ORDER BY updated_at DESC LIMIT $4",
+            tenant_id,
+            owner_id,
+            path_prefix,
+            max_items
         )
-        .bind(tenant_id)
-        .bind(owner_id)
-        .bind(path_prefix)
-        .bind(max_items)
         .fetch_all(self.metadata_store.pool())
         .await?;
 
         Ok(rows
             .into_iter()
-            .map(|(id, name, updated_at)| SummaryItem {
-                id: id.to_string(),
-                name,
+            .map(|row| SummaryItem {
+                id: row.id.to_string(),
+                name: row.name,
                 item_type: "folder".to_string(),
-                updated_at,
+                updated_at: row.updated_at,
             })
             .collect())
     }
@@ -870,24 +927,24 @@ impl ModuleService {
         tenant_id: Uuid,
         owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
-        let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
+        let rows = sqlx::query!(
             "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3 AND name LIKE $4 ORDER BY updated_at DESC LIMIT $5",
+            tenant_id,
+            owner_id,
+            path_prefix,
+            name_pattern,
+            max_items
         )
-        .bind(tenant_id)
-        .bind(owner_id)
-        .bind(path_prefix)
-        .bind(name_pattern)
-        .bind(max_items)
         .fetch_all(self.metadata_store.pool())
         .await?;
 
         Ok(rows
             .into_iter()
-            .map(|(id, name, updated_at)| SummaryItem {
-                id: id.to_string(),
-                name,
+            .map(|row| SummaryItem {
+                id: row.id.to_string(),
+                name: row.name,
                 item_type: "folder".to_string(),
-                updated_at,
+                updated_at: row.updated_at,
             })
             .collect())
     }
@@ -899,23 +956,23 @@ impl ModuleService {
         tenant_id: Uuid,
         owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
-        let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
+        let rows = sqlx::query!(
             "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND parent_folder_id = (SELECT id FROM folders WHERE path = $3 AND tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL LIMIT 1) ORDER BY updated_at DESC LIMIT $4",
+            tenant_id,
+            owner_id,
+            root_path,
+            max_items
         )
-        .bind(tenant_id)
-        .bind(owner_id)
-        .bind(root_path)
-        .bind(max_items)
         .fetch_all(self.metadata_store.pool())
         .await?;
 
         Ok(rows
             .into_iter()
-            .map(|(id, name, updated_at)| SummaryItem {
-                id: id.to_string(),
-                name,
+            .map(|row| SummaryItem {
+                id: row.id.to_string(),
+                name: row.name,
                 item_type: "folder".to_string(),
-                updated_at,
+                updated_at: row.updated_at,
             })
             .collect())
     }
@@ -943,14 +1000,14 @@ impl ModuleService {
     }
 
     async fn is_admin_user(&self, user_id: UserId, tenant_id: Uuid) -> Result<bool, ModuleError> {
-        let is_admin = sqlx::query_scalar::<_, bool>(
-            "SELECT COALESCE(is_admin, false) FROM users WHERE id = $1 AND tenant_id = $2",
+        let row = sqlx::query!(
+            "SELECT COALESCE(is_admin, false) as is_admin FROM users WHERE id = $1 AND tenant_id = $2",
+            user_id,
+            tenant_id
         )
-        .bind(user_id)
-        .bind(tenant_id)
         .fetch_optional(self.metadata_store.pool())
-        .await?
-        .unwrap_or(false);
+        .await?;
+        let is_admin = row.and_then(|r| r.is_admin).unwrap_or(false);
         Ok(is_admin)
     }
 
@@ -958,12 +1015,13 @@ impl ModuleService {
         &self,
         tenant_id: Uuid,
     ) -> Result<Option<UserId>, ModuleError> {
-        let admin_id = sqlx::query_scalar::<_, Uuid>(
+        let row = sqlx::query!(
             "SELECT id FROM users WHERE tenant_id = $1 AND is_admin = true ORDER BY created_at ASC LIMIT 1",
+            tenant_id
         )
-        .bind(tenant_id)
         .fetch_optional(self.metadata_store.pool())
         .await?;
+        let admin_id = row.map(|r| r.id);
         Ok(admin_id)
     }
 }
