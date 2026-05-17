@@ -3,19 +3,30 @@
 	import type { AdminUser } from '$lib/api/admin';
 	import { disableAdminUser, enableAdminUser, deleteAdminUser } from '$lib/api/admin';
 
-	export let users: AdminUser[] = [];
-	export let total: number = 0;
-	export let page: number = 1;
-	export let perPage: number = 20;
-	export let onPageChange: (page: number) => void = () => {};
-	export let onSearch: (query: string) => void = () => {};
-	export let onStatusFilter: (status: string) => void = () => {};
-	export let onRefresh: () => void = () => {};
+	let {
+		users = [],
+		total = 0,
+		page = 1,
+		perPage = 20,
+		onPageChange = () => {},
+		onSearch = () => {},
+		onStatusFilter = () => {},
+		onRefresh = () => {}
+	}: {
+		users?: AdminUser[];
+		total?: number;
+		page?: number;
+		perPage?: number;
+		onPageChange?: (page: number) => void;
+		onSearch?: (query: string) => void;
+		onStatusFilter?: (status: string) => void;
+		onRefresh?: () => void;
+	} = $props();
 
-	let searchValue = '';
+	let searchValue = $state('');
 	let statusFilter = '';
 	let searchTimeout: ReturnType<typeof setTimeout>;
-	let confirmDelete: string | null = null;
+	let confirmDelete = $state<string | null>(null);
 
 	const totalPages = Math.ceil(total / perPage);
 

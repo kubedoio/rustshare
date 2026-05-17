@@ -2,28 +2,47 @@
 	import { Folder, ChevronRight, Loader as Loader2, Check, X } from 'lucide-svelte';
 	import { folderTreeStore, type FolderNode } from '$lib/stores/folderTree';
 
-	export let folder: FolderNode;
-	export let level = 0;
-	export let renamingFolderId: string | null = null;
-	export let renameValue = '';
-	export let renameInputRef: HTMLInputElement | null = null;
-	export let draggedOverFolderId: string | null = null;
+	interface Props {
+		folder: FolderNode;
+		level?: number;
+		renamingFolderId?: string | null;
+		renameValue?: string;
+		renameInputRef?: HTMLInputElement | null;
+		draggedOverFolderId?: string | null;
+		onSelect: (folder: FolderNode) => void;
+		onToggleExpand: (folder: FolderNode) => void;
+		onContextMenu: (e: MouseEvent, folder: FolderNode) => void;
+		onRenameConfirm: (folder: FolderNode) => void;
+		onRenameCancel: () => void;
+		onRenameKeydown: (e: KeyboardEvent, folder: FolderNode) => void;
+		onDragOver?: (folderId: string) => void;
+		onDragLeave?: () => void;
+		onDrop?: (folder: FolderNode) => void;
+	}
 
-	export let onSelect: (folder: FolderNode) => void;
-	export let onToggleExpand: (folder: FolderNode) => void;
-	export let onContextMenu: (e: MouseEvent, folder: FolderNode) => void;
-	export let onRenameConfirm: (folder: FolderNode) => void;
-	export let onRenameCancel: () => void;
-	export let onRenameKeydown: (e: KeyboardEvent, folder: FolderNode) => void;
-	export let onDragOver: (folderId: string) => void = () => {};
-	export let onDragLeave: () => void = () => {};
-	export let onDrop: (folder: FolderNode) => void = () => {};
+	let {
+		folder,
+		level = 0,
+		renamingFolderId = null,
+		renameValue = '',
+		renameInputRef = null,
+		draggedOverFolderId = null,
+		onSelect,
+		onToggleExpand,
+		onContextMenu,
+		onRenameConfirm,
+		onRenameCancel,
+		onRenameKeydown,
+		onDragOver = () => {},
+		onDragLeave = () => {},
+		onDrop = () => {}
+	}: Props = $props();
 
-	$: isSelected = $folderTreeStore.selectedId === folder.id;
-	$: isExpanded = $folderTreeStore.expandedIds.has(folder.id);
-	$: isLoading = $folderTreeStore.loadingIds.has(folder.id);
-	$: isRenaming = renamingFolderId === folder.id;
-	$: isDragOver = draggedOverFolderId === folder.id;
+	let isSelected = $derived($folderTreeStore.selectedId === folder.id);
+	let isExpanded = $derived($folderTreeStore.expandedIds.has(folder.id));
+	let isLoading = $derived($folderTreeStore.loadingIds.has(folder.id));
+	let isRenaming = $derived(renamingFolderId === folder.id);
+	let isDragOver = $derived(draggedOverFolderId === folder.id);
 
 	function handleClick() {
 		onSelect(folder);

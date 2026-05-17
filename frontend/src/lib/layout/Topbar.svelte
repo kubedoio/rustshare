@@ -19,12 +19,12 @@
 	import UserMenuDropdown from './topbar/UserMenuDropdown.svelte';
 	import InvitePopover from './topbar/InvitePopover.svelte';
 
-	export let onMenuClick: () => void = () => {};
+	let { onMenuClick = () => {} }: { onMenuClick?: () => void } = $props();
 
-	let userMenuOpen = false;
-	let newMenuOpen = false;
-	let inviteOpen = false;
-	let inviteEnabled = false;
+	let userMenuOpen = $state(false);
+	let newMenuOpen = $state(false);
+	let inviteOpen = $state(false);
+	let inviteEnabled = $state(false);
 
 	onMount(() => {
 		void (async () => {
@@ -39,28 +39,34 @@
 		})();
 	});
 
-	$: unreadCountQuery = createQuery({
-		queryKey: ['notifications-unread-count'],
-		queryFn: () => getUnreadNotificationCount(),
-		enabled: !!$currentUser,
-		refetchInterval: 30000
-	});
+	let unreadCountQuery = $derived(
+		createQuery({
+			queryKey: ['notifications-unread-count'],
+			queryFn: () => getUnreadNotificationCount(),
+			enabled: !!$currentUser,
+			refetchInterval: 30000
+		})
+	);
 
-	$: allFilesQuery = createQuery({
-		queryKey: ['all-files'],
-		queryFn: () => listAllFiles(),
-		enabled: !!$currentUser
-	});
+	let allFilesQuery = $derived(
+		createQuery({
+			queryKey: ['all-files'],
+			queryFn: () => listAllFiles(),
+			enabled: !!$currentUser
+		})
+	);
 
-	$: totalSizeUsed =
+	let totalSizeUsed = $derived(
 		$allFilesQuery.data?.reduce(
 			(sum: number, file: { size?: number }) => sum + (file.size || 0),
 			0
-		) ?? 0;
-	$: storageQuota = $currentUser?.storage_quota ?? null;
-	$: usagePercent = storageQuota ? Math.min(100, (totalSizeUsed / storageQuota) * 100) : 0;
-	$: usageColor =
-		usagePercent > 85 ? '#b63e3e' : usagePercent > 60 ? '#a56a12' : 'var(--brand-500, #c65a1e)';
+		) ?? 0
+	);
+	let storageQuota = $derived($currentUser?.storage_quota ?? null);
+	let usagePercent = $derived(storageQuota ? Math.min(100, (totalSizeUsed / storageQuota) * 100) : 0);
+	let usageColor = $derived(
+		usagePercent > 85 ? '#b63e3e' : usagePercent > 60 ? '#a56a12' : 'var(--brand-500, #c65a1e)'
+	);
 
 	interface SearchItem {
 		id: string;
@@ -81,8 +87,8 @@
 
 	let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let searchAbortController: AbortController | null = null;
-	let searchLoading = false;
-	let serverSearchResults: { files: SearchItem[]; folders: SearchItem[] } = { files: [], folders: [] };
+	let searchLoading = $state(false);
+	let serverSearchResults: { files: SearchItem[]; folders: SearchItem[] } = $state({ files: [], folders: [] });
 
 	function getCachedSearch(query: string): { files: SearchItem[]; folders: SearchItem[] } | null {
 		const cached = searchCache.get(query);
@@ -146,7 +152,7 @@
 				});
 	}
 
-	$: {
+	$effect(() => {
 		const q = $globalSearchQuery;
 		if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
 		if (!q.trim()) {
@@ -159,7 +165,7 @@
 		} else {
 			searchDebounceTimer = setTimeout(() => performSearch(q), DEBOUNCE_MS);
 		}
-	}
+	});
 
 	onDestroy(() => {
 		if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
@@ -215,7 +221,7 @@
 		return null;
 	}
 
-	$: navLabel = computeNavLabel($page.url.pathname);
+	let navLabel = $derived(computeNavLabel($page.url.pathname));
 
 	function handleClickOutside(event: MouseEvent) {
 		const target = event.target as HTMLElement;

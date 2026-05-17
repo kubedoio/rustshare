@@ -2,7 +2,11 @@
 	import type { ModuleDefinition } from '$lib/modules/registry';
 	import DashboardWidgetRenderer from './DashboardWidgetRenderer.svelte';
 
-	export let modules: ModuleDefinition[] = [];
+	let {
+		modules = []
+	}: {
+		modules?: ModuleDefinition[];
+	} = $props();
 
 	function columnClass(module: ModuleDefinition): string {
 		const columns = module.ui.dashboard.widget.columns;

@@ -14,10 +14,17 @@
 		FileTerminal
 	} from 'lucide-svelte';
 
-	export let mimeType: string;
-	export let fileName: string;
-	export let size: 'sm' | 'md' | 'lg' = 'md';
-	export let className: string = '';
+	let {
+		mimeType,
+		fileName,
+		size = 'md',
+		className = ''
+	}: {
+		mimeType: string;
+		fileName: string;
+		size?: 'sm' | 'md' | 'lg';
+		className?: string;
+	} = $props();
 
 	const iconSizes = {
 		sm: 16,
@@ -25,7 +32,7 @@
 		lg: 24
 	};
 
-	$: iconSize = iconSizes[size];
+	let iconSize = $derived(iconSizes[size]);
 
 	function getIconComponent() {
 		const lowerName = fileName.toLowerCase();
@@ -179,8 +186,8 @@
 		return 'text-base-content/50';
 	}
 
-	$: IconComponent = getIconComponent();
-	$: iconColor = getIconColor();
+	let IconComponent = $derived(getIconComponent());
+	let iconColor = $derived(getIconColor());
 </script>
 
 <div class="{className} {iconColor}">

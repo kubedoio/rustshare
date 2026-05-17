@@ -1,7 +1,13 @@
 <script lang="ts">
-	export let title: string;
-	export let href: string | undefined = undefined;
-	export let onClick: (() => void) | undefined = undefined;
+	let {
+		title,
+		href = undefined,
+		onClick = undefined
+	}: {
+		title: string;
+		href?: string | undefined;
+		onClick?: (() => void) | undefined;
+	} = $props();
 </script>
 
 <div class="section-header">

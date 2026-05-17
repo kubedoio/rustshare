@@ -1,6 +1,11 @@
 <script lang="ts">
-	export let title: string;
-	export let description: string | undefined = undefined;
+	let {
+		title,
+		description = undefined
+	}: {
+		title: string;
+		description?: string | undefined;
+	} = $props();
 </script>
 
 <section class="py-6 first:pt-0 last:pb-0">

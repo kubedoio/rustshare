@@ -10,8 +10,13 @@
 		PenTool
 	} from 'lucide-svelte';
 
-	export let onAction: (action: string) => void;
-	export let open = false;
+	let {
+		onAction,
+		open = $bindable(false)
+	}: {
+		onAction: (action: string) => void;
+		open?: boolean;
+	} = $props();
 
 	function handleAction(action: string) {
 		open = false;

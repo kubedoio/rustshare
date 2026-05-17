@@ -6,41 +6,45 @@
 	import { ApiError } from '$lib/api/types';
 	import { authStore } from '$lib/stores/auth';
 
-	let deviceCode = '';
-	let userCode = '';
-	let isSubmitting = false;
-	let hasRedirectedToLogin = false;
-	let state: 'loading' | 'manual' | 'ready' | 'success' | 'error' = 'loading';
-	let errorMessage = '';
+	let deviceCode = $state('');
+	let userCode = $state('');
+	let isSubmitting = $state(false);
+	let hasRedirectedToLogin = $state(false);
+	let approvalState: 'loading' | 'manual' | 'ready' | 'success' | 'error' = $state('loading');
+	let errorMessage = $state('');
 
-	$: deviceCode = $page.url.searchParams.get('device_code')?.trim() ?? '';
+	$effect(() => {
+		deviceCode = $page.url.searchParams.get('device_code')?.trim() ?? '';
+	});
 
-	$: if (browser) {
-		if (deviceCode) {
-			// Auto-approval flow via device_code in URL
-			if (!$authStore.isLoading && !$authStore.isAuthenticated && !hasRedirectedToLogin) {
-				hasRedirectedToLogin = true;
-				const redirectTarget = `${$page.url.pathname}${$page.url.search}`;
-				goto(`/login?redirect_to=${encodeURIComponent(redirectTarget)}`);
-			} else if (!$authStore.isLoading && $authStore.isAuthenticated && state === 'loading') {
-				state = 'ready';
-			}
-		} else {
-			// Manual entry flow — no device_code in URL
-			if (!$authStore.isLoading && !$authStore.isAuthenticated && !hasRedirectedToLogin) {
-				hasRedirectedToLogin = true;
-				const redirectTarget = $page.url.pathname;
-				goto(`/login?redirect_to=${encodeURIComponent(redirectTarget)}`);
-			} else if (!$authStore.isLoading && $authStore.isAuthenticated && state === 'loading') {
-				state = 'manual';
+	$effect(() => {
+		if (browser) {
+			if (deviceCode) {
+				// Auto-approval flow via device_code in URL
+				if (!$authStore.isLoading && !$authStore.isAuthenticated && !hasRedirectedToLogin) {
+					hasRedirectedToLogin = true;
+					const redirectTarget = `${$page.url.pathname}${$page.url.search}`;
+					goto(`/login?redirect_to=${encodeURIComponent(redirectTarget)}`);
+				} else if (!$authStore.isLoading && $authStore.isAuthenticated && approvalState === 'loading') {
+					approvalState = 'ready';
+				}
+			} else {
+				// Manual entry flow — no device_code in URL
+				if (!$authStore.isLoading && !$authStore.isAuthenticated && !hasRedirectedToLogin) {
+					hasRedirectedToLogin = true;
+					const redirectTarget = $page.url.pathname;
+					goto(`/login?redirect_to=${encodeURIComponent(redirectTarget)}`);
+				} else if (!$authStore.isLoading && $authStore.isAuthenticated && approvalState === 'loading') {
+					approvalState = 'manual';
+				}
 			}
 		}
-	}
+	});
 
 	async function handleApproveByDeviceCode() {
 		if (!deviceCode) {
 			errorMessage = 'Invalid approval link. Start the pairing flow again from the desktop client.';
-			state = 'error';
+			approvalState = 'error';
 			return;
 		}
 
@@ -49,9 +53,9 @@
 
 		try {
 			await approveDevicePairingByDeviceCode(deviceCode);
-			state = 'success';
+			approvalState = 'success';
 		} catch (error) {
-			state = 'error';
+			approvalState = 'error';
 			errorMessage =
 				error instanceof ApiError && error.status === 404
 					? 'This approval link is invalid or has expired. Start a new pairing request from the desktop client.'
@@ -67,7 +71,7 @@
 		const code = userCode.trim().toUpperCase();
 		if (!code || code.length < 4) {
 			errorMessage = 'Please enter a valid pairing code.';
-			state = 'error';
+			approvalState = 'error';
 			return;
 		}
 
@@ -76,9 +80,9 @@
 
 		try {
 			await approveDevicePairing(code);
-			state = 'success';
+			approvalState = 'success';
 		} catch (error) {
-			state = 'error';
+			approvalState = 'error';
 			errorMessage =
 				error instanceof ApiError && error.status === 404
 					? 'This pairing code is invalid or has expired. Check the code and try again.'
@@ -99,9 +103,9 @@
 	<div class="w-full max-w-lg rounded-2xl border border-base-300 bg-base-100 p-8 shadow-xl">
 		<h1 class="text-2xl font-bold text-base-content">Approve Device Pairing</h1>
 
-		{#if state === 'loading'}
+		{#if approvalState === 'loading'}
 			<p class="mt-4 text-sm text-base-content/70">Checking your session...</p>
-		{:else if state === 'manual'}
+		{:else if approvalState === 'manual'}
 			<div class="mt-4 space-y-4">
 				<p class="text-sm text-base-content/75">
 					Enter the pairing code shown on the device you want to approve.
@@ -119,7 +123,7 @@
 						bind:value={userCode}
 						disabled={isSubmitting}
 						on:input={() => {
-							if (state === 'error') state = 'manual';
+							if (approvalState === 'error') approvalState = 'manual';
 						}}
 					/>
 					<button
@@ -136,7 +140,7 @@
 					again from the desktop client.
 				</p>
 			</div>
-		{:else if state === 'ready'}
+		{:else if approvalState === 'ready'}
 			<div class="mt-4 space-y-4">
 				<p class="text-sm text-base-content/75">
 					Approve this device only if you started the pairing flow yourself. The desktop client is
@@ -160,7 +164,7 @@
 					</button>
 				</div>
 			</div>
-		{:else if state === 'success'}
+		{:else if approvalState === 'success'}
 			<div class="mt-4 space-y-3">
 				<p class="text-sm text-success">
 					Device approved. You can return to the desktop client and continue setup.
@@ -174,7 +178,7 @@
 						type="button"
 						class="btn btn-outline btn-sm"
 						on:click={() => {
-							state = 'ready';
+							approvalState = 'ready';
 							errorMessage = '';
 						}}
 					>
@@ -185,7 +189,7 @@
 						type="button"
 						class="btn btn-outline btn-sm"
 						on:click={() => {
-							state = 'manual';
+							approvalState = 'manual';
 							errorMessage = '';
 						}}
 					>

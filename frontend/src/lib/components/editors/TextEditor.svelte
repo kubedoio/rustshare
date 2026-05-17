@@ -6,24 +6,33 @@
 	import BaseEditor from './BaseEditor.svelte';
 	import { createEventDispatcher } from 'svelte';
 
-	export let open = false;
-	export let file: File | null = null;
+	let {
+		open = false,
+		file = null,
+		onClose,
+		onSaved
+	}: {
+		open?: boolean;
+		file?: File | null;
+		onClose?: () => void;
+		onSaved?: (event: { file: File }) => void;
+	} = $props();
 
 	const dispatch = createEventDispatcher<{
 		close: void;
 		saved: { file: File };
 	}>();
 
-	let content = '';
-	let originalContent = '';
-	let isLoading = false;
-	let isSaving = false;
-	let error: string | null = null;
-	let saveMode: 'overwrite' | 'new_version' = 'new_version';
+	let content = $state('');
+	let originalContent = $state('');
+	let isLoading = $state(false);
+	let isSaving = $state(false);
+	let error = $state<string | null>(null);
+	let saveMode: 'overwrite' | 'new_version' = $state('new_version');
 	let editorContainer: HTMLDivElement;
-	let monaco: typeof import('monaco-editor') | null = null;
-	let editor: import('monaco-editor').editor.IStandaloneCodeEditor | null = null;
-	let hasChanges = false;
+	let monaco: typeof import('monaco-editor') | null = $state(null);
+	let editor: import('monaco-editor').editor.IStandaloneCodeEditor | null = $state(null);
+	let hasChanges = $state(false);
 
 	// Monaco editor options
 	const editorOptions: import('monaco-editor').editor.IStandaloneEditorConstructionOptions = {
@@ -129,6 +138,7 @@
 			hasChanges = false;
 
 			dispatch('saved', { file });
+			onSaved?.({ file });
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to save file';
 		} finally {
@@ -138,25 +148,30 @@
 
 	function handleClose() {
 		dispatch('close');
+		onClose?.();
 	}
 
 	// Initialize editor when modal opens
-	$: if (open && file) {
-		// Await content loading before initializing the editor to prevent blank display
-		loadContent().then(() => {
-			if (!editor) {
-				// Small delay to ensure container is fully bound and visible
-				setTimeout(() => initEditor(), 50);
-			}
-		});
-	}
+	$effect(() => {
+		if (open && file) {
+			// Await content loading before initializing the editor to prevent blank display
+			loadContent().then(() => {
+				if (!editor) {
+					// Small delay to ensure container is fully bound and visible
+					setTimeout(() => initEditor(), 50);
+				}
+			});
+		}
+	});
 
 	// Cleanup when modal closes
-	$: if (!open && editor) {
-		editor.dispose();
-		editor = null;
-		monaco = null;
-	}
+	$effect(() => {
+		if (!open && editor) {
+			editor.dispose();
+			editor = null;
+			monaco = null;
+		}
+	});
 
 	onDestroy(() => {
 		if (editor) {

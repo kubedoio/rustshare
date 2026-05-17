@@ -1,15 +1,21 @@
 <script lang="ts">
 	import { listAdminUsers, type AdminUser } from '$lib/api/admin';
 
-	export let placeholder = 'Search users...';
-	export let excludeIds: string[] = [];
-	export let onselect: ((user: AdminUser) => void) | undefined = undefined;
+	let {
+		placeholder = 'Search users...',
+		excludeIds = [],
+		onselect = undefined
+	}: {
+		placeholder?: string;
+		excludeIds?: string[];
+		onselect?: ((user: AdminUser) => void) | undefined;
+	} = $props();
 
-	let query = '';
-	let results: AdminUser[] = [];
-	let loading = false;
-	let open = false;
-	let searchTimeout: ReturnType<typeof setTimeout>;
+	let query = $state('');
+	let results = $state<AdminUser[]>([]);
+	let loading = $state(false);
+	let open = $state(false);
+	let searchTimeout = $state<ReturnType<typeof setTimeout> | undefined>(undefined);
 
 	async function search(q: string) {
 		if (!q.trim()) {

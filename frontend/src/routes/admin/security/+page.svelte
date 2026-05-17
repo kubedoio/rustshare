@@ -13,15 +13,17 @@
 		queryFn: getSecurityConfig
 	});
 
-	let loginProtectionEnabled = true;
-	let maxLoginAttempts = 5;
-	let blockDurationMinutes = 15;
+	let loginProtectionEnabled = $state(true);
+	let maxLoginAttempts = $state(5);
+	let blockDurationMinutes = $state(15);
 
-	$: if ($query.data) {
-		loginProtectionEnabled = $query.data.login_protection_enabled;
-		maxLoginAttempts = $query.data.max_login_attempts;
-		blockDurationMinutes = $query.data.login_block_duration_minutes;
-	}
+	$effect(() => {
+		if ($query.data) {
+			loginProtectionEnabled = $query.data.login_protection_enabled;
+			maxLoginAttempts = $query.data.max_login_attempts;
+			blockDurationMinutes = $query.data.login_block_duration_minutes;
+		}
+	});
 
 	const saveMutation = createMutation({
 		mutationFn: () => {

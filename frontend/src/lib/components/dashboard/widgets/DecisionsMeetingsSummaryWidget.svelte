@@ -5,20 +5,25 @@
 	import { formatDistanceToNow } from 'date-fns';
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 
-	export let module: ModuleDefinition;
-	export let modules: ModuleDefinition[] = [];
+	let {
+		module,
+		modules = []
+	}: {
+		module: ModuleDefinition;
+		modules?: ModuleDefinition[];
+	} = $props();
 
-	$: widget = module.ui.dashboard.widget;
-	$: decisionsModule = modules.find((candidate) => candidate.key === 'decisions');
-	$: meetingsSummaryQuery = createQuery({
+	let widget = $derived(module.ui.dashboard.widget);
+	let decisionsModule = $derived(modules.find((candidate) => candidate.key === 'decisions'));
+	let meetingsSummaryQuery = $derived(createQuery({
 		queryKey: ['module-summary', module.key],
 		queryFn: () => getModuleSummary(module.key)
-	});
-	$: decisionsSummaryQuery = createQuery({
+	}));
+	let decisionsSummaryQuery = $derived(createQuery({
 		queryKey: ['module-summary', 'decisions'],
 		queryFn: () => getModuleSummary('decisions'),
 		enabled: Boolean(decisionsModule)
-	});
+	}));
 </script>
 
 <a class="widget-card widget-link" data-size={widget.size} href={`/modules/${module.key}`}>

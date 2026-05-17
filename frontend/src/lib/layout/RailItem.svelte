@@ -1,10 +1,19 @@
 <script lang="ts">
-	export let href: string;
-	export let label: string;
-	export let active: boolean;
-	export let expanded: boolean;
-	export let badge: number | null = null;
-	export let ariaLabel: string | undefined = undefined;
+	let {
+		href,
+		label,
+		active,
+		expanded,
+		badge = null,
+		ariaLabel = undefined
+	}: {
+		href: string;
+		label: string;
+		active: boolean;
+		expanded: boolean;
+		badge?: number | null;
+		ariaLabel?: string;
+	} = $props();
 </script>
 
 <a

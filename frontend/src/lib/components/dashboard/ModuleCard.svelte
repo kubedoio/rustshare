@@ -7,26 +7,30 @@
 	import { runModulePrimaryAction } from '$lib/modules/moduleActions';
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 
-	export let module: ModuleConfig;
+	let {
+		module
+	}: {
+		module: ModuleConfig;
+	} = $props();
 
-	$: cardTitle = module.ui_config?.dashboard?.cardTitle ?? module.display_name;
-	$: cardDescription = module.ui_config?.dashboard?.cardDescription ?? module.description;
-	$: actionLabel = module.ui_config?.dashboard?.primaryAction?.label ?? 'Open';
-	$: summaryMode = module.ui_config?.dashboard?.summaryMode ?? 'none';
-	$: maxItems = module.ui_config?.dashboard?.maxItems ?? 4;
+	let cardTitle = $derived(module.ui_config?.dashboard?.cardTitle ?? module.display_name);
+	let cardDescription = $derived(module.ui_config?.dashboard?.cardDescription ?? module.description);
+	let actionLabel = $derived(module.ui_config?.dashboard?.primaryAction?.label ?? 'Open');
+	let summaryMode = $derived(module.ui_config?.dashboard?.summaryMode ?? 'none');
+	let maxItems = $derived(module.ui_config?.dashboard?.maxItems ?? 4);
 
-	$: summaryQuery = createQuery({
+	let summaryQuery = $derived(createQuery({
 		queryKey: ['module-summary', module.module_key],
 		queryFn: () => getModuleSummary(module.module_key),
 		enabled: summaryMode !== 'none'
-	});
+	}));
 
-	$: summary = $summaryQuery.data;
-	$: hasSummary = summaryMode !== 'none' && summary && !$summaryQuery.isLoading;
-	$: visibleItems = hasSummary ? filterUserVisibleEntries(summary!.recent_items).slice(0, maxItems) : [];
-	$: sharesExtra = (summary?.extra ?? {}) as { publicCount?: number; internalCount?: number };
-	$: standupsExtra = (summary?.extra ?? {}) as { todayExists?: boolean };
-	$: kanbanExtra = (summary?.extra ?? {}) as { boards?: Array<{ name: string }> };
+	let summary = $derived($summaryQuery.data);
+	let hasSummary = $derived(summaryMode !== 'none' && summary && !$summaryQuery.isLoading);
+	let visibleItems = $derived(hasSummary ? filterUserVisibleEntries(summary!.recent_items).slice(0, maxItems) : []);
+	let sharesExtra = $derived((summary?.extra ?? {}) as { publicCount?: number; internalCount?: number });
+	let standupsExtra = $derived((summary?.extra ?? {}) as { todayExists?: boolean });
+	let kanbanExtra = $derived((summary?.extra ?? {}) as { boards?: Array<{ name: string }> });
 
 	async function handlePrimaryAction() {
 		await runModulePrimaryAction(module, module.ui_config?.dashboard?.primaryAction);

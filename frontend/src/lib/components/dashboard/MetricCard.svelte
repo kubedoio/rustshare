@@ -1,11 +1,21 @@
 <script lang="ts">
-	export let label: string;
-	export let value: string | number;
-	export let subtitle: string;
-	export let icon: any;
-	export let iconColor: string;
-	export let iconBg: string;
-	export let href: string | undefined = undefined;
+	let {
+		label,
+		value,
+		subtitle,
+		icon,
+		iconColor,
+		iconBg,
+		href = undefined
+	}: {
+		label: string;
+		value: string | number;
+		subtitle: string;
+		icon: any;
+		iconColor: string;
+		iconBg: string;
+		href?: string;
+	} = $props();
 </script>
 
 {#if href}

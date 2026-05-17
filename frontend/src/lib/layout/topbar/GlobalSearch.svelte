@@ -7,12 +7,21 @@
 		path: string;
 	}
 
-	export let value: string;
-	export let results: { files: SearchItem[]; folders: SearchItem[] } = { files: [], folders: [] };
-	export let loading = false;
-	export let onChange: (query: string) => void;
-	export let onClear: () => void;
-	export let onSelect: (type: 'file' | 'folder', id: string) => void;
+	let {
+		value,
+		results = { files: [], folders: [] },
+		loading = false,
+		onChange,
+		onClear,
+		onSelect
+	}: {
+		value: string;
+		results?: { files: SearchItem[]; folders: SearchItem[] };
+		loading?: boolean;
+		onChange: (query: string) => void;
+		onClear: () => void;
+		onSelect: (type: 'file' | 'folder', id: string) => void;
+	} = $props();
 
 	function handleInput(event: Event) {
 		onChange((event.target as HTMLInputElement).value);

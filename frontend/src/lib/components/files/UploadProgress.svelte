@@ -9,8 +9,13 @@
 		previewUrl?: string;
 	}
 
-	export let tasks: UploadTask[] = [];
-	export let onClose: () => void = () => {};
+	let {
+		tasks = [],
+		onClose = () => {}
+	}: {
+		tasks?: UploadTask[];
+		onClose?: () => void;
+	} = $props();
 
 	function formatSize(bytes: number): string {
 		if (bytes === 0) return '0 B';
@@ -33,9 +38,10 @@
 		}
 	}
 
-	$: hasActiveTasks = tasks.some((t) => t.status === 'uploading' || t.status === 'pending');
-	$: allCompleted =
-		tasks.length > 0 && tasks.every((t) => t.status === 'success' || t.status === 'error');
+	let hasActiveTasks = $derived(tasks.some((t) => t.status === 'uploading' || t.status === 'pending'));
+	let allCompleted = $derived(
+		tasks.length > 0 && tasks.every((t) => t.status === 'success' || t.status === 'error')
+	);
 </script>
 
 {#if tasks.length > 0}

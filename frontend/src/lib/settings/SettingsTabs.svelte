@@ -1,4 +1,4 @@
-<script lang="ts" context="module">
+<script lang="ts" module>
 	export type TabId =
 		| 'general'
 		| 'security'
@@ -22,8 +22,13 @@
 		LayoutGrid
 	} from 'lucide-svelte';
 
-	export let activeTab: TabId = 'general';
-	export let onTabChange: (tab: TabId) => void;
+	let {
+		activeTab = 'general',
+		onTabChange
+	}: {
+		activeTab?: TabId;
+		onTabChange: (tab: TabId) => void;
+	} = $props();
 
 	interface Tab {
 		id: TabId;

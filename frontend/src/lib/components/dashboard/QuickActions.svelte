@@ -12,8 +12,13 @@
 		onClick: () => void;
 	}
 
-	export let actions: QuickAction[];
-	export let creating: boolean = false;
+	let {
+		actions,
+		creating = false
+	}: {
+		actions: QuickAction[];
+		creating?: boolean;
+	} = $props();
 </script>
 
 <section class="quick-actions" aria-label="Quick actions">

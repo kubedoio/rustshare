@@ -22,37 +22,44 @@
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
-	export let module: ModuleDefinition;
+	interface Props {
+		module: ModuleDefinition;
+	}
+
+	let { module }: Props = $props();
 
 	const notesQuery = createQuery({
 		queryKey: ['notes', module.key],
 		queryFn: () => listNotes()
 	});
 
-	$: recentNotes = $notesQuery.data ?? [];
+	let recentNotes = $derived($notesQuery.data ?? []);
 
-	let createError = '';
-	let isCreating = false;
-	let searchTerm = '';
-	let statusFilter: 'all' | 'public' | 'private' = 'all';
-	let sortDirection: 'desc' | 'asc' = 'desc';
-	let viewMode: 'list' | 'grid' = module.ui.page.layout === 'gallery-grid' ? 'grid' : 'list';
-	let itemsPerPage = 20;
+	let createError = $state('');
+	let isCreating = $state(false);
+	let searchTerm = $state('');
+	let statusFilter = $state<'all' | 'public' | 'private'>('all');
+	let sortDirection = $state<'desc' | 'asc'>('desc');
+	let viewMode = $state<'list' | 'grid'>(module.ui.page.layout === 'gallery-grid' ? 'grid' : 'list');
+	let itemsPerPage = $state(20);
 
-	$: filteredNotes = recentNotes
-		.filter((note) =>
-			(note.metadata?.title || note.name || '').toLowerCase().includes(searchTerm.trim().toLowerCase())
-		)
-		.filter((note) => statusFilter === 'all' || note.metadata?.visibility === statusFilter)
-		.sort((a, b) => {
-			const aTime = new Date(a.modified_at ?? a.metadata?.updated_at ?? 0).getTime();
-			const bTime = new Date(b.modified_at ?? b.metadata?.updated_at ?? 0).getTime();
-			return sortDirection === 'desc' ? bTime - aTime : aTime - bTime;
-		});
-	$: visibleNotes = filteredNotes.slice(0, itemsPerPage);
-	$: filterLabel =
-		statusFilter === 'public' ? 'Public notes' : statusFilter === 'private' ? 'Private notes' : module.ui.page.filterLabel ?? 'All notes';
-	$: sortLabel = sortDirection === 'desc' ? 'Modified' : 'Oldest first';
+	let filteredNotes = $derived(
+		recentNotes
+			.filter((note) =>
+				(note.metadata?.title || note.name || '').toLowerCase().includes(searchTerm.trim().toLowerCase())
+			)
+			.filter((note) => statusFilter === 'all' || note.metadata?.visibility === statusFilter)
+			.sort((a, b) => {
+				const aTime = new Date(a.modified_at ?? a.metadata?.updated_at ?? 0).getTime();
+				const bTime = new Date(b.modified_at ?? b.metadata?.updated_at ?? 0).getTime();
+				return sortDirection === 'desc' ? bTime - aTime : aTime - bTime;
+			})
+	);
+	let visibleNotes = $derived(filteredNotes.slice(0, itemsPerPage));
+	let filterLabel = $derived(
+		statusFilter === 'public' ? 'Public notes' : statusFilter === 'private' ? 'Private notes' : module.ui.page.filterLabel ?? 'All notes'
+	);
+	let sortLabel = $derived(sortDirection === 'desc' ? 'Modified' : 'Oldest first');
 
 	async function handleNewNote() {
 		if (isCreating) return;
@@ -97,13 +104,14 @@
 		}
 	}
 
-	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No notes yet';
-	$: emptyDescription =
+	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No notes yet');
+	let emptyDescription = $derived(
 		module.ui.page.emptyStateDescription ??
-		'No notes yet. Create your first note to capture ideas, documentation, or working knowledge.';
-	$: emptyAction = module.ui.page.primaryAction?.label ?? 'New note';
-	$: searchPlaceholder = module.ui.page.searchPlaceholder ?? 'Search notes...';
-	$: itemPlural = module.ui.page.itemPlural ?? 'notes';
+		'No notes yet. Create your first note to capture ideas, documentation, or working knowledge.'
+	);
+	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New note');
+	let searchPlaceholder = $derived(module.ui.page.searchPlaceholder ?? 'Search notes...');
+	let itemPlural = $derived(module.ui.page.itemPlural ?? 'notes');
 </script>
 
 <ModulePageShell title="Notes" subtitle="Write and keep file-backed notes in your workspace.">

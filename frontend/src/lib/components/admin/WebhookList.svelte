@@ -2,12 +2,18 @@
 	import { createMutation } from '$lib/query-compat';
 	import { updateWebhook, deleteWebhook, testWebhook, type Webhook } from '$lib/api/admin';
 
-	export let webhooks: Webhook[] = [];
-	export let onRefresh: () => void = () => {};
-	export let onCreate: () => void = () => {};
+	let {
+		webhooks = [],
+		onRefresh = () => {},
+		onCreate = () => {}
+	}: {
+		webhooks?: Webhook[];
+		onRefresh?: () => void;
+		onCreate?: () => void;
+	} = $props();
 
-	let confirmDelete: string | null = null;
-	let testResults: Record<string, { success: boolean; message?: string }> = {};
+	let confirmDelete = $state<string | null>(null);
+	let testResults = $state<Record<string, { success: boolean; message?: string }>>({});
 
 	const toggleMutation = createMutation({
 		mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>

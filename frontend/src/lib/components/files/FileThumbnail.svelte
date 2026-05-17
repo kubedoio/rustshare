@@ -12,12 +12,17 @@
 		File as FileDefault
 	} from 'lucide-svelte';
 
-	export let file: File;
-	export let size: 'sm' | 'md' | 'lg' = 'md';
+	let {
+		file,
+		size = 'md'
+	}: {
+		file: File;
+		size?: 'sm' | 'md' | 'lg';
+	} = $props();
 
-	let thumbnailUrl: string | null = null;
-	let loading = false;
-	let error = false;
+	let thumbnailUrl: string | null = $state(null);
+	let loading = $state(false);
+	let error = $state(false);
 
 	const sizeClasses = {
 		sm: 'w-10 h-10',
@@ -25,7 +30,7 @@
 		lg: 'w-24 h-24'
 	};
 
-	$: sizeClass = sizeClasses[size];
+	let sizeClass = $derived(sizeClasses[size]);
 
 	const isPDF = (mimeType: string) => {
 		return mimeType === 'application/pdf';
@@ -101,9 +106,11 @@
 	}
 
 	// Reactive: reload thumbnail when file changes
-	$: if (file?.id) {
-		loadThumbnail();
-	}
+	$effect(() => {
+		if (file?.id) {
+			loadThumbnail();
+		}
+	});
 
 	onDestroy(() => {
 		if (thumbnailUrl) {

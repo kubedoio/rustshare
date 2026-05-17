@@ -8,13 +8,19 @@
 	} from '$lib/api/admin';
 	import UserSearchInput from '$lib/components/common/UserSearchInput.svelte';
 
-	export let groupId: string;
-	export let members: GroupMember[] = [];
-	export let onRefresh: () => void = () => {};
+	let {
+		groupId,
+		members = [],
+		onRefresh = () => {}
+	}: {
+		groupId: string;
+		members?: GroupMember[];
+		onRefresh?: () => void;
+	} = $props();
 
-	let confirmRemove: GroupMember | null = null;
+	let confirmRemove = $state<GroupMember | null>(null);
 
-	$: memberIds = members.map((m) => m.user_id);
+	let memberIds = $derived(members.map((m) => m.user_id));
 
 	const addMutation = createMutation({
 		mutationFn: (userId: string) => addGroupMember(groupId, userId),

@@ -2,13 +2,19 @@
 	import { createMutation } from '$lib/query-compat';
 	import { createAdminGroup, type AdminGroupDetail } from '$lib/api/admin';
 
-	export let open: boolean = false;
-	export let onClose: () => void = () => {};
-	export let onCreated: (group: AdminGroupDetail) => void = () => {};
+	let {
+		open = false,
+		onClose = () => {},
+		onCreated = () => {}
+	}: {
+		open?: boolean;
+		onClose?: () => void;
+		onCreated?: (group: AdminGroupDetail) => void;
+	} = $props();
 
-	let name = '';
-	let description = '';
-	let errors: Record<string, string> = {};
+	let name = $state('');
+	let description = $state('');
+	let errors = $state<Record<string, string>>({});
 
 	function validate(): boolean {
 		errors = {};

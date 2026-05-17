@@ -2,9 +2,15 @@
 	import { createMutation } from '$lib/query-compat';
 	import { createWebhook, type Webhook } from '$lib/api/admin';
 
-	export let open: boolean = false;
-	export let onClose: () => void = () => {};
-	export let onCreated: (webhook: Webhook) => void = () => {};
+	let {
+		open = false,
+		onClose = () => {},
+		onCreated = () => {}
+	}: {
+		open?: boolean;
+		onClose?: () => void;
+		onCreated?: (webhook: Webhook) => void;
+	} = $props();
 
 	const ALL_EVENTS = [
 		{ value: 'file.uploaded', label: 'File Uploaded' },
@@ -19,11 +25,11 @@
 		{ value: 'user.deleted', label: 'User Deleted' }
 	];
 
-	let name = '';
-	let url = '';
-	let secret = '';
-	let selectedEvents: string[] = [];
-	let errors: Record<string, string> = {};
+	let name = $state('');
+	let url = $state('');
+	let secret = $state('');
+	let selectedEvents = $state<string[]>([]);
+	let errors = $state<Record<string, string>>({});
 
 	function validate(): boolean {
 		errors = {};

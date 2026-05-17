@@ -6,30 +6,29 @@
 	import { beginOidcLogin, getAuthConfig, type AuthConfig } from '$lib/api/auth';
 	import { authStore } from '$lib/stores/auth';
 
-	let email = '';
-	let password = '';
-	let isLoading = false;
-	let showError = false;
-	let errorMessage = '';
-	let isAuthConfigLoading = true;
-	let authConfigError = '';
-	let redirectTo = '/files';
-	let isReturningFromDeviceApproval = false;
-	let authConfig: AuthConfig = {
+	let email = $state('');
+	let password = $state('');
+	let isLoading = $state(false);
+	let showError = $state(false);
+	let errorMessage = $state('');
+	let isAuthConfigLoading = $state(true);
+	let authConfigError = $state('');
+	let redirectTo = $derived($page.url.searchParams.get('redirect_to') || '/files');
+	let isReturningFromDeviceApproval = $derived(redirectTo.startsWith('/device/approve'));
+	let authConfig = $state<AuthConfig>({
 		password_login_enabled: true,
 		oidc_enabled: false,
 		oidc_login_label: null,
 		oidc_mobile_enabled: false
-	};
+	});
 
-	$: redirectTo = $page.url.searchParams.get('redirect_to') || '/files';
-	$: isReturningFromDeviceApproval = redirectTo.startsWith('/device/approve');
+	let hasAnyLoginMethod = $derived(authConfig.oidc_enabled || authConfig.password_login_enabled);
 
-	$: hasAnyLoginMethod = authConfig.oidc_enabled || authConfig.password_login_enabled;
-
-	$: if ($authStore.isAuthenticated && browser) {
-		goto(redirectTo);
-	}
+	$effect(() => {
+		if ($authStore.isAuthenticated && browser) {
+			goto(redirectTo);
+		}
+	});
 
 	onMount(() => {
 		void (async () => {

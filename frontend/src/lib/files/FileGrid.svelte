@@ -4,39 +4,71 @@
 	import { selectionStore } from '$lib/stores/selection';
 	import FileGridTile from './FileGridTile.svelte';
 
-	export let folders: Folder[] = [];
-	export let files: FileType[] = [];
-	export let emptyTitle = 'This folder is empty';
-	export let emptyDescription = 'Upload files or create folders to get started';
-	export let emptyActionLabel: string | null = 'Upload files';
-	export let workspaceMode: 'all' | 'photos' | 'recent' | 'starred' | 'deleted' = 'all';
-	export let onFolderClick: (folder: Folder) => void;
-	export let onFileClick: (file: FileType) => void;
-	export let onRenameFolder: (folder: Folder, newName: string) => void = () => {};
-	export let onDeleteFolder: (folder: Folder) => void = () => {};
-	export let onToggleFolderStar: (folder: Folder) => void = () => {};
-	export let onRestoreFolder: (folder: Folder) => void = () => {};
-	export let onPermanentDeleteFolder: (folder: Folder) => void = () => {};
-	export let onShareFolder: (folder: Folder) => void = () => {};
-	export let onMoveFolder: (folder: Folder, targetFolderId: string | null) => void = () => {};
-	export let onRenameFile: (file: FileType, newName: string) => void = () => {};
-	export let onDeleteFile: (file: FileType) => void = () => {};
-	export let onToggleFileStar: (file: FileType) => void = () => {};
-	export let onRestoreFile: (file: FileType) => void = () => {};
-	export let onPermanentDeleteFile: (file: FileType) => void = () => {};
-	export let onShareFile: (file: FileType) => void = () => {};
-	export let onVersionHistory: (file: FileType) => void = () => {};
-	export let onMoveFile: (file: FileType, targetFolderId: string | null) => void = () => {};
-	export let onDownloadFile: (file: FileType) => void = () => {};
-	export let onReplaceFile: (file: FileType) => void = () => {};
-	export let onEditFile: (file: FileType) => void = () => {};
-	export let selectionMode = false;
+	interface Props {
+		folders?: Folder[];
+		files?: FileType[];
+		emptyTitle?: string;
+		emptyDescription?: string;
+		emptyActionLabel?: string | null;
+		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+		onFolderClick: (folder: Folder) => void;
+		onFileClick: (file: FileType) => void;
+		onRenameFolder?: (folder: Folder, newName: string) => void;
+		onDeleteFolder?: (folder: Folder) => void;
+		onToggleFolderStar?: (folder: Folder) => void;
+		onRestoreFolder?: (folder: Folder) => void;
+		onPermanentDeleteFolder?: (folder: Folder) => void;
+		onShareFolder?: (folder: Folder) => void;
+		onMoveFolder?: (folder: Folder, targetFolderId: string | null) => void;
+		onRenameFile?: (file: FileType, newName: string) => void;
+		onDeleteFile?: (file: FileType) => void;
+		onToggleFileStar?: (file: FileType) => void;
+		onRestoreFile?: (file: FileType) => void;
+		onPermanentDeleteFile?: (file: FileType) => void;
+		onShareFile?: (file: FileType) => void;
+		onVersionHistory?: (file: FileType) => void;
+		onMoveFile?: (file: FileType, targetFolderId: string | null) => void;
+		onDownloadFile?: (file: FileType) => void;
+		onReplaceFile?: (file: FileType) => void;
+		onEditFile?: (file: FileType) => void;
+		selectionMode?: boolean;
+		isSharedRoot?: boolean;
+	}
 
-	export let isSharedRoot = false;
+	let {
+		folders = [],
+		files = [],
+		emptyTitle = 'This folder is empty',
+		emptyDescription = 'Upload files or create folders to get started',
+		emptyActionLabel = 'Upload files',
+		workspaceMode = 'all',
+		onFolderClick,
+		onFileClick,
+		onRenameFolder = () => {},
+		onDeleteFolder = () => {},
+		onToggleFolderStar = () => {},
+		onRestoreFolder = () => {},
+		onPermanentDeleteFolder = () => {},
+		onShareFolder = () => {},
+		onMoveFolder = () => {},
+		onRenameFile = () => {},
+		onDeleteFile = () => {},
+		onToggleFileStar = () => {},
+		onRestoreFile = () => {},
+		onPermanentDeleteFile = () => {},
+		onShareFile = () => {},
+		onVersionHistory = () => {},
+		onMoveFile = () => {},
+		onDownloadFile = () => {},
+		onReplaceFile = () => {},
+		onEditFile = () => {},
+		selectionMode = false,
+		isSharedRoot = false
+	}: Props = $props();
 
 	// Drag and drop state
-	let draggedItem: { id: string; isFolder: boolean; parentFolderId: string | null } | null = null;
-	let dragOverFolderId: string | null = null;
+	let draggedItem = $state<{ id: string; isFolder: boolean; parentFolderId: string | null } | null>(null);
+	let dragOverFolderId = $state<string | null>(null);
 
 	function handleFileToggle(file: FileType, event?: MouseEvent) {
 		const isShiftKey = event?.shiftKey ?? false;

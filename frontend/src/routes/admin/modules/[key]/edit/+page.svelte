@@ -11,48 +11,48 @@
 	const queryClient = useQueryClient();
 	const key = $page.params.key!;
 
-	let displayName = '';
-	let description = '';
-	let icon = 'file-text';
-	let rootPath = '';
-	let renderer = '';
-	let defaultTemplate = '';
-	let enabled = false;
+	let displayName = $state('');
+	let description = $state('');
+	let icon = $state('file-text');
+	let rootPath = $state('');
+	let renderer = $state('');
+	let defaultTemplate = $state('');
+	let enabled = $state(false);
 
-	let sidebarEnabled = true;
-	let sidebarOrder = 30;
-	let sidebarIcon = 'file-text';
-	let sidebarLabel = '';
+	let sidebarEnabled = $state(true);
+	let sidebarOrder = $state(30);
+	let sidebarIcon = $state('file-text');
+	let sidebarLabel = $state('');
 
-	let dashboardEnabled = true;
-	let dashboardOrder = 10;
-	let dashboardCardTitle = '';
-	let dashboardCardDescription = '';
-	let dashboardSummaryMode = 'recent-items';
-	let dashboardWidgetEnabled = true;
-	let dashboardWidgetType = 'generic-module-summary';
-	let dashboardWidgetSize: 'small' | 'medium' | 'large' = 'small';
-	let dashboardColumnsDesktop = 3;
-	let dashboardColumnsTablet = 6;
-	let dashboardColumnsMobile = 12;
-	let dashboardMaxItems = 4;
-	let primaryActionLabel = '';
-	let primaryActionAction = 'create-from-template';
-	let primaryActionTemplate = '';
-	let pageEnabled = true;
-	let pageRoute = '';
-	let pageRenderer = '';
-	let modulePageLayout = 'list-grid';
-	let modulePageEmptyStateTitle = '';
-	let modulePageEmptyStateDescription = '';
-	let modulePageEmptyStateAction = '';
-	let pageSearchPlaceholder = '';
-	let pageFilterLabel = '';
-	let pageSortLabel = '';
-	let pageItemSingular = '';
-	let pageItemPlural = '';
+	let dashboardEnabled = $state(true);
+	let dashboardOrder = $state(10);
+	let dashboardCardTitle = $state('');
+	let dashboardCardDescription = $state('');
+	let dashboardSummaryMode = $state('recent-items');
+	let dashboardWidgetEnabled = $state(true);
+	let dashboardWidgetType = $state('generic-module-summary');
+	let dashboardWidgetSize: 'small' | 'medium' | 'large' = $state('small');
+	let dashboardColumnsDesktop = $state(3);
+	let dashboardColumnsTablet = $state(6);
+	let dashboardColumnsMobile = $state(12);
+	let dashboardMaxItems = $state(4);
+	let primaryActionLabel = $state('');
+	let primaryActionAction = $state('create-from-template');
+	let primaryActionTemplate = $state('');
+	let pageEnabled = $state(true);
+	let pageRoute = $state('');
+	let pageRenderer = $state('');
+	let modulePageLayout = $state('list-grid');
+	let modulePageEmptyStateTitle = $state('');
+	let modulePageEmptyStateDescription = $state('');
+	let modulePageEmptyStateAction = $state('');
+	let pageSearchPlaceholder = $state('');
+	let pageFilterLabel = $state('');
+	let pageSortLabel = $state('');
+	let pageItemSingular = $state('');
+	let pageItemPlural = $state('');
 
-	let error = '';
+	let error = $state('');
 
 	const moduleQuery = createQuery({
 		queryKey: ['admin-module', key],
@@ -64,53 +64,55 @@
 		queryFn: () => listAdminTemplates()
 	});
 
-	$: moduleTemplates = ($templatesQuery.data ?? []).filter((t) => t.module_key === key);
+	let moduleTemplates = $derived(($templatesQuery.data ?? []).filter((t) => t.module_key === key));
 
-	$: if ($moduleQuery.data) {
-		const m = $moduleQuery.data;
-		displayName = m.display_name;
-		description = m.description ?? '';
-		icon = m.icon ?? 'file-text';
-		rootPath = m.root_path ?? '';
-		renderer = m.renderer ?? '';
-		defaultTemplate = m.default_template ?? '';
-		enabled = m.enabled ?? false;
+	$effect(() => {
+		if ($moduleQuery.data) {
+			const m = $moduleQuery.data;
+			displayName = m.display_name;
+			description = m.description ?? '';
+			icon = m.icon ?? 'file-text';
+			rootPath = m.root_path ?? '';
+			renderer = m.renderer ?? '';
+			defaultTemplate = m.default_template ?? '';
+			enabled = m.enabled ?? false;
 
-		const ui = m.ui_config ?? {};
-		sidebarEnabled = ui.sidebar?.enabled ?? true;
-		sidebarOrder = ui.sidebar?.order ?? 30;
-		sidebarIcon = ui.sidebar?.icon ?? icon;
-		sidebarLabel = ui.sidebar?.label ?? displayName;
+			const ui = m.ui_config ?? {};
+			sidebarEnabled = ui.sidebar?.enabled ?? true;
+			sidebarOrder = ui.sidebar?.order ?? 30;
+			sidebarIcon = ui.sidebar?.icon ?? icon;
+			sidebarLabel = ui.sidebar?.label ?? displayName;
 
-		dashboardEnabled = ui.dashboard?.enabled ?? true;
-		dashboardOrder = ui.dashboard?.order ?? 10;
-		dashboardCardTitle = ui.dashboard?.cardTitle ?? displayName;
-		dashboardCardDescription = ui.dashboard?.cardDescription ?? description;
-		dashboardSummaryMode = ui.dashboard?.summaryMode ?? 'recent-items';
-		dashboardWidgetEnabled = ui.dashboard?.widget?.enabled ?? dashboardEnabled;
-		dashboardWidgetType = ui.dashboard?.widget?.type ?? dashboardSummaryMode;
-		dashboardWidgetSize = ui.dashboard?.widget?.size ?? 'small';
-		dashboardColumnsDesktop = ui.dashboard?.widget?.columns?.desktop ?? 3;
-		dashboardColumnsTablet = ui.dashboard?.widget?.columns?.tablet ?? 6;
-		dashboardColumnsMobile = ui.dashboard?.widget?.columns?.mobile ?? 12;
-		dashboardMaxItems = ui.dashboard?.maxItems ?? 4;
-		primaryActionLabel = ui.dashboard?.primaryAction?.label ?? '';
-		primaryActionAction = ui.dashboard?.primaryAction?.action ?? 'create-from-template';
-		primaryActionTemplate = ui.dashboard?.primaryAction?.template ?? m.default_template ?? '';
-		pageEnabled = ui.page?.enabled ?? true;
-		pageRoute = ui.page?.route ?? `/modules/${key}`;
-		pageRenderer = ui.page?.renderer ?? renderer ?? key;
-		modulePageLayout = ui.page?.layout ?? ui.modulePage?.layout ?? 'list-grid';
-		modulePageEmptyStateTitle = ui.page?.emptyStateTitle ?? ui.modulePage?.emptyStateTitle ?? '';
-		modulePageEmptyStateDescription =
-			ui.page?.emptyStateDescription ?? ui.modulePage?.emptyStateDescription ?? '';
-		modulePageEmptyStateAction = ui.page?.emptyStateAction ?? ui.modulePage?.emptyStateAction ?? '';
-		pageSearchPlaceholder = ui.page?.searchPlaceholder ?? `Search ${displayName.toLowerCase()}...`;
-		pageFilterLabel = ui.page?.filterLabel ?? `All ${displayName.toLowerCase()}`;
-		pageSortLabel = ui.page?.sortLabel ?? 'Modified';
-		pageItemSingular = ui.page?.itemSingular ?? displayName.toLowerCase();
-		pageItemPlural = ui.page?.itemPlural ?? displayName.toLowerCase();
-	}
+			dashboardEnabled = ui.dashboard?.enabled ?? true;
+			dashboardOrder = ui.dashboard?.order ?? 10;
+			dashboardCardTitle = ui.dashboard?.cardTitle ?? displayName;
+			dashboardCardDescription = ui.dashboard?.cardDescription ?? description;
+			dashboardSummaryMode = ui.dashboard?.summaryMode ?? 'recent-items';
+			dashboardWidgetEnabled = ui.dashboard?.widget?.enabled ?? dashboardEnabled;
+			dashboardWidgetType = ui.dashboard?.widget?.type ?? dashboardSummaryMode;
+			dashboardWidgetSize = ui.dashboard?.widget?.size ?? 'small';
+			dashboardColumnsDesktop = ui.dashboard?.widget?.columns?.desktop ?? 3;
+			dashboardColumnsTablet = ui.dashboard?.widget?.columns?.tablet ?? 6;
+			dashboardColumnsMobile = ui.dashboard?.widget?.columns?.mobile ?? 12;
+			dashboardMaxItems = ui.dashboard?.maxItems ?? 4;
+			primaryActionLabel = ui.dashboard?.primaryAction?.label ?? '';
+			primaryActionAction = ui.dashboard?.primaryAction?.action ?? 'create-from-template';
+			primaryActionTemplate = ui.dashboard?.primaryAction?.template ?? m.default_template ?? '';
+			pageEnabled = ui.page?.enabled ?? true;
+			pageRoute = ui.page?.route ?? `/modules/${key}`;
+			pageRenderer = ui.page?.renderer ?? renderer ?? key;
+			modulePageLayout = ui.page?.layout ?? ui.modulePage?.layout ?? 'list-grid';
+			modulePageEmptyStateTitle = ui.page?.emptyStateTitle ?? ui.modulePage?.emptyStateTitle ?? '';
+			modulePageEmptyStateDescription =
+				ui.page?.emptyStateDescription ?? ui.modulePage?.emptyStateDescription ?? '';
+			modulePageEmptyStateAction = ui.page?.emptyStateAction ?? ui.modulePage?.emptyStateAction ?? '';
+			pageSearchPlaceholder = ui.page?.searchPlaceholder ?? `Search ${displayName.toLowerCase()}...`;
+			pageFilterLabel = ui.page?.filterLabel ?? `All ${displayName.toLowerCase()}`;
+			pageSortLabel = ui.page?.sortLabel ?? 'Modified';
+			pageItemSingular = ui.page?.itemSingular ?? displayName.toLowerCase();
+			pageItemPlural = ui.page?.itemPlural ?? displayName.toLowerCase();
+		}
+	});
 
 	const updateMutation = createMutation({
 		mutationFn: (payload: {

@@ -5,14 +5,14 @@
 	import UserTable from '$lib/components/admin/UserTable.svelte';
 	import CreateUserModal from '$lib/components/admin/CreateUserModal.svelte';
 
-	let currentPage = 1;
-	let searchQuery = '';
-	let statusFilter = '';
-	let showCreateModal = false;
+	let currentPage = $state(1);
+	let searchQuery = $state('');
+	let statusFilter = $state('');
+	let showCreateModal = $state(false);
 
 	const PER_PAGE = 20;
 
-	$: usersQuery = createQuery({
+	let usersQuery = $derived(createQuery({
 		queryKey: ['admin', 'users', currentPage, searchQuery, statusFilter],
 		queryFn: () =>
 			listAdminUsers({
@@ -21,7 +21,7 @@
 				search: searchQuery || undefined,
 				status: statusFilter || undefined
 			})
-	});
+	}));
 
 	function handleSearch(q: string) {
 		searchQuery = q;

@@ -45,53 +45,41 @@
 		{ name: 'Pink', value: 'pink', class: 'bg-[var(--rs-accent-pink)]' }
 	];
 
-	/** Note title */
-	export let title: string = '';
-
-	/** Initial Markdown content */
-	export let content: string = '';
-
-	/** Current note color */
-	export let color: string | null = null;
-
-	/** Current editor mode */
-	export let mode: EditorMode = 'read';
-
-	/** User permissions */
-	export let permissions: EditorPermissions = READ_ONLY_PERMISSIONS;
-
-	/** Save status */
-	export let saveStatus: EditorSaveStatus = 'saved';
-
-	/** Document revision/version for conflict handling */
-	export let revision: number | string | undefined = undefined;
-
-	/** Optional module/path label (legacy, use breadcrumb instead) */
-	export let label: string = '';
-
-	/** Breadcrumb trail: [{ label, onClick? }, ...] */
-	export let breadcrumb: Array<{ label: string; onClick?: () => void }> = [];
-
-	/** Optional metadata line (e.g. last modified date) */
-	export let metadata: string = '';
-
-	/** Attachment list */
-	export let attachments: RichMarkdownAttachment[] = [];
-
-	/** Autosave delay in ms (0 to disable) */
-	export let autosaveDelay: number = 1500;
-
-	/** Whether to show the back button */
-	export let showBack: boolean = true;
-
-	/** For folder-backed notes: skip base64 sketch embedding and let parent handle file upload */
-	export let embedSketchesAsBase64: boolean = true;
-
-	/** Enable the queued autosave editor */
-	export let collab: boolean = false;
-
-	/** Document ID for the autosave editor */
-	export let docId: string = '';
+	let {
+		title = '',
+		content = '',
+		color = null,
+		mode = 'read',
+		permissions = READ_ONLY_PERMISSIONS,
+		saveStatus = 'saved',
+		revision = undefined,
+		label = '',
+		breadcrumb = [],
+		metadata = '',
+		attachments = [],
+		autosaveDelay = 1500,
+		showBack = true,
+		embedSketchesAsBase64 = true,
+		collab = false,
+		docId = ''
+	}: {
+		title?: string;
+		content?: string;
+		color?: string | null;
+		mode?: EditorMode;
+		permissions?: EditorPermissions;
+		saveStatus?: EditorSaveStatus;
+		revision?: number | string;
+		label?: string;
+		breadcrumb?: Array<{ label: string; onClick?: () => void }>;
+		metadata?: string;
+		attachments?: RichMarkdownAttachment[];
+		autosaveDelay?: number;
+		showBack?: boolean;
+		embedSketchesAsBase64?: boolean;
+		collab?: boolean;
+		docId?: string;
+	} = $props();
 
 	const dispatch = createEventDispatcher<{
 		save: { content: string; revision?: number | string; color?: string | null; docId?: string };
@@ -103,19 +91,21 @@
 		delete: { attachment: RichMarkdownAttachment };
 	}>();
 
-	let editorComponent: RichMarkdownEditor | CollabEditor;
-	let currentMarkdown: string = content;
-	let isAttachmentsOpen = false;
-	let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
-	let lastDocId = docId;
+	let editorComponent: RichMarkdownEditor | CollabEditor = $state() as unknown as RichMarkdownEditor | CollabEditor;
+	let currentMarkdown: string = $state(content);
+	let isAttachmentsOpen = $state(false);
+	let autosaveTimer: ReturnType<typeof setTimeout> | null = $state(null);
+	let lastDocId = $state(docId);
 
-	$: canEdit = permissions.canEdit;
-	$: isEditing = mode === 'edit' && canEdit;
-	$: if (docId !== lastDocId) {
-		currentMarkdown = content;
-		saveStatus = 'saved';
-		lastDocId = docId;
-	}
+	let canEdit = $derived(permissions.canEdit);
+	let isEditing = $derived(mode === 'edit' && canEdit);
+	$effect(() => {
+		if (docId !== lastDocId) {
+			currentMarkdown = content;
+			saveStatus = 'saved';
+			lastDocId = docId;
+		}
+	});
 
 	// Cleanup timer on unmount
 	onDestroy(() => {

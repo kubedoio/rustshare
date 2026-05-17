@@ -5,13 +5,17 @@
 	import { formatDistanceToNow } from 'date-fns';
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 
-	export let module: ModuleDefinition;
+	let {
+		module
+	}: {
+		module: ModuleDefinition;
+	} = $props();
 
-	$: widget = module.ui.dashboard.widget;
-	$: summaryQuery = createQuery({
+	let widget = $derived(module.ui.dashboard.widget);
+	let summaryQuery = $derived(createQuery({
 		queryKey: ['module-summary', module.key],
 		queryFn: () => getModuleSummary(module.key)
-	});
+	}));
 </script>
 
 <a class="widget-card widget-link" data-size={widget.size} href={`/modules/${module.key}`}>

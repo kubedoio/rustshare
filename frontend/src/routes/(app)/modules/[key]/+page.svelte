@@ -5,13 +5,13 @@
 	import ModulePageRenderer from './ModulePageRenderer.svelte';
 	import { Info } from 'lucide-svelte';
 
-	$: key = $page.params.key || '';
-	$: module = getModuleByKey(key);
-	$: user = $currentUser;
+	let key = $derived($page.params.key || '');
+	let module = $derived(getModuleByKey(key));
+	let user = $derived($currentUser);
 
 	// Permissions check
-	$: canUse = module?.enabled && module?.permissions.workspaceMembersCanUse;
-	$: pageEnabled = module?.ui.page.enabled;
+	let canUse = $derived(module?.enabled && module?.permissions.workspaceMembersCanUse);
+	let pageEnabled = $derived(module?.ui.page.enabled);
 </script>
 
 <svelte:head>

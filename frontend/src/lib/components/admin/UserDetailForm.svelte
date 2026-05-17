@@ -9,20 +9,26 @@
 		type AdminUserDetail
 	} from '$lib/api/admin';
 
-	export let user: AdminUserDetail;
-	export let onRefresh: () => void = () => {};
+	let {
+		user,
+		onRefresh = () => {}
+	}: {
+		user: AdminUserDetail;
+		onRefresh?: () => void;
+	} = $props();
 
-	let email = user.email;
-	let display_name = user.display_name;
-	let is_admin = user.is_admin;
-	let quota_gb =
+	let email = $state(user.email);
+	let display_name = $state(user.display_name);
+	let is_admin = $state(user.is_admin);
+	let quota_gb = $state(
 		user.storage_quota_bytes > 0
 			? String(Math.round(user.storage_quota_bytes / (1024 * 1024 * 1024)))
-			: '';
-	let password = '';
-	let confirm_password = '';
+			: ''
+	);
+	let password = $state('');
+	let confirm_password = $state('');
 
-	$: {
+	$effect(() => {
 		email = user.email;
 		display_name = user.display_name;
 		is_admin = user.is_admin;
@@ -32,11 +38,12 @@
 				: '';
 		password = '';
 		confirm_password = '';
-	}
-	let errors: Record<string, string> = {};
+	});
 
-	let confirmDisable = false;
-	let confirmDelete = false;
+	let errors = $state<Record<string, string>>({});
+
+	let confirmDisable = $state(false);
+	let confirmDelete = $state(false);
 
 	function validate(): boolean {
 		errors = {};

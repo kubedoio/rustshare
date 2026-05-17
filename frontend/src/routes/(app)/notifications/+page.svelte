@@ -12,12 +12,12 @@
 	import { resolveNotificationTarget } from '$lib/utils/shared';
 	import { formatDate } from '$lib/utils/format';
 
-	let unreadOnly = false;
+	let unreadOnly = $state(false);
 
-	$: notificationsQuery = createQuery({
+	let notificationsQuery = $derived(createQuery({
 		queryKey: ['notifications', unreadOnly],
 		queryFn: () => listNotifications({ unreadOnly, limit: 100 })
-	});
+	}));
 
 	const markReadMutation = createMutation({
 		mutationFn: markNotificationRead,
@@ -192,7 +192,7 @@
 										>
 											Mark read
 										</button>
-									{/if}
+										{/if}
 
 									<button
 										class="btn btn-outline btn-sm"

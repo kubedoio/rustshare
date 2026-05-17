@@ -9,16 +9,18 @@
 	import { resolveAttachmentPaths } from '../adapter/attachments';
 	import type { RichMarkdownAttachment } from '../types';
 
-	/** Markdown content to render */
-	export let content: string = '';
+	let {
+		content = '',
+		attachments = []
+	}: {
+		content?: string;
+		attachments?: RichMarkdownAttachment[];
+	} = $props();
 
-	/** Optional attachment list for resolving relative paths */
-	export let attachments: RichMarkdownAttachment[] = [];
+	let renderedHtml = $state('');
+	let parseError = $state<string | null>(null);
 
-	let renderedHtml = '';
-	let parseError: string | null = null;
-
-	$: {
+	$effect(() => {
 		const resolvedContent = attachments?.length ? resolveAttachmentPaths(content, attachments) : content;
 		const result = markdownToHtml(resolvedContent);
 		if (result.success) {
@@ -28,7 +30,7 @@
 			parseError = result.error || 'Failed to render Markdown';
 			renderedHtml = '';
 		}
-	}
+	});
 </script>
 
 <div class="rich-markdown-viewer">

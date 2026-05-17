@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Folder, MoreVertical } from 'lucide-svelte';
+	import { Folder as FolderIcon, MoreVertical } from 'lucide-svelte';
 	import DashboardSectionHeader from './DashboardSectionHeader.svelte';
 	import DashboardEmptyState from './DashboardEmptyState.svelte';
 
@@ -9,7 +9,11 @@
 		path: string;
 	}
 
-	export let folders: Folder[];
+	let {
+		folders
+	}: {
+		folders: Folder[];
+	} = $props();
 </script>
 
 <section class="pinned-folders" aria-label="Pinned folders">
@@ -25,7 +29,7 @@
 				<li class="folder-item">
 					<a href={`/files?folder=${folder.id}`} class="folder-link">
 						<div class="folder-icon">
-							<Folder size={18} />
+							<FolderIcon size={18} />
 						</div>
 						<div class="folder-body">
 							<span class="folder-name">{folder.name}</span>

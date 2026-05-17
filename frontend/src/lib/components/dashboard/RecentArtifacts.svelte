@@ -21,8 +21,13 @@
 		moduleName: string;
 	}
 
-	export let artifacts: ArtifactItem[];
-	export let userName: string | undefined = undefined;
+	let {
+		artifacts,
+		userName = undefined
+	}: {
+		artifacts: ArtifactItem[];
+		userName?: string | undefined;
+	} = $props();
 </script>
 
 <section class="recent-artifacts" aria-label="Recent artifacts">

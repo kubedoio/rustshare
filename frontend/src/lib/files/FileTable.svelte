@@ -9,23 +9,45 @@
 	} from '$lib/stores/replication';
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
 
-	export let folders: Folder[] = [];
-	export let files: File[] = [];
-	export let selectionMode = false;
-	export let replicationStatuses: Record<string, ReplicationStatus> = {};
-	export let onFolderClick: (folder: Folder) => void = () => {};
-	export let onFileClick: (file: File) => void = () => {};
-	export let onRenameFolder: (folder: Folder) => void = () => {};
-	export let onDeleteFolder: (folder: Folder) => void = () => {};
-	export let onShareFolder: (folder: Folder) => void = () => {};
-	export let onMoveFolder: (folder: Folder) => void = () => {};
-	export let onRenameFile: (file: File) => void = () => {};
-	export let onDeleteFile: (file: File) => void = () => {};
-	export let onShareFile: (file: File) => void = () => {};
-	export let onVersionHistory: (file: File) => void = () => {};
-	export const onMoveFile: (file: File) => void = () => {};
-	export let onDownloadFile: (file: File) => void = () => {};
-	export const onReplaceFile: (file: File) => void = () => {};
+	interface Props {
+		folders?: Folder[];
+		files?: File[];
+		selectionMode?: boolean;
+		replicationStatuses?: Record<string, ReplicationStatus>;
+		onFolderClick?: (folder: Folder) => void;
+		onFileClick?: (file: File) => void;
+		onRenameFolder?: (folder: Folder) => void;
+		onDeleteFolder?: (folder: Folder) => void;
+		onShareFolder?: (folder: Folder) => void;
+		onMoveFolder?: (folder: Folder) => void;
+		onRenameFile?: (file: File) => void;
+		onDeleteFile?: (file: File) => void;
+		onShareFile?: (file: File) => void;
+		onVersionHistory?: (file: File) => void;
+		onMoveFile?: (file: File) => void;
+		onDownloadFile?: (file: File) => void;
+		onReplaceFile?: (file: File) => void;
+	}
+
+	let {
+		folders = [],
+		files = [],
+		selectionMode = false,
+		replicationStatuses = {},
+		onFolderClick = () => {},
+		onFileClick = () => {},
+		onRenameFolder = () => {},
+		onDeleteFolder = () => {},
+		onShareFolder = () => {},
+		onMoveFolder = () => {},
+		onRenameFile = () => {},
+		onDeleteFile = () => {},
+		onShareFile = () => {},
+		onVersionHistory = () => {},
+		onMoveFile = () => {},
+		onDownloadFile = () => {},
+		onReplaceFile = () => {}
+	}: Props = $props();
 
 	function handleFileToggle(file: File) {
 		selectionStore.toggleFile(file.id);

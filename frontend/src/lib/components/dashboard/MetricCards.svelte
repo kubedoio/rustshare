@@ -11,7 +11,11 @@
 		href?: string;
 	}
 
-	export let cards: Card[];
+	let {
+		cards
+	}: {
+		cards: Card[];
+	} = $props();
 </script>
 
 <section class="summary-cards" aria-label="Workspace summary">

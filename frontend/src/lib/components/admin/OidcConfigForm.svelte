@@ -14,60 +14,18 @@
 		queryFn: getOidcConfig
 	});
 
-	let enabled = false;
-	let provider_name = '';
-	let client_id = '';
-	let client_secret = '';
-	let issuer_url = '';
-	let redirect_url = '';
-	let login_label = '';
-	let scopes_str = '';
-	let auto_provision_users = false;
-	let showSecret = false;
+	let enabled = $state(false);
+	let provider_name = $state('');
+	let client_id = $state('');
+	let client_secret = $state('');
+	let issuer_url = $state('');
+	let redirect_url = $state('');
+	let login_label = $state('');
+	let scopes_str = $state('');
+	let auto_provision_users = $state(false);
+	let showSecret = $state(false);
 
-	let testResult: { success: boolean; message?: string } | null = null;
-
-	$: storedSecretExists = Boolean($query.data?.client_secret);
-	$: isConnectionReady =
-		Boolean(issuer_url.trim()) &&
-		Boolean(client_id.trim()) &&
-		Boolean(redirect_url.trim()) &&
-		(storedSecretExists || Boolean(client_secret.trim()));
-	$: hasSaveSuccess = $saveMutation.isSuccess;
-	$: setupSteps = [
-		{
-			key: 'identity',
-			label: 'Identity provider details',
-			done: Boolean(enabled && provider_name.trim() && issuer_url.trim())
-		},
-		{
-			key: 'application',
-			label: 'Application credentials',
-			done: Boolean(enabled && client_id.trim() && (storedSecretExists || client_secret.trim()))
-		},
-		{
-			key: 'runtime',
-			label: 'RustShare runtime settings',
-			done: Boolean(enabled && redirect_url.trim() && login_label.trim())
-		},
-		{
-			key: 'verify',
-			label: 'Verify discovery and save',
-			done: Boolean(testResult?.success || hasSaveSuccess)
-		}
-	];
-
-	$: if ($query.data) {
-		enabled = $query.data.enabled;
-		provider_name = $query.data.provider_name ?? '';
-		client_id = $query.data.client_id ?? '';
-		client_secret = '';
-		issuer_url = $query.data.issuer_url ?? '';
-		redirect_url = $query.data.redirect_url ?? '';
-		login_label = $query.data.login_label ?? 'Continue with SSO';
-		scopes_str = ($query.data.scopes ?? []).join(' ');
-		auto_provision_users = $query.data.auto_provision_users;
-	}
+	let testResult = $state<{ success: boolean; message?: string } | null>(null);
 
 	const saveMutation = createMutation({
 		mutationFn: () => {
@@ -100,6 +58,52 @@
 				success: false,
 				message: err instanceof Error ? err.message : 'Could not reach the discovery endpoint'
 			};
+		}
+	});
+
+	let storedSecretExists = $derived(Boolean($query.data?.client_secret));
+	let isConnectionReady = $derived(
+		Boolean(issuer_url.trim()) &&
+			Boolean(client_id.trim()) &&
+			Boolean(redirect_url.trim()) &&
+			(storedSecretExists || Boolean(client_secret.trim()))
+	);
+	let hasSaveSuccess = $derived($saveMutation.isSuccess);
+	let setupSteps = $derived([
+		{
+			key: 'identity',
+			label: 'Identity provider details',
+			done: Boolean(enabled && provider_name.trim() && issuer_url.trim())
+		},
+		{
+			key: 'application',
+			label: 'Application credentials',
+			done: Boolean(enabled && client_id.trim() && (storedSecretExists || client_secret.trim()))
+		},
+		{
+			key: 'runtime',
+			label: 'RustShare runtime settings',
+			done: Boolean(enabled && redirect_url.trim() && login_label.trim())
+		},
+		{
+			key: 'verify',
+			label: 'Verify discovery and save',
+			done: Boolean(testResult?.success || hasSaveSuccess)
+		}
+	]);
+
+	$effect(() => {
+		const data = $query.data;
+		if (data) {
+			enabled = data.enabled;
+			provider_name = data.provider_name ?? '';
+			client_id = data.client_id ?? '';
+			client_secret = '';
+			issuer_url = data.issuer_url ?? '';
+			redirect_url = data.redirect_url ?? '';
+			login_label = data.login_label ?? 'Continue with SSO';
+			scopes_str = (data.scopes ?? []).join(' ');
+			auto_provision_users = data.auto_provision_users;
 		}
 	});
 </script>

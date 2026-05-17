@@ -20,18 +20,18 @@
 		Users
 	} from 'lucide-svelte';
 
-	let showToast = false;
-	let toastMessage = '';
-	let toastType: 'success' | 'error' | 'info' = 'info';
-	let activeShareActivityId: string | null = null;
+	let showToast = $state(false);
+	let toastMessage = $state('');
+	let toastType: 'success' | 'error' | 'info' = $state('info');
+	let activeShareActivityId = $state<string | null>(null);
 
-	let showConfirmModal = false;
-	let confirmTitle = '';
-	let confirmMessage = '';
-	let confirmOnConfirm = () => {};
-	let shareActivity: ShareAccessLogEntry[] = [];
-	let shareActivityLoading = false;
-	let shareActivityError = '';
+	let showConfirmModal = $state(false);
+	let confirmTitle = $state('');
+	let confirmMessage = $state('');
+	let confirmOnConfirm = $state(() => {});
+	let shareActivity = $state<ShareAccessLogEntry[]>([]);
+	let shareActivityLoading = $state(false);
+	let shareActivityError = $state('');
 
 	const sharesQuery = createQuery({
 		queryKey: ['user-shares'],
@@ -170,10 +170,10 @@
 		}
 	}
 
-	$: shares = $sharesQuery.data || [];
-	$: activeShareCount = shares.filter((share) => !isExpired(share.expires_at)).length;
-	$: expiringSoonCount = shares.filter((share) => isExpiringSoon(share.expires_at)).length;
-	$: totalAccessCount = shares.reduce((sum, share) => sum + share.access_count, 0);
+	let shares = $derived($sharesQuery.data || []);
+	let activeShareCount = $derived(shares.filter((share) => !isExpired(share.expires_at)).length);
+	let expiringSoonCount = $derived(shares.filter((share) => isExpiringSoon(share.expires_at)).length);
+	let totalAccessCount = $derived(shares.reduce((sum, share) => sum + share.access_count, 0));
 </script>
 
 <div class="mx-auto max-w-6xl space-y-6 p-4 lg:p-6">

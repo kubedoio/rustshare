@@ -16,35 +16,35 @@
 
 	type SharedResourceType = 'file' | 'folder';
 
-	let showPreviewModal = false;
-	let previewFile: File | null = null;
+	let showPreviewModal = $state(false);
+	let previewFile = $state<File | null>(null);
 
-	$: resourceId = $page.params.resourceId ?? '';
-	$: resourceType = ($page.params.resourceType as SharedResourceType | undefined) ?? 'file';
-	$: requestedFolderId = $page.url.searchParams.get('folder');
+	let resourceId = $derived($page.params.resourceId ?? '');
+	let resourceType = $derived(($page.params.resourceType as SharedResourceType | undefined) ?? 'file');
+	let requestedFolderId = $derived($page.url.searchParams.get('folder'));
 
 	const receivedSharesQuery = createQuery({
 		queryKey: ['received-shares'],
 		queryFn: listReceivedShares
 	});
 
-	$: shareEntry = findShare($receivedSharesQuery.data, resourceType, resourceId);
-	$: rootFolderId = resourceType === 'folder' ? resourceId : null;
-	$: currentFolderId = resourceType === 'folder' ? (requestedFolderId || rootFolderId) : null;
+	let shareEntry = $derived(findShare($receivedSharesQuery.data, resourceType, resourceId));
+	let rootFolderId = $derived(resourceType === 'folder' ? resourceId : null);
+	let currentFolderId = $derived(resourceType === 'folder' ? (requestedFolderId || rootFolderId) : null);
 
-	$: fileQuery = createQuery({
+	let fileQuery = $derived(createQuery({
 		queryKey: ['shared-file', resourceId],
 		queryFn: () => getFile(resourceId),
 		enabled: resourceType === 'file' && !!shareEntry
-	});
+	}));
 
-	$: folderContentsQuery = createQuery({
+	let folderContentsQuery = $derived(createQuery({
 		queryKey: ['shared-folder-contents', currentFolderId],
 		queryFn: () => getSharedFolderContents(currentFolderId!),
 		enabled: resourceType === 'folder' && !!shareEntry && !!currentFolderId
-	});
+	}));
 
-	$: currentFolderQuery = createQuery({
+	let currentFolderQuery = $derived(createQuery({
 		queryKey: ['shared-folder-meta', currentFolderId],
 		queryFn: () => getFolder(currentFolderId as string),
 		enabled:
@@ -52,13 +52,13 @@
 			!!shareEntry &&
 			!!currentFolderId &&
 			currentFolderId !== rootFolderId
-	});
+	}));
 
-	$: sharedFolderTreeQuery = createQuery({
+	let sharedFolderTreeQuery = $derived(createQuery({
 		queryKey: ['shared-folder-tree', resourceId],
 		queryFn: () => getSharedFolderTree(resourceId),
 		enabled: resourceType === 'folder' && !!resourceId
-	});
+	}));
 
 	function findShare(
 		shares: ReceivedShare[] | undefined,
@@ -134,27 +134,34 @@
 		}
 	}
 
-	$: nestedPath = resourceType === 'folder' && currentFolderId
-		? currentFolderId === rootFolderId
-			? []
-			: $sharedFolderTreeQuery.data
-				? findFolderPathInTree($sharedFolderTreeQuery.data, currentFolderId).slice(1)
-				: $currentFolderQuery.data
-					? [$currentFolderQuery.data]
-					: []
-		: [];
+	let nestedPath = $derived(
+		resourceType === 'folder' && currentFolderId
+			? currentFolderId === rootFolderId
+				? []
+				: $sharedFolderTreeQuery.data
+					? findFolderPathInTree($sharedFolderTreeQuery.data, currentFolderId).slice(1)
+					: $currentFolderQuery.data
+						? [$currentFolderQuery.data]
+						: []
+			: []
+	);
 
-	$: currentFolderTitle =
+	let currentFolderTitle = $derived(
 		nestedPath.length > 0
 			? nestedPath[nestedPath.length - 1].name
-			: $currentFolderQuery.data?.name ?? shareEntry?.resource_name;
+			: $currentFolderQuery.data?.name ?? shareEntry?.resource_name
+	);
 
-	$: visibleFolders = $folderContentsQuery.data
-		? filterUserVisibleEntries($folderContentsQuery.data.folders ?? [])
-		: [];
-	$: visibleFiles = $folderContentsQuery.data
-		? filterUserVisibleEntries($folderContentsQuery.data.files ?? [])
-		: [];
+	let visibleFolders = $derived(
+		$folderContentsQuery.data
+			? filterUserVisibleEntries($folderContentsQuery.data.folders ?? [])
+			: []
+	);
+	let visibleFiles = $derived(
+		$folderContentsQuery.data
+			? filterUserVisibleEntries($folderContentsQuery.data.files ?? [])
+			: []
+	);
 </script>
 
 <svelte:head>
@@ -356,89 +363,89 @@
 										<th>Modified</th>
 										<th class="text-right">Actions</th>
 									</tr>
-								</thead>
-								<tbody>
-									{#each visibleFolders as folder}
-										<tr class="hover">
-											<td>
-												<button
-													type="button"
-													class="flex items-center gap-3 font-medium hover:text-primary"
-													on:click={() => openNestedFolder(folder)}
-												>
-													<span class="text-xl">📁</span>
-													<span>{folder.name}</span>
-												</button>
-											</td>
-											<td>Folder</td>
-											<td>—</td>
-											<td>{formatDate(folder.updated_at)}</td>
-											<td class="text-right">
-												<button
-													type="button"
-													class="btn btn-outline btn-sm"
-													on:click={() => openNestedFolder(folder)}
-												>
-													Open
-												</button>
-											</td>
-										</tr>
-									{/each}
-
-									{#each visibleFiles as file}
-										<tr class="hover">
-											<td>
-												<button
-													type="button"
-													class="flex items-center gap-3 font-medium hover:text-primary"
-													on:click={() => openPreview(file)}
-												>
-													<FileIcon
-														mimeType={file.mime_type}
-														size="md"
-														iconClass="text-base-content/70"
-													/>
-													<span>{file.name}</span>
-												</button>
-											</td>
-											<td>{file.mime_type}</td>
-											<td>{formatFileSize(file.size)}</td>
-											<td>{formatDate(file.modified_at)}</td>
-											<td class="text-right">
-												<div class="flex justify-end gap-2">
+									</thead>
+									<tbody>
+										{#each visibleFolders as folder}
+											<tr class="hover">
+												<td>
 													<button
 														type="button"
-														class="btn btn-ghost btn-sm"
-														on:click={() => openPreview(file)}
+														class="flex items-center gap-3 font-medium hover:text-primary"
+														on:click={() => openNestedFolder(folder)}
 													>
-														Preview
+														<span class="text-xl">📁</span>
+														<span>{folder.name}</span>
 													</button>
+												</td>
+												<td>Folder</td>
+												<td>—</td>
+												<td>{formatDate(folder.updated_at)}</td>
+												<td class="text-right">
 													<button
 														type="button"
 														class="btn btn-outline btn-sm"
-														on:click={() => handleDownload(file)}
+														on:click={() => openNestedFolder(folder)}
 													>
-														Download
+														Open
 													</button>
-												</div>
-											</td>
-										</tr>
-									{/each}
+												</td>
+											</tr>
+										{/each}
 
-									{#if visibleFolders.length === 0 && visibleFiles.length === 0}
-										<tr>
-											<td colspan="5" class="py-10 text-center text-base-content/60">
-												This folder is empty.
-											</td>
-										</tr>
-									{/if}
-								</tbody>
-							</table>
-						</div>
-					{/if}
+										{#each visibleFiles as file}
+											<tr class="hover">
+												<td>
+													<button
+														type="button"
+														class="flex items-center gap-3 font-medium hover:text-primary"
+														on:click={() => openPreview(file)}
+													>
+														<FileIcon
+															mimeType={file.mime_type}
+															size="md"
+															iconClass="text-base-content/70"
+														/>
+														<span>{file.name}</span>
+													</button>
+												</td>
+												<td>{file.mime_type}</td>
+												<td>{formatFileSize(file.size)}</td>
+												<td>{formatDate(file.modified_at)}</td>
+												<td class="text-right">
+													<div class="flex justify-end gap-2">
+														<button
+															type="button"
+															class="btn btn-ghost btn-sm"
+															on:click={() => openPreview(file)}
+														>
+															Preview
+														</button>
+														<button
+															type="button"
+															class="btn btn-outline btn-sm"
+															on:click={() => handleDownload(file)}
+														>
+															Download
+														</button>
+													</div>
+												</td>
+											</tr>
+										{/each}
+
+										{#if visibleFolders.length === 0 && visibleFiles.length === 0}
+											<tr>
+												<td colspan="5" class="py-10 text-center text-base-content/60">
+													This folder is empty.
+												</td>
+											</tr>
+										{/if}
+									</tbody>
+								</table>
+							</div>
+						{/if}
+					</div>
 				</div>
 			</div>
-		</div>
 	{/if}
 </div>
 

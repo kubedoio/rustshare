@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { themeStore, getCurrentTheme, type Theme } from '$lib/stores/theme';
 
-	$: resolvedTheme = $themeStore === 'system' ? getCurrentTheme() : $themeStore;
+	let resolvedTheme = $derived($themeStore === 'system' ? getCurrentTheme() : $themeStore);
 
 	function toggleTheme() {
 		themeStore.toggleTheme();

@@ -1,7 +1,13 @@
 <script lang="ts">
-	export let title: string | undefined = undefined;
-	export let description: string;
-	export let minimal: boolean = false;
+	let {
+		title = undefined,
+		description,
+		minimal = false
+	}: {
+		title?: string | undefined;
+		description: string;
+		minimal?: boolean;
+	} = $props();
 </script>
 
 <div class="empty-state" class:minimal>

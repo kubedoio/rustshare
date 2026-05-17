@@ -3,12 +3,12 @@
 	import { listAuditLog } from '$lib/api/admin';
 	import AuditTable from '$lib/components/admin/AuditTable.svelte';
 
-	let currentPage = 1;
-	let filters: { type?: string; user_id?: string; from?: string; to?: string } = {};
+	let currentPage = $state(1);
+	let filters: { type?: string; user_id?: string; from?: string; to?: string } = $state({});
 
 	const PER_PAGE = 50;
 
-	$: auditQuery = createQuery({
+	let auditQuery = $derived(createQuery({
 		queryKey: ['admin', 'audit', currentPage, filters],
 		queryFn: () =>
 			listAuditLog({
@@ -16,7 +16,7 @@
 				per_page: PER_PAGE,
 				...filters
 			})
-	});
+	}));
 
 	function handleFilterChange(f: typeof filters) {
 		filters = f;

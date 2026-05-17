@@ -1,7 +1,13 @@
 <script lang="ts">
-	export let size: 'sm' | 'md' | 'lg' | 'xl' = 'md';
-	export let showText = true;
-	export let className = '';
+	let {
+		size = 'md',
+		showText = true,
+		className = ''
+	}: {
+		size?: 'sm' | 'md' | 'lg' | 'xl';
+		showText?: boolean;
+		className?: string;
+	} = $props();
 
 	const sizeClasses = {
 		sm: 'h-6',

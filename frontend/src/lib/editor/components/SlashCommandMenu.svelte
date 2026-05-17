@@ -22,15 +22,17 @@
 	import type { SlashCommand } from '../adapter/slash-commands';
 	import { filterSlashCommands } from '../adapter/slash-commands';
 
-	/** Current query string (text after "/") */
-	export let query: string = '';
-
-	/** Position for the menu */
-	export let top: number = 0;
-	export let left: number = 0;
-
-	/** Whether an attachment handler is available */
-	export let hasAttachmentHandler: boolean = false;
+	let {
+		query = '',
+		top = 0,
+		left = 0,
+		hasAttachmentHandler = false
+	}: {
+		query?: string;
+		top?: number;
+		left?: number;
+		hasAttachmentHandler?: boolean;
+	} = $props();
 
 	const dispatch = createEventDispatcher<{
 		select: { command: SlashCommand };
@@ -53,13 +55,15 @@
 		paperclip: Paperclip
 	};
 
-	let selectedIndex = 0;
+	let selectedIndex = $state(0);
 	let menuEl: HTMLDivElement;
 
-	$: filteredCommands = filterSlashCommands(query, { hasAttachmentHandler });
-	$: if (filteredCommands.length > 0 && selectedIndex >= filteredCommands.length) {
-		selectedIndex = 0;
-	}
+	let filteredCommands = $derived(filterSlashCommands(query, { hasAttachmentHandler }));
+	$effect(() => {
+		if (filteredCommands.length > 0 && selectedIndex >= filteredCommands.length) {
+			selectedIndex = 0;
+		}
+	});
 
 	onMount(async () => {
 		await tick();

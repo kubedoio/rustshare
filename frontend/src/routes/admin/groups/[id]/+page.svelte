@@ -5,22 +5,24 @@
 	import { getAdminGroup, updateAdminGroup } from '$lib/api/admin';
 	import GroupMemberList from '$lib/components/admin/GroupMemberList.svelte';
 
-	$: groupId = $page.params.id;
+	let groupId = $derived($page.params.id);
 
-	$: groupQuery = createQuery({
+	let groupQuery = $derived(createQuery({
 		queryKey: ['admin', 'group', groupId],
 		queryFn: () => getAdminGroup(groupId ?? ''),
 		enabled: !!groupId
+	}));
+
+	let editName = $state('');
+	let editDescription = $state('');
+	let editing = $state(false);
+
+	$effect(() => {
+		if ($groupQuery.data && !editing) {
+			editName = $groupQuery.data.name;
+			editDescription = $groupQuery.data.description ?? '';
+		}
 	});
-
-	let editName = '';
-	let editDescription = '';
-	let editing = false;
-
-	$: if ($groupQuery.data && !editing) {
-		editName = $groupQuery.data.name;
-		editDescription = $groupQuery.data.description ?? '';
-	}
 
 	const updateMutation = createMutation({
 		mutationFn: () =>

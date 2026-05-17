@@ -9,7 +9,7 @@
 	import BrainstormingModuleView from '$lib/components/modules/BrainstormingModuleView.svelte';
 	import GenericModuleView from '$lib/components/modules/GenericModuleView.svelte';
 
-	export let module: ModuleDefinition;
+	let { module }: { module: ModuleDefinition } = $props();
 
 	const rendererMap: Record<string, any> = {
 		notes: NotesModuleView,
@@ -21,7 +21,7 @@
 		brainstorming: BrainstormingModuleView
 	};
 
-	$: Renderer = rendererMap[module.ui.page.renderer] || GenericModuleView;
+	let Renderer = $derived(rendererMap[module.ui.page.renderer] || GenericModuleView);
 </script>
 
 <svelte:component this={Renderer} {module} />

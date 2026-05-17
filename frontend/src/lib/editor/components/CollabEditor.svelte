@@ -14,33 +14,31 @@
 		save: { content: string; docId: string };
 	}>();
 
-	/** Note ID retained for compatibility with existing document page wiring */
-	export let docId: string;
-
-	/** Initial Markdown content (loaded from server) */
-	export let content: string = '';
-
-	/** User permissions */
-	export let permissions: EditorPermissions = WRITE_PERMISSIONS;
-
-	/** Whether editing is enabled */
-	export let editable: boolean = true;
-
-	/** Whether an attachment handler is available */
-	export let hasAttachmentHandler: boolean = false;
-
-	/** Expose current Markdown for parent reads */
-	export let currentMarkdown: string = content;
+	let {
+		docId,
+		content = '',
+		permissions = WRITE_PERMISSIONS,
+		editable = true,
+		hasAttachmentHandler = false,
+		currentMarkdown = $bindable(content)
+	}: {
+		docId: string;
+		content?: string;
+		permissions?: EditorPermissions;
+		editable?: boolean;
+		hasAttachmentHandler?: boolean;
+		currentMarkdown?: string;
+	} = $props();
 
 	let editorComponent: RichMarkdownEditor;
-	let status: 'saved' | 'unsaved' | 'saving' | 'error' = 'saved';
-	let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
-	let lastSavedMarkdown = content;
-	let pendingMarkdown: string | null = null;
-	let inFlightMarkdown: string | null = null;
-	let lastError: string | null = null;
+	let status: 'saved' | 'unsaved' | 'saving' | 'error' = $state('saved');
+	let autosaveTimer: ReturnType<typeof setTimeout> | null = $state(null);
+	let lastSavedMarkdown = $state(content);
+	let pendingMarkdown: string | null = $state(null);
+	let inFlightMarkdown: string | null = $state(null);
+	let lastError: string | null = $state(null);
 
-	$: resolvedEditable = permissions.canEdit && editable;
+	let resolvedEditable = $derived(permissions.canEdit && editable);
 
 	onDestroy(() => {
 		if (autosaveTimer) {

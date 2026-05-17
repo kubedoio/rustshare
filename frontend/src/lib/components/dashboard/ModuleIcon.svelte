@@ -19,9 +19,15 @@
 	import { DEFAULT_MODULE_ICON } from '$lib/modules/iconRegistry';
 	import PathSeparationIcon from './PathSeparationIcon.svelte';
 
-	export let name: string;
-	export let size: number = 20;
-	export let strokeWidth: number = 1.75;
+	let {
+		name,
+		size = 20,
+		strokeWidth = 1.75
+	}: {
+		name: string;
+		size?: number;
+		strokeWidth?: number;
+	} = $props();
 
 	const iconMap: Record<string, typeof FileText> = {
 		'file-text': FileText,
@@ -42,7 +48,7 @@
 		'lightbulb': Lightbulb
 	};
 
-	$: IconComponent = iconMap[name] || iconMap[DEFAULT_MODULE_ICON] || Folder;
+	let IconComponent = $derived(iconMap[name] || iconMap[DEFAULT_MODULE_ICON] || Folder);
 </script>
 
 <svelte:component this={IconComponent} {size} {strokeWidth} />

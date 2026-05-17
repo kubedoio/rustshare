@@ -3,11 +3,15 @@
 	import ModuleCard from './ModuleCard.svelte';
 	import { LayoutGrid } from 'lucide-svelte';
 
-	export let modules: ModuleConfig[];
+	let {
+		modules
+	}: {
+		modules: ModuleConfig[];
+	} = $props();
 
-	$: sortedModules = modules
+	let sortedModules = $derived(modules
 		.filter((m) => m.ui_config?.dashboard?.enabled !== false)
-		.sort((a, b) => (a.ui_config?.dashboard?.order ?? 99) - (b.ui_config?.dashboard?.order ?? 99));
+		.sort((a, b) => (a.ui_config?.dashboard?.order ?? 99) - (b.ui_config?.dashboard?.order ?? 99)));
 </script>
 
 <section class="modules-panel">

@@ -2,11 +2,19 @@
 	import { Link2 } from 'lucide-svelte';
 	import { formatDate } from '$lib/utils/format';
 
-	export let isShared: boolean = false;
-	export let shareCount: number = 0;
-	export let shareExpiresAt: string | null = null;
-	export let size: 'xs' | 'sm' | 'md' = 'sm';
-	export let showText: boolean = true; // Whether to show expiration text
+	let {
+		isShared = false,
+		shareCount = 0,
+		shareExpiresAt = null,
+		size = 'sm',
+		showText = true
+	}: {
+		isShared?: boolean;
+		shareCount?: number;
+		shareExpiresAt?: string | null;
+		size?: 'xs' | 'sm' | 'md';
+		showText?: boolean;
+	} = $props();
 
 	const sizeClasses = {
 		xs: 'text-[10px] gap-0.5',

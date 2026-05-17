@@ -2,10 +2,17 @@
 	import { ChevronDown, User, Settings, Shield, LogOut, Bell, Smartphone } from 'lucide-svelte';
 	import type { User as UserType } from '$lib/api/types';
 
-	export let user: UserType | null;
-	export let unreadCount: number;
-	export let onLogout: () => void;
-	export let open = false;
+	let {
+		user,
+		unreadCount,
+		onLogout,
+		open = $bindable(false)
+	}: {
+		user: UserType | null;
+		unreadCount: number;
+		onLogout: () => void;
+		open?: boolean;
+	} = $props();
 
 	function getInitials(name: string): string {
 		return name?.charAt(0).toUpperCase() || '?';

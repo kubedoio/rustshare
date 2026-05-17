@@ -6,20 +6,19 @@
 <script lang="ts">
 	import RichMarkdownViewer from './RichMarkdownViewer.svelte';
 
-	/** Document title */
-	export let title: string = '';
-
-	/** Markdown content */
-	export let content: string = '';
-
-	/** Optional module/path label */
-	export let label: string = '';
-
-	/** Optional export date */
-	export let date: string = new Date().toLocaleDateString();
-
-	/** Whether to show the header (title, date, label) */
-	export let showHeader: boolean = true;
+	let {
+		title = '',
+		content = '',
+		label = '',
+		date = new Date().toLocaleDateString(),
+		showHeader = true
+	}: {
+		title?: string;
+		content?: string;
+		label?: string;
+		date?: string;
+		showHeader?: boolean;
+	} = $props();
 </script>
 
 <div class="printable-document-view">

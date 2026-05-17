@@ -14,35 +14,34 @@
 		Check
 	} from 'lucide-svelte';
 
-	export let imageUrl: string;
-	export let fileName: string;
+	let { imageUrl, fileName }: { imageUrl: string; fileName: string } = $props();
 
 	const dispatch = createEventDispatcher<{
 		save: { blob: Blob; fileName: string };
 		cancel: void;
 	}>();
 
-	let canvas: HTMLCanvasElement;
+	let canvas: HTMLCanvasElement = $state() as unknown as HTMLCanvasElement;
 	let editor: ImageEditor;
-	let loading = true;
-	let error: string | null = null;
+	let loading = $state(true);
+	let error = $state<string | null>(null);
 
 	// Toolbar state
-	let canUndo = false;
-	let canRedo = false;
+	let canUndo = $state(false);
+	let canRedo = $state(false);
 
 	// Crop mode
-	let isCropping = false;
-	let cropStart: { x: number; y: number } | null = null;
-	let cropSelection: CropSelection | null = null;
-	let isDragging = false;
+	let isCropping = $state(false);
+	let cropStart: { x: number; y: number } | null = $state(null);
+	let cropSelection: CropSelection | null = $state(null);
+	let isDragging = $state(false);
 
 	// Resize modal
-	let showResizeModal = false;
-	let resizeWidth = 0;
-	let resizeHeight = 0;
-	let maintainAspectRatio = true;
-	let aspectRatio = 1;
+	let showResizeModal = $state(false);
+	let resizeWidth = $state(0);
+	let resizeHeight = $state(0);
+	let maintainAspectRatio = $state(true);
+	let aspectRatio = $state(1);
 
 	onMount(() => {
 		void (async () => {

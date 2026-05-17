@@ -6,20 +6,29 @@
 	import { BaseEditor } from '$lib/components/editors';
 	import type { File as ApiFile } from '$lib/api/types';
 
-	export let open = false;
-	export let file: ApiFile | null = null;
+	let {
+		open = false,
+		file = null,
+		onClose,
+		onSaved
+	}: {
+		open?: boolean;
+		file?: ApiFile | null;
+		onClose?: () => void;
+		onSaved?: (event: { file: ApiFile }) => void;
+	} = $props();
 
 	const dispatch = createEventDispatcher<{
 		close: void;
 		saved: { file: ApiFile };
 	}>();
 
-	let content = '';
-	let currentMarkdown = '';
-	let isLoading = false;
-	let isSaving = false;
-	let error: string | null = null;
-	let saveMode: 'overwrite' | 'new_version' = 'new_version';
+	let content = $state('');
+	let currentMarkdown = $state('');
+	let isLoading = $state(false);
+	let isSaving = $state(false);
+	let error = $state<string | null>(null);
+	let saveMode: 'overwrite' | 'new_version' = $state('new_version');
 
 	async function loadContent() {
 		if (!file) return;
@@ -63,6 +72,7 @@
 
 			content = currentMarkdown;
 			dispatch('saved', { file });
+			onSaved?.({ file });
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to save file';
 		} finally {
@@ -72,11 +82,14 @@
 
 	function handleClose() {
 		dispatch('close');
+		onClose?.();
 	}
 
-	$: if (open && file) {
-		loadContent();
-	}
+	$effect(() => {
+		if (open && file) {
+			loadContent();
+		}
+	});
 
 	const permissions: EditorPermissions = {
 		canRead: true,

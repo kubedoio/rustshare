@@ -4,14 +4,25 @@
 	import { formatFileSize } from '$lib/utils/format';
 	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 
-	export let open = false;
-	export let file: File | null = null;
-	export let title = 'Edit File';
-	export let isLoading = false;
-	export let isSaving = false;
-	export let error: string | null = null;
-	export let saveMode: 'overwrite' | 'new_version' = 'new_version';
-	export let hasChanges = false;
+	let {
+		open = false,
+		file = null,
+		title = 'Edit File',
+		isLoading = false,
+		isSaving = false,
+		error = null,
+		saveMode = 'new_version',
+		hasChanges = false
+	}: {
+		open?: boolean;
+		file?: File | null;
+		title?: string;
+		isLoading?: boolean;
+		isSaving?: boolean;
+		error?: string | null;
+		saveMode?: 'overwrite' | 'new_version';
+		hasChanges?: boolean;
+	} = $props();
 
 	type EditorEvents = {
 		close: void;
@@ -19,9 +30,9 @@
 	};
 	const dispatch = createEventDispatcher<EditorEvents>();
 
-	let changeDescription = '';
-	let showSaveOptions = false;
-	let showConfirmModal = false;
+	let changeDescription = $state('');
+	let showSaveOptions = $state(false);
+	let showConfirmModal = $state(false);
 
 	function handleClose() {
 		if (hasChanges) {
@@ -59,7 +70,7 @@
 		}
 	}
 
-	$: canSave = hasChanges && !isSaving;
+	let canSave = $derived(hasChanges && !isSaving);
 </script>
 
 <svelte:window on:keydown={handleKeydown} />

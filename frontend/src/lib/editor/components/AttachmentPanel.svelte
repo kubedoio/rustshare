@@ -25,17 +25,17 @@
 		isInlineableImage
 	} from '../adapter/attachments';
 
-	/** Current attachment list */
-	export let attachments: RichMarkdownAttachment[] = [];
-
-	/** User permissions */
-	export let permissions: EditorPermissions;
-
-	/** Whether the panel is visible */
-	export let open: boolean = false;
-
-	/** Whether the editor is in edit mode (controls insert button visibility) */
-	export let editable: boolean = true;
+	let {
+		attachments = [],
+		permissions,
+		open = false,
+		editable = true
+	}: {
+		attachments?: RichMarkdownAttachment[];
+		permissions: EditorPermissions;
+		open?: boolean;
+		editable?: boolean;
+	} = $props();
 
 	const dispatch = createEventDispatcher<{
 		upload: { files: File[] };
@@ -44,13 +44,13 @@
 		close: void;
 	}>();
 
-	let fileInput: HTMLInputElement;
-	let isDragOver = false;
-	let error: string | null = null;
+	let fileInput: HTMLInputElement = $state() as unknown as HTMLInputElement;
+	let isDragOver = $state(false);
+	let error = $state<string | null>(null);
 
-	$: visibleAttachments = filterVisibleAttachments(attachments);
-	$: canUpload = permissions.canUploadAttachments;
-	$: canDelete = permissions.canDeleteAttachments;
+	let visibleAttachments = $derived(filterVisibleAttachments(attachments));
+	let canUpload = $derived(permissions.canUploadAttachments);
+	let canDelete = $derived(permissions.canDeleteAttachments);
 
 	const KIND_ICONS: Record<string, typeof FileText> = {
 		image: Image,

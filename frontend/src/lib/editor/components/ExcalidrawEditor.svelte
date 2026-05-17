@@ -5,25 +5,28 @@
 	import { X, Save, Palette } from 'lucide-svelte';
 	import { toastStore } from '$lib/stores/toast';
 
-	export let open = false;
-
-	/** Optional initial scene data for re-editing an existing sketch */
-	export let initialData: {
-		elements?: any[];
-		appState?: any;
-		files?: any;
-	} | null = null;
+	let {
+		open = false,
+		initialData = null
+	}: {
+		open?: boolean;
+		initialData?: {
+			elements?: any[];
+			appState?: any;
+			files?: any;
+		} | null;
+	} = $props();
 
 	const dispatch = createEventDispatcher<{
 		save: { blob: Blob; filename: string };
 		close: void;
 	}>();
 
-	let container: HTMLDivElement;
-	let root: any = null;
-	let excalidrawAPI: any = null;
-	let ExcalidrawComp: any = null;
-	let exportToBlobFn: any = null;
+	let container: HTMLDivElement = $state() as unknown as HTMLDivElement;
+	let root: any = $state(null);
+	let excalidrawAPI: any = $state(null);
+	let ExcalidrawComp: any = $state(null);
+	let exportToBlobFn: any = $state(null);
 
 	async function initExcalidraw() {
 		try {
@@ -116,23 +119,29 @@
 		}
 	}
 
-	$: if (open && !root && container) {
-		initExcalidraw();
-	}
+	$effect(() => {
+		if (open && !root && container) {
+			initExcalidraw();
+		}
+	});
 
 	// Re-render when initialData changes while open
-	$: if (open && root && ExcalidrawComp) {
-		render();
-	}
+	$effect(() => {
+		if (open && root && ExcalidrawComp) {
+			render();
+		}
+	});
 
 	// Cleanup React root when modal closes so it reinitializes on next open.
 	// The component itself is not destroyed (parent always renders it), so
 	// onDestroy never runs when open toggles false.
-	$: if (!open && root) {
-		root.unmount();
-		root = null;
-		excalidrawAPI = null;
-	}
+	$effect(() => {
+		if (!open && root) {
+			root.unmount();
+			root = null;
+			excalidrawAPI = null;
+		}
+	});
 
 	onDestroy(() => {
 		if (root) {

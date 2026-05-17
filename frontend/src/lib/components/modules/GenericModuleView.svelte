@@ -13,19 +13,23 @@
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
-	export let module: ModuleDefinition;
+	interface Props {
+		module: ModuleDefinition;
+	}
+
+	let { module }: Props = $props();
 
 	const folderContentsQuery = createQuery({
 		queryKey: ['module-folder-contents', module.key],
 		queryFn: () => getModuleRootContents(module.rootPath)
 	});
 
-	$: contents = $folderContentsQuery.data;
-	$: visibleFolders = filterUserVisibleEntries(contents?.folders ?? []);
-	$: visibleFiles = filterUserVisibleEntries(contents?.files ?? []);
+	let contents = $derived($folderContentsQuery.data);
+	let visibleFolders = $derived(filterUserVisibleEntries(contents?.folders ?? []));
+	let visibleFiles = $derived(filterUserVisibleEntries(contents?.files ?? []));
 
-	let showPromptModal = false;
-	let templateError = '';
+	let showPromptModal = $state(false);
+	let templateError = $state('');
 
 	function getActivityTypeForModule(key: string): ActivityType | null {
 		switch (key) {
@@ -86,13 +90,14 @@
 		}
 	}
 
-	$: emptyTitle = module.ui.page.emptyStateTitle ?? 'No items yet';
-	$: emptyDescription =
+	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No items yet');
+	let emptyDescription = $derived(
 		module.ui.page.emptyStateDescription ??
-		'Create your first item from a template to get started.';
-	$: emptyAction = module.ui.page.primaryAction?.label ?? 'Create from Template';
+		'Create your first item from a template to get started.'
+	);
+	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'Create from Template');
 
-	$: isGallery = module.ui.page.layout === 'gallery-grid';
+	let isGallery = $derived(module.ui.page.layout === 'gallery-grid');
 </script>
 
 <ModulePageShell title={module.displayName} subtitle={module.description}>

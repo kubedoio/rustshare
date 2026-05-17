@@ -9,13 +9,13 @@
 		type Workflow
 	} from '$lib/api/workflows';
 
-	let workflows: Workflow[] = [];
-	let selectedWorkflow: Workflow | null = null;
-	let editingWorkflow: Workflow | null = null;
-	let saveMessage = '';
-	let previewMode = false;
-	let loading = false;
-	let newModalOpen = false;
+	let workflows = $state<Workflow[]>([]);
+	let selectedWorkflow = $state<Workflow | null>(null);
+	let editingWorkflow = $state<Workflow | null>(null);
+	let saveMessage = $state('');
+	let previewMode = $state(false);
+	let loading = $state(false);
+	let newModalOpen = $state(false);
 
 	const TYPE_LABELS: Record<string, string> = {
 		invite: 'Invite',

@@ -3,14 +3,18 @@
 	import type { ModuleDefinition } from '$lib/modules/registry';
 	import { Eye, EyeOff, ArrowUp, ArrowDown, RotateCcw, Check } from 'lucide-svelte';
 
-	export let modules: ModuleDefinition[] = [];
+	let {
+		modules = []
+	}: {
+		modules?: ModuleDefinition[];
+	} = $props();
 
-	$: config = $dashboardConfig;
-	$: orderedModules = modules.slice().sort((a, b) => {
+	let config = $derived($dashboardConfig);
+	let orderedModules = $derived(modules.slice().sort((a, b) => {
 		const idxA = config.moduleOrder.indexOf(a.key);
 		const idxB = config.moduleOrder.indexOf(b.key);
 		return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
-	});
+	}));
 
 	function isEnabled(key: string): boolean {
 		return config.enabledModules.includes(key);

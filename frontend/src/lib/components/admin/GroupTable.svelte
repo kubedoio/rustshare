@@ -1,11 +1,17 @@
 <script lang="ts">
 	import type { AdminGroup } from '$lib/api/admin';
 
-	export let groups: AdminGroup[] = [];
-	export let onDelete: (group: AdminGroup) => void = () => {};
-	export let onCreate: () => void = () => {};
+	let {
+		groups = [],
+		onDelete = () => {},
+		onCreate = () => {}
+	}: {
+		groups?: AdminGroup[];
+		onDelete?: (group: AdminGroup) => void;
+		onCreate?: () => void;
+	} = $props();
 
-	let confirmDelete: AdminGroup | null = null;
+	let confirmDelete = $state<AdminGroup | null>(null);
 
 	function handleDelete(group: AdminGroup) {
 		confirmDelete = group;

@@ -4,15 +4,19 @@
 	import type { ModuleDefinition } from '$lib/modules/registry';
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 
-	export let module: ModuleDefinition;
+	let {
+		module
+	}: {
+		module: ModuleDefinition;
+	} = $props();
 
-	$: widget = module.ui.dashboard.widget;
-	$: summaryQuery = createQuery({
+	let widget = $derived(module.ui.dashboard.widget);
+	let summaryQuery = $derived(createQuery({
 		queryKey: ['module-summary', module.key],
 		queryFn: () => getModuleSummary(module.key)
-	});
-	$: extra = ($summaryQuery.data?.extra ?? {}) as { publicCount?: number; internalCount?: number };
-	$: visibleItems = filterUserVisibleEntries($summaryQuery.data?.recent_items ?? []);
+	}));
+	let extra = $derived(($summaryQuery.data?.extra ?? {}) as { publicCount?: number; internalCount?: number });
+	let visibleItems = $derived(filterUserVisibleEntries($summaryQuery.data?.recent_items ?? []));
 </script>
 
 <a class="widget-card widget-link" data-size={widget.size} href={`/modules/${module.key}`}>

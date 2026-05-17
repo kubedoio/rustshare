@@ -99,72 +99,72 @@
 
 	type WorkspaceMode = 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
 
-	let uploadTasks: UploadTask[] = [];
-	let selectionMode = false;
+	let uploadTasks = $state<UploadTask[]>([]);
+	let selectionMode = $state(false);
 
 	// Modal states
-	let showRenameModal = false;
-	let showDeleteModal = false;
-	let showMoveModal = false;
-	let showShareModal = false;
-	let showCreateFolderModal = false;
-	let showVersionHistoryModal = false;
-	let showFilePreviewModal = false;
-	let showReplaceFileModal = false;
-	let bulkMoveFileIds: string[] = [];
-	let bulkMoveLoading = false;
-	let showCreateFileModal = false;
-	let showUploadTargetModal = false;
-	let showEditFileModal = false;
-	let createFileLoading = false;
-	let uploadTargetFolderId: string | null = null;
-	let editableFilesForModal: File[] = [];
+	let showRenameModal = $state(false);
+	let showDeleteModal = $state(false);
+	let showMoveModal = $state(false);
+	let showShareModal = $state(false);
+	let showCreateFolderModal = $state(false);
+	let showVersionHistoryModal = $state(false);
+	let showFilePreviewModal = $state(false);
+	let showReplaceFileModal = $state(false);
+	let bulkMoveFileIds = $state<string[]>([]);
+	let bulkMoveLoading = $state(false);
+	let showCreateFileModal = $state(false);
+	let showUploadTargetModal = $state(false);
+	let showEditFileModal = $state(false);
+	let createFileLoading = $state(false);
+	let uploadTargetFolderId = $state<string | null>(null);
+	let editableFilesForModal = $state<File[]>([]);
 
 	// Trash state
-	let showEmptyTrashModal = false;
-	let trashSummary = { file_count: 0, folder_count: 0, total_size: 0 };
-	let emptyingTrash = false;
+	let showEmptyTrashModal = $state(false);
+	let trashSummary = $state({ file_count: 0, folder_count: 0, total_size: 0 });
+	let emptyingTrash = $state(false);
 
 	// Confirm modal state
-	let showConfirmModal = false;
-	let confirmTitle = '';
-	let confirmMessage = '';
-	let confirmDanger = false;
-	let confirmOnConfirm = () => {};
+	let showConfirmModal = $state(false);
+	let confirmTitle = $state('');
+	let confirmMessage = $state('');
+	let confirmDanger = $state(false);
+	let confirmOnConfirm = $state(() => {});
 
 	// Editor state
-	let showTextEditor = false;
-	let showMarkdownEditor = false;
-	let showExcalidrawEditor = false;
-	let editorTarget: File | null = null;
+	let showTextEditor = $state(false);
+	let showMarkdownEditor = $state(false);
+	let showExcalidrawEditor = $state(false);
+	let editorTarget = $state<File | null>(null);
 
 	// Targets
-	let renameTarget: File | Folder | null = null;
-	let renameType: 'file' | 'folder' = 'file';
-	let deleteTarget: File | Folder | null = null;
-	let deleteType: 'file' | 'folder' = 'file';
-	let moveTarget: File | Folder | null = null;
-	let moveType: 'file' | 'folder' = 'file';
-	let shareTarget: File | Folder | null = null;
-	let shareType: 'file' | 'folder' = 'file';
-	let versionHistoryTarget: File | null = null;
-	let previewTarget: File | null = null;
-	let replaceFileTarget: File | null = null;
+	let renameTarget = $state<File | Folder | null>(null);
+	let renameType = $state<'file' | 'folder'>('file');
+	let deleteTarget = $state<File | Folder | null>(null);
+	let deleteType = $state<'file' | 'folder'>('file');
+	let moveTarget = $state<File | Folder | null>(null);
+	let moveType = $state<'file' | 'folder'>('file');
+	let shareTarget = $state<File | Folder | null>(null);
+	let shareType = $state<'file' | 'folder'>('file');
+	let versionHistoryTarget = $state<File | null>(null);
+	let previewTarget = $state<File | null>(null);
+	let replaceFileTarget = $state<File | null>(null);
 
 	// Toast
-	let showToast = false;
-	let toastMessage = '';
-	let toastType: 'success' | 'error' | 'info' = 'info';
+	let showToast = $state(false);
+	let toastMessage = $state('');
+	let toastType = $state<'success' | 'error' | 'info'>('info');
 
 	// ============================================================================
 	// EXPLORER STATE DERIVATIONS
 	// ============================================================================
 
 	// URL parameters
-	$: urlFolderId = $page.url.searchParams.get('folder');
-	$: urlFilter = $page.url.searchParams.get('filter');
-	$: urlSort = $page.url.searchParams.get('sort');
-	$: urlRoot = $page.url.searchParams.get('root') as ExplorerRoot | null;
+	let urlFolderId = $derived($page.url.searchParams.get('folder'));
+	let urlFilter = $derived($page.url.searchParams.get('filter'));
+	let urlSort = $derived($page.url.searchParams.get('sort'));
+	let urlRoot = $derived($page.url.searchParams.get('root') as ExplorerRoot | null);
 
 	// Helper to check if a string looks like a valid UUID
 	function isValidUuid(value: string | null): value is string {
@@ -174,7 +174,7 @@
 	}
 
 	// Current workspace mode
-	$: workspaceMode = (
+	let workspaceMode = $derived((
 		urlFilter === 'photos'
 			? 'photos'
 			: urlFilter === 'starred'
@@ -184,23 +184,24 @@
 					: urlSort === 'recent'
 						? 'recent'
 						: 'all'
-	) as WorkspaceMode;
+	) as WorkspaceMode);
 
 	// Active root (my-files or shared)
-	$: activeRoot = (urlRoot === 'shared' ? 'shared' : 'my-files') as ExplorerRoot;
+	let activeRoot = $derived((urlRoot === 'shared' ? 'shared' : 'my-files') as ExplorerRoot);
 
 	// Is in collection mode?
-	$: isCollectionMode =
+	let isCollectionMode = $derived(
 		workspaceMode === 'starred' ||
 		workspaceMode === 'recent' ||
 		workspaceMode === 'photos' ||
-		workspaceMode === 'deleted';
-
-	// Is shared root view?
-	$: isSharedRoot = activeRoot === 'shared' && !currentFolderId;
+		workspaceMode === 'deleted'
+	);
 
 	// Current folder ID (null at root)
-	$: currentFolderId = isCollectionMode ? null : isValidUuid(urlFolderId) ? urlFolderId : null;
+	let currentFolderId = $derived(isCollectionMode ? null : isValidUuid(urlFolderId) ? urlFolderId : null);
+
+	// Is shared root view?
+	let isSharedRoot = $derived(activeRoot === 'shared' && !currentFolderId);
 
 	// ============================================================================
 	// QUERIES
@@ -242,7 +243,7 @@
 	});
 
 	// Query for the active workspace view
-	$: filesQuery = createQuery<ApiFolderContents>({
+	let filesQuery = $derived(createQuery<ApiFolderContents>({
 		queryKey: ['file-workspace', workspaceMode, currentFolderId, activeRoot],
 		queryFn: async () => {
 			if (workspaceMode === 'starred') return getStarredContents();
@@ -300,7 +301,7 @@
 			// Default my-files behavior
 			return getFolderContents(currentFolderId);
 		}
-	});
+	}));
 
 	// All files query (for storage stats)
 	const allFilesQuery = createQuery({
@@ -313,18 +314,20 @@
 	// ============================================================================
 
 	// Derive folderPath from the full API folder tree (for my-files)
-	$: myFilesFolderPath =
+	let myFilesFolderPath = $derived(
 		currentFolderId && $folderTreeQuery.data && activeRoot === 'my-files'
 			? findFolderPathInTree($folderTreeQuery.data, currentFolderId).slice(1)
-			: [];
-	$: sharedFolderPath =
+			: []
+	);
+	let sharedFolderPath = $derived(
 		currentFolderId && activeRoot === 'shared' && $sharedFolderTreesQuery.data
 			? findFolderPathInSharedTrees(currentFolderId, $sharedFolderTreesQuery.data)
-			: [];
+			: []
+	);
 
 	// Build breadcrumb based on current state
 	// Returns Folder-compatible objects for FileExplorer component
-	$: breadcrumbPath = ((): Folder[] => {
+	let breadcrumbPath = $derived(((): Folder[] => {
 		// In collection mode, return empty (no breadcrumb)
 		if (isCollectionMode) {
 			return [];
@@ -338,7 +341,7 @@
 		}
 
 		return [];
-	})();
+	})());
 
 	function permissionLevel(permission: 'View' | 'Edit' | 'Admin' | null | undefined): number {
 		if (permission === 'Admin') return 3;
@@ -347,15 +350,16 @@
 		return 0;
 	}
 
-	$: currentSharedFolderPermission =
-		activeRoot === 'shared' ? ($filesQuery.data?.current_folder_permission ?? null) : null;
-	$: hasSharedWritePermission = permissionLevel(currentSharedFolderPermission) >= 2;
+	let currentSharedFolderPermission = $derived(
+		activeRoot === 'shared' ? ($filesQuery.data?.current_folder_permission ?? null) : null
+	);
+	let hasSharedWritePermission = $derived(permissionLevel(currentSharedFolderPermission) >= 2);
 
 	// ============================================================================
 	// TITLE DERIVATION (Contextual Header)
 	// ============================================================================
 
-	$: workspaceTitle = isCollectionMode
+	let workspaceTitle = $derived(isCollectionMode
 		? workspaceMode === 'photos'
 			? 'Photos'
 			: workspaceMode === 'recent'
@@ -369,9 +373,9 @@
 				: 'Shared'
 			: currentFolderId
 				? breadcrumbPath[breadcrumbPath.length - 1]?.name
-				: 'My Files';
+				: 'My Files');
 
-	$: workspaceDescription = isCollectionMode
+	let workspaceDescription = $derived(isCollectionMode
 		? workspaceMode === 'photos'
 			? 'Image files in the current workspace, without the folder noise.'
 			: workspaceMode === 'recent'
@@ -385,9 +389,9 @@
 				: 'Folders shared with you by other users.'
 			: currentFolderId
 				? 'Folder contents.'
-				: 'Browse and organize files, folders, and workspace artifacts.';
+				: 'Browse and organize files, folders, and workspace artifacts.');
 
-	$: workspaceEmptyTitle = isCollectionMode
+	let workspaceEmptyTitle = $derived(isCollectionMode
 		? workspaceMode === 'photos'
 			? 'No photos in this view'
 			: workspaceMode === 'recent'
@@ -397,9 +401,9 @@
 					: 'Deleted items will show up here'
 		: activeRoot === 'shared'
 			? 'No shared folders'
-			: 'No files yet';
+			: 'No files yet');
 
-	$: workspaceEmptyDescription = isCollectionMode
+	let workspaceEmptyDescription = $derived(isCollectionMode
 		? workspaceMode === 'photos'
 			? 'Upload an image into this folder and it will show up here.'
 			: workspaceMode === 'recent'
@@ -409,58 +413,66 @@
 					: 'Deleting a folder or file moves it here instead of removing it immediately.'
 		: activeRoot === 'shared'
 			? 'Items shared with you will appear here.'
-			: 'This folder is empty. Upload a file or create a folder to start organizing your workspace.';
+			: 'This folder is empty. Upload a file or create a folder to start organizing your workspace.');
 
-	$: workspaceEmptyActionLabel =
-		!isCollectionMode && activeRoot === 'my-files' ? 'Upload files' : null;
+	let workspaceEmptyActionLabel = $derived(
+		!isCollectionMode && activeRoot === 'my-files' ? 'Upload files' : null
+	);
 
 	// ============================================================================
 	// UI STATE DERIVATIONS
 	// ============================================================================
 
-	$: showFolderTree = !isCollectionMode;
-	$: showBreadcrumbs = !isCollectionMode;
-	$: canCreateFolder =
+	let showFolderTree = $derived(!isCollectionMode);
+	let showBreadcrumbs = $derived(!isCollectionMode);
+	let canCreateFolder = $derived(
 		!isCollectionMode &&
-		(activeRoot === 'my-files' || (activeRoot === 'shared' && hasSharedWritePermission));
-	$: canUpload =
+		(activeRoot === 'my-files' || (activeRoot === 'shared' && hasSharedWritePermission))
+	);
+	let canUpload = $derived(
 		!isCollectionMode &&
-		(activeRoot === 'my-files' || (activeRoot === 'shared' && hasSharedWritePermission));
-	$: allowSelectionMode = workspaceMode !== 'deleted';
-	$: if (!allowSelectionMode && selectionMode) {
-		selectionMode = false;
-		selectionStore.clear();
-	}
+		(activeRoot === 'my-files' || (activeRoot === 'shared' && hasSharedWritePermission))
+	);
+	let allowSelectionMode = $derived(workspaceMode !== 'deleted');
+
+	$effect(() => {
+		if (!allowSelectionMode && selectionMode) {
+			selectionMode = false;
+			selectionStore.clear();
+		}
+	});
 
 	// ============================================================================
 	// SORTING & FILTERING
 	// ============================================================================
 
-	$: activeSortField = workspaceMode === 'recent' ? 'created_at' : $fileSortState.field;
-	$: activeSortOrder = workspaceMode === 'recent' ? 'desc' : $fileSortState.order;
-	$: searchTerm = $searchQuery.trim().toLowerCase();
+	let activeSortField = $derived(workspaceMode === 'recent' ? 'created_at' : $fileSortState.field);
+	let activeSortOrder = $derived(workspaceMode === 'recent' ? 'desc' : $fileSortState.order);
+	let searchTerm = $derived($searchQuery.trim().toLowerCase());
 
 	function matchesSearch(name: string) {
 		return searchTerm.length === 0 || name.toLowerCase().includes(searchTerm);
 	}
 
-	$: baseFolders = filterUserVisibleEntries(
+	let baseFolders = $derived(filterUserVisibleEntries(
 		($filesQuery.data?.folders || []).filter((folder) => matchesSearch(folder.name))
-	);
-	$: baseFiles = filterUserVisibleEntries(
+	));
+	let baseFiles = $derived(filterUserVisibleEntries(
 		($filesQuery.data?.files || []).filter((file) => matchesSearch(file.name))
-	);
+	));
 
-	$: filteredFolders =
+	let filteredFolders = $derived(
 		workspaceMode === 'all' || workspaceMode === 'starred' || workspaceMode === 'deleted'
 			? baseFolders
-			: [];
-	$: filteredFiles =
+			: []
+	);
+	let filteredFiles = $derived(
 		workspaceMode === 'photos'
 			? baseFiles.filter((file) => file.mime_type.startsWith('image/'))
-			: baseFiles;
+			: baseFiles
+	);
 
-	$: sortedFolders = [...filteredFolders].sort((a, b) => {
+	let sortedFolders = $derived([...filteredFolders].sort((a, b) => {
 		if (activeSortField === 'name') {
 			return activeSortOrder === 'asc'
 				? a.name.localeCompare(b.name)
@@ -472,9 +484,9 @@
 				: new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
 		}
 		return 0;
-	});
+	}));
 
-	$: sortedFiles = [...filteredFiles].sort((a, b) => {
+	let sortedFiles = $derived([...filteredFiles].sort((a, b) => {
 		if (activeSortField === 'name') {
 			return activeSortOrder === 'asc'
 				? a.name.localeCompare(b.name)
@@ -494,30 +506,31 @@
 				: b.mime_type.localeCompare(a.mime_type);
 		}
 		return 0;
-	});
+	}));
 
 	// ============================================================================
 	// PAGINATION
 	// ============================================================================
 
-	let currentPage = 1;
-	$: {
+	let currentPage = $state(1);
+
+	$effect(() => {
 		// Reset to page 1 when page size or sort changes
 		const _ = $fileSortState.pageSize;
 		const __ = activeSortField;
 		const ___ = activeSortOrder;
 		currentPage = 1;
-	}
+	});
 
-	$: pageSize = $fileSortState.pageSize;
-	$: startIndex = (currentPage - 1) * pageSize;
-	$: folderEndIndex = Math.min(startIndex + pageSize, sortedFolders.length);
-	$: paginatedFolders = sortedFolders.slice(startIndex, folderEndIndex);
-	$: fileStartIndex = Math.max(0, startIndex - sortedFolders.length);
-	$: fileEndIndex = Math.max(0, startIndex + pageSize - sortedFolders.length);
-	$: paginatedFiles = sortedFiles.slice(fileStartIndex, fileEndIndex);
-	$: totalItems = sortedFolders.length + sortedFiles.length;
-	$: totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+	let pageSize = $derived($fileSortState.pageSize);
+	let startIndex = $derived((currentPage - 1) * pageSize);
+	let folderEndIndex = $derived(Math.min(startIndex + pageSize, sortedFolders.length));
+	let paginatedFolders = $derived(sortedFolders.slice(startIndex, folderEndIndex));
+	let fileStartIndex = $derived(Math.max(0, startIndex - sortedFolders.length));
+	let fileEndIndex = $derived(Math.max(0, startIndex + pageSize - sortedFolders.length));
+	let paginatedFiles = $derived(sortedFiles.slice(fileStartIndex, fileEndIndex));
+	let totalItems = $derived(sortedFolders.length + sortedFiles.length);
+	let totalPages = $derived(Math.max(1, Math.ceil(totalItems / pageSize)));
 
 	// ============================================================================
 	// MUTATIONS
@@ -1565,11 +1578,12 @@
 		}
 	}
 
-	$: isUploading = uploadTasks.some((t) => t.status === 'uploading' || t.status === 'pending');
-	$: moveCurrentFolderId =
+	let isUploading = $derived(uploadTasks.some((t) => t.status === 'uploading' || t.status === 'pending'));
+	let moveCurrentFolderId = $derived(
 		moveType === 'file'
 			? (moveTarget as File | null)?.parent_folder_id
-			: (moveTarget as Folder | null)?.parent_folder_id;
+			: (moveTarget as Folder | null)?.parent_folder_id
+	);
 
 </script>
 

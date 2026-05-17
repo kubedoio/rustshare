@@ -13,31 +13,48 @@
 		onClick: () => void;
 	}
 
-	export let items: MenuItem[] = [];
-	export let x: number = 0;
-	export let y: number = 0;
-	export let visible: boolean = false;
-	export let onClose: () => void = () => {};
+	let {
+		items = [],
+		x = 0,
+		y = 0,
+		visible = false,
+		onClose = () => {}
+	}: {
+		items?: MenuItem[];
+		x?: number;
+		y?: number;
+		visible?: boolean;
+		onClose?: () => void;
+	} = $props();
 
-	let menuRef: HTMLDivElement;
+	let menuRef = $state<HTMLDivElement>();
 
-	// Adjust position to keep menu in viewport
-	$: adjustedX = x;
-	$: adjustedY = y;
-	$: if (menuRef && visible) {
-		const rect = menuRef.getBoundingClientRect();
-		const viewportWidth = window.innerWidth;
-		const viewportHeight = window.innerHeight;
+	let adjustedX = $state(x);
+	let adjustedY = $state(y);
 
-		if (x + rect.width > viewportWidth) {
-			adjustedX = viewportWidth - rect.width - 8;
+	$effect(() => {
+		if (menuRef && visible) {
+			const rect = menuRef.getBoundingClientRect();
+			const viewportWidth = window.innerWidth;
+			const viewportHeight = window.innerHeight;
+
+			let newX = x;
+			let newY = y;
+			if (x + rect.width > viewportWidth) {
+				newX = viewportWidth - rect.width - 8;
+			}
+			if (y + rect.height > viewportHeight) {
+				newY = viewportHeight - rect.height - 8;
+			}
+			if (newX < 8) newX = 8;
+			if (newY < 8) newY = 8;
+			adjustedX = newX;
+			adjustedY = newY;
+		} else {
+			adjustedX = x;
+			adjustedY = y;
 		}
-		if (y + rect.height > viewportHeight) {
-			adjustedY = viewportHeight - rect.height - 8;
-		}
-		if (adjustedX < 8) adjustedX = 8;
-		if (adjustedY < 8) adjustedY = 8;
-	}
+	});
 
 	function handleClickOutside(e: MouseEvent) {
 		if (menuRef && !menuRef.contains(e.target as Node)) {

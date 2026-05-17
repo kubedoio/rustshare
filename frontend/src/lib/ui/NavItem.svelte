@@ -1,14 +1,23 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 
-	export let href: string;
-	export let icon: string;
-	export let label: string;
-	export let badge: number | null = null;
-	export let compact = false;
-	export let onClick: (() => void) | undefined = undefined;
+	let {
+		href,
+		icon,
+		label,
+		badge = null,
+		compact = false,
+		onClick = undefined
+	}: {
+		href: string;
+		icon: string;
+		label: string;
+		badge?: number | null;
+		compact?: boolean;
+		onClick?: (() => void) | undefined;
+	} = $props();
 
-	$: isActive = $page.url.pathname === href || $page.url.pathname.startsWith(href + '/');
+	let isActive = $derived($page.url.pathname === href || $page.url.pathname.startsWith(href + '/'));
 </script>
 
 <a

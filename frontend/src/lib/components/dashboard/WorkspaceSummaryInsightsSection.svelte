@@ -2,7 +2,11 @@
 	import type { ModuleDefinition } from '$lib/modules/registry';
 	import DashboardWidgetGrid from './DashboardWidgetGrid.svelte';
 
-	export let modules: ModuleDefinition[] = [];
+	let {
+		modules = []
+	}: {
+		modules?: ModuleDefinition[];
+	} = $props();
 </script>
 
 <section class="insights-section">

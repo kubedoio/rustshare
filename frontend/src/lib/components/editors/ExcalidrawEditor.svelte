@@ -5,8 +5,17 @@
 	import BaseEditor from './BaseEditor.svelte';
 	import { createEventDispatcher } from 'svelte';
 
-	export let open = false;
-	export let file: File | null = null;
+	let {
+		open = false,
+		file = null,
+		onClose,
+		onSaved
+	}: {
+		open?: boolean;
+		file?: File | null;
+		onClose?: () => void;
+		onSaved?: (event: { file: File }) => void;
+	} = $props();
 
 	type DispatchEvents = {
 		close: void;
@@ -14,15 +23,15 @@
 	};
 	const dispatch = createEventDispatcher<DispatchEvents>();
 
-	let content = '';
-	let originalContent = '';
-	let isLoading = false;
-	let isSaving = false;
-	let error: string | null = null;
-	let saveMode: 'overwrite' | 'new_version' = 'new_version';
-	let hasChanges = false;
+	let content = $state('');
+	let originalContent = $state('');
+	let isLoading = $state(false);
+	let isSaving = $state(false);
+	let error = $state<string | null>(null);
+	let saveMode: 'overwrite' | 'new_version' = $state('new_version');
+	let hasChanges = $state(false);
 	let excalidrawContainer: HTMLDivElement;
-	let excalidrawInstance: any = null;
+	let excalidrawInstance: any = $state(null);
 
 	// Load Excalidraw dynamically
 	async function loadExcalidraw() {
@@ -157,6 +166,7 @@
 			hasChanges = false;
 
 			dispatch('saved', { file });
+			onSaved?.({ file });
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to save file';
 		} finally {
@@ -166,19 +176,24 @@
 
 	function handleClose() {
 		dispatch('close');
+		onClose?.();
 	}
 
-	$: if (open && file) {
-		loadContent();
-	}
-
-	$: if (!open) {
-		// Cleanup
-		if (excalidrawContainer) {
-			excalidrawContainer.innerHTML = '';
+	$effect(() => {
+		if (open && file) {
+			loadContent();
 		}
-		excalidrawInstance = null;
-	}
+	});
+
+	$effect(() => {
+		if (!open) {
+			// Cleanup
+			if (excalidrawContainer) {
+				excalidrawContainer.innerHTML = '';
+			}
+			excalidrawInstance = null;
+		}
+	});
 
 	onDestroy(() => {
 		if (excalidrawContainer) {

@@ -2,15 +2,21 @@
 	import { UserPlus, X } from 'lucide-svelte';
 	import { createInvite } from '$lib/api/invites';
 
-	export let enabled = false;
-	export let open = false;
-	export let onSend: (email: string) => Promise<void> = async () => {};
+	let {
+		enabled = false,
+		open = $bindable(false),
+		onSend = async () => {}
+	}: {
+		enabled?: boolean;
+		open?: boolean;
+		onSend?: (email: string) => Promise<void>;
+	} = $props();
 
-	let inviteEmail = '';
-	let inviteState: 'idle' | 'done' = 'idle';
-	let inviteLink = '';
-	let inviteLoading = false;
-	let inviteErrorMsg = '';
+	let inviteEmail = $state('');
+	let inviteState = $state<'idle' | 'done'>('idle');
+	let inviteLink = $state('');
+	let inviteLoading = $state(false);
+	let inviteErrorMsg = $state('');
 
 	function handleToggle() {
 		open = !open;

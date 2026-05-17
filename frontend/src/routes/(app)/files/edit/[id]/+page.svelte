@@ -3,10 +3,10 @@
 	import ImageEditor from '$lib/components/editors/ImageEditor.svelte';
 	import type { PageData } from './$types';
 
-	export let data: PageData;
+	let { data }: { data: PageData } = $props();
 
-	let saving = false;
-	let error: string | null = null;
+	let saving = $state(false);
+	let error = $state<string | null>(null);
 
 	async function handleSave(event: CustomEvent<{ blob: Blob; fileName: string }>) {
 		const { blob, fileName } = event.detail;

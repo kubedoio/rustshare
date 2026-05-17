@@ -10,20 +10,20 @@
 	const queryClient = useQueryClient();
 	const key = $page.params.key!;
 
-	let name = '';
-	let moduleKey = '';
-	let description = '';
-	let createLabel = '';
-	let icon = 'file-text';
-	let folderStructureJson = '[]';
-	let defaultFilesJson = '[]';
-	let metadataSchemaJson = '{}';
-	let renderer = '';
-	let visibilityPolicy = 'workspace';
-	let enabled = true;
-	let isSystemTemplate = false;
-	let error = '';
-	let moduleConfigJson = '{}';
+	let name = $state('');
+	let moduleKey = $state('');
+	let description = $state('');
+	let createLabel = $state('');
+	let icon = $state('file-text');
+	let folderStructureJson = $state('[]');
+	let defaultFilesJson = $state('[]');
+	let metadataSchemaJson = $state('{}');
+	let renderer = $state('');
+	let visibilityPolicy = $state('workspace');
+	let enabled = $state(true);
+	let isSystemTemplate = $state(false);
+	let error = $state('');
+	let moduleConfigJson = $state('{}');
 	const templateQuery = createQuery({
 		queryKey: ['admin-template', key],
 		queryFn: () => getAdminTemplate(key)
@@ -34,22 +34,24 @@
 		queryFn: () => listAdminModules()
 	});
 
-	$: if ($templateQuery.data) {
-		const t = $templateQuery.data;
-		name = t.name;
-		moduleKey = t.module_key;
-		description = t.description ?? '';
-		createLabel = t.ui_config?.createLabel ?? '';
-		icon = t.ui_config?.icon ?? 'file-text';
-		folderStructureJson = JSON.stringify(t.folder_structure ?? [], null, 2);
-		defaultFilesJson = JSON.stringify(t.default_files ?? [], null, 2);
-		metadataSchemaJson = JSON.stringify(t.metadata_schema ?? {}, null, 2);
-		renderer = t.renderer ?? '';
-		visibilityPolicy = t.visibility_policy ?? 'workspace';
-		enabled = t.enabled ?? true;
-		isSystemTemplate = t.system_template ?? false;
-		moduleConfigJson = JSON.stringify(t.module_config ?? {}, null, 2);
-	}
+	$effect(() => {
+		if ($templateQuery.data) {
+			const t = $templateQuery.data;
+			name = t.name;
+			moduleKey = t.module_key;
+			description = t.description ?? '';
+			createLabel = t.ui_config?.createLabel ?? '';
+			icon = t.ui_config?.icon ?? 'file-text';
+			folderStructureJson = JSON.stringify(t.folder_structure ?? [], null, 2);
+			defaultFilesJson = JSON.stringify(t.default_files ?? [], null, 2);
+			metadataSchemaJson = JSON.stringify(t.metadata_schema ?? {}, null, 2);
+			renderer = t.renderer ?? '';
+			visibilityPolicy = t.visibility_policy ?? 'workspace';
+			enabled = t.enabled ?? true;
+			isSystemTemplate = t.system_template ?? false;
+			moduleConfigJson = JSON.stringify(t.module_config ?? {}, null, 2);
+		}
+	});
 
 	const updateMutation = createMutation({
 		mutationFn: (payload: {

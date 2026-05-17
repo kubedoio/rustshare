@@ -1,18 +1,26 @@
 <script lang="ts">
 	import { formatFileSize } from '$lib/utils/format';
 
-	export let totalFiles = 0;
-	export let totalFolders = 0;
-	export let totalSize = 0;
-	export let storageQuota = 0;
+	let {
+		totalFiles = 0,
+		totalFolders = 0,
+		totalSize = 0,
+		storageQuota = 0
+	}: {
+		totalFiles?: number;
+		totalFolders?: number;
+		totalSize?: number;
+		storageQuota?: number;
+	} = $props();
 
-	$: usagePercent = storageQuota > 0 ? (totalSize / storageQuota) * 100 : 0;
-	$: usageClass =
+	let usagePercent = $derived(storageQuota > 0 ? (totalSize / storageQuota) * 100 : 0);
+	let usageClass = $derived(
 		usagePercent >= 90
 			? 'progress-error'
 			: usagePercent >= 75
 				? 'progress-warning'
-				: 'progress-primary';
+				: 'progress-primary'
+	);
 </script>
 
 <div class="stats w-full stats-vertical bg-base-100 shadow lg:stats-horizontal">

@@ -5,8 +5,13 @@
 	import DashboardSectionHeader from './DashboardSectionHeader.svelte';
 	import DashboardEmptyState from './DashboardEmptyState.svelte';
 
-	export let activities: Activity[];
-	export let userName: string | undefined = undefined;
+	let {
+		activities,
+		userName = undefined
+	}: {
+		activities: Activity[];
+		userName?: string | undefined;
+	} = $props();
 
 	function getActivityHref(activity: Activity): string | null {
 		if (!activity.artifactId) return null;

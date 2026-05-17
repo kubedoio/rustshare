@@ -14,28 +14,31 @@
 		queryFn: getSmtpConfig
 	});
 
-	let enabled = false;
-	let host = '';
-	let port: number | string = 587;
-	let username = '';
-	let password = '';
-	let from_address = '';
-	let from_name = '';
-	let tls_mode = 'starttls';
-	let showPassword = false;
+	let enabled = $state(false);
+	let host = $state('');
+	let port = $state<number | string>(587);
+	let username = $state('');
+	let password = $state('');
+	let from_address = $state('');
+	let from_name = $state('');
+	let tls_mode = $state('starttls');
+	let showPassword = $state(false);
 
-	let testResult: { success: boolean; message?: string } | null = null;
+	let testResult = $state<{ success: boolean; message?: string } | null>(null);
 
-	$: if ($query.data) {
-		enabled = $query.data.enabled;
-		host = $query.data.host ?? '';
-		port = $query.data.port ?? 587;
-		username = $query.data.username ?? '';
-		password = '';
-		from_address = $query.data.from_address ?? '';
-		from_name = $query.data.from_name ?? '';
-		tls_mode = $query.data.tls_mode ?? 'starttls';
-	}
+	$effect(() => {
+		const data = $query.data;
+		if (data) {
+			enabled = data.enabled;
+			host = data.host ?? '';
+			port = data.port ?? 587;
+			username = data.username ?? '';
+			password = '';
+			from_address = data.from_address ?? '';
+			from_name = data.from_name ?? '';
+			tls_mode = data.tls_mode ?? 'starttls';
+		}
+	});
 
 	const saveMutation = createMutation({
 		mutationFn: () => {

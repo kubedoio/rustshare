@@ -4,9 +4,13 @@
 	import { getOfficeFileType } from '$lib/utils/format';
 	import { FileText, FileSpreadsheet, Presentation } from 'lucide-svelte';
 
-	export let file: File | null = null;
+	let {
+		file = null
+	}: {
+		file?: File | null;
+	} = $props();
 
-	$: officeType = file ? getOfficeFileType(file.mime_type, file.name) : null;
+	let officeType = $derived(file ? getOfficeFileType(file.mime_type, file.name) : null);
 
 	const officeConfig = {
 		word: {
@@ -29,7 +33,7 @@
 		}
 	};
 
-	$: config = officeType ? officeConfig[officeType] : null;
+	let config = $derived(officeType ? officeConfig[officeType] : null);
 </script>
 
 <div class="flex flex-col items-center justify-center p-12 text-center">

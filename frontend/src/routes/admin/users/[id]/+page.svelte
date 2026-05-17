@@ -5,13 +5,13 @@
 	import { getAdminUser } from '$lib/api/admin';
 	import UserDetailForm from '$lib/components/admin/UserDetailForm.svelte';
 
-	$: userId = $page.params.id;
+	let userId = $derived($page.params.id);
 
-	$: userQuery = createQuery({
+	let userQuery = $derived(createQuery({
 		queryKey: ['admin', 'user', userId],
 		queryFn: () => getAdminUser(userId ?? ''),
 		enabled: !!userId
-	});
+	}));
 
 	function handleRefresh() {
 		queryClient.invalidateQueries({ queryKey: ['admin', 'user', userId] });

@@ -18,23 +18,21 @@
 	import SlashCommandMenu from './SlashCommandMenu.svelte';
 	import ExcalidrawEditor from './ExcalidrawEditor.svelte';
 
-	/** Initial Markdown content */
-	export let content: string = '';
-
-	/** Whether editing is enabled */
-	export let editable: boolean = true;
-
-	/** Whether an attachment handler is available */
-	export let hasAttachmentHandler: boolean = false;
-
-	/** Expose current Markdown for parent reads */
-	export let currentMarkdown: string = content;
-
-	/** Whether server-side content prop changes should replace the active document */
-	export let syncExternalContent: boolean = true;
-
-	/** Optional Yjs document for collaborative editing */
-	export let ydoc: import('yjs').Doc | undefined = undefined;
+	let {
+		content = '',
+		editable = true,
+		hasAttachmentHandler = false,
+		currentMarkdown = $bindable(content),
+		syncExternalContent = true,
+		ydoc = undefined
+	}: {
+		content?: string;
+		editable?: boolean;
+		hasAttachmentHandler?: boolean;
+		currentMarkdown?: string;
+		syncExternalContent?: boolean;
+		ydoc?: import('yjs').Doc | undefined;
+	} = $props();
 
 	const dispatch = createEventDispatcher<{
 		change: { markdown: string };
@@ -47,22 +45,22 @@
 
 	let editorElement: HTMLDivElement;
 	let editorWrapperElement: HTMLDivElement;
-	let editor: Editor | null = null;
-	let initialized = false;
-	let isDragOver = false;
-	let markdownUpdateTimer: ReturnType<typeof setTimeout> | null = null;
+	let editor: Editor | null = $state(null);
+	let initialized = $state(false);
+	let isDragOver = $state(false);
+	let markdownUpdateTimer: ReturnType<typeof setTimeout> | null = $state(null);
 
 	// Slash menu state
-	let showSlashMenu = false;
-	let slashQuery = '';
-	let slashMenuTop = 0;
-	let slashMenuLeft = 0;
-	let slashRangeFrom = 0;
+	let showSlashMenu = $state(false);
+	let slashQuery = $state('');
+	let slashMenuTop = $state(0);
+	let slashMenuLeft = $state(0);
+	let slashRangeFrom = $state(0);
 
 	// Excalidraw state
-	let showExcalidraw = false;
-	let excalidrawInitialData: { elements?: any[]; appState?: any; files?: any } | null = null;
-	let sketchEditPos: number | null = null;
+	let showExcalidraw = $state(false);
+	let excalidrawInitialData: { elements?: any[]; appState?: any; files?: any } | null = $state(null);
+	let sketchEditPos: number | null = $state(null);
 
 	onMount(() => {
 		if (!editorElement) return;
@@ -144,22 +142,28 @@
 	});
 
 	// React to editable prop changes
-	$: if (editor && initialized) {
-		editor.setEditable(editable);
-	}
+	$effect(() => {
+		if (editor && initialized) {
+			editor.setEditable(editable);
+		}
+	});
 
 	// React to external content changes (e.g. after save + refetch)
-	let lastExternalContent = content;
-	$: if (editor && initialized && syncExternalContent && content !== lastExternalContent) {
-		if (content !== editorToMarkdown(editor)) {
-			editor.commands.setContent(content, { emitUpdate: false });
+	let lastExternalContent = $state(content);
+	$effect(() => {
+		if (editor && initialized && syncExternalContent && content !== lastExternalContent) {
+			if (content !== editorToMarkdown(editor)) {
+				editor.commands.setContent(content, { emitUpdate: false });
+			}
+			lastExternalContent = content;
+			currentMarkdown = content;
 		}
-		lastExternalContent = content;
-		currentMarkdown = content;
-	}
-	$: if (!syncExternalContent && content !== lastExternalContent) {
-		lastExternalContent = content;
-	}
+	});
+	$effect(() => {
+		if (!syncExternalContent && content !== lastExternalContent) {
+			lastExternalContent = content;
+		}
+	});
 
 	function scheduleMarkdownUpdate() {
 		if (markdownUpdateTimer) clearTimeout(markdownUpdateTimer);
@@ -185,8 +189,8 @@
 		}
 
 		// Get text from start of current block to cursor
-		const $pos = state.doc.resolve(from);
-		const blockStart = $pos.start();
+		const resolvedPos = state.doc.resolve(from);
+		const blockStart = resolvedPos.start();
 		const textBefore = state.doc.textBetween(blockStart, from, '\0');
 
 		// Match /query pattern (slash at start of block)
@@ -227,8 +231,8 @@
 		// Delete the /query text
 		const { state } = editor;
 		const { from } = state.selection;
-		const $pos = state.doc.resolve(from);
-		const blockStart = $pos.start();
+		const resolvedPos = state.doc.resolve(from);
+		const blockStart = resolvedPos.start();
 
 		editor.chain().focus().deleteRange({ from: blockStart, to: from }).run();
 

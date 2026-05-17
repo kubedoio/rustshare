@@ -4,13 +4,19 @@
 	import { isInternalRustShareFile } from '$lib/utils/artifactVisibility';
 	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 
-	export let maxItems = 10;
-	export let showClearButton = true;
-	export let showHeader = true;
+	let {
+		maxItems = 10,
+		showClearButton = true,
+		showHeader = true
+	}: {
+		maxItems?: number;
+		showClearButton?: boolean;
+		showHeader?: boolean;
+	} = $props();
 
-	let showConfirmModal = false;
+	let showConfirmModal = $state(false);
 
-	$: recentActivities = $activityStore.filter((a) => !isInternalRustShareFile(a.fileName)).slice(0, maxItems);
+	let recentActivities = $derived($activityStore.filter((a) => !isInternalRustShareFile(a.fileName)).slice(0, maxItems));
 
 	function handleClearHistory() {
 		showConfirmModal = true;

@@ -16,9 +16,11 @@
 		{ href: '/admin/audit', label: 'Audit Log', icon: 'list' }
 	];
 
-	$: if (browser && !$authStore.isLoading && !$authStore.user?.is_admin) {
-		goto('/dashboard');
-	}
+	$effect(() => {
+		if (browser && !$authStore.isLoading && !$authStore.user?.is_admin) {
+			goto('/dashboard');
+		}
+	});
 </script>
 
 {#if $authStore.isLoading}

@@ -1,25 +1,34 @@
 <script lang="ts">
 	import type { AuditEntry } from '$lib/api/admin';
 
-	export let entries: AuditEntry[] = [];
-	export let total: number = 0;
-	export let page: number = 1;
-	export let perPage: number = 50;
-	export let onPageChange: (page: number) => void = () => {};
-	export let onFilterChange: (filters: {
-		type?: string;
-		user_id?: string;
-		from?: string;
-		to?: string;
-	}) => void = () => {};
+	let {
+		entries = [],
+		total = 0,
+		page = 1,
+		perPage = 50,
+		onPageChange = () => {},
+		onFilterChange = () => {}
+	}: {
+		entries?: AuditEntry[];
+		total?: number;
+		page?: number;
+		perPage?: number;
+		onPageChange?: (page: number) => void;
+		onFilterChange?: (filters: {
+			type?: string;
+			user_id?: string;
+			from?: string;
+			to?: string;
+		}) => void;
+	} = $props();
 
-	let typeFilter = '';
-	let userSearch = '';
-	let fromDate = '';
-	let toDate = '';
-	let expandedId: string | null = null;
+	let typeFilter = $state('');
+	let userSearch = $state('');
+	let fromDate = $state('');
+	let toDate = $state('');
+	let expandedId = $state<string | null>(null);
 
-	$: totalPages = Math.ceil(total / perPage);
+	let totalPages = $derived(Math.ceil(total / perPage));
 
 	function applyFilters() {
 		onFilterChange({

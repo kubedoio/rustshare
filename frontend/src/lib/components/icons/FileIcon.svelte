@@ -1,22 +1,29 @@
 <script lang="ts">
-	export let mimeType: string;
-	export let size: 'sm' | 'md' | 'lg' = 'md';
-	export let iconClass: string = '';
+	let {
+		mimeType,
+		size = 'md',
+		iconClass = ''
+	}: {
+		mimeType: string;
+		size?: 'sm' | 'md' | 'lg';
+		iconClass?: string;
+	} = $props();
 
-	$: normalized = mimeType.toLowerCase();
-	$: isImage = normalized.startsWith('image/');
-	$: isVideo = normalized.startsWith('video/');
-	$: isAudio = normalized.startsWith('audio/');
-	$: isPdf = normalized.includes('pdf');
-	$: isArchive =
+	let normalized = $derived(mimeType.toLowerCase());
+	let isImage = $derived(normalized.startsWith('image/'));
+	let isVideo = $derived(normalized.startsWith('video/'));
+	let isAudio = $derived(normalized.startsWith('audio/'));
+	let isPdf = $derived(normalized.includes('pdf'));
+	let isArchive = $derived(
 		normalized.includes('zip') ||
 		normalized.includes('tar') ||
 		normalized.includes('gzip') ||
-		normalized.includes('archive');
-	$: isWord = normalized.includes('msword') || normalized.includes('wordprocessingml');
-	$: isExcel = normalized.includes('ms-excel') || normalized.includes('spreadsheetml');
-	$: isPowerPoint = normalized.includes('ms-powerpoint') || normalized.includes('presentationml');
-	$: isText = normalized.startsWith('text/');
+		normalized.includes('archive')
+	);
+	let isWord = $derived(normalized.includes('msword') || normalized.includes('wordprocessingml'));
+	let isExcel = $derived(normalized.includes('ms-excel') || normalized.includes('spreadsheetml'));
+	let isPowerPoint = $derived(normalized.includes('ms-powerpoint') || normalized.includes('presentationml'));
+	let isText = $derived(normalized.startsWith('text/'));
 
 	const sizeClasses = {
 		sm: 'w-4 h-4',
@@ -24,7 +31,7 @@
 		lg: 'w-8 h-8'
 	};
 
-	$: sizeClass = sizeClasses[size];
+	let sizeClass = $derived(sizeClasses[size]);
 </script>
 
 {#if isImage}

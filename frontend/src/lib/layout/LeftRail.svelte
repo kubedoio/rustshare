@@ -23,28 +23,29 @@
 		queryFn: () => listEnabledModules()
 	});
 
-	$: sidebarModules = getEnabledSidebarModules($modulesQuery.data ?? []);
+	let sidebarModules = $derived(getEnabledSidebarModules($modulesQuery.data ?? []));
 
 	// Explicitly derive pathname so template expressions reliably re-evaluate
 	// when the route changes (Svelte 5 legacy mode can miss deps inside
 	// function calls in template expressions).
-	$: pathname = $page.url.pathname;
+	let pathname = $derived($page.url.pathname);
 
 	// Active primary/secondary item href (null when on a module page)
-	$: activePrimaryHref =
+	let activePrimaryHref = $derived(
 		pathname === '/dashboard' || pathname === '/'
 			? '/dashboard'
 			: pathname === '/files' || pathname.startsWith('/files')
 				? '/files'
 				: pathname === '/settings' || pathname.startsWith('/settings')
 					? '/settings'
-					: null;
+					: null
+	);
 
 	// Active module key extracted from /modules/{key}/... routes
-	$: activeModuleKey = pathname.match(/^\/modules\/([^/]+)/)?.[1] ?? null;
+	let activeModuleKey = $derived(pathname.match(/^\/modules\/([^/]+)/)?.[1] ?? null);
 
 	// Hover-based temporary expansion
-	let hoverExpanded = false;
+	let hoverExpanded = $state(false);
 	let hoverTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	function handleMouseEnter() {
@@ -63,7 +64,7 @@
 		hoverExpanded = false;
 	}
 
-	$: railExpanded = $sidebarExpanded || hoverExpanded;
+	let railExpanded = $derived($sidebarExpanded || hoverExpanded);
 </script>
 
 <!-- Far-left Icon Rail -->

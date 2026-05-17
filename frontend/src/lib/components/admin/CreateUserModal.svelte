@@ -2,17 +2,23 @@
 	import { createMutation } from '$lib/query-compat';
 	import { createAdminUser, type AdminUserDetail } from '$lib/api/admin';
 
-	export let open: boolean = false;
-	export let onClose: () => void = () => {};
-	export let onCreated: (user: AdminUserDetail) => void = () => {};
+	let {
+		open = false,
+		onClose = () => {},
+		onCreated = () => {}
+	}: {
+		open?: boolean;
+		onClose?: () => void;
+		onCreated?: (user: AdminUserDetail) => void;
+	} = $props();
 
-	let username = '';
-	let email = '';
-	let password = '';
-	let display_name = '';
-	let is_admin = false;
-	let quota_gb = '';
-	let errors: Record<string, string> = {};
+	let username = $state('');
+	let email = $state('');
+	let password = $state('');
+	let display_name = $state('');
+	let is_admin = $state(false);
+	let quota_gb = $state('');
+	let errors = $state<Record<string, string>>({});
 
 	function validate(): boolean {
 		errors = {};

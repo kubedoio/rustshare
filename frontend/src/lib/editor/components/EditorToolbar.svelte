@@ -27,10 +27,7 @@
 	import { createEventDispatcher } from 'svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
 
-	export let editor: Editor | null = null;
-
-	/** Whether attachment features are available */
-	export let hasAttachmentHandler: boolean = false;
+	let { editor = null, hasAttachmentHandler = false }: { editor?: Editor | null; hasAttachmentHandler?: boolean } = $props();
 
 	const dispatch = createEventDispatcher<{
 		attachment: void;
@@ -38,11 +35,18 @@
 	}>();
 
 	// Force reactivity on selection/transaction changes
-	let _tick = 0;
-	$: if (editor) {
-		editor.on('selectionUpdate', () => (_tick = _tick + 1));
-		editor.on('transaction', () => (_tick = _tick + 1));
-	}
+	let _tick = $state(0);
+	$effect(() => {
+		if (editor) {
+			const updateTick = () => (_tick = _tick + 1);
+			editor.on('selectionUpdate', updateTick);
+			editor.on('transaction', updateTick);
+			return () => {
+				editor.off('selectionUpdate', updateTick);
+				editor.off('transaction', updateTick);
+			};
+		}
+	});
 
 	function is(name: string, attrs?: Record<string, unknown>): boolean {
 		if (!editor || _tick < 0) return false;
@@ -66,8 +70,8 @@
 		};
 	}
 
-	let showLinkPrompt = false;
-	let linkUrl = '';
+	let showLinkPrompt = $state(false);
+	let linkUrl = $state('');
 
 	function toggleLink() {
 		if (!editor) return;

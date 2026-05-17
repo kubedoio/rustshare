@@ -25,8 +25,8 @@
 	<TextEditor
 		open={showTextEditor}
 		file={editorTarget}
-		on:close={() => onEditorClose()}
-		on:saved={() => onEditorSaved()}
+		onClose={onEditorClose}
+		onSaved={onEditorSaved}
 	/>
 {/if}
 
@@ -34,8 +34,8 @@
 	<MarkdownEditor
 		open={showMarkdownEditor}
 		file={editorTarget}
-		on:close={() => onEditorClose()}
-		on:saved={() => onEditorSaved()}
+		onClose={onEditorClose}
+		onSaved={onEditorSaved}
 	/>
 {/if}
 
@@ -43,7 +43,7 @@
 	<ExcalidrawEditor
 		open={showExcalidrawEditor}
 		file={editorTarget}
-		on:close={() => onEditorClose()}
-		on:saved={() => onEditorSaved()}
+		onClose={onEditorClose}
+		onSaved={onEditorSaved}
 	/>
 {/if}

@@ -4,15 +4,19 @@
 	import FileTypeIcon from './FileTypeIcon.svelte';
 	import { Folder as FolderIcon, Settings, FileText } from 'lucide-svelte';
 
-	export let item: File | Folder;
-	export let isFolder: boolean = false;
-	export let size: 'xs' | 'sm' | 'md' | 'lg' | 'xl' = 'md';
-	export let showThumbnail: boolean = true;
-	export let isSharedRoot: boolean = false;
+	interface Props {
+		item: File | Folder;
+		isFolder?: boolean;
+		size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+		showThumbnail?: boolean;
+		isSharedRoot?: boolean;
+	}
 
-	let thumbnailUrl: string | null = null;
-	let loading = false;
-	let error = false;
+	let { item, isFolder = false, size = 'md', showThumbnail = true, isSharedRoot = false }: Props = $props();
+
+	let thumbnailUrl = $state<string | null>(null);
+	let loading = $state(false);
+	let error = $state(false);
 
 	const sizeClasses = {
 		xs: 'w-6 h-6',
@@ -30,13 +34,13 @@
 		xl: 40
 	};
 
-	$: sizeClass = sizeClasses[size];
-	$: iconSize = iconSizes[size];
-	$: fileItem = isFolder ? null : (item as File);
-	$: mimeType = fileItem?.mime_type || '';
-	$: fileName = item?.name || '';
-	$: isRustshareSystemFolder = isFolder && item.name === '_rustshare';
-	$: isNoteBundle = isFolder && (item as any).note_bundle_file_id != null;
+	let sizeClass = $derived(sizeClasses[size]);
+	let iconSize = $derived(iconSizes[size]);
+	let fileItem = $derived(isFolder ? null : (item as File));
+	let mimeType = $derived(fileItem?.mime_type || '');
+	let fileName = $derived(item?.name || '');
+	let isRustshareSystemFolder = $derived(isFolder && item.name === '_rustshare');
+	let isNoteBundle = $derived(isFolder && (item as any).note_bundle_file_id != null);
 
 	const isPDF = (mime: string) => mime === 'application/pdf';
 	const isVideo = (mime: string) => mime.startsWith('video/');
@@ -85,9 +89,11 @@
 		}
 	}
 
-	$: if (!isFolder && item?.id && showThumbnail) {
-		loadThumbnail();
-	}
+	$effect(() => {
+		if (!isFolder && item?.id && showThumbnail) {
+			loadThumbnail();
+		}
+	});
 
 	onDestroy(() => {
 		if (thumbnailUrl) {

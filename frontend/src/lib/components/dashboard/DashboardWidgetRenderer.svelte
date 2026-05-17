@@ -8,8 +8,13 @@
 	import RecentBrainstormBoardsWidget from './widgets/RecentBrainstormBoardsWidget.svelte';
 	import GenericModuleSummaryWidget from './widgets/GenericModuleSummaryWidget.svelte';
 
-	export let module: ModuleDefinition;
-	export let modules: ModuleDefinition[] = [];
+	let {
+		module,
+		modules = []
+	}: {
+		module: ModuleDefinition;
+		modules?: ModuleDefinition[];
+	} = $props();
 
 	const widgetRegistry: Record<string, any> = {
 		'kanban-summary': KanbanSummaryWidget,
@@ -21,8 +26,8 @@
 		'recent-brainstorm-boards': RecentBrainstormBoardsWidget
 	};
 
-	$: widget = module.ui.dashboard.widget;
-	$: Renderer = widgetRegistry[widget.type] ?? GenericModuleSummaryWidget;
+	let widget = $derived(module.ui.dashboard.widget);
+	let Renderer = $derived(widgetRegistry[widget.type] ?? GenericModuleSummaryWidget);
 </script>
 
 <svelte:component this={Renderer} {module} {modules} />

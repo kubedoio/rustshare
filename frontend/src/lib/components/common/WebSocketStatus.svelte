@@ -10,28 +10,32 @@
 	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	let reconnectInFlight = false;
 
-	$: state = $websocketStore.state;
-	$: error = $websocketStore.error;
-	$: reconnectAttempts = $websocketStore.reconnectAttempts;
+	let state = $derived($websocketStore.state);
+	let error = $derived($websocketStore.error);
+	let reconnectAttempts = $derived($websocketStore.reconnectAttempts);
 
-	$: statusText = {
-		disconnected: 'Disconnected',
-		connecting: 'Connecting...',
-		connected: 'Live',
-		reconnecting: `Reconnecting (${reconnectAttempts})...`,
-		error: error || 'Connection error'
-	}[state];
+	let statusText = $derived(
+		({
+			disconnected: 'Disconnected',
+			connecting: 'Connecting...',
+			connected: 'Live',
+			reconnecting: `Reconnecting (${reconnectAttempts})...`,
+			error: error || 'Connection error'
+		} as Record<string, string>)[state]
+	);
 
-	$: statusColor = {
-		disconnected: 'bg-gray-500',
-		connecting: 'bg-yellow-500',
-		connected: 'bg-green-500',
-		reconnecting: 'bg-orange-500',
-		error: 'bg-red-500'
-	}[state];
+	let statusColor = $derived(
+		({
+			disconnected: 'bg-gray-500',
+			connecting: 'bg-yellow-500',
+			connected: 'bg-green-500',
+			reconnecting: 'bg-orange-500',
+			error: 'bg-red-500'
+		} as Record<string, string>)[state]
+	);
 
 	// Always show indicator so users know the connection status
-	$: showIndicator = true;
+	const showIndicator = true;
 
 	function loadWebSocketToken(): string | null {
 		if (!browser) {
@@ -61,7 +65,7 @@
 		}
 	}
 
-	$: {
+	$effect(() => {
 		if (reconnectTimer) {
 			clearTimeout(reconnectTimer);
 			reconnectTimer = null;
@@ -73,7 +77,7 @@
 				void ensureWebSocketConnection();
 			}, delay);
 		}
-	}
+	});
 
 	onDestroy(() => {
 		if (reconnectTimer) {

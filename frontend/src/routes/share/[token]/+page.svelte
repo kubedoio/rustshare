@@ -32,37 +32,37 @@
 	const SESSION_STORAGE_KEY = `share_session_${token}`;
 	const UPLOADER_NAME_STORAGE_KEY = `share_uploader_name_${token}`;
 
-	$: currentFolderId = $page.url.searchParams.get('folder');
+	let sessionToken = $state('');
+	let password = $state('');
+	let passwordError = $state('');
+	let isSubmittingPassword = $state(false);
+	let isDownloading = $state(false);
+	let isUploading = $state(false);
+	let errorType: 'not-found' | 'expired' | 'general' | null = $state(null);
+	let hasTriedAutoSession = $state(false);
+	let uploadInput: HTMLInputElement | null = $state(null);
+	let isDragActive = $state(false);
+	let uploadQueue: UploadQueueItem[] = $state([]);
+	let uploaderName = $state('');
 
-	$: shareQuery = createQuery({
+	let currentFolderId = $derived($page.url.searchParams.get('folder'));
+
+	let shareQuery = $derived(createQuery({
 		queryKey: ['public-share', token],
 		queryFn: () => getPublicShareInfo(token),
 		enabled: Boolean(token)
-	});
+	}));
 
-	$: folderContentsQuery = createQuery({
+	let folderContentsQuery = $derived(createQuery({
 		queryKey: ['public-share-folder', token, currentFolderId, sessionToken],
 		queryFn: () => getPublicFolderContents(token, sessionToken, currentFolderId || undefined),
 		enabled: Boolean(
 			token &&
-			sessionToken &&
-			$shareQuery.data?.resource_type === 'folder' &&
-			!$shareQuery.data?.upload_only
+				sessionToken &&
+				$shareQuery.data?.resource_type === 'folder' &&
+				!$shareQuery.data?.upload_only
 		)
-	});
-
-	let sessionToken = '';
-	let password = '';
-	let passwordError = '';
-	let isSubmittingPassword = false;
-	let isDownloading = false;
-	let isUploading = false;
-	let errorType: 'not-found' | 'expired' | 'general' | null = null;
-	let hasTriedAutoSession = false;
-	let uploadInput: HTMLInputElement | null = null;
-	let isDragActive = false;
-	let uploadQueue: UploadQueueItem[] = [];
-	let uploaderName = '';
+	}));
 
 	onMount(() => {
 		const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
@@ -76,19 +76,23 @@
 		}
 	});
 
-	$: if (typeof sessionStorage !== 'undefined') {
-		sessionStorage.setItem(UPLOADER_NAME_STORAGE_KEY, uploaderName);
-	}
+	$effect(() => {
+		if (typeof sessionStorage !== 'undefined') {
+			sessionStorage.setItem(UPLOADER_NAME_STORAGE_KEY, uploaderName);
+		}
+	});
 
-	$: if (
-		$shareQuery.data &&
-		!$shareQuery.data.password_protected &&
-		!sessionToken &&
-		!isSubmittingPassword &&
-		!hasTriedAutoSession
-	) {
-		createSessionAutomatically();
-	}
+	$effect(() => {
+		if (
+			$shareQuery.data &&
+			!$shareQuery.data.password_protected &&
+			!sessionToken &&
+			!isSubmittingPassword &&
+			!hasTriedAutoSession
+		) {
+			createSessionAutomatically();
+		}
+	});
 
 	async function createSessionAutomatically() {
 		hasTriedAutoSession = true;
@@ -104,28 +108,30 @@
 		}
 	}
 
-	$: needsPassword = $shareQuery.data?.password_protected && !sessionToken;
-	$: canAccessShare = Boolean($shareQuery.data && sessionToken);
-	$: canUploadToFolder = Boolean(
+	let needsPassword = $derived($shareQuery.data?.password_protected && !sessionToken);
+	let canAccessShare = $derived(Boolean($shareQuery.data && sessionToken));
+	let canUploadToFolder = $derived(Boolean(
 		$shareQuery.data &&
 		$shareQuery.data.resource_type === 'folder' &&
 		($shareQuery.data.upload_only || $shareQuery.data.permissions !== 'View') &&
 		sessionToken
-	);
+	));
 
-	$: if ($shareQuery.error) {
-		const error = $shareQuery.error as { status?: number; message?: string };
-		const status = error?.status;
-		const message = error?.message?.toLowerCase() || '';
+	$effect(() => {
+		if ($shareQuery.error) {
+			const error = $shareQuery.error as { status?: number; message?: string };
+			const status = error?.status;
+			const message = error?.message?.toLowerCase() || '';
 
-		if (status === 410 || message.includes('expired')) {
-			errorType = 'expired';
-		} else if (status === 404 || message.includes('not found')) {
-			errorType = 'not-found';
-		} else {
-			errorType = 'general';
+			if (status === 410 || message.includes('expired')) {
+				errorType = 'expired';
+			} else if (status === 404 || message.includes('not found')) {
+				errorType = 'not-found';
+			} else {
+				errorType = 'general';
+			}
 		}
-	}
+	});
 
 	function isExpired(shareInfo: ShareInfo | undefined): boolean {
 		if (!shareInfo?.expires_at) return false;
