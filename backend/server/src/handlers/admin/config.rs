@@ -349,10 +349,10 @@ pub async fn test_oidc_config(
                 })))
             } else {
                 let status_code = resp.status();
-                Err(AppError::internal(format!("Discovery URL returned HTTP {}", status_code)))
+                Err(AppError::bad_gateway(format!("Discovery URL returned HTTP {}", status_code)))
             }
         }
-        Err(e) => Err(AppError::internal(format!("{}", e))),
+        Err(e) => Err(AppError::bad_gateway(format!("{}", e))),
     }
 }
 
@@ -515,7 +515,8 @@ pub async fn get_security_config(
         .map_err(|e| {
             tracing::error!("Failed to get security config: {}", e);
             admin_internal_error("Failed to get security config")
-        })?;
+        })?
+        .ok_or_else(|| AppError::not_found("Security config not found"))?;
 
     Ok(Json(SecurityConfigResponse {
         login_protection_enabled: config.login_protection_enabled,

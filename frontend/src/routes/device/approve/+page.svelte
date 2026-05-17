@@ -6,16 +6,12 @@
 	import { ApiError } from '$lib/api/types';
 	import { authStore } from '$lib/stores/auth';
 
-	let deviceCode = $state('');
+	let deviceCode = $derived($page.url.searchParams.get('device_code')?.trim() ?? '');
 	let userCode = $state('');
 	let isSubmitting = $state(false);
 	let hasRedirectedToLogin = $state(false);
 	let approvalState: 'loading' | 'manual' | 'ready' | 'success' | 'error' = $state('loading');
 	let errorMessage = $state('');
-
-	$effect(() => {
-		deviceCode = $page.url.searchParams.get('device_code')?.trim() ?? '';
-	});
 
 	$effect(() => {
 		if (browser) {

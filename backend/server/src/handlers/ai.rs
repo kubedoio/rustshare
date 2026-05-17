@@ -179,7 +179,7 @@ pub async fn summarize_file(
             .summarize_file(request.file_id, auth.user_id, auth.tenant_id)
             .await?
     } else {
-        return Err(AppError::internal("AI service not configured"));
+        return Err(AppError::service_unavailable("AI service not configured"));
     };
 
     let response = SummarizeResponse {
@@ -226,7 +226,7 @@ pub async fn ask_question(
             .ask_question(question, auth.user_id, auth.tenant_id)
             .await?
     } else {
-        return Err(AppError::internal("AI service not configured"));
+        return Err(AppError::service_unavailable("AI service not configured"));
     };
 
     let citations: Vec<SourceCitation> = answer

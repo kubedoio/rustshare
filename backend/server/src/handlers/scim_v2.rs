@@ -138,60 +138,63 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         start_index: Option<i64>,
         count: Option<i64>,
     ) -> Result<(Vec<rustshare_core::services::ScimV2UserRecord>, i64), sqlx::Error> {
-        let mut query = String::from(
-            "SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at 
-             FROM users WHERE 1=1"
-        );
-        let mut count_query = String::from("SELECT COUNT(*) FROM users WHERE 1=1");
+        let base_select = "SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at 
+             FROM users WHERE 1=1";
+        let base_count = "SELECT COUNT(*) FROM users WHERE 1=1";
 
-        // Apply filters
+        let mut conditions: Vec<String> = Vec::new();
+        let mut binds: Vec<String> = Vec::new();
+
+        // Apply filters with parameterised binds
         for filter in filters {
             match filter.attribute.as_str() {
                 "userName" => {
-                    query.push_str(&format!(
-                        " AND LOWER(username) LIKE '%{}%'",
-                        filter.value.to_lowercase()
-                    ));
-                    count_query.push_str(&format!(
-                        " AND LOWER(username) LIKE '%{}%'",
-                        filter.value.to_lowercase()
-                    ));
+                    let idx = binds.len() + 1;
+                    conditions.push(format!(" AND LOWER(username) LIKE ${}", idx));
+                    binds.push(format!("%{}%", filter.value.to_lowercase()));
                 }
                 "externalId" => {
-                    query.push_str(&format!(" AND external_id = '{}'", filter.value));
-                    count_query.push_str(&format!(" AND external_id = '{}'", filter.value));
+                    let idx = binds.len() + 1;
+                    conditions.push(format!(" AND external_id = ${}", idx));
+                    binds.push(filter.value.clone());
                 }
                 "active" => {
                     let is_active = filter.value.to_lowercase() == "true";
                     if is_active {
-                        query.push_str(" AND disabled_at IS NULL");
-                        count_query.push_str(" AND disabled_at IS NULL");
+                        conditions.push(" AND disabled_at IS NULL".to_string());
                     } else {
-                        query.push_str(" AND disabled_at IS NOT NULL");
-                        count_query.push_str(" AND disabled_at IS NOT NULL");
+                        conditions.push(" AND disabled_at IS NOT NULL".to_string());
                     }
                 }
                 _ => {}
             }
         }
 
-        query.push_str(" ORDER BY username");
-
-        // Apply pagination
+        let where_clause = conditions.join("");
         let limit = count.unwrap_or(100);
         let offset = start_index.map(|s| s - 1).unwrap_or(0).max(0);
 
-        query.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+        // count query (no LIMIT/OFFSET)
+        let count_query = format!("{}{}", base_count, where_clause);
+        let mut count_q = sqlx::query_scalar::<_, i64>(&count_query);
+        for val in &binds {
+            count_q = count_q.bind(val);
+        }
+        let total: i64 = count_q.fetch_one(&self.pool).await?;
 
-        // DYNAMIC QUERY: count_query built at runtime
-        let total: i64 = sqlx::query_scalar(&count_query)
-            .fetch_one(&self.pool)
-            .await?;
-
-        // DYNAMIC QUERY: query built at runtime
-        let users = sqlx::query_as::<_, rustshare_core::services::ScimV2UserRecord>(&query)
-            .fetch_all(&self.pool)
-            .await?;
+        // select query with pagination binds
+        let pag_idx_1 = binds.len() + 1;
+        let pag_idx_2 = binds.len() + 2;
+        let query = format!(
+            "{} {} ORDER BY username LIMIT ${} OFFSET ${}",
+            base_select, where_clause, pag_idx_1, pag_idx_2
+        );
+        let mut q = sqlx::query_as::<_, rustshare_core::services::ScimV2UserRecord>(&query);
+        for val in &binds {
+            q = q.bind(val);
+        }
+        q = q.bind(limit).bind(offset);
+        let users = q.fetch_all(&self.pool).await?;
 
         Ok((users, total))
     }
@@ -386,50 +389,55 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         start_index: Option<i64>,
         count: Option<i64>,
     ) -> Result<(Vec<rustshare_core::services::ScimV2GroupRecord>, i64), sqlx::Error> {
-        let mut query = String::from(
-            "SELECT id, external_id, name, description, created_at, updated_at 
-             FROM user_groups WHERE 1=1",
-        );
-        let mut count_query = String::from("SELECT COUNT(*) FROM user_groups WHERE 1=1");
+        let base_select = "SELECT id, external_id, name, description, created_at, updated_at 
+             FROM user_groups WHERE 1=1";
+        let base_count = "SELECT COUNT(*) FROM user_groups WHERE 1=1";
 
-        // Apply filters
+        let mut conditions: Vec<String> = Vec::new();
+        let mut binds: Vec<String> = Vec::new();
+
+        // Apply filters with parameterised binds
         for filter in filters {
             match filter.attribute.as_str() {
                 "displayName" => {
-                    query.push_str(&format!(
-                        " AND LOWER(name) LIKE '%{}%'",
-                        filter.value.to_lowercase()
-                    ));
-                    count_query.push_str(&format!(
-                        " AND LOWER(name) LIKE '%{}%'",
-                        filter.value.to_lowercase()
-                    ));
+                    let idx = binds.len() + 1;
+                    conditions.push(format!(" AND LOWER(name) LIKE ${}", idx));
+                    binds.push(format!("%{}%", filter.value.to_lowercase()));
                 }
                 "externalId" => {
-                    query.push_str(&format!(" AND external_id = '{}'", filter.value));
-                    count_query.push_str(&format!(" AND external_id = '{}'", filter.value));
+                    let idx = binds.len() + 1;
+                    conditions.push(format!(" AND external_id = ${}", idx));
+                    binds.push(filter.value.clone());
                 }
                 _ => {}
             }
         }
 
-        query.push_str(" ORDER BY name");
-
-        // Apply pagination
+        let where_clause = conditions.join("");
         let limit = count.unwrap_or(100);
         let offset = start_index.map(|s| s - 1).unwrap_or(0).max(0);
 
-        query.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+        // count query (no LIMIT/OFFSET)
+        let count_query = format!("{}{}", base_count, where_clause);
+        let mut count_q = sqlx::query_scalar::<_, i64>(&count_query);
+        for val in &binds {
+            count_q = count_q.bind(val);
+        }
+        let total: i64 = count_q.fetch_one(&self.pool).await?;
 
-        // DYNAMIC QUERY: count_query built at runtime
-        let total: i64 = sqlx::query_scalar(&count_query)
-            .fetch_one(&self.pool)
-            .await?;
-
-        // DYNAMIC QUERY: query built at runtime
-        let groups = sqlx::query_as::<_, rustshare_core::services::ScimV2GroupRecord>(&query)
-            .fetch_all(&self.pool)
-            .await?;
+        // select query with pagination binds
+        let pag_idx_1 = binds.len() + 1;
+        let pag_idx_2 = binds.len() + 2;
+        let query = format!(
+            "{} {} ORDER BY name LIMIT ${} OFFSET ${}",
+            base_select, where_clause, pag_idx_1, pag_idx_2
+        );
+        let mut q = sqlx::query_as::<_, rustshare_core::services::ScimV2GroupRecord>(&query);
+        for val in &binds {
+            q = q.bind(val);
+        }
+        q = q.bind(limit).bind(offset);
+        let groups = q.fetch_all(&self.pool).await?;
 
         Ok((groups, total))
     }

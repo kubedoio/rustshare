@@ -48,8 +48,10 @@
 
 	async function initExcalidraw() {
 		if (!excalidrawContainer || !file) return;
+		const targetFileId = file.id;
 
 		const excalidraw = await loadExcalidraw();
+		if (file?.id !== targetFileId) return;
 		if (!excalidraw) {
 			error = 'Failed to load Excalidraw. Please check your internet connection.';
 			return;
@@ -98,19 +100,24 @@
 
 	async function loadContent() {
 		if (!file) return;
+		const targetFileId = file.id;
 
 		isLoading = true;
 		error = null;
 
 		try {
-			const loadedContent = await getFileContent(file.id);
+			const loadedContent = await getFileContent(targetFileId);
+			if (file?.id !== targetFileId) return;
 			content = loadedContent;
 			originalContent = loadedContent;
 			hasChanges = false;
 
 			// Initialize Excalidraw after content is loaded
-			setTimeout(() => initExcalidraw(), 0);
+			setTimeout(() => {
+				if (file?.id === targetFileId) initExcalidraw();
+			}, 0);
 		} catch (err) {
+			if (file?.id !== targetFileId) return;
 			error = err instanceof Error ? err.message : 'Failed to load file content';
 		} finally {
 			isLoading = false;
@@ -181,7 +188,11 @@
 
 	$effect(() => {
 		if (open && file) {
-			loadContent();
+			const targetFileId = file.id;
+			loadContent().then(() => {
+				if (file?.id !== targetFileId) return;
+				// content loaded for current file
+			});
 		}
 	});
 

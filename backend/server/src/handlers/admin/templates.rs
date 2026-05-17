@@ -47,14 +47,7 @@ pub async fn get_template(
     let template = state
         .template_service
         .get_template(&key, state.default_tenant_id)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("not found") {
-                AppError::not_found(e.to_string())
-            } else {
-                AppError::internal(e.to_string())
-            }
-        })?;
+        .await?;
 
     Ok(Json(template))
 }
@@ -67,8 +60,7 @@ pub async fn create_template(
     let template = state
         .template_service
         .create_template(body.clone(), user_id, state.default_tenant_id)
-        .await
-        .map_err(|e| AppError::bad_request(e.to_string()))?;
+        .await?;
 
     log_admin_action(
         &state.db_pool,
@@ -92,8 +84,7 @@ pub async fn update_template(
     let template = state
         .template_service
         .update_template(&key, body.clone(), state.default_tenant_id)
-        .await
-        .map_err(|e| AppError::bad_request(e.to_string()))?;
+        .await?;
 
     log_admin_action(
         &state.db_pool,
@@ -116,14 +107,12 @@ pub async fn delete_template(
     let template = state
         .template_service
         .get_template(&key, state.default_tenant_id)
-        .await
-        .map_err(|e| AppError::not_found(e.to_string()))?;
+        .await?;
 
     state
         .template_service
         .delete_template(&key, state.default_tenant_id)
-        .await
-        .map_err(|e| AppError::bad_request(e.to_string()))?;
+        .await?;
 
     log_admin_action(
         &state.db_pool,
@@ -146,8 +135,7 @@ pub async fn duplicate_template(
     let template = state
         .template_service
         .get_template(&key, state.default_tenant_id)
-        .await
-        .map_err(|e| AppError::not_found(e.to_string()))?;
+        .await?;
 
     let mut new_key = format!("{}_copy", template.template_key);
     let mut i = 1;
@@ -178,8 +166,7 @@ pub async fn duplicate_template(
     let new_template = state
         .template_service
         .create_template(request.clone(), user_id, state.default_tenant_id)
-        .await
-        .map_err(|e| AppError::bad_request(e.to_string()))?;
+        .await?;
 
     log_admin_action(
         &state.db_pool,

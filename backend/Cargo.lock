@@ -2351,6 +2351,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
 
 [[package]]
+name = "ipnetwork"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf466541e9d546596ee94f9f69590f89473455f88372423e0008fc1a7daf100e"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "iri-string"
 version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4161,6 +4170,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "hashlink",
  "indexmap 2.14.0",
+ "ipnetwork",
  "log",
  "memchr",
  "once_cell",
@@ -4282,6 +4292,7 @@ dependencies = [
  "hkdf",
  "hmac 0.12.1",
  "home",
+ "ipnetwork",
  "itoa",
  "log",
  "md-5",

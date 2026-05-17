@@ -61,9 +61,10 @@
 
 	async function initEditor() {
 		if (!editorContainer || !file || editor) return;
+		const targetFileId = file.id;
 
 		monaco = await loadMonaco();
-		if (!monaco || !editorContainer) return;
+		if (!monaco || !editorContainer || file?.id !== targetFileId) return;
 
 		const language = getMonacoLanguage(file.name);
 
@@ -89,12 +90,14 @@
 
 	async function loadContent() {
 		if (!file) return;
+		const targetFileId = file.id;
 
 		isLoading = true;
 		error = null;
 
 		try {
-			const loadedContent = await getFileContent(file.id);
+			const loadedContent = await getFileContent(targetFileId);
+			if (file?.id !== targetFileId) return;
 			content = loadedContent;
 			originalContent = loadedContent;
 			hasChanges = false;
@@ -104,6 +107,7 @@
 				editor.setValue(content);
 			}
 		} catch (err) {
+			if (file?.id !== targetFileId) return;
 			error = err instanceof Error ? err.message : 'Failed to load file content';
 		} finally {
 			isLoading = false;
@@ -154,12 +158,14 @@
 	// Initialize editor when modal opens
 	$effect(() => {
 		if (open && file) {
+			const targetFileId = file.id;
 			// Await content loading before initializing the editor to prevent blank display
 			loadContent().then(() => {
-				if (!editor) {
-					// Small delay to ensure container is fully bound and visible
-					setTimeout(() => initEditor(), 50);
-				}
+				if (file?.id !== targetFileId || editor) return;
+				// Small delay to ensure container is fully bound and visible
+				setTimeout(() => {
+					if (file?.id === targetFileId) initEditor();
+				}, 50);
 			});
 		}
 	});

@@ -1,8 +1,7 @@
 //! Metadata store for querying projection tables.
 //!
-//! NOTE: Currently uses runtime queries (`sqlx::query()`) instead of compile-time
-//! queries (`sqlx::query!()`) because offline mode setup requires a running database.
-//! This will be migrated to compile-time queries after Docker Compose is set up in Task 11.
+//! NOTE: File SELECT queries use compile-time checked `sqlx::query_as!()` macros.
+//! Other queries continue to use `sqlx::query!()` where type safety is enforced inline.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -10,7 +9,8 @@ use rustshare_core::domain::{
     File, FileVersion, Folder, OidcLoginState, ReplicationJob, ReplicationJobStatus,
     ReplicationState, ReplicationTarget, Share, SharePermissions, User, UserSession,
 };
-use sqlx::{PgPool, Row};
+use serde_json;
+use sqlx::PgPool;
 use uuid::Uuid;
 
 /// Metadata store for querying projection tables
@@ -153,30 +153,29 @@ impl MetadataStore {
 
     /// Create a new user in the projection table
     pub async fn create_user(&self, user: &User) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             "#,
+            user.id,
+            user.username,
+            user.email,
+            user.password_hash,
+            user.display_name,
+            user.is_admin,
+            user.storage_quota,
+            user.theme.to_string(),
+            user.created_at,
+            user.updated_at,
+            user.name.as_deref(),
+            user.surname.as_deref(),
+            user.avatar_path.as_deref(),
+            user.email_sharing_enabled,
+            user.trash_retention_days,
+            user.tenant_id,
+            serde_json::to_value(&*user.dashboard_config).unwrap(),
         )
-        .bind(user.id)
-        .bind(&user.username)
-        .bind(&user.email)
-        .bind(&user.password_hash)
-        .bind(&user.display_name)
-        .bind(user.is_admin)
-        .bind(user.storage_quota)
-        .bind(user.theme.to_string())
-        .bind(user.created_at)
-        .bind(user.updated_at)
-        .bind(user.name.as_deref())
-        .bind(user.surname.as_deref())
-        .bind(user.avatar_path.as_deref())
-        .bind(user.email_sharing_enabled)
-        .bind(user.trash_retention_days)
-        .bind(user.tenant_id)
-        .bind(&user.dashboard_config)
         .execute(&self.pool)
         .await?;
 
@@ -185,7 +184,7 @@ impl MetadataStore {
 
     /// Create a new opaque browser session.
     pub async fn create_user_session(&self, session: &UserSession) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO user_sessions (
                 id,
@@ -200,16 +199,16 @@ impl MetadataStore {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             "#,
+            session.id,
+            session.user_id,
+            session.session_token_hash,
+            session.expires_at,
+            session.created_at,
+            session.last_seen_at,
+            session.user_agent.as_deref(),
+            session.ip_address.as_deref(),
+            session.tenant_id,
         )
-        .bind(session.id)
-        .bind(session.user_id)
-        .bind(&session.session_token_hash)
-        .bind(session.expires_at)
-        .bind(session.created_at)
-        .bind(session.last_seen_at)
-        .bind(&session.user_agent)
-        .bind(&session.ip_address)
-        .bind(session.tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -221,7 +220,7 @@ impl MetadataStore {
         &self,
         token_hash: &str,
     ) -> Result<Option<UserSession>> {
-        let row = sqlx::query(
+        let row = sqlx::query!(
             r#"
             SELECT
                 id,
@@ -236,22 +235,22 @@ impl MetadataStore {
             FROM user_sessions
             WHERE session_token_hash = $1
             "#,
+            token_hash
         )
-        .bind(token_hash)
         .fetch_optional(&self.pool)
         .await?;
 
         if let Some(row) = row {
             Ok(Some(UserSession {
-                id: row.try_get("id")?,
-                user_id: row.try_get("user_id")?,
-                session_token_hash: row.try_get("session_token_hash")?,
-                expires_at: row.try_get("expires_at")?,
-                created_at: row.try_get("created_at")?,
-                last_seen_at: row.try_get("last_seen_at")?,
-                user_agent: row.try_get("user_agent")?,
-                ip_address: row.try_get("ip_address")?,
-                tenant_id: row.try_get("tenant_id")?,
+                id: row.id,
+                user_id: row.user_id,
+                session_token_hash: row.session_token_hash,
+                expires_at: row.expires_at,
+                created_at: row.created_at,
+                last_seen_at: row.last_seen_at,
+                user_agent: row.user_agent,
+                ip_address: row.ip_address,
+                tenant_id: row.tenant_id,
             }))
         } else {
             Ok(None)
@@ -260,14 +259,14 @@ impl MetadataStore {
 
     /// Touch session activity for active browser sessions.
     pub async fn touch_user_session(&self, session_id: Uuid) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE user_sessions
             SET last_seen_at = NOW()
             WHERE id = $1
             "#,
+            session_id
         )
-        .bind(session_id)
         .execute(&self.pool)
         .await?;
 
@@ -276,17 +275,19 @@ impl MetadataStore {
 
     /// Delete a browser session by hashed token.
     pub async fn delete_user_session_by_token_hash(&self, token_hash: &str) -> Result<()> {
-        sqlx::query("DELETE FROM user_sessions WHERE session_token_hash = $1")
-            .bind(token_hash)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM user_sessions WHERE session_token_hash = $1",
+            token_hash
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
 
     /// List active browser sessions for a user.
     pub async fn list_user_sessions(&self, user_id: Uuid) -> Result<Vec<UserSession>> {
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             SELECT
                 id,
@@ -302,23 +303,23 @@ impl MetadataStore {
             WHERE user_id = $1
             ORDER BY last_seen_at DESC
             "#,
+            user_id
         )
-        .bind(user_id)
         .fetch_all(&self.pool)
         .await?;
 
         rows.into_iter()
             .map(|row| {
                 Ok(UserSession {
-                    id: row.try_get("id")?,
-                    user_id: row.try_get("user_id")?,
-                    session_token_hash: row.try_get("session_token_hash")?,
-                    expires_at: row.try_get("expires_at")?,
-                    created_at: row.try_get("created_at")?,
-                    last_seen_at: row.try_get("last_seen_at")?,
-                    user_agent: row.try_get("user_agent")?,
-                    ip_address: row.try_get("ip_address")?,
-                    tenant_id: row.try_get("tenant_id")?,
+                    id: row.id,
+                    user_id: row.user_id,
+                    session_token_hash: row.session_token_hash,
+                    expires_at: row.expires_at,
+                    created_at: row.created_at,
+                    last_seen_at: row.last_seen_at,
+                    user_agent: row.user_agent,
+                    ip_address: row.ip_address.map(|ip| ip.to_string()),
+                    tenant_id: row.tenant_id,
                 })
             })
             .collect()
@@ -326,9 +327,7 @@ impl MetadataStore {
 
     /// Delete a browser session by session id, scoped to the owning user.
     pub async fn delete_user_session_by_id(&self, user_id: Uuid, session_id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM user_sessions WHERE user_id = $1 AND id = $2")
-            .bind(user_id)
-            .bind(session_id)
+        sqlx::query!("DELETE FROM user_sessions WHERE user_id = $1 AND id = $2", user_id, session_id)
             .execute(&self.pool)
             .await?;
 
@@ -340,7 +339,7 @@ impl MetadataStore {
         &self,
         event: UserSecurityEventRecord<'_>,
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO user_security_events (
                 id,
@@ -354,14 +353,14 @@ impl MetadataStore {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
             "#,
+            Uuid::new_v4(),
+            event.user_id,
+            event.event_type,
+            event.description,
+            event.ip_address,
+            event.user_agent,
+            event.session_id,
         )
-        .bind(Uuid::new_v4())
-        .bind(event.user_id)
-        .bind(event.event_type)
-        .bind(event.description)
-        .bind(event.ip_address)
-        .bind(event.user_agent)
-        .bind(event.session_id)
         .execute(&self.pool)
         .await?;
 
@@ -374,7 +373,7 @@ impl MetadataStore {
         user_id: Uuid,
         limit: i64,
     ) -> Result<Vec<UserSecurityEvent>> {
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             SELECT
                 id,
@@ -389,22 +388,22 @@ impl MetadataStore {
             ORDER BY occurred_at DESC
             LIMIT $2
             "#,
+            user_id,
+            limit
         )
-        .bind(user_id)
-        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
 
         rows.into_iter()
             .map(|row| {
                 Ok(UserSecurityEvent {
-                    id: row.try_get("id")?,
-                    event_type: row.try_get("event_type")?,
-                    description: row.try_get("description")?,
-                    ip_address: row.try_get("ip_address")?,
-                    user_agent: row.try_get("user_agent")?,
-                    session_id: row.try_get("session_id")?,
-                    occurred_at: row.try_get("occurred_at")?,
+                    id: row.id,
+                    event_type: row.event_type,
+                    description: row.description,
+                    ip_address: row.ip_address,
+                    user_agent: row.user_agent,
+                    session_id: row.session_id,
+                    occurred_at: row.occurred_at,
                 })
             })
             .collect()
@@ -412,7 +411,7 @@ impl MetadataStore {
 
     /// Persist a short-lived OIDC login state.
     pub async fn create_oidc_login_state(&self, login_state: &OidcLoginState) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO oidc_login_states (
                 state,
@@ -424,13 +423,13 @@ impl MetadataStore {
             )
             VALUES ($1, $2, $3, $4, $5, $6)
             "#,
+            login_state.state,
+            login_state.pkce_verifier,
+            login_state.nonce,
+            login_state.redirect_to,
+            login_state.expires_at,
+            login_state.created_at,
         )
-        .bind(&login_state.state)
-        .bind(&login_state.pkce_verifier)
-        .bind(&login_state.nonce)
-        .bind(&login_state.redirect_to)
-        .bind(login_state.expires_at)
-        .bind(login_state.created_at)
         .execute(&self.pool)
         .await?;
 
@@ -439,7 +438,7 @@ impl MetadataStore {
 
     /// Load an OIDC login state by the opaque state token.
     pub async fn find_oidc_login_state(&self, state: &str) -> Result<Option<OidcLoginState>> {
-        let row = sqlx::query(
+        let row = sqlx::query!(
             r#"
             SELECT
                 state,
@@ -451,19 +450,19 @@ impl MetadataStore {
             FROM oidc_login_states
             WHERE state = $1
             "#,
+            state
         )
-        .bind(state)
         .fetch_optional(&self.pool)
         .await?;
 
         if let Some(row) = row {
             Ok(Some(OidcLoginState {
-                state: row.try_get("state")?,
-                pkce_verifier: row.try_get("pkce_verifier")?,
-                nonce: row.try_get("nonce")?,
-                redirect_to: row.try_get("redirect_to")?,
-                expires_at: row.try_get("expires_at")?,
-                created_at: row.try_get("created_at")?,
+                state: row.state,
+                pkce_verifier: row.pkce_verifier,
+                nonce: row.nonce,
+                redirect_to: row.redirect_to,
+                expires_at: row.expires_at,
+                created_at: row.created_at,
             }))
         } else {
             Ok(None)
@@ -472,8 +471,7 @@ impl MetadataStore {
 
     /// Delete a consumed or expired OIDC login state.
     pub async fn delete_oidc_login_state(&self, state: &str) -> Result<()> {
-        sqlx::query("DELETE FROM oidc_login_states WHERE state = $1")
-            .bind(state)
+        sqlx::query!("DELETE FROM oidc_login_states WHERE state = $1", state)
             .execute(&self.pool)
             .await?;
 
@@ -482,130 +480,51 @@ impl MetadataStore {
 
     /// Find user by email
     pub async fn find_user_by_email(&self, email: &str) -> Result<Option<User>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config FROM users WHERE email = $1"#,
+        let user = sqlx::query_as!(
+            User,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme as "theme: _", created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config as "dashboard_config: _" FROM users WHERE email = $1"#,
+            email
         )
-        .bind(email)
         .fetch_optional(&self.pool)
         .await?;
-
-        if let Some(row) = row {
-            let user = User {
-                id: row.try_get("id")?,
-                username: row.try_get("username")?,
-                email: row.try_get("email")?,
-                password_hash: row.try_get("password_hash")?,
-                display_name: row.try_get("display_name")?,
-                is_admin: row.try_get("is_admin")?,
-                storage_quota: row.try_get("storage_quota")?,
-                theme: row
-                    .try_get::<String, _>("theme")?
-                    .parse()
-                    .unwrap_or_default(),
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                disabled_at: row.try_get("disabled_at")?,
-                name: row.try_get("name")?,
-                surname: row.try_get("surname")?,
-                avatar_path: row.try_get("avatar_path")?,
-                email_sharing_enabled: row.try_get("email_sharing_enabled")?,
-                trash_retention_days: row.try_get("trash_retention_days")?,
-                tenant_id: row.try_get("tenant_id")?,
-                dashboard_config: row.try_get("dashboard_config")?,
-            };
-            Ok(Some(user))
-        } else {
-            Ok(None)
-        }
+        Ok(user)
     }
 
     /// Find user by username.
     pub async fn find_user_by_username(&self, username: &str) -> Result<Option<User>> {
-        let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config FROM users WHERE username = $1"#,
+        let user = sqlx::query_as!(
+            User,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme as "theme: _", created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config as "dashboard_config: _" FROM users WHERE username = $1"#,
+            username
         )
-        .bind(username)
         .fetch_optional(&self.pool)
         .await?;
-
-        if let Some(row) = row {
-            Ok(Some(User {
-                id: row.try_get("id")?,
-                username: row.try_get("username")?,
-                email: row.try_get("email")?,
-                password_hash: row.try_get("password_hash")?,
-                display_name: row.try_get("display_name")?,
-                is_admin: row.try_get("is_admin")?,
-                storage_quota: row.try_get("storage_quota")?,
-                theme: row.try_get("theme")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                disabled_at: row.try_get("disabled_at")?,
-                name: row.try_get("name")?,
-                surname: row.try_get("surname")?,
-                avatar_path: row.try_get("avatar_path")?,
-                email_sharing_enabled: row.try_get("email_sharing_enabled")?,
-                trash_retention_days: row.try_get("trash_retention_days")?,
-                tenant_id: row.try_get("tenant_id")?,
-                dashboard_config: row.try_get("dashboard_config")?,
-            }))
-        } else {
-            Ok(None)
-        }
+        Ok(user)
     }
 
     /// Find user by ID
     pub async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query(
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config FROM users WHERE id = $1"#,
+        let user = sqlx::query_as!(
+            User,
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme as "theme: _", created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config as "dashboard_config: _" FROM users WHERE id = $1"#,
+            id
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
-
-        if let Some(row) = row {
-            let user = User {
-                id: row.try_get("id")?,
-                username: row.try_get("username")?,
-                email: row.try_get("email")?,
-                password_hash: row.try_get("password_hash")?,
-                display_name: row.try_get("display_name")?,
-                is_admin: row.try_get("is_admin")?,
-                storage_quota: row.try_get("storage_quota")?,
-                theme: row
-                    .try_get::<String, _>("theme")?
-                    .parse()
-                    .unwrap_or_default(),
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                disabled_at: row.try_get("disabled_at")?,
-                name: row.try_get("name")?,
-                surname: row.try_get("surname")?,
-                avatar_path: row.try_get("avatar_path")?,
-                email_sharing_enabled: row.try_get("email_sharing_enabled")?,
-                trash_retention_days: row.try_get("trash_retention_days")?,
-                tenant_id: row.try_get("tenant_id")?,
-                dashboard_config: row.try_get("dashboard_config")?,
-            };
-            Ok(Some(user))
-        } else {
-            Ok(None)
-        }
+        Ok(user)
     }
 
     /// Update a user's password hash and bump the updated timestamp.
     pub async fn update_user_password_hash(&self, id: Uuid, password_hash: &str) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE users
             SET password_hash = $2, updated_at = NOW()
             WHERE id = $1
             "#,
+            id,
+            password_hash
         )
-        .bind(id)
-        .bind(password_hash)
         .execute(&self.pool)
         .await?;
 
@@ -614,22 +533,22 @@ impl MetadataStore {
 
     /// Check if any users exist (for admin bootstrapping)
     pub async fn has_users(&self) -> Result<bool> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query("SELECT COUNT(*) as count FROM users")
+        let count = sqlx::query_scalar!("SELECT COUNT(*) as \"count!\" FROM users")
             .fetch_one(&self.pool)
             .await?;
 
-        let count: i64 = row.try_get("count")?;
         Ok(count > 0)
     }
 
     /// Update user's theme preference
     pub async fn update_user_theme(&self, user_id: Uuid, theme: &str) -> Result<()> {
-        sqlx::query(r#"UPDATE users SET theme = $1, updated_at = NOW() WHERE id = $2"#)
-            .bind(theme)
-            .bind(user_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            r#"UPDATE users SET theme = $1, updated_at = NOW() WHERE id = $2"#,
+            theme,
+            user_id
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -644,7 +563,7 @@ impl MetadataStore {
         email_sharing_enabled: Option<bool>,
         theme: Option<String>,
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE users SET
                 name = COALESCE($1, name),
@@ -655,13 +574,13 @@ impl MetadataStore {
                 updated_at = NOW()
             WHERE id = $6
             "#,
+            name,
+            surname,
+            display_name,
+            email_sharing_enabled,
+            theme,
+            user_id
         )
-        .bind(name)
-        .bind(surname)
-        .bind(display_name)
-        .bind(email_sharing_enabled)
-        .bind(theme)
-        .bind(user_id)
         .execute(&self.pool)
         .await?;
 
@@ -674,11 +593,11 @@ impl MetadataStore {
         user_id: Uuid,
         days: Option<i32>,
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"UPDATE users SET trash_retention_days = $1, updated_at = NOW() WHERE id = $2"#,
+            days,
+            user_id
         )
-        .bind(days)
-        .bind(user_id)
         .execute(&self.pool)
         .await?;
 
@@ -687,16 +606,16 @@ impl MetadataStore {
 
     /// Update user's avatar path
     pub async fn update_user_avatar(&self, user_id: Uuid, avatar_path: Option<&str>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE users
             SET avatar_path = $1,
                 updated_at = NOW()
             WHERE id = $2
             "#,
+            avatar_path,
+            user_id
         )
-        .bind(avatar_path)
-        .bind(user_id)
         .execute(&self.pool)
         .await?;
 
@@ -709,16 +628,16 @@ impl MetadataStore {
         user_id: Uuid,
         config: &rustshare_core::domain::DashboardConfig,
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE users
             SET dashboard_config = $1,
                 updated_at = NOW()
             WHERE id = $2
             "#,
+            serde_json::to_value(config).unwrap(),
+            user_id
         )
-        .bind(sqlx::types::Json(config))
-        .bind(user_id)
         .execute(&self.pool)
         .await?;
 
@@ -727,21 +646,13 @@ impl MetadataStore {
 
     /// List all users that have trash auto-clean enabled (trash_retention_days IS NOT NULL).
     pub async fn list_users_with_trash_retention(&self) -> Result<Vec<(Uuid, Uuid, i32)>> {
-        let rows = sqlx::query(
-            r#"SELECT id, tenant_id, trash_retention_days FROM users WHERE trash_retention_days IS NOT NULL"#
+        let rows = sqlx::query!(
+            r#"SELECT id, tenant_id, trash_retention_days as "trash_retention_days!" FROM users WHERE trash_retention_days IS NOT NULL"#
         )
         .fetch_all(&self.pool)
         .await?;
 
-        let mut users = Vec::with_capacity(rows.len());
-        for row in rows {
-            let id: Uuid = row.try_get("id")?;
-            let tenant_id: Uuid = row.try_get("tenant_id")?;
-            let days: i32 = row.try_get("trash_retention_days")?;
-            users.push((id, tenant_id, days));
-        }
-
-        Ok(users)
+        Ok(rows.into_iter().map(|r| (r.id, r.tenant_id, r.trash_retention_days)).collect())
     }
 
     // -----------------------------------------------------------------
@@ -750,33 +661,24 @@ impl MetadataStore {
 
     /// Check if an IP address is currently blocked from logging in.
     pub async fn is_ip_blocked(&self, ip_address: &str) -> Result<bool> {
-        let row = sqlx::query(
+        Ok(sqlx::query!(
             r#"
             SELECT blocked_until
             FROM login_attempts
             WHERE ip_address = $1
             "#,
+            ip_address
         )
-        .bind(ip_address)
         .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            let blocked_until: Option<chrono::DateTime<Utc>> = row.try_get("blocked_until")?;
-            if let Some(until) = blocked_until {
-                if until > Utc::now() {
-                    return Ok(true);
-                }
-            }
-        }
-
-        Ok(false)
+        .await?
+        .map(|r| r.blocked_until.map(|t| t > Utc::now()).unwrap_or(false))
+        .unwrap_or(false))
     }
 
     /// Record a failed login attempt for an IP address.
     /// If failed_count reaches max_login_attempts, blocks the IP for login_block_duration_minutes.
     pub async fn record_login_failure(&self, ip_address: &str) -> Result<()> {
-        let config = sqlx::query(
+        let config = sqlx::query!(
             r#"
             SELECT login_protection_enabled, max_login_attempts, login_block_duration_minutes
             FROM security_config
@@ -786,37 +688,36 @@ impl MetadataStore {
         .fetch_one(&self.pool)
         .await?;
 
-        let enabled: bool = config.try_get("login_protection_enabled")?;
+        let enabled = config.login_protection_enabled;
         if !enabled {
             return Ok(());
         }
 
-        let max_attempts: i32 = config.try_get("max_login_attempts")?;
-        let block_duration: i32 = config.try_get("login_block_duration_minutes")?;
+        let max_attempts = config.max_login_attempts;
+        let block_duration = config.login_block_duration_minutes;
 
         // Check if an existing block has expired — if so, reset the count
         let existing =
-            sqlx::query("SELECT blocked_until FROM login_attempts WHERE ip_address = $1")
-                .bind(ip_address)
+            sqlx::query!("SELECT blocked_until FROM login_attempts WHERE ip_address = $1", ip_address)
                 .fetch_optional(&self.pool)
                 .await?;
 
         if let Some(row) = existing {
-            let blocked_until: Option<chrono::DateTime<Utc>> = row.try_get("blocked_until")?;
+            let blocked_until = row.blocked_until;
             if let Some(until) = blocked_until {
                 if until <= Utc::now() {
                     // Block expired — reset count so user gets a fresh start
-                    sqlx::query(
-                        "UPDATE login_attempts SET failed_count = 0, blocked_until = NULL WHERE ip_address = $1"
+                    sqlx::query!(
+                        "UPDATE login_attempts SET failed_count = 0, blocked_until = NULL WHERE ip_address = $1",
+                        ip_address
                     )
-                    .bind(ip_address)
                     .execute(&self.pool)
                     .await?;
                 }
             }
         }
 
-        let row = sqlx::query(
+        let row = sqlx::query!(
             r#"
             INSERT INTO login_attempts (ip_address, failed_count, last_attempt_at)
             VALUES ($1, 1, NOW())
@@ -825,24 +726,24 @@ impl MetadataStore {
                 last_attempt_at = NOW()
             RETURNING failed_count
             "#,
+            ip_address
         )
-        .bind(ip_address)
         .fetch_one(&self.pool)
         .await?;
 
-        let failed_count: i32 = row.try_get("failed_count")?;
+        let failed_count = row.failed_count;
 
         if failed_count >= max_attempts {
             let block_until = Utc::now() + chrono::Duration::minutes(block_duration as i64);
-            sqlx::query(
+            sqlx::query!(
                 r#"
                 UPDATE login_attempts
                 SET blocked_until = $2
                 WHERE ip_address = $1
                 "#,
+                ip_address,
+                block_until
             )
-            .bind(ip_address)
-            .bind(block_until)
             .execute(&self.pool)
             .await?;
         }
@@ -852,8 +753,7 @@ impl MetadataStore {
 
     /// Clear login attempts for an IP address after a successful login.
     pub async fn clear_login_attempts(&self, ip_address: &str) -> Result<()> {
-        sqlx::query("DELETE FROM login_attempts WHERE ip_address = $1")
-            .bind(ip_address)
+        sqlx::query!("DELETE FROM login_attempts WHERE ip_address = $1", ip_address)
             .execute(&self.pool)
             .await?;
 
@@ -861,23 +761,23 @@ impl MetadataStore {
     }
 
     /// Get the current security configuration.
-    pub async fn get_security_config(&self) -> Result<SecurityConfig> {
-        let row = sqlx::query(
+    pub async fn get_security_config(&self) -> Result<Option<SecurityConfig>> {
+        let row = sqlx::query!(
             r#"
             SELECT login_protection_enabled, max_login_attempts, login_block_duration_minutes, updated_at
             FROM security_config
             WHERE id = 1
             "#,
         )
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
 
-        Ok(SecurityConfig {
-            login_protection_enabled: row.try_get("login_protection_enabled")?,
-            max_login_attempts: row.try_get("max_login_attempts")?,
-            login_block_duration_minutes: row.try_get("login_block_duration_minutes")?,
-            updated_at: row.try_get("updated_at")?,
-        })
+        Ok(row.map(|r| SecurityConfig {
+            login_protection_enabled: r.login_protection_enabled,
+            max_login_attempts: r.max_login_attempts,
+            login_block_duration_minutes: r.login_block_duration_minutes,
+            updated_at: r.updated_at,
+        }))
     }
 
     /// Update the security configuration.
@@ -887,7 +787,7 @@ impl MetadataStore {
         max_login_attempts: Option<i32>,
         login_block_duration_minutes: Option<i32>,
     ) -> Result<SecurityConfig> {
-        let row = sqlx::query(
+        let row = sqlx::query!(
             r#"
             UPDATE security_config
             SET
@@ -898,43 +798,42 @@ impl MetadataStore {
             WHERE id = 1
             RETURNING login_protection_enabled, max_login_attempts, login_block_duration_minutes, updated_at
             "#,
+            login_protection_enabled,
+            max_login_attempts,
+            login_block_duration_minutes
         )
-        .bind(login_protection_enabled)
-        .bind(max_login_attempts)
-        .bind(login_block_duration_minutes)
         .fetch_one(&self.pool)
         .await?;
 
         Ok(SecurityConfig {
-            login_protection_enabled: row.try_get("login_protection_enabled")?,
-            max_login_attempts: row.try_get("max_login_attempts")?,
-            login_block_duration_minutes: row.try_get("login_block_duration_minutes")?,
-            updated_at: row.try_get("updated_at")?,
+            login_protection_enabled: row.login_protection_enabled,
+            max_login_attempts: row.max_login_attempts,
+            login_block_duration_minutes: row.login_block_duration_minutes,
+            updated_at: row.updated_at,
         })
     }
 
     /// Create a new file in the projection table
     pub async fn create_file(&self, file: &File) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO files (id, name, path, size, mime_type, content_hash, storage_key, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id, starred_at, deleted_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULL, NULL)
             "#,
+            file.id,
+            &file.name,
+            &file.path,
+            file.size,
+            &file.mime_type,
+            &file.content_hash,
+            file.storage_key(),
+            file.owner_id,
+            file.parent_folder_id,
+            file.current_version,
+            file.created_at,
+            file.modified_at,
+            file.tenant_id,
         )
-        .bind(file.id)
-        .bind(&file.name)
-        .bind(&file.path)
-        .bind(file.size)
-        .bind(&file.mime_type)
-        .bind(&file.content_hash)
-        .bind(file.storage_key())
-        .bind(file.owner_id)
-        .bind(file.parent_folder_id)
-        .bind(file.current_version)
-        .bind(file.created_at)
-        .bind(file.modified_at)
-        .bind(file.tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -943,36 +842,15 @@ impl MetadataStore {
 
     /// Find file by ID (owner-filtered)
     pub async fn find_file_by_id(&self, id: Uuid, owner_id: Uuid) -> Result<Option<File>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query(
+        let file = sqlx::query_as!(
+            File,
             r#"SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id FROM files WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL"#,
+            id,
+            owner_id
         )
-        .bind(id)
-        .bind(owner_id)
         .fetch_optional(&self.pool)
         .await?;
-
-        if let Some(row) = row {
-            let file = File {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                size: row.try_get("size")?,
-                mime_type: row.try_get("mime_type")?,
-                content_hash: row.try_get("content_hash")?,
-                owner_id: row.try_get("owner_id")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                current_version: row.try_get("current_version")?,
-                created_at: row.try_get("created_at")?,
-                modified_at: row.try_get("modified_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-            };
-            Ok(Some(file))
-        } else {
-            Ok(None)
-        }
+        Ok(file)
     }
 
     /// Find file by ID without owner check.
@@ -980,96 +858,55 @@ impl MetadataStore {
     /// ⚠️ WARNING: This bypasses ownership filtering. Only use for public-share
     /// endpoints or other cases where the caller has already verified access.
     pub async fn find_file_by_id_unchecked(&self, id: Uuid) -> Result<Option<File>> {
-        let row = sqlx::query(
+        let file = sqlx::query_as!(
+            File,
             r#"SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id FROM files WHERE id = $1 AND deleted_at IS NULL"#,
+            id
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
-
-        if let Some(row) = row {
-            let file = File {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                size: row.try_get("size")?,
-                mime_type: row.try_get("mime_type")?,
-                content_hash: row.try_get("content_hash")?,
-                owner_id: row.try_get("owner_id")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                current_version: row.try_get("current_version")?,
-                created_at: row.try_get("created_at")?,
-                modified_at: row.try_get("modified_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-            };
-            Ok(Some(file))
-        } else {
-            Ok(None)
-        }
+        Ok(file)
     }
 
     /// Find a file by its canonical path for a specific owner.
     pub async fn find_file_by_path(&self, path: &str, owner_id: Uuid) -> Result<Option<File>> {
-        let row = sqlx::query(
+        let file = sqlx::query_as!(
+            File,
             r#"
             SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id
             FROM files
             WHERE path = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
+            path,
+            owner_id
         )
-        .bind(path)
-        .bind(owner_id)
         .fetch_optional(&self.pool)
         .await?;
-
-        if let Some(row) = row {
-            let file = File {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                size: row.try_get("size")?,
-                mime_type: row.try_get("mime_type")?,
-                content_hash: row.try_get("content_hash")?,
-                owner_id: row.try_get("owner_id")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                current_version: row.try_get("current_version")?,
-                created_at: row.try_get("created_at")?,
-                modified_at: row.try_get("modified_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-            };
-            Ok(Some(file))
-        } else {
-            Ok(None)
-        }
+        Ok(file)
     }
 
     /// Update a file in the projection table
     pub async fn update_file(&self, file: &File) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE files
             SET name = $2, path = $3, size = $4, mime_type = $5, content_hash = $6,
                 storage_key = $7, parent_folder_id = $8, current_version = $9, modified_at = $10, tenant_id = $11
             WHERE id = $1 AND owner_id = $12
             "#,
+            file.id,
+            &file.name,
+            &file.path,
+            file.size,
+            &file.mime_type,
+            &file.content_hash,
+            file.storage_key(),
+            file.parent_folder_id,
+            file.current_version,
+            file.modified_at,
+            file.tenant_id,
+            file.owner_id,
         )
-        .bind(file.id)
-        .bind(&file.name)
-        .bind(&file.path)
-        .bind(file.size)
-        .bind(&file.mime_type)
-        .bind(&file.content_hash)
-        .bind(file.storage_key())
-        .bind(file.parent_folder_id)
-        .bind(file.current_version)
-        .bind(file.modified_at)
-        .bind(file.tenant_id)
-        .bind(file.owner_id)
         .execute(&self.pool)
         .await?;
 
@@ -1078,15 +915,15 @@ impl MetadataStore {
 
     /// Delete a file from the projection table
     pub async fn delete_file(&self, id: Uuid, owner_id: Uuid) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE files
             SET deleted_at = NOW(), starred_at = NULL
             WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
+            id,
+            owner_id,
         )
-        .bind(id)
-        .bind(owner_id)
         .execute(&self.pool)
         .await?;
 
@@ -1103,8 +940,8 @@ impl MetadataStore {
         owner_id: Uuid,
         tenant_id: Uuid,
     ) -> Result<Vec<File>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let rows = sqlx::query(
+        let files = sqlx::query_as!(
+            File,
             r#"
             SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id
             FROM files
@@ -1114,34 +951,12 @@ impl MetadataStore {
               AND (parent_folder_id = $3 OR ($3 IS NULL AND parent_folder_id IS NULL))
             ORDER BY name ASC
             "#,
+            owner_id,
+            tenant_id,
+            parent_id
         )
-        .bind(owner_id)
-        .bind(tenant_id)
-        .bind(parent_id)
         .fetch_all(&self.pool)
         .await?;
-
-        let mut files = Vec::new();
-        for row in rows {
-            let file = File {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                size: row.try_get("size")?,
-                mime_type: row.try_get("mime_type")?,
-                content_hash: row.try_get("content_hash")?,
-                owner_id: row.try_get("owner_id")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                current_version: row.try_get("current_version")?,
-                created_at: row.try_get("created_at")?,
-                modified_at: row.try_get("modified_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-            };
-            files.push(file);
-        }
-
         Ok(files)
     }
 
@@ -1154,7 +969,8 @@ impl MetadataStore {
         parent_id: Option<Uuid>,
         tenant_id: Uuid,
     ) -> Result<Vec<File>> {
-        let rows = sqlx::query(
+        let files = sqlx::query_as!(
+            File,
             r#"
             SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id
             FROM files
@@ -1163,46 +979,25 @@ impl MetadataStore {
               AND (parent_folder_id = $2 OR ($2 IS NULL AND parent_folder_id IS NULL))
             ORDER BY name ASC
             "#,
+            tenant_id,
+            parent_id
         )
-        .bind(tenant_id)
-        .bind(parent_id)
         .fetch_all(&self.pool)
         .await?;
-
-        let mut files = Vec::new();
-        for row in rows {
-            files.push(File {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                size: row.try_get("size")?,
-                mime_type: row.try_get("mime_type")?,
-                content_hash: row.try_get("content_hash")?,
-                owner_id: row.try_get("owner_id")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                current_version: row.try_get("current_version")?,
-                created_at: row.try_get("created_at")?,
-                modified_at: row.try_get("modified_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-            });
-        }
-
         Ok(files)
     }
 
     pub async fn set_file_starred(&self, id: Uuid, owner_id: Uuid, starred: bool) -> Result<bool> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"
             UPDATE files
             SET starred_at = CASE WHEN $3 THEN NOW() ELSE NULL END
             WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
+            id,
+            owner_id,
+            starred,
         )
-        .bind(id)
-        .bind(owner_id)
-        .bind(starred)
         .execute(&self.pool)
         .await?;
 
@@ -1210,16 +1005,16 @@ impl MetadataStore {
     }
 
     pub async fn restore_file(&self, id: Uuid, owner_id: Uuid, tenant_id: Uuid) -> Result<bool> {
-        let row = sqlx::query(
+        let row = sqlx::query!(
             r#"
             SELECT id, name, parent_folder_id
             FROM files
             WHERE id = $1 AND owner_id = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL
             "#,
+            id,
+            owner_id,
+            tenant_id
         )
-        .bind(id)
-        .bind(owner_id)
-        .bind(tenant_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -1227,8 +1022,8 @@ impl MetadataStore {
             return Ok(false);
         };
 
-        let name: String = row.try_get("name")?;
-        let parent_folder_id: Option<Uuid> = row.try_get("parent_folder_id")?;
+        let name: String = row.name;
+        let parent_folder_id: Option<Uuid> = row.parent_folder_id;
 
         let parent_path = if let Some(parent_id) = parent_folder_id {
             sqlx::query_scalar::<_, String>(
@@ -1262,18 +1057,18 @@ impl MetadataStore {
             format!("/{}", name)
         };
 
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"
             UPDATE files
             SET deleted_at = NULL, parent_folder_id = $2, path = $3
             WHERE id = $1 AND owner_id = $4 AND tenant_id = $5 AND deleted_at IS NOT NULL
             "#,
+            id,
+            restored_parent_id,
+            restored_path,
+            owner_id,
+            tenant_id
         )
-        .bind(id)
-        .bind(restored_parent_id)
-        .bind(restored_path)
-        .bind(owner_id)
-        .bind(tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -1281,11 +1076,11 @@ impl MetadataStore {
     }
 
     pub async fn permanently_delete_file(&self, id: Uuid, owner_id: Uuid) -> Result<bool> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             "DELETE FROM files WHERE id = $1 AND owner_id = $2 AND deleted_at IS NOT NULL",
+            id,
+            owner_id,
         )
-        .bind(id)
-        .bind(owner_id)
         .execute(&self.pool)
         .await?;
 
@@ -1294,8 +1089,7 @@ impl MetadataStore {
 
     /// Create a new file version in the projection table
     pub async fn create_file_version(&self, version: &FileVersion) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO file_versions (
                 id,
@@ -1319,18 +1113,18 @@ impl MetadataStore {
                 created_at = EXCLUDED.created_at,
                 change_description = EXCLUDED.change_description
             "#,
+            version.id,
+            version.file_id,
+            version.version_number,
+            &version.content_hash,
+            version.storage_key(),
+            version.size,
+            version.replication_state.as_str(),
+            version.created_by,
+            version.created_at,
+            version.change_description.as_deref(),
+            version.tenant_id,
         )
-        .bind(version.id)
-        .bind(version.file_id)
-        .bind(version.version_number)
-        .bind(&version.content_hash)
-        .bind(version.storage_key())
-        .bind(version.size)
-        .bind(version.replication_state.as_str())
-        .bind(version.created_by)
-        .bind(version.created_at)
-        .bind(&version.change_description)
-        .bind(version.tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -1339,8 +1133,7 @@ impl MetadataStore {
 
     /// List all versions for a file, ordered by version number descending (newest first)
     pub async fn list_file_versions(&self, file_id: Uuid, owner_id: Uuid) -> Result<Vec<FileVersion>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             SELECT v.id, v.file_id, v.version_number, v.content_hash, v.size, v.replication_state, v.created_by, v.created_at, v.change_description, v.tenant_id
             FROM file_versions v
@@ -1348,26 +1141,25 @@ impl MetadataStore {
             WHERE v.file_id = $1 AND f.owner_id = $2
             ORDER BY v.version_number DESC
             "#,
+            file_id,
+            owner_id
         )
-        .bind(file_id)
-        .bind(owner_id)
         .fetch_all(&self.pool)
         .await?;
 
         let mut versions = Vec::new();
         for row in rows {
-            let replication_state: String = row.try_get("replication_state")?;
             let version = FileVersion {
-                id: row.try_get("id")?,
-                file_id: row.try_get("file_id")?,
-                version_number: row.try_get("version_number")?,
-                content_hash: row.try_get("content_hash")?,
-                size: row.try_get("size")?,
-                replication_state: Self::parse_replication_state(&replication_state)?,
-                created_by: row.try_get("created_by")?,
-                created_at: row.try_get("created_at")?,
-                change_description: row.try_get("change_description")?,
-                tenant_id: row.try_get("tenant_id")?,
+                id: row.id,
+                file_id: row.file_id,
+                version_number: row.version_number,
+                content_hash: row.content_hash,
+                size: row.size,
+                replication_state: Self::parse_replication_state(&row.replication_state)?,
+                created_by: row.created_by,
+                created_at: row.created_at,
+                change_description: row.change_description,
+                tenant_id: row.tenant_id,
             };
             versions.push(version);
         }
@@ -1382,34 +1174,32 @@ impl MetadataStore {
         version: i32,
         owner_id: Uuid,
     ) -> Result<Option<FileVersion>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query(
+        let row = sqlx::query!(
             r#"
             SELECT v.id, v.file_id, v.version_number, v.content_hash, v.size, v.replication_state, v.created_by, v.created_at, v.change_description, v.tenant_id
             FROM file_versions v
             JOIN files f ON v.file_id = f.id
             WHERE v.file_id = $1 AND v.version_number = $2 AND f.owner_id = $3
             "#,
+            file_id,
+            version,
+            owner_id
         )
-        .bind(file_id)
-        .bind(version)
-        .bind(owner_id)
         .fetch_optional(&self.pool)
         .await?;
 
         if let Some(row) = row {
-            let replication_state: String = row.try_get("replication_state")?;
             let version = FileVersion {
-                id: row.try_get("id")?,
-                file_id: row.try_get("file_id")?,
-                version_number: row.try_get("version_number")?,
-                content_hash: row.try_get("content_hash")?,
-                size: row.try_get("size")?,
-                replication_state: Self::parse_replication_state(&replication_state)?,
-                created_by: row.try_get("created_by")?,
-                created_at: row.try_get("created_at")?,
-                change_description: row.try_get("change_description")?,
-                tenant_id: row.try_get("tenant_id")?,
+                id: row.id,
+                file_id: row.file_id,
+                version_number: row.version_number,
+                content_hash: row.content_hash,
+                size: row.size,
+                replication_state: Self::parse_replication_state(&row.replication_state)?,
+                created_by: row.created_by,
+                created_at: row.created_at,
+                change_description: row.change_description,
+                tenant_id: row.tenant_id,
             };
             Ok(Some(version))
         } else {
@@ -1419,17 +1209,17 @@ impl MetadataStore {
 
     /// Count enabled replication targets.
     pub async fn count_enabled_replication_targets(&self) -> Result<i64> {
-        let row =
-            sqlx::query("SELECT COUNT(*) AS count FROM replication_targets WHERE enabled = TRUE")
-                .fetch_one(&self.pool)
-                .await?;
-
-        row.try_get("count").map_err(Into::into)
+        sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "count!" FROM replication_targets WHERE enabled = TRUE"#
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(Into::into)
     }
 
     /// Create a durable replication job for asynchronous workers.
     pub async fn create_replication_job(&self, job: &ReplicationJob) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO replication_jobs (
                 id,
@@ -1448,20 +1238,20 @@ impl MetadataStore {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             "#,
+            job.id,
+            job.file_id,
+            job.file_version_id,
+            &job.storage_key,
+            job.status.as_str(),
+            job.attempt_count,
+            job.next_attempt_at,
+            job.last_attempt_at,
+            job.leased_at,
+            job.lease_token,
+            job.last_error.as_deref(),
+            job.created_at,
+            job.updated_at,
         )
-        .bind(job.id)
-        .bind(job.file_id)
-        .bind(job.file_version_id)
-        .bind(&job.storage_key)
-        .bind(job.status.as_str())
-        .bind(job.attempt_count)
-        .bind(job.next_attempt_at)
-        .bind(job.last_attempt_at)
-        .bind(job.leased_at)
-        .bind(job.lease_token)
-        .bind(&job.last_error)
-        .bind(job.created_at)
-        .bind(job.updated_at)
         .execute(&self.pool)
         .await?;
 
@@ -1474,15 +1264,15 @@ impl MetadataStore {
         version_id: Uuid,
         state: ReplicationState,
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE file_versions
             SET replication_state = $2
             WHERE id = $1
             "#,
+            version_id,
+            state.as_str(),
         )
-        .bind(version_id)
-        .bind(state.as_str())
         .execute(&self.pool)
         .await?;
 
@@ -1491,7 +1281,7 @@ impl MetadataStore {
 
     /// List enabled replication targets that workers should copy into.
     pub async fn list_enabled_replication_targets(&self) -> Result<Vec<ReplicationTarget>> {
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             SELECT
                 id,
@@ -1520,21 +1310,21 @@ impl MetadataStore {
         let mut targets = Vec::with_capacity(rows.len());
         for row in rows {
             targets.push(ReplicationTarget {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                destination_type: row.try_get("destination_type")?,
-                endpoint: row.try_get("endpoint")?,
-                bucket: row.try_get("bucket")?,
-                region: row.try_get("region")?,
-                base_path: row.try_get("base_path")?,
-                is_required: row.try_get("is_required")?,
-                enabled: row.try_get("enabled")?,
-                auth_config: row.try_get("auth_config")?,
-                health_status: row.try_get("health_status")?,
-                last_healthy_at: row.try_get("last_healthy_at")?,
-                last_error: row.try_get("last_error")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
+                id: row.id,
+                name: row.name,
+                destination_type: row.destination_type,
+                endpoint: row.endpoint,
+                bucket: row.bucket,
+                region: row.region,
+                base_path: row.base_path,
+                is_required: row.is_required,
+                enabled: row.enabled,
+                auth_config: row.auth_config,
+                health_status: row.health_status,
+                last_healthy_at: row.last_healthy_at,
+                last_error: row.last_error,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
             });
         }
 
@@ -1548,7 +1338,7 @@ impl MetadataStore {
         lease_timeout_secs: i64,
         lease_token: Uuid,
     ) -> Result<Vec<ReplicationJob>> {
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             WITH candidates AS (
                 SELECT id
@@ -1577,7 +1367,7 @@ impl MetadataStore {
                 file_id,
                 file_version_id,
                 storage_key,
-                status,
+                status as "status!",
                 attempt_count,
                 next_attempt_at,
                 last_attempt_at,
@@ -1587,30 +1377,30 @@ impl MetadataStore {
                 created_at,
                 updated_at
             "#,
+            limit,
+            lease_timeout_secs as f64,
+            lease_token,
         )
-        .bind(limit)
-        .bind(lease_timeout_secs)
-        .bind(lease_token)
         .fetch_all(&self.pool)
         .await?;
 
         let mut jobs = Vec::with_capacity(rows.len());
         for row in rows {
-            let status: String = row.try_get("status")?;
+            let status: String = row.status;
             jobs.push(ReplicationJob {
-                id: row.try_get("id")?,
-                file_id: row.try_get("file_id")?,
-                file_version_id: row.try_get("file_version_id")?,
-                storage_key: row.try_get("storage_key")?,
+                id: row.id,
+                file_id: row.file_id,
+                file_version_id: row.file_version_id,
+                storage_key: row.storage_key,
                 status: Self::parse_replication_job_status(&status)?,
-                attempt_count: row.try_get("attempt_count")?,
-                next_attempt_at: row.try_get("next_attempt_at")?,
-                last_attempt_at: row.try_get("last_attempt_at")?,
-                leased_at: row.try_get("leased_at")?,
-                lease_token: row.try_get("lease_token")?,
-                last_error: row.try_get("last_error")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
+                attempt_count: row.attempt_count,
+                next_attempt_at: row.next_attempt_at,
+                last_attempt_at: row.last_attempt_at,
+                leased_at: row.leased_at,
+                lease_token: row.lease_token,
+                last_error: row.last_error,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
             });
         }
 
@@ -1619,7 +1409,7 @@ impl MetadataStore {
 
     /// Mark a replication job as completed and release its lease.
     pub async fn mark_replication_job_completed(&self, job_id: Uuid) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE replication_jobs
             SET
@@ -1630,8 +1420,8 @@ impl MetadataStore {
                 updated_at = NOW()
             WHERE id = $1
             "#,
+            job_id,
         )
-        .bind(job_id)
         .execute(&self.pool)
         .await?;
 
@@ -1645,7 +1435,7 @@ impl MetadataStore {
         last_error: &str,
         next_attempt_at: DateTime<Utc>,
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE replication_jobs
             SET
@@ -1657,10 +1447,10 @@ impl MetadataStore {
                 updated_at = NOW()
             WHERE id = $1
             "#,
+            job_id,
+            last_error,
+            next_attempt_at,
         )
-        .bind(job_id)
-        .bind(last_error)
-        .bind(next_attempt_at)
         .execute(&self.pool)
         .await?;
 
@@ -1669,7 +1459,7 @@ impl MetadataStore {
 
     /// Mark a replication job as terminally failed.
     pub async fn mark_replication_job_failed(&self, job_id: Uuid, last_error: &str) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE replication_jobs
             SET
@@ -1680,9 +1470,9 @@ impl MetadataStore {
                 updated_at = NOW()
             WHERE id = $1
             "#,
+            job_id,
+            last_error,
         )
-        .bind(job_id)
-        .bind(last_error)
         .execute(&self.pool)
         .await?;
 
@@ -1694,7 +1484,7 @@ impl MetadataStore {
         &self,
         attempt: ReplicationAttemptRecord<'_>,
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO replication_attempts (
                 id,
@@ -1708,15 +1498,15 @@ impl MetadataStore {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
+            Uuid::new_v4(),
+            attempt.job_id,
+            attempt.target_id,
+            attempt.attempt_number,
+            attempt.status,
+            attempt.error_message,
+            attempt.started_at,
+            attempt.completed_at,
         )
-        .bind(Uuid::new_v4())
-        .bind(attempt.job_id)
-        .bind(attempt.target_id)
-        .bind(attempt.attempt_number)
-        .bind(attempt.status)
-        .bind(attempt.error_message)
-        .bind(attempt.started_at)
-        .bind(attempt.completed_at)
         .execute(&self.pool)
         .await?;
 
@@ -1731,7 +1521,7 @@ impl MetadataStore {
         last_error: Option<&str>,
         last_healthy_at: Option<DateTime<Utc>>,
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE replication_targets
             SET
@@ -1741,11 +1531,11 @@ impl MetadataStore {
                 updated_at = NOW()
             WHERE id = $1
             "#,
+            target_id,
+            health_status,
+            last_error,
+            last_healthy_at,
         )
-        .bind(target_id)
-        .bind(health_status)
-        .bind(last_error)
-        .bind(last_healthy_at)
         .execute(&self.pool)
         .await?;
 
@@ -1754,21 +1544,20 @@ impl MetadataStore {
 
     /// Create a new folder in the projection table
     pub async fn create_folder(&self, folder: &Folder) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO folders (id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id, starred_at, deleted_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, NULL)
             "#,
+            folder.id,
+            folder.name,
+            folder.path,
+            folder.parent_folder_id,
+            folder.owner_id,
+            folder.created_at,
+            folder.updated_at,
+            folder.tenant_id,
         )
-        .bind(folder.id)
-        .bind(&folder.name)
-        .bind(&folder.path)
-        .bind(folder.parent_folder_id)
-        .bind(folder.owner_id)
-        .bind(folder.created_at)
-        .bind(folder.updated_at)
-        .bind(folder.tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -1777,37 +1566,21 @@ impl MetadataStore {
 
     /// Find folder by ID
     pub async fn find_folder_by_id(&self, id: Uuid, owner_id: Uuid) -> Result<Option<Folder>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query(
+        let folder = sqlx::query_as!(
+            Folder,
             r#"
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id,
+                   NULL::uuid[] as "ancestor_ids: _"
             FROM folders
             WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
+            id,
+            owner_id
         )
-        .bind(id)
-        .bind(owner_id)
         .fetch_optional(&self.pool)
         .await?;
 
-        if let Some(row) = row {
-            let folder = Folder {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                owner_id: row.try_get("owner_id")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-                ancestor_ids: None, // Will be populated from folder_documents if available
-            };
-            Ok(Some(folder))
-        } else {
-            Ok(None)
-        }
+        Ok(folder)
     }
 
     /// Find a folder by ID without owner filtering.
@@ -1815,88 +1588,57 @@ impl MetadataStore {
     /// ⚠️ WARNING: This bypasses ownership filtering. Only use for permission
     /// resolution or other cases where the caller has already verified access.
     pub async fn find_folder_by_id_unchecked(&self, id: Uuid) -> Result<Option<Folder>> {
-        let row = sqlx::query(
+        let folder = sqlx::query_as!(
+            Folder,
             r#"
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id,
+                   NULL::uuid[] as "ancestor_ids: _"
             FROM folders
             WHERE id = $1 AND deleted_at IS NULL
             "#,
+            id
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
 
-        if let Some(row) = row {
-            let folder = Folder {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                owner_id: row.try_get("owner_id")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-                ancestor_ids: None,
-            };
-            Ok(Some(folder))
-        } else {
-            Ok(None)
-        }
+        Ok(folder)
     }
 
     /// Find a folder by its canonical path for a specific owner.
     pub async fn find_folder_by_path(&self, path: &str, owner_id: Uuid) -> Result<Option<Folder>> {
-        let row = sqlx::query(
+        let folder = sqlx::query_as!(
+            Folder,
             r#"
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id,
+                   NULL::uuid[] as "ancestor_ids: _"
             FROM folders
             WHERE path = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
+            path,
+            owner_id
         )
-        .bind(path)
-        .bind(owner_id)
         .fetch_optional(&self.pool)
         .await?;
 
-        if let Some(row) = row {
-            let folder = Folder {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                owner_id: row.try_get("owner_id")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-                ancestor_ids: None, // Will be populated from folder_documents if available
-            };
-            Ok(Some(folder))
-        } else {
-            Ok(None)
-        }
+        Ok(folder)
     }
 
     /// Update a folder in the projection table
     pub async fn update_folder(&self, folder: &Folder) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE folders
             SET name = $2, path = $3, parent_folder_id = $4, updated_at = $5, tenant_id = $6
             WHERE id = $1 AND owner_id = $7
             "#,
+            folder.id,
+            folder.name,
+            folder.path,
+            folder.parent_folder_id,
+            folder.updated_at,
+            folder.tenant_id,
+            folder.owner_id,
         )
-        .bind(folder.id)
-        .bind(&folder.name)
-        .bind(&folder.path)
-        .bind(folder.parent_folder_id)
-        .bind(folder.updated_at)
-        .bind(folder.tenant_id)
-        .bind(folder.owner_id)
         .execute(&self.pool)
         .await?;
 
@@ -1905,27 +1647,27 @@ impl MetadataStore {
 
     /// Delete a folder from the projection table
     pub async fn delete_folder(&self, id: Uuid, owner_id: Uuid) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE folders
             SET deleted_at = NOW(), starred_at = NULL
             WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
+            id,
+            owner_id,
         )
-        .bind(id)
-        .bind(owner_id)
         .execute(&self.pool)
         .await?;
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE files
             SET deleted_at = COALESCE(deleted_at, NOW()), starred_at = NULL
             WHERE parent_folder_id = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
+            id,
+            owner_id,
         )
-        .bind(id)
-        .bind(owner_id)
         .execute(&self.pool)
         .await?;
 
@@ -1942,10 +1684,11 @@ impl MetadataStore {
         owner_id: Uuid,
         tenant_id: Uuid,
     ) -> Result<Vec<Folder>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let rows = sqlx::query(
+        let folders = sqlx::query_as!(
+            Folder,
             r#"
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id,
+                   NULL::uuid[] as "ancestor_ids: _"
             FROM folders
             WHERE owner_id = $1
               AND tenant_id = $2
@@ -1953,30 +1696,12 @@ impl MetadataStore {
               AND (parent_folder_id = $3 OR ($3 IS NULL AND parent_folder_id IS NULL))
             ORDER BY name ASC
             "#,
+            owner_id,
+            tenant_id,
+            parent_id
         )
-        .bind(owner_id)
-        .bind(tenant_id)
-        .bind(parent_id)
         .fetch_all(&self.pool)
         .await?;
-
-        let mut folders = Vec::new();
-        for row in rows {
-            let folder = Folder {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                owner_id: row.try_get("owner_id")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-                ancestor_ids: None, // Will be populated from folder_documents if available
-            };
-            folders.push(folder);
-        }
 
         Ok(folders)
     }
@@ -1990,37 +1715,22 @@ impl MetadataStore {
         parent_id: Option<Uuid>,
         tenant_id: Uuid,
     ) -> Result<Vec<Folder>> {
-        let rows = sqlx::query(
+        let folders = sqlx::query_as!(
+            Folder,
             r#"
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id,
+                   NULL::uuid[] as "ancestor_ids: _"
             FROM folders
             WHERE tenant_id = $1
               AND deleted_at IS NULL
               AND (parent_folder_id = $2 OR ($2 IS NULL AND parent_folder_id IS NULL))
             ORDER BY name ASC
             "#,
+            tenant_id,
+            parent_id
         )
-        .bind(tenant_id)
-        .bind(parent_id)
         .fetch_all(&self.pool)
         .await?;
-
-        let mut folders = Vec::new();
-        for row in rows {
-            folders.push(Folder {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                owner_id: row.try_get("owner_id")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-                ancestor_ids: None,
-            });
-        }
 
         Ok(folders)
     }
@@ -2034,7 +1744,7 @@ impl MetadataStore {
         owner_id: Uuid,
         tenant_id: Uuid,
     ) -> Result<Vec<FolderWithShares>> {
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             SELECT 
                 f.id, f.name, f.path, f.parent_folder_id, f.owner_id, 
@@ -2044,12 +1754,12 @@ impl MetadataStore {
                     SELECT 1 FROM shares 
                     WHERE folder_id = f.id 
                     AND revoked_at IS NULL
-                ) as is_shared,
+                ) as "is_shared!",
                 (
                     SELECT COUNT(*) FROM shares
                     WHERE folder_id = f.id
                     AND revoked_at IS NULL
-                ) as share_count,
+                ) as "share_count!",
                 (
                     SELECT MIN(expires_at) FROM shares
                     WHERE folder_id = f.id
@@ -2062,30 +1772,30 @@ impl MetadataStore {
               AND (f.parent_folder_id = $3 OR ($3 IS NULL AND f.parent_folder_id IS NULL))
             ORDER BY f.name ASC
             "#,
+            owner_id,
+            tenant_id,
+            parent_id
         )
-        .bind(owner_id)
-        .bind(tenant_id)
-        .bind(parent_id)
         .fetch_all(&self.pool)
         .await?;
 
         let mut folders = Vec::new();
         for row in rows {
             let folder = FolderWithShares {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                owner_id: row.try_get("owner_id")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
+                id: row.id,
+                name: row.name,
+                path: row.path,
+                parent_folder_id: row.parent_folder_id,
+                owner_id: row.owner_id,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                starred_at: row.starred_at,
+                deleted_at: row.deleted_at,
+                tenant_id: row.tenant_id,
                 ancestor_ids: None,
-                is_shared: row.try_get("is_shared")?,
-                share_count: row.try_get("share_count")?,
-                share_expires_at: row.try_get("share_expires_at")?,
+                is_shared: row.is_shared,
+                share_count: row.share_count,
+                share_expires_at: row.share_expires_at,
             };
             folders.push(folder);
         }
@@ -2099,16 +1809,16 @@ impl MetadataStore {
         owner_id: Uuid,
         starred: bool,
     ) -> Result<bool> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"
             UPDATE folders
             SET starred_at = CASE WHEN $3 THEN NOW() ELSE NULL END
             WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
+            id,
+            owner_id,
+            starred,
         )
-        .bind(id)
-        .bind(owner_id)
-        .bind(starred)
         .execute(&self.pool)
         .await?;
 
@@ -2116,16 +1826,16 @@ impl MetadataStore {
     }
 
     pub async fn restore_folder(&self, id: Uuid, owner_id: Uuid, tenant_id: Uuid) -> Result<bool> {
-        let row = sqlx::query(
+        let row = sqlx::query!(
             r#"
             SELECT id, name, path, parent_folder_id
             FROM folders
             WHERE id = $1 AND owner_id = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL
             "#,
+            id,
+            owner_id,
+            tenant_id,
         )
-        .bind(id)
-        .bind(owner_id)
-        .bind(tenant_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -2133,21 +1843,21 @@ impl MetadataStore {
             return Ok(false);
         };
 
-        let name: String = row.try_get("name")?;
-        let old_path: String = row.try_get("path")?;
-        let parent_folder_id: Option<Uuid> = row.try_get("parent_folder_id")?;
+        let name: String = row.name;
+        let old_path: String = row.path;
+        let parent_folder_id: Option<Uuid> = row.parent_folder_id;
 
         let parent_row = if let Some(parent_id) = parent_folder_id {
-            sqlx::query(
+            sqlx::query!(
                 r#"
                 SELECT id, path
                 FROM folders
                 WHERE id = $1 AND owner_id = $2 AND tenant_id = $3 AND deleted_at IS NULL
                 "#,
+                parent_id,
+                owner_id,
+                tenant_id,
             )
-            .bind(parent_id)
-            .bind(owner_id)
-            .bind(tenant_id)
             .fetch_optional(&self.pool)
             .await?
         } else {
@@ -2156,9 +1866,9 @@ impl MetadataStore {
 
         let restored_parent_id: Option<Uuid> = parent_row
             .as_ref()
-            .and_then(|value| value.try_get("id").ok());
+            .map(|value| value.id);
         let restored_path = if let Some(parent_row) = &parent_row {
-            let parent_path: String = parent_row.try_get("path")?;
+            let parent_path: String = parent_row.path.clone();
             if parent_path == "/" {
                 format!("/{}", name)
             } else {
@@ -2195,25 +1905,25 @@ impl MetadataStore {
             );
         }
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE folders
             SET deleted_at = NULL, parent_folder_id = $2, path = $3
             WHERE id = $1 AND owner_id = $4 AND tenant_id = $5 AND deleted_at IS NOT NULL
             "#,
+            id,
+            restored_parent_id,
+            &restored_path,
+            owner_id,
+            tenant_id,
         )
-        .bind(id)
-        .bind(restored_parent_id)
-        .bind(&restored_path)
-        .bind(owner_id)
-        .bind(tenant_id)
         .execute(&self.pool)
         .await?;
 
         let old_prefix = format!("{}/%", old_path.trim_end_matches('/'));
         let new_prefix = format!("{}/", restored_path.trim_end_matches('/'));
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE folders
             SET deleted_at = NULL,
@@ -2222,16 +1932,16 @@ impl MetadataStore {
               AND tenant_id = $4
               AND path LIKE $5
             "#,
+            owner_id,
+            &new_prefix,
+            &old_path,
+            tenant_id,
+            &old_prefix,
         )
-        .bind(owner_id)
-        .bind(&new_prefix)
-        .bind(&old_path)
-        .bind(tenant_id)
-        .bind(&old_prefix)
         .execute(&self.pool)
         .await?;
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE files
             SET deleted_at = NULL,
@@ -2240,12 +1950,12 @@ impl MetadataStore {
               AND tenant_id = $4
               AND path LIKE $5
             "#,
+            owner_id,
+            &new_prefix,
+            &old_path,
+            tenant_id,
+            &old_prefix,
         )
-        .bind(owner_id)
-        .bind(&new_prefix)
-        .bind(&old_path)
-        .bind(tenant_id)
-        .bind(&old_prefix)
         .execute(&self.pool)
         .await?;
 
@@ -2253,11 +1963,11 @@ impl MetadataStore {
     }
 
     pub async fn permanently_delete_folder(&self, id: Uuid, owner_id: Uuid) -> Result<bool> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             "DELETE FROM folders WHERE id = $1 AND owner_id = $2 AND deleted_at IS NOT NULL",
+            id,
+            owner_id,
         )
-        .bind(id)
-        .bind(owner_id)
         .execute(&self.pool)
         .await?;
 
@@ -2270,30 +1980,30 @@ impl MetadataStore {
         owner_id: Uuid,
         tenant_id: Uuid,
     ) -> Result<(i64, i64, i64)> {
-        let file_row = sqlx::query(
+        let file_row = sqlx::query!(
             r#"
             SELECT COUNT(*) as count, COALESCE(SUM(size), 0)::bigint as total_size
             FROM files
             WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL
             "#,
+            owner_id,
+            tenant_id,
         )
-        .bind(owner_id)
-        .bind(tenant_id)
         .fetch_one(&self.pool)
         .await?;
 
-        let file_count: i64 = file_row.try_get("count")?;
-        let total_size: i64 = file_row.try_get("total_size")?;
+        let file_count: i64 = file_row.count.unwrap_or(0);
+        let total_size: i64 = file_row.total_size.unwrap_or(0);
 
-        let folder_row = sqlx::query(
-            "SELECT COUNT(*) as count FROM folders WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL"
+        let folder_row = sqlx::query!(
+            "SELECT COUNT(*) as count FROM folders WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL",
+            owner_id,
+            tenant_id,
         )
-        .bind(owner_id)
-        .bind(tenant_id)
         .fetch_one(&self.pool)
         .await?;
 
-        let folder_count: i64 = folder_row.try_get("count")?;
+        let folder_count: i64 = folder_row.count.unwrap_or(0);
 
         Ok((file_count, folder_count, total_size))
     }
@@ -2301,20 +2011,20 @@ impl MetadataStore {
     /// Permanently delete all trashed items for a user.
     pub async fn empty_trash(&self, owner_id: Uuid, tenant_id: Uuid) -> Result<()> {
         // Delete trashed files first (to avoid FK violations when deleting folders)
-        sqlx::query(
+        sqlx::query!(
             "DELETE FROM files WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL",
+            owner_id,
+            tenant_id
         )
-        .bind(owner_id)
-        .bind(tenant_id)
         .execute(&self.pool)
         .await?;
 
         // Delete trashed folders (cascade will handle any remaining child records)
-        sqlx::query(
+        sqlx::query!(
             "DELETE FROM folders WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL",
+            owner_id,
+            tenant_id
         )
-        .bind(owner_id)
-        .bind(tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -2326,22 +2036,22 @@ impl MetadataStore {
         let cutoff = chrono::Utc::now() - chrono::Duration::days(days.into());
 
         // Delete old trashed files first
-        let file_result = sqlx::query(
-            "DELETE FROM files WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL AND deleted_at < $3"
+        let file_result = sqlx::query!(
+            "DELETE FROM files WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL AND deleted_at < $3",
+            owner_id,
+            tenant_id,
+            cutoff
         )
-        .bind(owner_id)
-        .bind(tenant_id)
-        .bind(cutoff)
         .execute(&self.pool)
         .await?;
 
         // Delete old trashed folders
-        let folder_result = sqlx::query(
-            "DELETE FROM folders WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL AND deleted_at < $3"
+        let folder_result = sqlx::query!(
+            "DELETE FROM folders WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL AND deleted_at < $3",
+            owner_id,
+            tenant_id,
+            cutoff
         )
-        .bind(owner_id)
-        .bind(tenant_id)
-        .bind(cutoff)
         .execute(&self.pool)
         .await?;
 
@@ -2357,8 +2067,7 @@ impl MetadataStore {
     /// Use this for operations where the caller has already verified the user
     /// owns the root folder (e.g., delete, move).
     pub async fn find_descendant_folders(&self, folder_id: Uuid, owner_id: Uuid) -> Result<Vec<Folder>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             WITH RECURSIVE folder_tree AS (
                 -- Base case: start with the specified folder
@@ -2374,30 +2083,31 @@ impl MetadataStore {
                 INNER JOIN folder_tree ft ON f.parent_folder_id = ft.id
                 WHERE f.owner_id = $2 AND f.deleted_at IS NULL
             )
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
+            SELECT id as "id!", name as "name!", path as "path!", parent_folder_id as "parent_folder_id", owner_id as "owner_id!", created_at as "created_at!", updated_at as "updated_at!", starred_at as "starred_at", deleted_at as "deleted_at", tenant_id as "tenant_id!",
+                   NULL::uuid[] as "ancestor_ids: Vec<Uuid>"
             FROM folder_tree
             ORDER BY path ASC
             "#,
+            folder_id,
+            owner_id
         )
-        .bind(folder_id)
-        .bind(owner_id)
         .fetch_all(&self.pool)
         .await?;
 
         let mut folders = Vec::new();
         for row in rows {
             let folder = Folder {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                owner_id: row.try_get("owner_id")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-                ancestor_ids: None, // Will be populated from folder_documents if available
+                id: row.id,
+                name: row.name,
+                path: row.path,
+                parent_folder_id: row.parent_folder_id,
+                owner_id: row.owner_id,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                starred_at: row.starred_at,
+                deleted_at: row.deleted_at,
+                tenant_id: row.tenant_id,
+                ancestor_ids: row.ancestor_ids,
             };
             folders.push(folder);
         }
@@ -2410,8 +2120,7 @@ impl MetadataStore {
     /// ⚠️ WARNING: This bypasses ownership filtering. Only use for public-share
     /// endpoints or other cases where the caller has already verified access.
     pub async fn find_descendant_folders_unchecked(&self, folder_id: Uuid) -> Result<Vec<Folder>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             WITH RECURSIVE folder_tree AS (
                 -- Base case: start with the specified folder
@@ -2427,29 +2136,30 @@ impl MetadataStore {
                 INNER JOIN folder_tree ft ON f.parent_folder_id = ft.id
                 WHERE f.deleted_at IS NULL
             )
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
+            SELECT id as "id!", name as "name!", path as "path!", parent_folder_id as "parent_folder_id", owner_id as "owner_id!", created_at as "created_at!", updated_at as "updated_at!", starred_at as "starred_at", deleted_at as "deleted_at", tenant_id as "tenant_id!",
+                   NULL::uuid[] as "ancestor_ids: Vec<Uuid>"
             FROM folder_tree
             ORDER BY path ASC
             "#,
+            folder_id
         )
-        .bind(folder_id)
         .fetch_all(&self.pool)
         .await?;
 
         let mut folders = Vec::new();
         for row in rows {
             let folder = Folder {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                owner_id: row.try_get("owner_id")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-                ancestor_ids: None, // Will be populated from folder_documents if available
+                id: row.id,
+                name: row.name,
+                path: row.path,
+                parent_folder_id: row.parent_folder_id,
+                owner_id: row.owner_id,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                starred_at: row.starred_at,
+                deleted_at: row.deleted_at,
+                tenant_id: row.tenant_id,
+                ancestor_ids: row.ancestor_ids,
             };
             folders.push(folder);
         }
@@ -2459,26 +2169,26 @@ impl MetadataStore {
 
     /// Create a new share link for a file
     pub async fn create_share(&self, share: &Share) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO shares (id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, tenant_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
+            share.id,
+            share.file_id,
+            share.folder_id,
+            share.share_token,
+            share.recipient_user_id,
+            share.recipient_group_id,
+            share.created_by,
+            Self::permission_to_db_value(share.permissions),
+            share.password_hash,
+            share.expires_at,
+            share.upload_only,
+            share.access_count,
+            share.created_at,
+            share.tenant_id
         )
-        .bind(share.id)
-        .bind(share.file_id)
-        .bind(share.folder_id)
-        .bind(&share.share_token)
-        .bind(share.recipient_user_id)
-        .bind(share.recipient_group_id)
-        .bind(share.created_by)
-        .bind(Self::permission_to_db_value(share.permissions))
-        .bind(&share.password_hash)
-        .bind(share.expires_at)
-        .bind(share.upload_only)
-        .bind(share.access_count)
-        .bind(share.created_at)
-        .bind(share.tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -2487,174 +2197,74 @@ impl MetadataStore {
 
     /// Find a share by its token
     pub async fn get_share_by_token(&self, token: &str) -> Result<Option<Share>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query(
+        let share = sqlx::query_as!(
+            Share,
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions as "permissions: SharePermissions", password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
             WHERE share_token = $1
             "#,
+            token
         )
-        .bind(token)
         .fetch_optional(&self.pool)
         .await?;
-
-        if let Some(row) = row {
-            let permissions_str: String = row.try_get("permissions")?;
-            let permissions = Self::permission_from_db_value(&permissions_str);
-
-            let share = Share {
-                id: row.try_get("id")?,
-                file_id: row.try_get("file_id")?,
-                folder_id: row.try_get("folder_id")?,
-                share_token: row.try_get("share_token")?,
-                recipient_user_id: row.try_get("recipient_user_id")?,
-                recipient_group_id: row.try_get("recipient_group_id")?,
-                created_by: row.try_get("created_by")?,
-                permissions,
-                password_hash: row.try_get("password_hash")?,
-                expires_at: row.try_get("expires_at")?,
-                upload_only: row.try_get("upload_only")?,
-                access_count: row.try_get("access_count")?,
-                created_at: row.try_get("created_at")?,
-                revoked_at: row.try_get("revoked_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-            };
-            Ok(Some(share))
-        } else {
-            Ok(None)
-        }
+        Ok(share)
     }
 
     /// Find a share by ID
     pub async fn get_share(&self, share_id: Uuid, actor_id: Uuid) -> Result<Option<Share>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let row = sqlx::query(
+        let share = sqlx::query_as!(
+            Share,
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions as "permissions: SharePermissions", password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
-            WHERE id = $1 AND created_by = $2
+            WHERE id = $1 AND (recipient_user_id = $2 OR created_by = $2)
             "#,
+            share_id,
+            actor_id
         )
-        .bind(share_id)
-        .bind(actor_id)
         .fetch_optional(&self.pool)
         .await?;
-
-        if let Some(row) = row {
-            let permissions_str: String = row.try_get("permissions")?;
-            let permissions = Self::permission_from_db_value(&permissions_str);
-
-            let share = Share {
-                id: row.try_get("id")?,
-                file_id: row.try_get("file_id")?,
-                folder_id: row.try_get("folder_id")?,
-                share_token: row.try_get("share_token")?,
-                recipient_user_id: row.try_get("recipient_user_id")?,
-                recipient_group_id: row.try_get("recipient_group_id")?,
-                created_by: row.try_get("created_by")?,
-                permissions,
-                password_hash: row.try_get("password_hash")?,
-                expires_at: row.try_get("expires_at")?,
-                upload_only: row.try_get("upload_only")?,
-                access_count: row.try_get("access_count")?,
-                created_at: row.try_get("created_at")?,
-                revoked_at: row.try_get("revoked_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-            };
-            Ok(Some(share))
-        } else {
-            Ok(None)
-        }
+        Ok(share)
     }
 
     /// Get all active (non-revoked) shares for a file
     pub async fn get_file_shares(&self, file_id: Uuid) -> Result<Vec<Share>> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        let rows = sqlx::query(
+        let shares = sqlx::query_as!(
+            Share,
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions as "permissions: SharePermissions", password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
             WHERE file_id = $1 AND revoked_at IS NULL
             ORDER BY created_at DESC
             "#,
+            file_id
         )
-        .bind(file_id)
         .fetch_all(&self.pool)
         .await?;
-
-        let mut shares = Vec::new();
-        for row in rows {
-            let permissions_str: String = row.try_get("permissions")?;
-            let permissions = Self::permission_from_db_value(&permissions_str);
-
-            let share = Share {
-                id: row.try_get("id")?,
-                file_id: row.try_get("file_id")?,
-                folder_id: row.try_get("folder_id")?,
-                share_token: row.try_get("share_token")?,
-                recipient_user_id: row.try_get("recipient_user_id")?,
-                recipient_group_id: row.try_get("recipient_group_id")?,
-                created_by: row.try_get("created_by")?,
-                permissions,
-                password_hash: row.try_get("password_hash")?,
-                expires_at: row.try_get("expires_at")?,
-                upload_only: row.try_get("upload_only")?,
-                access_count: row.try_get("access_count")?,
-                created_at: row.try_get("created_at")?,
-                revoked_at: row.try_get("revoked_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-            };
-            shares.push(share);
-        }
-
         Ok(shares)
     }
 
     /// Get all active (non-revoked) shares for a folder.
     pub async fn get_folder_shares(&self, folder_id: Uuid) -> Result<Vec<Share>> {
-        let rows = sqlx::query(
+        let shares = sqlx::query_as!(
+            Share,
             r#"
-            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions as "permissions: SharePermissions", password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
             WHERE folder_id = $1 AND revoked_at IS NULL
             ORDER BY created_at DESC
             "#,
+            folder_id
         )
-        .bind(folder_id)
         .fetch_all(&self.pool)
         .await?;
-
-        let mut shares = Vec::new();
-        for row in rows {
-            let permissions_str: String = row.try_get("permissions")?;
-            let permissions = Self::permission_from_db_value(&permissions_str);
-
-            shares.push(Share {
-                id: row.try_get("id")?,
-                file_id: row.try_get("file_id")?,
-                folder_id: row.try_get("folder_id")?,
-                share_token: row.try_get("share_token")?,
-                recipient_user_id: row.try_get("recipient_user_id")?,
-                recipient_group_id: row.try_get("recipient_group_id")?,
-                created_by: row.try_get("created_by")?,
-                permissions,
-                password_hash: row.try_get("password_hash")?,
-                expires_at: row.try_get("expires_at")?,
-                upload_only: row.try_get("upload_only")?,
-                access_count: row.try_get("access_count")?,
-                created_at: row.try_get("created_at")?,
-                revoked_at: row.try_get("revoked_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-            });
-        }
-
         Ok(shares)
     }
 
     /// Get all active public shares created by a specific user, with file names.
     pub async fn get_user_public_shares(&self, user_id: Uuid) -> Result<Vec<OwnedPublicShare>> {
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             SELECT
                 s.id,
@@ -2672,12 +2282,12 @@ impl MetadataStore {
                 s.created_at,
                 s.revoked_at,
                 s.tenant_id,
-                COALESCE(s.file_id, s.folder_id) AS resource_id,
+                COALESCE(s.file_id, s.folder_id) AS "resource_id!",
                 CASE
                     WHEN s.file_id IS NOT NULL THEN 'file'
                     ELSE 'folder'
-                END AS resource_type,
-                COALESCE(f.name, fo.name) AS resource_name
+                END AS "resource_type!",
+                COALESCE(f.name, fo.name) AS "resource_name!"
             FROM shares s
             LEFT JOIN files f ON f.id = s.file_id
             LEFT JOIN folders fo ON fo.id = s.folder_id
@@ -2687,37 +2297,36 @@ impl MetadataStore {
               AND s.revoked_at IS NULL
             ORDER BY s.created_at DESC
             "#,
+            user_id
         )
-        .bind(user_id)
         .fetch_all(&self.pool)
         .await?;
 
         let mut shares = Vec::with_capacity(rows.len());
         for row in rows {
-            let permissions_str: String = row.try_get("permissions")?;
-            let permissions = Self::permission_from_db_value(&permissions_str);
+            let permissions = Self::permission_from_db_value(&row.permissions);
 
             shares.push(OwnedPublicShare {
                 share: Share {
-                    id: row.try_get("id")?,
-                    file_id: row.try_get("file_id")?,
-                    folder_id: row.try_get("folder_id")?,
-                    share_token: row.try_get("share_token")?,
-                    recipient_user_id: row.try_get("recipient_user_id")?,
-                    recipient_group_id: row.try_get("recipient_group_id")?,
-                    created_by: row.try_get("created_by")?,
+                    id: row.id,
+                    file_id: row.file_id,
+                    folder_id: row.folder_id,
+                    share_token: row.share_token,
+                    recipient_user_id: row.recipient_user_id,
+                    recipient_group_id: row.recipient_group_id,
+                    created_by: row.created_by,
                     permissions,
-                    password_hash: row.try_get("password_hash")?,
-                    expires_at: row.try_get("expires_at")?,
-                    upload_only: row.try_get("upload_only")?,
-                    access_count: row.try_get("access_count")?,
-                    created_at: row.try_get("created_at")?,
-                    revoked_at: row.try_get("revoked_at")?,
-                    tenant_id: row.try_get("tenant_id")?,
+                    password_hash: row.password_hash,
+                    expires_at: row.expires_at,
+                    upload_only: row.upload_only,
+                    access_count: row.access_count,
+                    created_at: row.created_at,
+                    revoked_at: row.revoked_at,
+                    tenant_id: row.tenant_id,
                 },
-                resource_id: row.try_get("resource_id")?,
-                resource_type: row.try_get("resource_type")?,
-                resource_name: row.try_get("resource_name")?,
+                resource_id: row.resource_id,
+                resource_type: row.resource_type,
+                resource_name: row.resource_name,
             });
         }
 
@@ -2726,7 +2335,7 @@ impl MetadataStore {
 
     /// Get all active shares created by a specific user (public, user, and group shares).
     pub async fn get_user_all_shares(&self, user_id: Uuid) -> Result<Vec<OwnedPublicShare>> {
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             SELECT
                 s.id,
@@ -2744,12 +2353,12 @@ impl MetadataStore {
                 s.created_at,
                 s.revoked_at,
                 s.tenant_id,
-                COALESCE(s.file_id, s.folder_id) AS resource_id,
+                COALESCE(s.file_id, s.folder_id) AS "resource_id!",
                 CASE
                     WHEN s.file_id IS NOT NULL THEN 'file'
                     ELSE 'folder'
-                END AS resource_type,
-                COALESCE(f.name, fo.name) AS resource_name
+                END AS "resource_type!",
+                COALESCE(f.name, fo.name) AS "resource_name!"
             FROM shares s
             LEFT JOIN files f ON f.id = s.file_id
             LEFT JOIN folders fo ON fo.id = s.folder_id
@@ -2757,37 +2366,36 @@ impl MetadataStore {
               AND s.revoked_at IS NULL
             ORDER BY s.created_at DESC
             "#,
+            user_id
         )
-        .bind(user_id)
         .fetch_all(&self.pool)
         .await?;
 
         let mut shares = Vec::with_capacity(rows.len());
         for row in rows {
-            let permissions_str: String = row.try_get("permissions")?;
-            let permissions = Self::permission_from_db_value(&permissions_str);
+            let permissions = Self::permission_from_db_value(&row.permissions);
 
             shares.push(OwnedPublicShare {
                 share: Share {
-                    id: row.try_get("id")?,
-                    file_id: row.try_get("file_id")?,
-                    folder_id: row.try_get("folder_id")?,
-                    share_token: row.try_get("share_token")?,
-                    recipient_user_id: row.try_get("recipient_user_id")?,
-                    recipient_group_id: row.try_get("recipient_group_id")?,
-                    created_by: row.try_get("created_by")?,
+                    id: row.id,
+                    file_id: row.file_id,
+                    folder_id: row.folder_id,
+                    share_token: row.share_token,
+                    recipient_user_id: row.recipient_user_id,
+                    recipient_group_id: row.recipient_group_id,
+                    created_by: row.created_by,
                     permissions,
-                    password_hash: row.try_get("password_hash")?,
-                    expires_at: row.try_get("expires_at")?,
-                    upload_only: row.try_get("upload_only")?,
-                    access_count: row.try_get("access_count")?,
-                    created_at: row.try_get("created_at")?,
-                    revoked_at: row.try_get("revoked_at")?,
-                    tenant_id: row.try_get("tenant_id")?,
+                    password_hash: row.password_hash,
+                    expires_at: row.expires_at,
+                    upload_only: row.upload_only,
+                    access_count: row.access_count,
+                    created_at: row.created_at,
+                    revoked_at: row.revoked_at,
+                    tenant_id: row.tenant_id,
                 },
-                resource_id: row.try_get("resource_id")?,
-                resource_type: row.try_get("resource_type")?,
-                resource_name: row.try_get("resource_name")?,
+                resource_id: row.resource_id,
+                resource_type: row.resource_type,
+                resource_name: row.resource_name,
             });
         }
 
@@ -2801,7 +2409,7 @@ impl MetadataStore {
         owner_id: Uuid,
         limit: i64,
     ) -> Result<Vec<PublicShareAccessLogEntry>> {
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             SELECT
                 sal.accessed_at,
@@ -2821,25 +2429,25 @@ impl MetadataStore {
             ORDER BY sal.accessed_at DESC
             LIMIT $3
             "#,
+            share_id,
+            owner_id,
+            limit
         )
-        .bind(share_id)
-        .bind(owner_id)
-        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
 
         rows.into_iter()
             .map(|row| {
                 Ok(PublicShareAccessLogEntry {
-                    accessed_at: row.try_get("accessed_at")?,
-                    action: row.try_get("action")?,
-                    success: row.try_get("success")?,
-                    ip_address: row.try_get("ip_address")?,
-                    user_agent: row.try_get("user_agent")?,
-                    actor_type: row.try_get("actor_type")?,
-                    actor_label: row.try_get("actor_label")?,
-                    share_session_id: row.try_get("share_session_id")?,
-                    share_session_subject: row.try_get("share_session_subject")?,
+                    accessed_at: row.accessed_at,
+                    action: row.action,
+                    success: row.success,
+                    ip_address: row.ip_address.map(|ip| ip.to_string()),
+                    user_agent: row.user_agent,
+                    actor_type: row.actor_type,
+                    actor_label: row.actor_label,
+                    share_session_id: row.share_session_id,
+                    share_session_subject: row.share_session_subject,
                 })
             })
             .collect()
@@ -2847,19 +2455,18 @@ impl MetadataStore {
 
     /// Update a share's password and expiration
     pub async fn update_share(&self, share: &Share) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE shares
             SET password_hash = $2, expires_at = $3, tenant_id = $4
             WHERE id = $1 AND created_by = $5
             "#,
+            share.id,
+            share.password_hash,
+            share.expires_at,
+            share.tenant_id,
+            share.created_by
         )
-        .bind(share.id)
-        .bind(&share.password_hash)
-        .bind(share.expires_at)
-        .bind(share.tenant_id)
-        .bind(share.created_by)
         .execute(&self.pool)
         .await?;
 
@@ -2868,16 +2475,15 @@ impl MetadataStore {
 
     /// Revoke a share link (soft delete)
     pub async fn revoke_share(&self, share_id: Uuid, actor_id: Uuid) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE shares
             SET revoked_at = NOW()
             WHERE id = $1 AND created_by = $2
             "#,
+            share_id,
+            actor_id
         )
-        .bind(share_id)
-        .bind(actor_id)
         .execute(&self.pool)
         .await?;
 
@@ -2886,15 +2492,14 @@ impl MetadataStore {
 
     /// Increment share access count and update last_accessed_at
     pub async fn increment_share_access(&self, share_id: Uuid) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE shares
             SET access_count = access_count + 1, last_accessed_at = NOW()
             WHERE id = $1
             "#,
+            share_id
         )
-        .bind(share_id)
         .execute(&self.pool)
         .await?;
 
@@ -2903,13 +2508,12 @@ impl MetadataStore {
 
     /// Log a share access attempt
     pub async fn log_share_access(&self, entry: ShareAccessLogEntry) -> Result<()> {
-        // TODO: Switch to sqlx::query!() after Docker Compose setup (Task 11)
         // Validate IP address format before storage
         let validated_ip = entry
             .ip_address
-            .and_then(|ip| ip.parse::<std::net::IpAddr>().ok().map(|_| ip));
+            .and_then(|ip| ip.parse::<sqlx::types::ipnetwork::IpNetwork>().ok());
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO share_access_log (
                 share_id, ip_address, user_agent, action, success,
@@ -2917,16 +2521,16 @@ impl MetadataStore {
             )
             VALUES ($1, $2::inet, $3, $4, $5, $6, $7, $8, $9)
             "#,
+            entry.share_id,
+            validated_ip,
+            entry.user_agent,
+            entry.action,
+            entry.success,
+            entry.actor_type,
+            entry.actor_label,
+            entry.share_session_id,
+            entry.share_session_subject
         )
-        .bind(entry.share_id)
-        .bind(validated_ip)
-        .bind(entry.user_agent)
-        .bind(entry.action)
-        .bind(entry.success)
-        .bind(entry.actor_type)
-        .bind(entry.actor_label)
-        .bind(entry.share_session_id)
-        .bind(entry.share_session_subject)
         .execute(&self.pool)
         .await?;
 
@@ -2935,38 +2539,22 @@ impl MetadataStore {
 
     /// List all markdown files for a user across their entire library.
     pub async fn list_all_folders(&self, owner_id: Uuid, tenant_id: Uuid) -> Result<Vec<Folder>> {
-        let rows = sqlx::query(
+        let folders = sqlx::query_as!(
+            Folder,
             r#"
-            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id
+            SELECT id, name, path, parent_folder_id, owner_id, created_at, updated_at, starred_at, deleted_at, tenant_id,
+                NULL::uuid[] as "ancestor_ids: _"
             FROM folders
             WHERE owner_id = $1
               AND tenant_id = $2
               AND deleted_at IS NULL
             ORDER BY path ASC
             "#,
+            owner_id,
+            tenant_id
         )
-        .bind(owner_id)
-        .bind(tenant_id)
         .fetch_all(&self.pool)
         .await?;
-
-        let mut folders = Vec::new();
-        for row in rows {
-            let folder = Folder {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                owner_id: row.try_get("owner_id")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-                ancestor_ids: None,
-            };
-            folders.push(folder);
-        }
 
         Ok(folders)
     }
@@ -2976,7 +2564,8 @@ impl MetadataStore {
         owner_id: Uuid,
         tenant_id: Uuid,
     ) -> Result<Vec<File>> {
-        let rows = sqlx::query(
+        let files = sqlx::query_as!(
+            File,
             r#"
             SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id
             FROM files
@@ -2986,48 +2575,27 @@ impl MetadataStore {
               AND (mime_type = 'text/markdown' OR name ILIKE '%.md')
             ORDER BY modified_at DESC
             "#,
+            owner_id,
+            tenant_id,
         )
-        .bind(owner_id)
-        .bind(tenant_id)
         .fetch_all(&self.pool)
         .await?;
-
-        let mut files = Vec::new();
-        for row in rows {
-            let file = File {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                path: row.try_get("path")?,
-                size: row.try_get("size")?,
-                mime_type: row.try_get("mime_type")?,
-                content_hash: row.try_get("content_hash")?,
-                owner_id: row.try_get("owner_id")?,
-                parent_folder_id: row.try_get("parent_folder_id")?,
-                current_version: row.try_get("current_version")?,
-                created_at: row.try_get("created_at")?,
-                modified_at: row.try_get("modified_at")?,
-                starred_at: row.try_get("starred_at")?,
-                deleted_at: row.try_get("deleted_at")?,
-                tenant_id: row.try_get("tenant_id")?,
-            };
-            files.push(file);
-        }
 
         Ok(files)
     }
 
     /// Check if a user is a member of a group.
     pub async fn is_user_in_group(&self, user_id: Uuid, group_id: Uuid) -> Result<bool> {
-        let exists = sqlx::query_scalar::<_, bool>(
+        let exists = sqlx::query_scalar!(
             r#"
             SELECT EXISTS(
                 SELECT 1 FROM group_members
                 WHERE group_id = $1 AND user_id = $2
-            )
+            ) as "exists!"
             "#,
+            group_id,
+            user_id
         )
-        .bind(group_id)
-        .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
 
@@ -3080,8 +2648,7 @@ mod tests {
         assert_eq!(found_user.username, "testuser");
 
         // Cleanup
-        sqlx::query("DELETE FROM users WHERE email = $1")
-            .bind("test@example.com")
+        sqlx::query!("DELETE FROM users WHERE email = $1", "test@example.com")
             .execute(&pool)
             .await
             .unwrap();
@@ -3154,8 +2721,7 @@ mod tests {
         assert!(not_found.is_none());
 
         // Cleanup user
-        sqlx::query("DELETE FROM users WHERE id = $1")
-            .bind(owner.id)
+        sqlx::query!("DELETE FROM users WHERE id = $1", owner.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -3253,15 +2819,13 @@ mod tests {
         assert!(not_found.is_none());
 
         // Cleanup (file_versions will cascade delete with file)
-        sqlx::query("DELETE FROM files WHERE id = $1")
-            .bind(file.id)
+        sqlx::query!("DELETE FROM files WHERE id = $1", file.id)
             .execute(&pool)
             .await
             .unwrap();
 
         // Cleanup user
-        sqlx::query("DELETE FROM users WHERE id = $1")
-            .bind(user.id)
+        sqlx::query!("DELETE FROM users WHERE id = $1", user.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -3404,33 +2968,28 @@ mod tests {
 
         // Cleanup: Delete folders (cascade will handle children)
         // Delete in order: leaf -> parent
-        sqlx::query("DELETE FROM folders WHERE id = $1")
-            .bind(work_folder.id)
+        sqlx::query!("DELETE FROM folders WHERE id = $1", work_folder.id)
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query("DELETE FROM folders WHERE id = $1")
-            .bind(docs_folder.id)
+        sqlx::query!("DELETE FROM folders WHERE id = $1", docs_folder.id)
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query("DELETE FROM folders WHERE id = $1")
-            .bind(photos_folder.id)
+        sqlx::query!("DELETE FROM folders WHERE id = $1", photos_folder.id)
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query("DELETE FROM folders WHERE id = $1")
-            .bind(root_folder.id)
+        sqlx::query!("DELETE FROM folders WHERE id = $1", root_folder.id)
             .execute(&pool)
             .await
             .unwrap();
 
         // Cleanup user
-        sqlx::query("DELETE FROM users WHERE id = $1")
-            .bind(owner.id)
+        sqlx::query!("DELETE FROM users WHERE id = $1", owner.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -3571,21 +3130,18 @@ mod tests {
         assert!(revoked_share.is_some());
 
         // Cleanup
-        sqlx::query("DELETE FROM shares WHERE file_id = $1")
-            .bind(file.id)
+        sqlx::query!("DELETE FROM shares WHERE file_id = $1", file.id)
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query("DELETE FROM files WHERE id = $1")
-            .bind(file.id)
+        sqlx::query!("DELETE FROM files WHERE id = $1", file.id)
             .execute(&pool)
             .await
             .unwrap();
 
         // Cleanup user
-        sqlx::query("DELETE FROM users WHERE id = $1")
-            .bind(owner.id)
+        sqlx::query!("DELETE FROM users WHERE id = $1", owner.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -3647,16 +3203,16 @@ mod tests {
 
         // Create backing group row for the FK used by recipient_group_id.
         let group_id = Uuid::new_v4();
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO user_groups (id, name, description, created_by)
             VALUES ($1, $2, $3, $4)
             "#,
+            group_id,
+            format!("test-group-{}", group_id),
+            Some("Test group".to_string()),
+            owner.id
         )
-        .bind(group_id)
-        .bind(format!("test-group-{}", group_id))
-        .bind(Some("Test group".to_string()))
-        .bind(owner.id)
         .execute(&pool)
         .await
         .unwrap();
@@ -3689,23 +3245,19 @@ mod tests {
         assert_eq!(public_shares[0].share.id, public_share.id);
 
         // Cleanup
-        sqlx::query("DELETE FROM shares WHERE file_id = $1")
-            .bind(file.id)
+        sqlx::query!("DELETE FROM shares WHERE file_id = $1", file.id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("DELETE FROM files WHERE id = $1")
-            .bind(file.id)
+        sqlx::query!("DELETE FROM files WHERE id = $1", file.id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("DELETE FROM user_groups WHERE id = $1")
-            .bind(group_id)
+        sqlx::query!("DELETE FROM user_groups WHERE id = $1", group_id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("DELETE FROM users WHERE id = $1")
-            .bind(owner.id)
+        sqlx::query!("DELETE FROM users WHERE id = $1", owner.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -3766,9 +3318,7 @@ mod tests {
 
         // Cleanup
         store.delete_file(file.id, user_a.id).await.unwrap();
-        sqlx::query("DELETE FROM users WHERE id = $1 OR id = $2")
-            .bind(user_a.id)
-            .bind(user_b.id)
+        sqlx::query!("DELETE FROM users WHERE id = $1 OR id = $2", user_a.id, user_b.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -3820,9 +3370,7 @@ mod tests {
 
         // Cleanup
         store.delete_folder(folder.id, user_a.id).await.unwrap();
-        sqlx::query("DELETE FROM users WHERE id = $1 OR id = $2")
-            .bind(user_a.id)
-            .bind(user_b.id)
+        sqlx::query!("DELETE FROM users WHERE id = $1 OR id = $2", user_a.id, user_b.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -3897,19 +3445,15 @@ mod tests {
         assert!(still_exists.is_some(), "User A's share should still exist");
 
         // Cleanup
-        sqlx::query("DELETE FROM shares WHERE id = $1")
-            .bind(share.id)
+        sqlx::query!("DELETE FROM shares WHERE id = $1", share.id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("DELETE FROM files WHERE id = $1")
-            .bind(file.id)
+        sqlx::query!("DELETE FROM files WHERE id = $1", file.id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("DELETE FROM users WHERE id = $1 OR id = $2")
-            .bind(user_a.id)
-            .bind(user_b.id)
+        sqlx::query!("DELETE FROM users WHERE id = $1 OR id = $2", user_a.id, user_b.id)
             .execute(&pool)
             .await
             .unwrap();

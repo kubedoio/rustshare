@@ -75,6 +75,7 @@
 			loading = false;
 			return;
 		}
+		const targetFileId = file.id;
 
 		// Clean up old thumbnail URL before loading new one
 		if (thumbnailUrl) {
@@ -85,9 +86,11 @@
 		loading = true;
 
 		try {
-			const response = await fetch(`/api/v1/files/${file.id}/thumbnail?size=${size}`, {
+			const response = await fetch(`/api/v1/files/${targetFileId}/thumbnail?size=${size}`, {
 				credentials: 'include'
 			});
+
+			if (file.id !== targetFileId) return;
 
 			if (response.ok) {
 				const blob = await response.blob();
@@ -98,17 +101,24 @@
 				error = true;
 			}
 		} catch (err) {
+			if (file.id !== targetFileId) return;
 			console.error('Failed to load thumbnail:', err);
 			error = true;
 		} finally {
-			loading = false;
+			if (file.id === targetFileId) {
+				loading = false;
+			}
 		}
 	}
 
 	// Reactive: reload thumbnail when file changes
 	$effect(() => {
 		if (file?.id) {
-			loadThumbnail();
+			const targetFileId = file.id;
+			loadThumbnail().then(() => {
+				if (file.id !== targetFileId) return;
+				// thumbnail loaded for current file
+			});
 		}
 	});
 

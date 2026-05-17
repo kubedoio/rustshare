@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE replication_jobs\n            SET\n                status = 'completed',\n                leased_at = NULL,\n                lease_token = NULL,\n                last_error = NULL,\n                updated_at = NOW()\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "172cf0eeee6eada2e2cd0f9e8abb6a8a83e11bc64c3bf86c55811b1acb46645c"
+}

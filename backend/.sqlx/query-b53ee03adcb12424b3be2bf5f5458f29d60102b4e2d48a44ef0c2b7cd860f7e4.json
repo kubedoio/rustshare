@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                UPDATE login_attempts\n                SET blocked_until = $2\n                WHERE ip_address = $1\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b53ee03adcb12424b3be2bf5f5458f29d60102b4e2d48a44ef0c2b7cd860f7e4"
+}

@@ -1,0 +1,124 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                s.id,\n                s.file_id,\n                s.folder_id,\n                s.share_token,\n                s.recipient_user_id,\n                s.recipient_group_id,\n                s.created_by,\n                s.permissions,\n                s.password_hash,\n                s.expires_at,\n                s.upload_only,\n                s.access_count,\n                s.created_at,\n                s.revoked_at,\n                s.tenant_id,\n                COALESCE(s.file_id, s.folder_id) AS \"resource_id!\",\n                CASE\n                    WHEN s.file_id IS NOT NULL THEN 'file'\n                    ELSE 'folder'\n                END AS \"resource_type!\",\n                COALESCE(f.name, fo.name) AS \"resource_name!\"\n            FROM shares s\n            LEFT JOIN files f ON f.id = s.file_id\n            LEFT JOIN folders fo ON fo.id = s.folder_id\n            WHERE s.created_by = $1\n              AND s.revoked_at IS NULL\n            ORDER BY s.created_at DESC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "file_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "folder_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "share_token",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "recipient_user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "recipient_group_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 7,
+        "name": "permissions",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "password_hash",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "upload_only",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "access_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 12,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "revoked_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 15,
+        "name": "resource_id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 16,
+        "name": "resource_type!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 17,
+        "name": "resource_name!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "df39a2de63c7f9b2a77b3d68c57d88151b372beae3db9b0e8c5369e45952c3f1"
+}

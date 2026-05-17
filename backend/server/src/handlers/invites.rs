@@ -95,7 +95,7 @@ pub async fn create_invite(
             .execute(&state.db_pool)
             .await
             .ok();
-        return Err(AppError::internal(format!(
+        return Err(AppError::bad_gateway(format!(
             "Failed to send invite email: {}",
             e
         )));

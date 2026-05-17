@@ -32,15 +32,18 @@
 
 	async function loadContent() {
 		if (!file) return;
+		const targetFileId = file.id;
 
 		isLoading = true;
 		error = null;
 
 		try {
-			const loadedContent = await getFileContent(file.id);
+			const loadedContent = await getFileContent(targetFileId);
+			if (file?.id !== targetFileId) return;
 			content = loadedContent;
 			currentMarkdown = loadedContent;
 		} catch (err) {
+			if (file?.id !== targetFileId) return;
 			error = err instanceof Error ? err.message : 'Failed to load file content';
 		} finally {
 			isLoading = false;
@@ -87,7 +90,11 @@
 
 	$effect(() => {
 		if (open && file) {
-			loadContent();
+			const targetFileId = file.id;
+			loadContent().then(() => {
+				if (file?.id !== targetFileId) return;
+				// content loaded for current file
+			});
 		}
 	});
 

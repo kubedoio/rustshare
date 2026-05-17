@@ -331,10 +331,10 @@ pub async fn test_webhook(
             if resp.status().is_success() {
                 Ok(Json(json!({"status": "ok", "http_status": http_status})))
             } else {
-                Err(AppError::internal(format!("Webhook returned HTTP {http_status}")))
+                Err(AppError::bad_gateway(format!("Webhook returned HTTP {http_status}")))
             }
         }
-        Err(e) => Err(AppError::internal(e.to_string())),
+        Err(e) => Err(AppError::bad_gateway(e.to_string())),
     }
 }
 

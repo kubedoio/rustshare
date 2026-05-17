@@ -165,7 +165,7 @@ pub async fn create_upload_session(
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err(AppError::internal("Upload service not available"));
+            return Err(AppError::service_unavailable("Upload service not available"));
         }
     };
 
@@ -208,7 +208,7 @@ pub async fn get_upload_session_status(
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err(AppError::internal("Upload service not available"));
+            return Err(AppError::service_unavailable("Upload service not available"));
         }
     };
 
@@ -238,7 +238,7 @@ pub async fn upload_chunk(
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err(AppError::internal("Upload service not available"));
+            return Err(AppError::service_unavailable("Upload service not available"));
         }
     };
 
@@ -280,7 +280,7 @@ pub async fn complete_upload(
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err(AppError::internal("Upload service not available"));
+            return Err(AppError::service_unavailable("Upload service not available"));
         }
     };
 
@@ -312,7 +312,7 @@ pub async fn abort_upload_session(
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err(AppError::internal("Upload service not available"));
+            return Err(AppError::service_unavailable("Upload service not available"));
         }
     };
 
@@ -336,7 +336,7 @@ pub async fn list_upload_sessions(
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err(AppError::internal("Upload service not available"));
+            return Err(AppError::service_unavailable("Upload service not available"));
         }
     };
 

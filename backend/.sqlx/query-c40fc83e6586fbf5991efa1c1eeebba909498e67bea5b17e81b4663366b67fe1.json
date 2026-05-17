@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO folders (id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id, starred_at, deleted_at)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, NULL)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Text",
+        "Uuid",
+        "Uuid",
+        "Timestamptz",
+        "Timestamptz",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c40fc83e6586fbf5991efa1c1eeebba909498e67bea5b17e81b4663366b67fe1"
+}

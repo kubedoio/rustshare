@@ -150,6 +150,8 @@ pub enum AppError {
     UnsupportedMediaType(String),
     PayloadTooLarge(String),
     TooManyRequests,
+    BadGateway(String),
+    ServiceUnavailable(String),
     Internal(String),
 }
 
@@ -175,6 +177,12 @@ impl AppError {
     pub fn payload_too_large(msg: impl Into<String>) -> Self {
         Self::PayloadTooLarge(msg.into())
     }
+    pub fn bad_gateway(msg: impl Into<String>) -> Self {
+        Self::BadGateway(msg.into())
+    }
+    pub fn service_unavailable(msg: impl Into<String>) -> Self {
+        Self::ServiceUnavailable(msg.into())
+    }
     pub fn internal(msg: impl Into<String>) -> Self {
         Self::Internal(msg.into())
     }
@@ -195,7 +203,12 @@ impl IntoResponse for AppError {
                 StatusCode::TOO_MANY_REQUESTS,
                 "Too many requests. Please try again later.".to_string(),
             ),
-            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            AppError::BadGateway(msg) => (StatusCode::BAD_GATEWAY, msg),
+            AppError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
+            AppError::Internal(msg) => {
+                tracing::error!("Internal error: {}", msg);
+                (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
+            }
         };
         (status, Json(ErrorResponse::new(message))).into_response()
     }
