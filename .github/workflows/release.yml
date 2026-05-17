@@ -104,7 +104,7 @@ jobs:
 
       - name: Check CI gate
         if: steps.resolve.outputs.should_release == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const requiredWorkflows = ['CI', 'Frontend CI', 'Integration Tests'];
@@ -184,7 +184,7 @@ jobs:
           chmod +x "rustshare-server-${{ matrix.target }}"
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: binary-${{ matrix.target }}
           path: rustshare-server-${{ matrix.target }}
@@ -207,10 +207,10 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -221,7 +221,7 @@ jobs:
 
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
@@ -233,7 +233,7 @@ jobs:
 
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/backend.Dockerfile
@@ -252,14 +252,14 @@ jobs:
       contents: read
     steps:
       - name: Download binary artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: ./artifacts
           pattern: binary-*
           merge-multiple: true
 
       - name: Generate SBOM for x86_64 binary
-        uses: anchore/sbom-action@v0.17.9
+        uses: anchore/sbom-action@v0.24.0
         with:
           path: ./artifacts/rustshare-server-x86_64-unknown-linux-gnu
           format: spdx-json
@@ -268,7 +268,7 @@ jobs:
           artifact-name: sbom-x86_64
 
       - name: Generate SBOM for aarch64 binary
-        uses: anchore/sbom-action@v0.17.9
+        uses: anchore/sbom-action@v0.24.0
         with:
           path: ./artifacts/rustshare-server-aarch64-unknown-linux-gnu
           format: spdx-json
@@ -277,7 +277,7 @@ jobs:
           artifact-name: sbom-aarch64
 
       - name: Generate SBOM for Docker image
-        uses: anchore/sbom-action@v0.17.9
+        uses: anchore/sbom-action@v0.24.0
         with:
           image: ${{ env.IMAGE_NAME }}@${{ needs.build-and-push-image.outputs.digest }}
           format: spdx-json
@@ -296,7 +296,7 @@ jobs:
       packages: write
     steps:
       - name: Download binary artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: ./artifacts
           pattern: binary-*
@@ -322,14 +322,14 @@ jobs:
       contents: write
     steps:
       - name: Download binary artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: ./artifacts
           pattern: binary-*
           merge-multiple: true
 
       - name: Download SBOM artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: ./artifacts
           pattern: sbom-*
@@ -337,7 +337,7 @@ jobs:
 
       - name: Check if release already exists
         id: check_release
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const tag = 'v${{ needs.validate-tag.outputs.version }}';
