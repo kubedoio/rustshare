@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use rustshare_core::domain::SharePermissions;
 
-use super::{AuthenticatedUser, AppError};
+use super::{AppError, AuthenticatedUser};
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -292,10 +292,7 @@ pub async fn revoke_share(
     Path(share_id): Path<uuid::Uuid>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
 ) -> Result<StatusCode, AppError> {
-    state
-        .share_service
-        .revoke_share(share_id, user_id)
-        .await?;
+    state.share_service.revoke_share(share_id, user_id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

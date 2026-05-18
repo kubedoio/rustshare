@@ -698,29 +698,32 @@ impl TemplateService {
         .fetch_all(self.metadata_store.pool())
         .await?;
 
-        let templates: Vec<Template> = rows.into_iter().map(|row| Template {
-            id: row.id,
-            template_key: row.template_key,
-            name: row.name,
-            module_key: row.module_key,
-            version: row.version.unwrap_or_default(),
-            description: row.description.unwrap_or_default(),
-            ui_config: row.ui_config,
-            folder_structure: row.folder_structure,
-            default_files: row.default_files,
-            metadata_schema: row.metadata_schema,
-            renderer: row.renderer,
-            visibility_policy: row.visibility_policy.unwrap_or_default(),
-            ai_indexing_policy: row.ai_indexing_policy,
-            audit_logging_policy: row.audit_logging_policy,
-            module_config: row.module_config,
-            created_by: row.created_by,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-            enabled: row.enabled,
-            system_template: row.system_template,
-            tenant_id: row.tenant_id,
-        }).collect();
+        let templates: Vec<Template> = rows
+            .into_iter()
+            .map(|row| Template {
+                id: row.id,
+                template_key: row.template_key,
+                name: row.name,
+                module_key: row.module_key,
+                version: row.version.unwrap_or_default(),
+                description: row.description.unwrap_or_default(),
+                ui_config: row.ui_config,
+                folder_structure: row.folder_structure,
+                default_files: row.default_files,
+                metadata_schema: row.metadata_schema,
+                renderer: row.renderer,
+                visibility_policy: row.visibility_policy.unwrap_or_default(),
+                ai_indexing_policy: row.ai_indexing_policy,
+                audit_logging_policy: row.audit_logging_policy,
+                module_config: row.module_config,
+                created_by: row.created_by,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                enabled: row.enabled,
+                system_template: row.system_template,
+                tenant_id: row.tenant_id,
+            })
+            .collect();
 
         Ok(templates)
     }
@@ -739,29 +742,32 @@ impl TemplateService {
         .fetch_all(self.metadata_store.pool())
         .await?;
 
-        let templates: Vec<Template> = rows.into_iter().map(|row| Template {
-            id: row.id,
-            template_key: row.template_key,
-            name: row.name,
-            module_key: row.module_key,
-            version: row.version.unwrap_or_default(),
-            description: row.description.unwrap_or_default(),
-            ui_config: row.ui_config,
-            folder_structure: row.folder_structure,
-            default_files: row.default_files,
-            metadata_schema: row.metadata_schema,
-            renderer: row.renderer,
-            visibility_policy: row.visibility_policy.unwrap_or_default(),
-            ai_indexing_policy: row.ai_indexing_policy,
-            audit_logging_policy: row.audit_logging_policy,
-            module_config: row.module_config,
-            created_by: row.created_by,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-            enabled: row.enabled,
-            system_template: row.system_template,
-            tenant_id: row.tenant_id,
-        }).collect();
+        let templates: Vec<Template> = rows
+            .into_iter()
+            .map(|row| Template {
+                id: row.id,
+                template_key: row.template_key,
+                name: row.name,
+                module_key: row.module_key,
+                version: row.version.unwrap_or_default(),
+                description: row.description.unwrap_or_default(),
+                ui_config: row.ui_config,
+                folder_structure: row.folder_structure,
+                default_files: row.default_files,
+                metadata_schema: row.metadata_schema,
+                renderer: row.renderer,
+                visibility_policy: row.visibility_policy.unwrap_or_default(),
+                ai_indexing_policy: row.ai_indexing_policy,
+                audit_logging_policy: row.audit_logging_policy,
+                module_config: row.module_config,
+                created_by: row.created_by,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                enabled: row.enabled,
+                system_template: row.system_template,
+                tenant_id: row.tenant_id,
+            })
+            .collect();
 
         Ok(templates)
     }
@@ -910,9 +916,13 @@ impl TemplateService {
             ));
         }
 
-        sqlx::query!("DELETE FROM templates WHERE template_key = $1 AND tenant_id = $2", key, tenant_id)
-            .execute(self.metadata_store.pool())
-            .await?;
+        sqlx::query!(
+            "DELETE FROM templates WHERE template_key = $1 AND tenant_id = $2",
+            key,
+            tenant_id
+        )
+        .execute(self.metadata_store.pool())
+        .await?;
 
         Ok(())
     }
@@ -1095,7 +1105,9 @@ impl TemplateService {
         folder_structure: &[String],
         default_files: &[TemplateDefaultFile],
     ) -> Result<CreatedObject, TemplateError> {
-        let name = self.unique_folder_object_name(&name, parent_id, owner_id, tenant_id).await?;
+        let name = self
+            .unique_folder_object_name(&name, parent_id, owner_id, tenant_id)
+            .await?;
         let object_folder = self
             .folder_service
             .create_folder(name.clone(), parent_id, owner_id, tenant_id)
@@ -1536,10 +1548,7 @@ mod tests {
 
     #[test]
     fn notes_templates_use_folder_creation_mode() {
-        assert_eq!(
-            resolve_creation_mode("notes"),
-            TemplateCreationMode::Folder
-        );
+        assert_eq!(resolve_creation_mode("notes"), TemplateCreationMode::Folder);
     }
 
     #[test]

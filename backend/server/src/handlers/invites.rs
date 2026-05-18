@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    handlers::{AuthenticatedUser, AppError},
+    handlers::{AppError, AuthenticatedUser},
     AppState,
 };
 
@@ -31,20 +31,23 @@ pub async fn create_invite(
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Json(req): Json<CreateInviteRequest>,
 ) -> Result<Json<CreateInviteResponse>, AppError> {
-    let workflow = sqlx::query_as!(WorkflowRow,
+    let workflow = sqlx::query_as!(
+        WorkflowRow,
         "SELECT id, subject, body, terms_enabled, terms_text
          FROM workflows
          WHERE key = 'invite_email' AND status = 'active'",
     )
     .fetch_optional(&state.db_pool)
     .await?
-    .ok_or_else(|| {
-        AppError::bad_request("Invite workflow is not active")
-    })?;
+    .ok_or_else(|| AppError::bad_request("Invite workflow is not active"))?;
 
-    let sender = sqlx::query_as!(SenderRow, "SELECT display_name FROM users WHERE id = $1", user_id)
-        .fetch_one(&state.db_pool)
-        .await?;
+    let sender = sqlx::query_as!(
+        SenderRow,
+        "SELECT display_name FROM users WHERE id = $1",
+        user_id
+    )
+    .fetch_one(&state.db_pool)
+    .await?;
 
     let mut token_bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut token_bytes);
@@ -123,7 +126,8 @@ pub async fn get_invite(
     State(state): State<AppState>,
     Path(token): Path<String>,
 ) -> Result<Json<InviteDetailResponse>, AppError> {
-    let row = sqlx::query_as!(InviteTokenRow,
+    let row = sqlx::query_as!(
+        InviteTokenRow,
         "SELECT it.sender_id, it.recipient_email, it.expires_at, it.used_at, it.revoked_at,
                 w.subject, w.body, w.terms_enabled, w.terms_text
          FROM invite_tokens it
@@ -133,11 +137,7 @@ pub async fn get_invite(
     )
     .fetch_optional(&state.db_pool)
     .await?
-    .ok_or_else(|| {
-        AppError::gone(
-            "Invite link has expired or already been used",
-        )
-    })?;
+    .ok_or_else(|| AppError::gone("Invite link has expired or already been used"))?;
 
     if row.used_at.is_some() || row.revoked_at.is_some() || row.expires_at < chrono::Utc::now() {
         return Err(AppError::gone(
@@ -145,9 +145,13 @@ pub async fn get_invite(
         ));
     }
 
-    let sender = sqlx::query_as!(SenderRow, "SELECT display_name FROM users WHERE id = $1", row.sender_id)
-        .fetch_one(&state.db_pool)
-        .await?;
+    let sender = sqlx::query_as!(
+        SenderRow,
+        "SELECT display_name FROM users WHERE id = $1",
+        row.sender_id
+    )
+    .fetch_one(&state.db_pool)
+    .await?;
 
     Ok(Json(InviteDetailResponse {
         sender_name: sender.display_name,
@@ -183,7 +187,8 @@ pub async fn accept_invite(
     Path(token): Path<String>,
     Json(req): Json<AcceptInviteRequest>,
 ) -> Result<Json<AcceptInviteResponse>, AppError> {
-    let row = sqlx::query_as!(InviteAcceptRow,
+    let row =
+        sqlx::query_as!(InviteAcceptRow,
         "SELECT it.id as token_id, it.recipient_email, it.expires_at, it.used_at, it.revoked_at,
                 w.terms_enabled, w.terms_text
          FROM invite_tokens it
@@ -191,13 +196,9 @@ pub async fn accept_invite(
          WHERE it.token = $1",
         &token
     )
-    .fetch_optional(&state.db_pool)
-    .await?
-    .ok_or_else(|| {
-        AppError::gone(
-            "Invite link has expired or already been used",
-        )
-    })?;
+        .fetch_optional(&state.db_pool)
+        .await?
+        .ok_or_else(|| AppError::gone("Invite link has expired or already been used"))?;
 
     if row.used_at.is_some() || row.revoked_at.is_some() || row.expires_at < chrono::Utc::now() {
         return Err(AppError::gone(
@@ -223,9 +224,10 @@ pub async fn accept_invite(
         ));
     }
 
-    let existing: Option<Uuid> = sqlx::query_scalar!("SELECT id FROM users WHERE email = $1", &req.email)
-        .fetch_optional(&state.db_pool)
-        .await?;
+    let existing: Option<Uuid> =
+        sqlx::query_scalar!("SELECT id FROM users WHERE email = $1", &req.email)
+            .fetch_optional(&state.db_pool)
+            .await?;
 
     if existing.is_some() {
         return Err(AppError::conflict(
@@ -233,9 +235,8 @@ pub async fn accept_invite(
         ));
     }
 
-    let password_hash = PasswordHasher::hash(&req.password).map_err(|e| {
-        AppError::internal(e.to_string())
-    })?;
+    let password_hash =
+        PasswordHasher::hash(&req.password).map_err(|e| AppError::internal(e.to_string()))?;
 
     let user_id = Uuid::new_v4();
     let now = chrono::Utc::now();
@@ -260,9 +261,12 @@ pub async fn accept_invite(
     );
     pref_repo.seed_defaults(user_id).await.ok();
 
-    sqlx::query!("UPDATE invite_tokens SET used_at = NOW() WHERE id = $1", row.token_id)
-        .execute(&state.db_pool)
-        .await?;
+    sqlx::query!(
+        "UPDATE invite_tokens SET used_at = NOW() WHERE id = $1",
+        row.token_id
+    )
+    .execute(&state.db_pool)
+    .await?;
 
     Ok(Json(AcceptInviteResponse {
         id: user_id.to_string(),

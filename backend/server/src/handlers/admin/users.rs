@@ -13,7 +13,10 @@ use uuid::Uuid;
 use super::{
     admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, log_admin_action,
 };
-use crate::{handlers::{AdminUser, AppError}, AppState};
+use crate::{
+    handlers::{AdminUser, AppError},
+    AppState,
+};
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -48,25 +51,40 @@ pub struct AdminUserDetailResponse {
 }
 
 fn validate_username(username: &str) -> Result<(), validator::ValidationError> {
-    if username.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+    if username
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    {
         Ok(())
     } else {
         let mut err = validator::ValidationError::new("username_format");
-        err.message = Some("Username may only contain letters, numbers, underscores, and hyphens".into());
+        err.message =
+            Some("Username may only contain letters, numbers, underscores, and hyphens".into());
         Err(err)
     }
 }
 
 #[derive(Debug, Deserialize, validator::Validate)]
 pub struct CreateUserRequest {
-    #[validate(length(min = 1, max = 50, message = "Username must be between 1 and 50 characters"))]
-    #[validate(custom(function = "validate_username", message = "Username may only contain letters, numbers, underscores, and hyphens"))]
+    #[validate(length(
+        min = 1,
+        max = 50,
+        message = "Username must be between 1 and 50 characters"
+    ))]
+    #[validate(custom(
+        function = "validate_username",
+        message = "Username may only contain letters, numbers, underscores, and hyphens"
+    ))]
     pub username: String,
     #[validate(email(message = "Invalid email address"))]
     pub email: String,
     #[validate(length(min = 8, message = "Password must be at least 8 characters"))]
     pub password: String,
-    #[validate(length(min = 1, max = 100, message = "Display name must be between 1 and 100 characters"))]
+    #[validate(length(
+        min = 1,
+        max = 100,
+        message = "Display name must be between 1 and 100 characters"
+    ))]
     pub display_name: Option<String>,
     pub is_admin: Option<bool>,
     #[validate(range(min = 0, message = "Storage quota must be non-negative"))]
@@ -161,12 +179,11 @@ pub async fn list_admin_users(
             (rows, total)
         }
         (None, Some("active")) => {
-            let total =
-                sqlx::query_scalar!("SELECT COUNT(*) FROM users WHERE disabled_at IS NULL")
-                    .fetch_one(&state.db_pool)
-                    .await
-                    .map_err(db_error)?
-                    .unwrap_or(0);
+            let total = sqlx::query_scalar!("SELECT COUNT(*) FROM users WHERE disabled_at IS NULL")
+                .fetch_one(&state.db_pool)
+                .await
+                .map_err(db_error)?
+                .unwrap_or(0);
             let rows = sqlx::query_as::<_, UserRow>(&format!(
                 "SELECT {cols} FROM users WHERE disabled_at IS NULL {order} LIMIT $1 OFFSET $2"
             ))
@@ -290,23 +307,26 @@ pub async fn create_admin_user(
     AdminUser { user_id: actor_id }: AdminUser,
     crate::handlers::ValidatedJson(req): crate::handlers::ValidatedJson<CreateUserRequest>,
 ) -> Result<(StatusCode, Json<AdminUserResponse>), AppError> {
-
     // Check username uniqueness
-    let username_count = sqlx::query_scalar!("SELECT COUNT(*) FROM users WHERE username = $1", &req.username)
-        .fetch_one(&state.db_pool)
-        .await
-        .map_err(db_error)?
-        .unwrap_or(0);
+    let username_count = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM users WHERE username = $1",
+        &req.username
+    )
+    .fetch_one(&state.db_pool)
+    .await
+    .map_err(db_error)?
+    .unwrap_or(0);
     if username_count > 0 {
         return Err(admin_conflict("Username already taken"));
     }
 
     // Check email uniqueness
-    let email_count = sqlx::query_scalar!("SELECT COUNT(*) FROM users WHERE email = $1", &req.email)
-        .fetch_one(&state.db_pool)
-        .await
-        .map_err(db_error)?
-        .unwrap_or(0);
+    let email_count =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM users WHERE email = $1", &req.email)
+            .fetch_one(&state.db_pool)
+            .await
+            .map_err(db_error)?
+            .unwrap_or(0);
     if email_count > 0 {
         return Err(admin_conflict("Email already registered"));
     }
@@ -526,10 +546,13 @@ pub async fn disable_admin_user(
         return Err(admin_bad_request("Cannot disable your own account"));
     }
 
-    sqlx::query!("UPDATE users SET disabled_at = NOW() WHERE id = $1", user_id)
-        .execute(&state.db_pool)
-        .await
-        .map_err(db_error)?;
+    sqlx::query!(
+        "UPDATE users SET disabled_at = NOW() WHERE id = $1",
+        user_id
+    )
+    .execute(&state.db_pool)
+    .await
+    .map_err(db_error)?;
 
     sqlx::query!("DELETE FROM user_sessions WHERE user_id = $1", user_id)
         .execute(&state.db_pool)

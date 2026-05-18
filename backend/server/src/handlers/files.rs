@@ -12,10 +12,10 @@ use uuid::Uuid;
 
 use rustshare_core::{
     domain::{File, ThumbnailSize},
-    services::{ThumbnailError},
+    services::ThumbnailError,
 };
 
-use super::{AuthenticatedUser, AppError};
+use super::{AppError, AuthenticatedUser};
 use crate::AppState;
 
 /// Hidden kanban metadata files that should never be exposed through file APIs.
@@ -55,10 +55,7 @@ pub async fn upload_file(
     // Parse multipart fields
     while let Some(field) = multipart.next_field().await.map_err(|e| {
         tracing::error!("Failed to read multipart field: {}", e);
-        AppError::internal(format!(
-            "Failed to read multipart field: {}",
-            e
-        ))
+        AppError::internal(format!("Failed to read multipart field: {}", e))
     })? {
         let field_name = field.name().unwrap_or("").to_string();
 
@@ -66,50 +63,36 @@ pub async fn upload_file(
             "file" => {
                 file_data = Some(field.bytes().await.map_err(|e| {
                     tracing::error!("Failed to read file data: {}", e);
-                    AppError::internal(format!(
-                        "Failed to read file data: {}",
-                        e
-                    ))
+                    AppError::internal(format!("Failed to read file data: {}", e))
                 })?);
             }
             "name" => {
                 file_name = Some(field.text().await.map_err(|e| {
                     tracing::error!("Failed to read name field: {}", e);
-                    AppError::internal(format!(
-                        "Failed to read name field: {}",
-                        e
-                    ))
+                    AppError::internal(format!("Failed to read name field: {}", e))
                 })?);
             }
             "parent_folder_id" => {
                 let text = field.text().await.map_err(|e| {
                     tracing::error!("Failed to read parent_folder_id field: {}", e);
-                    AppError::internal(format!(
-                        "Failed to read parent_folder_id field: {}",
-                        e
-                    ))
+                    AppError::internal(format!("Failed to read parent_folder_id field: {}", e))
                 })?;
-                parent_folder_id = Some(Uuid::parse_str(&text).map_err(|_| {
-                    AppError::bad_request("Invalid parent_folder_id")
-                })?);
+                parent_folder_id = Some(
+                    Uuid::parse_str(&text)
+                        .map_err(|_| AppError::bad_request("Invalid parent_folder_id"))?,
+                );
             }
             _ => {}
         }
     }
 
     // Validate required fields
-    let file_data = file_data.ok_or_else(|| {
-        AppError::bad_request("Missing file data")
-    })?;
-    let file_name = file_name.ok_or_else(|| {
-        AppError::bad_request("Missing file name")
-    })?;
+    let file_data = file_data.ok_or_else(|| AppError::bad_request("Missing file data"))?;
+    let file_name = file_name.ok_or_else(|| AppError::bad_request("Missing file name"))?;
 
     // Validate file name length and content
     if file_name.trim().is_empty() {
-        return Err(AppError::bad_request(
-            "File name must not be empty",
-        ));
+        return Err(AppError::bad_request("File name must not be empty"));
     }
     if file_name.len() > 255 {
         return Err(AppError::bad_request(
@@ -138,8 +121,7 @@ pub async fn upload_file(
             mime_type,
             auth.tenant_id,
         )
-        .await
-        ?;
+        .await?;
 
     Ok((
         StatusCode::OK,
@@ -176,11 +158,7 @@ pub async fn get_file(
     auth: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
 ) -> Result<Json<File>, AppError> {
-    let file = state
-        .file_service
-        .get_file(file_id, auth.user_id)
-        .await
-        ?;
+    let file = state.file_service.get_file(file_id, auth.user_id).await?;
     if is_hidden_kanban_file(&file.name) {
         return Err(AppError::not_found(format!("File not found: {}", file_id)));
     }
@@ -198,8 +176,7 @@ pub async fn download_file(
     let url = state
         .file_service
         .get_download_url(file_id, auth.user_id)
-        .await
-        ?;
+        .await?;
     Ok(Json(DownloadUrlResponse { url }))
 }
 
@@ -304,8 +281,7 @@ pub async fn delete_file(
     state
         .file_service
         .delete_file(file_id, auth.user_id)
-        .await
-        ?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -332,44 +308,38 @@ pub async fn update_file(
     let if_match = headers
         .get(header::IF_MATCH)
         .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| {
-            AppError::bad_request("Missing If-Match header")
-        })?;
+        .ok_or_else(|| AppError::bad_request("Missing If-Match header"))?;
 
-    let expected_version: i32 = if_match.parse().map_err(|_| {
-        AppError::bad_request("Invalid If-Match header: must be an integer")
-    })?;
+    let expected_version: i32 = if_match
+        .parse()
+        .map_err(|_| AppError::bad_request("Invalid If-Match header: must be an integer"))?;
 
     // Extract file data from multipart
     let mut file_data: Option<Bytes> = None;
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        AppError::internal(format!(
-            "Failed to read multipart field: {}",
-            e
-        ))
-    })? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to read multipart field: {}", e)))?
+    {
         if field.name() == Some("file") {
-            file_data = Some(field.bytes().await.map_err(|e| {
-                AppError::internal(format!(
-                    "Failed to read file data: {}",
-                    e
-                ))
-            })?);
+            file_data = Some(
+                field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::internal(format!("Failed to read file data: {}", e)))?,
+            );
             break;
         }
     }
 
-    let file_data = file_data.ok_or_else(|| {
-        AppError::bad_request("Missing file data")
-    })?;
+    let file_data = file_data.ok_or_else(|| AppError::bad_request("Missing file data"))?;
 
     // Update file
     let file = state
         .file_service
         .update_file(file_id, auth.user_id, expected_version, file_data)
-        .await
-        ?;
+        .await?;
 
     Ok(Json(FileUpdateResponse {
         id: file.id,
@@ -412,8 +382,7 @@ pub async fn get_file_versions(
     let versions = state
         .file_service
         .list_versions(file_id, auth.user_id)
-        .await
-        ?;
+        .await?;
     let response: Vec<FileVersionResponse> = versions
         .into_iter()
         .map(|v| FileVersionResponse {
@@ -442,8 +411,7 @@ pub async fn restore_file_version(
     let file = state
         .file_service
         .restore_version(file_id, req.version, auth.user_id)
-        .await
-        ?;
+        .await?;
 
     Ok(Json(FileRestoreResponse {
         id: file.id,
@@ -486,8 +454,7 @@ pub async fn move_file(
     let file = state
         .file_service
         .move_file(file_id, req.target_folder_id, auth.user_id)
-        .await
-        ?;
+        .await?;
 
     Ok(Json(file))
 }
@@ -511,8 +478,7 @@ pub async fn rename_file(
     let file = state
         .file_service
         .rename_file(file_id, req.new_name, auth.user_id)
-        .await
-        ?;
+        .await?;
 
     Ok(Json(file))
 }
@@ -553,11 +519,7 @@ pub async fn get_file_thumbnail(
     Query(params): Query<ThumbnailParams>,
 ) -> Result<Response, AppError> {
     // First, verify the user has access to the file
-    let file = state
-        .file_service
-        .get_file(file_id, user_id)
-        .await
-        ?;
+    let file = state.file_service.get_file(file_id, user_id).await?;
 
     // Check file size - don't generate thumbnails for files larger than 100MB
     if file.size > MAX_THUMBNAIL_FILE_SIZE {
@@ -587,7 +549,9 @@ pub async fn get_file_thumbnail(
                 .await
                 .map_err(|e| match e {
                     ThumbnailError::NotFound => AppError::not_found("File not found"),
-                    ThumbnailError::UnsupportedType => AppError::unsupported_media_type("Thumbnail generation not supported for this file type"),
+                    ThumbnailError::UnsupportedType => AppError::unsupported_media_type(
+                        "Thumbnail generation not supported for this file type",
+                    ),
                     _ => {
                         tracing::error!("Thumbnail service error: {}", e);
                         AppError::internal("Failed to generate thumbnail")
@@ -598,7 +562,9 @@ pub async fn get_file_thumbnail(
             tracing::error!("Failed to get thumbnail: {}", e);
             return Err(match e {
                 ThumbnailError::NotFound => AppError::not_found("File not found"),
-                ThumbnailError::UnsupportedType => AppError::unsupported_media_type("Thumbnail generation not supported for this file type"),
+                ThumbnailError::UnsupportedType => AppError::unsupported_media_type(
+                    "Thumbnail generation not supported for this file type",
+                ),
                 _ => {
                     tracing::error!("Thumbnail service error: {}", e);
                     AppError::internal("Failed to generate thumbnail")
@@ -614,7 +580,9 @@ pub async fn get_file_thumbnail(
         .await
         .map_err(|e| match e {
             ThumbnailError::NotFound => AppError::not_found("File not found"),
-            ThumbnailError::UnsupportedType => AppError::unsupported_media_type("Thumbnail generation not supported for this file type"),
+            ThumbnailError::UnsupportedType => AppError::unsupported_media_type(
+                "Thumbnail generation not supported for this file type",
+            ),
             _ => {
                 tracing::error!("Thumbnail service error: {}", e);
                 AppError::internal("Failed to generate thumbnail")
@@ -682,12 +650,11 @@ pub async fn edit_file(
     }
 
     // Decode base64 content
-    let content =
-        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &req.content)
-            .map_err(|e| {
-                tracing::error!("Failed to decode base64 content: {}", e);
-                AppError::bad_request("Invalid base64 content")
-            })?;
+    let content = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &req.content)
+        .map_err(|e| {
+            tracing::error!("Failed to decode base64 content: {}", e);
+            AppError::bad_request("Invalid base64 content")
+        })?;
     let content = Bytes::from(content);
 
     // Edit file
@@ -700,8 +667,7 @@ pub async fn edit_file(
             &req.save_mode,
             req.change_description,
         )
-        .await
-        ?;
+        .await?;
 
     Ok(Json(EditFileResponse {
         id: file.id,
@@ -811,10 +777,7 @@ pub async fn toggle_file_star(
         .metadata_store
         .set_file_starred(file_id, auth.user_id, req.starred)
         .await
-        .map_err(|e| AppError::internal(format!(
-            "Failed to update star state: {}",
-            e
-        )))?;
+        .map_err(|e| AppError::internal(format!("Failed to update star state: {}", e)))?;
 
     if !updated {
         return Err(AppError::not_found(format!("File not found: {}", file_id)));
@@ -850,10 +813,7 @@ pub async fn permanently_delete_file(
         .metadata_store
         .permanently_delete_file(file_id, auth.user_id)
         .await
-        .map_err(|e| AppError::internal(format!(
-            "Failed to permanently delete file: {}",
-            e
-        )))?;
+        .map_err(|e| AppError::internal(format!("Failed to permanently delete file: {}", e)))?;
 
     if !deleted {
         return Err(AppError::not_found(format!("File not found: {}", file_id)));

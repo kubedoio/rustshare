@@ -327,9 +327,13 @@ impl MetadataStore {
 
     /// Delete a browser session by session id, scoped to the owning user.
     pub async fn delete_user_session_by_id(&self, user_id: Uuid, session_id: Uuid) -> Result<()> {
-        sqlx::query!("DELETE FROM user_sessions WHERE user_id = $1 AND id = $2", user_id, session_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM user_sessions WHERE user_id = $1 AND id = $2",
+            user_id,
+            session_id
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -652,7 +656,10 @@ impl MetadataStore {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows.into_iter().map(|r| (r.id, r.tenant_id, r.trash_retention_days)).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.id, r.tenant_id, r.trash_retention_days))
+            .collect())
     }
 
     // -----------------------------------------------------------------
@@ -697,10 +704,12 @@ impl MetadataStore {
         let block_duration = config.login_block_duration_minutes;
 
         // Check if an existing block has expired — if so, reset the count
-        let existing =
-            sqlx::query!("SELECT blocked_until FROM login_attempts WHERE ip_address = $1", ip_address)
-                .fetch_optional(&self.pool)
-                .await?;
+        let existing = sqlx::query!(
+            "SELECT blocked_until FROM login_attempts WHERE ip_address = $1",
+            ip_address
+        )
+        .fetch_optional(&self.pool)
+        .await?;
 
         if let Some(row) = existing {
             let blocked_until = row.blocked_until;
@@ -753,9 +762,12 @@ impl MetadataStore {
 
     /// Clear login attempts for an IP address after a successful login.
     pub async fn clear_login_attempts(&self, ip_address: &str) -> Result<()> {
-        sqlx::query!("DELETE FROM login_attempts WHERE ip_address = $1", ip_address)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM login_attempts WHERE ip_address = $1",
+            ip_address
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -1132,7 +1144,11 @@ impl MetadataStore {
     }
 
     /// List all versions for a file, ordered by version number descending (newest first)
-    pub async fn list_file_versions(&self, file_id: Uuid, owner_id: Uuid) -> Result<Vec<FileVersion>> {
+    pub async fn list_file_versions(
+        &self,
+        file_id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<Vec<FileVersion>> {
         let rows = sqlx::query!(
             r#"
             SELECT v.id, v.file_id, v.version_number, v.content_hash, v.size, v.replication_state, v.created_by, v.created_at, v.change_description, v.tenant_id
@@ -1864,9 +1880,7 @@ impl MetadataStore {
             None
         };
 
-        let restored_parent_id: Option<Uuid> = parent_row
-            .as_ref()
-            .map(|value| value.id);
+        let restored_parent_id: Option<Uuid> = parent_row.as_ref().map(|value| value.id);
         let restored_path = if let Some(parent_row) = &parent_row {
             let parent_path: String = parent_row.path.clone();
             if parent_path == "/" {
@@ -2066,7 +2080,11 @@ impl MetadataStore {
     ///
     /// Use this for operations where the caller has already verified the user
     /// owns the root folder (e.g., delete, move).
-    pub async fn find_descendant_folders(&self, folder_id: Uuid, owner_id: Uuid) -> Result<Vec<Folder>> {
+    pub async fn find_descendant_folders(
+        &self,
+        folder_id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<Vec<Folder>> {
         let rows = sqlx::query!(
             r#"
             WITH RECURSIVE folder_tree AS (
@@ -2706,7 +2724,11 @@ mod tests {
         updated_file.size = 4096;
         store.update_file(&updated_file).await.unwrap();
 
-        let found_updated = store.find_file_by_id(file.id, owner.id).await.unwrap().unwrap();
+        let found_updated = store
+            .find_file_by_id(file.id, owner.id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found_updated.name, "renamed-document.pdf");
         assert_eq!(found_updated.size, 4096);
 
@@ -2854,7 +2876,10 @@ mod tests {
         store.create_folder(&root_folder).await.unwrap();
 
         // Test: find_folder_by_id
-        let found = store.find_folder_by_id(root_folder.id, owner.id).await.unwrap();
+        let found = store
+            .find_folder_by_id(root_folder.id, owner.id)
+            .await
+            .unwrap();
         assert!(found.is_some());
         let found_folder = found.unwrap();
         assert_eq!(found_folder.id, root_folder.id);
@@ -2926,7 +2951,10 @@ mod tests {
         assert_eq!(root_folders[0].name, "Root");
 
         // Test: find_descendant_folders (should find all descendants of Documents)
-        let descendants = store.find_descendant_folders(docs_folder.id, owner.id).await.unwrap();
+        let descendants = store
+            .find_descendant_folders(docs_folder.id, owner.id)
+            .await
+            .unwrap();
         // Should include: Documents, Work, Projects (3 folders)
         assert_eq!(descendants.len(), 3);
         assert!(descendants.iter().any(|f| f.name == "Documents"));
@@ -2957,12 +2985,21 @@ mod tests {
         assert_eq!(found_updated.path, "/Pictures");
 
         // Test: delete_folder (delete leaf folder first)
-        store.delete_folder(projects_folder.id, owner.id).await.unwrap();
-        let not_found = store.find_folder_by_id(projects_folder.id, owner.id).await.unwrap();
+        store
+            .delete_folder(projects_folder.id, owner.id)
+            .await
+            .unwrap();
+        let not_found = store
+            .find_folder_by_id(projects_folder.id, owner.id)
+            .await
+            .unwrap();
         assert!(not_found.is_none());
 
         // Verify descendants updated after deletion
-        let updated_descendants = store.find_descendant_folders(docs_folder.id, owner.id).await.unwrap();
+        let updated_descendants = store
+            .find_descendant_folders(docs_folder.id, owner.id)
+            .await
+            .unwrap();
         assert_eq!(updated_descendants.len(), 2); // Only Documents and Work remain
         assert!(!updated_descendants.iter().any(|f| f.name == "Projects"));
 
@@ -3318,10 +3355,14 @@ mod tests {
 
         // Cleanup
         store.delete_file(file.id, user_a.id).await.unwrap();
-        sqlx::query!("DELETE FROM users WHERE id = $1 OR id = $2", user_a.id, user_b.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "DELETE FROM users WHERE id = $1 OR id = $2",
+            user_a.id,
+            user_b.id
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -3370,10 +3411,14 @@ mod tests {
 
         // Cleanup
         store.delete_folder(folder.id, user_a.id).await.unwrap();
-        sqlx::query!("DELETE FROM users WHERE id = $1 OR id = $2", user_a.id, user_b.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "DELETE FROM users WHERE id = $1 OR id = $2",
+            user_a.id,
+            user_b.id
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -3453,9 +3498,13 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query!("DELETE FROM users WHERE id = $1 OR id = $2", user_a.id, user_b.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "DELETE FROM users WHERE id = $1 OR id = $2",
+            user_a.id,
+            user_b.id
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
     }
 }

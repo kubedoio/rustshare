@@ -521,7 +521,6 @@ async fn contract_public_note_page_does_not_leak_internal_paths() {
     cleanup_user(&pool, user.id).await;
 }
 
-
 #[tokio::test]
 #[ignore] // Requires database and S3
 async fn contract_create_note_creates_bundle_structure() {
@@ -598,7 +597,13 @@ async fn contract_save_note_renames_bundle_folder_on_h1_change() {
     let bundle_folder_id = note.parent_folder_id.expect("should have parent folder");
 
     let saved = service
-        .save_note(note.id, user.id, "# New Title\n\nbody".to_string(), None, None)
+        .save_note(
+            note.id,
+            user.id,
+            "# New Title\n\nbody".to_string(),
+            None,
+            None,
+        )
         .await
         .unwrap();
 
@@ -668,7 +673,8 @@ async fn contract_list_notes_includes_bundle_counts() {
         object_store.clone(),
         &pool,
     );
-    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+    let file_service =
+        create_file_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
         .create_note(
@@ -761,7 +767,8 @@ async fn contract_standalone_md_still_works() {
         object_store.clone(),
         &pool,
     );
-    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+    let file_service =
+        create_file_service(event_store, metadata_store.clone(), object_store, &pool);
 
     // Create a bundle note first to ensure /Workspace/Notes exists
     let setup_note = service
@@ -809,7 +816,13 @@ async fn contract_standalone_md_still_works() {
 
     // save_note should work (plain content update, no H1 rename)
     let saved = service
-        .save_note(standalone.id, user.id, "updated standalone".to_string(), None, None)
+        .save_note(
+            standalone.id,
+            user.id,
+            "updated standalone".to_string(),
+            None,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(saved.content, "updated standalone");
@@ -846,7 +859,10 @@ async fn contract_recent_activity_shows_bundle_title() {
     let module_service = ModuleService::new(folder_service, metadata_store.clone());
 
     // Ensure default modules exist for this tenant
-    module_service.ensure_default_modules(tenant_id).await.unwrap();
+    module_service
+        .ensure_default_modules(tenant_id)
+        .await
+        .unwrap();
 
     let note = service
         .create_note(
@@ -864,7 +880,11 @@ async fn contract_recent_activity_shows_bundle_title() {
         .await
         .unwrap();
 
-    let names: Vec<&str> = summary.recent_items.iter().map(|i| i.name.as_str()).collect();
+    let names: Vec<&str> = summary
+        .recent_items
+        .iter()
+        .map(|i| i.name.as_str())
+        .collect();
     assert!(
         names.iter().any(|n| *n == "Activity Test Note"),
         "recent items should show bundle title, got: {:?}",

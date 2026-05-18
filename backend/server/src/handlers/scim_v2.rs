@@ -282,7 +282,11 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             false,
             storage_quota,
             "system",
-            if user.active { None::<DateTime<Utc>> } else { Some(Utc::now()) },
+            if user.active {
+                None::<DateTime<Utc>>
+            } else {
+                Some(Utc::now())
+            },
             name,
             surname,
             true,
@@ -328,7 +332,11 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             user.user_name,
             display_name,
             email,
-            if user.active { None::<DateTime<Utc>> } else { Some(Utc::now()) },
+            if user.active {
+                None::<DateTime<Utc>>
+            } else {
+                Some(Utc::now())
+            },
             name,
             surname,
             user.external_id
@@ -365,7 +373,11 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                         sqlx::query!(
                             "UPDATE users SET disabled_at = $2, updated_at = NOW() WHERE id = $1",
                             id,
-                            if active { None::<DateTime<Utc>> } else { Some(Utc::now()) }
+                            if active {
+                                None::<DateTime<Utc>>
+                            } else {
+                                Some(Utc::now())
+                            }
                         )
                         .execute(&self.pool)
                         .await?;
@@ -643,12 +655,9 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         &self,
         external_id: &str,
     ) -> Result<Option<Uuid>, sqlx::Error> {
-        let row = sqlx::query!(
-            "SELECT id FROM users WHERE external_id = $1",
-            external_id
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let row = sqlx::query!("SELECT id FROM users WHERE external_id = $1", external_id)
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row.map(|r| r.id))
     }

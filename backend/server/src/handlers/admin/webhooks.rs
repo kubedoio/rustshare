@@ -13,7 +13,10 @@ use sha2::Sha256;
 use uuid::Uuid;
 
 use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_action};
-use crate::{handlers::{AdminUser, AppError}, AppState};
+use crate::{
+    handlers::{AdminUser, AppError},
+    AppState,
+};
 
 // ---------------------------------------------------------------------------
 // Supported event types
@@ -331,7 +334,9 @@ pub async fn test_webhook(
             if resp.status().is_success() {
                 Ok(Json(json!({"status": "ok", "http_status": http_status})))
             } else {
-                Err(AppError::bad_gateway(format!("Webhook returned HTTP {http_status}")))
+                Err(AppError::bad_gateway(format!(
+                    "Webhook returned HTTP {http_status}"
+                )))
             }
         }
         Err(e) => Err(AppError::bad_gateway(e.to_string())),

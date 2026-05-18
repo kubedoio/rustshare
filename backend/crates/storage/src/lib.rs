@@ -330,7 +330,11 @@ impl ShareMetadataStoreOps for MetadataStore {
         self.find_descendant_folders_unchecked(folder_id).await
     }
 
-    async fn revoke_share(&self, share_id: uuid::Uuid, actor_id: rustshare_core::domain::UserId) -> Result<()> {
+    async fn revoke_share(
+        &self,
+        share_id: uuid::Uuid,
+        actor_id: rustshare_core::domain::UserId,
+    ) -> Result<()> {
         self.revoke_share(share_id, actor_id).await
     }
 

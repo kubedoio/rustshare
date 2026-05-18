@@ -89,9 +89,7 @@ impl DeviceApprovalLookup {
 
 /// GET /api/v1/auth/device/qr-info
 /// Returns information needed for QR code generation on the device pairing page
-pub async fn device_qr_info(
-    headers: HeaderMap,
-) -> Result<Json<DeviceQrInfoResponse>, AppError> {
+pub async fn device_qr_info(headers: HeaderMap) -> Result<Json<DeviceQrInfoResponse>, AppError> {
     let instance_url = build_instance_url(&headers);
 
     Ok(Json(DeviceQrInfoResponse {
@@ -426,9 +424,12 @@ async fn device_poll_inner(
     // Check if expired
     if is_expired {
         // Clean up expired request - best effort
-        if let Err(e) = sqlx::query!("DELETE FROM device_pair_requests WHERE device_code = $1", &req.device_code)
-            .execute(db_pool)
-            .await
+        if let Err(e) = sqlx::query!(
+            "DELETE FROM device_pair_requests WHERE device_code = $1",
+            &req.device_code
+        )
+        .execute(db_pool)
+        .await
         {
             tracing::debug!(device_code = %req.device_code, error = %e, "failed to clean up expired device pair request");
         }
@@ -442,7 +443,8 @@ async fn device_poll_inner(
     }
 
     // Approved - generate token and clean up
-    let user_id = user_id_opt.ok_or_else(|| AppError::internal("Approved request missing user_id"))?;
+    let user_id =
+        user_id_opt.ok_or_else(|| AppError::internal("Approved request missing user_id"))?;
 
     let raw_token = gen_token();
     let token_hash = hash_token(&raw_token);
@@ -472,9 +474,12 @@ async fn device_poll_inner(
     .await?;
 
     // Delete the pair request
-    sqlx::query!("DELETE FROM device_pair_requests WHERE device_code = $1", &req.device_code)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query!(
+        "DELETE FROM device_pair_requests WHERE device_code = $1",
+        &req.device_code
+    )
+    .execute(&mut *tx)
+    .await?;
 
     tx.commit().await?;
 
@@ -878,10 +883,13 @@ mod tests {
         assert!(matches!(result, Err(AppError::NotFound(_))));
         assert_eq!(device_token_count(&pool, user_id).await, 0);
 
-        sqlx::query!("DELETE FROM device_pair_requests WHERE device_code = $1", device_code)
-            .execute(&pool)
-            .await
-            .ok();
+        sqlx::query!(
+            "DELETE FROM device_pair_requests WHERE device_code = $1",
+            device_code
+        )
+        .execute(&pool)
+        .await
+        .ok();
         cleanup_test_user(&pool, user_id).await;
     }
 

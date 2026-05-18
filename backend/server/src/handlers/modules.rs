@@ -49,10 +49,7 @@ pub async fn get_module(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<Json<ModuleDetailResponse>, AppError> {
-    let module = state
-        .module_service
-        .get_module(&key, tenant_id)
-        .await?;
+    let module = state.module_service.get_module(&key, tenant_id).await?;
 
     if !module.enabled {
         return Err(AppError::forbidden("Module disabled"));
@@ -121,10 +118,7 @@ pub async fn create_from_template(
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to initialize kanban board: {}", e);
-                    AppError::bad_request(format!(
-                        "Board created but initialization failed: {}",
-                        e
-                    ))
+                    AppError::bad_request(format!("Board created but initialization failed: {}", e))
                 })?;
         }
     }

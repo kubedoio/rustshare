@@ -35,8 +35,8 @@ async fn require_kanban_enabled(state: &AppState, tenant_id: Uuid) -> Result<(),
 use crate::services::kanban_service::{
     CreateBoardInput, CreateCardInput, CreateLabelInput, KanbanAssignee, KanbanBoard,
     KanbanBoardSummary, KanbanCard, KanbanCardAttachment, KanbanCardDetail, KanbanChecklistGroup,
-    KanbanChecklistItem, KanbanLabel, MoveCardInput, UpdateBoardInput,
-    UpdateCardInput, UpdateLabelInput,
+    KanbanChecklistItem, KanbanLabel, MoveCardInput, UpdateBoardInput, UpdateCardInput,
+    UpdateLabelInput,
 };
 use axum::extract::Multipart;
 
@@ -296,10 +296,7 @@ pub async fn get_card(
     Path(card_id): Path<Uuid>,
 ) -> Result<Json<KanbanCard>, AppError> {
     require_kanban_enabled(&state, auth.tenant_id).await?;
-    let card = state
-        .kanban_service
-        .get_card(card_id, auth.user_id)
-        .await?;
+    let card = state.kanban_service.get_card(card_id, auth.user_id).await?;
 
     Ok(Json(card))
 }
@@ -410,30 +407,23 @@ pub async fn add_card_attachment(
     let mut file_data: Option<bytes::Bytes> = None;
     let mut file_name: Option<String> = None;
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        AppError::bad_request(format!(
-            "Failed to read multipart field: {}",
-            e
-        ))
-    })? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::bad_request(format!("Failed to read multipart field: {}", e)))?
+    {
         let field_name = field.name().unwrap_or("").to_string();
         if field_name == "file" {
             file_name = field.file_name().map(|s| s.to_string());
-            file_data = Some(field.bytes().await.map_err(|e| {
-                AppError::bad_request(format!(
-                    "Failed to read file data: {}",
-                    e
-                ))
-            })?);
+            file_data =
+                Some(field.bytes().await.map_err(|e| {
+                    AppError::bad_request(format!("Failed to read file data: {}", e))
+                })?);
         }
     }
 
-    let file_data = file_data.ok_or_else(|| {
-        AppError::bad_request("Missing file data")
-    })?;
-    let file_name = file_name.ok_or_else(|| {
-        AppError::bad_request("Missing file name")
-    })?;
+    let file_data = file_data.ok_or_else(|| AppError::bad_request("Missing file data"))?;
+    let file_name = file_name.ok_or_else(|| AppError::bad_request("Missing file name"))?;
 
     let mime_type = mime_guess::from_path(&file_name)
         .first_or_octet_stream()

@@ -460,7 +460,9 @@ impl DecisionService {
         // Validate title
         let trimmed = new_title.trim();
         if trimmed.is_empty() {
-            return Err(DecisionError::InvalidData("Title cannot be empty".to_string()));
+            return Err(DecisionError::InvalidData(
+                "Title cannot be empty".to_string(),
+            ));
         }
 
         // Extract DEC-ID prefix from current filename (e.g., "DEC-0001" from "DEC-0001-use-rust.md")
@@ -475,7 +477,9 @@ impl DecisionService {
         let renamed_file = self.file_service.rename_file(id, new_name, user_id).await?;
 
         // Load and update metadata
-        let mut meta = self.load_metadata(&renamed_file, user_id, renamed_file.tenant_id).await?;
+        let mut meta = self
+            .load_metadata(&renamed_file, user_id, renamed_file.tenant_id)
+            .await?;
         meta.title = trimmed.to_string();
         meta.updated_at = Utc::now();
 
@@ -488,7 +492,11 @@ impl DecisionService {
         // Find old sidecar, update its content and name
         let siblings = self
             .metadata_store
-            .list_files(renamed_file.parent_folder_id, user_id, renamed_file.tenant_id)
+            .list_files(
+                renamed_file.parent_folder_id,
+                user_id,
+                renamed_file.tenant_id,
+            )
             .await
             .map_err(|e| DecisionError::Database(e.to_string()))?;
 

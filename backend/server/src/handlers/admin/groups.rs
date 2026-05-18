@@ -12,7 +12,10 @@ use uuid::Uuid;
 use super::{
     admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, log_admin_action,
 };
-use crate::{handlers::{AdminUser, AppError}, AppState};
+use crate::{
+    handlers::{AdminUser, AppError},
+    AppState,
+};
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -437,10 +440,14 @@ pub async fn remove_member(
     AdminUser { user_id: actor_id }: AdminUser,
     Path((group_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
-    let result = sqlx::query!("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2", group_id, user_id)
-        .execute(&state.db_pool)
-        .await
-        .map_err(db_error)?;
+    let result = sqlx::query!(
+        "DELETE FROM group_members WHERE group_id = $1 AND user_id = $2",
+        group_id,
+        user_id
+    )
+    .execute(&state.db_pool)
+    .await
+    .map_err(db_error)?;
 
     if result.rows_affected() == 0 {
         return Err(admin_not_found("Membership not found"));

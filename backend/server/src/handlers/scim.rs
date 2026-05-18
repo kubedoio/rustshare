@@ -432,7 +432,11 @@ impl ScimRepository for ScimRepositoryImpl {
         external_id: &str,
         disabled: bool,
     ) -> Result<(), sqlx::Error> {
-        let disabled_at: Option<chrono::DateTime<chrono::Utc>> = if disabled { Some(chrono::Utc::now()) } else { None };
+        let disabled_at: Option<chrono::DateTime<chrono::Utc>> = if disabled {
+            Some(chrono::Utc::now())
+        } else {
+            None
+        };
 
         sqlx::query!(
             r#"
@@ -528,12 +532,9 @@ impl ScimRepository for ScimRepositoryImpl {
         external_id: &str,
     ) -> Result<Option<uuid::Uuid>, sqlx::Error> {
         let id: Option<uuid::Uuid> =
-            sqlx::query_scalar!(
-                "SELECT id FROM users WHERE external_id = $1",
-                external_id
-            )
-            .fetch_optional(&self.pool)
-            .await?;
+            sqlx::query_scalar!("SELECT id FROM users WHERE external_id = $1", external_id)
+                .fetch_optional(&self.pool)
+                .await?;
 
         Ok(id)
     }
@@ -542,13 +543,12 @@ impl ScimRepository for ScimRepositoryImpl {
         &self,
         group_id: uuid::Uuid,
     ) -> Result<Vec<uuid::Uuid>, sqlx::Error> {
-        let members: Vec<uuid::Uuid> =
-            sqlx::query_scalar!(
-                "SELECT user_id FROM group_members WHERE group_id = $1",
-                group_id
-            )
-            .fetch_all(&self.pool)
-            .await?;
+        let members: Vec<uuid::Uuid> = sqlx::query_scalar!(
+            "SELECT user_id FROM group_members WHERE group_id = $1",
+            group_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         Ok(members)
     }
@@ -590,12 +590,9 @@ impl ScimRepository for ScimRepositoryImpl {
     }
 
     async fn clear_group_members(&self, group_id: uuid::Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query!(
-            "DELETE FROM group_members WHERE group_id = $1",
-            group_id
-        )
-        .execute(&self.pool)
-        .await?;
+        sqlx::query!("DELETE FROM group_members WHERE group_id = $1", group_id)
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }

@@ -100,10 +100,7 @@ pub async fn get_note(
     auth: AuthenticatedUser,
     Path(note_id): Path<Uuid>,
 ) -> Result<Json<GetNoteResponse>, AppError> {
-    let note = state
-        .note_service
-        .get_note(note_id, auth.user_id)
-        .await?;
+    let note = state.note_service.get_note(note_id, auth.user_id).await?;
 
     let public_url = note
         .metadata
@@ -152,7 +149,13 @@ pub async fn save_note(
 ) -> Result<Json<SaveNoteResponse>, AppError> {
     let note = state
         .note_service
-        .save_note(note_id, auth.user_id, req.content, req.color, req.attachments)
+        .save_note(
+            note_id,
+            auth.user_id,
+            req.content,
+            req.color,
+            req.attachments,
+        )
         .await?;
 
     Ok(Json(SaveNoteResponse {
@@ -370,10 +373,7 @@ pub async fn get_public_note(
     State(state): State<AppState>,
     Path(share_id): Path<String>,
 ) -> Result<Json<PublicNoteResponse>, AppError> {
-    let note = state
-        .note_service
-        .get_public_note(&share_id)
-        .await?;
+    let note = state.note_service.get_public_note(&share_id).await?;
 
     Ok(Json(PublicNoteResponse {
         title: note.title,

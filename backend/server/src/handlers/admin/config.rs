@@ -349,7 +349,10 @@ pub async fn test_oidc_config(
                 })))
             } else {
                 let status_code = resp.status();
-                Err(AppError::bad_gateway(format!("Discovery URL returned HTTP {}", status_code)))
+                Err(AppError::bad_gateway(format!(
+                    "Discovery URL returned HTTP {}",
+                    status_code
+                )))
             }
         }
         Err(e) => Err(AppError::bad_gateway(format!("{}", e))),

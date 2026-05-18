@@ -67,7 +67,11 @@ pub trait MetadataStoreOps: Send + Sync {
     async fn create_file_version(&self, version: &FileVersion) -> Result<()>;
 
     /// Find a folder by ID.
-    async fn find_folder_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<Option<Folder>>;
+    async fn find_folder_by_id(
+        &self,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> Result<Option<Folder>>;
 
     /// Find a file by ID.
     async fn find_file_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<Option<File>>;
@@ -84,7 +88,11 @@ pub trait MetadataStoreOps: Send + Sync {
     async fn delete_file(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<()>;
 
     /// List all versions of a file, ordered by version number descending.
-    async fn list_file_versions(&self, file_id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<Vec<FileVersion>>;
+    async fn list_file_versions(
+        &self,
+        file_id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> Result<Vec<FileVersion>>;
 
     /// Find a specific version of a file.
     async fn find_file_version(
@@ -1459,11 +1467,19 @@ mod tests {
             Ok(())
         }
 
-        async fn find_folder_by_id(&self, id: uuid::Uuid, _owner_id: uuid::Uuid) -> Result<Option<Folder>> {
+        async fn find_folder_by_id(
+            &self,
+            id: uuid::Uuid,
+            _owner_id: uuid::Uuid,
+        ) -> Result<Option<Folder>> {
             Ok(self.folders.lock().unwrap().get(&id).cloned())
         }
 
-        async fn find_file_by_id(&self, id: uuid::Uuid, _owner_id: uuid::Uuid) -> Result<Option<File>> {
+        async fn find_file_by_id(
+            &self,
+            id: uuid::Uuid,
+            _owner_id: uuid::Uuid,
+        ) -> Result<Option<File>> {
             Ok(self
                 .files
                 .lock()
@@ -1497,7 +1513,11 @@ mod tests {
             Ok(())
         }
 
-        async fn list_file_versions(&self, file_id: uuid::Uuid, _owner_id: uuid::Uuid) -> Result<Vec<FileVersion>> {
+        async fn list_file_versions(
+            &self,
+            file_id: uuid::Uuid,
+            _owner_id: uuid::Uuid,
+        ) -> Result<Vec<FileVersion>> {
             let versions = self.versions.lock().unwrap();
             let mut result: Vec<_> = versions
                 .iter()

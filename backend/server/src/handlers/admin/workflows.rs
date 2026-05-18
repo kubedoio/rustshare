@@ -11,7 +11,7 @@ use crate::{
     AppState,
 };
 
-use super::{log_admin_action};
+use super::log_admin_action;
 
 #[derive(sqlx::FromRow, Serialize)]
 pub struct WorkflowResponse {

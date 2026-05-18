@@ -11,7 +11,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{handlers::{AuthenticatedUser, AppError}, AppState};
+use crate::{
+    handlers::{AppError, AuthenticatedUser},
+    AppState,
+};
 
 // ============================================================================
 // Request/Response DTOs

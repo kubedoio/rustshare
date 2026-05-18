@@ -62,7 +62,11 @@ pub trait MetadataStoreOps: Send + Sync {
     ) -> Result<Vec<Folder>>;
 
     /// Find all descendant folders of a given folder using recursive CTE.
-    async fn find_descendant_folders(&self, folder_id: FolderId, owner_id: UserId) -> Result<Vec<Folder>>;
+    async fn find_descendant_folders(
+        &self,
+        folder_id: FolderId,
+        owner_id: UserId,
+    ) -> Result<Vec<Folder>>;
 
     /// List files with optional parent filter.
     async fn list_files(
@@ -249,7 +253,10 @@ where
         }
 
         // Not found — try to create
-        match self.create_folder(name.clone(), parent_folder_id, owner_id, tenant_id).await {
+        match self
+            .create_folder(name.clone(), parent_folder_id, owner_id, tenant_id)
+            .await
+        {
             Ok(folder) => Ok(folder),
             Err(FolderError::DuplicateName { .. }) => {
                 // We lost the race — fetch the existing folder
@@ -270,7 +277,8 @@ where
                 };
                 existing.ok_or_else(|| {
                     FolderError::Database(
-                        "Race condition: folder was created by another request but cannot be found".to_string(),
+                        "Race condition: folder was created by another request but cannot be found"
+                            .to_string(),
                     )
                 })
             }
@@ -829,7 +837,11 @@ mod tests {
             Ok(())
         }
 
-        async fn find_folder_by_id(&self, id: FolderId, _owner_id: UserId) -> Result<Option<Folder>> {
+        async fn find_folder_by_id(
+            &self,
+            id: FolderId,
+            _owner_id: UserId,
+        ) -> Result<Option<Folder>> {
             Ok(self.folders.lock().unwrap().get(&id).cloned())
         }
 
@@ -861,7 +873,11 @@ mod tests {
             Ok(result)
         }
 
-        async fn find_descendant_folders(&self, folder_id: FolderId, _owner_id: UserId) -> Result<Vec<Folder>> {
+        async fn find_descendant_folders(
+            &self,
+            folder_id: FolderId,
+            _owner_id: UserId,
+        ) -> Result<Vec<Folder>> {
             let folders = self.folders.lock().unwrap();
             let mut result = Vec::new();
             let mut to_process = vec![folder_id];
@@ -2303,13 +2319,23 @@ mod tests {
 
         // First call creates Kanban under Workspace
         let first = service
-            .create_folder_or_get("Kanban".to_string(), Some(workspace.id), owner_id, tenant_id)
+            .create_folder_or_get(
+                "Kanban".to_string(),
+                Some(workspace.id),
+                owner_id,
+                tenant_id,
+            )
             .await
             .unwrap();
 
         // Second call returns the same folder
         let second = service
-            .create_folder_or_get("Kanban".to_string(), Some(workspace.id), owner_id, tenant_id)
+            .create_folder_or_get(
+                "Kanban".to_string(),
+                Some(workspace.id),
+                owner_id,
+                tenant_id,
+            )
             .await
             .unwrap();
 

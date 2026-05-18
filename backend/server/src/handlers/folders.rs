@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use rustshare_core::domain::Folder;
 
-use super::{AuthenticatedUser, AppError};
+use super::{AppError, AuthenticatedUser};
 use crate::AppState;
 
 // ============================================================================
@@ -102,7 +102,11 @@ pub async fn create_folder(
 
 #[derive(Debug, Deserialize, validator::Validate)]
 pub struct CreateFolderRequest {
-    #[validate(length(min = 1, max = 255, message = "Folder name must be between 1 and 255 characters"))]
+    #[validate(length(
+        min = 1,
+        max = 255,
+        message = "Folder name must be between 1 and 255 characters"
+    ))]
     pub name: String,
     pub parent_folder_id: Option<Uuid>,
 }
@@ -521,13 +525,13 @@ pub async fn toggle_folder_star(
         .metadata_store
         .set_folder_starred(folder_id, auth.user_id, req.starred)
         .await
-        .map_err(|e| AppError::internal(format!(
-            "Failed to update folder star state: {}",
-            e
-        )))?;
+        .map_err(|e| AppError::internal(format!("Failed to update folder star state: {}", e)))?;
 
     if !updated {
-        return Err(AppError::not_found(format!("Folder not found: {}", folder_id)));
+        return Err(AppError::not_found(format!(
+            "Folder not found: {}",
+            folder_id
+        )));
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -552,7 +556,10 @@ pub async fn restore_folder_from_trash(
         })?;
 
     if !restored {
-        return Err(AppError::not_found(format!("Folder not found: {}", folder_id)));
+        return Err(AppError::not_found(format!(
+            "Folder not found: {}",
+            folder_id
+        )));
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -567,13 +574,13 @@ pub async fn permanently_delete_folder(
         .metadata_store
         .permanently_delete_folder(folder_id, auth.user_id)
         .await
-        .map_err(|e| AppError::internal(format!(
-            "Failed to permanently delete folder: {}",
-            e
-        )))?;
+        .map_err(|e| AppError::internal(format!("Failed to permanently delete folder: {}", e)))?;
 
     if !deleted {
-        return Err(AppError::not_found(format!("Folder not found: {}", folder_id)));
+        return Err(AppError::not_found(format!(
+            "Folder not found: {}",
+            folder_id
+        )));
     }
 
     Ok(StatusCode::NO_CONTENT)

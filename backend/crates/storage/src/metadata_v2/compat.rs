@@ -75,7 +75,11 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
             .map_err(|e| e.into())
     }
 
-    async fn find_folder_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
+    async fn find_folder_by_id(
+        &self,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<Folder>> {
         match self.repo.folders().get(id).await? {
             Some(doc) => {
                 let folder = folder_from_document(&doc);
@@ -89,7 +93,11 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
         }
     }
 
-    async fn find_file_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<Option<File>> {
+    async fn find_file_by_id(
+        &self,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<File>> {
         match self.repo.files().get(id).await? {
             Some(doc) => {
                 let file = file_from_document(&doc);
@@ -132,7 +140,11 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
         }
     }
 
-    async fn list_file_versions(&self, file_id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<Vec<FileVersion>> {
+    async fn list_file_versions(
+        &self,
+        file_id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<FileVersion>> {
         // Verify file ownership first
         match self.repo.files().get(file_id).await? {
             Some(file) => {
@@ -221,7 +233,11 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
         self.repo.folders().create(&doc).await.map_err(|e| e.into())
     }
 
-    async fn find_folder_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
+    async fn find_folder_by_id(
+        &self,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<Folder>> {
         match self.repo.folders().get(id).await? {
             Some(doc) => {
                 let folder = folder_from_document(&doc);
@@ -311,7 +327,11 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
         }
     }
 
-    async fn find_descendant_folders(&self, folder_id: uuid::Uuid, _owner_id: uuid::Uuid) -> anyhow::Result<Vec<Folder>> {
+    async fn find_descendant_folders(
+        &self,
+        folder_id: uuid::Uuid,
+        _owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<Folder>> {
         let docs = self.repo.folders().list_descendants(folder_id).await?;
         Ok(docs.iter().map(folder_from_document).collect())
     }
@@ -397,7 +417,11 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         Ok(row)
     }
 
-    async fn find_file_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<Option<File>> {
+    async fn find_file_by_id(
+        &self,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<File>> {
         match self.repo.files().get(id).await? {
             Some(doc) => {
                 let file = file_from_document(&doc);
@@ -418,7 +442,11 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         }
     }
 
-    async fn find_folder_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
+    async fn find_folder_by_id(
+        &self,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<Folder>> {
         match self.repo.folders().get(id).await? {
             Some(doc) => {
                 let folder = folder_from_document(&doc);
@@ -444,7 +472,11 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         self.repo.shares().create(&doc).await.map_err(|e| e.into())
     }
 
-    async fn get_share_by_id(&self, id: uuid::Uuid, actor_id: uuid::Uuid) -> anyhow::Result<Option<Share>> {
+    async fn get_share_by_id(
+        &self,
+        id: uuid::Uuid,
+        actor_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<Share>> {
         match self.repo.shares().get(id).await? {
             Some(doc) => {
                 let share = share_from_document(&doc);
@@ -469,10 +501,7 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
 
     async fn get_file_shares(&self, file_id: uuid::Uuid) -> anyhow::Result<Vec<Share>> {
         let docs = self.repo.shares().list_by_resource("file", file_id).await?;
-        Ok(docs
-            .iter()
-            .map(share_from_document)
-            .collect())
+        Ok(docs.iter().map(share_from_document).collect())
     }
 
     async fn get_folder_shares(&self, folder_id: uuid::Uuid) -> anyhow::Result<Vec<Share>> {
@@ -481,10 +510,7 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
             .shares()
             .list_by_resource("folder", folder_id)
             .await?;
-        Ok(docs
-            .iter()
-            .map(share_from_document)
-            .collect())
+        Ok(docs.iter().map(share_from_document).collect())
     }
 
     async fn list_files(
@@ -535,12 +561,19 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         .await
     }
 
-    async fn find_descendant_folders(&self, folder_id: uuid::Uuid, _owner_id: uuid::Uuid) -> anyhow::Result<Vec<Folder>> {
+    async fn find_descendant_folders(
+        &self,
+        folder_id: uuid::Uuid,
+        _owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<Folder>> {
         let docs = self.repo.folders().list_descendants(folder_id).await?;
         Ok(docs.iter().map(folder_from_document).collect())
     }
 
-    async fn find_descendant_folders_unchecked(&self, folder_id: uuid::Uuid) -> anyhow::Result<Vec<Folder>> {
+    async fn find_descendant_folders_unchecked(
+        &self,
+        folder_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<Folder>> {
         let docs = self.repo.folders().list_descendants(folder_id).await?;
         Ok(docs.iter().map(folder_from_document).collect())
     }

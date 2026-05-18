@@ -67,7 +67,11 @@ pub trait MetadataStoreOps: Send + Sync {
     async fn find_file_by_id_unchecked(&self, id: uuid::Uuid) -> Result<Option<File>>;
 
     /// Find a folder by ID.
-    async fn find_folder_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<Option<Folder>>;
+    async fn find_folder_by_id(
+        &self,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> Result<Option<Folder>>;
 
     /// Find a folder by ID without owner filtering.
     ///
@@ -123,12 +127,17 @@ pub trait MetadataStoreOps: Send + Sync {
     ) -> Result<Vec<Folder>>;
 
     /// Find all descendant folders of a given folder using recursive CTE.
-    async fn find_descendant_folders(&self, folder_id: uuid::Uuid, owner_id: UserId) -> Result<Vec<Folder>>;
+    async fn find_descendant_folders(
+        &self,
+        folder_id: uuid::Uuid,
+        owner_id: UserId,
+    ) -> Result<Vec<Folder>>;
 
     /// Find all descendant folders without owner filtering.
     ///
     /// ⚠️ WARNING: Only use for public-share endpoints where access is already verified.
-    async fn find_descendant_folders_unchecked(&self, folder_id: uuid::Uuid) -> Result<Vec<Folder>>;
+    async fn find_descendant_folders_unchecked(&self, folder_id: uuid::Uuid)
+        -> Result<Vec<Folder>>;
 
     /// Revoke a share by ID.
     async fn revoke_share(&self, share_id: uuid::Uuid, actor_id: UserId) -> Result<()>;
@@ -326,8 +335,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         let has_admin = if is_owner {
             true
         } else {
-            self.check_resource_permission(user_id, Resource::Folder(folder_id), SharePermissions::Admin)
-                .await?
+            self.check_resource_permission(
+                user_id,
+                Resource::Folder(folder_id),
+                SharePermissions::Admin,
+            )
+            .await?
         };
 
         if !has_admin {
@@ -687,8 +700,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         let has_admin = if is_owner {
             true
         } else {
-            self.check_resource_permission(user_id, Resource::File(file_id), SharePermissions::Admin)
-                .await?
+            self.check_resource_permission(
+                user_id,
+                Resource::File(file_id),
+                SharePermissions::Admin,
+            )
+            .await?
         };
 
         if !has_admin {
@@ -719,8 +736,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         let has_admin = if is_owner {
             true
         } else {
-            self.check_resource_permission(user_id, Resource::Folder(folder_id), SharePermissions::Admin)
-                .await?
+            self.check_resource_permission(
+                user_id,
+                Resource::Folder(folder_id),
+                SharePermissions::Admin,
+            )
+            .await?
         };
 
         if !has_admin {
@@ -1573,7 +1594,11 @@ mod tests {
                 .collect())
         }
 
-        async fn find_descendant_folders(&self, folder_id: Uuid, _owner_id: UserId) -> Result<Vec<Folder>> {
+        async fn find_descendant_folders(
+            &self,
+            folder_id: Uuid,
+            _owner_id: UserId,
+        ) -> Result<Vec<Folder>> {
             let folders = self.folders.lock().unwrap().clone();
             let mut result = Vec::new();
             let mut stack = vec![folder_id];
