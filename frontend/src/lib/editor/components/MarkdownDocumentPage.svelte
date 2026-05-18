@@ -33,6 +33,8 @@
 	import CollabEditor from './CollabEditor.svelte';
 	import AttachmentPanel from './AttachmentPanel.svelte';
 	import PrintableDocumentView from './PrintableDocumentView.svelte';
+	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
+	import type { PreviewableFile } from '$lib/components/modals/FilePreviewModal.svelte';
 	import { insertAttachmentIntoEditor } from '../adapter/attachments';
 	import { downloadTextFile, formatExportFilename, triggerPrint } from '../adapter/export';
 	import { toastStore } from '$lib/stores/toast';
@@ -109,6 +111,7 @@
 	let isAttachmentsOpen = $state(initialAttachmentsOpen);
 	let autosaveTimer: ReturnType<typeof setTimeout> | null = $state(null);
 	let lastDocId = $state(docId);
+	let previewAttachment = $state<RichMarkdownAttachment | null>(null);
 
 	let canEdit = $derived(permissions.canEdit);
 	let isEditing = $derived(mode === 'edit' && canEdit);
@@ -289,6 +292,23 @@
 
 	function toggleAttachments() {
 		isAttachmentsOpen = !isAttachmentsOpen;
+	}
+
+	function handleOpenAttachment(event: CustomEvent<{ attachment: RichMarkdownAttachment }>) {
+		previewAttachment = event.detail.attachment;
+	}
+
+	function closePreview() {
+		previewAttachment = null;
+	}
+
+	function toPreviewableFile(attachment: RichMarkdownAttachment): PreviewableFile {
+		return {
+			id: attachment.id,
+			name: attachment.filename,
+			mime_type: attachment.mimeType,
+			size: attachment.size
+		};
 	}
 
 	/**
@@ -542,7 +562,11 @@
 					/>
 				{/if}
 			{:else}
-				<RichMarkdownViewer content={currentMarkdown || content} {attachments} />
+				<RichMarkdownViewer
+					content={currentMarkdown || content}
+					{attachments}
+					on:open={handleOpenAttachment}
+				/>
 			{/if}
 		</main>
 
@@ -565,6 +589,14 @@
 	<div class="print-only">
 		<PrintableDocumentView {title} content={currentMarkdown || content} {label} />
 	</div>
+
+	{#if previewAttachment}
+		<FilePreviewModal
+			open={true}
+			file={toPreviewableFile(previewAttachment)}
+			onClose={closePreview}
+		/>
+	{/if}
 </div>
 
 <style>

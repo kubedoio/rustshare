@@ -24,6 +24,8 @@
 		formatFileSize,
 		isInlineableImage
 	} from '../adapter/attachments';
+	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
+	import type { PreviewableFile } from '$lib/components/modals/FilePreviewModal.svelte';
 
 	let {
 		attachments = [],
@@ -47,6 +49,7 @@
 	let fileInput: HTMLInputElement = $state() as unknown as HTMLInputElement;
 	let isDragOver = $state(false);
 	let error = $state<string | null>(null);
+	let previewAttachment = $state<RichMarkdownAttachment | null>(null);
 
 	let visibleAttachments = $derived(filterVisibleAttachments(attachments));
 	let canUpload = $derived(permissions.canUploadAttachments);
@@ -121,6 +124,23 @@
 	function handleDelete(attachment: RichMarkdownAttachment) {
 		dispatch('delete', { attachment });
 	}
+
+	function openPreview(attachment: RichMarkdownAttachment) {
+		previewAttachment = attachment;
+	}
+
+	function closePreview() {
+		previewAttachment = null;
+	}
+
+	function toPreviewableFile(attachment: RichMarkdownAttachment): PreviewableFile {
+		return {
+			id: attachment.id,
+			name: attachment.filename,
+			mime_type: attachment.mimeType,
+			size: attachment.size
+		};
+	}
 </script>
 
 {#if open}
@@ -128,7 +148,7 @@
 		<div class="panel-header">
 			<h3 class="panel-title">Attachments</h3>
 			<span class="panel-count">{visibleAttachments.length}</span>
-			<button class="panel-close" on:click={() => dispatch('close')} aria-label="Close panel">
+			<button class="panel-close" onclick={() => dispatch('close')} aria-label="Close panel">
 				<X size={16} />
 			</button>
 		</div>
@@ -138,13 +158,13 @@
 			<div
 				class="upload-zone"
 				class:drag-over={isDragOver}
-				on:drop={handleDrop}
-				on:dragover={handleDragOver}
-				on:dragleave={handleDragLeave}
+				ondrop={handleDrop}
+				ondragover={handleDragOver}
+				ondragleave={handleDragLeave}
 				role="button"
 				tabindex="0"
-				on:click={() => fileInput.click()}
-				on:keydown={(e) => e.key === 'Enter' && fileInput.click()}
+				onclick={() => fileInput.click()}
+				onkeydown={(e) => e.key === 'Enter' && fileInput.click()}
 			>
 				<Upload size={20} />
 				<span class="upload-label">
@@ -155,7 +175,7 @@
 					type="file"
 					multiple
 					class="upload-input"
-					on:change={handleFileSelect}
+					onchange={handleFileSelect}
 					aria-label="Upload attachments"
 				/>
 			</div>
@@ -177,7 +197,13 @@
 				</div>
 			{:else}
 				{#each visibleAttachments as attachment (attachment.id)}
-					<div class="attachment-item">
+					<div
+						class="attachment-item"
+						onclick={() => openPreview(attachment)}
+						role="button"
+						tabindex="0"
+						onkeydown={(e) => e.key === 'Enter' && openPreview(attachment)}
+					>
 						<span class="attachment-icon">
 							<svelte:component this={getKindIcon(attachment.kind)} size={16} />
 						</span>
@@ -191,7 +217,7 @@
 							{#if editable}
 								<button
 									class="action-btn"
-									on:click={() => handleInsert(attachment)}
+									onclick={(e) => { e.stopPropagation(); handleInsert(attachment); }}
 									title={isInlineableImage(attachment.mimeType) ? 'Insert image' : 'Insert link'}
 									aria-label="Insert into editor"
 								>
@@ -201,7 +227,7 @@
 							{#if canDelete}
 								<button
 									class="action-btn action-btn-danger"
-									on:click={() => handleDelete(attachment)}
+									onclick={(e) => { e.stopPropagation(); handleDelete(attachment); }}
 									title="Delete attachment"
 									aria-label="Delete attachment"
 								>
@@ -214,6 +240,14 @@
 			{/if}
 		</div>
 	</div>
+{/if}
+
+{#if previewAttachment}
+	<FilePreviewModal
+		open={true}
+		file={toPreviewableFile(previewAttachment)}
+		onClose={closePreview}
+	/>
 {/if}
 
 <style>
@@ -329,6 +363,7 @@
 		padding: 0.5rem;
 		border-radius: 0.375rem;
 		transition: background 0.1s;
+		cursor: pointer;
 	}
 
 	.attachment-item:hover {

@@ -1,13 +1,13 @@
 <script lang="ts">
-	import type { File } from '$lib/api/types';
 	import { formatFileSize } from '$lib/utils/format';
 	import { getOfficeFileType } from '$lib/utils/format';
 	import { FileText, FileSpreadsheet, Presentation } from 'lucide-svelte';
+	import type { PreviewableFile } from '$lib/components/modals/FilePreviewModal.svelte';
 
 	let {
 		file = null
 	}: {
-		file?: File | null;
+		file?: PreviewableFile | null;
 	} = $props();
 
 	let officeType = $derived(file ? getOfficeFileType(file.mime_type, file.name) : null);
@@ -47,7 +47,7 @@
 		<h3 class="mb-2 text-xl font-semibold text-base-content">{file.name}</h3>
 		<p class="mb-1 text-base-content/60">{config.label}</p>
 		<p class="mb-6 text-sm text-base-content/40">
-			{formatFileSize(file.size)} • {new Date(file.modified_at).toLocaleDateString()}
+			{formatFileSize(file.size)}{#if file.modified_at} • {new Date(file.modified_at).toLocaleDateString()}{/if}
 		</p>
 		<div class="flex flex-col items-center gap-4">
 			<p class="max-w-sm text-sm text-base-content/60">
