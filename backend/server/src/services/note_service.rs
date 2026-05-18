@@ -838,10 +838,6 @@ impl NoteService {
         attachments: Option<Vec<NoteAttachment>>,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
-        let is_folder_backed = Self::is_folder_backed_note(&file);
-
-        // Extract H1 as the title if present
-        let extracted_title = extract_h1_title(&content);
 
         // Update file content via edit_file (overwrite mode)
         let mut updated_file = self
@@ -864,48 +860,6 @@ impl NoteService {
                 fallback.created_at = file.created_at;
                 fallback
             });
-
-        // Sync title and filename if H1 changed
-        if let Some(new_title) = extracted_title {
-            if new_title != meta.title {
-                meta.title = new_title.clone();
-
-                if is_folder_backed {
-                    // For folder-backed notes, rename the parent folder
-                    if let Some(parent_folder_id) = file.parent_folder_id {
-                        let parent_folder = self
-                            .folder_service
-                            .get_folder(parent_folder_id, user_id)
-                            .await
-                            .map_err(|e| NoteError::Storage(e.to_string()))?;
-                        let new_folder_name = self
-                            .unique_folder_name(file.owner_id, file.tenant_id, parent_folder.parent_folder_id, &new_title)
-                            .await?;
-                        if new_folder_name != parent_folder.name {
-                            let _ = self
-                                .folder_service
-                                .rename_folder(parent_folder_id, new_folder_name, user_id)
-                                .await;
-                        }
-                    }
-                } else {
-                    // Legacy: rename the file
-                    let new_filename = self
-                        .unique_note_name(file.owner_id, file.tenant_id, file.parent_folder_id, &new_title)
-                        .await?;
-
-                    if new_filename != updated_file.name {
-                        if let Ok(renamed) = self
-                            .file_service
-                            .rename_file(file_id, new_filename, user_id)
-                            .await
-                        {
-                            updated_file = renamed;
-                        }
-                    }
-                }
-            }
-        }
 
         if let Some(new_color) = color {
             meta.color = Some(new_color);
@@ -1584,15 +1538,4 @@ fn generate_share_id() -> String {
         .collect()
 }
 
-fn extract_h1_title(content: &str) -> Option<String> {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("# ") {
-            let title = rest.trim();
-            if !title.is_empty() {
-                return Some(title.to_string());
-            }
-        }
-    }
-    None
-}
+

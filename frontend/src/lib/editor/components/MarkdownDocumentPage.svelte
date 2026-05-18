@@ -66,7 +66,8 @@
 		collab = false,
 		docId = '',
 		showNoteActions = false,
-		initialAttachmentsOpen = false
+		initialAttachmentsOpen = false,
+		subtitle = ''
 	}: {
 		title?: string;
 		content?: string;
@@ -86,6 +87,7 @@
 		docId?: string;
 		showNoteActions?: boolean;
 		initialAttachmentsOpen?: boolean;
+		subtitle?: string;
 	} = $props();
 
 	const dispatch = createEventDispatcher<{
@@ -316,6 +318,9 @@
 				<span class="doc-label-sep">·</span>
 			{/if}
 			<h1 class="doc-title">{title}</h1>
+			{#if subtitle}
+				<span class="doc-subtitle">{subtitle}</span>
+			{/if}
 			{#if metadata}
 				<span class="doc-meta">{metadata}</span>
 			{/if}
@@ -623,6 +628,17 @@
 		margin: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.doc-subtitle {
+		font-size: 0.75rem;
+		color: var(--color-base-content, #9ca3af);
+		opacity: 0.6;
+		margin-top: 0.125rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 400px;
 	}
 
 	.doc-meta {

@@ -71,6 +71,9 @@
 	let item = $derived($query.data);
 	let content = $derived(item?.content ?? '');
 	let title = $derived(item?.metadata?.title || item?.name || '');
+	let subtitle = $derived(
+		key === 'notes' ? (item?.metadata?.excerpt || '') : ''
+	);
 	let modifiedAt = $derived(
 		item?.modified_at
 			? key === 'meetings' && item?.metadata?.date
@@ -435,6 +438,7 @@
 		<MarkdownDocumentPage
 			bind:this={documentPage}
 			{title}
+			subtitle={subtitle}
 			content={editorContent}
 			{mode}
 			{saveStatus}
