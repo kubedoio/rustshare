@@ -212,7 +212,7 @@ where
                 if db_err.constraint() == Some("idx_folders_unique_name") {
                     return Err(FolderError::DuplicateName {
                         name: folder.name.clone(),
-                        parent_id: folder.parent_folder_id.unwrap_or_else(|| folder.id),
+                        parent_id: folder.parent_folder_id.unwrap_or(folder.id),
                     });
                 }
             }

@@ -769,6 +769,7 @@ impl ModuleService {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn build_summary_for_mode(
         &self,
         key: &str,
