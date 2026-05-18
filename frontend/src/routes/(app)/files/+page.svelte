@@ -163,7 +163,6 @@
 	// URL parameters
 	let urlFolderId = $derived($page.url.searchParams.get('folder'));
 	let urlFilter = $derived($page.url.searchParams.get('filter'));
-	let urlSort = $derived($page.url.searchParams.get('sort'));
 	let urlRoot = $derived($page.url.searchParams.get('root') as ExplorerRoot | null);
 
 	// Helper to check if a string looks like a valid UUID
@@ -181,7 +180,7 @@
 				? 'starred'
 				: urlFilter === 'deleted'
 					? 'deleted'
-					: urlSort === 'recent'
+					: urlFilter === 'recent'
 						? 'recent'
 						: 'all'
 	) as WorkspaceMode);
@@ -250,7 +249,7 @@
 			if (workspaceMode === 'deleted') return getDeletedContents();
 			if (workspaceMode === 'recent') {
 				const allFiles = await listAllFiles();
-				return { folders: [], files: allFiles };
+				return { folders: [], files: allFiles.slice(0, 30) };
 			}
 
 			// For shared root

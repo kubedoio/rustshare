@@ -35,15 +35,6 @@
 	// Types
 	// ---------------------------------------------------------------------------
 
-	interface ArtifactItem {
-		id: string;
-		name: string;
-		item_type: 'file' | 'folder';
-		updated_at: string;
-		moduleKey: string;
-		moduleName: string;
-	}
-
 	interface QuickAction {
 		label: string;
 		subtitle: string;
@@ -95,25 +86,8 @@
 	let sharedItemsCount = $derived(allFiles.filter((f) => f.is_shared).length);
 
 	let recentArtifacts = $derived(() => {
-		const summaries = $moduleSummariesQuery.data ?? [];
-		const items: ArtifactItem[] = [];
-
-		for (const { module, summary } of summaries) {
-			for (const item of summary.recent_items) {
-				if (isInternalRustShareFile(item.name)) continue;
-				items.push({
-					id: item.id,
-					name: item.name,
-					item_type: item.item_type as 'file' | 'folder',
-					updated_at: item.updated_at,
-					moduleKey: module.key,
-					moduleName: module.displayName
-				});
-			}
-		}
-
-		return items
-			.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+		return allFiles
+			.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 			.slice(0, 30);
 	});
 
