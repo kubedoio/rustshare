@@ -1,7 +1,7 @@
 # =============================================================================
 # Stage 1: Frontend Builder
 # =============================================================================
-FROM node:25-bookworm-slim AS frontend-builder
+FROM node:26-bookworm-slim AS frontend-builder
 
 WORKDIR /app/frontend
 
