@@ -16,7 +16,10 @@
 		FileText,
 		MoreHorizontal,
 		Paperclip,
-		ChevronRight
+		ChevronRight,
+		FolderInput,
+		Copy,
+		Trash2
 	} from 'lucide-svelte';
 	import type {
 		EditorMode,
@@ -61,7 +64,8 @@
 		showBack = true,
 		embedSketchesAsBase64 = true,
 		collab = false,
-		docId = ''
+		docId = '',
+		showNoteActions = false
 	}: {
 		title?: string;
 		content?: string;
@@ -79,6 +83,7 @@
 		embedSketchesAsBase64?: boolean;
 		collab?: boolean;
 		docId?: string;
+		showNoteActions?: boolean;
 	} = $props();
 
 	const dispatch = createEventDispatcher<{
@@ -89,6 +94,10 @@
 		upload: { files: File[] };
 		sketch: { blob: Blob; filename: string };
 		delete: { attachment: RichMarkdownAttachment };
+		rename: void;
+		move: void;
+		duplicate: void;
+		deleteDocument: void;
 	}>();
 
 	let editorComponent: RichMarkdownEditor | CollabEditor = $state() as unknown as RichMarkdownEditor | CollabEditor;
@@ -425,7 +434,7 @@
 					<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
 					<ul
 						tabindex="0"
-						class="dropdown-content menu z-10 w-48 menu-sm rounded-box bg-base-200 p-1 shadow"
+						class="dropdown-content menu z-10 w-52 menu-sm rounded-box bg-base-200 p-1 shadow"
 					>
 						<li>
 							<button on:click={toggleAttachments}>
@@ -436,6 +445,32 @@
 								{/if}
 							</button>
 						</li>
+						{#if showNoteActions}
+							<li>
+								<button on:click={() => dispatch('rename')}>
+									<Pencil size={14} />
+									Rename note
+								</button>
+							</li>
+							<li>
+								<button on:click={() => dispatch('move')}>
+									<FolderInput size={14} />
+									Move to folder
+								</button>
+							</li>
+							<li>
+								<button on:click={() => dispatch('duplicate')}>
+									<Copy size={14} />
+									Duplicate note
+								</button>
+							</li>
+							<li>
+								<button on:click={() => dispatch('deleteDocument')} class="text-error">
+									<Trash2 size={14} />
+									Delete note
+								</button>
+							</li>
+						{/if}
 					</ul>
 				</div>
 			</div>

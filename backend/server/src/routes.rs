@@ -180,6 +180,10 @@ pub fn note_routes() -> Router<AppState> {
             post(crate::handlers::toggle_visibility),
         )
         .route("/api/v1/notes/{id}", delete(crate::handlers::delete_note))
+        .route(
+            "/api/v1/notes/{id}/duplicate",
+            post(crate::handlers::duplicate_note),
+        )
 }
 
 pub fn note_public_routes() -> Router<AppState> {

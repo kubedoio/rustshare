@@ -288,19 +288,6 @@
 			</div>
 		{/if}
 
-		<!-- More/overflow menu placeholder -->
-		<div class="toolbar-spacer"></div>
-		<div class="toolbar-group">
-			<button
-				type="button"
-				class="toolbar-btn toolbar-btn-subtle"
-				on:click={() => dispatch('more')}
-				title="More options"
-				aria-label="More options"
-			>
-				<MoreHorizontal size={16} />
-			</button>
-		</div>
 	</div>
 {/if}
 

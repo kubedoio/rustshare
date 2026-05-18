@@ -1104,6 +1104,184 @@ impl NoteService {
         })
     }
 
+    /// Duplicate a note (creates a copy of the bundle with new IDs).
+    pub async fn duplicate_note(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+    ) -> Result<Note, NoteError> {
+        let original = self.get_note(file_id, user_id).await?;
+        let original_file = self.file_service.get_file(file_id, user_id).await?;
+        let tenant_id = original_file.tenant_id;
+        let is_folder_backed = Self::is_folder_backed_note(&original_file);
+
+        // Determine copy title and parent folder
+        let copy_title = format!("{} (copy)", original.metadata.title);
+        let parent_folder_id = original_file.parent_folder_id;
+
+        if is_folder_backed {
+            // Create new bundle folder with unique name
+            let new_folder_name = self
+                .unique_folder_name(user_id, tenant_id, parent_folder_id, &copy_title)
+                .await?;
+            let note_folder = self
+                .folder_service
+                .create_folder(new_folder_name, parent_folder_id, user_id, tenant_id)
+                .await
+                .map_err(|e| NoteError::Storage(e.to_string()))?;
+
+            // Create subfolders
+            for subfolder in &["attachments", "drawings", "exports", "_rustshare"] {
+                self.get_or_create_subfolder(note_folder.id, subfolder, user_id, tenant_id)
+                    .await?;
+            }
+
+            // Copy note.md content
+            let new_file = self
+                .file_service
+                .upload_file(
+                    user_id,
+                    "note.md".to_string(),
+                    Some(note_folder.id),
+                    Bytes::from(original.content.clone()),
+                    "text/markdown".to_string(),
+                    tenant_id,
+                )
+                .await?;
+
+            // Copy attachments
+            let attachments_folder = self
+                .get_or_create_subfolder(note_folder.id, "attachments", user_id, tenant_id)
+                .await?;
+            let mut new_attachments = Vec::new();
+            for att in &original.metadata.attachments {
+                let att_file = self.file_service.get_file(att.file_id, user_id).await;
+                if let Ok(att_file) = att_file {
+                    let att_bytes = self
+                        .object_store
+                        .get(&att_file.storage_key())
+                        .await
+                        .map_err(|e| NoteError::Storage(format!("Failed to read attachment: {}", e)))?;
+                    let new_att_file = self
+                        .file_service
+                        .upload_file(
+                            user_id,
+                            att.name.clone(),
+                            Some(attachments_folder.id),
+                            att_bytes,
+                            att.mime_type.clone(),
+                            tenant_id,
+                        )
+                        .await?;
+                    new_attachments.push(NoteAttachment {
+                        file_id: new_att_file.id,
+                        name: att.name.clone(),
+                        mime_type: att.mime_type.clone(),
+                        size: new_att_file.size,
+                        created_at: new_att_file.created_at,
+                    });
+                }
+            }
+
+            // Build new metadata
+            let mut meta = original.metadata.clone();
+            meta.title = copy_title;
+            meta.visibility = NoteVisibility::Private;
+            meta.public_share_id = None;
+            meta.attachments = new_attachments;
+            meta.created_at = Utc::now();
+            meta.updated_at = Utc::now();
+            self.save_metadata(new_file.id, user_id, tenant_id, &meta)
+                .await?;
+
+            // Create manifest.json
+            let manifest_folder = self
+                .get_or_create_subfolder(note_folder.id, "_rustshare", user_id, tenant_id)
+                .await?;
+            let manifest = serde_json::json!({
+                "type": "rustshare.note",
+                "version": 1,
+                "id": new_file.id.to_string(),
+                "title": meta.title,
+                "main": "note.md",
+                "created_at": meta.created_at.to_rfc3339(),
+                "updated_at": meta.updated_at.to_rfc3339(),
+                "attachments": meta.attachments.iter().map(|a| serde_json::json!({
+                    "file_id": a.file_id.to_string(),
+                    "name": a.name,
+                    "mime_type": a.mime_type,
+                    "size": a.size,
+                    "created_at": a.created_at.to_rfc3339()
+                })).collect::<Vec<_>>(),
+                "drawings": [],
+                "exports": []
+            });
+            self.file_service
+                .upload_file(
+                    user_id,
+                    "manifest.json".to_string(),
+                    Some(manifest_folder.id),
+                    Bytes::from(manifest.to_string()),
+                    "application/json".to_string(),
+                    tenant_id,
+                )
+                .await
+                .ok();
+
+            return Ok(Note {
+                id: new_file.id,
+                name: new_file.name,
+                path: new_file.path,
+                content: original.content,
+                metadata: meta,
+                parent_folder_id: new_file.parent_folder_id,
+                owner_id: new_file.owner_id,
+                current_version: new_file.current_version,
+                created_at: new_file.created_at,
+                modified_at: new_file.modified_at,
+            });
+        }
+
+        // Legacy single-file note duplication
+        let new_name = self
+            .unique_note_name(user_id, tenant_id, parent_folder_id, &copy_title)
+            .await?;
+        let new_file = self
+            .file_service
+            .upload_file(
+                user_id,
+                new_name,
+                parent_folder_id,
+                Bytes::from(original.content.clone()),
+                "text/markdown".to_string(),
+                tenant_id,
+            )
+            .await?;
+
+        let mut meta = original.metadata.clone();
+        meta.title = copy_title;
+        meta.visibility = NoteVisibility::Private;
+        meta.public_share_id = None;
+        meta.attachments = Vec::new(); // Legacy: attachments not copied
+        meta.created_at = Utc::now();
+        meta.updated_at = Utc::now();
+        self.save_metadata(new_file.id, user_id, tenant_id, &meta)
+            .await?;
+
+        Ok(Note {
+            id: new_file.id,
+            name: new_file.name,
+            path: new_file.path,
+            content: original.content,
+            metadata: meta,
+            parent_folder_id: new_file.parent_folder_id,
+            owner_id: new_file.owner_id,
+            current_version: new_file.current_version,
+            created_at: new_file.created_at,
+            modified_at: new_file.modified_at,
+        })
+    }
+
     /// List all notes for a user.
     pub async fn list_notes(
         &self,

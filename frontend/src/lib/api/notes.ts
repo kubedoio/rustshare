@@ -87,6 +87,10 @@ export async function deleteNote(noteId: string): Promise<void> {
 	return apiClient.delete(`/notes/${noteId}`);
 }
 
+export async function duplicateNote(noteId: string): Promise<CreateNoteResponse> {
+	return apiClient.post<CreateNoteResponse>(`/notes/${noteId}/duplicate`);
+}
+
 export async function listNotes(limit?: number): Promise<NoteSummary[]> {
 	const query = limit !== undefined ? `?limit=${limit}` : '';
 	return apiClient.get<NoteSummary[]>(`/notes${query}`);

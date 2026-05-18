@@ -3,7 +3,7 @@
 	import { page } from '$app/stores';
 	import { createQuery, createMutation } from '$lib/query-compat';
 	import { queryClient } from '$lib/query-client';
-	import { notesApi } from '$lib/api/notes';
+	import { notesApi, renameNote, moveNote, deleteNote, duplicateNote } from '$lib/api/notes';
 	import { decisionsApi } from '$lib/api/decisions';
 	import { meetingsApi } from '$lib/api/meetings';
 	import { standupsApi } from '$lib/api/standups';
@@ -15,6 +15,8 @@
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
 	import ShareModal from '$lib/components/modals/ShareModal.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
+	import MoveModal from '$lib/components/modals/MoveModal.svelte';
+	import DeleteConfirmation from '$lib/components/modals/DeleteConfirmation.svelte';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import { toastStore } from '$lib/stores/toast';
 	import type { EditorMode, EditorSaveStatus, RichMarkdownAttachment } from '$lib/editor/types';
@@ -83,6 +85,11 @@
 	let showRenameModal = $state(false);
 	let renameError = $state('');
 	let isRenaming = $state(false);
+	let showMoveModal = $state(false);
+	let isMoving = $state(false);
+	let showDeleteModal = $state(false);
+	let isDeleting = $state(false);
+	let isDuplicating = $state(false);
 	let attachments = $state<RichMarkdownAttachment[]>([]);
 	let documentPage = $state<MarkdownDocumentPage | undefined>(undefined);
 
@@ -343,16 +350,72 @@
 		isRenaming = true;
 		renameError = '';
 		try {
-			await decisionsApi.rename(id, { title: trimmed });
+			if (key === 'notes') {
+				await renameNote(id, { title: trimmed });
+				toastStore.show('Note renamed', 'success');
+			} else if (key === 'decisions') {
+				await decisionsApi.rename(id, { title: trimmed });
+				toastStore.show('Decision renamed', 'success');
+			}
 			showRenameModal = false;
 			renameError = '';
 			$query.refetch();
-			toastStore.show('Decision renamed', 'success');
 		} catch (err) {
-			console.error('Failed to rename decision:', err);
-			renameError = err instanceof Error ? err.message : 'Failed to rename decision';
+			console.error('Failed to rename:', err);
+			renameError = err instanceof Error ? err.message : 'Failed to rename';
 		} finally {
 			isRenaming = false;
+		}
+	}
+
+	async function handleMoveConfirm(payload: { targetFolderId: string | null }) {
+		if (isMoving || !item) return;
+		isMoving = true;
+		try {
+			if (key === 'notes') {
+				await moveNote(id, { target_folder_id: payload.targetFolderId });
+				toastStore.show('Note moved', 'success');
+			}
+			showMoveModal = false;
+			$query.refetch();
+		} catch (err) {
+			console.error('Failed to move:', err);
+			toastStore.show(err instanceof Error ? err.message : 'Failed to move', 'error');
+		} finally {
+			isMoving = false;
+		}
+	}
+
+	async function handleDuplicate() {
+		if (isDuplicating || !item) return;
+		isDuplicating = true;
+		try {
+			const duplicated = await duplicateNote(id);
+			toastStore.show('Note duplicated', 'success');
+			goto(`/modules/notes/${duplicated.id}`);
+		} catch (err) {
+			console.error('Failed to duplicate note:', err);
+			toastStore.show(err instanceof Error ? err.message : 'Failed to duplicate note', 'error');
+		} finally {
+			isDuplicating = false;
+		}
+	}
+
+	async function handleDeleteConfirm() {
+		if (isDeleting || !item) return;
+		isDeleting = true;
+		try {
+			if (key === 'notes') {
+				await deleteNote(id);
+				toastStore.show('Note deleted', 'success');
+			}
+			showDeleteModal = false;
+			goto(`/modules/${key}`);
+		} catch (err) {
+			console.error('Failed to delete:', err);
+			toastStore.show(err instanceof Error ? err.message : 'Failed to delete', 'error');
+		} finally {
+			isDeleting = false;
 		}
 	}
 </script>
@@ -388,12 +451,17 @@
 			embedSketchesAsBase64={!isFolderBacked}
 			collab={key === 'notes'}
 			docId={id}
+			showNoteActions={key === 'notes'}
 			on:save={handleSave}
 			on:back={handleBack}
 			on:modechange={handleModeChange}
 			on:upload={handleUpload}
 			on:delete={handleDeleteAttachment}
 			on:sketch={handleSketch}
+			on:rename={() => { showRenameModal = true; renameError = ''; }}
+			on:move={() => { showMoveModal = true; }}
+			on:duplicate={handleDuplicate}
+			on:deleteDocument={() => { showDeleteModal = true; }}
 		>
 			<svelte:fragment slot="extraActions">
 				{#if key === 'notes'}
@@ -433,10 +501,10 @@
 			onNotification={handleShareNotification}
 		/>
 
-		{#if key === 'decisions'}
+		{#if key === 'notes' || key === 'decisions'}
 			<PromptModal
 				open={showRenameModal}
-				title="Rename decision"
+				title={key === 'notes' ? 'Rename note' : 'Rename decision'}
 				message="New title"
 				defaultValue={title}
 				confirmLabel="Rename"
@@ -447,6 +515,28 @@
 					showRenameModal = false;
 					renameError = '';
 				}}
+			/>
+		{/if}
+
+		{#if key === 'notes'}
+			<MoveModal
+				open={showMoveModal}
+				loading={isMoving}
+				itemName={title}
+				itemType="file"
+				currentFolderId={item?.parent_folder_id ?? null}
+				itemId={id}
+				onClose={() => (showMoveModal = false)}
+				onConfirm={handleMoveConfirm}
+			/>
+
+			<DeleteConfirmation
+				open={showDeleteModal}
+				loading={isDeleting}
+				itemName={title}
+				itemType="file"
+				onClose={() => (showDeleteModal = false)}
+				onConfirm={handleDeleteConfirm}
 			/>
 		{/if}
 	{/if}
