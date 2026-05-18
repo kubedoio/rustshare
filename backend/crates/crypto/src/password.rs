@@ -1,8 +1,9 @@
 use argon2::{
-    password_hash::{PasswordHash, PasswordHasher as _, PasswordVerifier, SaltString},
+    password_hash::{
+        rand_core::OsRng, PasswordHash, PasswordHasher as _, PasswordVerifier, SaltString,
+    },
     Argon2,
 };
-use rand::rngs::OsRng;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
