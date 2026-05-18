@@ -65,7 +65,8 @@
 		embedSketchesAsBase64 = true,
 		collab = false,
 		docId = '',
-		showNoteActions = false
+		showNoteActions = false,
+		initialAttachmentsOpen = false
 	}: {
 		title?: string;
 		content?: string;
@@ -84,6 +85,7 @@
 		collab?: boolean;
 		docId?: string;
 		showNoteActions?: boolean;
+		initialAttachmentsOpen?: boolean;
 	} = $props();
 
 	const dispatch = createEventDispatcher<{
@@ -102,7 +104,7 @@
 
 	let editorComponent: RichMarkdownEditor | CollabEditor = $state() as unknown as RichMarkdownEditor | CollabEditor;
 	let currentMarkdown: string = $state(content);
-	let isAttachmentsOpen = $state(false);
+	let isAttachmentsOpen = $state(initialAttachmentsOpen);
 	let autosaveTimer: ReturnType<typeof setTimeout> | null = $state(null);
 	let lastDocId = $state(docId);
 

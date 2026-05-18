@@ -14,13 +14,21 @@
 		Grid3X3,
 		ArrowUpDown,
 		Paperclip,
-		Image
+		Image,
+		Pencil,
+		FolderInput,
+		Copy,
+		Trash2
 	} from 'lucide-svelte';
 
-	import { listNotes, createNote, deleteNote } from '$lib/api/notes';
+	import { listNotes, createNote, deleteNote, renameNote, moveNote, duplicateNote } from '$lib/api/notes';
 	import { activityStore } from '$lib/stores/activity';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
+	import { toastStore } from '$lib/stores/toast';
+	import PromptModal from '$lib/components/common/PromptModal.svelte';
+	import MoveModal from '$lib/components/modals/MoveModal.svelte';
+	import DeleteConfirmation from '$lib/components/modals/DeleteConfirmation.svelte';
 
 	interface Props {
 		module: ModuleDefinition;
@@ -42,6 +50,16 @@
 	let sortDirection = $state<'desc' | 'asc'>('desc');
 	let viewMode = $state<'list' | 'grid'>(module.ui.page.layout === 'gallery-grid' ? 'grid' : 'list');
 	let itemsPerPage = $state(20);
+
+	let activeNote = $state<any>(null);
+	let showRenameModal = $state(false);
+	let showMoveModal = $state(false);
+	let showDeleteModal = $state(false);
+	let renameError = $state('');
+	let isRenaming = $state(false);
+	let isMoving = $state(false);
+	let isDeleting = $state(false);
+	let isDuplicating = $state(false);
 
 	let filteredNotes = $derived(
 		recentNotes
@@ -104,10 +122,99 @@
 		}
 	}
 
+	function handleShowAttachments(note: any) {
+		goto(`/modules/notes/${note.id}?attachments=open`);
+	}
+
+	function openRenameModal(note: any) {
+		activeNote = note;
+		showRenameModal = true;
+		renameError = '';
+	}
+
+	function openMoveModal(note: any) {
+		activeNote = note;
+		showMoveModal = true;
+	}
+
+	function openDeleteModal(note: any) {
+		activeNote = note;
+		showDeleteModal = true;
+	}
+
+	async function handleRenameConfirm(newTitle: string) {
+		if (isRenaming || !activeNote) return;
+		const trimmed = newTitle.trim();
+		if (!trimmed) {
+			renameError = 'Title is required';
+			return;
+		}
+		isRenaming = true;
+		renameError = '';
+		try {
+			await renameNote(activeNote.id, { title: trimmed });
+			toastStore.show('Note renamed', 'success');
+			showRenameModal = false;
+			$notesQuery.refetch();
+		} catch (err) {
+			console.error('Failed to rename note:', err);
+			renameError = err instanceof Error ? err.message : 'Failed to rename';
+		} finally {
+			isRenaming = false;
+		}
+	}
+
+	async function handleMoveConfirm(payload: { targetFolderId: string | null }) {
+		if (isMoving || !activeNote) return;
+		isMoving = true;
+		try {
+			await moveNote(activeNote.id, { target_folder_id: payload.targetFolderId });
+			toastStore.show('Note moved', 'success');
+			showMoveModal = false;
+			$notesQuery.refetch();
+		} catch (err) {
+			console.error('Failed to move note:', err);
+			toastStore.show(err instanceof Error ? err.message : 'Failed to move', 'error');
+		} finally {
+			isMoving = false;
+		}
+	}
+
+	async function handleDuplicate(note: any) {
+		if (isDuplicating) return;
+		isDuplicating = true;
+		try {
+			const duplicated = await duplicateNote(note.id);
+			toastStore.show('Note duplicated', 'success');
+			goto(`/modules/notes/${duplicated.id}`);
+		} catch (err) {
+			console.error('Failed to duplicate note:', err);
+			toastStore.show(err instanceof Error ? err.message : 'Failed to duplicate note', 'error');
+		} finally {
+			isDuplicating = false;
+		}
+	}
+
+	async function handleDeleteConfirm() {
+		if (isDeleting || !activeNote) return;
+		isDeleting = true;
+		try {
+			await deleteNote(activeNote.id);
+			toastStore.show('Note deleted', 'success');
+			showDeleteModal = false;
+			$notesQuery.refetch();
+		} catch (err) {
+			console.error('Failed to delete note:', err);
+			toastStore.show(err instanceof Error ? err.message : 'Failed to delete', 'error');
+		} finally {
+			isDeleting = false;
+		}
+	}
+
 	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No notes yet');
 	let emptyDescription = $derived(
 		module.ui.page.emptyStateDescription ??
-		'No notes yet. Create your first note to capture ideas, documentation, or working knowledge.'
+			'No notes yet. Create your first note to capture ideas, documentation, or working knowledge.'
 	);
 	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New note');
 	let searchPlaceholder = $derived(module.ui.page.searchPlaceholder ?? 'Search notes...');
@@ -196,50 +303,15 @@
 				{#if viewMode === 'grid'}
 					<div class="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3">
 						{#each visibleNotes as note}
-							<a href={`/modules/${module.key}/${note.id}`} class="rounded-xl border border-base-300/50 p-4 transition-colors hover:border-brand-500/30 hover:bg-base-200/30">
-								<div class="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-base-200 text-base-content/55">
-									<FileText size={16} />
-								</div>
-								<p class="truncate text-sm font-medium text-base-content">{(note.metadata?.title || note.name || '').replace(/\.md$/i, '')}</p>
-								<p class="mt-1 line-clamp-2 text-xs text-base-content/55">{note.metadata?.excerpt || 'No preview available'}</p>
-								{#if note.attachment_count || note.drawing_count}
-									<div class="mt-2 flex items-center gap-3 text-xs text-base-content/50">
-										{#if note.attachment_count}
-											<span class="flex items-center gap-1">
-												<Paperclip size={12} />
-												{note.attachment_count}
-											</span>
-										{/if}
-										{#if note.drawing_count}
-											<span class="flex items-center gap-1">
-												<Image size={12} />
-												{note.drawing_count}
-											</span>
-										{/if}
+							<div class="relative rounded-xl border border-base-300/50 p-4 transition-colors hover:border-brand-500/30 hover:bg-base-200/30">
+								<a href={`/modules/${module.key}/${note.id}`} class="block">
+									<div class="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-base-200 text-base-content/55">
+										<FileText size={16} />
 									</div>
-								{/if}
-							</a>
-						{/each}
-					</div>
-				{:else}
-					<div class="divide-y divide-base-200">
-						{#each visibleNotes as note}
-							<a
-								href={`/modules/${module.key}/${note.id}`}
-								class="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-base-200/40"
-							>
-								<div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-200 text-base-content/55">
-									<FileText size={16} />
-								</div>
-								<div class="flex min-w-0 flex-1 flex-col">
-									<span class="truncate text-sm font-medium text-base-content">
-										{(note.metadata?.title || note.name || '').replace(/\.md$/i, '')}
-									</span>
-									<span class="line-clamp-1 text-xs text-base-content/55">
-										{note.metadata?.excerpt || 'No preview available'}
-									</span>
+									<p class="truncate pr-6 text-sm font-medium text-base-content">{(note.metadata?.title || note.name || '').replace(/\.md$/i, '')}</p>
+									<p class="mt-1 line-clamp-2 text-xs text-base-content/55">{note.metadata?.excerpt || 'No preview available'}</p>
 									{#if note.attachment_count || note.drawing_count}
-										<div class="mt-1 flex items-center gap-3 text-xs text-base-content/50">
+										<div class="mt-2 flex items-center gap-3 text-xs text-base-content/50">
 											{#if note.attachment_count}
 												<span class="flex items-center gap-1">
 													<Paperclip size={12} />
@@ -254,12 +326,52 @@
 											{/if}
 										</div>
 									{/if}
-								</div>
-								<span class="hidden text-xs text-base-content/55 sm:block">
-									{note.modified_at ? new Date(note.modified_at).toLocaleDateString() : ''}
-								</span>
-								<MoreHorizontal size={16} class="text-base-content/45" />
-							</a>
+								</a>
+								{@render noteActions(note, 'grid')}
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<div class="divide-y divide-base-200">
+						{#each visibleNotes as note}
+							<div class="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-base-200/40">
+								<a
+									href={`/modules/${module.key}/${note.id}`}
+									class="flex min-w-0 flex-1 items-center gap-4"
+								>
+									<div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-200 text-base-content/55">
+										<FileText size={16} />
+									</div>
+									<div class="flex min-w-0 flex-1 flex-col">
+										<span class="truncate text-sm font-medium text-base-content">
+											{(note.metadata?.title || note.name || '').replace(/\.md$/i, '')}
+										</span>
+										<span class="line-clamp-1 text-xs text-base-content/55">
+											{note.metadata?.excerpt || 'No preview available'}
+										</span>
+										{#if note.attachment_count || note.drawing_count}
+											<div class="mt-1 flex items-center gap-3 text-xs text-base-content/50">
+												{#if note.attachment_count}
+													<span class="flex items-center gap-1">
+														<Paperclip size={12} />
+														{note.attachment_count}
+													</span>
+												{/if}
+												{#if note.drawing_count}
+													<span class="flex items-center gap-1">
+														<Image size={12} />
+														{note.drawing_count}
+													</span>
+												{/if}
+											</div>
+										{/if}
+									</div>
+									<span class="hidden text-xs text-base-content/55 sm:block">
+										{note.modified_at ? new Date(note.modified_at).toLocaleDateString() : ''}
+									</span>
+								</a>
+								{@render noteActions(note, 'list')}
+							</div>
 						{/each}
 					</div>
 				{/if}
@@ -278,3 +390,86 @@
 		{/if}
 	</div>
 </ModulePageShell>
+
+{#snippet noteActions(note: any, position: 'list' | 'grid')}
+	<div class="dropdown dropdown-end {position === 'grid' ? 'absolute top-3 right-3' : ''}">
+		<button tabindex="0" class="btn btn-ghost btn-sm" aria-label="More options">
+			<MoreHorizontal size={16} />
+		</button>
+		<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
+		<ul
+			tabindex="0"
+			class="dropdown-content menu z-10 w-48 menu-sm rounded-box bg-base-200 p-1 shadow"
+		>
+			<li>
+				<button onclick={() => handleShowAttachments(note)}>
+					<Paperclip size={14} />
+					Show attachments
+					{#if note.attachment_count}
+						<span class="badge badge-sm">{note.attachment_count}</span>
+					{/if}
+				</button>
+			</li>
+			<li>
+				<button onclick={() => openRenameModal(note)}>
+					<Pencil size={14} />
+					Rename note
+				</button>
+			</li>
+			<li>
+				<button onclick={() => openMoveModal(note)}>
+					<FolderInput size={14} />
+					Move to folder
+				</button>
+			</li>
+			<li>
+				<button onclick={() => handleDuplicate(note)}>
+					<Copy size={14} />
+					Duplicate note
+				</button>
+			</li>
+			<div class="divider my-0"></div>
+			<li>
+				<button onclick={() => openDeleteModal(note)} class="text-error">
+					<Trash2 size={14} />
+					Delete note
+				</button>
+			</li>
+		</ul>
+	</div>
+{/snippet}
+
+<PromptModal
+	open={showRenameModal}
+	title="Rename note"
+	message="New title"
+	defaultValue={activeNote ? (activeNote.metadata?.title || activeNote.name || '').replace(/\.md$/i, '') : ''}
+	confirmLabel="Rename"
+	error={renameError}
+	isLoading={isRenaming}
+	onConfirm={handleRenameConfirm}
+	onCancel={() => {
+		showRenameModal = false;
+		renameError = '';
+	}}
+/>
+
+<MoveModal
+	open={showMoveModal}
+	loading={isMoving}
+	itemName={activeNote ? (activeNote.metadata?.title || activeNote.name || '').replace(/\.md$/i, '') : ''}
+	itemType="file"
+	currentFolderId={activeNote?.parent_folder_id ?? null}
+	itemId={activeNote?.id ?? null}
+	onClose={() => (showMoveModal = false)}
+	onConfirm={handleMoveConfirm}
+/>
+
+<DeleteConfirmation
+	open={showDeleteModal}
+	loading={isDeleting}
+	itemName={activeNote ? (activeNote.metadata?.title || activeNote.name || '').replace(/\.md$/i, '') : ''}
+	itemType="file"
+	onClose={() => (showDeleteModal = false)}
+	onConfirm={handleDeleteConfirm}
+/>

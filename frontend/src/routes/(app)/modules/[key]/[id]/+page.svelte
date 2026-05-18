@@ -30,6 +30,7 @@
 	let key = $derived(($page.params.key || '') as string);
 	let id = $derived(($page.params.id || '') as string);
 	let module = $derived(getModuleByKey(key));
+	let initialAttachmentsOpen = $derived($page.url.searchParams.get('attachments') === 'open');
 
 	// Determine which API to use
 	let api = $derived(
@@ -452,6 +453,7 @@
 			collab={key === 'notes'}
 			docId={id}
 			showNoteActions={key === 'notes'}
+			initialAttachmentsOpen={initialAttachmentsOpen}
 			on:save={handleSave}
 			on:back={handleBack}
 			on:modechange={handleModeChange}
