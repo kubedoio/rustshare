@@ -36,7 +36,7 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors", "limit"] }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "ipnetwork"] }
 rusqlite = { version = "0.32", features = ["bundled", "chrono", "uuid"] }
 
 # Serialization
