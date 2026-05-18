@@ -97,7 +97,7 @@
 		previewUrl?: string;
 	};
 
-	type WorkspaceMode = 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+	type WorkspaceMode = 'all' | 'photos' | 'recent' | 'starred' | 'deleted' | 'week';
 
 	let uploadTasks = $state<UploadTask[]>([]);
 	let selectionMode = $state(false);
@@ -192,6 +192,7 @@
 	let isCollectionMode = $derived(
 		workspaceMode === 'starred' ||
 		workspaceMode === 'recent' ||
+		workspaceMode === 'week' ||
 		workspaceMode === 'photos' ||
 		workspaceMode === 'deleted'
 	);
@@ -250,6 +251,14 @@
 			if (workspaceMode === 'recent') {
 				const allFiles = await listAllFiles();
 				return { folders: [], files: allFiles.slice(0, 30) };
+			}
+			if (workspaceMode === 'week') {
+				const allFiles = await listAllFiles();
+				const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+				const weekFiles = allFiles
+					.filter((f) => new Date(f.modified_at) >= weekAgo)
+					.sort((a, b) => new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime());
+				return { folders: [], files: weekFiles };
 			}
 
 			// For shared root
@@ -363,9 +372,11 @@
 			? 'Photos'
 			: workspaceMode === 'recent'
 				? 'Recent'
-				: workspaceMode === 'starred'
-					? 'Starred'
-					: 'Trash'
+				: workspaceMode === 'week'
+					? 'Updated This Week'
+					: workspaceMode === 'starred'
+						? 'Starred'
+						: 'Trash'
 		: activeRoot === 'shared'
 			? currentFolderId
 				? breadcrumbPath[breadcrumbPath.length - 1]?.name
@@ -379,9 +390,11 @@
 			? 'Image files in the current workspace, without the folder noise.'
 			: workspaceMode === 'recent'
 				? 'The latest created files in this workspace, sorted by newest first.'
-				: workspaceMode === 'starred'
-					? 'Pinned folders and files that need fast access without digging through the tree.'
-					: 'Recently deleted items live here until you restore them or remove them permanently.'
+				: workspaceMode === 'week'
+					? 'Files and artifacts updated within the last 7 days, sorted by latest first.'
+					: workspaceMode === 'starred'
+						? 'Pinned folders and files that need fast access without digging through the tree.'
+						: 'Recently deleted items live here until you restore them or remove them permanently.'
 		: activeRoot === 'shared'
 			? currentFolderId
 				? 'Shared folder contents.'
@@ -395,9 +408,11 @@
 			? 'No photos in this view'
 			: workspaceMode === 'recent'
 				? 'No files created yet'
-				: workspaceMode === 'starred'
-					? 'Nothing is starred yet'
-					: 'Deleted items will show up here'
+				: workspaceMode === 'week'
+					? 'No updates this week'
+					: workspaceMode === 'starred'
+						? 'Nothing is starred yet'
+						: 'Deleted items will show up here'
 		: activeRoot === 'shared'
 			? 'No shared folders'
 			: 'No files yet');
@@ -407,9 +422,11 @@
 			? 'Upload an image into this folder and it will show up here.'
 			: workspaceMode === 'recent'
 				? 'Create or upload a file and it will show up here.'
-				: workspaceMode === 'starred'
-					? 'Star a folder or file from its action menu and it will show up here.'
-					: 'Deleting a folder or file moves it here instead of removing it immediately.'
+				: workspaceMode === 'week'
+					? 'Files updated in the last 7 days will appear here.'
+					: workspaceMode === 'starred'
+						? 'Star a folder or file from its action menu and it will show up here.'
+						: 'Deleting a folder or file moves it here instead of removing it immediately.'
 		: activeRoot === 'shared'
 			? 'Items shared with you will appear here.'
 			: 'This folder is empty. Upload a file or create a folder to start organizing your workspace.');
@@ -445,8 +462,15 @@
 	// SORTING & FILTERING
 	// ============================================================================
 
-	let activeSortField = $derived(workspaceMode === 'recent' ? 'created_at' : $fileSortState.field);
-	let activeSortOrder = $derived(workspaceMode === 'recent' ? 'desc' : $fileSortState.order);
+	let activeSortField = $derived(
+		workspaceMode === 'recent' ? 'created_at' :
+		workspaceMode === 'week' ? 'modified_at' :
+		$fileSortState.field
+	);
+	let activeSortOrder = $derived(
+		workspaceMode === 'recent' || workspaceMode === 'week' ? 'desc' :
+		$fileSortState.order
+	);
 	let searchTerm = $derived($searchQuery.trim().toLowerCase());
 
 	function matchesSearch(name: string) {

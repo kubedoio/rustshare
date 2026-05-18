@@ -14,7 +14,7 @@
 		folders?: Folder[];
 		files?: FileType[];
 		viewMode?: 'grid' | 'list';
-		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted' | 'week';
 		isSharedRoot?: boolean;
 		isLoading?: boolean;
 		error?: Error | null;
