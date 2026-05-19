@@ -45,7 +45,8 @@
 
 	let editorElement: HTMLDivElement;
 	let editorWrapperElement: HTMLDivElement;
-	let editor: Editor | null = $state(null);
+	let editor: Editor | null = $state.raw(null);
+	let editorTick = $state(0);
 	let initialized = $state(false);
 	let isDragOver = $state(false);
 	let markdownUpdateTimer: ReturnType<typeof setTimeout> | null = $state(null);
@@ -60,7 +61,7 @@
 
 	// Excalidraw state
 	let showExcalidraw = $state(false);
-	let excalidrawInitialData: { elements?: any[]; appState?: any; files?: any } | null = $state(null);
+	let excalidrawInitialData: { elements?: any[]; appState?: any; files?: any } | null = $state.raw(null);
 	let sketchEditPos: number | null = $state(null);
 
 	onMount(() => {
@@ -109,7 +110,7 @@
 				checkSlashTrigger();
 			},
 			onSelectionUpdate: () => {
-				editor = editor; // Trigger Svelte reactivity
+				editorTick++; // Trigger Svelte reactivity
 				if (showSlashMenu) {
 					checkSlashTrigger();
 				}

@@ -176,7 +176,7 @@
 	});
 
 	async function handleSave(event: CustomEvent<{ content: string; docId?: string }>) {
-		if (event.detail.docId && event.detail.docId !== currentId()) {
+		if (event.detail.docId && event.detail.docId !== id) {
 			return;
 		}
 
@@ -193,7 +193,7 @@
 			documentPage?.markSaved(editorContent);
 			if (key === 'notes') {
 				const noteAttachments = serializeNoteAttachments();
-				queryClient.setQueryData(['module-item', currentKey(), currentId()], (previous: any) => {
+				queryClient.setQueryData(['module-item', key, id], (previous: any) => {
 					if (!previous) return previous;
 					const modifiedAt = saved?.modified_at ?? previous.modified_at;
 					return {
