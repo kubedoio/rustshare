@@ -543,7 +543,7 @@
 							{content}
 							editable={true}
 							hasAttachmentHandler={true}
-							bind:currentMarkdown
+							currentMarkdown={currentMarkdown}
 							on:change={handleEditorChange}
 							on:save={handleCollabSave}
 							on:ready
@@ -559,7 +559,7 @@
 						{content}
 						editable={true}
 						hasAttachmentHandler={true}
-						bind:currentMarkdown
+						currentMarkdown={currentMarkdown}
 						on:change={handleEditorChange}
 						on:attachment={toggleAttachments}
 						on:sketch={handleSketch}

@@ -20,7 +20,7 @@
 		permissions = WRITE_PERMISSIONS,
 		editable = true,
 		hasAttachmentHandler = false,
-		currentMarkdown = $bindable(content)
+		currentMarkdown = content
 	}: {
 		docId: string;
 		content?: string;
@@ -29,6 +29,8 @@
 		hasAttachmentHandler?: boolean;
 		currentMarkdown?: string;
 	} = $props();
+
+	let localMarkdown = $state(currentMarkdown);
 
 	let editorComponent: RichMarkdownEditor;
 	let status: 'saved' | 'unsaved' | 'saving' | 'error' = $state('saved');
@@ -58,7 +60,7 @@
 
 	function flushPendingSave(): void {
 		const markdown =
-			pendingMarkdown ?? editorComponent?.getMarkdown() ?? currentMarkdown ?? content;
+			pendingMarkdown ?? editorComponent?.getMarkdown() ?? localMarkdown ?? content;
 
 		if (inFlightMarkdown) {
 			pendingMarkdown = markdown;
@@ -84,12 +86,12 @@
 	}
 
 	function handleEditorChange(event: CustomEvent<{ markdown: string }>) {
-		currentMarkdown = event.detail.markdown;
-		pendingMarkdown = currentMarkdown;
+		localMarkdown = event.detail.markdown;
+		pendingMarkdown = localMarkdown;
 		if (!inFlightMarkdown) {
-			status = currentMarkdown === lastSavedMarkdown ? 'saved' : 'unsaved';
+			status = localMarkdown === lastSavedMarkdown ? 'saved' : 'unsaved';
 		}
-		dispatch('change', { markdown: currentMarkdown });
+		dispatch('change', { markdown: localMarkdown });
 		if (autosaveTimer) clearTimeout(autosaveTimer);
 		autosaveTimer = setTimeout(() => {
 			autosaveTimer = null;
@@ -126,7 +128,7 @@
 	export function getMarkdown(): string {
 		if (!editorComponent) return content;
 		const markdown = editorComponent.getMarkdown();
-		currentMarkdown = markdown;
+		localMarkdown = markdown;
 		pendingMarkdown = markdown;
 		return markdown;
 	}
@@ -147,7 +149,7 @@
 		inFlightMarkdown = null;
 		lastError = null;
 
-		const latestMarkdown = pendingMarkdown ?? currentMarkdown;
+		const latestMarkdown = pendingMarkdown ?? localMarkdown;
 		if (latestMarkdown !== lastSavedMarkdown) {
 			pendingMarkdown = latestMarkdown;
 			status = 'unsaved';
@@ -189,7 +191,7 @@
 			editable={resolvedEditable}
 			{hasAttachmentHandler}
 			syncExternalContent={false}
-			bind:currentMarkdown
+			currentMarkdown={currentMarkdown}
 			on:change={handleEditorChange}
 			on:ready
 			on:attachment

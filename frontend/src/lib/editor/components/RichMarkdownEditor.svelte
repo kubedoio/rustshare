@@ -22,7 +22,7 @@
 		content = '',
 		editable = true,
 		hasAttachmentHandler = false,
-		currentMarkdown = $bindable(content),
+		currentMarkdown = content,
 		syncExternalContent = true,
 		ydoc = undefined
 	}: {
@@ -49,6 +49,7 @@
 	let initialized = $state(false);
 	let isDragOver = $state(false);
 	let markdownUpdateTimer: ReturnType<typeof setTimeout> | null = $state(null);
+	let localMarkdown = $state(currentMarkdown);
 
 	// Slash menu state
 	let showSlashMenu = $state(false);
@@ -161,7 +162,7 @@
 					editor!.commands.setContent(newContent, { emitUpdate: false });
 				}
 				lastExternalContent = newContent;
-				currentMarkdown = newContent;
+				localMarkdown = newContent;
 			});
 		}
 	});
@@ -182,7 +183,7 @@
 			markdownUpdateTimer = null;
 			if (!editor) return;
 			const md = editorToMarkdown(editor);
-			currentMarkdown = md;
+			localMarkdown = md;
 			dispatch('change', { markdown: md });
 		}, 250);
 	}
@@ -437,7 +438,7 @@
 			markdownUpdateTimer = null;
 		}
 		const md = editorToMarkdown(editor);
-		currentMarkdown = md;
+		localMarkdown = md;
 		return md;
 	}
 
@@ -447,7 +448,7 @@
 	export function setContent(markdown: string): void {
 		if (editor) {
 			editor.commands.setContent(markdown, { emitUpdate: false });
-			currentMarkdown = markdown;
+			localMarkdown = markdown;
 			lastExternalContent = markdown;
 		}
 	}
