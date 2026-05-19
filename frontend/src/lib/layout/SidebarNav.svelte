@@ -64,7 +64,7 @@
 	const sharedFolderTreesQuery = createQuery<FolderTreeType[]>({
 		queryKey: ['shared-folder-trees'],
 		queryFn: async () => {
-			const folderShares = (get(receivedSharesQuery).data || []).filter(
+			const folderShares = ($receivedSharesQuery.data || []).filter(
 				(share) => share.resource_type === 'folder'
 			);
 			return Promise.all(folderShares.map((share) => getSharedFolderTree(share.resource_id)));
@@ -75,12 +75,50 @@
 	const allFilesQuery = createQuery({
 		queryKey: ['all-files'],
 		queryFn: () => listAllFiles(),
-		enabled: !!get(currentUser)
+		enabled: !!$currentUser
 	});
 
-	// We need 'get' from svelte/store because these queries are now stable and not derived,
-	// but we still want to react to their data changes using $ store syntax in the template.
-	import { get } from 'svelte/store';
+	$effect(() => {
+		folderTreeQuery.setOptions({
+			queryKey: ['folder-tree'],
+			queryFn: () => getFolderTree(),
+			enabled: variant === 'files',
+			refetchOnWindowFocus: true,
+			staleTime: 0
+		});
+	});
+
+	$effect(() => {
+		receivedSharesQuery.setOptions({
+			queryKey: ['received-shares'],
+			queryFn: () => listReceivedShares(),
+			enabled: variant === 'files'
+		});
+	});
+
+	$effect(() => {
+		sharedFolderTreesQuery.setOptions({
+			queryKey: ['shared-folder-trees'],
+			queryFn: async () => {
+				const folderShares = ($receivedSharesQuery.data || []).filter(
+					(share) => share.resource_type === 'folder'
+				);
+				return Promise.all(folderShares.map((share) => getSharedFolderTree(share.resource_id)));
+			},
+			enabled:
+				variant === 'files' &&
+				!!$receivedSharesQuery.data &&
+				$receivedSharesQuery.data.some((share) => share.resource_type === 'folder')
+		});
+	});
+
+	$effect(() => {
+		allFilesQuery.setOptions({
+			queryKey: ['all-files'],
+			queryFn: () => listAllFiles(),
+			enabled: !!$currentUser
+		});
+	});
 
 	let totalSizeUsed = $derived($allFilesQuery.data?.reduce((sum, file) => sum + file.size, 0) || 0);
 

@@ -39,22 +39,35 @@
 		})();
 	});
 
-	let unreadCountQuery = $derived(
-		createQuery({
+	const unreadCountQuery = createQuery({
+		queryKey: ['notifications-unread-count'],
+		queryFn: () => getUnreadNotificationCount(),
+		enabled: !!$currentUser,
+		refetchInterval: 30000
+	});
+
+	const allFilesQuery = createQuery({
+		queryKey: ['all-files'],
+		queryFn: () => listAllFiles(),
+		enabled: !!$currentUser
+	});
+
+	$effect(() => {
+		unreadCountQuery.setOptions({
 			queryKey: ['notifications-unread-count'],
 			queryFn: () => getUnreadNotificationCount(),
 			enabled: !!$currentUser,
 			refetchInterval: 30000
-		})
-	);
+		});
+	});
 
-	let allFilesQuery = $derived(
-		createQuery({
+	$effect(() => {
+		allFilesQuery.setOptions({
 			queryKey: ['all-files'],
 			queryFn: () => listAllFiles(),
 			enabled: !!$currentUser
-		})
-	);
+		});
+	});
 
 	let totalSizeUsed = $derived(
 		$allFilesQuery.data?.reduce(

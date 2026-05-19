@@ -113,13 +113,19 @@
 	let lastDocId = $state(docId);
 	let previewAttachment = $state<RichMarkdownAttachment | null>(null);
 
+	import { untrack } from 'svelte';
+
 	let canEdit = $derived(permissions.canEdit);
 	let isEditing = $derived(mode === 'edit' && canEdit);
 	$effect(() => {
 		if (docId !== lastDocId) {
-			currentMarkdown = content;
-			saveStatus = 'saved';
-			lastDocId = docId;
+			const newDocId = docId;
+			const newContent = content;
+			untrack(() => {
+				currentMarkdown = newContent;
+				saveStatus = 'saved';
+				lastDocId = newDocId;
+			});
 		}
 	});
 

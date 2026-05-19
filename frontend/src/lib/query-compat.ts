@@ -98,24 +98,16 @@ export function createQuery<
 		}
 	};
 
-	const makeResult = (): QueryStoreValue<TQueryFnData, TError, TData, TQueryData, TQueryKey> => ({
-		...observer.getOptimisticResult(queryClient.defaultQueryOptions(options)),
-		...methods
-	});
-
-	const store = readable<QueryStoreValue<TQueryFnData, TError, TData, TQueryData, TQueryKey>>(
-		makeResult(),
-		(set) => {
-			observer.setOptions(options);
-			set(makeResult());
-			return observer.subscribe((result) => {
-				set({ ...result, ...methods });
-			});
-		}
-	);
-
 	return {
-		subscribe: store.subscribe,
+		subscribe: (run) => {
+			run({
+				...observer.getOptimisticResult(queryClient.defaultQueryOptions(currentOptions)),
+				...methods
+			});
+			return observer.subscribe((result) => {
+				run({ ...result, ...methods });
+			});
+		},
 		...methods
 	};
 }

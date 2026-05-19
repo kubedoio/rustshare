@@ -45,35 +45,24 @@
 						: null
 	);
 
-	function currentKey() {
-		return $page.params.key || '';
-	}
-
-	function currentId() {
-		return $page.params.id || '';
-	}
-
-	function currentApi() {
-		const moduleKey = currentKey();
-		if (moduleKey === 'notes') return notesApi;
-		if (moduleKey === 'decisions') return decisionsApi;
-		if (moduleKey === 'meetings') return meetingsApi;
-		if (moduleKey === 'standups') return standupsApi;
-		return null;
-	}
-
 	const query = createQuery<any, Error, any, any, string[]>({
-		queryKey: ['module-item', currentKey(), currentId()],
-		queryFn: () => currentApi()?.get(currentId()),
-		enabled: !!currentApi() && !!currentId()
+		queryKey: ['module-item', key, id],
+		queryFn: () => api?.get(id),
+		enabled: !!api && !!id
+	});
+
+	$effect(() => {
+		query.setOptions({
+			queryKey: ['module-item', key, id],
+			queryFn: () => api?.get(id),
+			enabled: !!api && !!id
+		});
 	});
 
 	let item = $derived($query.data);
 	let content = $derived(item?.content ?? '');
 	let title = $derived(item?.metadata?.title || item?.name || '');
-	let subtitle = $derived(
-		key === 'notes' ? (item?.metadata?.excerpt || '') : ''
-	);
+	let subtitle = $derived(key === 'notes' ? (item?.metadata?.excerpt || '') : '');
 	let modifiedAt = $derived(
 		item?.modified_at
 			? key === 'meetings' && item?.metadata?.date
@@ -83,8 +72,16 @@
 					: `Last edited ${new Date(item.modified_at).toLocaleString()}`
 			: ''
 	);
-	let mode: EditorMode = $state(currentKey() === 'notes' ? 'edit' : 'read');
+
+	let mode: EditorMode = $state('read');
 	let saveStatus: EditorSaveStatus = $state('saved');
+
+	$effect(() => {
+		// Initialize mode based on module key when it changes
+		untrack(() => {
+			mode = key === 'notes' ? 'edit' : 'read';
+		});
+	});
 	let showShareModal = $state(false);
 	let showRenameModal = $state(false);
 	let renameError = $state('');
@@ -124,9 +121,20 @@
 			// (prevents background refetch from dropping unsaved uploads)
 			const serverIds = new Set(serverAttachments.map((a: RichMarkdownAttachment) => a.id));
 			const localOnly = untrack(() => attachments).filter((a) => !serverIds.has(a.id));
-			attachments = [...serverAttachments, ...localOnly];
-		} else if (untrack(() => attachments).length === 0) {
-			attachments = [];
+			const newAttachments = [...serverAttachments, ...localOnly];
+
+			untrack(() => {
+				// Only update if actually different to prevent unnecessary downstream reactivity
+				if (JSON.stringify(newAttachments) !== JSON.stringify(attachments)) {
+					attachments = newAttachments;
+				}
+			});
+		} else {
+			untrack(() => {
+				if (attachments.length > 0) {
+					attachments = [];
+				}
+			});
 		}
 	});
 

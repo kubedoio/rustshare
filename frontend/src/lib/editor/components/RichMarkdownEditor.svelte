@@ -148,20 +148,31 @@
 		}
 	});
 
+	import { untrack } from 'svelte';
+
 	// React to external content changes (e.g. after save + refetch)
 	let lastExternalContent = $state(content);
 	$effect(() => {
+		// Only sync if content actually changed from what we last saw from outside
 		if (editor && initialized && syncExternalContent && content !== lastExternalContent) {
-			if (content !== editorToMarkdown(editor)) {
-				editor.commands.setContent(content, { emitUpdate: false });
-			}
-			lastExternalContent = content;
-			currentMarkdown = content;
+			const newContent = content;
+			untrack(() => {
+				if (newContent !== editorToMarkdown(editor!)) {
+					editor!.commands.setContent(newContent, { emitUpdate: false });
+				}
+				lastExternalContent = newContent;
+				currentMarkdown = newContent;
+			});
 		}
 	});
+
 	$effect(() => {
+		// Keep lastExternalContent in sync even if syncExternalContent is false
 		if (!syncExternalContent && content !== lastExternalContent) {
-			lastExternalContent = content;
+			const newContent = content;
+			untrack(() => {
+				lastExternalContent = newContent;
+			});
 		}
 	});
 
