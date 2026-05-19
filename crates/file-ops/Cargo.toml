@@ -12,7 +12,7 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 walkdir = { workspace = true }
 tokio = { workspace = true }
-fs4 = { version = "0.13", features = ["tokio"] }
+fs4 = { version = "1.1", features = ["tokio"] }
 pathdiff = { workspace = true }
 notify = { workspace = true }
 chrono = { workspace = true }
