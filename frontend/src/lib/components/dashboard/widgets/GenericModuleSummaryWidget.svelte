@@ -12,10 +12,10 @@
 	} = $props();
 
 	let widget = $derived(module.ui.dashboard.widget);
-	let summaryQuery = $derived(createQuery({
+	const summaryQuery = createQuery({
 		queryKey: ['module-summary', module.key],
 		queryFn: () => getModuleSummary(module.key)
-	}));
+	});
 </script>
 
 <a class="widget-card widget-link" data-size={widget.size} href={`/modules/${module.key}`}>

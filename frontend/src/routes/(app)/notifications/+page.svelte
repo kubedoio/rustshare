@@ -14,10 +14,17 @@
 
 	let unreadOnly = $state(false);
 
-	let notificationsQuery = $derived(createQuery({
+	const notificationsQuery = createQuery({
 		queryKey: ['notifications', unreadOnly],
 		queryFn: () => listNotifications({ unreadOnly, limit: 100 })
-	}));
+	});
+
+	$effect(() => {
+		notificationsQuery.setOptions({
+			queryKey: ['notifications', unreadOnly],
+			queryFn: () => listNotifications({ unreadOnly, limit: 100 })
+		});
+	});
 
 	const markReadMutation = createMutation({
 		mutationFn: markNotificationRead,

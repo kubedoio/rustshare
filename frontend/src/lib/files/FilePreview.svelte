@@ -136,8 +136,8 @@
 		const request = getThumbnailRequest();
 
 		if (!request) {
-			currentRequestKey = null;
 			untrack(() => {
+				currentRequestKey = null;
 				clearThumbnail();
 				loading = false;
 				error = false;
@@ -147,8 +147,8 @@
 
 		if (request.key === currentRequestKey) return;
 
-		currentRequestKey = request.key;
 		untrack(() => {
+			currentRequestKey = request.key;
 			void loadThumbnail(request);
 		});
 	});

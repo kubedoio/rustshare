@@ -80,21 +80,22 @@
 
 	let allFiles = $derived(filterUserVisibleEntries($allFilesQuery.data ?? []));
 
-	let updatedThisWeek = $derived(() => {
-		const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-		return allFiles.filter((f) => new Date(f.modified_at) >= weekAgo).length;
-	});
+	let updatedThisWeek = $derived(
+		allFiles.filter(
+			(f) => new Date(f.modified_at) >= new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+		).length
+	);
 
 	let sharedItemsCount = $derived(allFiles.filter((f) => f.is_shared).length);
 
-	let recentArtifacts = $derived(() => {
-		return [...allFiles]
-			.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-			.slice(0, 30);
-	});
+	let recentArtifacts = $derived(
+		allFiles
+			.toSorted((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+			.slice(0, 30)
+	);
 
 	// Build a lookup map from artifact ID → current name using data already loaded
-	let nameLookup = $derived(() => {
+	let nameLookup = $derived.by(() => {
 		const map = new Map<string, string>();
 		for (const file of allFiles) {
 			map.set(file.id, file.name);
@@ -111,7 +112,7 @@
 	let enrichedActivities = $derived(
 		($activityStore ?? []).map((a) => ({
 			...a,
-			fileName: a.artifactId ? (nameLookup().get(a.artifactId) ?? a.fileName) : a.fileName
+			fileName: a.artifactId ? (nameLookup.get(a.artifactId) ?? a.fileName) : a.fileName
 		}))
 	);
 
@@ -279,7 +280,7 @@
 	const summaryCards = $derived([
 		{
 			label: 'Recent Artifacts',
-			value: recentArtifacts().length,
+			value: recentArtifacts.length,
 			subtitle: 'Last 30 items',
 			icon: Package,
 			iconColor: '#ea580c',
@@ -288,7 +289,7 @@
 		},
 		{
 			label: 'Updated This Week',
-			value: updatedThisWeek(),
+			value: updatedThisWeek,
 			subtitle: 'This week',
 			icon: Clock,
 			iconColor: '#16a34a',

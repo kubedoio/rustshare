@@ -243,73 +243,82 @@
 	});
 
 	// Query for the active workspace view
-	let filesQuery = $derived(createQuery<ApiFolderContents>({
-		queryKey: ['file-workspace', workspaceMode, currentFolderId, activeRoot],
-		queryFn: async () => {
-			if (workspaceMode === 'starred') return getStarredContents();
-			if (workspaceMode === 'deleted') return getDeletedContents();
-			if (workspaceMode === 'recent') {
-				const allFiles = await listAllFiles();
-				return { folders: [], files: allFiles.slice(0, 30) };
-			}
-			if (workspaceMode === 'week') {
-				const allFiles = await listAllFiles();
-				const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-				const weekFiles = allFiles
-					.filter((f) => new Date(f.modified_at) >= weekAgo)
-					.sort((a, b) => new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime());
-				return { folders: [], files: weekFiles };
-			}
-
-			// For shared root
-			if (activeRoot === 'shared') {
-				if (currentFolderId) {
-					// Inside a specific shared folder
-					return getSharedFolderContents(currentFolderId);
-				} else {
-					// At shared root - show list of received shares
-					const shares = await listReceivedShares();
-					// Transform shares into FolderContents format
-					return {
-						folders: shares
-							.filter((s) => s.resource_type === 'folder')
-							.map((s) => ({
-								id: s.resource_id,
-								name: s.resource_name,
-								path: s.resource_path,
-								parent_folder_id: null,
-								owner_id: s.shared_by,
-								created_at: s.created_at,
-								updated_at: s.created_at,
-								is_shared: true,
-								share_count: 1,
-								effective_permission: s.permission
-							})),
-						files: shares
-							.filter((s) => s.resource_type === 'file')
-							.map((s) => ({
-								id: s.resource_id,
-								name: s.resource_name,
-								path: s.resource_path,
-								size: 0,
-								mime_type: 'application/octet-stream',
-								parent_folder_id: null,
-								owner_id: s.shared_by,
-								current_version: 1,
-								created_at: s.created_at,
-								modified_at: s.created_at,
-								is_shared: true,
-								share_count: 1,
-								effective_permission: s.permission
-							}))
-					};
-				}
-			}
-
-			// Default my-files behavior
-			return getFolderContents(currentFolderId);
+	async function fetchWorkspaceContents() {
+		if (workspaceMode === 'starred') return getStarredContents();
+		if (workspaceMode === 'deleted') return getDeletedContents();
+		if (workspaceMode === 'recent') {
+			const allFiles = await listAllFiles();
+			return { folders: [], files: allFiles.slice(0, 30) };
 		}
-	}));
+		if (workspaceMode === 'week') {
+			const allFiles = await listAllFiles();
+			const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+			const weekFiles = allFiles
+				.filter((f) => new Date(f.modified_at) >= weekAgo)
+				.toSorted((a, b) => new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime());
+			return { folders: [], files: weekFiles };
+		}
+
+		// For shared root
+		if (activeRoot === 'shared') {
+			if (currentFolderId) {
+				// Inside a specific shared folder
+				return getSharedFolderContents(currentFolderId);
+			} else {
+				// At shared root - show list of received shares
+				const shares = await listReceivedShares();
+				// Transform shares into FolderContents format
+				return {
+					folders: shares
+						.filter((s) => s.resource_type === 'folder')
+						.map((s) => ({
+							id: s.resource_id,
+							name: s.resource_name,
+							path: s.resource_path,
+							parent_folder_id: null,
+							owner_id: s.shared_by,
+							created_at: s.created_at,
+							updated_at: s.created_at,
+							is_shared: true,
+							share_count: 1,
+							effective_permission: s.permission
+						})),
+					files: shares
+						.filter((s) => s.resource_type === 'file')
+						.map((s) => ({
+							id: s.resource_id,
+							name: s.resource_name,
+							path: s.resource_path,
+							size: 0,
+							mime_type: 'application/octet-stream',
+							parent_folder_id: null,
+							owner_id: s.shared_by,
+							current_version: 1,
+							created_at: s.created_at,
+							modified_at: s.created_at,
+							is_shared: true,
+							share_count: 1,
+							effective_permission: s.permission
+						}))
+				};
+			}
+		}
+
+		// Default my-files behavior
+		return getFolderContents(currentFolderId);
+	}
+
+	const filesQuery = createQuery<ApiFolderContents>({
+		queryKey: ['file-workspace', workspaceMode, currentFolderId, activeRoot],
+		queryFn: fetchWorkspaceContents
+	});
+
+	$effect(() => {
+		filesQuery.setOptions({
+			queryKey: ['file-workspace', workspaceMode, currentFolderId, activeRoot],
+			queryFn: fetchWorkspaceContents
+		});
+	});
 
 	// All files query (for storage stats)
 	const allFilesQuery = createQuery({

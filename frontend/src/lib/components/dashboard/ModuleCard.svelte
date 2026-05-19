@@ -19,11 +19,13 @@
 	let summaryMode = $derived(module.ui_config?.dashboard?.summaryMode ?? 'none');
 	let maxItems = $derived(module.ui_config?.dashboard?.maxItems ?? 4);
 
-	let summaryQuery = $derived(createQuery({
+	import { get } from 'svelte/store';
+
+	const summaryQuery = createQuery({
 		queryKey: ['module-summary', module.module_key],
 		queryFn: () => getModuleSummary(module.module_key),
-		enabled: summaryMode !== 'none'
-	}));
+		enabled: get($derived(summaryMode !== 'none'))
+	});
 
 	let summary = $derived($summaryQuery.data);
 	let hasSummary = $derived(summaryMode !== 'none' && summary && !$summaryQuery.isLoading);

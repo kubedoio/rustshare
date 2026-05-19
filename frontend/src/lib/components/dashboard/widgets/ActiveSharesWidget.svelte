@@ -11,10 +11,10 @@
 	} = $props();
 
 	let widget = $derived(module.ui.dashboard.widget);
-	let summaryQuery = $derived(createQuery({
+	const summaryQuery = createQuery({
 		queryKey: ['module-summary', module.key],
 		queryFn: () => getModuleSummary(module.key)
-	}));
+	});
 	let extra = $derived(($summaryQuery.data?.extra ?? {}) as { publicCount?: number; internalCount?: number });
 	let visibleItems = $derived(filterUserVisibleEntries($summaryQuery.data?.recent_items ?? []));
 </script>

@@ -46,55 +46,41 @@
 	// QUERIES
 	// ============================================================================
 
-	let folderTreeQuery = $derived(
-		createQuery<FolderTreeType>({
-			queryKey: ['folder-tree'],
-			queryFn: () => getFolderTree(),
-			enabled: variant === 'files',
-			refetchOnWindowFocus: true,
-			staleTime: 0
-		})
-	);
+	const folderTreeQuery = createQuery<FolderTreeType>({
+		queryKey: ['folder-tree'],
+		queryFn: () => getFolderTree(),
+		enabled: variant === 'files',
+		refetchOnWindowFocus: true,
+		staleTime: 0
+	});
 
 	// Query for received shares (for Shared tree)
-	let receivedSharesQuery = $derived(
-		createQuery<ReceivedShare[]>({
-			queryKey: ['received-shares'],
-			queryFn: () => listReceivedShares(),
-			enabled: variant === 'files'
-		})
-	);
+	const receivedSharesQuery = createQuery<ReceivedShare[]>({
+		queryKey: ['received-shares'],
+		queryFn: () => listReceivedShares(),
+		enabled: variant === 'files'
+	});
 
-	let sharedFolderTreesQuery = $derived(
-		createQuery<FolderTreeType[]>({
-			queryKey: [
-				'shared-folder-trees',
-				($receivedSharesQuery.data || [])
-					.filter((share) => share.resource_type === 'folder')
-					.map((share) => share.resource_id)
-					.sort()
-					.join(',')
-			],
-			queryFn: async () => {
-				const folderShares = ($receivedSharesQuery.data || []).filter(
-					(share) => share.resource_type === 'folder'
-				);
-				return Promise.all(folderShares.map((share) => getSharedFolderTree(share.resource_id)));
-			},
-			enabled:
-				variant === 'files' &&
-				!!$receivedSharesQuery.data &&
-				$receivedSharesQuery.data.some((share) => share.resource_type === 'folder')
-		})
-	);
+	const sharedFolderTreesQuery = createQuery<FolderTreeType[]>({
+		queryKey: ['shared-folder-trees'],
+		queryFn: async () => {
+			const folderShares = (get(receivedSharesQuery).data || []).filter(
+				(share) => share.resource_type === 'folder'
+			);
+			return Promise.all(folderShares.map((share) => getSharedFolderTree(share.resource_id)));
+		},
+		enabled: variant === 'files'
+	});
 
-	let allFilesQuery = $derived(
-		createQuery({
-			queryKey: ['all-files'],
-			queryFn: () => listAllFiles(),
-			enabled: !!$currentUser
-		})
-	);
+	const allFilesQuery = createQuery({
+		queryKey: ['all-files'],
+		queryFn: () => listAllFiles(),
+		enabled: !!get(currentUser)
+	});
+
+	// We need 'get' from svelte/store because these queries are now stable and not derived,
+	// but we still want to react to their data changes using $ store syntax in the template.
+	import { get } from 'svelte/store';
 
 	let totalSizeUsed = $derived($allFilesQuery.data?.reduce((sum, file) => sum + file.size, 0) || 0);
 

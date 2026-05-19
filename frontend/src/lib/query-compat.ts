@@ -15,6 +15,9 @@ import { queryClient } from '$lib/query-client';
 type QueryMethods<TQueryFnData, TError, TData, TQueryData, TQueryKey extends QueryKey> = {
 	refetch: QueryObserver<TQueryFnData, TError, TData, TQueryData, TQueryKey>['refetch'];
 	remove: () => void;
+	setOptions: (
+		options: QueryObserverOptions<TQueryFnData, TError, TData, TQueryData, TQueryKey>
+	) => void;
 };
 
 type MutationMethods<TData, TError, TVariables, TContext> = {
@@ -79,12 +82,19 @@ export function createQuery<
 		queryClient,
 		options
 	);
+
+	let currentOptions = options;
+
 	const methods: QueryMethods<TQueryFnData, TError, TData, TQueryData, TQueryKey> = {
 		refetch: observer.refetch.bind(observer),
 		remove: () => {
-			if (options.queryKey) {
-				queryClient.removeQueries({ queryKey: options.queryKey });
+			if (currentOptions.queryKey) {
+				queryClient.removeQueries({ queryKey: currentOptions.queryKey });
 			}
+		},
+		setOptions: (newOptions) => {
+			currentOptions = newOptions;
+			observer.setOptions(newOptions);
 		}
 	};
 
