@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import type { File } from '$lib/api/types';
 	import {
 		FileText,
@@ -23,6 +23,7 @@
 	let thumbnailUrl: string | null = $state(null);
 	let loading = $state(false);
 	let error = $state(false);
+	let currentRequestKey: string | null = null;
 
 	const sizeClasses = {
 		sm: 'w-10 h-10',
@@ -70,30 +71,56 @@
 		return false;
 	};
 
-	async function loadThumbnail() {
-		if (!file?.id || !isThumbnailSupported(file.mime_type, file.name)) {
-			loading = false;
-			return;
-		}
-		const targetFileId = file.id;
+	type ThumbnailRequest = {
+		fileId: string;
+		name: string;
+		mimeType: string;
+		size: 'sm' | 'md' | 'lg';
+		modifiedAt: string;
+		key: string;
+	};
 
-		// Clean up old thumbnail URL before loading new one
+	function getThumbnailRequest(): ThumbnailRequest | null {
+		if (!file?.id || !isThumbnailSupported(file.mime_type, file.name)) {
+			return null;
+		}
+
+		return {
+			fileId: file.id,
+			name: file.name,
+			mimeType: file.mime_type,
+			size,
+			modifiedAt: file.modified_at,
+			key: `${file.id}:${file.modified_at}:${size}`
+		};
+	}
+
+	function clearThumbnail() {
 		if (thumbnailUrl) {
 			URL.revokeObjectURL(thumbnailUrl);
 			thumbnailUrl = null;
 		}
+	}
+
+	async function loadThumbnail(request: ThumbnailRequest) {
+		clearThumbnail();
 
 		loading = true;
+		error = false;
 
 		try {
-			const response = await fetch(`/api/v1/files/${targetFileId}/thumbnail?size=${size}`, {
-				credentials: 'include'
-			});
+			const response = await fetch(
+				`/api/v1/files/${request.fileId}/thumbnail?size=${request.size}`,
+				{
+					credentials: 'include'
+				}
+			);
 
-			if (file.id !== targetFileId) return;
+			if (currentRequestKey !== request.key) return;
 
 			if (response.ok) {
 				const blob = await response.blob();
+				if (currentRequestKey !== request.key) return;
 				thumbnailUrl = URL.createObjectURL(blob);
 				error = false;
 			} else {
@@ -101,31 +128,39 @@
 				error = true;
 			}
 		} catch (err) {
-			if (file.id !== targetFileId) return;
+			if (currentRequestKey !== request.key) return;
 			console.error('Failed to load thumbnail:', err);
 			error = true;
 		} finally {
-			if (file.id === targetFileId) {
+			if (currentRequestKey === request.key) {
 				loading = false;
 			}
 		}
 	}
 
-	// Reactive: reload thumbnail when file changes
 	$effect(() => {
-		if (file?.id) {
-			const targetFileId = file.id;
-			loadThumbnail().then(() => {
-				if (file.id !== targetFileId) return;
-				// thumbnail loaded for current file
+		const request = getThumbnailRequest();
+
+		if (!request) {
+			currentRequestKey = null;
+			untrack(() => {
+				clearThumbnail();
+				loading = false;
+				error = false;
 			});
+			return;
 		}
+
+		if (request.key === currentRequestKey) return;
+
+		currentRequestKey = request.key;
+		untrack(() => {
+			void loadThumbnail(request);
+		});
 	});
 
 	onDestroy(() => {
-		if (thumbnailUrl) {
-			URL.revokeObjectURL(thumbnailUrl);
-		}
+		clearThumbnail();
 	});
 
 	// Special file types detection

@@ -44,10 +44,12 @@
 			)
 			.filter((standup) => {
 				if (statusFilter === 'all') return true;
-				const timestamp = new Date(standup.modified_at ?? standup.metadata?.updated_at ?? 0).getTime();
+				const timestamp = new Date(
+					standup.modified_at ?? standup.metadata?.updated_at ?? 0
+				).getTime();
 				return timestamp >= Date.now() - 30 * 24 * 60 * 60 * 1000;
 			})
-			.sort((a, b) => {
+			.toSorted((a, b) => {
 				const aTime = new Date(a.modified_at ?? a.metadata?.updated_at ?? 0).getTime();
 				const bTime = new Date(b.modified_at ?? b.metadata?.updated_at ?? 0).getTime();
 				return sortDirection === 'desc' ? bTime - aTime : aTime - bTime;
@@ -106,10 +108,14 @@ What needs follow-up or support?
 				date: now.toISOString(),
 				content
 			});
-			activityStore.addActivity('standup_created', result.metadata?.title || title || 'Untitled Standup', {
-				artifactId: result.id,
-				moduleKey: 'standups'
-			});
+			activityStore.addActivity(
+				'standup_created',
+				result.metadata?.title || title || 'Untitled Standup',
+				{
+					artifactId: result.id,
+					moduleKey: 'standups'
+				}
+			);
 			goto(`/modules/${module.key}/${result.id}`);
 			$standupsQuery.refetch();
 		} catch (err) {
@@ -140,13 +146,12 @@ What needs follow-up or support?
 	let itemPlural = $derived(module.ui.page.itemPlural ?? 'standup records');
 </script>
 
-<ModulePageShell title="Standup Records" subtitle="Capture daily team updates, blockers, and follow-up items.">
+<ModulePageShell
+	title="Standup Records"
+	subtitle="Capture daily team updates, blockers, and follow-up items."
+>
 	<div slot="primaryAction">
-		<button
-			class="btn gap-2 btn-sm btn-primary"
-			onclick={handleNewStandup}
-			disabled={isCreating}
-		>
+		<button class="btn gap-2 btn-sm btn-primary" onclick={handleNewStandup} disabled={isCreating}>
 			<Plus size={14} />
 			<span>New standup</span>
 		</button>
@@ -170,7 +175,7 @@ What needs follow-up or support?
 			</div>
 		{:else if standups.length === 0}
 			<EmptyState
-				icon={"📊"}
+				icon={'📊'}
 				title={emptyTitle}
 				description={emptyDescription}
 				actionLabel={emptyAction}
@@ -180,20 +185,27 @@ What needs follow-up or support?
 			<div class="overflow-hidden rounded-xl border border-base-300/60 bg-base-100">
 				<div class="flex flex-col gap-3 border-b border-base-200 p-3 lg:flex-row lg:items-center">
 					<label class="relative min-w-0 flex-1">
-						<Search size={16} class="absolute top-1/2 left-3 -translate-y-1/2 text-base-content/35" />
+						<Search
+							size={16}
+							class="absolute top-1/2 left-3 -translate-y-1/2 text-base-content/35"
+						/>
 						<input
 							class="input-bordered input input-sm w-full pl-9"
 							placeholder={searchPlaceholder}
 							bind:value={searchTerm}
 						/>
 					</label>
-					<select class="select-bordered select select-sm lg:w-40" bind:value={statusFilter} aria-label="Filter standups">
+					<select
+						class="select-bordered select select-sm lg:w-40"
+						bind:value={statusFilter}
+						aria-label="Filter standups"
+					>
 						<option value="all">{module.ui.page.filterLabel ?? 'All standups'}</option>
 						<option value="recent">Last 30 days</option>
 					</select>
 					<div class="ml-auto flex items-center gap-2">
 						<button
-							class="btn gap-2 btn-sm btn-outline"
+							class="btn gap-2 btn-outline btn-sm"
 							onclick={() => (sortDirection = sortDirection === 'desc' ? 'asc' : 'desc')}
 						>
 							<ArrowUpDown size={14} />
@@ -218,7 +230,11 @@ What needs follow-up or support?
 					</div>
 				</div>
 
-				<div class={viewMode === 'grid' ? 'grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3' : 'divide-y divide-base-200'}>
+				<div
+					class={viewMode === 'grid'
+						? 'grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3'
+						: 'divide-y divide-base-200'}
+				>
 					{#each visibleStandups as standup}
 						<a
 							href={`/modules/${module.key}/${standup.id}`}
@@ -226,28 +242,44 @@ What needs follow-up or support?
 								? 'rounded-xl border border-base-300/50 p-4 transition-colors hover:border-brand-500/30 hover:bg-base-200/30'
 								: 'flex items-center gap-4 px-4 py-3 transition-colors hover:bg-base-200/40'}
 						>
-							<div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-500/10 text-brand-500 {viewMode === 'grid' ? 'mb-3' : ''}">
+							<div
+								class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-500/10 text-brand-500 {viewMode ===
+								'grid'
+									? 'mb-3'
+									: ''}"
+							>
 								<CalendarDays size={16} />
 							</div>
 							<div class="flex min-w-0 flex-1 flex-col">
 								<span class="truncate text-sm font-medium text-base-content">
 									{standup.metadata?.title || standup.name}
 								</span>
-								<span class="text-xs text-base-content/55">{new Date(standup.modified_at).toLocaleDateString()}</span>
+								<span class="text-xs text-base-content/55"
+									>{new Date(standup.modified_at).toLocaleDateString()}</span
+								>
 							</div>
-							<span class="{viewMode === 'grid' ? 'mt-3 block' : 'hidden sm:block'} text-xs text-base-content/55">
+							<span
+								class="{viewMode === 'grid'
+									? 'mt-3 block'
+									: 'hidden sm:block'} text-xs text-base-content/55"
+							>
 								{new Date(standup.modified_at).toLocaleDateString()}
 							</span>
-							{#if viewMode === 'list'}<MoreHorizontal size={16} class="text-base-content/45" />{/if}
+							{#if viewMode === 'list'}<MoreHorizontal
+									size={16}
+									class="text-base-content/45"
+								/>{/if}
 						</a>
 					{/each}
 				</div>
 
-				<div class="flex items-center justify-between border-t border-base-200 px-4 py-3 text-sm text-base-content/60">
+				<div
+					class="flex items-center justify-between border-t border-base-200 px-4 py-3 text-sm text-base-content/60"
+				>
 					<span>{filteredStandups.length} {itemPlural}</span>
 					<label class="flex items-center gap-2">
 						<span>Items per page</span>
-						<select class="select-bordered select select-sm w-20" bind:value={itemsPerPage}>
+						<select class="select-bordered select w-20 select-sm" bind:value={itemsPerPage}>
 							<option value={20}>20</option>
 							<option value={50}>50</option>
 						</select>

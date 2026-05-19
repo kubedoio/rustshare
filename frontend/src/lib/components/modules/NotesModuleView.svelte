@@ -21,7 +21,14 @@
 		Trash2
 	} from 'lucide-svelte';
 
-	import { listNotes, createNote, deleteNote, renameNote, moveNote, duplicateNote } from '$lib/api/notes';
+	import {
+		listNotes,
+		createNote,
+		deleteNote,
+		renameNote,
+		moveNote,
+		duplicateNote
+	} from '$lib/api/notes';
 	import { activityStore } from '$lib/stores/activity';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
@@ -48,7 +55,9 @@
 	let searchTerm = $state('');
 	let statusFilter = $state<'all' | 'public' | 'private'>('all');
 	let sortDirection = $state<'desc' | 'asc'>('desc');
-	let viewMode = $state<'list' | 'grid'>(module.ui.page.layout === 'gallery-grid' ? 'grid' : 'list');
+	let viewMode = $state<'list' | 'grid'>(
+		module.ui.page.layout === 'gallery-grid' ? 'grid' : 'list'
+	);
 	let itemsPerPage = $state(20);
 
 	let activeNote = $state<any>(null);
@@ -64,10 +73,12 @@
 	let filteredNotes = $derived(
 		recentNotes
 			.filter((note) =>
-				(note.metadata?.title || note.name || '').toLowerCase().includes(searchTerm.trim().toLowerCase())
+				(note.metadata?.title || note.name || '')
+					.toLowerCase()
+					.includes(searchTerm.trim().toLowerCase())
 			)
 			.filter((note) => statusFilter === 'all' || note.metadata?.visibility === statusFilter)
-			.sort((a, b) => {
+			.toSorted((a, b) => {
 				const aTime = new Date(a.modified_at ?? a.metadata?.updated_at ?? 0).getTime();
 				const bTime = new Date(b.modified_at ?? b.metadata?.updated_at ?? 0).getTime();
 				return sortDirection === 'desc' ? bTime - aTime : aTime - bTime;
@@ -75,7 +86,11 @@
 	);
 	let visibleNotes = $derived(filteredNotes.slice(0, itemsPerPage));
 	let filterLabel = $derived(
-		statusFilter === 'public' ? 'Public notes' : statusFilter === 'private' ? 'Private notes' : module.ui.page.filterLabel ?? 'All notes'
+		statusFilter === 'public'
+			? 'Public notes'
+			: statusFilter === 'private'
+				? 'Private notes'
+				: (module.ui.page.filterLabel ?? 'All notes')
 	);
 	let sortLabel = $derived(sortDirection === 'desc' ? 'Modified' : 'Oldest first');
 
@@ -85,7 +100,9 @@
 		createError = '';
 
 		let title = 'Untitled Note';
-		const existingTitles = recentNotes.map((n) => n.metadata?.title?.toLowerCase() ?? n.name?.toLowerCase() ?? '');
+		const existingTitles = recentNotes.map(
+			(n) => n.metadata?.title?.toLowerCase() ?? n.name?.toLowerCase() ?? ''
+		);
 		if (existingTitles.includes(title.toLowerCase())) {
 			let counter = 2;
 			while (existingTitles.includes(`${title} ${counter}`.toLowerCase())) {
@@ -251,7 +268,7 @@
 			</div>
 		{:else if recentNotes.length === 0}
 			<EmptyState
-				icon={"📝"}
+				icon={'📝'}
 				title={emptyTitle}
 				description={emptyDescription}
 				actionLabel={emptyAction}
@@ -261,21 +278,28 @@
 			<div class="overflow-hidden rounded-xl border border-base-300/60 bg-base-100">
 				<div class="flex flex-col gap-3 border-b border-base-200 p-3 lg:flex-row lg:items-center">
 					<label class="relative min-w-0 flex-1">
-						<Search size={16} class="absolute top-1/2 left-3 -translate-y-1/2 text-base-content/35" />
+						<Search
+							size={16}
+							class="absolute top-1/2 left-3 -translate-y-1/2 text-base-content/35"
+						/>
 						<input
 							class="input-bordered input input-sm w-full pl-9"
 							placeholder={searchPlaceholder}
 							bind:value={searchTerm}
 						/>
 					</label>
-					<select class="select-bordered select select-sm lg:w-40" bind:value={statusFilter} aria-label="Filter notes">
+					<select
+						class="select-bordered select select-sm lg:w-40"
+						bind:value={statusFilter}
+						aria-label="Filter notes"
+					>
 						<option value="all">{module.ui.page.filterLabel ?? 'All notes'}</option>
 						<option value="private">Private notes</option>
 						<option value="public">Public notes</option>
 					</select>
 					<div class="ml-auto flex items-center gap-2">
 						<button
-							class="btn gap-2 btn-sm btn-outline"
+							class="btn gap-2 btn-outline btn-sm"
 							onclick={() => (sortDirection = sortDirection === 'desc' ? 'asc' : 'desc')}
 						>
 							<ArrowUpDown size={14} />
@@ -303,13 +327,21 @@
 				{#if viewMode === 'grid'}
 					<div class="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3">
 						{#each visibleNotes as note}
-							<div class="relative rounded-xl border border-base-300/50 p-4 transition-colors hover:border-brand-500/30 hover:bg-base-200/30">
+							<div
+								class="relative rounded-xl border border-base-300/50 p-4 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
+							>
 								<a href={`/modules/${module.key}/${note.id}`} class="block">
-									<div class="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-base-200 text-base-content/55">
+									<div
+										class="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-base-200 text-base-content/55"
+									>
 										<FileText size={16} />
 									</div>
-									<p class="truncate pr-6 text-sm font-medium text-base-content">{(note.metadata?.title || note.name || '').replace(/\.md$/i, '')}</p>
-									<p class="mt-1 line-clamp-2 text-xs text-base-content/55">{note.metadata?.excerpt || 'No preview available'}</p>
+									<p class="truncate pr-6 text-sm font-medium text-base-content">
+										{(note.metadata?.title || note.name || '').replace(/\.md$/i, '')}
+									</p>
+									<p class="mt-1 line-clamp-2 text-xs text-base-content/55">
+										{note.metadata?.excerpt || 'No preview available'}
+									</p>
 									{#if note.attachment_count || note.drawing_count}
 										<div class="mt-2 flex items-center gap-3 text-xs text-base-content/50">
 											{#if note.attachment_count}
@@ -339,7 +371,9 @@
 									href={`/modules/${module.key}/${note.id}`}
 									class="flex min-w-0 flex-1 items-center gap-4"
 								>
-									<div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-200 text-base-content/55">
+									<div
+										class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-200 text-base-content/55"
+									>
 										<FileText size={16} />
 									</div>
 									<div class="flex min-w-0 flex-1 flex-col">
@@ -376,11 +410,13 @@
 					</div>
 				{/if}
 
-				<div class="flex items-center justify-between border-t border-base-200 px-4 py-3 text-sm text-base-content/60">
+				<div
+					class="flex items-center justify-between border-t border-base-200 px-4 py-3 text-sm text-base-content/60"
+				>
 					<span>{filteredNotes.length} {itemPlural}</span>
 					<label class="flex items-center gap-2">
 						<span>Items per page</span>
-						<select class="select-bordered select select-sm w-20" bind:value={itemsPerPage}>
+						<select class="select-bordered select w-20 select-sm" bind:value={itemsPerPage}>
 							<option value={20}>20</option>
 							<option value={50}>50</option>
 						</select>
@@ -443,7 +479,9 @@
 	open={showRenameModal}
 	title="Rename note"
 	message="New title"
-	defaultValue={activeNote ? (activeNote.metadata?.title || activeNote.name || '').replace(/\.md$/i, '') : ''}
+	defaultValue={activeNote
+		? (activeNote.metadata?.title || activeNote.name || '').replace(/\.md$/i, '')
+		: ''}
 	confirmLabel="Rename"
 	error={renameError}
 	isLoading={isRenaming}
@@ -457,7 +495,9 @@
 <MoveModal
 	open={showMoveModal}
 	loading={isMoving}
-	itemName={activeNote ? (activeNote.metadata?.title || activeNote.name || '').replace(/\.md$/i, '') : ''}
+	itemName={activeNote
+		? (activeNote.metadata?.title || activeNote.name || '').replace(/\.md$/i, '')
+		: ''}
 	itemType="file"
 	currentFolderId={activeNote?.parent_folder_id ?? null}
 	itemId={activeNote?.id ?? null}
@@ -468,7 +508,9 @@
 <DeleteConfirmation
 	open={showDeleteModal}
 	loading={isDeleting}
-	itemName={activeNote ? (activeNote.metadata?.title || activeNote.name || '').replace(/\.md$/i, '') : ''}
+	itemName={activeNote
+		? (activeNote.metadata?.title || activeNote.name || '').replace(/\.md$/i, '')
+		: ''}
 	itemType="file"
 	onClose={() => (showDeleteModal = false)}
 	onConfirm={handleDeleteConfirm}

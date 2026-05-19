@@ -46,7 +46,7 @@
 					.includes(searchTerm.trim().toLowerCase())
 			)
 			.filter((decision) => statusFilter === 'all' || decision.metadata?.status === statusFilter)
-			.sort((a, b) => {
+			.toSorted((a, b) => {
 				const aTime = new Date(a.metadata?.decision_date ?? a.modified_at ?? 0).getTime();
 				const bTime = new Date(b.metadata?.decision_date ?? b.modified_at ?? 0).getTime();
 				return sortDirection === 'desc' ? bTime - aTime : aTime - bTime;
@@ -135,12 +135,12 @@
 	}
 </script>
 
-<ModulePageShell title="Decisions" subtitle="Record important decisions with context and rationale.">
+<ModulePageShell
+	title="Decisions"
+	subtitle="Record important decisions with context and rationale."
+>
 	<div slot="primaryAction">
-		<button
-			class="btn gap-2 btn-sm btn-primary"
-			onclick={handleCreateDecision}
-		>
+		<button class="btn gap-2 btn-sm btn-primary" onclick={handleCreateDecision}>
 			<Plus size={14} />
 			<span>New decision</span>
 		</button>
@@ -159,7 +159,7 @@
 			</div>
 		{:else if decisions.length === 0}
 			<EmptyState
-				icon={"✅"}
+				icon={'✅'}
 				title={emptyTitle}
 				description={emptyDescription}
 				actionLabel={emptyAction}
@@ -169,14 +169,21 @@
 			<div class="overflow-hidden rounded-xl border border-base-300/60 bg-base-100">
 				<div class="flex flex-col gap-3 border-b border-base-200 p-3 lg:flex-row lg:items-center">
 					<label class="relative min-w-0 flex-1">
-						<Search size={16} class="absolute top-1/2 left-3 -translate-y-1/2 text-base-content/35" />
+						<Search
+							size={16}
+							class="absolute top-1/2 left-3 -translate-y-1/2 text-base-content/35"
+						/>
 						<input
 							class="input-bordered input input-sm w-full pl-9"
 							placeholder={searchPlaceholder}
 							bind:value={searchTerm}
 						/>
 					</label>
-					<select class="select-bordered select select-sm lg:w-40" bind:value={statusFilter} aria-label="Filter decisions">
+					<select
+						class="select-bordered select select-sm lg:w-40"
+						bind:value={statusFilter}
+						aria-label="Filter decisions"
+					>
 						<option value="all">{module.ui.page.filterLabel ?? 'All decisions'}</option>
 						<option value="accepted">Accepted</option>
 						<option value="proposed">Proposed</option>
@@ -184,7 +191,7 @@
 					</select>
 					<div class="ml-auto flex items-center gap-2">
 						<button
-							class="btn gap-2 btn-sm btn-outline"
+							class="btn gap-2 btn-outline btn-sm"
 							onclick={() => (sortDirection = sortDirection === 'desc' ? 'asc' : 'desc')}
 						>
 							<ArrowUpDown size={14} />
@@ -209,7 +216,11 @@
 					</div>
 				</div>
 
-				<div class={viewMode === 'grid' ? 'grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3' : 'divide-y divide-base-200'}>
+				<div
+					class={viewMode === 'grid'
+						? 'grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3'
+						: 'divide-y divide-base-200'}
+				>
 					{#each visibleDecisions as decision}
 						<a
 							href={`/modules/${module.key}/${decision.id}`}
@@ -217,7 +228,12 @@
 								? 'rounded-xl border border-base-300/50 p-4 transition-colors hover:border-brand-500/30 hover:bg-base-200/30'
 								: 'flex items-center gap-4 px-4 py-3 transition-colors hover:bg-base-200/40'}
 						>
-							<div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-500/10 text-brand-500 {viewMode === 'grid' ? 'mb-3' : ''}">
+							<div
+								class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-500/10 text-brand-500 {viewMode ===
+								'grid'
+									? 'mb-3'
+									: ''}"
+							>
 								<FileText size={16} />
 							</div>
 							<div class="flex min-w-0 flex-1 flex-col">
@@ -233,19 +249,28 @@
 									{/if}
 								</div>
 							</div>
-							<span class="{viewMode === 'grid' ? 'mt-3 block' : 'hidden lg:block'} max-w-xs truncate text-xs text-base-content/55">
+							<span
+								class="{viewMode === 'grid'
+									? 'mt-3 block'
+									: 'hidden lg:block'} max-w-xs truncate text-xs text-base-content/55"
+							>
 								{decision.metadata?.category || 'General'}
 							</span>
-							{#if viewMode === 'list'}<MoreHorizontal size={16} class="text-base-content/45" />{/if}
+							{#if viewMode === 'list'}<MoreHorizontal
+									size={16}
+									class="text-base-content/45"
+								/>{/if}
 						</a>
 					{/each}
 				</div>
 
-				<div class="flex items-center justify-between border-t border-base-200 px-4 py-3 text-sm text-base-content/60">
+				<div
+					class="flex items-center justify-between border-t border-base-200 px-4 py-3 text-sm text-base-content/60"
+				>
 					<span>{filteredDecisions.length} {itemPlural}</span>
 					<label class="flex items-center gap-2">
 						<span>Items per page</span>
-						<select class="select-bordered select select-sm w-20" bind:value={itemsPerPage}>
+						<select class="select-bordered select w-20 select-sm" bind:value={itemsPerPage}>
 							<option value={20}>20</option>
 							<option value={50}>50</option>
 						</select>

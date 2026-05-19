@@ -68,7 +68,9 @@
 					}
 				})
 			);
-			return results.filter((r): r is { module: ModuleDefinition; summary: ModuleSummary } => r !== null);
+			return results.filter(
+				(r): r is { module: ModuleDefinition; summary: ModuleSummary } => r !== null
+			);
 		}
 	});
 
@@ -86,7 +88,7 @@
 	let sharedItemsCount = $derived(allFiles.filter((f) => f.is_shared).length);
 
 	let recentArtifacts = $derived(() => {
-		return allFiles
+		return [...allFiles]
 			.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 			.slice(0, 30);
 	});
@@ -97,7 +99,7 @@
 		for (const file of allFiles) {
 			map.set(file.id, file.name);
 		}
-		for (const { summary } of ($moduleSummariesQuery.data ?? [])) {
+		for (const { summary } of $moduleSummariesQuery.data ?? []) {
 			for (const item of summary.recent_items) {
 				map.set(item.id, item.name);
 			}
@@ -215,7 +217,10 @@
 		creating = true;
 		createError = '';
 		try {
-			const result = await createBrainstormBoard(`Idea Board — ${todayDateString()}`, 'template_blank_brainstorm');
+			const result = await createBrainstormBoard(
+				`Idea Board — ${todayDateString()}`,
+				'template_blank_brainstorm'
+			);
 			activityStore.addActivity('brainstorm_created', result.title || 'Untitled Idea Board', {
 				artifactId: result.id,
 				moduleKey: 'brainstorming'
@@ -268,7 +273,7 @@
 			iconColor: '#ca8a04',
 			iconBg: 'rgba(202, 138, 4, 0.1)',
 			onClick: handleNewBrainstorm
-		},
+		}
 	];
 
 	const summaryCards = $derived([
@@ -326,7 +331,10 @@
 			<!-- Left column -->
 			<div class="dashboard-main">
 				<MetricCards cards={summaryCards} />
-				<RecentActivity activities={enrichedActivities.slice(0, 6)} userName={$currentUser?.display_name} />
+				<RecentActivity
+					activities={enrichedActivities.slice(0, 6)}
+					userName={$currentUser?.display_name}
+				/>
 			</div>
 
 			<!-- Right column -->
