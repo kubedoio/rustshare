@@ -159,6 +159,13 @@ impl FolderMetadataStoreOps for MetadataStore {
         self.find_folder_by_id(id, owner_id).await
     }
 
+    async fn find_folder_by_id_unchecked(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<Option<rustshare_core::domain::Folder>> {
+        self.find_folder_by_id_unchecked(id).await
+    }
+
     async fn update_folder(&self, folder: &rustshare_core::domain::Folder) -> Result<()> {
         self.update_folder(folder).await
     }
@@ -258,6 +265,13 @@ impl ShareMetadataStoreOps for MetadataStore {
         actor_id: rustshare_core::domain::UserId,
     ) -> Result<Option<rustshare_core::domain::Share>> {
         self.get_share(id, actor_id).await
+    }
+
+    async fn get_share_by_id_unchecked(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<Option<rustshare_core::domain::Share>> {
+        self.get_share_unchecked(id).await
     }
 
     async fn get_share_by_token(

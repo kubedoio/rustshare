@@ -251,6 +251,13 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
         }
     }
 
+    async fn find_folder_by_id_unchecked(&self, id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
+        match self.repo.folders().get(id).await? {
+            Some(doc) => Ok(Some(folder_from_document(&doc))),
+            None => Ok(None),
+        }
+    }
+
     async fn update_folder(&self, folder: &Folder) -> anyhow::Result<()> {
         let doc = folder_to_document(folder);
         self.repo.folders().update(&doc).await.map_err(|e| e.into())
@@ -486,6 +493,13 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
                     Ok(None)
                 }
             }
+            None => Ok(None),
+        }
+    }
+
+    async fn get_share_by_id_unchecked(&self, id: uuid::Uuid) -> anyhow::Result<Option<Share>> {
+        match self.repo.shares().get(id).await? {
+            Some(doc) => Ok(Some(share_from_document(&doc))),
             None => Ok(None),
         }
     }

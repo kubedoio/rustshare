@@ -40,6 +40,11 @@ pub trait MetadataStoreOps: Send + Sync {
     /// Find a folder by ID.
     async fn find_folder_by_id(&self, id: FolderId, owner_id: UserId) -> Result<Option<Folder>>;
 
+    /// Find a folder by ID without owner filtering.
+    ///
+    /// Only use when the caller performs explicit access handling.
+    async fn find_folder_by_id_unchecked(&self, id: FolderId) -> Result<Option<Folder>>;
+
     /// Update a folder in the metadata store.
     async fn update_folder(&self, folder: &Folder) -> Result<()>;
 
@@ -296,28 +301,19 @@ where
     ) -> Result<Folder, FolderError> {
         tracing::info!(folder_id = %folder_id, user_id = %user_id, "folder_service::get_folder called");
 
-        // 1. Find folder by ID
+        // 1. Find folder by ID. This must not be owner-filtered; shared recipients
+        // are allowed to read non-owned folders once permission is verified.
         let folder = self
             .metadata_store
-            .find_folder_by_id(folder_id, user_id)
+            .find_folder_by_id_unchecked(folder_id)
             .await
             .map_err(|e| {
-                tracing::info!(folder_id = %folder_id, error = %e, "folder_service::get_folder: find_folder_by_id DB error");
+                tracing::info!(folder_id = %folder_id, error = %e, "folder_service::get_folder: find_folder_by_id_unchecked DB error");
                 FolderError::Database(e.to_string())
-            })?;
+            })?
+            .ok_or(FolderError::NotFound(folder_id))?;
 
-        let folder = match folder {
-            Some(f) => {
-                tracing::info!(folder_id = %folder_id, folder_path = %f.path, folder_owner = %f.owner_id, "folder_service::get_folder: folder found");
-                f
-            }
-            None => {
-                tracing::info!(folder_id = %folder_id, "folder_service::get_folder: folder NOT found in DB");
-                return Err(FolderError::NotFound(folder_id));
-            }
-        };
-
-        // 2. Check permissions using the resolver
+        // 2. Check permissions using the resolver.
         let perm_result = self
             .require_folder_permission(user_id, folder_id, SharePermissions::View)
             .await;
@@ -842,6 +838,10 @@ mod tests {
             id: FolderId,
             _owner_id: UserId,
         ) -> Result<Option<Folder>> {
+            Ok(self.folders.lock().unwrap().get(&id).cloned())
+        }
+
+        async fn find_folder_by_id_unchecked(&self, id: FolderId) -> Result<Option<Folder>> {
             Ok(self.folders.lock().unwrap().get(&id).cloned())
         }
 

@@ -2246,6 +2246,21 @@ impl MetadataStore {
         Ok(share)
     }
 
+    /// Find a share by ID without actor filtering.
+    pub async fn get_share_unchecked(&self, share_id: Uuid) -> Result<Option<Share>> {
+        let share = sqlx::query_as::<_, Share>(
+            r#"
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions::text AS permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
+            FROM shares
+            WHERE id = $1
+            "#
+        )
+        .bind(share_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(share)
+    }
+
     /// Get all active (non-revoked) shares for a file
     pub async fn get_file_shares(&self, file_id: Uuid) -> Result<Vec<Share>> {
         let shares = sqlx::query_as!(
