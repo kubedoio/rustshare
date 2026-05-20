@@ -5,6 +5,7 @@
 -->
 <script lang="ts">
 	import { createEventDispatcher, onDestroy } from 'svelte';
+	import { Editor } from '@tiptap/core';
 	import {
 		ArrowLeft,
 		Eye,
@@ -40,6 +41,8 @@
 	import { toastStore } from '$lib/stores/toast';
 
 	/** Purposeful Colors from CSS */
+	const DEFAULT_AUTOSAVE_DELAY_MS = 1500;
+
 	const PURPOSEFUL_COLORS = [
 		{ name: 'Default', value: null, class: 'bg-base-300' },
 		{ name: 'Blue', value: 'blue', class: 'bg-[var(--rs-accent-blue)]' },
@@ -62,7 +65,7 @@
 		breadcrumb = [],
 		metadata = '',
 		attachments = [],
-		autosaveDelay = 1500,
+		autosaveDelay = DEFAULT_AUTOSAVE_DELAY_MS,
 		showBack = true,
 		embedSketchesAsBase64 = true,
 		collab = false,
@@ -106,7 +109,15 @@
 		deleteDocument: void;
 	}>();
 
-	let editorComponent: RichMarkdownEditor | CollabEditor = $state() as unknown as RichMarkdownEditor | CollabEditor;
+	interface EditorComponent {
+		getMarkdown(): string;
+		getEditor(): Editor | null;
+		setContent(markdown: string): void;
+		markSaved?(markdown?: string): void;
+		markSaveError?(message?: string): void;
+		flush?(): void;
+	}
+	let editorComponent: EditorComponent | undefined = $state();
 	let currentMarkdown: string = $state(content);
 	let isAttachmentsOpen = $state(initialAttachmentsOpen);
 	let autosaveTimer: ReturnType<typeof setTimeout> | null = $state(null);
@@ -140,7 +151,7 @@
 		// If switching from edit to read, ensure any pending autosave is flushed
 		if (mode === 'edit' && editorComponent) {
 			currentMarkdown = editorComponent.getMarkdown();
-			if (collab && 'flush' in editorComponent) {
+			if (collab && editorComponent && typeof editorComponent.flush === 'function') {
 				editorComponent.flush();
 			} else if (saveStatus === 'unsaved') {
 				handleSave();
@@ -198,13 +209,13 @@
 	}
 
 	export function markSaved(markdown?: string): void {
-		if (editorComponent && 'markSaved' in editorComponent) {
+		if (editorComponent && typeof editorComponent.markSaved === 'function') {
 			editorComponent.markSaved(markdown);
 		}
 	}
 
 	export function markSaveError(message?: string): void {
-		if (editorComponent && 'markSaveError' in editorComponent) {
+		if (editorComponent && typeof editorComponent.markSaveError === 'function') {
 			editorComponent.markSaveError(message);
 		}
 	}
@@ -337,14 +348,14 @@
 	}
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="markdown-document-page">
 	<!-- Header bar -->
 	<header class="doc-header">
 		<div class="doc-header-left">
 			{#if showBack}
-				<button class="btn btn-ghost btn-sm" on:click={handleBack} aria-label="Go back">
+				<button class="btn btn-ghost btn-sm" onclick={handleBack} aria-label="Go back">
 					<ArrowLeft size={16} />
 				</button>
 			{/if}
@@ -386,7 +397,7 @@
 							{#each PURPOSEFUL_COLORS as c}
 								<button
 									class="group relative flex h-8 w-full items-center justify-center rounded-lg transition-all hover:bg-base-200"
-									on:click={() => {
+									onclick={() => {
 										color = c.value;
 										dispatch('save', { content: currentMarkdown || content, color: c.value });
 									}}
@@ -428,7 +439,7 @@
 			{#if canEdit}
 				<button
 					class="btn btn-sm {isEditing ? 'btn-primary' : 'btn-ghost'}"
-					on:click={toggleMode}
+					onclick={toggleMode}
 					title={isEditing ? 'Switch to read mode' : 'Switch to edit mode'}
 				>
 					{#if isEditing}
@@ -457,13 +468,13 @@
 							class="dropdown-content menu z-10 w-40 menu-sm rounded-box bg-base-200 p-1 shadow"
 						>
 							<li>
-								<button on:click={handleExportMarkdown}>
+								<button onclick={handleExportMarkdown}>
 									<FileText size={14} />
 									Markdown
 								</button>
 							</li>
 							<li>
-								<button on:click={handlePrint}>
+								<button onclick={handlePrint}>
 									<Download size={14} />
 									Save as PDF
 								</button>
@@ -482,7 +493,7 @@
 						class="dropdown-content menu z-10 w-52 menu-sm rounded-box bg-base-200 p-1 shadow"
 					>
 						<li>
-							<button on:click={toggleAttachments}>
+							<button onclick={toggleAttachments}>
 								<Paperclip size={14} />
 								{isAttachmentsOpen ? 'Hide' : 'Show'} Attachments
 								{#if attachments.length > 0}
@@ -492,25 +503,25 @@
 						</li>
 						{#if showNoteActions}
 							<li>
-								<button on:click={() => dispatch('rename')}>
+								<button onclick={() => dispatch('rename')}>
 									<Pencil size={14} />
 									Rename note
 								</button>
 							</li>
 							<li>
-								<button on:click={() => dispatch('move')}>
+								<button onclick={() => dispatch('move')}>
 									<FolderInput size={14} />
 									Move to folder
 								</button>
 							</li>
 							<li>
-								<button on:click={() => dispatch('duplicate')}>
+								<button onclick={() => dispatch('duplicate')}>
 									<Copy size={14} />
 									Duplicate note
 								</button>
 							</li>
 							<li>
-								<button on:click={() => dispatch('deleteDocument')} class="text-error">
+								<button onclick={() => dispatch('deleteDocument')} class="text-error">
 									<Trash2 size={14} />
 									Delete note
 								</button>
@@ -527,7 +538,7 @@
 		<nav aria-label="Breadcrumb" class="doc-breadcrumb">
 			{#each breadcrumb as crumb, i}
 				{#if crumb.onClick}
-					<button class="btn btn-ghost btn-xs" on:click={crumb.onClick}>
+					<button class="btn btn-ghost btn-xs" onclick={crumb.onClick}>
 						{crumb.label}
 					</button>
 				{:else}

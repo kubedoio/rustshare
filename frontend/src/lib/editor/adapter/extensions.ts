@@ -4,6 +4,7 @@
  * to ensure consistent rendering.
  */
 
+import type { Extensions } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import Underline from '@tiptap/extension-underline';
@@ -27,8 +28,8 @@ export interface EditorExtensionsOptions {
  * Returns the standard set of Tiptap extensions for the RustShare editor.
  * Both the viewer and editor must use identical extensions.
  */
-export function getEditorExtensions(options?: EditorExtensionsOptions) {
-	const extensions: any[] = [
+export function getEditorExtensions(options?: EditorExtensionsOptions): Extensions {
+	const extensions: Extensions = [
 		StarterKit.configure({
 			heading: { levels: [1, 2, 3] },
 			codeBlock: { HTMLAttributes: { class: 'editor-code-block' } },

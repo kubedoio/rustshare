@@ -4,6 +4,7 @@
  */
 
 import { Editor } from '@tiptap/core';
+import type { EditorProps } from '@tiptap/pm/view';
 import { getEditorExtensions } from './extensions';
 
 // ---------------------------------------------------------------------------
@@ -176,8 +177,11 @@ export function editorToMarkdown(editor: Editor): string {
 	if (!editor) return '';
 
 	try {
-		const storage = editor.storage as any;
-		const markdownStorage = storage?.markdown as { getMarkdown: () => string } | undefined;
+		interface MarkdownStorage {
+			markdown?: { getMarkdown: () => string };
+		}
+		const storage = editor.storage as MarkdownStorage;
+		const markdownStorage = storage?.markdown;
 
 		if (markdownStorage?.getMarkdown) {
 			return markdownStorage.getMarkdown();
@@ -203,7 +207,7 @@ export interface CreateEditorOptions {
 	onSelectionUpdate?: () => void;
 	onCreate?: () => void;
 	/** Additional ProseMirror editor props (e.g. handleDoubleClickOn) */
-	editorProps?: Record<string, any>;
+	editorProps?: EditorProps;
 	/** Optional Yjs document for collaborative editing */
 	ydoc?: import('yjs').Doc;
 }

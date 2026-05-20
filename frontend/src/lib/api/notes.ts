@@ -106,13 +106,7 @@ export async function toggleVisibility(noteId: string): Promise<VisibilityRespon
 }
 
 export async function getPublicNote(shareId: string): Promise<PublicNoteResponse> {
-	const response = await fetch(`/api/v1/public/notes/${shareId}`, {
-		credentials: 'include'
-	});
-	if (!response.ok) {
-		throw new Error('Failed to load public note');
-	}
-	return response.json();
+	return apiClient.get<PublicNoteResponse>(`/public/notes/${shareId}`);
 }
 export const notesApi = {
 	get: getNote,

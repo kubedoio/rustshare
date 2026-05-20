@@ -188,7 +188,7 @@ pub async fn list_audit_log(
     let mut bind_index: u32 = 1;
 
     // user_id filter — applied to actor_id column
-    let user_id_bind_pos = if user_id_active {
+    let _user_id_bind_pos = if user_id_active {
         let pos = bind_index;
         where_parts.push(format!("actor_id = ${}", pos));
         bind_index += 1;
@@ -198,7 +198,7 @@ pub async fn list_audit_log(
     };
 
     // from filter
-    let from_bind_pos = if query.from.is_some() {
+    let _from_bind_pos = if query.from.is_some() {
         let pos = bind_index;
         where_parts.push(format!("occurred_at >= ${}", pos));
         bind_index += 1;
@@ -208,7 +208,7 @@ pub async fn list_audit_log(
     };
 
     // to filter
-    let to_bind_pos = if query.to.is_some() {
+    let _to_bind_pos = if query.to.is_some() {
         let pos = bind_index;
         where_parts.push(format!("occurred_at <= ${}", pos));
         bind_index += 1;
@@ -245,14 +245,14 @@ LIMIT ${limit_pos} OFFSET ${offset_pos}"
     macro_rules! bind_params {
         ($q:expr) => {{
             let mut q = $q;
-            if let Some(_pos) = user_id_bind_pos {
-                q = q.bind(query.user_id.unwrap());
+            if let Some(user_id) = query.user_id {
+                q = q.bind(user_id);
             }
-            if let Some(_pos) = from_bind_pos {
-                q = q.bind(query.from.unwrap());
+            if let Some(from) = query.from {
+                q = q.bind(from);
             }
-            if let Some(_pos) = to_bind_pos {
-                q = q.bind(query.to.unwrap());
+            if let Some(to) = query.to {
+                q = q.bind(to);
             }
             q
         }};

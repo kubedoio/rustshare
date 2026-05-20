@@ -117,7 +117,7 @@
 	class="slash-menu"
 	style="top: {top}px; left: {left}px;"
 	bind:this={menuEl}
-	on:keydown={handleKeydown}
+	onkeydown={handleKeydown}
 	tabindex="0"
 	role="listbox"
 	aria-label="Insert block"
@@ -132,8 +132,8 @@
 				data-index={i}
 				role="option"
 				aria-selected={i === selectedIndex}
-				on:click={() => selectCommand(cmd)}
-				on:mouseenter={() => (selectedIndex = i)}
+				onclick={() => selectCommand(cmd)}
+				onmouseenter={() => (selectedIndex = i)}
 			>
 				<span class="slash-menu-icon">
 					<svelte:component this={getIcon(cmd.icon)} size={16} />

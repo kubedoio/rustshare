@@ -104,7 +104,7 @@
 				type="button"
 				class="toolbar-btn"
 				class:active={is('heading', { level: 1 })}
-				on:click={cmd((e) => e.chain().focus().toggleHeading({ level: 1 }).run())}
+				onclick={cmd((e) => e.chain().focus().toggleHeading({ level: 1 }).run())}
 				title="Heading 1"
 				aria-label="Heading 1"
 			>
@@ -114,7 +114,7 @@
 				type="button"
 				class="toolbar-btn"
 				class:active={is('heading', { level: 2 })}
-				on:click={cmd((e) => e.chain().focus().toggleHeading({ level: 2 }).run())}
+				onclick={cmd((e) => e.chain().focus().toggleHeading({ level: 2 }).run())}
 				title="Heading 2"
 				aria-label="Heading 2"
 			>
@@ -124,7 +124,7 @@
 				type="button"
 				class="toolbar-btn"
 				class:active={is('heading', { level: 3 })}
-				on:click={cmd((e) => e.chain().focus().toggleHeading({ level: 3 }).run())}
+				onclick={cmd((e) => e.chain().focus().toggleHeading({ level: 3 }).run())}
 				title="Heading 3"
 				aria-label="Heading 3"
 			>
@@ -140,7 +140,7 @@
 				type="button"
 				class="toolbar-btn"
 				class:active={is('bold')}
-				on:click={cmd((e) => e.chain().focus().toggleBold().run())}
+				onclick={cmd((e) => e.chain().focus().toggleBold().run())}
 				title="Bold (⌘B)"
 				aria-label="Bold"
 			>
@@ -150,7 +150,7 @@
 				type="button"
 				class="toolbar-btn"
 				class:active={is('italic')}
-				on:click={cmd((e) => e.chain().focus().toggleItalic().run())}
+				onclick={cmd((e) => e.chain().focus().toggleItalic().run())}
 				title="Italic (⌘I)"
 				aria-label="Italic"
 			>
@@ -160,7 +160,7 @@
 				type="button"
 				class="toolbar-btn"
 				class:active={is('underline')}
-				on:click={cmd((e) => e.chain().focus().toggleUnderline().run())}
+				onclick={cmd((e) => e.chain().focus().toggleUnderline().run())}
 				title="Underline (⌘U)"
 				aria-label="Underline"
 			>
@@ -170,7 +170,7 @@
 				type="button"
 				class="toolbar-btn"
 				class:active={is('code')}
-				on:click={cmd((e) => e.chain().focus().toggleCode().run())}
+				onclick={cmd((e) => e.chain().focus().toggleCode().run())}
 				title="Inline code"
 				aria-label="Inline code"
 			>
@@ -186,7 +186,7 @@
 				type="button"
 				class="toolbar-btn"
 				class:active={is('bulletList')}
-				on:click={cmd((e) => e.chain().focus().toggleBulletList().run())}
+				onclick={cmd((e) => e.chain().focus().toggleBulletList().run())}
 				title="Bullet list"
 				aria-label="Bullet list"
 			>
@@ -196,7 +196,7 @@
 				type="button"
 				class="toolbar-btn"
 				class:active={is('orderedList')}
-				on:click={cmd((e) => e.chain().focus().toggleOrderedList().run())}
+				onclick={cmd((e) => e.chain().focus().toggleOrderedList().run())}
 				title="Numbered list"
 				aria-label="Numbered list"
 			>
@@ -206,7 +206,7 @@
 				type="button"
 				class="toolbar-btn"
 				class:active={is('taskList')}
-				on:click={cmd((e) => e.chain().focus().toggleTaskList().run())}
+				onclick={cmd((e) => e.chain().focus().toggleTaskList().run())}
 				title="Task list"
 				aria-label="Task list"
 			>
@@ -222,7 +222,7 @@
 				type="button"
 				class="toolbar-btn"
 				class:active={is('blockquote')}
-				on:click={cmd((e) => e.chain().focus().toggleBlockquote().run())}
+				onclick={cmd((e) => e.chain().focus().toggleBlockquote().run())}
 				title="Blockquote"
 				aria-label="Blockquote"
 			>
@@ -232,7 +232,7 @@
 				type="button"
 				class="toolbar-btn"
 				class:active={is('codeBlock')}
-				on:click={cmd((e) => e.chain().focus().toggleCodeBlock().run())}
+				onclick={cmd((e) => e.chain().focus().toggleCodeBlock().run())}
 				title="Code block"
 				aria-label="Code block"
 			>
@@ -242,7 +242,7 @@
 				type="button"
 				class="toolbar-btn"
 				class:active={is('link')}
-				on:click={toggleLink}
+				onclick={toggleLink}
 				title={is('link') ? 'Remove link' : 'Insert link'}
 				aria-label={is('link') ? 'Remove link' : 'Insert link'}
 			>
@@ -255,7 +255,7 @@
 			<button
 				type="button"
 				class="toolbar-btn"
-				on:click={insertTable}
+				onclick={insertTable}
 				title="Insert table"
 				aria-label="Insert table"
 			>
@@ -264,7 +264,7 @@
 			<button
 				type="button"
 				class="toolbar-btn"
-				on:click={cmd((e) => e.chain().focus().setHorizontalRule().run())}
+				onclick={cmd((e) => e.chain().focus().setHorizontalRule().run())}
 				title="Horizontal rule"
 				aria-label="Horizontal rule"
 			>
@@ -279,7 +279,7 @@
 				<button
 					type="button"
 					class="toolbar-btn"
-					on:click={() => dispatch('attachment')}
+					onclick={() => dispatch('attachment')}
 					title="Attach file"
 					aria-label="Attach file"
 				>

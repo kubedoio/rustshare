@@ -30,7 +30,13 @@
 		currentMarkdown?: string;
 	} = $props();
 
+	const AUTOSAVE_DELAY_MS = 1000;
+
 	let localMarkdown = $state(currentMarkdown);
+
+	$effect(() => {
+		localMarkdown = currentMarkdown;
+	});
 
 	let editorComponent: RichMarkdownEditor;
 	let status: 'saved' | 'unsaved' | 'saving' | 'error' = $state('saved');
@@ -97,7 +103,7 @@
 		autosaveTimer = setTimeout(() => {
 			autosaveTimer = null;
 			flushPendingSave();
-		}, 1000);
+		}, AUTOSAVE_DELAY_MS);
 	}
 
 	function getStatusLabel() {
@@ -159,6 +165,7 @@
 				autosaveTimer = null;
 				flushPendingSave();
 			}, 0);
+			// Immediate flush for already-saved state transitions
 			return;
 		}
 
