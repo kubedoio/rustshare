@@ -47,7 +47,8 @@
 			clearTimeout(autosaveTimer);
 			autosaveTimer = null;
 		}
-		flushPendingSave();
+		// Do not dispatch save events during destruction — navigation-time
+		// flushing is handled by beforeNavigate in the parent page.
 	});
 
 	function startSave(markdown: string): void {

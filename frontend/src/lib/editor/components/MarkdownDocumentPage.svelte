@@ -323,6 +323,18 @@
 	export function insertAttachment(attachment: RichMarkdownAttachment) {
 		handleAttachmentInsert(new CustomEvent('insert', { detail: { attachment } }));
 	}
+
+	/**
+	 * Flushes any pending autosave without waiting for the server.
+	 * Call this in beforeNavigate so saves are dispatched before destruction.
+	 */
+	export function flush(): void {
+		if (collab && editorComponent && 'flush' in editorComponent) {
+			(editorComponent as CollabEditor).flush();
+		} else if (!collab && saveStatus === 'unsaved') {
+			handleSave();
+		}
+	}
 </script>
 
 <svelte:window on:keydown={handleKeydown} />

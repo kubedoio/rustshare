@@ -20,6 +20,17 @@
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import FileIcon from '$lib/components/icons/FileIcon.svelte';
 
+	function generateUUID(): string {
+		if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+			return crypto.randomUUID();
+		}
+		return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+			const r = (Math.random() * 16) | 0;
+			const v = c === 'x' ? r : (r & 0x3) | 0x8;
+			return v.toString(16);
+		});
+	}
+
 	type UploadQueueItem = {
 		id: string;
 		name: string;
@@ -203,7 +214,7 @@
 			: currentFolderId || $folderContentsQuery.data?.root_folder_id;
 
 		const queuedItems = fileList.map((file) => ({
-			id: `${file.name}-${file.size}-${crypto.randomUUID()}`,
+			id: `${file.name}-${file.size}-${generateUUID()}`,
 			name: file.name,
 			progress: 0,
 			status: 'queued' as const

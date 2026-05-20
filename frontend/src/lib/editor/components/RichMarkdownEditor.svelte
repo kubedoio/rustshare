@@ -130,17 +130,21 @@
 	});
 
 	onDestroy(() => {
-		if (markdownUpdateTimer) {
-			clearTimeout(markdownUpdateTimer);
-			markdownUpdateTimer = null;
+		try {
+			if (markdownUpdateTimer) {
+				clearTimeout(markdownUpdateTimer);
+				markdownUpdateTimer = null;
+			}
+			if (editor) {
+				editor.view.dom.removeEventListener('keydown', handleEditorKeydown);
+				editor.view.dom.removeEventListener('paste', handlePaste);
+				editor.destroy();
+				editor = null;
+			}
+			editorElement?.replaceChildren();
+		} catch (e) {
+			console.error('Error destroying RichMarkdownEditor:', e);
 		}
-		if (editor) {
-			editor.view.dom.removeEventListener('keydown', handleEditorKeydown);
-			editor.view.dom.removeEventListener('paste', handlePaste);
-			editor.destroy();
-			editor = null;
-		}
-		editorElement?.replaceChildren();
 	});
 
 	// React to editable prop changes

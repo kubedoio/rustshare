@@ -10,7 +10,7 @@
 	import { uploadFile, deleteFile } from '$lib/api/files';
 	import { getFolderContents } from '$lib/api/folders';
 	import { getModuleByKey } from '$lib/modules/registry';
-	import { goto } from '$app/navigation';
+	import { goto, beforeNavigate } from '$app/navigation';
 	import { Folder, Share2, Pencil } from 'lucide-svelte';
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
 	import ShareModal from '$lib/components/modals/ShareModal.svelte';
@@ -95,6 +95,12 @@
 	let documentPage = $state<MarkdownDocumentPage | undefined>(undefined);
 
 	let isFolderBacked = $derived(item?.name === 'note.md');
+
+	// Flush pending saves before navigation so events are dispatched while
+	// components are still mounted, avoiding errors during destruction.
+	beforeNavigate(() => {
+		documentPage?.flush();
+	});
 
 	$effect(() => {
 		if (item?.metadata?.attachments) {
