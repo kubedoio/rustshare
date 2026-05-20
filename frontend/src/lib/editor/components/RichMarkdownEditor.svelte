@@ -52,11 +52,7 @@
 	let initialized = $state(false);
 	let isDragOver = $state(false);
 	let markdownUpdateTimer: ReturnType<typeof setTimeout> | null = $state(null);
-	let localMarkdown = $state(currentMarkdown);
-
-	$effect(() => {
-		localMarkdown = currentMarkdown;
-	});
+	let localMarkdown = $state(untrack(() => currentMarkdown));
 
 	// Slash menu state
 	let showSlashMenu = $state(false);

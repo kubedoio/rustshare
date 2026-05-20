@@ -3,7 +3,7 @@
   Wraps RichMarkdownEditor and persists edits without requiring the save button.
 -->
 <script lang="ts">
-	import { onDestroy, createEventDispatcher } from 'svelte';
+	import { onDestroy, createEventDispatcher, untrack } from 'svelte';
 	import type { Editor } from '@tiptap/core';
 	import RichMarkdownEditor from './RichMarkdownEditor.svelte';
 	import type { EditorPermissions, RichMarkdownAttachment } from '../types';
@@ -32,11 +32,7 @@
 
 	const AUTOSAVE_DELAY_MS = 1000;
 
-	let localMarkdown = $state(currentMarkdown);
-
-	$effect(() => {
-		localMarkdown = currentMarkdown;
-	});
+	let localMarkdown = $state(untrack(() => currentMarkdown));
 
 	let editorComponent: RichMarkdownEditor;
 	let status: 'saved' | 'unsaved' | 'saving' | 'error' = $state('saved');
