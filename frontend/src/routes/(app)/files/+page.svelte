@@ -1623,7 +1623,7 @@
 	<title>{workspaceTitle} - RustShare</title>
 </svelte:head>
 
-<svelte:window on:keydown={handleKeyDown} />
+<svelte:window onkeydown={handleKeyDown} />
 
 <!-- Hidden file input for upload button -->
 <input
@@ -1631,7 +1631,7 @@
 	type="file"
 	class="hidden"
 	multiple
-	on:change={(e) => {
+	onchange={(e) => {
 		const target = e.target as HTMLInputElement;
 		if (target.files && target.files.length > 0) {
 			const files = Array.from(target.files);
@@ -1665,7 +1665,7 @@
 				<button
 					type="button"
 					class="flex items-center gap-2 rounded-lg border border-error/30 bg-error/10 px-3 py-1.5 text-sm font-medium text-error transition-colors hover:bg-error/20"
-					on:click={openEmptyTrashModal}
+					onclick={openEmptyTrashModal}
 				>
 					<svg
 						xmlns="http://www.w3.org/2000/svg"

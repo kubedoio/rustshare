@@ -30,7 +30,7 @@
 		<span class="text-sm text-base-content/60"
 			>{groups.length} group{groups.length !== 1 ? 's' : ''}</span
 		>
-		<button class="btn btn-sm btn-primary" on:click={onCreate}>New Group</button>
+		<button class="btn btn-sm btn-primary" onclick={onCreate}>New Group</button>
 	</div>
 
 	<div class="overflow-x-auto rounded-lg border border-base-300">
@@ -64,7 +64,7 @@
 								<a href="/admin/groups/{group.id}" class="btn btn-ghost btn-xs">Edit</a>
 								<button
 									class="btn text-error btn-ghost btn-xs"
-									on:click={() => handleDelete(group)}
+									onclick={() => handleDelete(group)}
 								>
 									Delete
 								</button>
@@ -91,10 +91,10 @@
 				cannot be undone.
 			</p>
 			<div class="modal-action">
-				<button class="btn btn-ghost" on:click={() => (confirmDelete = null)}>Cancel</button>
-				<button class="btn btn-error" on:click={confirmAndDelete}>Delete</button>
+				<button class="btn btn-ghost" onclick={() => (confirmDelete = null)}>Cancel</button>
+				<button class="btn btn-error" onclick={confirmAndDelete}>Delete</button>
 			</div>
 		</div>
-		<div class="modal-backdrop" on:click={() => (confirmDelete = null)} role="presentation"></div>
+		<div class="modal-backdrop" onclick={() => (confirmDelete = null)} role="presentation"></div>
 	</div>
 {/if}

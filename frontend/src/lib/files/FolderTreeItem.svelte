@@ -95,18 +95,18 @@
 			: 'text-base-content/70 hover:bg-base-200/50 hover:text-base-content'}
 			{isDragOver ? 'bg-brand-500/10 ring-2 ring-brand-500/50' : ''}"
 		style="padding-left: {level * 16 + 8}px"
-		on:click={handleClick}
-		on:contextmenu={handleContextMenu}
+		onclick={handleClick}
+		oncontextmenu={handleContextMenu}
 		draggable={!isRenaming}
-		on:dragstart={handleDragStart}
-		on:dragover={handleDragOver}
-		on:dragleave={handleDragLeave}
-		on:drop={handleDrop}
+		ondragstart={handleDragStart}
+		ondragover={handleDragOver}
+		ondragleave={handleDragLeave}
+		ondrop={handleDrop}
 		role="treeitem"
 		aria-selected={isSelected}
 		aria-expanded={isExpanded}
 		tabindex="0"
-		on:keydown={(e) => {
+		onkeydown={(e) => {
 			if (e.key === 'Enter') handleClick();
 			if (e.key === 'ArrowRight' && !isExpanded) onToggleExpand(folder);
 			if (e.key === 'ArrowLeft' && isExpanded) onToggleExpand(folder);
@@ -117,7 +117,7 @@
 			type="button"
 			class="flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-base-300/50
 				{folder.children === undefined && !isLoading ? 'invisible' : ''}"
-			on:click={handleToggle}
+			onclick={handleToggle}
 			tabindex="-1"
 		>
 			{#if isLoading}
@@ -141,10 +141,10 @@
 					type="text"
 					class="min-w-0 flex-1 rounded border border-brand-500 bg-base-100 px-1.5 py-0.5 text-xs focus:ring-2 focus:ring-brand-500/20 focus:outline-hidden"
 					value={renameValue}
-					on:input={(e) => (renameValue = e.currentTarget.value)}
-					on:keydown={(e) => onRenameKeydown(e, folder)}
-					on:blur={() => onRenameConfirm(folder)}
-					on:click|stopPropagation
+					oninput={(e) => (renameValue = e.currentTarget.value)}
+					onkeydown={(e) => onRenameKeydown(e, folder)}
+					onblur={() => onRenameConfirm(folder)}
+					onclick={(e) => { e.stopPropagation(); }}
 				/>
 			</div>
 		{:else}

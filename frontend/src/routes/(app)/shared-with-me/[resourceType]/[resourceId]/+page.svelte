@@ -175,7 +175,7 @@
 <div class="space-y-6">
 	<div class="flex items-center justify-between gap-4">
 		<div>
-			<button class="btn mb-2 -ml-2 btn-ghost btn-sm" on:click={() => goto('/shared-with-me')}>
+			<button class="btn mb-2 -ml-2 btn-ghost btn-sm" onclick={() => goto('/shared-with-me')}>
 				← Back to Shared with Me
 			</button>
 			<h1 class="text-3xl font-bold">
@@ -254,13 +254,13 @@
 							</div>
 
 							<div class="flex gap-3">
-								<button class="btn btn-ghost" on:click={copyCurrentLocationLink}>
+								<button class="btn btn-ghost" onclick={copyCurrentLocationLink}>
 									Copy Link
 								</button>
-								<button class="btn btn-primary" on:click={() => openPreview($fileQuery.data)}>
+								<button class="btn btn-primary" onclick={() => openPreview($fileQuery.data)}>
 									Preview
 								</button>
-								<button class="btn btn-outline" on:click={() => handleDownload($fileQuery.data)}>
+								<button class="btn btn-outline" onclick={() => handleDownload($fileQuery.data)}>
 									Download
 								</button>
 							</div>
@@ -321,7 +321,7 @@
 							<div class="breadcrumbs text-sm">
 								<ul>
 									<li>
-										<button type="button" class="link link-hover" on:click={navigateToRootFolder}>
+										<button type="button" class="link link-hover" onclick={navigateToRootFolder}>
 											{shareEntry.resource_name}
 										</button>
 									</li>
@@ -330,7 +330,7 @@
 											<button
 												type="button"
 												class="link link-hover"
-												on:click={() => navigateToNestedFolder(index)}
+												onclick={() => navigateToNestedFolder(index)}
 											>
 												{folder.name}
 											</button>
@@ -339,7 +339,7 @@
 								</ul>
 							</div>
 						</div>
-						<button class="btn btn-outline btn-sm" on:click={copyCurrentLocationLink}>
+						<button class="btn btn-outline btn-sm" onclick={copyCurrentLocationLink}>
 							Copy Current Link
 						</button>
 					</div>
@@ -371,7 +371,7 @@
 													<button
 														type="button"
 														class="flex items-center gap-3 font-medium hover:text-primary"
-														on:click={() => openNestedFolder(folder)}
+														onclick={() => openNestedFolder(folder)}
 													>
 														<span class="text-xl">📁</span>
 														<span>{folder.name}</span>
@@ -384,7 +384,7 @@
 													<button
 														type="button"
 														class="btn btn-outline btn-sm"
-														on:click={() => openNestedFolder(folder)}
+														onclick={() => openNestedFolder(folder)}
 													>
 														Open
 													</button>
@@ -398,7 +398,7 @@
 													<button
 														type="button"
 														class="flex items-center gap-3 font-medium hover:text-primary"
-														on:click={() => openPreview(file)}
+														onclick={() => openPreview(file)}
 													>
 														<FileIcon
 															mimeType={file.mime_type}
@@ -416,14 +416,14 @@
 														<button
 															type="button"
 															class="btn btn-ghost btn-sm"
-															on:click={() => openPreview(file)}
+															onclick={() => openPreview(file)}
 														>
 															Preview
 														</button>
 														<button
 															type="button"
 															class="btn btn-outline btn-sm"
-															on:click={() => handleDownload(file)}
+															onclick={() => handleDownload(file)}
 														>
 															Download
 														</button>

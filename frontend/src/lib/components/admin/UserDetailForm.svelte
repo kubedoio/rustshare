@@ -144,7 +144,7 @@
 	<div class="card bg-base-100 shadow">
 		<div class="card-body">
 			<h3 class="card-title text-base">Edit Details</h3>
-			<form on:submit|preventDefault={handleSubmit} class="mt-2 space-y-4">
+			<form onsubmit={(e) => { e.preventDefault(); handleSubmit(e); }} class="mt-2 space-y-4">
 				<div class="form-control">
 					<label class="label" for="edit-email"><span class="label-text">Email</span></label>
 					<input
@@ -260,7 +260,7 @@
 				{#if user.disabled_at}
 					<button
 						class="btn btn-outline btn-sm btn-success"
-						on:click={() => $enableMutation.mutate()}
+						onclick={() => $enableMutation.mutate()}
 						disabled={$enableMutation.isPending}
 					>
 						{$enableMutation.isPending ? 'Enabling...' : 'Enable Account'}
@@ -268,12 +268,12 @@
 				{:else}
 					<button
 						class="btn btn-outline btn-sm btn-warning"
-						on:click={() => (confirmDisable = true)}
+						onclick={() => (confirmDisable = true)}
 					>
 						Disable Account
 					</button>
 				{/if}
-				<button class="btn btn-outline btn-sm btn-error" on:click={() => (confirmDelete = true)}>
+				<button class="btn btn-outline btn-sm btn-error" onclick={() => (confirmDelete = true)}>
 					Delete User
 				</button>
 			</div>
@@ -291,17 +291,17 @@
 				log in.
 			</p>
 			<div class="modal-action">
-				<button class="btn btn-ghost" on:click={() => (confirmDisable = false)}>Cancel</button>
+				<button class="btn btn-ghost" onclick={() => (confirmDisable = false)}>Cancel</button>
 				<button
 					class="btn btn-warning"
-					on:click={() => $disableMutation.mutate()}
+					onclick={() => $disableMutation.mutate()}
 					disabled={$disableMutation.isPending}
 				>
 					{$disableMutation.isPending ? 'Disabling...' : 'Disable'}
 				</button>
 			</div>
 		</div>
-		<div class="modal-backdrop" on:click={() => (confirmDisable = false)} role="presentation"></div>
+		<div class="modal-backdrop" onclick={() => (confirmDisable = false)} role="presentation"></div>
 	</div>
 {/if}
 
@@ -315,16 +315,16 @@
 				cannot be undone.
 			</p>
 			<div class="modal-action">
-				<button class="btn btn-ghost" on:click={() => (confirmDelete = false)}>Cancel</button>
+				<button class="btn btn-ghost" onclick={() => (confirmDelete = false)}>Cancel</button>
 				<button
 					class="btn btn-error"
-					on:click={() => $deleteMutation.mutate()}
+					onclick={() => $deleteMutation.mutate()}
 					disabled={$deleteMutation.isPending}
 				>
 					{$deleteMutation.isPending ? 'Deleting...' : 'Delete'}
 				</button>
 			</div>
 		</div>
-		<div class="modal-backdrop" on:click={() => (confirmDelete = false)} role="presentation"></div>
+		<div class="modal-backdrop" onclick={() => (confirmDelete = false)} role="presentation"></div>
 	</div>
 {/if}

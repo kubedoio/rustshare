@@ -75,7 +75,7 @@
 						id="audit-type"
 						class="select-bordered select w-40 select-sm"
 						bind:value={typeFilter}
-						on:change={applyFilters}
+						onchange={applyFilters}
 					>
 						<option value="">All</option>
 						<option value="share_access">Share Access</option>
@@ -94,7 +94,7 @@
 						class="input-bordered input input-sm w-44"
 						bind:value={userSearch}
 						placeholder="Filter by user..."
-						on:input={applyFilters}
+						oninput={applyFilters}
 					/>
 				</div>
 
@@ -107,7 +107,7 @@
 						type="date"
 						class="input-bordered input input-sm"
 						bind:value={fromDate}
-						on:change={applyFilters}
+						onchange={applyFilters}
 					/>
 				</div>
 
@@ -119,7 +119,7 @@
 						type="date"
 						class="input-bordered input input-sm"
 						bind:value={toDate}
-						on:change={applyFilters}
+						onchange={applyFilters}
 					/>
 				</div>
 
@@ -161,7 +161,7 @@
 						<td class="font-data text-sm text-base-content/70">{entry.target_label ?? '—'}</td>
 						<td>
 							{#if Object.keys(entry.detail).length > 0}
-								<button class="btn btn-ghost btn-xs" on:click={() => toggleExpand(entry.id)}>
+								<button class="btn btn-ghost btn-xs" onclick={() => toggleExpand(entry.id)}>
 									{expandedId === entry.id ? 'Collapse' : 'Expand'}
 								</button>
 							{:else}
@@ -196,7 +196,7 @@
 			<button
 				class="btn btn-ghost btn-sm"
 				disabled={page <= 1}
-				on:click={() => onPageChange(page - 1)}
+				onclick={() => onPageChange(page - 1)}
 			>
 				Previous
 			</button>
@@ -204,7 +204,7 @@
 			<button
 				class="btn btn-ghost btn-sm"
 				disabled={page >= totalPages}
-				on:click={() => onPageChange(page + 1)}
+				onclick={() => onPageChange(page + 1)}
 			>
 				Next
 			</button>

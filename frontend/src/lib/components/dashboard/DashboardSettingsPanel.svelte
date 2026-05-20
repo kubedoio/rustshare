@@ -38,7 +38,7 @@
 			<button
 				type="button"
 				class="settings-btn reset"
-				on:click={() => dashboardConfig.reset(modules)}
+				onclick={() => dashboardConfig.reset(modules)}
 				title="Reset to defaults"
 			>
 				<RotateCcw size={14} />
@@ -47,7 +47,7 @@
 			<button
 				type="button"
 				class="settings-btn done"
-				on:click={() => dashboardConfig.setEditMode(false)}
+				onclick={() => dashboardConfig.setEditMode(false)}
 			>
 				<Check size={14} />
 				<span>Done</span>
@@ -62,7 +62,7 @@
 					type="button"
 					class="toggle-btn"
 					class:enabled={isEnabled(module.key)}
-					on:click={() => dashboardConfig.toggleModule(module.key)}
+					onclick={() => dashboardConfig.toggleModule(module.key)}
 					title={isEnabled(module.key) ? 'Hide module' : 'Show module'}
 					aria-pressed={isEnabled(module.key)}
 				>
@@ -82,7 +82,7 @@
 						type="button"
 						class="reorder-btn"
 						disabled={!canMoveUp(module.key)}
-						on:click={() => dashboardConfig.moveModule(module.key, 'up')}
+						onclick={() => dashboardConfig.moveModule(module.key, 'up')}
 						title="Move up"
 					>
 						<ArrowUp size={14} />
@@ -91,7 +91,7 @@
 						type="button"
 						class="reorder-btn"
 						disabled={!canMoveDown(module.key)}
-						on:click={() => dashboardConfig.moveModule(module.key, 'down')}
+						onclick={() => dashboardConfig.moveModule(module.key, 'down')}
 						title="Move down"
 					>
 						<ArrowDown size={14} />

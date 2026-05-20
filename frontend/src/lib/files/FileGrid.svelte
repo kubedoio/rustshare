@@ -214,7 +214,7 @@
 			<button
 				type="button"
 				class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-600"
-				on:click={() => document.getElementById('upload-file-input')?.click()}
+				onclick={() => document.getElementById('upload-file-input')?.click()}
 			>
 				{emptyActionLabel}
 			</button>

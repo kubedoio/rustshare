@@ -237,7 +237,7 @@
 					<button
 						type="button"
 						class="inline-flex w-full items-center justify-center gap-2 border border-base-300/80 bg-base-100 px-4 py-3 text-sm font-semibold text-base-content transition-colors hover:border-brand-500/25 hover:bg-base-200 disabled:opacity-50"
-						on:click={handleOidcLogin}
+						onclick={handleOidcLogin}
 						disabled={isLoading}
 					>
 						<svg
@@ -284,7 +284,7 @@
 						</div>
 					{/if}
 
-					<form on:submit={handleSubmit} class="space-y-4">
+					<form onsubmit={handleSubmit} class="space-y-4">
 						<div>
 							<label for="email" class="mb-1.5 block text-sm font-semibold text-base-content"
 								>Email</label

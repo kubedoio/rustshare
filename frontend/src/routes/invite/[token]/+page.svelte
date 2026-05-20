@@ -216,7 +216,7 @@
 								'form'
 									? 'text-brand-400'
 									: 'text-white/40'}"
-								on:click={() => (currentStep = 'form')}
+								onclick={() => (currentStep = 'form')}
 							>
 								<span
 									class="flex h-5 w-5 items-center justify-center rounded-full text-[10px] {currentStep ===
@@ -302,7 +302,7 @@
 							<button
 								type="button"
 								class="w-full rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-brand-500/30 transition-all hover:bg-brand-600 active:scale-[0.98]"
-								on:click={() => {
+								onclick={() => {
 									const err = validateForm().replace('Please accept the Terms & Conditions.', '');
 									if (err.trim()) {
 										submitError = err;
@@ -322,7 +322,7 @@
 								type="button"
 								class="w-full rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-brand-500/30 transition-all hover:bg-brand-600 active:scale-[0.98] disabled:opacity-60"
 								disabled={isSubmitting}
-								on:click={handleSubmit}
+								onclick={handleSubmit}
 							>
 								{isSubmitting ? 'Creating account...' : 'Create Account'}
 							</button>
@@ -362,13 +362,13 @@
 							<button
 								type="button"
 								class="flex-1 rounded-xl border border-white/10 px-4 py-2.5 text-sm font-semibold text-white/60 transition-all hover:bg-white/5"
-								on:click={() => (currentStep = 'form')}>← Back</button
+								onclick={() => (currentStep = 'form')}>← Back</button
 							>
 							<button
 								type="button"
 								class="flex-1 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-brand-500/30 transition-all hover:bg-brand-600 active:scale-[0.98] disabled:opacity-60"
 								disabled={isSubmitting || !termsAccepted}
-								on:click={handleSubmit}
+								onclick={handleSubmit}
 							>
 								{isSubmitting ? 'Creating account...' : 'Accept & Create Account'}
 							</button>

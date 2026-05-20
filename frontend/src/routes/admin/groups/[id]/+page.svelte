@@ -85,13 +85,13 @@
 			<div class="card-body">
 				<div class="flex items-start justify-between">
 					<h3 class="card-title">Group Details</h3>
-					<button class="btn btn-ghost btn-sm" on:click={() => (editing = !editing)}>
+					<button class="btn btn-ghost btn-sm" onclick={() => (editing = !editing)}>
 						{editing ? 'Cancel' : 'Edit'}
 					</button>
 				</div>
 
 				{#if editing}
-					<form on:submit|preventDefault={() => $updateMutation.mutate()} class="mt-2 space-y-4">
+					<form onsubmit={(e) => { e.preventDefault(); $updateMutation.mutate(); }} class="mt-2 space-y-4">
 						<div class="form-control">
 							<label class="label" for="grp-name"><span class="label-text">Name</span></label>
 							<input id="grp-name" type="text" class="input-bordered input" bind:value={editName} />

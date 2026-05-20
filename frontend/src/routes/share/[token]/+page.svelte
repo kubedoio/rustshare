@@ -454,7 +454,7 @@
 							</p>
 						</div>
 					{:else if needsPassword}
-						<form on:submit={handlePasswordSubmit} class="w-full max-w-md">
+						<form onsubmit={handlePasswordSubmit} class="w-full max-w-md">
 							<div class="form-control w-full">
 								<label for="password" class="label">
 									<span class="label-text">This share is password protected</span>
@@ -491,7 +491,7 @@
 						<button
 							type="button"
 							class="btn w-full max-w-md btn-lg btn-primary"
-							on:click={handleFileDownload}
+							onclick={handleFileDownload}
 							disabled={isDownloading}
 						>
 							{#if isDownloading}
@@ -523,12 +523,12 @@
 													type="file"
 													multiple
 													class="hidden"
-													on:change={handleFolderUpload}
+													onchange={handleFolderUpload}
 												/>
 												<button
 													type="button"
 													class="btn btn-sm btn-primary"
-													on:click={promptFolderUpload}
+													onclick={promptFolderUpload}
 													disabled={isUploading}
 												>
 													{#if isUploading}
@@ -565,10 +565,10 @@
 											class={`rounded-lg border-2 border-dashed p-4 text-center transition-colors ${
 												isDragActive ? 'border-primary bg-primary/5' : 'border-base-300'
 											}`}
-											on:dragenter|preventDefault={() => (isDragActive = true)}
-											on:dragover|preventDefault={() => (isDragActive = true)}
-											on:dragleave|preventDefault={() => (isDragActive = false)}
-											on:drop={handleDrop}
+											ondragenter={(e) => { e.preventDefault(); isDragActive = true; }}
+											ondragover={(e) => { e.preventDefault(); isDragActive = true; }}
+											ondragleave={(e) => { e.preventDefault(); isDragActive = false; }}
+											ondrop={handleDrop}
 										>
 											<p class="font-medium">Drag files here to upload</p>
 											<p class="text-sm text-base-content/60">
@@ -638,7 +638,7 @@
 											</div>
 										</div>
 										{#if currentFolderId}
-											<button type="button" class="btn btn-ghost btn-sm" on:click={openRootFolder}>
+											<button type="button" class="btn btn-ghost btn-sm" onclick={openRootFolder}>
 												Back to shared root
 											</button>
 										{/if}
@@ -659,12 +659,12 @@
 													type="file"
 													multiple
 													class="hidden"
-													on:change={handleFolderUpload}
+													onchange={handleFolderUpload}
 												/>
 												<button
 													type="button"
 													class="btn btn-sm btn-primary"
-													on:click={promptFolderUpload}
+													onclick={promptFolderUpload}
 													disabled={isUploading}
 												>
 													{#if isUploading}
@@ -685,10 +685,10 @@
 											class={`rounded-lg border-2 border-dashed p-4 text-center transition-colors ${
 												isDragActive ? 'border-primary bg-primary/5' : 'border-base-300'
 											}`}
-											on:dragenter|preventDefault={() => (isDragActive = true)}
-											on:dragover|preventDefault={() => (isDragActive = true)}
-											on:dragleave|preventDefault={() => (isDragActive = false)}
-											on:drop={handleDrop}
+											ondragenter={(e) => { e.preventDefault(); isDragActive = true; }}
+											ondragover={(e) => { e.preventDefault(); isDragActive = true; }}
+											ondragleave={(e) => { e.preventDefault(); isDragActive = false; }}
+											ondrop={handleDrop}
 										>
 											<p class="font-medium">Drag files here to upload</p>
 											<p class="text-sm text-base-content/60">
@@ -747,7 +747,7 @@
 															<button
 																type="button"
 																class="btn px-0 normal-case btn-ghost btn-sm"
-																on:click={() => openFolder(folder.id)}
+																onclick={() => openFolder(folder.id)}
 															>
 																📁 {folder.name}
 															</button>
@@ -757,7 +757,7 @@
 															<button
 																type="button"
 																class="btn btn-ghost btn-sm"
-																on:click={() => openFolder(folder.id)}
+																onclick={() => openFolder(folder.id)}
 															>
 																Open
 															</button>
@@ -772,7 +772,7 @@
 															<button
 																type="button"
 																class="btn btn-sm btn-primary"
-																on:click={() => handleFolderFileDownload(file)}
+																onclick={() => handleFolderFileDownload(file)}
 																disabled={isDownloading}
 															>
 																Download

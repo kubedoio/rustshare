@@ -70,7 +70,7 @@
 							checked={$selectionStore.selectedFileIds.size +
 								$selectionStore.selectedFolderIds.size ===
 								files.length + folders.length && files.length + folders.length > 0}
-							on:change={() => {
+							onchange={() => {
 								if (
 									$selectionStore.selectedFileIds.size + $selectionStore.selectedFolderIds.size ===
 									files.length + folders.length
@@ -112,7 +112,7 @@
 								type="checkbox"
 								class="h-4 w-4 rounded border-base-300 text-brand-500 focus:ring-brand-500"
 								checked={$selectionStore.selectedFolderIds.has(folder.id)}
-								on:change={() => handleFolderToggle(folder)}
+								onchange={() => handleFolderToggle(folder)}
 							/>
 						{/if}
 					</td>
@@ -120,7 +120,7 @@
 						<button
 							type="button"
 							class="group/link flex items-center gap-3 text-left"
-							on:click={() => onFolderClick(folder)}
+							onclick={() => onFolderClick(folder)}
 						>
 							<div
 								class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-brand-500/10"
@@ -175,7 +175,7 @@
 							<button
 								type="button"
 								class="rounded-lg p-2 text-base-content/40 opacity-0 transition-all group-hover:opacity-100 hover:bg-base-200 hover:text-base-content"
-								on:click|stopPropagation
+								onclick={(e) => { e.stopPropagation(); }}
 								aria-label="Folder actions"
 							>
 								<svg
@@ -200,21 +200,21 @@
 								<button
 									type="button"
 									class="w-full px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200"
-									on:click={() => onRenameFolder(folder)}
+									onclick={() => onRenameFolder(folder)}
 								>
 									Rename
 								</button>
 								<button
 									type="button"
 									class="w-full px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200"
-									on:click={() => onShareFolder(folder)}
+									onclick={() => onShareFolder(folder)}
 								>
 									Share
 								</button>
 								<button
 									type="button"
 									class="w-full px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200"
-									on:click={() => onMoveFolder(folder)}
+									onclick={() => onMoveFolder(folder)}
 								>
 									Move
 								</button>
@@ -222,7 +222,7 @@
 								<button
 									type="button"
 									class="w-full px-4 py-2 text-left text-sm text-error transition-colors hover:bg-error/10"
-									on:click={() => onDeleteFolder(folder)}
+									onclick={() => onDeleteFolder(folder)}
 								>
 									Delete
 								</button>
@@ -241,7 +241,7 @@
 								type="checkbox"
 								class="h-4 w-4 rounded border-base-300 text-brand-500 focus:ring-brand-500"
 								checked={$selectionStore.selectedFileIds.has(file.id)}
-								on:change={() => handleFileToggle(file)}
+								onchange={() => handleFileToggle(file)}
 							/>
 						{/if}
 					</td>
@@ -249,7 +249,7 @@
 						<button
 							type="button"
 							class="group/link flex items-center gap-3 text-left"
-							on:click={() => onFileClick(file)}
+							onclick={() => onFileClick(file)}
 						>
 							<div
 								class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-base-200"
@@ -405,7 +405,7 @@
 							<button
 								type="button"
 								class="rounded-lg p-2 text-base-content/40 opacity-0 transition-all group-hover:opacity-100 hover:bg-base-200 hover:text-base-content"
-								on:click|stopPropagation
+								onclick={(e) => { e.stopPropagation(); }}
 								aria-label="File actions"
 							>
 								<svg
@@ -430,28 +430,28 @@
 								<button
 									type="button"
 									class="w-full px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200"
-									on:click={() => onRenameFile(file)}
+									onclick={() => onRenameFile(file)}
 								>
 									Rename
 								</button>
 								<button
 									type="button"
 									class="w-full px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200"
-									on:click={() => onDownloadFile(file)}
+									onclick={() => onDownloadFile(file)}
 								>
 									Download
 								</button>
 								<button
 									type="button"
 									class="w-full px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200"
-									on:click={() => onShareFile(file)}
+									onclick={() => onShareFile(file)}
 								>
 									Share
 								</button>
 								<button
 									type="button"
 									class="w-full px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200"
-									on:click={() => onVersionHistory(file)}
+									onclick={() => onVersionHistory(file)}
 								>
 									Version history
 								</button>
@@ -459,7 +459,7 @@
 								<button
 									type="button"
 									class="w-full px-4 py-2 text-left text-sm text-error transition-colors hover:bg-error/10"
-									on:click={() => onDeleteFile(file)}
+									onclick={() => onDeleteFile(file)}
 								>
 									Delete
 								</button>
@@ -494,7 +494,7 @@
 			<button
 				type="button"
 				class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-600"
-				on:click={() => document.getElementById('upload-file-input')?.click()}
+				onclick={() => document.getElementById('upload-file-input')?.click()}
 			>
 				Upload files
 			</button>

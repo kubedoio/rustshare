@@ -61,7 +61,7 @@
 		<span class="text-sm text-base-content/60">
 			{webhooks.length} webhook{webhooks.length !== 1 ? 's' : ''}
 		</span>
-		<button class="btn btn-sm btn-primary" on:click={onCreate}>Add Webhook</button>
+		<button class="btn btn-sm btn-primary" onclick={onCreate}>Add Webhook</button>
 	</div>
 
 	{#if webhooks.length === 0}
@@ -99,7 +99,7 @@
 							type="checkbox"
 							class="toggle toggle-sm toggle-success"
 							checked={wh.enabled}
-							on:change={(e) =>
+							onchange={(e) =>
 								$toggleMutation.mutate({
 									id: wh.id,
 									enabled: (e.target as HTMLInputElement).checked
@@ -107,14 +107,14 @@
 						/>
 						<button
 							class="btn btn-ghost btn-xs"
-							on:click={() => $testMutation.mutate(wh.id)}
+							onclick={() => $testMutation.mutate(wh.id)}
 							disabled={$testMutation.isPending}
 						>
 							Test
 						</button>
 						<button
 							class="btn text-error btn-ghost btn-xs"
-							on:click={() => (confirmDelete = wh.id)}
+							onclick={() => (confirmDelete = wh.id)}
 						>
 							Delete
 						</button>
@@ -142,16 +142,16 @@
 			<h3 class="text-lg font-bold">Delete Webhook</h3>
 			<p class="py-4">Are you sure you want to delete this webhook?</p>
 			<div class="modal-action">
-				<button class="btn btn-ghost" on:click={() => (confirmDelete = null)}>Cancel</button>
+				<button class="btn btn-ghost" onclick={() => (confirmDelete = null)}>Cancel</button>
 				<button
 					class="btn btn-error"
-					on:click={() => confirmDelete && $deleteMutation.mutate(confirmDelete)}
+					onclick={() => confirmDelete && $deleteMutation.mutate(confirmDelete)}
 					disabled={$deleteMutation.isPending}
 				>
 					{$deleteMutation.isPending ? 'Deleting...' : 'Delete'}
 				</button>
 			</div>
 		</div>
-		<div class="modal-backdrop" on:click={() => (confirmDelete = null)} role="presentation"></div>
+		<div class="modal-backdrop" onclick={() => (confirmDelete = null)} role="presentation"></div>
 	</div>
 {/if}

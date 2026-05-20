@@ -374,7 +374,7 @@
 											<button
 												type="button"
 												class="inline-flex items-center gap-2 rounded-xl border border-base-300 bg-base-100 px-3 py-2 font-data text-sm font-semibold text-base-content/75 transition-colors hover:border-brand-500/20 hover:text-base-content"
-												on:click={() => copyShareLink(share.share_token)}
+												onclick={() => copyShareLink(share.share_token)}
 											>
 												<Copy class="h-4 w-4" />
 												Copy link
@@ -383,7 +383,7 @@
 										<button
 											type="button"
 											class="inline-flex items-center gap-2 rounded-xl border border-base-300 bg-base-100 px-3 py-2 font-data text-sm font-semibold text-base-content/75 transition-colors hover:border-brand-500/20 hover:text-base-content"
-											on:click={() => toggleShareActivity(share)}
+											onclick={() => toggleShareActivity(share)}
 										>
 											<Activity class="h-4 w-4" />
 											{activeShareActivityId === share.id ? 'Hide activity' : 'View activity'}
@@ -391,7 +391,7 @@
 										<button
 											type="button"
 											class="inline-flex items-center gap-2 rounded-xl border border-error/20 bg-error/5 px-3 py-2 font-data text-sm font-semibold text-error transition-colors hover:bg-error/10"
-											on:click={() => handleRevokeShare(share)}
+											onclick={() => handleRevokeShare(share)}
 										>
 											<Trash2 class="h-4 w-4" />
 											Revoke
@@ -519,7 +519,7 @@
 								<button
 									type="button"
 									class="rounded-xl border border-base-300 bg-base-100 px-3 py-2 font-data text-sm font-semibold text-base-content/75 transition-colors hover:border-brand-500/20 hover:text-base-content"
-									on:click={closeShareActivity}
+									onclick={closeShareActivity}
 								>
 									Close
 								</button>

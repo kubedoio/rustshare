@@ -10,7 +10,7 @@
 
 <button
 	class="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-base-300/80 bg-base-100 text-base-content/70 transition-colors hover:border-brand-500/20 hover:bg-base-200 hover:text-base-content"
-	on:click={toggleTheme}
+	onclick={toggleTheme}
 	title="Toggle theme (current: {resolvedTheme})"
 	aria-label="Toggle theme"
 >

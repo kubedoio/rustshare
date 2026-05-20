@@ -60,7 +60,7 @@
 			<button
 				class="btn btn-circle btn-ghost btn-sm"
 				aria-label="Close upload progress"
-				on:click={onClose}
+				onclick={onClose}
 				disabled={hasActiveTasks}
 			>
 				<svg
@@ -209,7 +209,7 @@
 		<!-- Footer with actions -->
 		{#if allCompleted}
 			<div class="bg-base-200 p-4">
-				<button class="btn btn-block btn-sm" on:click={onClose}> Close </button>
+				<button class="btn btn-block btn-sm" onclick={onClose}> Close </button>
 			</div>
 		{/if}
 	</div>

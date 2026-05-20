@@ -67,7 +67,7 @@
 					<span>Failed to load security settings.</span>
 				</div>
 			{:else}
-				<form on:submit|preventDefault={() => $saveMutation.mutate()} class="space-y-6">
+				<form onsubmit={(e) => { e.preventDefault(); $saveMutation.mutate(); }} class="space-y-6">
 					<section class="rounded-[1.4rem] border border-base-300/80 bg-base-200/35 p-5">
 						<div class="flex items-start justify-between gap-4">
 							<div>

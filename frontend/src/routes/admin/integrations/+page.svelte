@@ -36,14 +36,14 @@
 		<button
 			class="tab"
 			class:tab-active={activeTab === 'webhooks'}
-			on:click={() => (activeTab = 'webhooks')}
+			onclick={() => (activeTab = 'webhooks')}
 		>
 			Webhooks
 		</button>
 		<button
 			class="tab"
 			class:tab-active={activeTab === 'smtp'}
-			on:click={() => (activeTab = 'smtp')}
+			onclick={() => (activeTab = 'smtp')}
 		>
 			SMTP Email
 		</button>

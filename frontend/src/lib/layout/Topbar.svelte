@@ -247,7 +247,7 @@
 	}
 </script>
 
-<svelte:window on:click={handleClickOutside} />
+<svelte:window onclick={handleClickOutside} />
 
 <header
 	class="topbar relative z-[95] flex h-16 items-center border-b border-base-300/60 bg-base-100/80 px-4 backdrop-blur-xl lg:px-6"
@@ -257,7 +257,7 @@
 		<button
 			type="button"
 			class="-ml-2 flex items-center justify-center rounded-xl border border-transparent p-2 text-base-content/60 transition-colors hover:border-base-300/80 hover:bg-base-200/80 hover:text-base-content lg:hidden"
-			on:click={onMenuClick}
+			onclick={onMenuClick}
 			aria-label="Open menu"
 		>
 			<svg

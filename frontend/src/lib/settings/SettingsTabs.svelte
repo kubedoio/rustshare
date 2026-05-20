@@ -62,7 +62,7 @@
 					{activeTab === tab.id
 					? 'border-brand-500 text-brand-400'
 					: 'border-transparent text-base-content/60 hover:border-base-300 hover:text-base-content'}"
-				on:click={() => handleTabClick(tab.id)}
+				onclick={() => handleTabClick(tab.id)}
 				aria-current={activeTab === tab.id ? 'page' : undefined}
 			>
 				<svelte:component this={tab.icon} size={16} />
@@ -82,7 +82,7 @@
 					{activeTab === tab.id
 					? 'border-brand-500 text-brand-400'
 					: 'border-transparent text-base-content/60 hover:border-base-300 hover:text-base-content'}"
-				on:click={() => handleTabClick(tab.id)}
+				onclick={() => handleTabClick(tab.id)}
 				aria-current={activeTab === tab.id ? 'page' : undefined}
 			>
 				<svelte:component this={tab.icon} size={16} />

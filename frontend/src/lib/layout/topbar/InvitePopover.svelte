@@ -61,14 +61,14 @@
 	}
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} />
 
 {#if enabled}
 	<div class="relative">
 		<button
 			type="button"
 			class="hidden items-center gap-2 rounded-xl border border-base-300/60 px-3 py-2 text-xs font-bold text-base-content/70 transition-all hover:bg-base-200 sm:flex"
-			on:click={handleToggle}
+			onclick={handleToggle}
 			aria-expanded={open}
 			aria-haspopup="dialog"
 		>
@@ -90,7 +90,7 @@
 					<button
 						type="button"
 						class="rounded-lg p-1 text-base-content/40 hover:bg-base-200 hover:text-base-content"
-						on:click={resetInvite}
+						onclick={resetInvite}
 					>
 						<X size={16} />
 					</button>
@@ -109,7 +109,7 @@
 								bind:value={inviteEmail}
 								placeholder="colleague@company.com"
 								class="w-full rounded-xl border border-base-300/60 bg-base-200/50 px-3 py-2 text-sm text-base-content placeholder:text-base-content/30 focus:border-brand-500/50 focus:bg-base-100 focus:ring-2 focus:ring-brand-500/10 focus:outline-hidden"
-								on:keydown={(e) => e.key === 'Enter' && handleSendInvite()}
+								onkeydown={(e) => e.key === 'Enter' && handleSendInvite()}
 							/>
 						</div>
 						<p class="text-2xs leading-relaxed text-base-content/40">
@@ -122,7 +122,7 @@
 							type="button"
 							class="w-full rounded-xl bg-brand-500 px-4 py-2 text-sm font-bold text-white shadow-sm transition-all hover:bg-brand-600 active:scale-[0.98] disabled:opacity-50"
 							disabled={!inviteEmail.trim() || inviteLoading}
-							on:click={handleSendInvite}
+							onclick={handleSendInvite}
 						>
 							{inviteLoading ? 'Sending...' : 'Generate Invite Link'}
 						</button>
@@ -151,12 +151,12 @@
 						<button
 							type="button"
 							class="w-full rounded-xl bg-brand-500 px-4 py-2 text-sm font-bold text-white shadow-sm transition-all hover:bg-brand-600 active:scale-[0.98]"
-							on:click={() => navigator.clipboard.writeText(inviteLink)}>Copy Link</button
+							onclick={() => navigator.clipboard.writeText(inviteLink)}>Copy Link</button
 						>
 						<button
 							type="button"
 							class="w-full text-xs text-base-content/50 hover:text-base-content"
-							on:click={() => {
+							onclick={() => {
 								inviteState = 'idle';
 								inviteEmail = '';
 							}}>Invite someone else</button

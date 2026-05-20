@@ -109,7 +109,7 @@
 		<button
 			type="button"
 			class="inline-flex items-center gap-1.5 rounded-lg bg-brand-500/5 px-3 py-1.5 text-xs font-medium text-brand-600 transition-colors hover:bg-brand-500/10 focus:ring-2 focus:ring-brand-500/40 focus:outline-none"
-			on:click={handlePrimaryAction}
+			onclick={handlePrimaryAction}
 			aria-label={actionLabel + ' in ' + module.display_name}
 		>
 			{actionLabel}

@@ -96,7 +96,7 @@
 						{item.disabled ? 'cursor-not-allowed opacity-50' : 'hover:bg-base-200'}
 						{item.danger ? 'text-error hover:bg-error/10' : 'text-base-content'}"
 					disabled={item.disabled}
-					on:click={() => {
+					onclick={() => {
 						if (!item.disabled) {
 							item.onClick();
 							onClose();
