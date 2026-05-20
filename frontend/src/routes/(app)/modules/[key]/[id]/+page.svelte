@@ -82,7 +82,6 @@
 	});
 
 	$effect(() => {
-		console.log('[effect] +page.svelte:84 query.setOptions');
 		query.setOptions({
 			queryKey: ['module-item', key, id],
 			queryFn: () => api?.get(id),
@@ -108,7 +107,6 @@
 	let saveStatus: EditorSaveStatus = $state('saved');
 
 	$effect(() => {
-		console.log('[effect] +page.svelte:109 mode init');
 		// Initialize mode based on module key when it changes
 		untrack(() => {
 			mode = key === 'notes' ? 'edit' : 'read';
@@ -135,7 +133,6 @@
 	});
 
 	$effect(() => {
-		console.log('[effect] +page.svelte:135 attachments');
 		if (item?.metadata?.attachments) {
 			const serverAttachments = item.metadata.attachments.map((a: NoteAttachment) => {
 				const isImage = a.mime_type?.startsWith('image/');

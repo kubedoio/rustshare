@@ -159,7 +159,6 @@
 	}
 
 	$effect(() => {
-		console.log('[effect] ExcalidrawEditor.svelte:161 init');
 		if (open && !root && container) {
 			initExcalidraw();
 		}
@@ -167,7 +166,6 @@
 
 	// Re-render when initialData changes while open
 	$effect(() => {
-		console.log('[effect] ExcalidrawEditor.svelte:168 re-render');
 		if (open && root && ExcalidrawComp) {
 			render();
 		}
@@ -177,7 +175,6 @@
 	// The component itself is not destroyed (parent always renders it), so
 	// onDestroy never runs when open toggles false.
 	$effect(() => {
-		console.log('[effect] ExcalidrawEditor.svelte:177 cleanup');
 		if (!open && root) {
 			root.unmount();
 			root = null;

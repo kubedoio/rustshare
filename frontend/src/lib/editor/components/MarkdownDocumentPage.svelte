@@ -129,7 +129,6 @@
 	let canEdit = $derived(permissions.canEdit);
 	let isEditing = $derived(mode === 'edit' && canEdit);
 	$effect(() => {
-		console.log('[effect] MarkdownDocumentPage.svelte:131 docId sync');
 		if (docId !== lastDocId) {
 			const newDocId = docId;
 			const newContent = content;

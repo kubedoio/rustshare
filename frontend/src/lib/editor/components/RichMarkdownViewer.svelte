@@ -73,7 +73,6 @@
 	}
 
 	$effect(() => {
-		console.log('[effect] RichMarkdownViewer.svelte:75 render');
 		const resolvedContent = attachments?.length ? resolveAttachmentPaths(content, attachments) : content;
 		const result = markdownToHtml(resolvedContent);
 		if (result.success) {

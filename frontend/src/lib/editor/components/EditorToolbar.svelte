@@ -37,7 +37,6 @@
 	// Force reactivity on selection/transaction changes
 	let _tick = $state(0);
 	$effect(() => {
-		console.log('[effect] EditorToolbar.svelte:39 editor listeners');
 		if (editor) {
 			const updateTick = () => (_tick = _tick + 1);
 			editor.on('selectionUpdate', updateTick);

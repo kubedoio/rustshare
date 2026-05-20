@@ -168,7 +168,6 @@
 	// React to external content changes (e.g. after save + refetch)
 	let lastExternalContent = $state(content);
 	$effect(() => {
-		console.log('[effect] RichMarkdownEditor.svelte:179 external content', content, lastExternalContent);
 		if (content !== lastExternalContent) {
 			const newContent = content;
 			untrack(() => {
