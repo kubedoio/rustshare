@@ -48,7 +48,6 @@
 	const MARKDOWN_DEBOUNCE_MS = 250;
 
 	let editor: Editor | null = $state.raw(null);
-	let editorTick = $state(0);
 	let initialized = $state(false);
 	let isDragOver = $state(false);
 	let markdownUpdateTimer: ReturnType<typeof setTimeout> | null = $state(null);
@@ -123,7 +122,6 @@
 				checkSlashTrigger();
 			},
 			onSelectionUpdate: () => {
-				editorTick++;
 				if (showSlashMenu) {
 					checkSlashTrigger();
 				}
@@ -165,18 +163,12 @@
 		}
 	});
 
-	// React to editable prop changes
-	$effect(() => {
-		if (editor && initialized) {
-			editor.setEditable(editable);
-		}
-	});
-
 	import { untrack } from 'svelte';
 
 	// React to external content changes (e.g. after save + refetch)
 	let lastExternalContent = $state(content);
 	$effect(() => {
+		console.log('[effect] RichMarkdownEditor.svelte:179 external content', content, lastExternalContent);
 		if (content !== lastExternalContent) {
 			const newContent = content;
 			untrack(() => {

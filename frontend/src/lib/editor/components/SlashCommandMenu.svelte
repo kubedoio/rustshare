@@ -60,6 +60,7 @@
 
 	let filteredCommands = $derived(filterSlashCommands(query, { hasAttachmentHandler }));
 	$effect(() => {
+		console.log('[effect] SlashCommandMenu.svelte:62 selectedIndex guard');
 		if (filteredCommands.length > 0 && selectedIndex >= filteredCommands.length) {
 			selectedIndex = 0;
 		}
