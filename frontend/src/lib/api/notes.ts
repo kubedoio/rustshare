@@ -87,6 +87,10 @@ export async function deleteNote(noteId: string): Promise<void> {
 	return apiClient.delete(`/notes/${noteId}`);
 }
 
+export async function duplicateNote(noteId: string): Promise<CreateNoteResponse> {
+	return apiClient.post<CreateNoteResponse>(`/notes/${noteId}/duplicate`);
+}
+
 export async function listNotes(limit?: number): Promise<NoteSummary[]> {
 	const query = limit !== undefined ? `?limit=${limit}` : '';
 	return apiClient.get<NoteSummary[]>(`/notes${query}`);
@@ -102,13 +106,7 @@ export async function toggleVisibility(noteId: string): Promise<VisibilityRespon
 }
 
 export async function getPublicNote(shareId: string): Promise<PublicNoteResponse> {
-	const response = await fetch(`/api/v1/public/notes/${shareId}`, {
-		credentials: 'include'
-	});
-	if (!response.ok) {
-		throw new Error('Failed to load public note');
-	}
-	return response.json();
+	return apiClient.get<PublicNoteResponse>(`/public/notes/${shareId}`);
 }
 export const notesApi = {
 	get: getNote,

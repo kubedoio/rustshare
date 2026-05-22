@@ -46,35 +46,59 @@
 	// QUERIES
 	// ============================================================================
 
-	let folderTreeQuery = $derived(
-		createQuery<FolderTreeType>({
+	const folderTreeQuery = createQuery<FolderTreeType>({
+		queryKey: ['folder-tree'],
+		queryFn: () => getFolderTree(),
+		enabled: variant === 'files',
+		refetchOnWindowFocus: true,
+		staleTime: 0
+	});
+
+	// Query for received shares (for Shared tree)
+	const receivedSharesQuery = createQuery<ReceivedShare[]>({
+		queryKey: ['received-shares'],
+		queryFn: () => listReceivedShares(),
+		enabled: variant === 'files'
+	});
+
+	const sharedFolderTreesQuery = createQuery<FolderTreeType[]>({
+		queryKey: ['shared-folder-trees'],
+		queryFn: async () => {
+			const folderShares = ($receivedSharesQuery.data || []).filter(
+				(share) => share.resource_type === 'folder'
+			);
+			return Promise.all(folderShares.map((share) => getSharedFolderTree(share.resource_id)));
+		},
+		enabled: variant === 'files'
+	});
+
+	const allFilesQuery = createQuery({
+		queryKey: ['all-files'],
+		queryFn: () => listAllFiles(),
+		enabled: !!$currentUser
+	});
+
+	$effect(() => {
+		folderTreeQuery.setOptions({
 			queryKey: ['folder-tree'],
 			queryFn: () => getFolderTree(),
 			enabled: variant === 'files',
 			refetchOnWindowFocus: true,
 			staleTime: 0
-		})
-	);
+		});
+	});
 
-	// Query for received shares (for Shared tree)
-	let receivedSharesQuery = $derived(
-		createQuery<ReceivedShare[]>({
+	$effect(() => {
+		receivedSharesQuery.setOptions({
 			queryKey: ['received-shares'],
 			queryFn: () => listReceivedShares(),
 			enabled: variant === 'files'
-		})
-	);
+		});
+	});
 
-	let sharedFolderTreesQuery = $derived(
-		createQuery<FolderTreeType[]>({
-			queryKey: [
-				'shared-folder-trees',
-				($receivedSharesQuery.data || [])
-					.filter((share) => share.resource_type === 'folder')
-					.map((share) => share.resource_id)
-					.sort()
-					.join(',')
-			],
+	$effect(() => {
+		sharedFolderTreesQuery.setOptions({
+			queryKey: ['shared-folder-trees'],
 			queryFn: async () => {
 				const folderShares = ($receivedSharesQuery.data || []).filter(
 					(share) => share.resource_type === 'folder'
@@ -85,16 +109,16 @@
 				variant === 'files' &&
 				!!$receivedSharesQuery.data &&
 				$receivedSharesQuery.data.some((share) => share.resource_type === 'folder')
-		})
-	);
+		});
+	});
 
-	let allFilesQuery = $derived(
-		createQuery({
+	$effect(() => {
+		allFilesQuery.setOptions({
 			queryKey: ['all-files'],
 			queryFn: () => listAllFiles(),
 			enabled: !!$currentUser
-		})
-	);
+		});
+	});
 
 	let totalSizeUsed = $derived($allFilesQuery.data?.reduce((sum, file) => sum + file.size, 0) || 0);
 

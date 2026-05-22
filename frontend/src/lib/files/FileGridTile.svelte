@@ -28,7 +28,7 @@
 	interface Props {
 		item: FileType | Folder;
 		isFolder: boolean;
-		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted' | 'week';
 		isSharedRoot?: boolean;
 		selected?: boolean;
 		selectionMode?: boolean;

@@ -1,15 +1,24 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { previewFile, downloadFile, getFileContent } from '$lib/api/files';
-	import type { File } from '$lib/api/types';
 	import { formatFileSize } from '$lib/utils/format';
 	import { detectEditorType, detectFileCapabilities } from '$lib/utils/editor';
 	import OfficePreview from '$lib/components/preview/OfficePreview.svelte';
 	import { renderMarkdown } from '$lib/utils/markdown';
 
+	import type { File } from '$lib/api/types';
+
+	export interface PreviewableFile {
+		id: string;
+		name: string;
+		mime_type: string;
+		size: number;
+		modified_at?: string;
+	}
+
 	interface Props {
 		open?: boolean;
-		file?: File | null;
+		file?: PreviewableFile | null;
 		onClose?: () => void;
 		onEdit?: (payload: { file: File }) => void;
 	}
@@ -91,7 +100,7 @@
 			goto(`/files/edit/${file.id}`);
 			onClose();
 		} else {
-			onEdit({ file });
+			onEdit({ file: file as File });
 		}
 	}
 
@@ -134,7 +143,7 @@
 		return fileName.toLowerCase().endsWith('.drawio') || fileName.toLowerCase().endsWith('.dio');
 	}
 
-	function canPreview(file: File): boolean {
+	function canPreview(file: PreviewableFile): boolean {
 		const caps = detectFileCapabilities(file.name, file.mime_type);
 		return caps.previewType !== 'none';
 	}

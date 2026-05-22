@@ -19,7 +19,7 @@
 		emptyTitle?: string;
 		emptyDescription?: string;
 		emptyActionLabel?: string | null;
-		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted' | 'week';
 		showBreadcrumbs?: boolean;
 		canCreateFolder?: boolean;
 		canUpload?: boolean;

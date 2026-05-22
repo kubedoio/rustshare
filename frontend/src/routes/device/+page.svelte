@@ -287,7 +287,7 @@
 					</div>
 					<h2 class="mb-2 text-lg font-semibold">Pairing Failed</h2>
 					<p class="mb-6 text-sm text-base-content/60">{errorMessage}</p>
-					<button class="btn w-full btn-primary" on:click={handleRetry}> Try Again </button>
+					<button class="btn w-full btn-primary" onclick={handleRetry}> Try Again </button>
 				</div>
 			</div>
 		{:else}
@@ -297,7 +297,7 @@
 				<div class="tabs-boxed tabs rounded-none bg-base-200 p-2">
 					<button
 						class="tab flex-1 {activeTab === 'qr' ? 'tab-active bg-base-100 shadow-sm' : ''}"
-						on:click={() => (activeTab = 'qr')}
+						onclick={() => (activeTab = 'qr')}
 					>
 						<svg
 							xmlns="http://www.w3.org/2000/svg"
@@ -323,7 +323,7 @@
 					</button>
 					<button
 						class="tab flex-1 {activeTab === 'key' ? 'tab-active bg-base-100 shadow-sm' : ''}"
-						on:click={() => (activeTab = 'key')}
+						onclick={() => (activeTab = 'key')}
 					>
 						<svg
 							xmlns="http://www.w3.org/2000/svg"
@@ -343,7 +343,7 @@
 					</button>
 					<button
 						class="tab flex-1 {activeTab === 'scan' ? 'tab-active bg-base-100 shadow-sm' : ''}"
-						on:click={() => (activeTab = 'scan')}
+						onclick={() => (activeTab = 'scan')}
 					>
 						<svg
 							xmlns="http://www.w3.org/2000/svg"
@@ -440,7 +440,7 @@
 							<div class="relative">
 								<button
 									class="group w-full rounded-2xl border-2 border-dashed border-base-300 bg-base-200 p-6 transition-colors hover:bg-base-300"
-									on:click={copyPairingKey}
+									onclick={copyPairingKey}
 									title="Click to copy"
 								>
 									<div class="font-mono text-4xl font-bold tracking-[0.2em] text-primary">
@@ -530,7 +530,7 @@
 						</span>
 						<button
 							class="btn text-xs btn-ghost btn-sm"
-							on:click={handleRetry}
+							onclick={handleRetry}
 							disabled={countdown > 30}
 						>
 							<svg

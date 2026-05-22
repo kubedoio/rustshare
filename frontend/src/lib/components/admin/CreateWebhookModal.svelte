@@ -92,7 +92,7 @@
 		<div class="modal-box w-full max-w-md">
 			<h3 class="mb-4 text-lg font-bold">Add Webhook</h3>
 
-			<form on:submit|preventDefault={handleSubmit} class="space-y-4">
+			<form onsubmit={(e) => { e.preventDefault(); handleSubmit(e); }} class="space-y-4">
 				<div class="form-control">
 					<label class="label" for="wh-name"><span class="label-text">Name *</span></label>
 					<input
@@ -141,7 +141,7 @@
 									type="checkbox"
 									class="checkbox checkbox-sm"
 									checked={selectedEvents.includes(event.value)}
-									on:change={() => toggleEvent(event.value)}
+									onchange={() => toggleEvent(event.value)}
 								/>
 								<span class="label-text">{event.label}</span>
 							</label>
@@ -159,13 +159,13 @@
 				{/if}
 
 				<div class="modal-action">
-					<button type="button" class="btn btn-ghost" on:click={handleClose}>Cancel</button>
+					<button type="button" class="btn btn-ghost" onclick={handleClose}>Cancel</button>
 					<button type="submit" class="btn btn-primary" disabled={$mutation.isPending}>
 						{$mutation.isPending ? 'Creating...' : 'Add Webhook'}
 					</button>
 				</div>
 			</form>
 		</div>
-		<div class="modal-backdrop" on:click={handleClose} role="presentation"></div>
+		<div class="modal-backdrop" onclick={handleClose} role="presentation"></div>
 	</div>
 {/if}

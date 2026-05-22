@@ -16,7 +16,7 @@
 		emptyTitle?: string;
 		emptyDescription?: string;
 		emptyActionLabel?: string | null;
-		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted' | 'week';
 		onFolderClick: (folder: Folder) => void;
 		onFileClick: (file: FileType) => void;
 		onRenameFolder?: (folder: Folder, newName: string) => void;

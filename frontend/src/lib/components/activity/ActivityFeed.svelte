@@ -40,7 +40,7 @@
 			{#if showClearButton && $activityStore.length > 0}
 				<button
 					class="btn text-[11px] btn-ghost btn-xs"
-					on:click={handleClearHistory}
+					onclick={handleClearHistory}
 					title="Clear all history"
 				>
 					Clear All
@@ -101,7 +101,7 @@
 					</div>
 					<button
 						class="btn btn-circle opacity-0 btn-ghost transition-opacity btn-xs group-hover:opacity-100"
-						on:click={() => handleRemoveActivity(activity.id)}
+						onclick={() => handleRemoveActivity(activity.id)}
 						title="Remove"
 					>
 						<svg

@@ -74,8 +74,8 @@
 	class:w-[4.5rem]={!railExpanded}
 	aria-label="Main navigation"
 	aria-expanded={railExpanded}
-	on:mouseenter={handleMouseEnter}
-	on:mouseleave={handleMouseLeave}
+	onmouseenter={handleMouseEnter}
+	onmouseleave={handleMouseLeave}
 >
 	<!-- Logo -->
 	<div
@@ -154,7 +154,7 @@
 				{railExpanded ? 'w-full px-3' : 'w-11 justify-center'}
 				text-base-content/50 hover:bg-base-200 hover:text-base-content"
 			aria-label={$sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
-			on:click={() => sidebarExpanded.toggle()}
+			onclick={() => sidebarExpanded.toggle()}
 		>
 			{#if $sidebarExpanded}
 				<PanelLeftClose size={22} strokeWidth={1.75} />

@@ -5,6 +5,7 @@
 -->
 <script lang="ts">
 	import { createEventDispatcher, onDestroy } from 'svelte';
+	import { Editor } from '@tiptap/core';
 	import {
 		ArrowLeft,
 		Eye,
@@ -16,7 +17,10 @@
 		FileText,
 		MoreHorizontal,
 		Paperclip,
-		ChevronRight
+		ChevronRight,
+		FolderInput,
+		Copy,
+		Trash2
 	} from 'lucide-svelte';
 	import type {
 		EditorMode,
@@ -30,11 +34,15 @@
 	import CollabEditor from './CollabEditor.svelte';
 	import AttachmentPanel from './AttachmentPanel.svelte';
 	import PrintableDocumentView from './PrintableDocumentView.svelte';
+	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
+	import type { PreviewableFile } from '$lib/components/modals/FilePreviewModal.svelte';
 	import { insertAttachmentIntoEditor } from '../adapter/attachments';
 	import { downloadTextFile, formatExportFilename, triggerPrint } from '../adapter/export';
 	import { toastStore } from '$lib/stores/toast';
 
 	/** Purposeful Colors from CSS */
+	const DEFAULT_AUTOSAVE_DELAY_MS = 1500;
+
 	const PURPOSEFUL_COLORS = [
 		{ name: 'Default', value: null, class: 'bg-base-300' },
 		{ name: 'Blue', value: 'blue', class: 'bg-[var(--rs-accent-blue)]' },
@@ -57,11 +65,14 @@
 		breadcrumb = [],
 		metadata = '',
 		attachments = [],
-		autosaveDelay = 1500,
+		autosaveDelay = DEFAULT_AUTOSAVE_DELAY_MS,
 		showBack = true,
 		embedSketchesAsBase64 = true,
 		collab = false,
-		docId = ''
+		docId = '',
+		showNoteActions = false,
+		initialAttachmentsOpen = false,
+		subtitle = ''
 	}: {
 		title?: string;
 		content?: string;
@@ -79,6 +90,9 @@
 		embedSketchesAsBase64?: boolean;
 		collab?: boolean;
 		docId?: string;
+		showNoteActions?: boolean;
+		initialAttachmentsOpen?: boolean;
+		subtitle?: string;
 	} = $props();
 
 	const dispatch = createEventDispatcher<{
@@ -89,21 +103,40 @@
 		upload: { files: File[] };
 		sketch: { blob: Blob; filename: string };
 		delete: { attachment: RichMarkdownAttachment };
+		rename: void;
+		move: void;
+		duplicate: void;
+		deleteDocument: void;
 	}>();
 
-	let editorComponent: RichMarkdownEditor | CollabEditor = $state() as unknown as RichMarkdownEditor | CollabEditor;
+	interface EditorComponent {
+		getMarkdown(): string;
+		getEditor(): Editor | null;
+		setContent(markdown: string): void;
+		markSaved?(markdown?: string): void;
+		markSaveError?(message?: string): void;
+		flush?(): void;
+	}
+	let editorComponent: EditorComponent | undefined = $state();
 	let currentMarkdown: string = $state(content);
-	let isAttachmentsOpen = $state(false);
+	let isAttachmentsOpen = $state(initialAttachmentsOpen);
 	let autosaveTimer: ReturnType<typeof setTimeout> | null = $state(null);
 	let lastDocId = $state(docId);
+	let previewAttachment = $state<RichMarkdownAttachment | null>(null);
+
+	import { untrack } from 'svelte';
 
 	let canEdit = $derived(permissions.canEdit);
 	let isEditing = $derived(mode === 'edit' && canEdit);
 	$effect(() => {
 		if (docId !== lastDocId) {
-			currentMarkdown = content;
-			saveStatus = 'saved';
-			lastDocId = docId;
+			const newDocId = docId;
+			const newContent = content;
+			untrack(() => {
+				currentMarkdown = newContent;
+				saveStatus = 'saved';
+				lastDocId = newDocId;
+			});
 		}
 	});
 
@@ -118,7 +151,7 @@
 		// If switching from edit to read, ensure any pending autosave is flushed
 		if (mode === 'edit' && editorComponent) {
 			currentMarkdown = editorComponent.getMarkdown();
-			if (collab && 'flush' in editorComponent) {
+			if (collab && editorComponent && typeof editorComponent.flush === 'function') {
 				editorComponent.flush();
 			} else if (saveStatus === 'unsaved') {
 				handleSave();
@@ -176,13 +209,13 @@
 	}
 
 	export function markSaved(markdown?: string): void {
-		if (editorComponent && 'markSaved' in editorComponent) {
+		if (editorComponent && typeof editorComponent.markSaved === 'function') {
 			editorComponent.markSaved(markdown);
 		}
 	}
 
 	export function markSaveError(message?: string): void {
-		if (editorComponent && 'markSaveError' in editorComponent) {
+		if (editorComponent && typeof editorComponent.markSaveError === 'function') {
 			editorComponent.markSaveError(message);
 		}
 	}
@@ -278,22 +311,51 @@
 		isAttachmentsOpen = !isAttachmentsOpen;
 	}
 
+	function handleOpenAttachment(event: CustomEvent<{ attachment: RichMarkdownAttachment }>) {
+		previewAttachment = event.detail.attachment;
+	}
+
+	function closePreview() {
+		previewAttachment = null;
+	}
+
+	function toPreviewableFile(attachment: RichMarkdownAttachment): PreviewableFile {
+		return {
+			id: attachment.id,
+			name: attachment.filename,
+			mime_type: attachment.mimeType,
+			size: attachment.size
+		};
+	}
+
 	/**
 	 * Public API to insert an attachment into the editor.
 	 */
 	export function insertAttachment(attachment: RichMarkdownAttachment) {
 		handleAttachmentInsert(new CustomEvent('insert', { detail: { attachment } }));
 	}
+
+	/**
+	 * Flushes any pending autosave without waiting for the server.
+	 * Call this in beforeNavigate so saves are dispatched before destruction.
+	 */
+	export function flush(): void {
+		if (collab && editorComponent && 'flush' in editorComponent) {
+			(editorComponent as CollabEditor).flush();
+		} else if (!collab && saveStatus === 'unsaved') {
+			handleSave();
+		}
+	}
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="markdown-document-page">
 	<!-- Header bar -->
 	<header class="doc-header">
 		<div class="doc-header-left">
 			{#if showBack}
-				<button class="btn btn-ghost btn-sm" on:click={handleBack} aria-label="Go back">
+				<button class="btn btn-ghost btn-sm" onclick={handleBack} aria-label="Go back">
 					<ArrowLeft size={16} />
 				</button>
 			{/if}
@@ -305,6 +367,9 @@
 				<span class="doc-label-sep">·</span>
 			{/if}
 			<h1 class="doc-title">{title}</h1>
+			{#if subtitle}
+				<span class="doc-subtitle">{subtitle}</span>
+			{/if}
 			{#if metadata}
 				<span class="doc-meta">{metadata}</span>
 			{/if}
@@ -332,7 +397,7 @@
 							{#each PURPOSEFUL_COLORS as c}
 								<button
 									class="group relative flex h-8 w-full items-center justify-center rounded-lg transition-all hover:bg-base-200"
-									on:click={() => {
+									onclick={() => {
 										color = c.value;
 										dispatch('save', { content: currentMarkdown || content, color: c.value });
 									}}
@@ -374,7 +439,7 @@
 			{#if canEdit}
 				<button
 					class="btn btn-sm {isEditing ? 'btn-primary' : 'btn-ghost'}"
-					on:click={toggleMode}
+					onclick={toggleMode}
 					title={isEditing ? 'Switch to read mode' : 'Switch to edit mode'}
 				>
 					{#if isEditing}
@@ -403,13 +468,13 @@
 							class="dropdown-content menu z-10 w-40 menu-sm rounded-box bg-base-200 p-1 shadow"
 						>
 							<li>
-								<button on:click={handleExportMarkdown}>
+								<button onclick={handleExportMarkdown}>
 									<FileText size={14} />
 									Markdown
 								</button>
 							</li>
 							<li>
-								<button on:click={handlePrint}>
+								<button onclick={handlePrint}>
 									<Download size={14} />
 									Save as PDF
 								</button>
@@ -425,10 +490,10 @@
 					<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
 					<ul
 						tabindex="0"
-						class="dropdown-content menu z-10 w-48 menu-sm rounded-box bg-base-200 p-1 shadow"
+						class="dropdown-content menu z-10 w-52 menu-sm rounded-box bg-base-200 p-1 shadow"
 					>
 						<li>
-							<button on:click={toggleAttachments}>
+							<button onclick={toggleAttachments}>
 								<Paperclip size={14} />
 								{isAttachmentsOpen ? 'Hide' : 'Show'} Attachments
 								{#if attachments.length > 0}
@@ -436,6 +501,32 @@
 								{/if}
 							</button>
 						</li>
+						{#if showNoteActions}
+							<li>
+								<button onclick={() => dispatch('rename')}>
+									<Pencil size={14} />
+									Rename note
+								</button>
+							</li>
+							<li>
+								<button onclick={() => dispatch('move')}>
+									<FolderInput size={14} />
+									Move to folder
+								</button>
+							</li>
+							<li>
+								<button onclick={() => dispatch('duplicate')}>
+									<Copy size={14} />
+									Duplicate note
+								</button>
+							</li>
+							<li>
+								<button onclick={() => dispatch('deleteDocument')} class="text-error">
+									<Trash2 size={14} />
+									Delete note
+								</button>
+							</li>
+						{/if}
 					</ul>
 				</div>
 			</div>
@@ -447,7 +538,7 @@
 		<nav aria-label="Breadcrumb" class="doc-breadcrumb">
 			{#each breadcrumb as crumb, i}
 				{#if crumb.onClick}
-					<button class="btn btn-ghost btn-xs" on:click={crumb.onClick}>
+					<button class="btn btn-ghost btn-xs" onclick={crumb.onClick}>
 						{crumb.label}
 					</button>
 				{:else}
@@ -475,7 +566,7 @@
 							{content}
 							editable={true}
 							hasAttachmentHandler={true}
-							bind:currentMarkdown
+							currentMarkdown={currentMarkdown}
 							on:change={handleEditorChange}
 							on:save={handleCollabSave}
 							on:ready
@@ -491,7 +582,7 @@
 						{content}
 						editable={true}
 						hasAttachmentHandler={true}
-						bind:currentMarkdown
+						currentMarkdown={currentMarkdown}
 						on:change={handleEditorChange}
 						on:attachment={toggleAttachments}
 						on:sketch={handleSketch}
@@ -500,7 +591,11 @@
 					/>
 				{/if}
 			{:else}
-				<RichMarkdownViewer content={currentMarkdown || content} {attachments} />
+				<RichMarkdownViewer
+					content={currentMarkdown || content}
+					{attachments}
+					on:open={handleOpenAttachment}
+				/>
 			{/if}
 		</main>
 
@@ -523,6 +618,14 @@
 	<div class="print-only">
 		<PrintableDocumentView {title} content={currentMarkdown || content} {label} />
 	</div>
+
+	{#if previewAttachment}
+		<FilePreviewModal
+			open={true}
+			file={toPreviewableFile(previewAttachment)}
+			onClose={closePreview}
+		/>
+	{/if}
 </div>
 
 <style>
@@ -586,6 +689,17 @@
 		margin: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.doc-subtitle {
+		font-size: 0.75rem;
+		color: var(--color-base-content, #9ca3af);
+		opacity: 0.6;
+		margin-top: 0.125rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 400px;
 	}
 
 	.doc-meta {

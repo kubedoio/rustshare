@@ -10,7 +10,7 @@
 		emptyTitle?: string;
 		emptyDescription?: string;
 		emptyActionLabel?: string | null;
-		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted' | 'week';
 		onFolderClick: (folder: Folder) => void;
 		onFileClick: (file: FileType) => void;
 		onRenameFolder?: (folder: Folder, newName: string) => void;
@@ -214,7 +214,7 @@
 			<button
 				type="button"
 				class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-600"
-				on:click={() => document.getElementById('upload-file-input')?.click()}
+				onclick={() => document.getElementById('upload-file-input')?.click()}
 			>
 				{emptyActionLabel}
 			</button>

@@ -27,7 +27,7 @@
 		? 'border-brand-500/20 bg-brand-500/10 text-brand-600'
 		: 'border-transparent text-base-content/70 hover:border-base-300/70 hover:bg-base-200/55 hover:text-base-content'}
 		{compact ? 'justify-center' : ''}"
-	on:click={onClick}
+	onclick={onClick}
 	aria-current={isActive ? 'page' : undefined}
 >
 	<span

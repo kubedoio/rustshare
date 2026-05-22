@@ -54,7 +54,7 @@
 <div class="space-y-4">
 	<div class="flex items-center justify-between">
 		<h2 class="text-2xl font-bold">Users</h2>
-		<button class="btn btn-primary" on:click={() => (showCreateModal = true)}> + New User </button>
+		<button class="btn btn-primary" onclick={() => (showCreateModal = true)}> + New User </button>
 	</div>
 
 	{#if $usersQuery.isLoading}

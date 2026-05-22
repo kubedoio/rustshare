@@ -3,7 +3,7 @@
   Wraps RichMarkdownEditor and persists edits without requiring the save button.
 -->
 <script lang="ts">
-	import { onDestroy, createEventDispatcher } from 'svelte';
+	import { onDestroy, createEventDispatcher, untrack } from 'svelte';
 	import type { Editor } from '@tiptap/core';
 	import RichMarkdownEditor from './RichMarkdownEditor.svelte';
 	import type { EditorPermissions, RichMarkdownAttachment } from '../types';
@@ -20,7 +20,7 @@
 		permissions = WRITE_PERMISSIONS,
 		editable = true,
 		hasAttachmentHandler = false,
-		currentMarkdown = $bindable(content)
+		currentMarkdown = content
 	}: {
 		docId: string;
 		content?: string;
@@ -29,6 +29,10 @@
 		hasAttachmentHandler?: boolean;
 		currentMarkdown?: string;
 	} = $props();
+
+	const AUTOSAVE_DELAY_MS = 1000;
+
+	let localMarkdown = $state(untrack(() => currentMarkdown));
 
 	let editorComponent: RichMarkdownEditor;
 	let status: 'saved' | 'unsaved' | 'saving' | 'error' = $state('saved');
@@ -45,7 +49,8 @@
 			clearTimeout(autosaveTimer);
 			autosaveTimer = null;
 		}
-		flushPendingSave();
+		// Do not dispatch save events during destruction — navigation-time
+		// flushing is handled by beforeNavigate in the parent page.
 	});
 
 	function startSave(markdown: string): void {
@@ -58,7 +63,7 @@
 
 	function flushPendingSave(): void {
 		const markdown =
-			pendingMarkdown ?? editorComponent?.getMarkdown() ?? currentMarkdown ?? content;
+			pendingMarkdown ?? editorComponent?.getMarkdown() ?? localMarkdown ?? content;
 
 		if (inFlightMarkdown) {
 			pendingMarkdown = markdown;
@@ -84,17 +89,17 @@
 	}
 
 	function handleEditorChange(event: CustomEvent<{ markdown: string }>) {
-		currentMarkdown = event.detail.markdown;
-		pendingMarkdown = currentMarkdown;
+		localMarkdown = event.detail.markdown;
+		pendingMarkdown = localMarkdown;
 		if (!inFlightMarkdown) {
-			status = currentMarkdown === lastSavedMarkdown ? 'saved' : 'unsaved';
+			status = localMarkdown === lastSavedMarkdown ? 'saved' : 'unsaved';
 		}
-		dispatch('change', { markdown: currentMarkdown });
+		dispatch('change', { markdown: localMarkdown });
 		if (autosaveTimer) clearTimeout(autosaveTimer);
 		autosaveTimer = setTimeout(() => {
 			autosaveTimer = null;
 			flushPendingSave();
-		}, 1000);
+		}, AUTOSAVE_DELAY_MS);
 	}
 
 	function getStatusLabel() {
@@ -126,7 +131,7 @@
 	export function getMarkdown(): string {
 		if (!editorComponent) return content;
 		const markdown = editorComponent.getMarkdown();
-		currentMarkdown = markdown;
+		localMarkdown = markdown;
 		pendingMarkdown = markdown;
 		return markdown;
 	}
@@ -147,7 +152,7 @@
 		inFlightMarkdown = null;
 		lastError = null;
 
-		const latestMarkdown = pendingMarkdown ?? currentMarkdown;
+		const latestMarkdown = pendingMarkdown ?? localMarkdown;
 		if (latestMarkdown !== lastSavedMarkdown) {
 			pendingMarkdown = latestMarkdown;
 			status = 'unsaved';
@@ -156,6 +161,7 @@
 				autosaveTimer = null;
 				flushPendingSave();
 			}, 0);
+			// Immediate flush for already-saved state transitions
 			return;
 		}
 
@@ -189,7 +195,7 @@
 			editable={resolvedEditable}
 			{hasAttachmentHandler}
 			syncExternalContent={false}
-			bind:currentMarkdown
+			currentMarkdown={currentMarkdown}
 			on:change={handleEditorChange}
 			on:ready
 			on:attachment

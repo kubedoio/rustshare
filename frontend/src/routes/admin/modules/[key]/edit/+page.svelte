@@ -318,7 +318,7 @@
 			</div>
 		{/if}
 
-		<form on:submit|preventDefault={handleSubmit} class="mt-6 flex flex-col gap-4">
+		<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="mt-6 flex flex-col gap-4">
 			<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6 shadow-sm">
 				<h2 class="mb-4 text-sm font-semibold tracking-wider text-base-content uppercase">
 					Basic Information

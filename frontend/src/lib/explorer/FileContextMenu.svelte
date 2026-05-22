@@ -20,7 +20,7 @@
 
 	interface Props {
 		item: FileType | Folder;
-		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted' | 'week';
 		isOpen?: boolean;
 		position?: { x: number; y: number };
 		onClose?: () => void;

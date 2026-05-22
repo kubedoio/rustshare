@@ -3,7 +3,7 @@
   consistent rendering with the editor.
 -->
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { createEventDispatcher } from 'svelte';
 	import { markdownToHtml } from '../adapter/markdown';
 	import { sanitizeHtml } from '../adapter/security';
 	import { resolveAttachmentPaths } from '../adapter/attachments';
@@ -19,6 +19,58 @@
 
 	let renderedHtml = $state('');
 	let parseError = $state<string | null>(null);
+
+	const dispatch = createEventDispatcher<{
+		open: { attachment: RichMarkdownAttachment };
+	}>();
+
+	function findAttachmentByUrl(url: string): RichMarkdownAttachment | undefined {
+		// Match /api/v1/files/{id}/preview or /api/v1/files/{id}/content
+		const match = url.match(/\/api\/v1\/files\/([^/]+)\/(?:preview|content)/);
+		if (match) {
+			return attachments.find((a) => a.id === match[1]);
+		}
+		// Also try matching by relative path (fallback for unresolved paths)
+		return attachments.find((a) => url.includes(a.path) || url.endsWith(a.filename));
+	}
+
+	function handleViewerClick(event: MouseEvent) {
+		const target = event.target as HTMLElement;
+
+		// Check for <a> tag clicks
+		const anchor = target.closest('a') as HTMLAnchorElement | null;
+		if (anchor) {
+			const href = anchor.getAttribute('href');
+			if (!href) return;
+
+			const attachment = findAttachmentByUrl(href);
+			if (attachment) {
+				event.preventDefault();
+				event.stopPropagation();
+				dispatch('open', { attachment });
+				return;
+			}
+			// External or unknown link: open in new tab
+			event.preventDefault();
+			window.open(href, '_blank');
+			return;
+		}
+
+		// Check for <img> tag clicks
+		const img = target.closest('img') as HTMLImageElement | null;
+		if (img) {
+			const src = img.getAttribute('src');
+			if (!src) return;
+
+			const attachment = findAttachmentByUrl(src);
+			if (attachment) {
+				event.preventDefault();
+				event.stopPropagation();
+				dispatch('open', { attachment });
+			}
+			return;
+		}
+	}
 
 	$effect(() => {
 		const resolvedContent = attachments?.length ? resolveAttachmentPaths(content, attachments) : content;
@@ -42,7 +94,8 @@
 		<!-- Raw Markdown fallback -->
 		<pre class="viewer-raw-fallback">{content}</pre>
 	{:else if renderedHtml}
-		<div class="viewer-content prose max-w-none">
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="viewer-content prose max-w-none" onclick={handleViewerClick}>
 			{@html renderedHtml}
 		</div>
 	{:else}
@@ -227,6 +280,7 @@
 		border-radius: 0.5rem;
 		margin: 0.75rem 0;
 		height: auto;
+		cursor: pointer;
 	}
 
 	/* Tables */

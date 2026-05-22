@@ -9,7 +9,7 @@
 	import { NodeSelection } from '@tiptap/pm/state';
 	import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 	import type { EditorView } from '@tiptap/pm/view';
-	import { createRichEditor, editorToMarkdown } from '../adapter/markdown';
+	import { createRichEditor, editorToMarkdown, type CreateEditorOptions } from '../adapter/markdown';
 	import type { SlashCommand } from '../adapter/slash-commands';
 	import { validateAttachmentUpload } from '../adapter/attachments';
 	import type { EditorPermissions } from '../types';
@@ -22,7 +22,7 @@
 		content = '',
 		editable = true,
 		hasAttachmentHandler = false,
-		currentMarkdown = $bindable(content),
+		currentMarkdown = content,
 		syncExternalContent = true,
 		ydoc = undefined
 	}: {
@@ -45,10 +45,13 @@
 
 	let editorElement: HTMLDivElement;
 	let editorWrapperElement: HTMLDivElement;
-	let editor: Editor | null = $state(null);
+	const MARKDOWN_DEBOUNCE_MS = 250;
+
+	let editor: Editor | null = $state.raw(null);
 	let initialized = $state(false);
 	let isDragOver = $state(false);
 	let markdownUpdateTimer: ReturnType<typeof setTimeout> | null = $state(null);
+	let localMarkdown = $state(untrack(() => currentMarkdown));
 
 	// Slash menu state
 	let showSlashMenu = $state(false);
@@ -57,17 +60,29 @@
 	let slashMenuLeft = $state(0);
 	let slashRangeFrom = $state(0);
 
+	interface ExcalidrawElement {
+		id: string;
+		type: string;
+		[x: string]: unknown;
+	}
+	interface ExcalidrawAppState {
+		[x: string]: unknown;
+	}
+
+	interface ExcalidrawInitialData {
+		elements?: ExcalidrawElement[];
+		appState?: ExcalidrawAppState;
+		files?: Record<string, unknown>;
+	}
+
 	// Excalidraw state
 	let showExcalidraw = $state(false);
-	let excalidrawInitialData: { elements?: any[]; appState?: any; files?: any } | null = $state(null);
+	let excalidrawInitialData: ExcalidrawInitialData | null = $state.raw(null);
 	let sketchEditPos: number | null = $state(null);
 
-	onMount(() => {
-		if (!editorElement) return;
-		editorElement.replaceChildren();
-
-		editor = createRichEditor({
-			element: editorElement,
+	function buildEditorOptions(element: HTMLElement): CreateEditorOptions {
+		return {
+			element,
 			content: ydoc ? '' : content,
 			editable,
 			ydoc,
@@ -98,7 +113,6 @@
 					event.preventDefault();
 					event.stopPropagation();
 
-					// Launch async without awaiting in the sync handler
 					launchSketchEdit(src, pos);
 					return true;
 				}
@@ -108,7 +122,6 @@
 				checkSlashTrigger();
 			},
 			onSelectionUpdate: () => {
-				editor = editor; // Trigger Svelte reactivity
 				if (showSlashMenu) {
 					checkSlashTrigger();
 				}
@@ -119,49 +132,53 @@
 					dispatch('ready', { editor });
 				}
 			}
-		});
+		};
+	}
 
-		// Intercept keydown for slash menu navigation
+	onMount(() => {
+		if (!editorElement) return;
+		editorElement.replaceChildren();
+
+		editor = createRichEditor(buildEditorOptions(editorElement));
+
 		editor.view.dom.addEventListener('keydown', handleEditorKeydown);
-		// Intercept paste for image/file paste
 		editor.view.dom.addEventListener('paste', handlePaste);
 	});
 
 	onDestroy(() => {
-		if (markdownUpdateTimer) {
-			clearTimeout(markdownUpdateTimer);
-			markdownUpdateTimer = null;
+		try {
+			if (markdownUpdateTimer) {
+				clearTimeout(markdownUpdateTimer);
+				markdownUpdateTimer = null;
+			}
+			if (editor) {
+				editor.view.dom.removeEventListener('keydown', handleEditorKeydown);
+				editor.view.dom.removeEventListener('paste', handlePaste);
+				editor.destroy();
+				editor = null;
+			}
+			editorElement?.replaceChildren();
+		} catch (e) {
+			console.error('Error destroying RichMarkdownEditor:', e);
 		}
-		if (editor) {
-			editor.view.dom.removeEventListener('keydown', handleEditorKeydown);
-			editor.view.dom.removeEventListener('paste', handlePaste);
-			editor.destroy();
-			editor = null;
-		}
-		editorElement?.replaceChildren();
 	});
 
-	// React to editable prop changes
-	$effect(() => {
-		if (editor && initialized) {
-			editor.setEditable(editable);
-		}
-	});
+	import { untrack } from 'svelte';
 
 	// React to external content changes (e.g. after save + refetch)
 	let lastExternalContent = $state(content);
 	$effect(() => {
-		if (editor && initialized && syncExternalContent && content !== lastExternalContent) {
-			if (content !== editorToMarkdown(editor)) {
-				editor.commands.setContent(content, { emitUpdate: false });
-			}
-			lastExternalContent = content;
-			currentMarkdown = content;
-		}
-	});
-	$effect(() => {
-		if (!syncExternalContent && content !== lastExternalContent) {
-			lastExternalContent = content;
+		if (content !== lastExternalContent) {
+			const newContent = content;
+			untrack(() => {
+				if (syncExternalContent && editor && initialized) {
+					if (newContent !== editorToMarkdown(editor!)) {
+						editor!.commands.setContent(newContent, { emitUpdate: false });
+					}
+					localMarkdown = newContent;
+				}
+				lastExternalContent = newContent;
+			});
 		}
 	});
 
@@ -171,9 +188,9 @@
 			markdownUpdateTimer = null;
 			if (!editor) return;
 			const md = editorToMarkdown(editor);
-			currentMarkdown = md;
+			localMarkdown = md;
 			dispatch('change', { markdown: md });
-		}, 250);
+		}, MARKDOWN_DEBOUNCE_MS);
 	}
 
 	// --- Slash Menu Logic ---
@@ -332,7 +349,8 @@
 			sketchEditPos = pos;
 			showExcalidraw = true;
 		} catch (err) {
-			console.error('Failed to load sketch for editing:', err);
+			const message = err instanceof Error ? err.message : 'Unknown error';
+			console.error('Failed to load sketch for editing:', message);
 			// If loadFromBlob fails (e.g. no embedded scene), just open empty
 			excalidrawInitialData = null;
 			sketchEditPos = pos;
@@ -426,7 +444,7 @@
 			markdownUpdateTimer = null;
 		}
 		const md = editorToMarkdown(editor);
-		currentMarkdown = md;
+		localMarkdown = md;
 		return md;
 	}
 
@@ -436,7 +454,7 @@
 	export function setContent(markdown: string): void {
 		if (editor) {
 			editor.commands.setContent(markdown, { emitUpdate: false });
-			currentMarkdown = markdown;
+			localMarkdown = markdown;
 			lastExternalContent = markdown;
 		}
 	}
@@ -455,10 +473,10 @@
 	class:readonly={!editable}
 	class:drag-over={isDragOver}
 	bind:this={editorWrapperElement}
-	on:dragenter={handleDragEnter}
-	on:dragover={handleDragOver}
-	on:dragleave={handleDragLeave}
-	on:drop={handleDrop}
+	ondragenter={handleDragEnter}
+	ondragover={handleDragOver}
+	ondragleave={handleDragLeave}
+	ondrop={handleDrop}
 	role="region"
 	aria-label="Markdown Editor"
 >

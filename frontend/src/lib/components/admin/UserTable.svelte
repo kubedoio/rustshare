@@ -79,9 +79,9 @@
 			placeholder="Search users..."
 			class="input-bordered input input-sm w-64"
 			value={searchValue}
-			on:input={handleSearchInput}
+			oninput={handleSearchInput}
 		/>
-		<select class="select-bordered select select-sm" on:change={handleStatusChange}>
+		<select class="select-bordered select select-sm" onchange={handleStatusChange}>
 			<option value="">All statuses</option>
 			<option value="active">Active</option>
 			<option value="disabled">Disabled</option>
@@ -130,7 +130,7 @@
 								{#if user.disabled_at}
 									<button
 										class="btn text-success btn-ghost btn-xs"
-										on:click={() => $enableMutation.mutate(user.id)}
+										onclick={() => $enableMutation.mutate(user.id)}
 										disabled={$enableMutation.isPending}
 									>
 										Enable
@@ -138,7 +138,7 @@
 								{:else}
 									<button
 										class="btn text-warning btn-ghost btn-xs"
-										on:click={() => $disableMutation.mutate(user.id)}
+										onclick={() => $disableMutation.mutate(user.id)}
 										disabled={$disableMutation.isPending}
 									>
 										Disable
@@ -146,7 +146,7 @@
 								{/if}
 								<button
 									class="btn text-error btn-ghost btn-xs"
-									on:click={() => (confirmDelete = user.id)}
+									onclick={() => (confirmDelete = user.id)}
 								>
 									Delete
 								</button>
@@ -169,7 +169,7 @@
 			<button
 				class="btn btn-ghost btn-sm"
 				disabled={page <= 1}
-				on:click={() => onPageChange(page - 1)}
+				onclick={() => onPageChange(page - 1)}
 			>
 				Previous
 			</button>
@@ -177,7 +177,7 @@
 			<button
 				class="btn btn-ghost btn-sm"
 				disabled={page >= totalPages}
-				on:click={() => onPageChange(page + 1)}
+				onclick={() => onPageChange(page + 1)}
 			>
 				Next
 			</button>
@@ -192,16 +192,16 @@
 			<h3 class="text-lg font-bold">Delete User</h3>
 			<p class="py-4">Are you sure you want to delete this user? This action cannot be undone.</p>
 			<div class="modal-action">
-				<button class="btn btn-ghost" on:click={() => (confirmDelete = null)}>Cancel</button>
+				<button class="btn btn-ghost" onclick={() => (confirmDelete = null)}>Cancel</button>
 				<button
 					class="btn btn-error"
-					on:click={() => confirmDelete && $deleteMutation.mutate(confirmDelete)}
+					onclick={() => confirmDelete && $deleteMutation.mutate(confirmDelete)}
 					disabled={$deleteMutation.isPending}
 				>
 					{$deleteMutation.isPending ? 'Deleting...' : 'Delete'}
 				</button>
 			</div>
 		</div>
-		<div class="modal-backdrop" on:click={() => (confirmDelete = null)} role="presentation"></div>
+		<div class="modal-backdrop" onclick={() => (confirmDelete = null)} role="presentation"></div>
 	</div>
 {/if}

@@ -9,9 +9,13 @@
 		modules: ModuleConfig[];
 	} = $props();
 
-	let sortedModules = $derived(modules
-		.filter((m) => m.ui_config?.dashboard?.enabled !== false)
-		.sort((a, b) => (a.ui_config?.dashboard?.order ?? 99) - (b.ui_config?.dashboard?.order ?? 99)));
+	let sortedModules = $derived(
+		modules
+			.filter((m) => m.ui_config?.dashboard?.enabled !== false)
+			.toSorted(
+				(a, b) => (a.ui_config?.dashboard?.order ?? 99) - (b.ui_config?.dashboard?.order ?? 99)
+			)
+	);
 </script>
 
 <section class="modules-panel">

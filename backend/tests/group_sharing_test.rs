@@ -127,12 +127,15 @@ async fn test_compat_layer_group_membership_sql() {
 
     // Create test user
     let user_id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO users (id, email, password_hash, tenant_id) VALUES ($1, $2, $3, $4) RETURNING id"
+        "INSERT INTO users (id, username, email, password_hash, tenant_id, display_name, storage_quota) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"
     )
     .bind(Uuid::new_v4())
+    .bind(format!("testuser{}", test_id))
     .bind(format!("test{}@example.com", test_id))
     .bind("hash")
     .bind(tenant_id)
+    .bind(format!("Test User {}", test_id))
+    .bind(10_737_418_240i64)
     .fetch_one(&pool)
     .await
     .expect("Failed to create user");
@@ -236,7 +239,7 @@ async fn test_compat_layer_find_user_by_id() {
 
     // Create test user
     let user_id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO users (id, username, email, password_hash, display_name, tenant_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id"
+        "INSERT INTO users (id, username, email, password_hash, display_name, tenant_id, storage_quota) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"
     )
     .bind(Uuid::new_v4())
     .bind(format!("user{}", test_id))
@@ -244,6 +247,7 @@ async fn test_compat_layer_find_user_by_id() {
     .bind("hash")
     .bind(format!("Test User {}", test_id))
     .bind(tenant_id)
+    .bind(10_737_418_240i64)
     .fetch_one(&pool)
     .await
     .expect("Failed to create user");

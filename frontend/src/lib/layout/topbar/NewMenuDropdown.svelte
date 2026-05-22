@@ -30,13 +30,13 @@
 	}
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="relative">
 	<button
 		type="button"
 		class="flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2 text-sm font-bold text-white shadow-lg shadow-brand-500/30 transition-all hover:bg-brand-600 hover:shadow-brand-500/40 active:scale-95"
-		on:click={() => (open = !open)}
+		onclick={() => (open = !open)}
 		aria-expanded={open}
 		aria-haspopup="menu"
 	>
@@ -53,42 +53,42 @@
 			<button
 				role="menuitem"
 				class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium transition-colors hover:bg-base-200"
-				on:click={() => handleAction('create-file-requested')}
+				onclick={() => handleAction('create-file-requested')}
 			>
 				<File size={16} class="text-brand-500" /> File
 			</button>
 			<button
 				role="menuitem"
 				class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium transition-colors hover:bg-base-200"
-				on:click={() => handleAction('create-folder-requested')}
+				onclick={() => handleAction('create-folder-requested')}
 			>
 				<Folder size={16} class="text-brand-500" /> Folder
 			</button>
 			<button
 				role="menuitem"
 				class="mt-1 flex w-full items-center gap-3 rounded-xl border-t border-base-200 px-4 py-2.5 pt-2.5 text-sm font-medium transition-colors hover:bg-base-200"
-				on:click={() => handleAction('create-note-requested')}
+				onclick={() => handleAction('create-note-requested')}
 			>
 				<FileText size={16} class="text-brand-500" /> New note
 			</button>
 			<button
 				role="menuitem"
 				class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium transition-colors hover:bg-base-200"
-				on:click={() => handleAction('upload-requested')}
+				onclick={() => handleAction('upload-requested')}
 			>
 				<Upload size={16} class="text-brand-500" /> Upload
 			</button>
 			<button
 				role="menuitem"
 				class="mt-1 flex w-full items-center gap-3 rounded-xl border-t border-base-200 px-4 py-2.5 pt-2.5 text-sm font-medium transition-colors hover:bg-base-200"
-				on:click={() => handleAction('edit-file-requested')}
+				onclick={() => handleAction('edit-file-requested')}
 			>
 				<Edit3 size={16} class="text-brand-500" /> Edit
 			</button>
 			<button
 				role="menuitem"
 				class="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium transition-colors hover:bg-base-200"
-				on:click={() => handleAction('create-canvas-requested')}
+				onclick={() => handleAction('create-canvas-requested')}
 			>
 				<PenTool size={16} class="text-brand-500" /> Sign
 			</button>

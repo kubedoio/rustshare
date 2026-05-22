@@ -77,7 +77,7 @@
 		<div class="modal-box w-full max-w-md">
 			<h3 class="mb-4 text-lg font-bold">Create User</h3>
 
-			<form on:submit|preventDefault={handleSubmit} class="space-y-4">
+			<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="space-y-4">
 				<div class="form-control">
 					<label class="label" for="username"><span class="label-text">Username *</span></label>
 					<input
@@ -160,13 +160,13 @@
 				{/if}
 
 				<div class="modal-action">
-					<button type="button" class="btn btn-ghost" on:click={handleClose}>Cancel</button>
+					<button type="button" class="btn btn-ghost" onclick={handleClose}>Cancel</button>
 					<button type="submit" class="btn btn-primary" disabled={$mutation.isPending}>
 						{$mutation.isPending ? 'Creating...' : 'Create User'}
 					</button>
 				</div>
 			</form>
 		</div>
-		<div class="modal-backdrop" on:click={handleClose} role="presentation"></div>
+		<div class="modal-backdrop" onclick={handleClose} role="presentation"></div>
 	</div>
 {/if}

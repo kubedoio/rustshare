@@ -14,10 +14,17 @@
 
 	let unreadOnly = $state(false);
 
-	let notificationsQuery = $derived(createQuery({
+	const notificationsQuery = createQuery({
 		queryKey: ['notifications', unreadOnly],
 		queryFn: () => listNotifications({ unreadOnly, limit: 100 })
-	}));
+	});
+
+	$effect(() => {
+		notificationsQuery.setOptions({
+			queryKey: ['notifications', unreadOnly],
+			queryFn: () => listNotifications({ unreadOnly, limit: 100 })
+		});
+	});
 
 	const markReadMutation = createMutation({
 		mutationFn: markNotificationRead,
@@ -128,7 +135,7 @@
 					When someone shares a file or folder with you, changes your permission, or revokes access,
 					it will appear here.
 				</p>
-				<button class="btn btn-primary" on:click={() => goto('/shared-with-me')}>
+				<button class="btn btn-primary" onclick={() => goto('/shared-with-me')}>
 					Go to Shared with Me
 				</button>
 			</div>
@@ -145,7 +152,7 @@
 								: 's'}
 						</p>
 					</div>
-					<button class="btn btn-outline btn-sm" on:click={() => goto('/shared-with-me')}>
+					<button class="btn btn-outline btn-sm" onclick={() => goto('/shared-with-me')}>
 						Shared with Me
 					</button>
 				</div>
@@ -187,7 +194,7 @@
 									{#if !notification.read}
 										<button
 											class="btn btn-ghost btn-sm"
-											on:click={() => $markReadMutation.mutate(notification.id)}
+											onclick={() => $markReadMutation.mutate(notification.id)}
 											disabled={$markReadMutation.isPending}
 										>
 											Mark read
@@ -196,14 +203,14 @@
 
 									<button
 										class="btn btn-outline btn-sm"
-										on:click={() => handleOpenNotification(notification)}
+										onclick={() => handleOpenNotification(notification)}
 									>
 										Open
 									</button>
 
 									<button
 										class="btn text-error btn-ghost btn-sm"
-										on:click={() => $deleteNotificationMutation.mutate(notification.id)}
+										onclick={() => $deleteNotificationMutation.mutate(notification.id)}
 										disabled={$deleteNotificationMutation.isPending}
 									>
 										Remove

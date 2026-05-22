@@ -25,14 +25,14 @@
 	}
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} />
 
 {#if user}
 	<div class="relative ml-1">
 		<button
 			type="button"
 			class="flex items-center gap-2 rounded-xl border border-base-300/60 bg-base-100/50 p-1 pr-3 transition-all hover:border-brand-500/20 hover:bg-base-200"
-			on:click={() => (open = !open)}
+			onclick={() => (open = !open)}
 			aria-expanded={open}
 			aria-haspopup="menu"
 		>
@@ -106,7 +106,7 @@
 
 				<div class="mt-1 border-t border-base-200 pt-1.5">
 					<button
-						on:click={onLogout}
+						onclick={onLogout}
 						role="menuitem"
 						class="flex w-full items-center gap-3 px-4 py-2 text-sm font-bold text-error transition-colors hover:bg-error/10"
 					>

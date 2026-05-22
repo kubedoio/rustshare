@@ -43,7 +43,7 @@
 			type: 'excalidraw',
 			label: 'Excalidraw',
 			icon: PenTool,
-			color: 'text-purple-500',
+			color: 'text-primary',
 			extension: '.excalidraw'
 		},
 		{ type: 'odt', label: 'Document', icon: FileType, color: 'text-orange-500', extension: '.odt' }

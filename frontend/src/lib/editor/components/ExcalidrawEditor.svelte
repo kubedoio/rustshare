@@ -1,20 +1,55 @@
 <script lang="ts">
 	import { onDestroy, createEventDispatcher } from 'svelte';
 	import React from 'react';
-	import { createRoot } from 'react-dom/client';
+	import { createRoot, type Root } from 'react-dom/client';
 	import { X, Save, Palette } from 'lucide-svelte';
 	import { toastStore } from '$lib/stores/toast';
+
+	interface ExcalidrawElement {
+		id: string;
+		type: string;
+		[key: string]: unknown;
+	}
+
+	interface ExcalidrawAppState {
+		viewBackgroundColor?: string;
+		[key: string]: unknown;
+	}
+
+	interface ExcalidrawAPI {
+		getSceneElements: () => readonly ExcalidrawElement[];
+		getAppState: () => ExcalidrawAppState;
+		getFiles: () => Record<string, unknown>;
+	}
+
+	interface ExcalidrawInitialData {
+		elements?: ExcalidrawElement[];
+		appState?: ExcalidrawAppState;
+		files?: Record<string, unknown>;
+	}
+
+	interface ExportToBlobOptions {
+		elements: readonly ExcalidrawElement[];
+		appState: Record<string, unknown>;
+		files: Record<string, unknown>;
+		mimeType: string;
+		getDimensions: (width: number, height: number) => { width: number; height: number };
+	}
+
+	function isReactComponent(val: unknown): val is React.ComponentType<Record<string, unknown>> {
+		return typeof val === 'function';
+	}
+
+	function isExportToBlobFn(val: unknown): val is (opts: ExportToBlobOptions) => Promise<Blob> {
+		return typeof val === 'function';
+	}
 
 	let {
 		open = false,
 		initialData = null
 	}: {
 		open?: boolean;
-		initialData?: {
-			elements?: any[];
-			appState?: any;
-			files?: any;
-		} | null;
+		initialData?: ExcalidrawInitialData | null;
 	} = $props();
 
 	const dispatch = createEventDispatcher<{
@@ -23,10 +58,10 @@
 	}>();
 
 	let container: HTMLDivElement = $state() as unknown as HTMLDivElement;
-	let root: any = $state(null);
-	let excalidrawAPI: any = $state(null);
-	let ExcalidrawComp: any = $state(null);
-	let exportToBlobFn: any = $state(null);
+	let root: Root | null = $state.raw(null);
+	let excalidrawAPI: ExcalidrawAPI | null = $state.raw(null);
+	let ExcalidrawComp: unknown = $state.raw(null);
+	let exportToBlobFn: unknown = $state.raw(null);
 
 	async function initExcalidraw() {
 		try {
@@ -43,15 +78,17 @@
 				render();
 			}
 		} catch (err) {
-			console.error('Failed to load Excalidraw:', err);
+			const message = err instanceof Error ? err.message : 'Unknown error';
+			console.error('Failed to load Excalidraw:', message);
 		}
 	}
 
 	function render() {
 		if (!root || !ExcalidrawComp) return;
+		if (!isReactComponent(ExcalidrawComp)) return;
 
-		const props: any = {
-			excalidrawAPI: (api: any) => (excalidrawAPI = api),
+		const props: Record<string, unknown> = {
+			excalidrawAPI: (api: ExcalidrawAPI) => (excalidrawAPI = api),
 			UIOptions: {
 				canvasActions: {
 					toggleTheme: true,
@@ -84,6 +121,7 @@
 
 	async function handleSave() {
 		if (!excalidrawAPI || !exportToBlobFn) return;
+		if (!isExportToBlobFn(exportToBlobFn)) return;
 
 		const elements = excalidrawAPI.getSceneElements();
 		const appState = excalidrawAPI.getAppState();
@@ -114,7 +152,8 @@
 			const filename = `sketch-${Date.now()}.png`;
 			dispatch('save', { blob, filename });
 		} catch (err) {
-			console.error('Failed to export drawing:', err);
+			const message = err instanceof Error ? err.message : 'Unknown error';
+			console.error('Failed to export drawing:', message);
 			toastStore.show('Failed to save drawing. Please try again.', 'error');
 		}
 	}
@@ -177,11 +216,11 @@
 				</div>
 
 				<div class="flex gap-2">
-					<button class="btn px-4 btn-ghost btn-sm" on:click={() => dispatch('close')}>
+					<button class="btn px-4 btn-ghost btn-sm" onclick={() => dispatch('close')}>
 						<X size={16} />
 						<span>Cancel</span>
 					</button>
-					<button class="btn px-6 btn-sm btn-primary" on:click={handleSave}>
+					<button class="btn px-6 btn-sm btn-primary" onclick={handleSave}>
 						<Save size={16} />
 						<span>{initialData ? 'Update Sketch' : 'Insert Sketch'}</span>
 					</button>

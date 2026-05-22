@@ -73,7 +73,7 @@
 	let canSave = $derived(hasChanges && !isSaving);
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} />
 
 <dialog class="modal" class:modal-open={open} {open}>
 	<div class="modal-box flex h-[90vh] max-w-7xl flex-col p-0">
@@ -96,7 +96,7 @@
 					type="button"
 					class="btn btn-circle btn-ghost btn-sm"
 					aria-label="Close editor"
-					on:click={handleClose}
+					onclick={handleClose}
 					disabled={isSaving}
 				>
 					<svg
@@ -192,7 +192,7 @@
 					<button
 						type="button"
 						class="btn btn-ghost btn-sm"
-						on:click={handleClose}
+						onclick={handleClose}
 						disabled={isSaving}
 					>
 						Cancel
@@ -203,7 +203,7 @@
 							type="button"
 							class="btn btn-sm btn-primary"
 							disabled={!canSave}
-							on:click={() => handleSave()}
+							onclick={() => handleSave()}
 						>
 							{#if isSaving}
 								<span class="loading loading-xs loading-spinner"></span>
@@ -239,7 +239,7 @@
 	</div>
 
 	<form method="dialog" class="modal-backdrop">
-		<button type="button" on:click={handleClose}>close</button>
+		<button type="button" onclick={handleClose}>close</button>
 	</form>
 </dialog>
 

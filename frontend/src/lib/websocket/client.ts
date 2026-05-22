@@ -13,6 +13,7 @@ export class WebSocketClient {
 	private maxReconnectDelay = 30000; // Max 30 seconds
 	private isManualClose = false;
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	private connectPromise: Promise<void> | null = null;
 
 	constructor(url: string) {
 		// Convert http/https to ws/wss
@@ -20,7 +21,41 @@ export class WebSocketClient {
 	}
 
 	connect(token?: string | null): Promise<void> {
-		return new Promise((resolve, reject) => {
+		const nextToken = token ?? null;
+
+		if (this.ws?.readyState === WebSocket.OPEN && this.token === nextToken) {
+			return Promise.resolve();
+		}
+
+		if (
+			this.ws?.readyState === WebSocket.CONNECTING &&
+			this.token === nextToken &&
+			this.connectPromise
+		) {
+			return this.connectPromise;
+		}
+
+		if (this.reconnectTimer) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+		}
+
+		if (
+			this.ws &&
+			this.ws.readyState !== WebSocket.CLOSED &&
+			this.ws.readyState !== WebSocket.CLOSING
+		) {
+			this.isManualClose = true;
+			this.ws.onopen = null;
+			this.ws.onmessage = null;
+			this.ws.onerror = null;
+			this.ws.onclose = null;
+			this.ws.close();
+			this.ws = null;
+		}
+
+		this.connectPromise = new Promise((resolve, reject) => {
+			let settled = false;
 			this.token = token ?? null;
 			this.isManualClose = false;
 
@@ -34,6 +69,8 @@ export class WebSocketClient {
 				this.ws = new WebSocket(wsUrlWithToken);
 
 				this.ws.onopen = () => {
+					settled = true;
+					this.connectPromise = null;
 					logger.debug('[WebSocket] Connected');
 					websocketStore.setState('connected');
 					websocketStore.resetReconnectAttempts();
@@ -53,10 +90,20 @@ export class WebSocketClient {
 				this.ws.onerror = (error) => {
 					logger.error('[WebSocket] Error:', error);
 					websocketStore.setError('WebSocket connection error');
+					if (!settled) {
+						settled = true;
+						this.connectPromise = null;
+						reject(new Error('WebSocket connection error'));
+					}
 				};
 
 				this.ws.onclose = (event) => {
 					logger.debug('[WebSocket] Disconnected', event.code, event.reason);
+					if (!settled) {
+						settled = true;
+						this.connectPromise = null;
+						reject(new Error(`WebSocket closed before opening (${event.code})`));
+					}
 
 					if (!this.isManualClose) {
 						// Handle different close codes
@@ -81,9 +128,12 @@ export class WebSocketClient {
 			} catch (error) {
 				logger.error('[WebSocket] Failed to create connection:', error);
 				websocketStore.setError('Failed to create WebSocket connection');
+				this.connectPromise = null;
 				reject(error);
 			}
 		});
+
+		return this.connectPromise;
 	}
 
 	private reconnect(): void {
@@ -161,6 +211,7 @@ export class WebSocketClient {
 			clearTimeout(this.reconnectTimer);
 			this.reconnectTimer = null;
 		}
+		this.connectPromise = null;
 
 		if (this.ws) {
 			this.ws.close();

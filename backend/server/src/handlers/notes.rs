@@ -357,6 +357,49 @@ pub async fn toggle_visibility(
 }
 
 // ============================================================================
+// Duplicate Note
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct DuplicateNoteResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub path: String,
+    pub content: String,
+    pub metadata: crate::services::note_service::NoteMetadata,
+    pub parent_folder_id: Option<Uuid>,
+    pub current_version: i32,
+    pub created_at: String,
+    pub modified_at: String,
+}
+
+pub async fn duplicate_note(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<DuplicateNoteResponse>), AppError> {
+    let note = state
+        .note_service
+        .duplicate_note(id, auth.user_id)
+        .await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(DuplicateNoteResponse {
+            id: note.id,
+            name: note.name,
+            path: note.path,
+            content: note.content,
+            metadata: note.metadata,
+            parent_folder_id: note.parent_folder_id,
+            current_version: note.current_version,
+            created_at: note.created_at.to_rfc3339(),
+            modified_at: note.modified_at.to_rfc3339(),
+        }),
+    ))
+}
+
+// ============================================================================
 // Public Note
 // ============================================================================
 

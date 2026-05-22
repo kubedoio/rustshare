@@ -18,7 +18,7 @@
 		const lower = fileName.toLowerCase();
 		if (lower.endsWith('.md')) return { icon: FileText, color: 'text-blue-500', label: 'Markdown' };
 		if (lower.endsWith('.excalidraw'))
-			return { icon: PenTool, color: 'text-purple-500', label: 'Excalidraw' };
+			return { icon: PenTool, color: 'text-primary', label: 'Excalidraw' };
 		return { icon: File, color: 'text-gray-500', label: 'Text' };
 	}
 

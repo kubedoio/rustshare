@@ -118,14 +118,14 @@
 						class="input-bordered input w-full font-mono text-lg tracking-widest uppercase"
 						bind:value={userCode}
 						disabled={isSubmitting}
-						on:input={() => {
+						oninput={() => {
 							if (approvalState === 'error') approvalState = 'manual';
 						}}
 					/>
 					<button
 						type="button"
 						class="btn w-full btn-primary"
-						on:click={handleApproveByUserCode}
+						onclick={handleApproveByUserCode}
 						disabled={isSubmitting || !userCode.trim()}
 					>
 						{#if isSubmitting}Approving...{:else}Approve Device{/if}
@@ -150,12 +150,12 @@
 					<button
 						type="button"
 						class="btn btn-primary"
-						on:click={handleApproveByDeviceCode}
+						onclick={handleApproveByDeviceCode}
 						disabled={isSubmitting}
 					>
 						{#if isSubmitting}Approving...{:else}Approve Device{/if}
 					</button>
-					<button type="button" class="btn btn-outline" on:click={() => goto('/files')}>
+					<button type="button" class="btn btn-outline" onclick={() => goto('/files')}>
 						Cancel
 					</button>
 				</div>
@@ -173,7 +173,7 @@
 					<button
 						type="button"
 						class="btn btn-outline btn-sm"
-						on:click={() => {
+						onclick={() => {
 							approvalState = 'ready';
 							errorMessage = '';
 						}}
@@ -184,7 +184,7 @@
 					<button
 						type="button"
 						class="btn btn-outline btn-sm"
-						on:click={() => {
+						onclick={() => {
 							approvalState = 'manual';
 							errorMessage = '';
 						}}

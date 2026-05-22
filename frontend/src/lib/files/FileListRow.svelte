@@ -29,7 +29,7 @@
 		item: FileType | Folder;
 		isFolder: boolean;
 		isSharedRoot?: boolean;
-		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+		workspaceMode?: 'all' | 'photos' | 'recent' | 'starred' | 'deleted' | 'week';
 		selectionMode?: boolean;
 		selected?: boolean;
 		isDragging?: boolean;

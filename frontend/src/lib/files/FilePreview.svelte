@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import type { File, Folder } from '$lib/api/types';
 	import FileTypeIcon from './FileTypeIcon.svelte';
 	import { Folder as FolderIcon, Settings, FileText } from 'lucide-svelte';
@@ -12,11 +12,18 @@
 		isSharedRoot?: boolean;
 	}
 
-	let { item, isFolder = false, size = 'md', showThumbnail = true, isSharedRoot = false }: Props = $props();
+	let {
+		item,
+		isFolder = false,
+		size = 'md',
+		showThumbnail = true,
+		isSharedRoot = false
+	}: Props = $props();
 
 	let thumbnailUrl = $state<string | null>(null);
 	let loading = $state(false);
 	let error = $state(false);
+	let currentRequestKey: string | null = null;
 
 	const sizeClasses = {
 		xs: 'w-6 h-6',
@@ -56,49 +63,98 @@
 		return false;
 	};
 
-	async function loadThumbnail() {
-		if (isFolder || !showThumbnail || !item?.id || !isThumbnailSupported(mimeType, fileName)) {
-			loading = false;
-			return;
+	type ThumbnailRequest = {
+		fileId: string;
+		name: string;
+		mimeType: string;
+		size: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+		modifiedAt: string;
+		key: string;
+	};
+
+	function getThumbnailRequest(): ThumbnailRequest | null {
+		if (
+			isFolder ||
+			!showThumbnail ||
+			!fileItem?.id ||
+			!isThumbnailSupported(fileItem.mime_type, fileItem.name)
+		) {
+			return null;
 		}
 
+		return {
+			fileId: fileItem.id,
+			name: fileItem.name,
+			mimeType: fileItem.mime_type,
+			size,
+			modifiedAt: fileItem.modified_at,
+			key: `${fileItem.id}:${fileItem.modified_at}:${size}`
+		};
+	}
+
+	function clearThumbnail() {
 		if (thumbnailUrl) {
 			URL.revokeObjectURL(thumbnailUrl);
 			thumbnailUrl = null;
 		}
+	}
 
+	async function loadThumbnail(request: ThumbnailRequest) {
+		clearThumbnail();
 		loading = true;
+		error = false;
+
 		try {
-			const thumbSize = size === 'xs' || size === 'sm' ? 'sm' : size === 'md' ? 'md' : 'lg';
-			const response = await fetch(`/api/v1/files/${item.id}/thumbnail?size=${thumbSize}`, {
+			const thumbSize =
+				request.size === 'xs' || request.size === 'sm' ? 'sm' : request.size === 'md' ? 'md' : 'lg';
+			const response = await fetch(`/api/v1/files/${request.fileId}/thumbnail?size=${thumbSize}`, {
 				credentials: 'include'
 			});
 
+			if (currentRequestKey !== request.key) return;
+
 			if (response.ok) {
 				const blob = await response.blob();
+				if (currentRequestKey !== request.key) return;
 				thumbnailUrl = URL.createObjectURL(blob);
 				error = false;
 			} else {
 				error = true;
 			}
 		} catch (err) {
+			if (currentRequestKey !== request.key) return;
 			console.error('Failed to load thumbnail:', err);
 			error = true;
 		} finally {
-			loading = false;
+			if (currentRequestKey === request.key) {
+				loading = false;
+			}
 		}
 	}
 
 	$effect(() => {
-		if (!isFolder && item?.id && showThumbnail) {
-			loadThumbnail();
+		const request = getThumbnailRequest();
+
+		if (!request) {
+			untrack(() => {
+				currentRequestKey = null;
+				clearThumbnail();
+				loading = false;
+				error = false;
+			});
+			return;
 		}
+
+		if (request.key === currentRequestKey) return;
+
+		untrack(() => {
+			currentRequestKey = request.key;
+			void loadThumbnail(request);
+		});
 	});
 
 	onDestroy(() => {
-		if (thumbnailUrl) {
-			URL.revokeObjectURL(thumbnailUrl);
-		}
+		clearThumbnail();
 	});
 </script>
 
@@ -115,7 +171,9 @@
 		{:else if isNoteBundle}
 			<div class="relative">
 				<FolderIcon size={iconSize} class="text-brand-400" />
-				<div class="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-base-100 shadow-sm">
+				<div
+					class="absolute -right-0.5 -bottom-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-base-100 shadow-sm"
+				>
 					<FileText size={10} class="text-brand-500" />
 				</div>
 			</div>

@@ -82,7 +82,7 @@
 						<td>
 							<button
 								class="btn text-error btn-ghost btn-xs"
-								on:click={() => (confirmRemove = member)}
+								onclick={() => (confirmRemove = member)}
 							>
 								Remove
 							</button>
@@ -107,16 +107,16 @@
 				Remove <strong>{confirmRemove.username}</strong> from this group?
 			</p>
 			<div class="modal-action">
-				<button class="btn btn-ghost" on:click={() => (confirmRemove = null)}>Cancel</button>
+				<button class="btn btn-ghost" onclick={() => (confirmRemove = null)}>Cancel</button>
 				<button
 					class="btn btn-error"
-					on:click={() => confirmRemove && $removeMutation.mutate(confirmRemove.user_id)}
+					onclick={() => confirmRemove && $removeMutation.mutate(confirmRemove.user_id)}
 					disabled={$removeMutation.isPending}
 				>
 					{$removeMutation.isPending ? 'Removing...' : 'Remove'}
 				</button>
 			</div>
 		</div>
-		<div class="modal-backdrop" on:click={() => (confirmRemove = null)} role="presentation"></div>
+		<div class="modal-backdrop" onclick={() => (confirmRemove = null)} role="presentation"></div>
 	</div>
 {/if}

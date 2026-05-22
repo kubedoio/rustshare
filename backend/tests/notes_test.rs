@@ -898,3 +898,48 @@ async fn contract_recent_activity_shows_bundle_title() {
 
     cleanup_user(&pool, user.id).await;
 }
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_custom_workspace_and_folder_paths() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "custom_paths_user", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+
+    // Customize the workspace and folder names
+    let customized_service = (*service).clone().with_custom_paths("CustomWorkspace".to_string(), "CustomNotes".to_string());
+
+    let note = customized_service
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Custom Note".to_string()),
+            None,
+            Some("custom note content".to_string()),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(customized_service.workspace_name, "CustomWorkspace");
+    assert_eq!(customized_service.folder_name, "CustomNotes");
+    assert!(note.path.starts_with("/CustomWorkspace/CustomNotes/"));
+
+    let listed = customized_service
+        .list_notes(user.id, tenant_id, None)
+        .await
+        .unwrap();
+
+    assert!(
+        listed.iter().any(|n| n.id == note.id),
+        "should find custom note in custom listed notes"
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+

@@ -18,24 +18,12 @@ function isApiError(error: unknown): error is { status: number } {
 	return typeof error === 'object' && error !== null && 'status' in error;
 }
 
-function saveWebSocketToken(token: string | null | undefined): void {
+function clearLegacyWebSocketToken(): void {
 	if (typeof window === 'undefined') {
 		return;
 	}
 
-	if (token && token.trim()) {
-		window.sessionStorage.setItem(WEBSOCKET_TOKEN_KEY, token.trim());
-	} else {
-		window.sessionStorage.removeItem(WEBSOCKET_TOKEN_KEY);
-	}
-}
-
-function loadWebSocketToken(): string | null {
-	if (typeof window === 'undefined') {
-		return null;
-	}
-
-	return window.sessionStorage.getItem(WEBSOCKET_TOKEN_KEY);
+	window.sessionStorage.removeItem(WEBSOCKET_TOKEN_KEY);
 }
 
 function toAuthUser(profile: Awaited<ReturnType<typeof getUserProfile>>): User {
@@ -69,8 +57,9 @@ function createAuthStore() {
 			});
 
 			themeStore.loadFromBackend(profile.theme);
+			clearLegacyWebSocketToken();
 			try {
-				await initializeWebSocket(loadWebSocketToken(), profile.id);
+				await initializeWebSocket(null, profile.id);
 			} catch (error) {
 				console.error('Failed to initialize WebSocket during bootstrap:', error);
 			}
@@ -81,7 +70,7 @@ function createAuthStore() {
 
 			cleanupWebSocket();
 			replicationStore.reset();
-			saveWebSocketToken(null);
+			clearLegacyWebSocketToken();
 			set({
 				user: null,
 				isAuthenticated: false,
@@ -102,7 +91,7 @@ function createAuthStore() {
 			try {
 				const response = await loginRequest(email, password);
 				const user = response.user;
-				saveWebSocketToken(response.token);
+				clearLegacyWebSocketToken();
 
 				set({
 					user,
@@ -111,7 +100,7 @@ function createAuthStore() {
 				});
 
 				try {
-					await initializeWebSocket(response.token ?? null, user.id);
+					await initializeWebSocket(null, user.id);
 				} catch (error) {
 					console.error('Failed to initialize WebSocket after login:', error);
 				}
@@ -134,7 +123,7 @@ function createAuthStore() {
 		logout: async () => {
 			cleanupWebSocket();
 			replicationStore.reset();
-			saveWebSocketToken(null);
+			clearLegacyWebSocketToken();
 			await logoutRequest();
 			set({
 				user: null,

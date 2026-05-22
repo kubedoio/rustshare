@@ -97,7 +97,7 @@
 		previewUrl?: string;
 	};
 
-	type WorkspaceMode = 'all' | 'photos' | 'recent' | 'starred' | 'deleted';
+	type WorkspaceMode = 'all' | 'photos' | 'recent' | 'starred' | 'deleted' | 'week';
 
 	let uploadTasks = $state<UploadTask[]>([]);
 	let selectionMode = $state(false);
@@ -163,7 +163,6 @@
 	// URL parameters
 	let urlFolderId = $derived($page.url.searchParams.get('folder'));
 	let urlFilter = $derived($page.url.searchParams.get('filter'));
-	let urlSort = $derived($page.url.searchParams.get('sort'));
 	let urlRoot = $derived($page.url.searchParams.get('root') as ExplorerRoot | null);
 
 	// Helper to check if a string looks like a valid UUID
@@ -181,7 +180,7 @@
 				? 'starred'
 				: urlFilter === 'deleted'
 					? 'deleted'
-					: urlSort === 'recent'
+					: urlFilter === 'recent'
 						? 'recent'
 						: 'all'
 	) as WorkspaceMode);
@@ -193,6 +192,7 @@
 	let isCollectionMode = $derived(
 		workspaceMode === 'starred' ||
 		workspaceMode === 'recent' ||
+		workspaceMode === 'week' ||
 		workspaceMode === 'photos' ||
 		workspaceMode === 'deleted'
 	);
@@ -243,65 +243,82 @@
 	});
 
 	// Query for the active workspace view
-	let filesQuery = $derived(createQuery<ApiFolderContents>({
-		queryKey: ['file-workspace', workspaceMode, currentFolderId, activeRoot],
-		queryFn: async () => {
-			if (workspaceMode === 'starred') return getStarredContents();
-			if (workspaceMode === 'deleted') return getDeletedContents();
-			if (workspaceMode === 'recent') {
-				const allFiles = await listAllFiles();
-				return { folders: [], files: allFiles };
-			}
-
-			// For shared root
-			if (activeRoot === 'shared') {
-				if (currentFolderId) {
-					// Inside a specific shared folder
-					return getSharedFolderContents(currentFolderId);
-				} else {
-					// At shared root - show list of received shares
-					const shares = await listReceivedShares();
-					// Transform shares into FolderContents format
-					return {
-						folders: shares
-							.filter((s) => s.resource_type === 'folder')
-							.map((s) => ({
-								id: s.resource_id,
-								name: s.resource_name,
-								path: s.resource_path,
-								parent_folder_id: null,
-								owner_id: s.shared_by,
-								created_at: s.created_at,
-								updated_at: s.created_at,
-								is_shared: true,
-								share_count: 1,
-								effective_permission: s.permission
-							})),
-						files: shares
-							.filter((s) => s.resource_type === 'file')
-							.map((s) => ({
-								id: s.resource_id,
-								name: s.resource_name,
-								path: s.resource_path,
-								size: 0,
-								mime_type: 'application/octet-stream',
-								parent_folder_id: null,
-								owner_id: s.shared_by,
-								current_version: 1,
-								created_at: s.created_at,
-								modified_at: s.created_at,
-								is_shared: true,
-								share_count: 1,
-								effective_permission: s.permission
-							}))
-					};
-				}
-			}
-
-			// Default my-files behavior
-			return getFolderContents(currentFolderId);
+	async function fetchWorkspaceContents() {
+		if (workspaceMode === 'starred') return getStarredContents();
+		if (workspaceMode === 'deleted') return getDeletedContents();
+		if (workspaceMode === 'recent') {
+			const allFiles = await listAllFiles();
+			return { folders: [], files: allFiles.slice(0, 30) };
 		}
-	}));
+		if (workspaceMode === 'week') {
+			const allFiles = await listAllFiles();
+			const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+			const weekFiles = allFiles
+				.filter((f) => new Date(f.modified_at) >= weekAgo)
+				.toSorted((a, b) => new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime());
+			return { folders: [], files: weekFiles };
+		}
+
+		// For shared root
+		if (activeRoot === 'shared') {
+			if (currentFolderId) {
+				// Inside a specific shared folder
+				return getSharedFolderContents(currentFolderId);
+			} else {
+				// At shared root - show list of received shares
+				const shares = await listReceivedShares();
+				// Transform shares into FolderContents format
+				return {
+					folders: shares
+						.filter((s) => s.resource_type === 'folder')
+						.map((s) => ({
+							id: s.resource_id,
+							name: s.resource_name,
+							path: s.resource_path,
+							parent_folder_id: null,
+							owner_id: s.shared_by,
+							created_at: s.created_at,
+							updated_at: s.created_at,
+							is_shared: true,
+							share_count: 1,
+							effective_permission: s.permission
+						})),
+					files: shares
+						.filter((s) => s.resource_type === 'file')
+						.map((s) => ({
+							id: s.resource_id,
+							name: s.resource_name,
+							path: s.resource_path,
+							size: 0,
+							mime_type: 'application/octet-stream',
+							parent_folder_id: null,
+							owner_id: s.shared_by,
+							current_version: 1,
+							created_at: s.created_at,
+							modified_at: s.created_at,
+							is_shared: true,
+							share_count: 1,
+							effective_permission: s.permission
+						}))
+				};
+			}
+		}
+
+		// Default my-files behavior
+		return getFolderContents(currentFolderId);
+	}
+
+	const filesQuery = createQuery<ApiFolderContents>({
+		queryKey: ['file-workspace', workspaceMode, currentFolderId, activeRoot],
+		queryFn: fetchWorkspaceContents
+	});
+
+	$effect(() => {
+		filesQuery.setOptions({
+			queryKey: ['file-workspace', workspaceMode, currentFolderId, activeRoot],
+			queryFn: fetchWorkspaceContents
+		});
+	});
 
 	// All files query (for storage stats)
 	const allFilesQuery = createQuery({
@@ -364,9 +381,11 @@
 			? 'Photos'
 			: workspaceMode === 'recent'
 				? 'Recent'
-				: workspaceMode === 'starred'
-					? 'Starred'
-					: 'Trash'
+				: workspaceMode === 'week'
+					? 'Updated This Week'
+					: workspaceMode === 'starred'
+						? 'Starred'
+						: 'Trash'
 		: activeRoot === 'shared'
 			? currentFolderId
 				? breadcrumbPath[breadcrumbPath.length - 1]?.name
@@ -380,9 +399,11 @@
 			? 'Image files in the current workspace, without the folder noise.'
 			: workspaceMode === 'recent'
 				? 'The latest created files in this workspace, sorted by newest first.'
-				: workspaceMode === 'starred'
-					? 'Pinned folders and files that need fast access without digging through the tree.'
-					: 'Recently deleted items live here until you restore them or remove them permanently.'
+				: workspaceMode === 'week'
+					? 'Files and artifacts updated within the last 7 days, sorted by latest first.'
+					: workspaceMode === 'starred'
+						? 'Pinned folders and files that need fast access without digging through the tree.'
+						: 'Recently deleted items live here until you restore them or remove them permanently.'
 		: activeRoot === 'shared'
 			? currentFolderId
 				? 'Shared folder contents.'
@@ -396,9 +417,11 @@
 			? 'No photos in this view'
 			: workspaceMode === 'recent'
 				? 'No files created yet'
-				: workspaceMode === 'starred'
-					? 'Nothing is starred yet'
-					: 'Deleted items will show up here'
+				: workspaceMode === 'week'
+					? 'No updates this week'
+					: workspaceMode === 'starred'
+						? 'Nothing is starred yet'
+						: 'Deleted items will show up here'
 		: activeRoot === 'shared'
 			? 'No shared folders'
 			: 'No files yet');
@@ -408,9 +431,11 @@
 			? 'Upload an image into this folder and it will show up here.'
 			: workspaceMode === 'recent'
 				? 'Create or upload a file and it will show up here.'
-				: workspaceMode === 'starred'
-					? 'Star a folder or file from its action menu and it will show up here.'
-					: 'Deleting a folder or file moves it here instead of removing it immediately.'
+				: workspaceMode === 'week'
+					? 'Files updated in the last 7 days will appear here.'
+					: workspaceMode === 'starred'
+						? 'Star a folder or file from its action menu and it will show up here.'
+						: 'Deleting a folder or file moves it here instead of removing it immediately.'
 		: activeRoot === 'shared'
 			? 'Items shared with you will appear here.'
 			: 'This folder is empty. Upload a file or create a folder to start organizing your workspace.');
@@ -446,8 +471,15 @@
 	// SORTING & FILTERING
 	// ============================================================================
 
-	let activeSortField = $derived(workspaceMode === 'recent' ? 'created_at' : $fileSortState.field);
-	let activeSortOrder = $derived(workspaceMode === 'recent' ? 'desc' : $fileSortState.order);
+	let activeSortField = $derived(
+		workspaceMode === 'recent' ? 'created_at' :
+		workspaceMode === 'week' ? 'modified_at' :
+		$fileSortState.field
+	);
+	let activeSortOrder = $derived(
+		workspaceMode === 'recent' || workspaceMode === 'week' ? 'desc' :
+		$fileSortState.order
+	);
 	let searchTerm = $derived($searchQuery.trim().toLowerCase());
 
 	function matchesSearch(name: string) {
@@ -1591,7 +1623,7 @@
 	<title>{workspaceTitle} - RustShare</title>
 </svelte:head>
 
-<svelte:window on:keydown={handleKeyDown} />
+<svelte:window onkeydown={handleKeyDown} />
 
 <!-- Hidden file input for upload button -->
 <input
@@ -1599,7 +1631,7 @@
 	type="file"
 	class="hidden"
 	multiple
-	on:change={(e) => {
+	onchange={(e) => {
 		const target = e.target as HTMLInputElement;
 		if (target.files && target.files.length > 0) {
 			const files = Array.from(target.files);
@@ -1633,7 +1665,7 @@
 				<button
 					type="button"
 					class="flex items-center gap-2 rounded-lg border border-error/30 bg-error/10 px-3 py-1.5 text-sm font-medium text-error transition-colors hover:bg-error/20"
-					on:click={openEmptyTrashModal}
+					onclick={openEmptyTrashModal}
 				>
 					<svg
 						xmlns="http://www.w3.org/2000/svg"

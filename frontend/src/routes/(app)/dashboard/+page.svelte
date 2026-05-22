@@ -35,15 +35,6 @@
 	// Types
 	// ---------------------------------------------------------------------------
 
-	interface ArtifactItem {
-		id: string;
-		name: string;
-		item_type: 'file' | 'folder';
-		updated_at: string;
-		moduleKey: string;
-		moduleName: string;
-	}
-
 	interface QuickAction {
 		label: string;
 		subtitle: string;
@@ -77,7 +68,9 @@
 					}
 				})
 			);
-			return results.filter((r): r is { module: ModuleDefinition; summary: ModuleSummary } => r !== null);
+			return results.filter(
+				(r): r is { module: ModuleDefinition; summary: ModuleSummary } => r !== null
+			);
 		}
 	});
 
@@ -87,43 +80,27 @@
 
 	let allFiles = $derived(filterUserVisibleEntries($allFilesQuery.data ?? []));
 
-	let updatedThisWeek = $derived(() => {
-		const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-		return allFiles.filter((f) => new Date(f.modified_at) >= weekAgo).length;
-	});
+	let updatedThisWeek = $derived(
+		allFiles.filter(
+			(f) => new Date(f.modified_at) >= new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+		).length
+	);
 
 	let sharedItemsCount = $derived(allFiles.filter((f) => f.is_shared).length);
 
-	let recentArtifacts = $derived(() => {
-		const summaries = $moduleSummariesQuery.data ?? [];
-		const items: ArtifactItem[] = [];
-
-		for (const { module, summary } of summaries) {
-			for (const item of summary.recent_items) {
-				if (isInternalRustShareFile(item.name)) continue;
-				items.push({
-					id: item.id,
-					name: item.name,
-					item_type: item.item_type as 'file' | 'folder',
-					updated_at: item.updated_at,
-					moduleKey: module.key,
-					moduleName: module.displayName
-				});
-			}
-		}
-
-		return items
-			.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-			.slice(0, 30);
-	});
+	let recentArtifacts = $derived(
+		allFiles
+			.toSorted((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+			.slice(0, 30)
+	);
 
 	// Build a lookup map from artifact ID → current name using data already loaded
-	let nameLookup = $derived(() => {
+	let nameLookup = $derived.by(() => {
 		const map = new Map<string, string>();
 		for (const file of allFiles) {
 			map.set(file.id, file.name);
 		}
-		for (const { summary } of ($moduleSummariesQuery.data ?? [])) {
+		for (const { summary } of $moduleSummariesQuery.data ?? []) {
 			for (const item of summary.recent_items) {
 				map.set(item.id, item.name);
 			}
@@ -135,7 +112,7 @@
 	let enrichedActivities = $derived(
 		($activityStore ?? []).map((a) => ({
 			...a,
-			fileName: a.artifactId ? (nameLookup().get(a.artifactId) ?? a.fileName) : a.fileName
+			fileName: a.artifactId ? (nameLookup.get(a.artifactId) ?? a.fileName) : a.fileName
 		}))
 	);
 
@@ -241,7 +218,10 @@
 		creating = true;
 		createError = '';
 		try {
-			const result = await createBrainstormBoard(`Idea Board — ${todayDateString()}`, 'template_blank_brainstorm');
+			const result = await createBrainstormBoard(
+				`Idea Board — ${todayDateString()}`,
+				'template_blank_brainstorm'
+			);
 			activityStore.addActivity('brainstorm_created', result.title || 'Untitled Idea Board', {
 				artifactId: result.id,
 				moduleKey: 'brainstorming'
@@ -294,13 +274,13 @@
 			iconColor: '#ca8a04',
 			iconBg: 'rgba(202, 138, 4, 0.1)',
 			onClick: handleNewBrainstorm
-		},
+		}
 	];
 
 	const summaryCards = $derived([
 		{
 			label: 'Recent Artifacts',
-			value: recentArtifacts().length,
+			value: recentArtifacts.length,
 			subtitle: 'Last 30 items',
 			icon: Package,
 			iconColor: '#ea580c',
@@ -309,7 +289,7 @@
 		},
 		{
 			label: 'Updated This Week',
-			value: updatedThisWeek(),
+			value: updatedThisWeek,
 			subtitle: 'This week',
 			icon: Clock,
 			iconColor: '#16a34a',
@@ -352,7 +332,10 @@
 			<!-- Left column -->
 			<div class="dashboard-main">
 				<MetricCards cards={summaryCards} />
-				<RecentActivity activities={enrichedActivities.slice(0, 6)} userName={$currentUser?.display_name} />
+				<RecentActivity
+					activities={enrichedActivities.slice(0, 6)}
+					userName={$currentUser?.display_name}
+				/>
 			</div>
 
 			<!-- Right column -->
