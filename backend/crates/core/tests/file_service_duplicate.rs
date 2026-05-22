@@ -101,7 +101,11 @@ impl FileMetadataStoreOps for MockMetadataStore {
         unreachable!()
     }
 
-    async fn list_file_versions(&self, _file_id: Uuid, _owner_id: Uuid) -> Result<Vec<FileVersion>> {
+    async fn list_file_versions(
+        &self,
+        _file_id: Uuid,
+        _owner_id: Uuid,
+    ) -> Result<Vec<FileVersion>> {
         Ok(Vec::new())
     }
 

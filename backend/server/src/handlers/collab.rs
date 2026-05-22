@@ -96,6 +96,12 @@ impl CollabRooms {
     }
 }
 
+impl Default for CollabRooms {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// A single collaborative document room.
 pub struct CollabRoom {
     doc_id: String,

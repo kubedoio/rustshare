@@ -45,9 +45,7 @@ impl From<rustshare_core::services::FolderError> for ModuleError {
             rustshare_core::services::FolderError::DuplicateName { .. } => {
                 ModuleError::AlreadyExists("folder".to_string())
             }
-            rustshare_core::services::FolderError::Database(e) => {
-                ModuleError::Database(e)
-            }
+            rustshare_core::services::FolderError::Database(e) => ModuleError::Database(e),
             _ => ModuleError::Storage(e.to_string()),
         }
     }
@@ -63,9 +61,7 @@ impl From<rustshare_core::services::FileError> for ModuleError {
                 ModuleError::PermissionDenied
             }
             rustshare_core::services::FileError::InvalidName(s) => ModuleError::InvalidName(s),
-            rustshare_core::services::FileError::Database(e) => {
-                ModuleError::Database(e)
-            }
+            rustshare_core::services::FileError::Database(e) => ModuleError::Database(e),
             _ => ModuleError::Storage(e.to_string()),
         }
     }
@@ -419,25 +415,28 @@ impl ModuleService {
         .fetch_all(self.metadata_store.pool())
         .await?;
 
-        let modules: Vec<Module> = rows.into_iter().map(|row| Module {
-            id: row.id,
-            module_key: row.module_key,
-            display_name: row.display_name,
-            description: row.description.unwrap_or_default(),
-            enabled: row.enabled,
-            root_path: row.root_path,
-            renderer: row.renderer,
-            default_template: row.default_template,
-            icon: row.icon.unwrap_or_default(),
-            schema_version: row.schema_version.unwrap_or_default(),
-            permissions: row.permissions,
-            ai_indexing: row.ai_indexing,
-            audit: row.audit,
-            ui_config: row.ui_config,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-            tenant_id: row.tenant_id,
-        }).collect();
+        let modules: Vec<Module> = rows
+            .into_iter()
+            .map(|row| Module {
+                id: row.id,
+                module_key: row.module_key,
+                display_name: row.display_name,
+                description: row.description.unwrap_or_default(),
+                enabled: row.enabled,
+                root_path: row.root_path,
+                renderer: row.renderer,
+                default_template: row.default_template,
+                icon: row.icon.unwrap_or_default(),
+                schema_version: row.schema_version.unwrap_or_default(),
+                permissions: row.permissions,
+                ai_indexing: row.ai_indexing,
+                audit: row.audit,
+                ui_config: row.ui_config,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                tenant_id: row.tenant_id,
+            })
+            .collect();
 
         Ok(modules
             .into_iter()
@@ -459,25 +458,28 @@ impl ModuleService {
         .fetch_all(self.metadata_store.pool())
         .await?;
 
-        let modules: Vec<Module> = rows.into_iter().map(|row| Module {
-            id: row.id,
-            module_key: row.module_key,
-            display_name: row.display_name,
-            description: row.description.unwrap_or_default(),
-            enabled: row.enabled,
-            root_path: row.root_path,
-            renderer: row.renderer,
-            default_template: row.default_template,
-            icon: row.icon.unwrap_or_default(),
-            schema_version: row.schema_version.unwrap_or_default(),
-            permissions: row.permissions,
-            ai_indexing: row.ai_indexing,
-            audit: row.audit,
-            ui_config: row.ui_config,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-            tenant_id: row.tenant_id,
-        }).collect();
+        let modules: Vec<Module> = rows
+            .into_iter()
+            .map(|row| Module {
+                id: row.id,
+                module_key: row.module_key,
+                display_name: row.display_name,
+                description: row.description.unwrap_or_default(),
+                enabled: row.enabled,
+                root_path: row.root_path,
+                renderer: row.renderer,
+                default_template: row.default_template,
+                icon: row.icon.unwrap_or_default(),
+                schema_version: row.schema_version.unwrap_or_default(),
+                permissions: row.permissions,
+                ai_indexing: row.ai_indexing,
+                audit: row.audit,
+                ui_config: row.ui_config,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                tenant_id: row.tenant_id,
+            })
+            .collect();
 
         Ok(modules
             .into_iter()
@@ -767,6 +769,7 @@ impl ModuleService {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn build_summary_for_mode(
         &self,
         key: &str,

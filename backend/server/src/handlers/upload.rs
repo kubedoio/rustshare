@@ -165,7 +165,9 @@ pub async fn create_upload_session(
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err(AppError::service_unavailable("Upload service not available"));
+            return Err(AppError::service_unavailable(
+                "Upload service not available",
+            ));
         }
     };
 
@@ -208,13 +210,13 @@ pub async fn get_upload_session_status(
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err(AppError::service_unavailable("Upload service not available"));
+            return Err(AppError::service_unavailable(
+                "Upload service not available",
+            ));
         }
     };
 
-    let status = service
-        .get_session_status(session_id, auth.user_id)
-        .await?;
+    let status = service.get_session_status(session_id, auth.user_id).await?;
 
     Ok(Json(status.into()))
 }
@@ -238,7 +240,9 @@ pub async fn upload_chunk(
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err(AppError::service_unavailable("Upload service not available"));
+            return Err(AppError::service_unavailable(
+                "Upload service not available",
+            ));
         }
     };
 
@@ -280,13 +284,13 @@ pub async fn complete_upload(
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err(AppError::service_unavailable("Upload service not available"));
+            return Err(AppError::service_unavailable(
+                "Upload service not available",
+            ));
         }
     };
 
-    let response = service
-        .complete_upload(session_id, auth.user_id)
-        .await?;
+    let response = service.complete_upload(session_id, auth.user_id).await?;
 
     Ok((
         StatusCode::OK,
@@ -312,13 +316,13 @@ pub async fn abort_upload_session(
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err(AppError::service_unavailable("Upload service not available"));
+            return Err(AppError::service_unavailable(
+                "Upload service not available",
+            ));
         }
     };
 
-    service
-        .abort_session(session_id, auth.user_id)
-        .await?;
+    service.abort_session(session_id, auth.user_id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -336,13 +340,13 @@ pub async fn list_upload_sessions(
     let service = match &state.upload_service {
         Some(s) => s,
         None => {
-            return Err(AppError::service_unavailable("Upload service not available"));
+            return Err(AppError::service_unavailable(
+                "Upload service not available",
+            ));
         }
     };
 
-    let sessions = service
-        .list_user_sessions(auth.user_id)
-        .await?;
+    let sessions = service.list_user_sessions(auth.user_id).await?;
 
     Ok(Json(sessions.into_iter().map(|s| s.into()).collect()))
 }

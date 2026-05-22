@@ -1,7 +1,10 @@
 use axum::{extract::State, Json};
 use serde::Serialize;
 
-use crate::{handlers::{AuthenticatedUser, AppError}, state::DatabaseState};
+use crate::{
+    handlers::{AppError, AuthenticatedUser},
+    state::DatabaseState,
+};
 
 #[derive(Serialize)]
 pub struct FeaturesResponse {

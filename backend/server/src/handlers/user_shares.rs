@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use rustshare_core::{domain::SharePermissions, services::Resource};
 
-use super::{AuthenticatedUser, AppError};
+use super::{AppError, AuthenticatedUser};
 use crate::AppState;
 
 // Re-export folder/file with shares types from folders handler
@@ -207,7 +207,11 @@ pub async fn list_received_shares(
         };
 
         let (resource_name, resource_path) = if let Some(file_id) = share.file_id {
-            match state.metadata_store.find_file_by_id_unchecked(file_id).await {
+            match state
+                .metadata_store
+                .find_file_by_id_unchecked(file_id)
+                .await
+            {
                 Ok(Some(file)) => (file.name, file.path),
                 Ok(None) => continue,
                 Err(error) => {
@@ -216,7 +220,11 @@ pub async fn list_received_shares(
                 }
             }
         } else if let Some(folder_id) = share.folder_id {
-            match state.metadata_store.find_folder_by_id_unchecked(folder_id).await {
+            match state
+                .metadata_store
+                .find_folder_by_id_unchecked(folder_id)
+                .await
+            {
                 Ok(Some(folder)) => (folder.name, folder.path),
                 Ok(None) => continue,
                 Err(error) => {
@@ -529,10 +537,7 @@ async fn build_user_shared_folder_tree(
     user_id: Uuid,
     folder_id: Uuid,
 ) -> Result<FolderTreeWithShares, AppError> {
-    let folder = state
-        .folder_service
-        .get_folder(folder_id, user_id)
-        .await?;
+    let folder = state.folder_service.get_folder(folder_id, user_id).await?;
 
     let share_info = load_folder_share_summary(&state.db_pool, folder_id).await?;
     let permission = state

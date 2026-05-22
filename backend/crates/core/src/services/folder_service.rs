@@ -40,6 +40,11 @@ pub trait MetadataStoreOps: Send + Sync {
     /// Find a folder by ID.
     async fn find_folder_by_id(&self, id: FolderId, owner_id: UserId) -> Result<Option<Folder>>;
 
+    /// Find a folder by ID without owner filtering.
+    ///
+    /// Only use when the caller performs explicit access handling.
+    async fn find_folder_by_id_unchecked(&self, id: FolderId) -> Result<Option<Folder>>;
+
     /// Update a folder in the metadata store.
     async fn update_folder(&self, folder: &Folder) -> Result<()>;
 
@@ -62,7 +67,11 @@ pub trait MetadataStoreOps: Send + Sync {
     ) -> Result<Vec<Folder>>;
 
     /// Find all descendant folders of a given folder using recursive CTE.
-    async fn find_descendant_folders(&self, folder_id: FolderId, owner_id: UserId) -> Result<Vec<Folder>>;
+    async fn find_descendant_folders(
+        &self,
+        folder_id: FolderId,
+        owner_id: UserId,
+    ) -> Result<Vec<Folder>>;
 
     /// List files with optional parent filter.
     async fn list_files(
@@ -208,7 +217,7 @@ where
                 if db_err.constraint() == Some("idx_folders_unique_name") {
                     return Err(FolderError::DuplicateName {
                         name: folder.name.clone(),
-                        parent_id: folder.parent_folder_id.unwrap_or_else(|| folder.id),
+                        parent_id: folder.parent_folder_id.unwrap_or(folder.id),
                     });
                 }
             }
@@ -249,7 +258,10 @@ where
         }
 
         // Not found — try to create
-        match self.create_folder(name.clone(), parent_folder_id, owner_id, tenant_id).await {
+        match self
+            .create_folder(name.clone(), parent_folder_id, owner_id, tenant_id)
+            .await
+        {
             Ok(folder) => Ok(folder),
             Err(FolderError::DuplicateName { .. }) => {
                 // We lost the race — fetch the existing folder
@@ -270,7 +282,8 @@ where
                 };
                 existing.ok_or_else(|| {
                     FolderError::Database(
-                        "Race condition: folder was created by another request but cannot be found".to_string(),
+                        "Race condition: folder was created by another request but cannot be found"
+                            .to_string(),
                     )
                 })
             }
@@ -288,28 +301,19 @@ where
     ) -> Result<Folder, FolderError> {
         tracing::info!(folder_id = %folder_id, user_id = %user_id, "folder_service::get_folder called");
 
-        // 1. Find folder by ID
+        // 1. Find folder by ID. This must not be owner-filtered; shared recipients
+        // are allowed to read non-owned folders once permission is verified.
         let folder = self
             .metadata_store
-            .find_folder_by_id(folder_id, user_id)
+            .find_folder_by_id_unchecked(folder_id)
             .await
             .map_err(|e| {
-                tracing::info!(folder_id = %folder_id, error = %e, "folder_service::get_folder: find_folder_by_id DB error");
+                tracing::info!(folder_id = %folder_id, error = %e, "folder_service::get_folder: find_folder_by_id_unchecked DB error");
                 FolderError::Database(e.to_string())
-            })?;
+            })?
+            .ok_or(FolderError::NotFound(folder_id))?;
 
-        let folder = match folder {
-            Some(f) => {
-                tracing::info!(folder_id = %folder_id, folder_path = %f.path, folder_owner = %f.owner_id, "folder_service::get_folder: folder found");
-                f
-            }
-            None => {
-                tracing::info!(folder_id = %folder_id, "folder_service::get_folder: folder NOT found in DB");
-                return Err(FolderError::NotFound(folder_id));
-            }
-        };
-
-        // 2. Check permissions using the resolver
+        // 2. Check permissions using the resolver.
         let perm_result = self
             .require_folder_permission(user_id, folder_id, SharePermissions::View)
             .await;
@@ -829,7 +833,15 @@ mod tests {
             Ok(())
         }
 
-        async fn find_folder_by_id(&self, id: FolderId, _owner_id: UserId) -> Result<Option<Folder>> {
+        async fn find_folder_by_id(
+            &self,
+            id: FolderId,
+            _owner_id: UserId,
+        ) -> Result<Option<Folder>> {
+            Ok(self.folders.lock().unwrap().get(&id).cloned())
+        }
+
+        async fn find_folder_by_id_unchecked(&self, id: FolderId) -> Result<Option<Folder>> {
             Ok(self.folders.lock().unwrap().get(&id).cloned())
         }
 
@@ -861,7 +873,11 @@ mod tests {
             Ok(result)
         }
 
-        async fn find_descendant_folders(&self, folder_id: FolderId, _owner_id: UserId) -> Result<Vec<Folder>> {
+        async fn find_descendant_folders(
+            &self,
+            folder_id: FolderId,
+            _owner_id: UserId,
+        ) -> Result<Vec<Folder>> {
             let folders = self.folders.lock().unwrap();
             let mut result = Vec::new();
             let mut to_process = vec![folder_id];
@@ -2303,13 +2319,23 @@ mod tests {
 
         // First call creates Kanban under Workspace
         let first = service
-            .create_folder_or_get("Kanban".to_string(), Some(workspace.id), owner_id, tenant_id)
+            .create_folder_or_get(
+                "Kanban".to_string(),
+                Some(workspace.id),
+                owner_id,
+                tenant_id,
+            )
             .await
             .unwrap();
 
         // Second call returns the same folder
         let second = service
-            .create_folder_or_get("Kanban".to_string(), Some(workspace.id), owner_id, tenant_id)
+            .create_folder_or_get(
+                "Kanban".to_string(),
+                Some(workspace.id),
+                owner_id,
+                tenant_id,
+            )
             .await
             .unwrap();
 

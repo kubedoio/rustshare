@@ -31,7 +31,10 @@ pub struct TrashSummaryResponse {
 /// - 200 OK: Returns trash summary
 /// - 401 Unauthorized: Missing or invalid authentication
 /// - 500 Internal Server Error: Database error
-pub async fn get_trash_summary(State(state): State<AppState>, auth: AuthenticatedUser) -> Result<Response, AppError> {
+pub async fn get_trash_summary(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+) -> Result<Response, AppError> {
     match state
         .metadata_store
         .get_trash_summary(auth.user_id, auth.tenant_id)
@@ -65,7 +68,10 @@ pub async fn get_trash_summary(State(state): State<AppState>, auth: Authenticate
 /// - 204 No Content: Trash emptied successfully
 /// - 401 Unauthorized: Missing or invalid authentication
 /// - 500 Internal Server Error: Database error
-pub async fn empty_trash(State(state): State<AppState>, auth: AuthenticatedUser) -> Result<Response, AppError> {
+pub async fn empty_trash(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+) -> Result<Response, AppError> {
     match state
         .metadata_store
         .empty_trash(auth.user_id, auth.tenant_id)

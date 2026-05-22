@@ -1,28 +1,37 @@
 version: 2
 updates:
-  # Enable version updates for Cargo (Rust)
+  # Backend Rust dependencies: keep routine updates separate from breaking majors.
   - package-ecosystem: "cargo"
     directory: "/backend"
     schedule:
       interval: "weekly"
       day: "monday"
       time: "09:00"
-    # Group all updates together in a single PR
     groups:
-      cargo-dependencies:
+      cargo-backend-minor-and-patch:
         patterns:
           - "*"
-    # Limit open PRs to avoid noise
+        exclude-patterns:
+          - "rand"
+        update-types:
+          - "minor"
+          - "patch"
+      cargo-backend-rand:
+        patterns:
+          - "rand"
+      cargo-backend-major:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "rand"
+        update-types:
+          - "major"
     open-pull-requests-limit: 5
-    # Labels for PRs
     labels:
       - "dependencies"
       - "rust"
-    # Reviewers
-    # reviewers:
-    #   - "your-github-username"
-    
-  # Enable version updates for npm (frontend)
+
+  # Frontend dependencies: React and other majors need migration-sized PRs.
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
@@ -30,29 +39,43 @@ updates:
       day: "monday"
       time: "09:00"
     groups:
-      npm-dependencies:
+      npm-minor-and-patch:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      npm-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
       - "javascript"
 
-  # Enable version updates for GitHub Actions
+  # GitHub Actions: ignore nonexistent fixed Rust toolchain action tags.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"
+    ignore:
+      - dependency-name: "dtolnay/rust-toolchain"
+        versions:
+          - "1.*"
     groups:
       github-actions:
         patterns:
           - "*"
+        exclude-patterns:
+          - "dtolnay/rust-toolchain"
     open-pull-requests-limit: 3
     labels:
       - "dependencies"
       - "ci"
 
-  # Enable version updates for Cargo (root workspace)
+  # Root Rust workspace dependencies: keep routine updates separate from breaking majors.
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
@@ -60,15 +83,30 @@ updates:
       day: "monday"
       time: "09:00"
     groups:
-      cargo-root-dependencies:
+      cargo-root-minor-and-patch:
         patterns:
           - "*"
+        exclude-patterns:
+          - "rand"
+        update-types:
+          - "minor"
+          - "patch"
+      cargo-root-rand:
+        patterns:
+          - "rand"
+      cargo-root-major:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "rand"
+        update-types:
+          - "major"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
       - "rust"
 
-  # Enable version updates for Docker base images
+  # Docker base images
   - package-ecosystem: "docker"
     directory: "/docker"
     schedule:

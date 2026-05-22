@@ -10,7 +10,10 @@ use serde_json::json;
 
 use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_action};
 use crate::services::module_service::UpdateModuleInput;
-use crate::{handlers::{AdminUser, AppError}, state::AppState};
+use crate::{
+    handlers::{AdminUser, AppError},
+    state::AppState,
+};
 
 // ---------------------------------------------------------------------------
 // Request / response types

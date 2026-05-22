@@ -100,10 +100,13 @@ pub async fn resolve_bearer_token(
     };
 
     // Update last_used_at
-    sqlx::query!("UPDATE device_tokens SET last_used_at = NOW() WHERE token_hash = $1", &token_hash)
-        .execute(&state.db_pool)
-        .await
-        .map_err(|_| AuthError::DatabaseError)?;
+    sqlx::query!(
+        "UPDATE device_tokens SET last_used_at = NOW() WHERE token_hash = $1",
+        &token_hash
+    )
+    .execute(&state.db_pool)
+    .await
+    .map_err(|_| AuthError::DatabaseError)?;
 
     // Check disabled status for device token user and get tenant_id
     let row: (bool, Uuid) =

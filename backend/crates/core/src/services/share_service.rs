@@ -67,7 +67,11 @@ pub trait MetadataStoreOps: Send + Sync {
     async fn find_file_by_id_unchecked(&self, id: uuid::Uuid) -> Result<Option<File>>;
 
     /// Find a folder by ID.
-    async fn find_folder_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<Option<Folder>>;
+    async fn find_folder_by_id(
+        &self,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> Result<Option<Folder>>;
 
     /// Find a folder by ID without owner filtering.
     ///
@@ -82,6 +86,11 @@ pub trait MetadataStoreOps: Send + Sync {
 
     /// Get a share by ID.
     async fn get_share_by_id(&self, id: uuid::Uuid, actor_id: UserId) -> Result<Option<Share>>;
+
+    /// Get a share by ID without actor filtering.
+    ///
+    /// Only use when the caller performs explicit authorization.
+    async fn get_share_by_id_unchecked(&self, id: uuid::Uuid) -> Result<Option<Share>>;
 
     /// Get a share by token.
     async fn get_share_by_token(&self, token: &str) -> Result<Option<Share>>;
@@ -123,12 +132,17 @@ pub trait MetadataStoreOps: Send + Sync {
     ) -> Result<Vec<Folder>>;
 
     /// Find all descendant folders of a given folder using recursive CTE.
-    async fn find_descendant_folders(&self, folder_id: uuid::Uuid, owner_id: UserId) -> Result<Vec<Folder>>;
+    async fn find_descendant_folders(
+        &self,
+        folder_id: uuid::Uuid,
+        owner_id: UserId,
+    ) -> Result<Vec<Folder>>;
 
     /// Find all descendant folders without owner filtering.
     ///
     /// ⚠️ WARNING: Only use for public-share endpoints where access is already verified.
-    async fn find_descendant_folders_unchecked(&self, folder_id: uuid::Uuid) -> Result<Vec<Folder>>;
+    async fn find_descendant_folders_unchecked(&self, folder_id: uuid::Uuid)
+        -> Result<Vec<Folder>>;
 
     /// Revoke a share by ID.
     async fn revoke_share(&self, share_id: uuid::Uuid, actor_id: UserId) -> Result<()>;
@@ -326,8 +340,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         let has_admin = if is_owner {
             true
         } else {
-            self.check_resource_permission(user_id, Resource::Folder(folder_id), SharePermissions::Admin)
-                .await?
+            self.check_resource_permission(
+                user_id,
+                Resource::Folder(folder_id),
+                SharePermissions::Admin,
+            )
+            .await?
         };
 
         if !has_admin {
@@ -481,45 +499,15 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         share_id: uuid::Uuid,
         user_id: UserId,
     ) -> Result<(), ShareError> {
-        // Get share by ID
+        // Get share by ID for an explicit authorization decision.
         let share = self
             .metadata_store
-            .get_share_by_id(share_id, user_id)
+            .get_share_by_id_unchecked(share_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
-        // Determine resource and check permission using the same pattern as create_group_share
-        let (resource, is_owner) = if let Some(file_id) = share.file_id {
-            let file = self
-                .metadata_store
-                .find_file_by_id_unchecked(file_id)
-                .await
-                .map_err(|e| ShareError::Database(e.to_string()))?
-                .ok_or(ShareError::FileNotFound(file_id))?;
-            (Resource::File(file_id), file.owner_id == user_id)
-        } else if let Some(folder_id) = share.folder_id {
-            let folder = self
-                .metadata_store
-                .find_folder_by_id_unchecked(folder_id)
-                .await
-                .map_err(|e| ShareError::Database(e.to_string()))?
-                .ok_or(ShareError::FolderNotFound(folder_id))?;
-            (Resource::Folder(folder_id), folder.owner_id == user_id)
-        } else {
-            return Err(ShareError::InvalidState(
-                "share has no associated resource".to_string(),
-            ));
-        };
-
-        let has_admin = if is_owner {
-            true
-        } else {
-            self.check_resource_permission(user_id, resource, SharePermissions::Admin)
-                .await?
-        };
-
-        if !has_admin {
+        if share.created_by != user_id {
             return Err(ShareError::PermissionDenied {
                 file_id: share.resource_id().unwrap_or(share.id),
                 user_id,
@@ -687,8 +675,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         let has_admin = if is_owner {
             true
         } else {
-            self.check_resource_permission(user_id, Resource::File(file_id), SharePermissions::Admin)
-                .await?
+            self.check_resource_permission(
+                user_id,
+                Resource::File(file_id),
+                SharePermissions::Admin,
+            )
+            .await?
         };
 
         if !has_admin {
@@ -719,8 +711,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         let has_admin = if is_owner {
             true
         } else {
-            self.check_resource_permission(user_id, Resource::Folder(folder_id), SharePermissions::Admin)
-                .await?
+            self.check_resource_permission(
+                user_id,
+                Resource::Folder(folder_id),
+                SharePermissions::Admin,
+            )
+            .await?
         };
 
         if !has_admin {
@@ -1507,6 +1503,16 @@ mod tests {
                 .cloned())
         }
 
+        async fn get_share_by_id_unchecked(&self, id: Uuid) -> Result<Option<Share>> {
+            Ok(self
+                .shares
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.id == id)
+                .cloned())
+        }
+
         async fn get_share_by_token(&self, token: &str) -> Result<Option<Share>> {
             Ok(self
                 .shares
@@ -1573,7 +1579,11 @@ mod tests {
                 .collect())
         }
 
-        async fn find_descendant_folders(&self, folder_id: Uuid, _owner_id: UserId) -> Result<Vec<Folder>> {
+        async fn find_descendant_folders(
+            &self,
+            folder_id: Uuid,
+            _owner_id: UserId,
+        ) -> Result<Vec<Folder>> {
             let folders = self.folders.lock().unwrap().clone();
             let mut result = Vec::new();
             let mut stack = vec![folder_id];
@@ -2025,6 +2035,51 @@ mod tests {
             .validate_and_create_session(&share_token, None)
             .await;
         assert!(matches!(result, Err(ShareError::Revoked)));
+    }
+
+    #[tokio::test]
+    async fn test_non_creator_cannot_revoke_share() {
+        let (service, _event_store, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+        let other_user_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        let file = File::new(
+            "document.pdf".to_string(),
+            "/documents/document.pdf".to_string(),
+            "abc123".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        );
+        let file_id = file.id;
+        metadata_store.add_file(file);
+
+        let share = service
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+
+        let result = service.revoke_share(share.id, other_user_id).await;
+
+        assert!(matches!(result, Err(ShareError::PermissionDenied { .. })));
+
+        let active_share = metadata_store
+            .get_share_by_id_unchecked(share.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(active_share.revoked_at.is_none());
     }
 
     #[tokio::test]

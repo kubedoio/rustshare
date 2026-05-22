@@ -468,7 +468,10 @@ impl CardMarkdownFrontmatter {
     }
 }
 
-fn parse_card_markdown(content: &str, card_id: &str) -> Result<(CardMetadata, String), KanbanError> {
+fn parse_card_markdown(
+    content: &str,
+    card_id: &str,
+) -> Result<(CardMetadata, String), KanbanError> {
     if !content.trim_start().starts_with("---") {
         return Err(KanbanError::InvalidData(
             "Missing YAML frontmatter".to_string(),
@@ -845,7 +848,9 @@ impl KanbanService {
             slug.clone()
         };
 
-        let name = self.unique_board_folder_name(&name, root.id, user_id, tenant_id).await?;
+        let name = self
+            .unique_board_folder_name(&name, root.id, user_id, tenant_id)
+            .await?;
 
         // Ensure unique name under root
         let board_folder = self
@@ -1519,9 +1524,10 @@ impl KanbanService {
 
         let attachments = match frontmatter_attachments {
             Some(a) if !a.is_empty() => a,
-            _ => self
-                .load_card_attachments(&card_folder, user_id, card_folder.tenant_id)
-                .await?,
+            _ => {
+                self.load_card_attachments(&card_folder, user_id, card_folder.tenant_id)
+                    .await?
+            }
         };
 
         let activity = match frontmatter_activity {
@@ -3764,9 +3770,7 @@ column: 01-ready
 Description.
 "#;
 
-        assert!(
-            parse_card_markdown(content, "550e8400-e29b-41d4-a716-446655440000").is_err()
-        );
+        assert!(parse_card_markdown(content, "550e8400-e29b-41d4-a716-446655440000").is_err());
     }
 
     #[test]

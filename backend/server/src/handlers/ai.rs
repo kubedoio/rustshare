@@ -8,11 +8,7 @@
 //! Contract A-04: Rate limiting enforced on all AI endpoints.
 //! Contract A-05: Input validation and sanitization.
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

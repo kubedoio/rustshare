@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    handlers::{AuthenticatedUser, AppError},
+    handlers::{AppError, AuthenticatedUser},
     AppState,
 };
 
@@ -104,10 +104,7 @@ pub async fn get_file_replication_status(
     auth: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
 ) -> Result<Json<FileReplicationStatusResponse>, AppError> {
-    let file = state
-        .file_service
-        .get_file(file_id, auth.user_id)
-        .await?;
+    let file = state.file_service.get_file(file_id, auth.user_id).await?;
 
     let row = sqlx::query!(
         r#"
@@ -295,8 +292,7 @@ pub async fn list_replication_jobs(
                 updated_at: to_rfc3339(row.updated_at),
             })
         })
-        .collect::<Result<Vec<_>, sqlx::Error>>()
-        ?;
+        .collect::<Result<Vec<_>, sqlx::Error>>()?;
 
     Ok(Json(jobs))
 }
@@ -351,8 +347,7 @@ pub async fn list_replication_targets(
                 updated_at: to_rfc3339(row.updated_at),
             })
         })
-        .collect::<Result<Vec<_>, sqlx::Error>>()
-        ?;
+        .collect::<Result<Vec<_>, sqlx::Error>>()?;
 
     Ok(Json(targets))
 }

@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{admin_bad_request, admin_internal_error};
-use crate::{handlers::{AdminUser, AppError}, AppState};
+use crate::{
+    handlers::{AdminUser, AppError},
+    AppState,
+};
 
 // ---------------------------------------------------------------------------
 // Request / response types

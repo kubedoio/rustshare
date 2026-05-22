@@ -4,6 +4,7 @@ pub mod admin;
 pub mod ai;
 pub mod auth;
 mod brainstorming;
+pub mod collab;
 mod decisions;
 pub mod device_auth;
 pub mod devices;
@@ -17,30 +18,29 @@ mod kanban;
 mod meetings;
 mod modules;
 mod notes;
-mod standups;
 mod notifications;
 mod profile;
 mod public_shares;
 pub mod scim;
 pub mod scim_v2;
-pub mod collab;
 mod shares;
+mod standups;
 mod sync;
 mod trash;
-pub mod ws_auth;
 pub mod upload;
 mod user_shares;
 mod users;
-mod workspace_surface;
 mod validated_json;
+mod workspace_surface;
+pub mod ws_auth;
 
 pub use brainstorming::{
     create_brainstorm_board, delete_brainstorm_board, get_brainstorm_board,
     get_brainstorm_board_source, list_brainstorm_boards, save_brainstorm_board_source,
     update_brainstorm_board_preview,
 };
+pub use collab::collab_handler;
 pub use extractors::{AdminUser, AuthenticatedSession, AuthenticatedUser, ShareSessionAuth};
-pub use validated_json::ValidatedJson;
 pub use files::{
     delete_file, download_file, download_file_content, edit_file, get_file, get_file_thumbnail,
     get_file_versions, list_deleted_items, list_files, list_starred_items, move_file,
@@ -72,13 +72,15 @@ pub use shares::{
     create_public_file_share, create_public_folder_share, get_share_access_log,
     list_public_file_shares, list_public_folder_shares, list_user_shares, revoke_share,
 };
-pub use collab::collab_handler;
 pub use sync::{get_sync_cursor, get_sync_delta, sync_handler};
 pub use trash::{empty_trash, get_trash_summary};
+pub use validated_json::ValidatedJson;
 
 pub use ai::{ask_question, semantic_search, summarize_file};
 pub use auth::{ensure_optional_seed_user, login, logout};
-pub use decisions::{create_decision, get_decision, list_decisions, rename_decision, update_decision};
+pub use decisions::{
+    create_decision, get_decision, list_decisions, rename_decision, update_decision,
+};
 pub use features::get_features;
 pub use groups::{
     create_file_group_share, create_folder_group_share, get_my_group, list_file_group_shares,
@@ -86,12 +88,12 @@ pub use groups::{
 };
 pub use invites::{accept_invite, create_invite, get_invite};
 pub use meetings::{create_meeting, get_meeting, list_meetings, update_meeting};
-pub use standups::{create_standup, get_standup, list_standups, update_standup};
 pub use modules::{create_from_template, get_module, get_module_summary, list_enabled_modules};
 pub use notes::{
     create_note, delete_note, duplicate_note, get_note, get_public_note, list_notes, list_recent_notes, move_note,
     rename_note, save_note, toggle_visibility,
 };
+pub use standups::{create_standup, get_standup, list_standups, update_standup};
 pub use user_shares::{
     create_file_share, create_folder_share, get_user_shared_folder_contents,
     get_user_shared_folder_tree, list_file_recipients, list_folder_recipients,
@@ -110,7 +112,9 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use rustshare_core::services::{AiError, FileError, FolderError, NotificationError, ShareError, UploadError};
+use rustshare_core::services::{
+    AiError, FileError, FolderError, NotificationError, ShareError, UploadError,
+};
 use serde::Serialize;
 
 /// Standard error response format.
@@ -207,7 +211,10 @@ impl IntoResponse for AppError {
             AppError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
             AppError::Internal(msg) => {
                 tracing::error!("Internal error: {}", msg);
-                (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error".to_string(),
+                )
             }
         };
         (status, Json(ErrorResponse::new(message))).into_response()
@@ -268,9 +275,7 @@ impl From<ShareError> for AppError {
             | ShareError::CrossTenantSharingNotAllowed
             | ShareError::NotGroupMember(_) => AppError::Forbidden(err.to_string()),
             ShareError::Revoked | ShareError::Expired => AppError::Gone(err.to_string()),
-            ShareError::PasswordRequired | ShareError::InvalidPassword => {
-                AppError::Unauthorized
-            }
+            ShareError::PasswordRequired | ShareError::InvalidPassword => AppError::Unauthorized,
             ShareError::CannotShareWithSelf
             | ShareError::InvalidState(_)
             | ShareError::InvalidRecipientVisibility(_) => AppError::BadRequest(err.to_string()),
@@ -315,7 +320,9 @@ impl From<NotificationError> for AppError {
                 AppError::NotFound(err.to_string())
             }
             NotificationError::NotOwned { .. } => AppError::Forbidden(err.to_string()),
-            NotificationError::Database(_) => AppError::Internal("Internal server error".to_string()),
+            NotificationError::Database(_) => {
+                AppError::Internal("Internal server error".to_string())
+            }
         }
     }
 }

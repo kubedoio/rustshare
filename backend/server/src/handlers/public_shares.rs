@@ -14,10 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
 
-use rustshare_core::{
-    domain::SharePermissions,
-    services::{FileUploadActor},
-};
+use rustshare_core::{domain::SharePermissions, services::FileUploadActor};
 use rustshare_storage::ShareAccessLogEntry;
 
 use crate::{handlers::ShareSessionAuth, AppState};
@@ -96,10 +93,7 @@ pub async fn get_share_info(
     State(state): State<AppState>,
     Path(token): Path<String>,
 ) -> Result<Response, AppError> {
-    let (share, file, folder) = state
-        .share_service
-        .get_public_share_info(&token)
-        .await?;
+    let (share, file, folder) = state.share_service.get_public_share_info(&token).await?;
 
     if let Some(file) = file {
         Ok(Json(ShareInfoResponse {
@@ -152,12 +146,11 @@ async fn parse_upload_multipart(
     let mut uploader_name: Option<String> = None;
     let mut mime_type = "application/octet-stream".to_string();
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        AppError::internal(format!(
-            "Failed to read multipart field: {}",
-            e
-        ))
-    })? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to read multipart field: {}", e)))?
+    {
         let field_name = field.name().unwrap_or("").to_string();
 
         match field_name.as_str() {
@@ -170,41 +163,31 @@ async fn parse_upload_multipart(
                         file_name = Some(name.to_string());
                     }
                 }
-                file_data = Some(field.bytes().await.map_err(|e| {
-                    AppError::internal(format!(
-                        "Failed to read file data: {}",
-                        e
-                    ))
-                })?);
+                file_data =
+                    Some(field.bytes().await.map_err(|e| {
+                        AppError::internal(format!("Failed to read file data: {}", e))
+                    })?);
             }
             "name" => {
                 file_name = Some(field.text().await.map_err(|e| {
-                    AppError::internal(format!(
-                        "Failed to read name field: {}",
-                        e
-                    ))
+                    AppError::internal(format!("Failed to read name field: {}", e))
                 })?);
             }
             "parent_folder_id" => {
                 let text = field.text().await.map_err(|e| {
-                    AppError::internal(format!(
-                        "Failed to read parent_folder_id field: {}",
-                        e
-                    ))
+                    AppError::internal(format!("Failed to read parent_folder_id field: {}", e))
                 })?;
 
                 if !text.is_empty() {
-                    parent_folder_id = Some(Uuid::parse_str(&text).map_err(|_| {
-                        AppError::bad_request("Invalid parent_folder_id")
-                    })?);
+                    parent_folder_id = Some(
+                        Uuid::parse_str(&text)
+                            .map_err(|_| AppError::bad_request("Invalid parent_folder_id"))?,
+                    );
                 }
             }
             "uploader_name" => {
                 let text = field.text().await.map_err(|e| {
-                    AppError::internal(format!(
-                        "Failed to read uploader_name field: {}",
-                        e
-                    ))
+                    AppError::internal(format!("Failed to read uploader_name field: {}", e))
                 })?;
 
                 let trimmed = text.trim();
@@ -221,12 +204,8 @@ async fn parse_upload_multipart(
         }
     }
 
-    let file_data = file_data.ok_or_else(|| {
-        AppError::bad_request("Missing file data")
-    })?;
-    let file_name = file_name.ok_or_else(|| {
-        AppError::bad_request("Missing file name")
-    })?;
+    let file_data = file_data.ok_or_else(|| AppError::bad_request("Missing file data"))?;
+    let file_name = file_name.ok_or_else(|| AppError::bad_request("Missing file name"))?;
 
     // If mime_type is generic or not provided, guess from file extension
     if mime_type == "application/octet-stream" {
@@ -590,7 +569,9 @@ pub async fn upload_shared_folder_file(
         .iter()
         .any(|folder| folder.id == target_folder_id)
     {
-        return Err(AppError::forbidden("Target folder is outside the shared folder"));
+        return Err(AppError::forbidden(
+            "Target folder is outside the shared folder",
+        ));
     }
 
     let file = state
