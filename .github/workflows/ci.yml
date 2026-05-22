@@ -29,8 +29,8 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="origin/${{ github.base_ref }}"
             HEAD_COMMIT="${{ github.event.pull_request.head.sha }}"
-          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
-            BASE="origin/main"
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ] || ! git merge-base --is-ancestor "${{ github.event.before }}" HEAD >/dev/null 2>&1; then
+            BASE="HEAD~1"
             HEAD_COMMIT="HEAD"
           else
             BASE="${{ github.event.before }}"
