@@ -33,6 +33,8 @@ RUN npm run build
 # =============================================================================
 FROM rust:1.95-bookworm AS builder
 
+ARG TARGETPLATFORM
+ARG USE_PRECOMPILED=false
 WORKDIR /app
 
 # Install build dependencies
@@ -42,6 +44,10 @@ RUN apt-get update && apt-get install -y pkg-config libssl-dev \
 # Cache buster - change this to invalidate build cache
 ARG CACHE_BUSTER=1
 
+# Optional copy of precompiled binaries (glob pattern makes it optional)
+COPY rustshare-server-x86_64-unknown-linux-gnu* ./
+COPY rustshare-server-aarch64-unknown-linux-gnu* ./
+
 # Copy all source code at once (no dummy file trick to avoid caching issues)
 COPY Cargo.toml Cargo.lock ./
 COPY rust-toolchain.toml ./
@@ -49,12 +55,19 @@ COPY backend ./backend/
 COPY apps ./apps/
 COPY crates ./crates/
 
-# Build the application
+# Build the application or select precompiled binaries
 ENV CARGO_NET_RETRY=10
-RUN cargo build --release --bin rustshare-server
-
-# Strip the binary for smaller size
-RUN strip target/release/rustshare-server
+RUN mkdir -p target/release \
+    && if [ "$USE_PRECOMPILED" = "true" ]; then \
+        case "$TARGETPLATFORM" in \
+            "linux/amd64") cp rustshare-server-x86_64-unknown-linux-gnu target/release/rustshare-server ;; \
+            "linux/arm64") cp rustshare-server-aarch64-unknown-linux-gnu target/release/rustshare-server ;; \
+            *) echo "Unsupported target platform for precompiled: $TARGETPLATFORM" >&2; exit 1 ;; \
+        esac; \
+    else \
+        cargo build --release --bin rustshare-server; \
+    fi \
+    && strip target/release/rustshare-server
 
 # =============================================================================
 # Stage 3: Runtime Image
