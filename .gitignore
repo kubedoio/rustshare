@@ -60,3 +60,6 @@ bin/
 # Local Dev Databases
 rustshare.db
 device_id
+
+# Antigravity CLI
+.antigravitycli/

@@ -1,0 +1,15 @@
+name = "rustshare-docs"
+main = "worker.js"
+compatibility_date = "2024-04-03"
+
+# Modern Cloudflare Workers Assets Configuration
+# This binds the current directory containing our static files to the worker env.ASSETS namespace.
+[assets]
+directory = "./"
+binding = "ASSETS"
+
+# Domain Binding configuration for production docs.rustshare.io
+# This automatically routes docs.rustshare.io request traffic to this worker.
+routes = [
+  { pattern = "docs.rustshare.io/*", zone_name = "rustshare.io" }
+]

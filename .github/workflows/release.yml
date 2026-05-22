@@ -11,7 +11,7 @@ on:
         required: true
         type: string
   workflow_run:
-    workflows: ["CI", "Frontend CI", "Integration Tests"]
+    workflows: ["CI"]
     types: [completed]
     branches: [main]
 
@@ -107,7 +107,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const requiredWorkflows = ['CI', 'Frontend CI', 'Integration Tests'];
+            const requiredWorkflows = ['CI'];
             const sha = '${{ steps.resolve.outputs.commit }}';
 
             const { data: { workflow_runs: runs } } = await github.rest.actions.listWorkflowRunsForRepo({

@@ -9,5 +9,5 @@ use tracing::debug;
 
 /// Placeholder for macOS VFS initialization
 pub fn init_vfs() {
-	debug!("macOS VFS placeholder initialized");
+    debug!("macOS VFS placeholder initialized");
 }

@@ -378,10 +378,7 @@ pub async fn duplicate_note(
     auth: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<DuplicateNoteResponse>), AppError> {
-    let note = state
-        .note_service
-        .duplicate_note(id, auth.user_id)
-        .await?;
+    let note = state.note_service.duplicate_note(id, auth.user_id).await?;
 
     Ok((
         StatusCode::CREATED,

@@ -913,7 +913,9 @@ async fn contract_custom_workspace_and_folder_paths() {
     );
 
     // Customize the workspace and folder names
-    let customized_service = (*service).clone().with_custom_paths("CustomWorkspace".to_string(), "CustomNotes".to_string());
+    let customized_service = (*service)
+        .clone()
+        .with_custom_paths("CustomWorkspace".to_string(), "CustomNotes".to_string());
 
     let note = customized_service
         .create_note(
@@ -942,4 +944,3 @@ async fn contract_custom_workspace_and_folder_paths() {
 
     cleanup_user(&pool, user.id).await;
 }
-

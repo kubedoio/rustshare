@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RustShare Documentation — Modern File-Sharing & Company Memory Infrastructure</title>
+  
+  <!-- SEO Meta Tags -->
+  <meta name="description" content="Official technical documentation for RustShare: a modern, self-hosted file-sharing and sync platform for security-conscious technical teams. Learn how to deploy, operate, and contribute.">
+  <meta name="keywords" content="RustShare, self-hosted file sharing, company memory, open source, secure sharing, docker compose, rustfs, technical collaboration">
+  <meta name="author" content="RustShare Project Team">
+  <meta name="robots" content="index, follow">
+  
+  <!-- Social Graphics (Open Graph) -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="RustShare Technical Documentation">
+  <meta property="og:description" content="Official documentation for RustShare, the open-source company memory infrastructure. Built for technical teams that need absolute control, self-hosting, and explicit permissions.">
+  <meta property="og:image" content="https://raw.githubusercontent.com/kubedoio/rustshare/main/logo.png">
+  
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="styles.css">
+  
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='80' height='80' x='10' y='10' rx='16' fill='%230284c7'/><text x='30' y='65' fill='white' font-family='sans-serif' font-weight='bold' font-size='48'>R</text></svg>">
+</head>
+<body>
+
+  <!-- App Main Wrapper -->
+  <div class="app-container">
+
+    <!-- Mobile Header -->
+    <header class="mobile-header" id="mobile-header">
+      <div class="mobile-brand">
+        <div class="brand-logo">R</div>
+        <span>RustShare Docs</span>
+      </div>
+      <button class="menu-toggle" id="menu-toggle-btn" aria-label="Toggle Navigation Menu">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/>
+        </svg>
+      </button>
+    </header>
+
+    <!-- Left Navigation Sidebar -->
+    <aside class="sidebar" id="sidebar-menu">
+      <div class="sidebar-top">
+        
+        <!-- Brand Segment -->
+        <div class="brand-section">
+          <div class="brand-logo">R</div>
+          <span class="brand-name">RustShare</span>
+          <span class="badge active-badge">Preview</span>
+        </div>
+
+        <!-- Technical Search Trigger -->
+        <button class="search-trigger" id="sidebar-search-trigger" title="Press / to search">
+          <svg class="search-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+          </svg>
+          <span>Search docs...</span>
+          <kbd class="search-trigger-kbd">/</kbd>
+        </button>
+
+        <!-- Navigation Menu Items -->
+        <nav>
+          <ul class="nav-menu" id="navigation-list">
+            <li class="nav-item active"><a href="#home">Home</a></li>
+            <li class="nav-item"><a href="#getting-started">Getting Started</a></li>
+            <li class="nav-item"><a href="#concepts">Concepts</a></li>
+            <li class="nav-item"><a href="#architecture">Architecture</a></li>
+            <li class="nav-item"><a href="#deployment">Deployment</a></li>
+            <li class="nav-item"><a href="#desktop-client">Desktop Client</a></li>
+            <li class="nav-item"><a href="#operations">Operations</a></li>
+            <li class="nav-item"><a href="#security-model">Security Model</a></li>
+            <li class="nav-item"><a href="#contributing">Contributing</a></li>
+            <li class="nav-item"><a href="#roadmap">Roadmap</a></li>
+            <li class="nav-item"><a href="#faq">FAQ</a></li>
+          </ul>
+        </nav>
+      </div>
+
+      <!-- Sidebar Footer (Theme Switch & External Links) -->
+      <div class="sidebar-footer">
+        <a href="https://github.com/kubedoio/rustshare" target="_blank" rel="noopener" class="github-link" id="github-repo-link">
+          <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          <span>kubedoio/rustshare</span>
+        </a>
+        
+        <!-- Professional Dual Theme Selector -->
+        <div class="theme-selector" id="theme-selector-group">
+          <button class="theme-btn" data-theme="light" title="Use Light Mode">Light</button>
+          <button class="theme-btn" data-theme="dark" title="Use Dark Mode">Dark</button>
+          <button class="theme-btn active" data-theme="system" title="Follow System Preference">System</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Scrolling Area -->
+    <main class="main-wrapper" id="main-content-panel">
+      <div class="content-container">
+
+        <!-- ==========================================
+           PAGE 1: Home (#home)
+           ========================================== -->
+        <section id="home" class="doc-section active-section" data-title="Home">
+          <h1>RustShare Documentation</h1>
+          <p class="subtitle">Modern, self-hosted file-sharing and sync platform built for technical teams and security-conscious organizations.</p>
+          
+          <div class="alert alert-important">
+            <div class="alert-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+              <span>Public Preview / late-MVP Status</span>
+            </div>
+            <p>RustShare is currently in a <strong>late-MVP / pre-release</strong> state. The core web sharing capabilities, asynchronous replication, and operator recovery tools are fully implemented and highly stable. Active desktop and mobile client features are in progress or prototype phases. We are actively refining the platform for production readiness.</p>
+          </div>
+
+          <h2>Everything is a File.</h2>
+          <p>RustShare is designed around a single, uncompromising philosophy: <strong>"Everything is a File."</strong></p>
+          <p>In most modern collaboration suites, organization memory is scattered. Notes live in one SaaS app, project boards in another, meeting notes are lost in calendars, and raw files sit in cloud drives. RustShare consolidates these paradigms. Whether it is a raw technical artifact, a markdown document, a collaborative decision, a meeting transcript, or a Kanban board record—it is represented and stored natively as a versioned, secure file. This guarantees that your organization's entire cognitive memory remains traceable, searchable, auditable, and self-hosted.</p>
+
+          <h2>Core Value Proposition</h2>
+          <ul>
+            <li><strong>Durable Infrastructure:</strong> Built from the ground up for technical teams, utilizing standard S3-compatible object storage as the primary storage layer.</li>
+            <li><strong>Absolute Control:</strong> Open-source, private-cloud first, and easy to self-host. No hidden third-party telemetry, no cloud locking.</li>
+            <li><strong>Permission Clarity:</strong> Sharing model is designed to be fully understandable, auditable, and testable. No implicit background authorization logic.</li>
+            <li><strong>Traceable Auditability:</strong> Detailed access logging and state validation for critical tenant and share actions.</li>
+            <li><strong>Zero-PostgreSQL Profile:</strong> Supports a highly optimized standalone runtime profile where metadata is stored directly inside object storage JSON structures, removing SQL database requirements.</li>
+            <li><strong>AI-Ready Bounding:</strong> Designed to facilitate future semantic and indexing AI layers, while strictly respecting ACL and user scopes.</li>
+          </ul>
+
+          <h2>Quick Navigation</h2>
+          <div class="quick-nav-grid">
+            <a href="#getting-started" class="quick-nav-card">
+              <div>
+                <h3>Getting Started</h3>
+                <p>Run RustShare locally in under 5 minutes using Docker Compose.</p>
+              </div>
+              <span class="quick-nav-arrow">Start guide &rarr;</span>
+            </a>
+            <a href="#architecture" class="quick-nav-card">
+              <div>
+                <h3>Architecture</h3>
+                <p>Learn about Rust backend services, metadata caching, and the storage layer.</p>
+              </div>
+              <span class="quick-nav-arrow">Read details &rarr;</span>
+            </a>
+            <a href="#deployment" class="quick-nav-card">
+              <div>
+                <h3>Deployment</h3>
+                <p>Production checklists, reverse proxies, environment secrets, and HTTPS.</p>
+              </div>
+              <span class="quick-nav-arrow">Configure stack &rarr;</span>
+            </a>
+            <a href="#contributing" class="quick-nav-card">
+              <div>
+                <h3>Contributing</h3>
+                <p>How to set up the local compiler stack, compile the frontend, and run tests.</p>
+              </div>
+              <span class="quick-nav-arrow">Join dev &rarr;</span>
+            </a>
+          </div>
+
+          <p>Explore the project on <a href="https://github.com/kubedoio/rustshare" target="_blank" rel="noopener">GitHub</a> to report issues, contribute code, or star the repository.</p>
+        </section>
+
+
+        <!-- ==========================================
+           PAGE 2: Getting Started (#getting-started)
+           ========================================== -->
+        <section id="getting-started" class="doc-section" data-title="Getting Started">
+          <h1>Getting Started</h1>
+          <p>Set up RustShare and get it running locally on your machine in under five minutes.</p>
+
+          <h2>Prerequisites</h2>
+          <ul>
+            <li><strong>Docker:</strong> Engine version 24.0+ or Docker Desktop</li>
+            <li><strong>Docker Compose:</strong> V2 is required</li>
+            <li><strong>Hardware Resources:</strong> A minimum of 4 GB RAM allocated to Docker</li>
+            <li><strong>Network Ports:</strong> Ports 80 and 443 free on your local host (unless overrides are configured)</li>
+          </ul>
+
+          <h2>Quick Start</h2>
+          <p>Copy and run the following commands in your terminal to clone the repository, generate initial environment variables, and bootstrap the container stack:</p>
+          
+          <pre><code>git clone https://github.com/kubedoio/rustshare.git
+cd rustshare
+cp .env.example .env
+./scripts/pre-flight.sh
+docker compose up -d</code></pre>
+
+          <h2>What Just Happened</h2>
+          <p>Running the quick start starts four core Docker containers that comprise the complete local stack:</p>
+          
+          <table>
+            <thead>
+              <tr>
+                <th>Container Name</th>
+                <th>Service Purpose</th>
+                <th>Default Ports</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>postgres</code></td>
+                <td>Metadata authority, session logs, and user identity store</td>
+                <td><code>5432</code> (internal only)</td>
+              </tr>
+              <tr>
+                <td><code>rustfs</code></td>
+                <td>Primary S3-compatible local object storage (content + JSON metadata)</td>
+                <td><code>9000</code> / <code>9001</code></td>
+              </tr>
+              <tr>
+                <td><code>backend</code></td>
+                <td>High-performance Axum Rust API + SvelteKit Single Page App runner</td>
+                <td><code>8080</code> (internal only)</td>
+              </tr>
+              <tr>
+                <td><code>nginx</code></td>
+                <td>Edge reverse proxy and local request dispatcher</td>
+                <td><code>80</code> (binds to host)</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="alert alert-note">
+            <div class="alert-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+              <span>Docker Build Details</span>
+            </div>
+            <p>The RustShare backend container uses a highly efficient, multi-stage Docker build pipeline. Node.js compiles the SvelteKit frontend as a static single-page bundle, which is then compiled and embedded directly into the final lightweight scratch Rust runtime container.</p>
+          </div>
+
+          <h2>First-Time Login & Verification</h2>
+          <ol>
+            <li>Open your browser and navigate to <a href="http://localhost" target="_blank" rel="noopener">http://localhost</a>.</li>
+            <li>
+              <strong>Retrieve generated credentials:</strong> If you ran <code>./scripts/pre-flight.sh</code>, high-entropy random passwords were automatically generated. Retrieve the bootstrapped administrator password by querying your running container logs:
+              <pre><code>docker logs rustshare-backend-1 | grep "Bootstrap admin password"</code></pre>
+              Alternatively, inspect the <code>RUSTSHARE_ADMIN_PASSWORD</code> and <code>RUSTSHARE_DEMO_VIEWER_PASSWORD</code> values written to your local <code>.env</code> file.
+            </li>
+            <li>Sign in as administrator.</li>
+            <li>
+              <strong>Run the post-launch validation suite:</strong> Confirm that the API, database connectivity, replication channels, and S3 credentials are in full working order:
+              <pre><code>./scripts/final-launch-smoke.sh</code></pre>
+            </li>
+          </ol>
+        </section>
+
+
+        <!-- ==========================================
+           PAGE 3: Concepts (#concepts)
+           ========================================== -->
+        <section id="concepts" class="doc-section" data-title="Concepts">
+          <h1>Core Concepts</h1>
+          <p>Understanding the unified design paradigms that shape RustShare and differentiate it from general-purpose cloud storage providers.</p>
+
+          <h2>Everything is a File</h2>
+          <p>RustShare consolidates team knowledge by treating all objects natively as version-controlled files inside explicit namespaces. By making files the universal primitive, we achieve massive architectural simplifications: version history, permission control, backup policies, and full audit trails are handled uniformly across all collaboration models.</p>
+
+          <h2>The Product model</h2>
+          <ul>
+            <li>
+              <strong>Workspaces:</strong>
+              Logical multi-tenant partitions. A Workspace binds a specific set of users, security groups, and storage policies to isolated content hierarchies.
+            </li>
+            <li>
+              <strong>Files and Folders:</strong>
+              Traditional hierarchical directory structure. Supports instant upload, download, renaming, deep copy, soft trash deletion, and immutable version restore.
+            </li>
+            <li>
+              <strong>Notes:</strong>
+              Rich collaborative markdown documents. Notes are saved automatically to the active folder in real-time, can embed attachments, and can be shared externally with a single click.
+            </li>
+            <li>
+              <strong>Attachments:</strong>
+              Durable metadata linking static assets, spreadsheets, and binary files directly to text-based documents or meeting logs.
+            </li>
+            <li>
+              <strong>Meetings:</strong>
+              Structured markdown logs for capturing meeting agendas, participant lists, and actionable tasks. They are written to designated folders and linked to relevant project paths.
+            </li>
+            <li>
+              <strong>Decisions:</strong>
+              Architectural Decision Records (ADRs) and business decisions stored as versioned documents requiring explicit member signatures and approval workflows.
+            </li>
+            <li>
+              <strong>Kanban Records:</strong>
+              Lightweight task tracking cards grouped in boards. Unlike database-siloed project tools, each Kanban board is represented as an plain JSON schema folder, making tasks fully traceable and auditable.
+            </li>
+            <li>
+              <strong>Sharing Model:</strong>
+              Decoupled into <em>Internal Sharing</em> (targeting specific workspace users or groups with granular Viewer/Editor roles) and <em>Public Links</em> (allowing anonymous access, optional passwords, expiration caps, and upload-only folder-drops).
+            </li>
+            <li>
+              <strong>Explicit Permissions:</strong>
+              Permissions are never implicit. Effective access is computed dynamically based on parent directory grants. Revoked states are applied instantly.
+            </li>
+            <li>
+              <strong>Auditability:</strong>
+              Detailed system-wide append logs tracking exactly who read, modified, downloaded, or shared an asset.
+            </li>
+            <li>
+              <strong>Future Permission-Aware AI:</strong>
+              A foundational design principle that guarantees that when a semantic indexer or LLM queries your files, it cannot bypass the user's explicit ACL settings. You only see AI responses generated from files you have access to.
+            </li>
+          </ul>
+        </section>
+
+
+        <!-- ==========================================
+           PAGE 4: Architecture (#architecture)
+           ========================================== -->
+        <section id="architecture" class="doc-section" data-title="Architecture">
+          <h1>System Architecture</h1>
+          <p>A look under the hood of RustShare's hybrid, service-oriented infrastructure.</p>
+
+          <div class="alert alert-important">
+            <div class="alert-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>
+              <span>Product Implementation vs. Intended Direction</span>
+            </div>
+            <p>This technical section explicitly distinguishes between what is implemented and functional inside the current codebase versus the long-term architectural goals of the project.</p>
+          </div>
+
+          <h2>High-Level Technical Stack</h2>
+          <p>RustShare uses a decoupled, three-tier structure designed to maximize throughput, minimize memory usage, and ensure complete container isolation:</p>
+
+          <ul>
+            <li>
+              <strong>Rust Backend:</strong>
+              Built using <code>Axum</code> for the REST/WebSocket router, <code>sqlx</code> for compiled-checked SQL queries, and the <code>tokio</code> runtime. It handles OIDC logic, JWT generation, file operations, replication claims, and permission processing.
+            </li>
+            <li>
+              <strong>Svelte Frontend:</strong>
+              Written in Svelte 5 utilizing SvelteKit. It operates as a high-performance Single Page Application (SPA), caching UI layouts and establishing active WebSocket connections for realtime toast notifications.
+            </li>
+            <li>
+              <strong>Storage Orchestrator:</strong>
+              Uses S3-compatible storage layers (such as AWS S3, Cloudflare R2, MinIO, or the default local <code>RustFS</code>) to store both immutable binary content and structured JSON metadata.
+            </li>
+          </ul>
+
+          <h2>Major Update: Zero-PostgreSQL Profile (Implemented)</h2>
+          <p>Historically, RustShare required PostgreSQL as its relational database core. On March 27, 2026, the team completed the <strong>Zero-PostgreSQL Refactor</strong>.</p>
+          <p>We now support a <strong>Standalone (single-node)</strong> execution profile that completely bypasses Postgres. In this profile, RustFS acts as the canonical store of record. User profiles, system configuration, directory structures, and permission grants are stored natively in the S3 backend as encrypted, hierarchical JSON documents, with an in-memory caching layer handling fast read queries. This eliminates runtime overhead, significantly simplifying deployment.</p>
+          <p>For large-scale, multi-node setups, the <strong>Distributed Profile</strong> pairs the object storage with Redis to manage distributed locks, job claims, and rate limits.</p>
+
+          <h2>Core Architecture Diagram</h2>
+          <pre><code>
++-------------------------------------------------------------+
+|                     Edge Reverse Proxy                      |
+|                 (Nginx / TLS Edge Gateway)                  |
++------------------------------+------------------------------+
+                               |
+                               | (Proxies non-static paths)
+                               v
++------------------------------+------------------------------+
+|                        Rust Backend                         |
+|                     (Axum API Server)                       |
+|  +---------------------------+---------------------------+  |
+|  |     Stateless JWT Auth    |     Permission ACL Unit   |  |
+|  +---------------------------+---------------------------+  |
+|  |     In-Memory Cache       |  Asynchronous Replication |  |
+|  +---------------------------+---------------------------+  |
++---------+--------------------+---------------------+--------+
+          |                                          |
+          | (Reads/Writes Metadata)                  | (Triggers Sync)
+          v                                          v
++---------+--------------------+          +----------+--------+
+|      Canonical Data Store    |          |   Replication     |
+|   (RustFS S3 / Postgres V1)  |          |   Worker Target   |
++------------------------------+          +-------------------+
+          </code></pre>
+
+          <h2>Future Technical Integrations</h2>
+          <ul>
+            <li>
+              <strong>RustChat Integration:</strong>
+              Deep, native linking with RustChat platforms. The integration will utilize a shared OIDC identity layer and bounded API contracts to fetch permission-checked file references inside chats, preventing the sharing of database backends.
+            </li>
+            <li>
+              <strong>Permission-Aware AI Layer:</strong>
+              Planned event-driven projections that index file content changes in the background, feeding updates into vector DBs. The retrieval-augmented generation (RAG) system checks the exact ACL of the requesting user at query execution, preventing security bypasses.
+            </li>
+          </ul>
+        </section>
+
+
+        <!-- ==========================================
+           PAGE 5: Deployment (#deployment)
+           ========================================== -->
+        <section id="deployment" class="doc-section" data-title="Deployment">
+          <h1>Deployment Guide</h1>
+          <p>Instructions for taking RustShare from a local quickstart to a production-hardened self-hosted cluster.</p>
+
+          <h2>Production Deployment</h2>
+          <p>For production deployments, combine the base Docker Compose manifest with the production-hardening overrides:</p>
+          
+          <pre><code>docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d</code></pre>
+
+          <h2>Production Hardening Checklist</h2>
+          <ol>
+            <li>
+              <strong>High-Entropy Secrets:</strong> Ensure you generate strong keys in your <code>.env</code> file. Do not run production instances with default boilerplate values. In particular:
+              <ul>
+                <li><code>RUSTSHARE_SECRET_ENCRYPTION_KEY</code> (AES-256-GCM key used to encrypt secrets at rest).</li>
+                <li><code>JWT_SECRET</code> (Stateless web session signing key).</li>
+              </ul>
+            </li>
+            <li>
+              <strong>Port Isolation:</strong> The default production stack overrides bind internal database ports (<code>5432</code>) and backend ports (<code>8080</code>) strictly to <code>127.0.0.1</code> to prevent exposing databases directly to the public web.
+            </li>
+            <li>
+              <strong>Log Rotation:</strong> Enable standard Docker log rotation rules to avoid filling storage disks with standard request trails:
+              <pre><code># Inside docker-compose.prod.yml
+logging:
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "5"</code></pre>
+            </li>
+            <li>
+              <strong>Resource Isolation:</strong> Impose strict CPU and memory limits on containers to prevent host exhaustions during massive, concurrent uploads.
+            </li>
+          </ol>
+
+          <h2>Reverse Proxy & HTTPS Setup</h2>
+          <p>RustShare does not terminate TLS natively. Production operators must deploy a reverse proxy (e.g., Nginx, Caddy, HAProxy, or Cloudflare Edge Gateways) in front of the stack. Ensure the proxy configures the following headers to support websocket connections and large uploads:</p>
+          
+          <pre><code># Recommended Nginx Proxy Configuration
+server {
+    listen 443 ssl http2;
+    server_name rustshare.company.internal;
+
+    client_max_body_size 5G; # Supports large file uploads
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}</code></pre>
+        </section>
+
+
+        <!-- ==========================================
+           PAGE 6: Desktop Client (#desktop-client)
+           ========================================== -->
+        <section id="desktop-client" class="doc-section" data-title="Desktop Client">
+          <h1>Desktop Client</h1>
+          <p>Deep-dive into the synchronization engine designed for local directory monitoring and file-matching.</p>
+
+          <h2>Current Status</h2>
+          <p>The desktop client is actively developed as a <strong>CLI sync engine paired with a background monitor daemon</strong>. It resides in the repository under <code>apps/desktop</code>.</p>
+          <p>The current implementation focuses on robust, low-level POSIX file operations, ensuring synchronization correctness before wrapping the tool inside a graphical GUI.</p>
+
+          <h2>What is Shipped Today (v0.3.0)</h2>
+          <ul>
+            <li>
+              <strong>Apple macOS Support:</strong> The native compiled macOS binary <code>rustshare-desktop</code> is the primary testbed.
+            </li>
+            <li>
+              <strong>Pairing-First Auth:</strong> Secure desktop client registration uses a token exchange protocol. Administrators can fall back to explicit <code>--token</code> inputs during debugging.
+            </li>
+            <li>
+              <strong>Root Synced Subtrees:</strong> Fully mirrors remote nested paths locally, including empty directories and zero-byte placeholders.
+            </li>
+            <li>
+              <strong>Full Account Mirror:</strong> Supports mapping the root <code>/</code> workspace directly to a local disk path.
+            </li>
+            <li>
+              <strong>Quarantine Safeguards:</strong> Corrupt server transfers or aborted downloads are automatically quarantined to specific cache routes to avoid blocking the sync queue.
+            </li>
+            <li>
+              <strong>Sync Doctor Command:</strong> Allows operators to inspect stale or out-of-sync local metadata tables via the CLI:
+              <pre><code>rustshare-desktop sync doctor</code></pre>
+            </li>
+            <li>
+              <strong>Remote Cleanup:</strong> Stale remote records can be easily pruned using:
+              <pre><code>rustshare-desktop sync cleanup-remote</code></pre>
+            </li>
+          </ul>
+
+          <h2>What is NOT Shipped Yet</h2>
+          <p>The following elements are currently planned but not yet implemented inside the desktop suite:</p>
+          <ul>
+            <li>A polished macOS <code>.app</code> bundle container.</li>
+            <li>Notarized drag-and-drop installer packages for macOS and Windows.</li>
+            <li>A finished graphic GUI shell wrapping the sync engine (all status commands currently operate through terminal logs).</li>
+          </ul>
+
+          <div class="alert alert-tip">
+            <div class="alert-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+              <span>Developer Reference</span>
+            </div>
+            <p>If you want to build the current client from source, consult the markdown instructions located inside the repository: <code>apps/desktop/docs/distribution/macos-client-installation.md</code>.</p>
+          </div>
+        </section>
+
+
+        <!-- ==========================================
+           PAGE 7: Operations (#operations)
+           ========================================== -->
+        <section id="operations" class="doc-section" data-title="Operations">
+          <h1>Operations Guide</h1>
+          <p>A quick-reference dashboard for administrators managing the day-to-day operations of a RustShare node.</p>
+
+          <h2>Operational Checklist</h2>
+          
+          <h3>Starting Services</h3>
+          <p>Ensure your environment variables are configured, then start the stack in detached mode:</p>
+          <pre><code>docker compose up -d</code></pre>
+
+          <h3>Stopping Services</h3>
+          <p>Safely stop the running backend and metadata services without destroying volumes:</p>
+          <pre><code>docker compose down</code></pre>
+
+          <h3>Checking Service Logs</h3>
+          <p>Monitor startup outputs, JWT validation reports, or database connection pools:</p>
+          <pre><code>docker logs -f rustshare-backend-1</code></pre>
+
+          <h2>System Backups</h2>
+          <p>RustShare backups must capture two components to ensure absolute state recovery:</p>
+          <ul>
+            <li><strong>Relational Metadata:</strong> A snapshot of PostgreSQL state (if using the V1 database profile).</li>
+            <li><strong>Durable Content:</strong> Full copies of the underlying S3 storage bucket.</li>
+          </ul>
+          <p>Run the built-in backup script to output an encrypted package: </p>
+          <pre><code>./scripts/backup-stack.sh</code></pre>
+
+          <h2>Restore Validation Drills</h2>
+          <div class="alert alert-important">
+            <div class="alert-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+              <span>Test Your Recovery Path</span>
+            </div>
+            <p>A backup process is only as good as its tested restore path. We recommend running a recovery drill at least once a quarter using our preconfigured isolated environment.</p>
+          </div>
+          <p>To run a recovery validation drill locally:</p>
+          <pre><code>docker compose -f docker-compose.restore-drill.yml up -d
+./scripts/final-launch-smoke.sh</code></pre>
+
+          <h2>Troubleshooting FAQ</h2>
+          <p><strong>Error: Rate limit exceeded on authentication paths.</strong><br>
+          <em>Solution:</em> By default, authentication paths enforce per-IP limits. If users are behind a corporate NAT, ensure your reverse proxy passes the correct <code>X-Real-IP</code> header, or configure the rate limits in your <code>.env</code> file.</p>
+          
+          <p><strong>Error: S3 Storage authentication failed.</strong><br>
+          <em>Solution:</em> Verify that the credentials in <code>.env</code> match the credentials configured in the <code>rustfs</code> administration panel at <code>http://localhost:9001</code>.</p>
+        </section>
+
+
+        <!-- ==========================================
+           PAGE 8: Security Model (#security-model)
+           ========================================== -->
+        <section id="security-model" class="doc-section" data-title="Security Model">
+          <h1>Security Model</h1>
+          <p>Understanding the mitigation boundaries, credential policies, and access controls of the platform.</p>
+
+          <h2>Threat Model Matrix</h2>
+          
+          <table>
+            <thead>
+              <tr>
+                <th>Threat Target</th>
+                <th>Mitigation Strategy</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Unauthorized File Access</td>
+                <td>Secure HttpOnly JWT cookies, token checks on downloads, and explicit ACL evaluation.</td>
+              </tr>
+              <tr>
+                <td>Brute Force / Dictionary Attacks</td>
+                <td>Argon2id password hashing and per-IP rate-limiting on login.</td>
+              </tr>
+              <tr>
+                <td>Session Hijacking</td>
+                <td>SameSite cookies and CSRF validation on all mutation endpoints.</td>
+              </tr>
+              <tr>
+                <td>Data Leak at Rest</td>
+                <td>AES-256-GCM encryption of secrets via <code>RUSTSHARE_SECRET_ENCRYPTION_KEY</code>.</td>
+              </tr>
+              <tr>
+                <td>SQL Injections</td>
+                <td>Compile-time query verification in <code>sqlx</code> (preventing raw string generation).</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>Limitations & Non-Goals</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Boundary Limitations</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Compromised Host OS</td>
+                <td>If an attacker gains root privileges on the server, all encryption keys in memory are exposed.</td>
+              </tr>
+              <tr>
+                <td>Unencrypted Transport</td>
+                <td>TLS termination is the responsibility of the operator. Do not deploy without HTTPS.</td>
+              </tr>
+              <tr>
+                <td>Malicious Files</td>
+                <td>Automatic virus scanning and executable sandboxing are out of scope for the core platform.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="alert alert-note">
+            <div class="alert-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+              <span>Security Disclaimer</span>
+            </div>
+            <p><strong>RustShare has not yet undergone an external penetration audit.</strong> The current security posture is built on industry standards, type-safe Rust code compilation, strict compiler flags, and automated dependency auditing.</p>
+          </div>
+
+          <h2>OIDC Integration Status</h2>
+          <p>RustShare supports single sign-on (SSO) authentication using standard OpenID Connect (OIDC) protocols. The system is designed to use the <code>authorization_code</code> flow. While PKCE-based OIDC configuration exists to support mobile and desktop pairing, end-to-end production validation against enterprise identity providers (such as Okta, Azure AD, or Keycloak) is in progress.</p>
+        </section>
+
+
+        <!-- ==========================================
+           PAGE 9: Contributing (#contributing)
+           ========================================== -->
+        <section id="contributing" class="doc-section" data-title="Contributing">
+          <h1>Contributing to RustShare</h1>
+          <p>We welcome contributions from developers, technical writers, and security researchers.</p>
+
+          <h2>Local Development Setup</h2>
+          <p>To compile RustShare and run tests locally, ensure you meet the following requirements:</p>
+          <ul>
+            <li><strong>Rust Toolchain:</strong> Version 1.95.0 (as specified in <code>rust-toolchain.toml</code>)</li>
+            <li><strong>Node.js:</strong> Version 20.0+ (and npm)</li>
+            <li><strong>Docker:</strong> Active docker service to run local test databases</li>
+          </ul>
+
+          <h3>Step 1: Start Mock Dependencies</h3>
+          <p>Boot up the developer Postgres database and the MinIO storage server locally:</p>
+          <pre><code>docker compose -f docker-compose.dev.yml up -d</code></pre>
+
+          <h3>Step 2: Build the Frontend</h3>
+          <p>Navigate to the frontend folder, install packages, and compile the SPA bundle:</p>
+          <pre><code>cd frontend
+npm install
+npm run build
+cd ..</code></pre>
+
+          <h3>Step 3: Build and Test the Backend</h3>
+          <p>Verify that your local environment passes all unit, integration, and formatting tests:</p>
+          <pre><code># Run tests
+cargo test
+
+# Check formatting
+cargo fmt -- --check
+
+# Check for common code anti-patterns
+cargo clippy -- -D warnings</code></pre>
+
+          <h2>Contribution Guidelines</h2>
+          <ul>
+            <li>
+              <strong>DCO (Developer Certificate of Origin):</strong>
+              All commits must be signed off (using <code>git commit -s</code>) to certify that you have the right to submit the code under the project's Apache 2.0 license.
+            </li>
+            <li>
+              <strong>Code Quality:</strong>
+              Write clean, documented, type-safe code. We expect thorough unit testing for all critical API and permission paths.
+            </li>
+            <li>
+              <strong>Submitting Pull Requests:</strong>
+              Ensure your PR targets the <code>main</code> branch, passes all CI validations, and provides a clear description of the problem solved.
+            </li>
+          </ul>
+
+          <p>For the complete contribution charter, review the <a href="https://github.com/kubedoio/rustshare/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">CONTRIBUTING.md</a> file in the repository.</p>
+        </section>
+
+
+        <!-- ==========================================
+           PAGE 10: Roadmap (#roadmap)
+           ========================================== -->
+        <section id="roadmap" class="doc-section" data-title="Roadmap">
+          <h1>Product Roadmap</h1>
+          <p>Visualizing current priorities, active developments, and long-term milestones. Items are explicitly labeled to reflect actual repository status.</p>
+
+          <h2>Maturity Snapshot</h2>
+          <ul>
+            <li><strong>Web File-Sharing System:</strong> <code>94% - 96%</code> Complete</li>
+            <li><strong>Multi-tenant Permissions Unit:</strong> <code>90%</code> Complete</li>
+            <li><strong>Desktop Synchronization Suite:</strong> <code>40%</code> (Daemon core is stable; GUI shell is in prototype stage)</li>
+            <li><strong>Mobile Application Suite:</strong> <code>20%</code> (PKCE groundwork is in place; mobile layout work is deferred)</li>
+          </ul>
+
+          <h2>Active Phase: Late MVP Refining (In Progress)</h2>
+          <div class="quick-nav-grid" style="grid-template-columns: 1fr 1fr;">
+            <div class="quick-nav-card" style="cursor: default; transform: none; box-shadow: none;">
+              <div>
+                <h3 style="color: var(--color-brand);">[Solid / Implemented]</h3>
+                <p>&bull; Zero-PostgreSQL refactor and S3 system-of-record.<br>
+                &bull; axum-based stateless JWT session cookies.<br>
+                &bull; Full Markdown notes editor with autosave.<br>
+                &bull; Local backup and restore-drill validation scripts.</p>
+              </div>
+            </div>
+            <div class="quick-nav-card" style="cursor: default; transform: none; box-shadow: none;">
+              <div>
+                <h3 style="color: var(--warning-border);">[In Progress]</h3>
+                <p>&bull; Svelte 5 frontend component polish.<br>
+                &bull; Complete OIDC validation against key providers.<br>
+                &bull; Background replication alerting hooks.<br>
+                &bull; Advanced desktop sync daemon testing.</p>
+              </div>
+            </div>
+          </div>
+
+          <h2>Future Milestones</h2>
+          
+          <h3>Near Term (Next 3-6 Months)</h3>
+          <ul>
+            <li><strong>V1.0 Stable Release:</strong> Freeze API endpoints and commit to SemVer versioning.</li>
+            <li><strong>Security Audit:</strong> Commission an external penetration and code structure audit.</li>
+            <li><strong>Mobile Responsiveness:</strong> Improve mobile web layouts.</li>
+          </ul>
+
+          <h3>Medium Term (6-12 Months)</h3>
+          <ul>
+            <li><strong>Orchestration Tools:</strong> Official Kubernetes Helm charts.</li>
+            <li><strong>Identity Integration:</strong> Full SCIM v2 support for enterprise group provisioning.</li>
+            <li><strong>Desktop GUI:</strong> Deliver a drag-and-drop installer with a native tray layout.</li>
+          </ul>
+
+          <h3>Long Term (Deferred)</h3>
+          <ul>
+            <li><strong>Native Mobile Apps:</strong> iOS and Android applications (deferred until web and desktop v1.0 are stable).</li>
+            <li><strong>RustChat Bounded Integration:</strong> Inline permission-aware file unfurling in chats.</li>
+            <li><strong>Permission-Aware AI:</strong> Background vector RAG engines respecting ACL.</li>
+          </ul>
+        </section>
+
+
+        <!-- ==========================================
+           PAGE 11: FAQ (#faq)
+           ========================================== -->
+        <section id="faq" class="doc-section" data-title="FAQ">
+          <h1>Frequently Asked Questions</h1>
+          <p>Answers to common questions regarding RustShare's design, limits, and deployment path.</p>
+
+          <h2>General Questions</h2>
+          
+          <h3>Is RustShare production ready?</h3>
+          <p>Not yet. RustShare is in a late-MVP / pre-release state. The core web engine and S3-based file sync are highly stable and feature-complete, but OIDC enterprise validation, advanced alerting, and desktop installer suites are still being validated. We recommend testing the platform in staging before deploying it to mission-critical environments.</p>
+
+          <h3>Is RustShare open source?</h3>
+          <p>Yes. RustShare is licensed under the permissive <strong>Apache License, Version 2.0</strong>. You are free to download, modify, distribute, and self-host the platform for commercial and private use.</p>
+
+          <h3>Is it a Dropbox replacement?</h3>
+          <p>No. While it shares basic upload/download capabilities, RustShare is designed as <strong>company memory infrastructure</strong>. It focuses on structured technical documents, ADRs, project boards, and explicit permission auditability for teams, rather than mass-market consumer camera uploads or generic cloud drives.</p>
+
+          <h3>Is it a Nextcloud replacement?</h3>
+          <p>Yes, but with a deliberately narrower scope. Nextcloud is a massive suite offering mail, calendars, office suites, and a large app marketplace. RustShare focuses on doing one thing extremely well: <strong>high-performance, secure file collaboration for technical teams</strong>. We avoid feature bloat to maintain speed, auditability, and ease of deployment.</p>
+
+          <h3>Does it require a specific cloud provider?</h3>
+          <p>No. RustShare is completely infrastructure-agnostic. You can deploy the Docker containers to AWS, Google Cloud, Azure, on-premise VMs, bare metal servers, or a single Raspberry Pi.</p>
+
+          <h3>Can I host it in air-gapped environments?</h3>
+          <p>Yes. Because RustShare supports a Zero-PostgreSQL standalone profile and bundles its compiled SvelteKit SPA directly inside the Axum binary, you can host the entire stack locally in isolated, air-gapped corporate subnets with zero external dependencies.</p>
+
+          <h3>Does it include AI?</h3>
+          <p>AI features (semantic searches, summaries, and indexing) are planned as <strong>optional, permission-aware additives</strong>. They are not a requirement for the platform's core usability, and they will never execute unauthorized background data leakage.</p>
+
+          <h3>How does RustShare relate to RustChat?</h3>
+          <p>RustShare is designed to act as the native file and storage layer for the RustChat ecosystem. They share identity models, but they maintain separated databases and strictly bounded API boundaries to prevent security bypasses.</p>
+        </section>
+
+      </div>
+    </main>
+
+  </div>
+
+  <!-- Technical Search Overlay Modal -->
+  <div class="search-modal" id="doc-search-modal" aria-hidden="true" role="dialog">
+    <div class="search-modal-container">
+      <div class="search-modal-header">
+        <svg class="search-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+        </svg>
+        <input type="text" class="search-input" id="search-input-field" placeholder="Search documentation... (Press Esc to close)" autocomplete="off">
+        <button class="search-close" id="search-modal-close-btn" aria-label="Close Search">Esc</button>
+      </div>
+      <ul class="search-results" id="search-results-list">
+        <!-- Results injected dynamically via JS -->
+      </ul>
+      <div class="search-modal-footer">
+        <span class="search-kbd-guide"><kbd class="search-kbd-btn">&crarr;</kbd> to navigate</span>
+        <span class="search-kbd-guide"><kbd class="search-kbd-btn">Esc</kbd> to close</span>
+        <span class="search-kbd-guide"><kbd class="search-kbd-btn">/</kbd> to focus anywhere</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Script Loader -->
+  <script src="script.js"></script>
+</body>
+</html>

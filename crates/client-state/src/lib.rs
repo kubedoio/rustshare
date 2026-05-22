@@ -293,7 +293,10 @@ impl Database {
                     entry_type,
                     size: row.get::<_, i64>(2)? as u64,
                     hash: row.get(3)?,
-                    mtime: Utc.timestamp_millis_opt(mtime_ms).single().unwrap_or_else(Utc::now),
+                    mtime: Utc
+                        .timestamp_millis_opt(mtime_ms)
+                        .single()
+                        .unwrap_or_else(Utc::now),
                     last_synced_version: row.get(5)?,
                     hydration_state,
                 })
@@ -358,7 +361,10 @@ impl Database {
         )?;
 
         let result = stmt.query_row(
-            params![root_id.as_bytes(), relative_path.to_string_lossy().to_string()],
+            params![
+                root_id.as_bytes(),
+                relative_path.to_string_lossy().to_string()
+            ],
             |row| {
                 let remote_file_id: Option<Vec<u8>> = row.get(5)?;
                 Ok(FileState {
@@ -428,7 +434,10 @@ impl Database {
     pub fn delete_file_state(&self, root_id: Uuid, relative_path: &Path) -> Result<bool> {
         let deleted = self.conn.execute(
             "DELETE FROM file_states WHERE root_id = ? AND relative_path = ?",
-            params![root_id.as_bytes(), relative_path.to_string_lossy().to_string()],
+            params![
+                root_id.as_bytes(),
+                relative_path.to_string_lossy().to_string()
+            ],
         )?;
         Ok(deleted > 0)
     }
@@ -607,7 +616,10 @@ impl Database {
     ) -> Result<bool> {
         let deleted = self.conn.execute(
             "DELETE FROM broken_remote_entries WHERE root_id = ? AND relative_path = ?",
-            params![root_id.as_bytes(), relative_path.to_string_lossy().to_string()],
+            params![
+                root_id.as_bytes(),
+                relative_path.to_string_lossy().to_string()
+            ],
         )?;
         Ok(deleted > 0)
     }
@@ -833,7 +845,9 @@ mod tests {
         assert!(!entries[0].relative_path.as_os_str().is_empty());
 
         // clear_broken_remote_entries_for_path should not panic
-        assert!(db.clear_broken_remote_entries_for_path(root_id, bad_path).unwrap());
+        assert!(db
+            .clear_broken_remote_entries_for_path(root_id, bad_path)
+            .unwrap());
         assert!(db.get_broken_remote_entries(root_id).unwrap().is_empty());
 
         // upsert_file_state should not panic
