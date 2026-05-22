@@ -36,25 +36,29 @@ async fn test_group_sharing_works_via_compat_layer() {
 
     // Create test users
     let owner_id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO users (id, username, email, password_hash, tenant_id) VALUES ($1, $2, $3, $4, $5) RETURNING id"
+        "INSERT INTO users (id, username, email, password_hash, tenant_id, display_name, storage_quota) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"
     )
     .bind(Uuid::new_v4())
     .bind(format!("owner{}", test_id))
     .bind(format!("owner{}@example.com", test_id))
     .bind("hash")
     .bind(tenant_id)
+    .bind(format!("owner{} Display", test_id))
+    .bind(10_737_418_240i64)
     .fetch_one(&pool)
     .await
     .expect("Failed to create owner user");
 
     let member_id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO users (id, username, email, password_hash, tenant_id) VALUES ($1, $2, $3, $4, $5) RETURNING id"
+        "INSERT INTO users (id, username, email, password_hash, tenant_id, display_name, storage_quota) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"
     )
     .bind(Uuid::new_v4())
     .bind(format!("member{}", test_id))
     .bind(format!("member{}@example.com", test_id))
     .bind("hash")
     .bind(tenant_id)
+    .bind(format!("member{} Display", test_id))
+    .bind(10_737_418_240i64)
     .fetch_one(&pool)
     .await
     .expect("Failed to create member user");
@@ -81,9 +85,10 @@ async fn test_group_sharing_works_via_compat_layer() {
 
     // Create test file
     let file_id = Uuid::new_v4();
+    let storage_key = format!("{}/files/{}", tenant_id, file_id);
     sqlx::query(r#"
-        INSERT INTO files (id, name, path, content_hash, size, mime_type, owner_id, tenant_id, current_version)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        INSERT INTO files (id, name, path, content_hash, size, mime_type, owner_id, tenant_id, current_version, storage_key)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     "#)
     .bind(file_id)
     .bind("test.txt")
@@ -94,6 +99,7 @@ async fn test_group_sharing_works_via_compat_layer() {
     .bind(owner_id)
     .bind(tenant_id)
     .bind(1i32)
+    .bind(storage_key)
     .execute(&pool)
     .await
     .expect("Failed to create file");
@@ -252,20 +258,22 @@ async fn test_find_user_by_id_respects_disabled_filter() {
 
     // Create active user
     let active_user_id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO users (id, username, email, password_hash, tenant_id) VALUES ($1, $2, $3, $4, $5) RETURNING id"
+        "INSERT INTO users (id, username, email, password_hash, tenant_id, display_name, storage_quota) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"
     )
     .bind(Uuid::new_v4())
     .bind(format!("active{}", test_id))
     .bind(format!("active{}@example.com", test_id))
     .bind("hash")
     .bind(tenant_id)
+    .bind(format!("active{} Display", test_id))
+    .bind(10_737_418_240i64)
     .fetch_one(&pool)
     .await
     .expect("Failed to create active user");
 
     // Create disabled user
     let disabled_user_id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO users (id, username, email, password_hash, tenant_id, disabled_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id"
+        "INSERT INTO users (id, username, email, password_hash, tenant_id, disabled_at, display_name, storage_quota) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id"
     )
     .bind(Uuid::new_v4())
     .bind(format!("disabled{}", test_id))
@@ -273,6 +281,8 @@ async fn test_find_user_by_id_respects_disabled_filter() {
     .bind("hash")
     .bind(tenant_id)
     .bind(chrono::Utc::now())
+    .bind(format!("disabled{} Display", test_id))
+    .bind(10_737_418_240i64)
     .fetch_one(&pool)
     .await
     .expect("Failed to create disabled user");
@@ -331,13 +341,15 @@ async fn test_is_user_in_group_edge_cases() {
 
     // Create test user
     let user_id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO users (id, username, email, password_hash, tenant_id) VALUES ($1, $2, $3, $4, $5) RETURNING id"
+        "INSERT INTO users (id, username, email, password_hash, tenant_id, display_name, storage_quota) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"
     )
     .bind(Uuid::new_v4())
     .bind(format!("user{}", test_id))
     .bind(format!("user{}@example.com", test_id))
     .bind("hash")
     .bind(tenant_id)
+    .bind(format!("user{} Display", test_id))
+    .bind(10_737_418_240i64)
     .fetch_one(&pool)
     .await
     .expect("Failed to create user");
@@ -438,7 +450,10 @@ async fn create_test_compat(pool: sqlx::PgPool) -> MetadataStoreCompat {
     struct MockFolderRepo;
     struct MockFileRepo;
     struct MockFileVersionRepo;
-    struct MockShareRepo;
+    #[derive(Clone)]
+    struct MockShareRepo {
+        shares: Arc<std::sync::Mutex<std::collections::HashMap<ShareId, ShareDocument>>>,
+    }
     struct MockEventRepo;
     struct MockFolderChildrenIndexRepo;
     struct MockTombstoneRepo;
@@ -544,8 +559,9 @@ async fn create_test_compat(pool: sqlx::PgPool) -> MetadataStoreCompat {
 
     #[async_trait]
     impl ShareRepository for MockShareRepo {
-        async fn get(&self, _id: ShareId) -> Result<Option<ShareDocument>, RepositoryError> {
-            Ok(None)
+        async fn get(&self, id: ShareId) -> Result<Option<ShareDocument>, RepositoryError> {
+            let map = self.shares.lock().unwrap();
+            Ok(map.get(&id).cloned())
         }
         async fn get_by_token(
             &self,
@@ -553,7 +569,9 @@ async fn create_test_compat(pool: sqlx::PgPool) -> MetadataStoreCompat {
         ) -> Result<Option<ShareDocument>, RepositoryError> {
             Ok(None)
         }
-        async fn create(&self, _share: &ShareDocument) -> Result<(), RepositoryError> {
+        async fn create(&self, share: &ShareDocument) -> Result<(), RepositoryError> {
+            let mut map = self.shares.lock().unwrap();
+            map.insert(share.id, share.clone());
             Ok(())
         }
         async fn update(&self, _share: &ShareDocument) -> Result<(), RepositoryError> {
@@ -567,10 +585,17 @@ async fn create_test_compat(pool: sqlx::PgPool) -> MetadataStoreCompat {
         }
         async fn list_by_resource(
             &self,
-            _resource_type: &str,
-            _resource_id: uuid::Uuid,
+            resource_type: &str,
+            resource_id: uuid::Uuid,
         ) -> Result<Vec<ShareDocument>, RepositoryError> {
-            Ok(vec![])
+            let map = self.shares.lock().unwrap();
+            let mut result = Vec::new();
+            for doc in map.values() {
+                if doc.resource_type == resource_type && doc.resource_id == resource_id {
+                    result.push(doc.clone());
+                }
+            }
+            Ok(result)
         }
         async fn list_by_creator(
             &self,
@@ -688,12 +713,12 @@ async fn create_test_compat(pool: sqlx::PgPool) -> MetadataStoreCompat {
     }
 
     impl MockMetadataRepository {
-        fn new() -> Self {
+        fn new(shares: MockShareRepo) -> Self {
             Self {
                 folders: MockFolderRepo,
                 files: MockFileRepo,
                 file_versions: MockFileVersionRepo,
-                shares: MockShareRepo,
+                shares,
                 events: MockEventRepo,
                 folder_children_index: MockFolderChildrenIndexRepo,
                 tombstones: MockTombstoneRepo,
@@ -729,5 +754,8 @@ async fn create_test_compat(pool: sqlx::PgPool) -> MetadataStoreCompat {
         }
     }
 
-    MetadataStoreCompat::new(Arc::new(MockMetadataRepository::new()), pool)
+    let mock_shares = MockShareRepo {
+        shares: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+    };
+    MetadataStoreCompat::new(Arc::new(MockMetadataRepository::new(mock_shares)), pool)
 }

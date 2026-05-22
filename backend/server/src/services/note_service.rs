@@ -159,6 +159,7 @@ impl From<rustshare_core::services::FileError> for NoteError {
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 
 /// Service for managing notes as files with sidecar metadata.
+#[derive(Clone)]
 pub struct NoteService {
     file_service: Arc<
         FileService<
@@ -173,6 +174,8 @@ pub struct NoteService {
     >,
     metadata_store: Arc<MetadataStore>,
     object_store: Arc<ObjectStore>,
+    pub workspace_name: String,
+    pub folder_name: String,
 }
 
 impl NoteService {
@@ -200,7 +203,16 @@ impl NoteService {
             folder_service,
             metadata_store,
             object_store,
+            workspace_name: "Workspace".to_string(),
+            folder_name: "Notes".to_string(),
         }
+    }
+
+    /// Customize the workspace and folder names.
+    pub fn with_custom_paths(mut self, workspace_name: String, folder_name: String) -> Self {
+        self.workspace_name = workspace_name;
+        self.folder_name = folder_name;
+        self
     }
 
     fn public_share_key(share_id: &str) -> String {
@@ -491,24 +503,24 @@ impl NoteService {
         Ok(())
     }
 
-    /// Find or create the user's "Notes" folder under /Workspace.
-    async fn ensure_notes_folder(
+    /// Find or create the target folder under workspace.
+    async fn ensure_target_folder(
         &self,
         owner_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Folder, NoteError> {
-        // Legacy: try to find existing Notes folder at root
+        // Legacy: try to find existing folder at root
         let root_folders = self
             .metadata_store
             .list_folders(None, owner_id, tenant_id)
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?;
 
-        if let Some(notes_folder) = root_folders.into_iter().find(|f| f.name == "Notes") {
-            return Ok(notes_folder);
+        if let Some(target_folder) = root_folders.into_iter().find(|f| f.name == self.folder_name) {
+            return Ok(target_folder);
         }
 
-        // New: find or create Workspace, then Notes under it
+        // New: find or create Workspace, then folder under it
         let ws = self.ensure_workspace_folder(owner_id, tenant_id).await?;
         let ws_folders = self
             .metadata_store
@@ -516,13 +528,13 @@ impl NoteService {
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?;
 
-        if let Some(notes_folder) = ws_folders.into_iter().find(|f| f.name == "Notes") {
-            return Ok(notes_folder);
+        if let Some(target_folder) = ws_folders.into_iter().find(|f| f.name == self.folder_name) {
+            return Ok(target_folder);
         }
 
         let folder = self
             .folder_service
-            .create_folder_or_get("Notes".to_string(), Some(ws.id), owner_id, tenant_id)
+            .create_folder_or_get(self.folder_name.clone(), Some(ws.id), owner_id, tenant_id)
             .await
             .map_err(|e| NoteError::Storage(e.to_string()))?;
 
@@ -540,12 +552,12 @@ impl NoteService {
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?;
 
-        if let Some(ws) = folders.into_iter().find(|f| f.name == "Workspace") {
+        if let Some(ws) = folders.into_iter().find(|f| f.name == self.workspace_name) {
             return Ok(ws);
         }
 
         self.folder_service
-            .create_folder_or_get("Workspace".into(), None, owner_id, tenant_id)
+            .create_folder_or_get(self.workspace_name.clone(), None, owner_id, tenant_id)
             .await
             .map_err(|e| NoteError::Storage(e.to_string()))
     }
@@ -702,12 +714,12 @@ impl NoteService {
         let title = title.unwrap_or_else(|| "Untitled Note".to_string());
         let content = content.unwrap_or_default();
 
-        // Determine parent folder (default to Notes/)
+        // Determine parent folder (default to generic target folder)
         let parent_folder_id = if let Some(id) = parent_folder_id {
             Some(id)
         } else {
-            let notes_folder = self.ensure_notes_folder(owner_id, tenant_id).await?;
-            Some(notes_folder.id)
+            let target_folder = self.ensure_target_folder(owner_id, tenant_id).await?;
+            Some(target_folder.id)
         };
 
         // Generate collision-safe folder name
@@ -840,7 +852,7 @@ impl NoteService {
         let file = self.file_service.get_file(file_id, user_id).await?;
 
         // Update file content via edit_file (overwrite mode)
-        let mut updated_file = self
+        let updated_file = self
             .file_service
             .edit_file(
                 file_id,
@@ -1251,8 +1263,11 @@ impl NoteService {
             .map_err(|e| NoteError::Database(e.to_string()))?;
 
         let mut notes = Vec::new();
+        let workspace_prefix = format!("/{}/{}/", self.workspace_name, self.folder_name);
+        let folder_prefix = format!("/{}/", self.folder_name);
+
         for file in files {
-            if !(file.path.starts_with("/Workspace/Notes/") || file.path.starts_with("/Notes/")) {
+            if !(file.path.starts_with(&workspace_prefix) || file.path.starts_with(&folder_prefix)) {
                 continue;
             }
 

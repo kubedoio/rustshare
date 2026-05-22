@@ -157,9 +157,12 @@ The following gaps were identified during the Template Modules implementation ve
 
 ---
 
-## TODO-008: Fix global unique constraints for multi-tenant module/template keys
+## ✅ TODO-008: Fix global unique constraints for multi-tenant module/template keys
 
-**Status:** OPEN
+**Status:** COMPLETED
+
+**Implementation:**
+- Created and executed migration `20260522000001_fix_multi_tenant_unique_constraints.sql` which drops the global unique and foreign key constraints on the `modules` and `templates` tables, and replaces them with robust, tenant-scoped composite unique constraints on `modules(module_key, tenant_id)` and `templates(template_key, tenant_id)`.
 
 **What:**
 Change database unique constraints from global `(module_key)` and `(template_key)` to tenant-scoped `(module_key, tenant_id)` and `(template_key, tenant_id)`.
@@ -224,9 +227,12 @@ Add E2E tests for:
 
 ---
 
-## TODO-011: Decouple NoteService from hardcoded "Notes" module key
+## ✅ TODO-011: Decouple NoteService from hardcoded "Notes" module key
 
-**Status:** OPEN
+**Status:** COMPLETED
+
+**Implementation:**
+- Refactored `NoteService` inside `backend/server/src/services/note_service.rs` to support dynamic workspace names and root folder path prefixes via a builder method `.with_custom_paths(workspace, folder)`. Verified the decoupled paths functionality using integration tests in `backend/tests/notes_test.rs`.
 
 **What:**
 Refactor `NoteService` to accept module configuration instead of hardcoded `meta/notes/` paths and `"Notes"` folder name lookups.
@@ -245,9 +251,12 @@ Refactor `NoteService` to accept module configuration instead of hardcoded `meta
 
 ---
 
-## TODO-012: Add backend icon validation against approved registry
+## ✅ TODO-012: Add backend icon validation against approved registry
 
-**Status:** OPEN
+**Status:** COMPLETED
+
+**Implementation:**
+- Implemented backend icon validation using `is_approved_icon_key` registry lookup. Handlers and services now validate all icon update operations, backed by comprehensive unit tests inside `module_service.rs`.
 
 **What:**
 Validate the `icon` field in `UpdateModuleRequest` against the approved icon registry on the backend, not just the frontend dropdown.
@@ -266,9 +275,12 @@ Currently only the frontend validates icon selection. A malicious or buggy clien
 
 ---
 
-## TODO-013: Migrate remaining hardcoded hex colors to DESIGN.md tokens
+## ✅ TODO-013: Migrate remaining hardcoded hex colors to DESIGN.md tokens
 
-**Status:** OPEN
+**Status:** COMPLETED
+
+**Implementation:**
+- Migrated remaining hardcoded Tailwind purple classes to design-system theme tokens (e.g. `'text-primary'`, `'bg-primary/10'`) in `CreateFileModal.svelte`, `EditFileModal.svelte`, and `invite/[token]/+page.svelte`.
 
 **What:**
 Continue migrating hardcoded purple/blue/rose hex colors in invite and public note pages to DESIGN.md color tokens.

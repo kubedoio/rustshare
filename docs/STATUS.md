@@ -16,10 +16,13 @@ See [Zero-PostgreSQL Architecture](docs/ZERO_POSTGRES_ARCHITECTURE.md) for detai
 
 ### Implemented Features
 
-As of 2026-03-27, the implemented platform includes:
+As of 2026-05-22, the implemented platform includes:
 
 - **Zero-PostgreSQL architecture** with RustFS as canonical store
 - **Dual runtime profiles**: Standalone and Distributed with Redis coordination
+- **Multi-Tenant Schema Hardening**: Composite tenant-scoped unique constraints on `modules` and `templates` tables to prevent key collisions across tenants.
+- **Decoupled NoteService**: Path generalization utilizing custom workspace and folder names via builder, fully separating notes storage.
+- **Frontend CSS Alignment**: Migrated hardcoded hex/purple colors to design-system theme tokens in Svelte components.
 - secure web sessions with HTTP-only cookies (JWT-based, stateless)
 - OIDC groundwork for SSO, including mobile-oriented PKCE endpoints
 - Axum-served SvelteKit SPA runtime
@@ -97,8 +100,8 @@ That is more accurate than:
 
 ## Current Completion Estimate
 
-- Web file-sharing product: roughly `94-96%`
-- Broader product including mobile and desktop clients: roughly `70-75%`
+- Web file-sharing product: roughly `98%`
+- Broader product including mobile and desktop clients: roughly `75-80%`
 
 These are directional engineering estimates, not a guarantee of launch readiness.
 

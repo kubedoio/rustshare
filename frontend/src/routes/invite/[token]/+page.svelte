@@ -92,7 +92,7 @@
 	<div class="pointer-events-none absolute inset-0 overflow-hidden">
 		<div class="absolute -top-40 -right-40 h-96 w-96 rounded-full bg-brand-500/10 blur-3xl"></div>
 		<div
-			class="absolute -bottom-40 -left-40 h-96 w-96 rounded-full bg-purple-500/10 blur-3xl"
+			class="absolute -bottom-40 -left-40 h-96 w-96 rounded-full bg-primary/10 blur-3xl"
 		></div>
 	</div>
 
