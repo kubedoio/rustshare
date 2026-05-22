@@ -195,6 +195,7 @@ jobs:
     needs: validate-tag
     if: needs.validate-tag.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 80
     permissions:
       contents: read
       packages: write

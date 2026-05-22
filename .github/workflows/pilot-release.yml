@@ -26,6 +26,7 @@ env:
 jobs:
   pilot-compose-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 80
     permissions:
       contents: read
     steps:
@@ -86,6 +87,7 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: pilot-compose-smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 80
     permissions:
       contents: read
       packages: write
