@@ -365,6 +365,12 @@ jobs:
           pattern: sbom-*
           merge-multiple: true
 
+      - name: Rename SBOM files to include extension
+        run: |
+          mv ./artifacts/sbom-x86_64 ./artifacts/sbom-x86_64.spdx.json || true
+          mv ./artifacts/sbom-aarch64 ./artifacts/sbom-aarch64.spdx.json || true
+          mv ./artifacts/sbom-docker ./artifacts/sbom-docker.spdx.json || true
+
       - name: Check if release already exists
         id: check_release
         uses: actions/github-script@v7
