@@ -38,7 +38,7 @@ ARG USE_PRECOMPILED=false
 WORKDIR /app
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y pkg-config libssl-dev \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Cache buster - change this to invalidate build cache
@@ -74,7 +74,7 @@ RUN mkdir -p target/release \
 # =============================================================================
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y ca-certificates libssl3 wget \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y ca-certificates libssl3 wget \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy binary and frontend build

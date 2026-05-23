@@ -276,7 +276,7 @@ jobs:
       - name: Generate SBOM for x86_64 binary
         uses: anchore/sbom-action@v0.17.9
         with:
-          path: ./artifacts/rustshare-server-x86_64-unknown-linux-gnu
+          file: ./artifacts/rustshare-server-x86_64-unknown-linux-gnu
           format: spdx-json
           output-file: sbom-x86_64.spdx.json
           upload-artifact: true
@@ -285,7 +285,7 @@ jobs:
       - name: Generate SBOM for aarch64 binary
         uses: anchore/sbom-action@v0.17.9
         with:
-          path: ./artifacts/rustshare-server-aarch64-unknown-linux-gnu
+          file: ./artifacts/rustshare-server-aarch64-unknown-linux-gnu
           format: spdx-json
           output-file: sbom-aarch64.spdx.json
           upload-artifact: true
@@ -316,6 +316,13 @@ jobs:
           path: ./artifacts
           pattern: binary-*
           merge-multiple: true
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Attest binaries
         uses: actions/attest-build-provenance@v4

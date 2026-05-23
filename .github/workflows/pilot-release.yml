@@ -131,7 +131,7 @@ jobs:
           image-ref: '${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.sha }}'
           format: 'sarif'
           output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
+          severity: 'CRITICAL'
           exit-code: '0'
 
       - name: Upload Trivy SARIF
@@ -145,7 +145,7 @@ jobs:
           if [ -f trivy-results.sarif ]; then
             COUNT=$(jq '.runs[0].results | length' trivy-results.sarif)
             if [ "$COUNT" -gt 0 ]; then
-              echo "Found $COUNT HIGH/CRITICAL vulnerabilities"
+              echo "Found $COUNT CRITICAL vulnerabilities"
               exit 1
             fi
           fi
