@@ -346,7 +346,7 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    needs: [generate-sbom, attest-artifacts]
+    needs: [validate-tag, generate-sbom, attest-artifacts]
     runs-on: ubuntu-latest
     permissions:
       contents: write
