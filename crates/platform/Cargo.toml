@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 keyring = { workspace = true }
+keyring-core = "1.0"
 directories = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

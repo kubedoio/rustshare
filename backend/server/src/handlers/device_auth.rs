@@ -11,7 +11,7 @@ use axum::{
     Json,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use rand::{distributions::Uniform, Rng};
+use rand::{distr::Uniform, Rng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
@@ -285,8 +285,8 @@ fn build_device_request_response(
 
 /// Generate a random user code (8 chars from safe alphabet)
 fn gen_user_code() -> String {
-    let mut rng = rand::thread_rng();
-    let alphabet = Uniform::from(0..USER_CODE_ALPHABET.len());
+    let mut rng = rand::rng();
+    let alphabet = Uniform::new(0, USER_CODE_ALPHABET.len()).unwrap();
 
     (0..USER_CODE_LENGTH)
         .map(|_| USER_CODE_ALPHABET[rng.sample(alphabet)])
@@ -295,15 +295,15 @@ fn gen_user_code() -> String {
 
 /// Generate a random device code (32 bytes, base64url-encoded)
 fn gen_device_code() -> String {
-    let mut rng = rand::thread_rng();
-    let bytes: Vec<u8> = (0..DEVICE_CODE_LENGTH).map(|_| rng.gen()).collect();
+    let mut rng = rand::rng();
+    let bytes: Vec<u8> = (0..DEVICE_CODE_LENGTH).map(|_| rng.random()).collect();
     URL_SAFE_NO_PAD.encode(&bytes)
 }
 
 /// Generate a random token (32 bytes, base64url-encoded)
 fn gen_token() -> String {
-    let mut rng = rand::thread_rng();
-    let bytes: Vec<u8> = (0..TOKEN_LENGTH).map(|_| rng.gen()).collect();
+    let mut rng = rand::rng();
+    let bytes: Vec<u8> = (0..TOKEN_LENGTH).map(|_| rng.random()).collect();
     URL_SAFE_NO_PAD.encode(&bytes)
 }
 

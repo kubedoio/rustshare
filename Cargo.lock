@@ -5636,6 +5636,7 @@ dependencies = [
  "cfg-if",
  "directories",
  "keyring",
+ "keyring-core",
  "tracing",
  "uuid",
 ]

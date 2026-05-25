@@ -493,8 +493,8 @@ impl<R: ScimRepository> ScimService<R> {
 /// These users should typically use SSO or password reset.
 fn generate_temporary_password_hash() -> String {
     use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let random_bytes: [u8; 32] = rng.gen();
+    let mut rng = rand::rng();
+    let random_bytes: [u8; 32] = rng.random();
     format!("$scim_temp${}", base64::encode(random_bytes))
 }
 
