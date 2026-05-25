@@ -16,10 +16,10 @@ use super::AppError;
 /// A JSON extractor that validates the payload using `validator`.
 ///
 /// Usage in handlers:
-/// ```ignore
+/// ```text
 /// pub async fn create_folder(
 ///     ValidatedJson(req): ValidatedJson<CreateFolderRequest>,
-/// ) -> impl IntoResponse { ... }
+/// ) -> impl IntoResponse { /* ... */ }
 /// ```
 pub struct ValidatedJson<T>(pub T);
 
