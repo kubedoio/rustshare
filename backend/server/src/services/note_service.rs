@@ -663,13 +663,12 @@ impl NoteService {
     ) -> String {
         if Self::is_folder_backed_note(file) {
             if let Some(parent_id) = file.parent_folder_id {
-                match self
+                if let Ok(Some(folder)) = self
                     .metadata_store
                     .find_folder_by_id(parent_id, user_id)
                     .await
                 {
-                    Ok(Some(folder)) => return folder.name,
-                    _ => {}
+                    return folder.name;
                 }
             }
         }
