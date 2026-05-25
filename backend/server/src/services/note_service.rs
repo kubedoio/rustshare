@@ -653,28 +653,6 @@ impl NoteService {
         file.name == "note.md"
     }
 
-    /// Resolve the display name for a note.
-    /// For folder-backed notes, returns the parent bundle folder name.
-    /// For legacy single-file notes, returns the file name.
-    async fn resolve_note_name(
-        &self,
-        file: &rustshare_core::domain::File,
-        user_id: UserId,
-    ) -> String {
-        if Self::is_folder_backed_note(file) {
-            if let Some(parent_id) = file.parent_folder_id {
-                if let Ok(Some(folder)) = self
-                    .metadata_store
-                    .find_folder_by_id(parent_id, user_id)
-                    .await
-                {
-                    return folder.name;
-                }
-            }
-        }
-        file.name.clone()
-    }
-
     /// Count visible files in a note bundle's attachments, drawings, and exports subfolders.
     async fn count_bundle_contents(
         &self,
@@ -839,11 +817,9 @@ impl NoteService {
         self.save_metadata(file.id, owner_id, tenant_id, &meta)
             .await?;
 
-        let name = self.resolve_note_name(&file, owner_id).await;
-
         Ok(Note {
             id: file.id,
-            name,
+            name: file.name.clone(),
             path: file.path,
             content,
             metadata: meta,
@@ -880,11 +856,9 @@ impl NoteService {
             }
         };
 
-        let name = self.resolve_note_name(&file, user_id).await;
-
         Ok(Note {
             id: file.id,
-            name,
+            name: file.name.clone(),
             path: file.path,
             content,
             metadata: meta,
@@ -977,11 +951,9 @@ impl NoteService {
         self.save_metadata(file_id, user_id, file.tenant_id, &meta)
             .await?;
 
-        let name = self.resolve_note_name(&updated_file, user_id).await;
-
         Ok(Note {
             id: updated_file.id,
-            name,
+            name: updated_file.name.clone(),
             path: updated_file.path,
             content,
             metadata: meta,
@@ -1060,11 +1032,9 @@ impl NoteService {
             Err(_) => String::new(),
         };
 
-        let name = self.resolve_note_name(&file, user_id).await;
-
         Ok(Note {
             id: file.id,
-            name,
+            name: file.name.clone(),
             path: file.path,
             content,
             metadata: meta,
@@ -1159,11 +1129,9 @@ impl NoteService {
             Err(_) => String::new(),
         };
 
-        let name = self.resolve_note_name(&moved_file, user_id).await;
-
         Ok(Note {
             id: moved_file.id,
-            name,
+            name: moved_file.name.clone(),
             path: moved_file.path,
             content,
             metadata: meta,
@@ -1297,11 +1265,9 @@ impl NoteService {
                 .await
                 .ok();
 
-            let name = self.resolve_note_name(&new_file, user_id).await;
-
             return Ok(Note {
                 id: new_file.id,
-                name,
+                name: new_file.name.clone(),
                 path: new_file.path,
                 content: original.content,
                 metadata: meta,
@@ -1590,11 +1556,9 @@ impl NoteService {
             Err(_) => String::new(),
         };
 
-        let name = self.resolve_note_name(&file, user_id).await;
-
         Ok(Note {
             id: file.id,
-            name,
+            name: file.name.clone(),
             path: file.path,
             content,
             metadata: meta,

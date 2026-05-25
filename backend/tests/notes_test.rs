@@ -221,11 +221,29 @@ async fn contract_create_note_uses_collision_safe_naming() {
         .await
         .unwrap();
 
-    assert_ne!(note1.name, note2.name);
-    assert_ne!(note2.name, note3.name);
+    // For folder-backed notes, collision-safe naming applies to bundle folders,
+    // not the file (which is always note.md). Verify via parent folder names.
+    let folder1 = metadata_store
+        .find_folder_by_id(note1.parent_folder_id.unwrap(), user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let folder2 = metadata_store
+        .find_folder_by_id(note2.parent_folder_id.unwrap(), user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let folder3 = metadata_store
+        .find_folder_by_id(note3.parent_folder_id.unwrap(), user.id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_ne!(folder1.name, folder2.name);
+    assert_ne!(folder2.name, folder3.name);
     assert!(note1.name.ends_with(".md"));
-    assert!(note2.name.contains("Untitled Note 2"));
-    assert!(note3.name.contains("Untitled Note 3"));
+    assert!(folder2.name.contains("Untitled Note 2"));
+    assert!(folder3.name.contains("Untitled Note 3"));
 
     cleanup_user(&pool, user.id).await;
 }
@@ -324,7 +342,13 @@ async fn contract_rename_note_renames_file_and_sidecar_and_preserves_share_id() 
         .await
         .unwrap();
 
-    assert!(renamed.name.contains("New Title"));
+    // For folder-backed notes, the file name stays note.md; the parent folder is renamed
+    let renamed_folder = metadata_store
+        .find_folder_by_id(renamed.parent_folder_id.unwrap(), user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(renamed_folder.name.contains("New Title"));
     assert_eq!(renamed.metadata.title, "New Title");
     assert_eq!(renamed.metadata.public_share_id, share_id);
 
