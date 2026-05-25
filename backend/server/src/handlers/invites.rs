@@ -50,7 +50,7 @@ pub async fn create_invite(
     .await?;
 
     let mut token_bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut token_bytes);
+    rand::rng().fill_bytes(&mut token_bytes);
     let token = hex::encode(token_bytes);
 
     let expires_at = chrono::Utc::now() + chrono::Duration::days(7);

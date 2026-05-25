@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use keyring::Entry;
+use keyring_core::Entry;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -30,7 +30,7 @@ impl TokenStore {
             Entry::new(&self.service, user_id).map_err(|e| anyhow!("Keyring error: {}", e))?;
         match entry.get_password() {
             Ok(token) => Ok(Some(token)),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(keyring_core::Error::NoEntry) => Ok(None),
             Err(e) => Err(anyhow!("Keyring error: {}", e)),
         }
     }
