@@ -3478,7 +3478,8 @@ mod tests {
         );
         store.create_file(&file).await.unwrap();
 
-        let mut share = Share::new(
+        // Create a public link share (no recipient) so User B has no access
+        let share = Share::new(
             file.id,
             "token".to_string(),
             user_a.id,
@@ -3487,9 +3488,6 @@ mod tests {
             None,
             tenant_id,
         );
-        // Convert public share to direct user share for isolation test
-        share.share_token = None;
-        share.recipient_user_id = Some(user_b.id);
         store.create_share(&share).await.unwrap();
 
         // User B should NOT be able to get User A's share by ID
