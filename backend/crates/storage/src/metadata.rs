@@ -3320,9 +3320,10 @@ mod tests {
     async fn test_cross_user_file_isolation() {
         let (store, pool) = setup_metadata_store().await;
         let tenant_id = Uuid::new_v4();
+        let suffix = Uuid::new_v4().to_string();
 
         let user_a = User::new(
-            "user_a".to_string(),
+            format!("user_a_{}", suffix),
             "User A".to_string(),
             "hash_a".to_string(),
             "user_a@example.com".to_string(),
@@ -3331,7 +3332,7 @@ mod tests {
             tenant_id,
         );
         let user_b = User::new(
-            "user_b".to_string(),
+            format!("user_b_{}", suffix),
             "User B".to_string(),
             "hash_b".to_string(),
             "user_b@example.com".to_string(),
@@ -3385,9 +3386,10 @@ mod tests {
     async fn test_cross_user_folder_isolation() {
         let (store, pool) = setup_metadata_store().await;
         let tenant_id = Uuid::new_v4();
+        let suffix = Uuid::new_v4().to_string();
 
         let user_a = User::new(
-            "user_a".to_string(),
+            format!("user_a_{}", suffix),
             "User A".to_string(),
             "hash_a".to_string(),
             "user_a@example.com".to_string(),
@@ -3396,7 +3398,7 @@ mod tests {
             tenant_id,
         );
         let user_b = User::new(
-            "user_b".to_string(),
+            format!("user_b_{}", suffix),
             "User B".to_string(),
             "hash_b".to_string(),
             "user_b@example.com".to_string(),
@@ -3441,9 +3443,10 @@ mod tests {
     async fn test_cross_user_share_isolation() {
         let (store, pool) = setup_metadata_store().await;
         let tenant_id = Uuid::new_v4();
+        let suffix = Uuid::new_v4().to_string();
 
         let user_a = User::new(
-            "user_a".to_string(),
+            format!("user_a_{}", suffix),
             "User A".to_string(),
             "hash_a".to_string(),
             "user_a@example.com".to_string(),
@@ -3452,7 +3455,7 @@ mod tests {
             tenant_id,
         );
         let user_b = User::new(
-            "user_b".to_string(),
+            format!("user_b_{}", suffix),
             "User B".to_string(),
             "hash_b".to_string(),
             "user_b@example.com".to_string(),
