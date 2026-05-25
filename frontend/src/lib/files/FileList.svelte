@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { File as FileType, Folder } from '$lib/api/types';
-	
+
 	import type { SortField, SortOrder } from '$lib/stores/fileSort';
 	import { selectionStore } from '$lib/stores/selection';
 	import SortableTableHeader from '$lib/components/common/SortableTableHeader.svelte';
@@ -80,7 +80,9 @@
 	}: Props = $props();
 
 	// Drag and drop state
-	let draggedItem = $state<{ id: string; isFolder: boolean; parentFolderId: string | null } | null>(null);
+	let draggedItem = $state<{ id: string; isFolder: boolean; parentFolderId: string | null } | null>(
+		null
+	);
 	let dragOverFolderId = $state<string | null>(null);
 
 	function handleFileToggle(file: FileType, event?: MouseEvent) {
@@ -221,8 +223,8 @@
 
 	let allSelected = $derived(
 		folders.length + files.length > 0 &&
-		$selectionStore.selectedFolderIds.size + $selectionStore.selectedFileIds.size ===
-			folders.length + files.length
+			$selectionStore.selectedFolderIds.size + $selectionStore.selectedFileIds.size ===
+				folders.length + files.length
 	);
 </script>
 
@@ -325,7 +327,6 @@
 						{workspaceMode}
 						{selectionMode}
 						selected={$selectionStore.selectedFileIds.has(file.id)}
-
 						isDragging={draggedItem?.id === file.id}
 						onSelect={(e) => (selectionMode ? handleFileToggle(file, e) : onFileClick(file))}
 						onToggleSelect={() => handleFileToggle(file)}

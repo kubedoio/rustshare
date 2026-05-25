@@ -14,7 +14,9 @@
 	} = $props();
 
 	let cardTitle = $derived(module.ui_config?.dashboard?.cardTitle ?? module.display_name);
-	let cardDescription = $derived(module.ui_config?.dashboard?.cardDescription ?? module.description);
+	let cardDescription = $derived(
+		module.ui_config?.dashboard?.cardDescription ?? module.description
+	);
 	let actionLabel = $derived(module.ui_config?.dashboard?.primaryAction?.label ?? 'Open');
 	let summaryMode = $derived(module.ui_config?.dashboard?.summaryMode ?? 'none');
 	let maxItems = $derived(module.ui_config?.dashboard?.maxItems ?? 4);
@@ -27,8 +29,12 @@
 
 	let summary = $derived($summaryQuery.data);
 	let hasSummary = $derived(summaryMode !== 'none' && summary && !$summaryQuery.isLoading);
-	let visibleItems = $derived(hasSummary ? filterUserVisibleEntries(summary!.recent_items).slice(0, maxItems) : []);
-	let sharesExtra = $derived((summary?.extra ?? {}) as { publicCount?: number; internalCount?: number });
+	let visibleItems = $derived(
+		hasSummary ? filterUserVisibleEntries(summary!.recent_items).slice(0, maxItems) : []
+	);
+	let sharesExtra = $derived(
+		(summary?.extra ?? {}) as { publicCount?: number; internalCount?: number }
+	);
 	let standupsExtra = $derived((summary?.extra ?? {}) as { todayExists?: boolean });
 	let kanbanExtra = $derived((summary?.extra ?? {}) as { boards?: Array<{ name: string }> });
 

@@ -20,7 +20,9 @@
 	let previewFile = $state<File | null>(null);
 
 	let resourceId = $derived($page.params.resourceId ?? '');
-	let resourceType = $derived(($page.params.resourceType as SharedResourceType | undefined) ?? 'file');
+	let resourceType = $derived(
+		($page.params.resourceType as SharedResourceType | undefined) ?? 'file'
+	);
 	let requestedFolderId = $derived($page.url.searchParams.get('folder'));
 
 	const receivedSharesQuery = createQuery({
@@ -30,35 +32,45 @@
 
 	let shareEntry = $derived(findShare($receivedSharesQuery.data, resourceType, resourceId));
 	let rootFolderId = $derived(resourceType === 'folder' ? resourceId : null);
-	let currentFolderId = $derived(resourceType === 'folder' ? (requestedFolderId || rootFolderId) : null);
+	let currentFolderId = $derived(
+		resourceType === 'folder' ? requestedFolderId || rootFolderId : null
+	);
 
-	let fileQuery = $derived(createQuery({
-		queryKey: ['shared-file', resourceId],
-		queryFn: () => getFile(resourceId),
-		enabled: resourceType === 'file' && !!shareEntry
-	}));
+	let fileQuery = $derived(
+		createQuery({
+			queryKey: ['shared-file', resourceId],
+			queryFn: () => getFile(resourceId),
+			enabled: resourceType === 'file' && !!shareEntry
+		})
+	);
 
-	let folderContentsQuery = $derived(createQuery({
-		queryKey: ['shared-folder-contents', currentFolderId],
-		queryFn: () => getSharedFolderContents(currentFolderId!),
-		enabled: resourceType === 'folder' && !!shareEntry && !!currentFolderId
-	}));
+	let folderContentsQuery = $derived(
+		createQuery({
+			queryKey: ['shared-folder-contents', currentFolderId],
+			queryFn: () => getSharedFolderContents(currentFolderId!),
+			enabled: resourceType === 'folder' && !!shareEntry && !!currentFolderId
+		})
+	);
 
-	let currentFolderQuery = $derived(createQuery({
-		queryKey: ['shared-folder-meta', currentFolderId],
-		queryFn: () => getFolder(currentFolderId as string),
-		enabled:
-			resourceType === 'folder' &&
-			!!shareEntry &&
-			!!currentFolderId &&
-			currentFolderId !== rootFolderId
-	}));
+	let currentFolderQuery = $derived(
+		createQuery({
+			queryKey: ['shared-folder-meta', currentFolderId],
+			queryFn: () => getFolder(currentFolderId as string),
+			enabled:
+				resourceType === 'folder' &&
+				!!shareEntry &&
+				!!currentFolderId &&
+				currentFolderId !== rootFolderId
+		})
+	);
 
-	let sharedFolderTreeQuery = $derived(createQuery({
-		queryKey: ['shared-folder-tree', resourceId],
-		queryFn: () => getSharedFolderTree(resourceId),
-		enabled: resourceType === 'folder' && !!resourceId
-	}));
+	let sharedFolderTreeQuery = $derived(
+		createQuery({
+			queryKey: ['shared-folder-tree', resourceId],
+			queryFn: () => getSharedFolderTree(resourceId),
+			enabled: resourceType === 'folder' && !!resourceId
+		})
+	);
 
 	function findShare(
 		shares: ReceivedShare[] | undefined,
@@ -149,7 +161,7 @@
 	let currentFolderTitle = $derived(
 		nestedPath.length > 0
 			? nestedPath[nestedPath.length - 1].name
-			: $currentFolderQuery.data?.name ?? shareEntry?.resource_name
+			: ($currentFolderQuery.data?.name ?? shareEntry?.resource_name)
 	);
 
 	let visibleFolders = $derived(
@@ -158,9 +170,7 @@
 			: []
 	);
 	let visibleFiles = $derived(
-		$folderContentsQuery.data
-			? filterUserVisibleEntries($folderContentsQuery.data.files ?? [])
-			: []
+		$folderContentsQuery.data ? filterUserVisibleEntries($folderContentsQuery.data.files ?? []) : []
 	);
 </script>
 
@@ -254,9 +264,7 @@
 							</div>
 
 							<div class="flex gap-3">
-								<button class="btn btn-ghost" onclick={copyCurrentLocationLink}>
-									Copy Link
-								</button>
+								<button class="btn btn-ghost" onclick={copyCurrentLocationLink}> Copy Link </button>
 								<button class="btn btn-primary" onclick={() => openPreview($fileQuery.data)}>
 									Preview
 								</button>
@@ -363,89 +371,89 @@
 										<th>Modified</th>
 										<th class="text-right">Actions</th>
 									</tr>
-									</thead>
-									<tbody>
-										{#each visibleFolders as folder}
-											<tr class="hover">
-												<td>
+								</thead>
+								<tbody>
+									{#each visibleFolders as folder}
+										<tr class="hover">
+											<td>
+												<button
+													type="button"
+													class="flex items-center gap-3 font-medium hover:text-primary"
+													onclick={() => openNestedFolder(folder)}
+												>
+													<span class="text-xl">📁</span>
+													<span>{folder.name}</span>
+												</button>
+											</td>
+											<td>Folder</td>
+											<td>—</td>
+											<td>{formatDate(folder.updated_at)}</td>
+											<td class="text-right">
+												<button
+													type="button"
+													class="btn btn-outline btn-sm"
+													onclick={() => openNestedFolder(folder)}
+												>
+													Open
+												</button>
+											</td>
+										</tr>
+									{/each}
+
+									{#each visibleFiles as file}
+										<tr class="hover">
+											<td>
+												<button
+													type="button"
+													class="flex items-center gap-3 font-medium hover:text-primary"
+													onclick={() => openPreview(file)}
+												>
+													<FileIcon
+														mimeType={file.mime_type}
+														size="md"
+														iconClass="text-base-content/70"
+													/>
+													<span>{file.name}</span>
+												</button>
+											</td>
+											<td>{file.mime_type}</td>
+											<td>{formatFileSize(file.size)}</td>
+											<td>{formatDate(file.modified_at)}</td>
+											<td class="text-right">
+												<div class="flex justify-end gap-2">
 													<button
 														type="button"
-														class="flex items-center gap-3 font-medium hover:text-primary"
-														onclick={() => openNestedFolder(folder)}
+														class="btn btn-ghost btn-sm"
+														onclick={() => openPreview(file)}
 													>
-														<span class="text-xl">📁</span>
-														<span>{folder.name}</span>
+														Preview
 													</button>
-												</td>
-												<td>Folder</td>
-												<td>—</td>
-												<td>{formatDate(folder.updated_at)}</td>
-												<td class="text-right">
 													<button
 														type="button"
 														class="btn btn-outline btn-sm"
-														onclick={() => openNestedFolder(folder)}
+														onclick={() => handleDownload(file)}
 													>
-														Open
+														Download
 													</button>
-												</td>
-											</tr>
-										{/each}
+												</div>
+											</td>
+										</tr>
+									{/each}
 
-										{#each visibleFiles as file}
-											<tr class="hover">
-												<td>
-													<button
-														type="button"
-														class="flex items-center gap-3 font-medium hover:text-primary"
-														onclick={() => openPreview(file)}
-													>
-														<FileIcon
-															mimeType={file.mime_type}
-															size="md"
-															iconClass="text-base-content/70"
-														/>
-														<span>{file.name}</span>
-													</button>
-												</td>
-												<td>{file.mime_type}</td>
-												<td>{formatFileSize(file.size)}</td>
-												<td>{formatDate(file.modified_at)}</td>
-												<td class="text-right">
-													<div class="flex justify-end gap-2">
-														<button
-															type="button"
-															class="btn btn-ghost btn-sm"
-															onclick={() => openPreview(file)}
-														>
-															Preview
-														</button>
-														<button
-															type="button"
-															class="btn btn-outline btn-sm"
-															onclick={() => handleDownload(file)}
-														>
-															Download
-														</button>
-													</div>
-												</td>
-											</tr>
-										{/each}
-
-										{#if visibleFolders.length === 0 && visibleFiles.length === 0}
-											<tr>
-												<td colspan="5" class="py-10 text-center text-base-content/60">
-													This folder is empty.
-												</td>
-											</tr>
-										{/if}
-									</tbody>
-								</table>
-							</div>
-						{/if}
-					</div>
+									{#if visibleFolders.length === 0 && visibleFiles.length === 0}
+										<tr>
+											<td colspan="5" class="py-10 text-center text-base-content/60">
+												This folder is empty.
+											</td>
+										</tr>
+									{/if}
+								</tbody>
+							</table>
+						</div>
+					{/if}
 				</div>
 			</div>
+		</div>
 	{/if}
 </div>
 

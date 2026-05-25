@@ -105,8 +105,10 @@
 			modulePageEmptyStateTitle = ui.page?.emptyStateTitle ?? ui.modulePage?.emptyStateTitle ?? '';
 			modulePageEmptyStateDescription =
 				ui.page?.emptyStateDescription ?? ui.modulePage?.emptyStateDescription ?? '';
-			modulePageEmptyStateAction = ui.page?.emptyStateAction ?? ui.modulePage?.emptyStateAction ?? '';
-			pageSearchPlaceholder = ui.page?.searchPlaceholder ?? `Search ${displayName.toLowerCase()}...`;
+			modulePageEmptyStateAction =
+				ui.page?.emptyStateAction ?? ui.modulePage?.emptyStateAction ?? '';
+			pageSearchPlaceholder =
+				ui.page?.searchPlaceholder ?? `Search ${displayName.toLowerCase()}...`;
 			pageFilterLabel = ui.page?.filterLabel ?? `All ${displayName.toLowerCase()}`;
 			pageSortLabel = ui.page?.sortLabel ?? 'Modified';
 			pageItemSingular = ui.page?.itemSingular ?? displayName.toLowerCase();
@@ -318,7 +320,13 @@
 			</div>
 		{/if}
 
-		<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="mt-6 flex flex-col gap-4">
+		<form
+			onsubmit={(e) => {
+				e.preventDefault();
+				handleSubmit();
+			}}
+			class="mt-6 flex flex-col gap-4"
+		>
 			<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6 shadow-sm">
 				<h2 class="mb-4 text-sm font-semibold tracking-wider text-base-content uppercase">
 					Basic Information
@@ -638,7 +646,9 @@
 								bind:value={dashboardColumnsMobile}
 							/>
 						</div>
-						<div class="rounded-xl border border-base-300/50 bg-base-200/30 p-3 text-xs text-base-content/60">
+						<div
+							class="rounded-xl border border-base-300/50 bg-base-200/30 p-3 text-xs text-base-content/60"
+						>
 							<p class="font-semibold text-base-content/70">Runtime alignment</p>
 							<p class="mt-1">
 								The dashboard uses the widget type, max items, primary action, and responsive

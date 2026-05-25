@@ -116,8 +116,6 @@
 
 	// Get current version
 	let currentVersionNumber = $derived($fileQuery.data?.current_version);
-
-
 </script>
 
 {#if open && fileId}

@@ -14,9 +14,7 @@
 		{ icon: FolderOpen, label: 'Folders', href: '/files' }
 	];
 
-	const secondaryItems = [
-		{ icon: Settings, label: 'Settings', href: '/settings' }
-	];
+	const secondaryItems = [{ icon: Settings, label: 'Settings', href: '/settings' }];
 
 	const modulesQuery = createQuery({
 		queryKey: ['enabled-modules'],
@@ -84,7 +82,12 @@
 		class:justify-center={!railExpanded}
 	>
 		<a href="/dashboard" class="flex items-center gap-3" aria-label="RustShare">
-			<svg class="h-9 w-9 flex-shrink-0" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+			<svg
+				class="h-9 w-9 flex-shrink-0"
+				viewBox="0 0 32 32"
+				fill="none"
+				xmlns="http://www.w3.org/2000/svg"
+			>
 				<rect
 					x="2"
 					y="6"
@@ -108,7 +111,12 @@
 	<!-- Primary Navigation -->
 	<nav class="flex-1 space-y-1 overflow-y-auto px-2 py-4" aria-label="Primary">
 		{#each primaryItems as item}
-			<RailItem href={item.href} label={item.label} active={activePrimaryHref === item.href} expanded={railExpanded}>
+			<RailItem
+				href={item.href}
+				label={item.label}
+				active={activePrimaryHref === item.href}
+				expanded={railExpanded}
+			>
 				<svelte:component this={item.icon} size={22} strokeWidth={1.75} />
 			</RailItem>
 		{/each}
@@ -118,7 +126,9 @@
 			<div class="my-2 border-t border-base-300/50 pt-2">
 				{#if railExpanded}
 					<div class="mb-1 px-3 py-1.5">
-						<span class="text-xs font-semibold uppercase tracking-wider text-base-content/40">Modules</span>
+						<span class="text-xs font-semibold uppercase tracking-wider text-base-content/40"
+							>Modules</span
+						>
 					</div>
 				{/if}
 				{#each sidebarModules as mod}
@@ -142,7 +152,12 @@
 	<!-- Secondary Navigation -->
 	<nav class="flex-shrink-0 space-y-1 border-t border-base-300/50 px-2 py-4" aria-label="Secondary">
 		{#each secondaryItems as item}
-			<RailItem href={item.href} label={item.label} active={activePrimaryHref === item.href} expanded={railExpanded}>
+			<RailItem
+				href={item.href}
+				label={item.label}
+				active={activePrimaryHref === item.href}
+				expanded={railExpanded}
+			>
 				<svelte:component this={item.icon} size={22} strokeWidth={1.75} />
 			</RailItem>
 		{/each}

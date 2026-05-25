@@ -26,12 +26,7 @@
 	<div class="action-list">
 		{#each actions as action}
 			{@const ActionIcon = action.icon as Component}
-			<button
-				type="button"
-				class="action-item"
-				onclick={action.onClick}
-				disabled={creating}
-			>
+			<button type="button" class="action-item" onclick={action.onClick} disabled={creating}>
 				<div class="action-icon" style="background: {action.iconBg}; color: {action.iconColor};">
 					<ActionIcon size={18} />
 				</div>

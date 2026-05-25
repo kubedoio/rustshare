@@ -11,7 +11,9 @@ describe('getModuleObjectHref', () => {
 	});
 
 	it('routes standup files to the standup editor', () => {
-		expect(getModuleObjectHref('standups', 'file', 'stand-123')).toBe('/modules/standups/stand-123');
+		expect(getModuleObjectHref('standups', 'file', 'stand-123')).toBe(
+			'/modules/standups/stand-123'
+		);
 	});
 
 	it('routes decision files to the decision editor', () => {
@@ -23,7 +25,9 @@ describe('getModuleObjectHref', () => {
 	});
 
 	it('routes brainstorming files to the brainstorming editor', () => {
-		expect(getModuleObjectHref('brainstorming', 'file', 'brain-123')).toBe('/modules/brainstorming/brain-123');
+		expect(getModuleObjectHref('brainstorming', 'file', 'brain-123')).toBe(
+			'/modules/brainstorming/brain-123'
+		);
 	});
 
 	it('routes share files to the share editor', () => {

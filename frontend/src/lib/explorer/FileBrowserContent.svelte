@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { File as FileType, Folder } from '$lib/api/types';
-	
+
 	import type { SortField, SortOrder } from '$lib/stores/fileSort';
 	import { viewMode } from '$lib/stores/fileBrowserUi';
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
@@ -21,7 +21,7 @@
 		emptyTitle?: string;
 		emptyDescription?: string;
 		emptyActionLabel?: string | null;
-	
+
 		selectionMode?: boolean;
 		activeSortField?: SortField;
 		activeSortOrder?: SortOrder;
@@ -61,7 +61,7 @@
 		emptyTitle = 'No files yet',
 		emptyDescription = 'Upload your first file to get started',
 		emptyActionLabel = 'Upload files',
-	
+
 		selectionMode = false,
 		activeSortField = 'name',
 		activeSortOrder = 'asc',
@@ -140,7 +140,6 @@
 			{emptyDescription}
 			{emptyActionLabel}
 			{workspaceMode}
-
 			{selectionMode}
 			{onFolderClick}
 			{onFileClick}
@@ -174,7 +173,6 @@
 			{emptyDescription}
 			{emptyActionLabel}
 			{workspaceMode}
-
 			{selectionMode}
 			{activeSortField}
 			{activeSortOrder}

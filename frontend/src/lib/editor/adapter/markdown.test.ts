@@ -1,6 +1,11 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { Editor } from '@tiptap/core';
-import { markdownToHtml, editorToMarkdown, createRichEditor, preprocessMarkdownTables } from './markdown';
+import {
+	markdownToHtml,
+	editorToMarkdown,
+	createRichEditor,
+	preprocessMarkdownTables
+} from './markdown';
 import { getEditorExtensions } from './extensions';
 
 // ---------------------------------------------------------------------------
@@ -286,7 +291,6 @@ describe('Markdown round-trip: mixed formatting', () => {
 	});
 });
 
-
 describe('preprocessMarkdownTables', () => {
 	it('converts a simple GFM table to HTML', () => {
 		const input = '| A | B |\n|---|---|\n| 1 | 2 |';
@@ -329,7 +333,6 @@ describe('preprocessMarkdownTables', () => {
 		expect(preprocessMarkdownTables(input)).toBe(input);
 	});
 });
-
 
 describe('base64 image round-trip', () => {
 	it('preserves data URL in markdown', () => {

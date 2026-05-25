@@ -57,7 +57,7 @@
 	import { fileSortState, setSortField, setPageSize } from '$lib/stores/fileSort';
 	import { selectionStore, selectionCount, hasSelection } from '$lib/stores/selection';
 	import { activityStore } from '$lib/stores/activity';
-	
+
 	import { folderTreeStore } from '$lib/stores/folderTree';
 	import type { File, Folder, FolderContents as ApiFolderContents } from '$lib/api/types';
 	import { page } from '$app/stores';
@@ -173,8 +173,8 @@
 	}
 
 	// Current workspace mode
-	let workspaceMode = $derived((
-		urlFilter === 'photos'
+	let workspaceMode = $derived(
+		(urlFilter === 'photos'
 			? 'photos'
 			: urlFilter === 'starred'
 				? 'starred'
@@ -182,8 +182,8 @@
 					? 'deleted'
 					: urlFilter === 'recent'
 						? 'recent'
-						: 'all'
-	) as WorkspaceMode);
+						: 'all') as WorkspaceMode
+	);
 
 	// Active root (my-files or shared)
 	let activeRoot = $derived((urlRoot === 'shared' ? 'shared' : 'my-files') as ExplorerRoot);
@@ -191,14 +191,16 @@
 	// Is in collection mode?
 	let isCollectionMode = $derived(
 		workspaceMode === 'starred' ||
-		workspaceMode === 'recent' ||
-		workspaceMode === 'week' ||
-		workspaceMode === 'photos' ||
-		workspaceMode === 'deleted'
+			workspaceMode === 'recent' ||
+			workspaceMode === 'week' ||
+			workspaceMode === 'photos' ||
+			workspaceMode === 'deleted'
 	);
 
 	// Current folder ID (null at root)
-	let currentFolderId = $derived(isCollectionMode ? null : isValidUuid(urlFolderId) ? urlFolderId : null);
+	let currentFolderId = $derived(
+		isCollectionMode ? null : isValidUuid(urlFolderId) ? urlFolderId : null
+	);
 
 	// Is shared root view?
 	let isSharedRoot = $derived(activeRoot === 'shared' && !currentFolderId);
@@ -344,21 +346,23 @@
 
 	// Build breadcrumb based on current state
 	// Returns Folder-compatible objects for FileExplorer component
-	let breadcrumbPath = $derived(((): Folder[] => {
-		// In collection mode, return empty (no breadcrumb)
-		if (isCollectionMode) {
+	let breadcrumbPath = $derived(
+		((): Folder[] => {
+			// In collection mode, return empty (no breadcrumb)
+			if (isCollectionMode) {
+				return [];
+			}
+
+			if (activeRoot === 'my-files') {
+				// Return my-files path (already Folder objects)
+				return myFilesFolderPath;
+			} else if (activeRoot === 'shared' && currentFolderId) {
+				return sharedFolderPath;
+			}
+
 			return [];
-		}
-
-		if (activeRoot === 'my-files') {
-			// Return my-files path (already Folder objects)
-			return myFilesFolderPath;
-		} else if (activeRoot === 'shared' && currentFolderId) {
-			return sharedFolderPath;
-		}
-
-		return [];
-	})());
+		})()
+	);
 
 	function permissionLevel(permission: 'View' | 'Edit' | 'Admin' | null | undefined): number {
 		if (permission === 'Admin') return 3;
@@ -376,69 +380,77 @@
 	// TITLE DERIVATION (Contextual Header)
 	// ============================================================================
 
-	let workspaceTitle = $derived(isCollectionMode
-		? workspaceMode === 'photos'
-			? 'Photos'
-			: workspaceMode === 'recent'
-				? 'Recent'
-				: workspaceMode === 'week'
-					? 'Updated This Week'
-					: workspaceMode === 'starred'
-						? 'Starred'
-						: 'Trash'
-		: activeRoot === 'shared'
-			? currentFolderId
-				? breadcrumbPath[breadcrumbPath.length - 1]?.name
-				: 'Shared'
-			: currentFolderId
-				? breadcrumbPath[breadcrumbPath.length - 1]?.name
-				: 'My Files');
+	let workspaceTitle = $derived(
+		isCollectionMode
+			? workspaceMode === 'photos'
+				? 'Photos'
+				: workspaceMode === 'recent'
+					? 'Recent'
+					: workspaceMode === 'week'
+						? 'Updated This Week'
+						: workspaceMode === 'starred'
+							? 'Starred'
+							: 'Trash'
+			: activeRoot === 'shared'
+				? currentFolderId
+					? breadcrumbPath[breadcrumbPath.length - 1]?.name
+					: 'Shared'
+				: currentFolderId
+					? breadcrumbPath[breadcrumbPath.length - 1]?.name
+					: 'My Files'
+	);
 
-	let workspaceDescription = $derived(isCollectionMode
-		? workspaceMode === 'photos'
-			? 'Image files in the current workspace, without the folder noise.'
-			: workspaceMode === 'recent'
-				? 'The latest created files in this workspace, sorted by newest first.'
-				: workspaceMode === 'week'
-					? 'Files and artifacts updated within the last 7 days, sorted by latest first.'
-					: workspaceMode === 'starred'
-						? 'Pinned folders and files that need fast access without digging through the tree.'
-						: 'Recently deleted items live here until you restore them or remove them permanently.'
-		: activeRoot === 'shared'
-			? currentFolderId
-				? 'Shared folder contents.'
-				: 'Folders shared with you by other users.'
-			: currentFolderId
-				? 'Folder contents.'
-				: 'Browse and organize files, folders, and workspace artifacts.');
+	let workspaceDescription = $derived(
+		isCollectionMode
+			? workspaceMode === 'photos'
+				? 'Image files in the current workspace, without the folder noise.'
+				: workspaceMode === 'recent'
+					? 'The latest created files in this workspace, sorted by newest first.'
+					: workspaceMode === 'week'
+						? 'Files and artifacts updated within the last 7 days, sorted by latest first.'
+						: workspaceMode === 'starred'
+							? 'Pinned folders and files that need fast access without digging through the tree.'
+							: 'Recently deleted items live here until you restore them or remove them permanently.'
+			: activeRoot === 'shared'
+				? currentFolderId
+					? 'Shared folder contents.'
+					: 'Folders shared with you by other users.'
+				: currentFolderId
+					? 'Folder contents.'
+					: 'Browse and organize files, folders, and workspace artifacts.'
+	);
 
-	let workspaceEmptyTitle = $derived(isCollectionMode
-		? workspaceMode === 'photos'
-			? 'No photos in this view'
-			: workspaceMode === 'recent'
-				? 'No files created yet'
-				: workspaceMode === 'week'
-					? 'No updates this week'
-					: workspaceMode === 'starred'
-						? 'Nothing is starred yet'
-						: 'Deleted items will show up here'
-		: activeRoot === 'shared'
-			? 'No shared folders'
-			: 'No files yet');
+	let workspaceEmptyTitle = $derived(
+		isCollectionMode
+			? workspaceMode === 'photos'
+				? 'No photos in this view'
+				: workspaceMode === 'recent'
+					? 'No files created yet'
+					: workspaceMode === 'week'
+						? 'No updates this week'
+						: workspaceMode === 'starred'
+							? 'Nothing is starred yet'
+							: 'Deleted items will show up here'
+			: activeRoot === 'shared'
+				? 'No shared folders'
+				: 'No files yet'
+	);
 
-	let workspaceEmptyDescription = $derived(isCollectionMode
-		? workspaceMode === 'photos'
-			? 'Upload an image into this folder and it will show up here.'
-			: workspaceMode === 'recent'
-				? 'Create or upload a file and it will show up here.'
-				: workspaceMode === 'week'
-					? 'Files updated in the last 7 days will appear here.'
-					: workspaceMode === 'starred'
-						? 'Star a folder or file from its action menu and it will show up here.'
-						: 'Deleting a folder or file moves it here instead of removing it immediately.'
-		: activeRoot === 'shared'
-			? 'Items shared with you will appear here.'
-			: 'This folder is empty. Upload a file or create a folder to start organizing your workspace.');
+	let workspaceEmptyDescription = $derived(
+		isCollectionMode
+			? workspaceMode === 'photos'
+				? 'Upload an image into this folder and it will show up here.'
+				: workspaceMode === 'recent'
+					? 'Create or upload a file and it will show up here.'
+					: workspaceMode === 'week'
+						? 'Files updated in the last 7 days will appear here.'
+						: workspaceMode === 'starred'
+							? 'Star a folder or file from its action menu and it will show up here.'
+							: 'Deleting a folder or file moves it here instead of removing it immediately.'
+			: activeRoot === 'shared'
+				? 'Items shared with you will appear here.'
+				: 'This folder is empty. Upload a file or create a folder to start organizing your workspace.'
+	);
 
 	let workspaceEmptyActionLabel = $derived(
 		!isCollectionMode && activeRoot === 'my-files' ? 'Upload files' : null
@@ -452,11 +464,11 @@
 	let showBreadcrumbs = $derived(!isCollectionMode);
 	let canCreateFolder = $derived(
 		!isCollectionMode &&
-		(activeRoot === 'my-files' || (activeRoot === 'shared' && hasSharedWritePermission))
+			(activeRoot === 'my-files' || (activeRoot === 'shared' && hasSharedWritePermission))
 	);
 	let canUpload = $derived(
 		!isCollectionMode &&
-		(activeRoot === 'my-files' || (activeRoot === 'shared' && hasSharedWritePermission))
+			(activeRoot === 'my-files' || (activeRoot === 'shared' && hasSharedWritePermission))
 	);
 	let allowSelectionMode = $derived(workspaceMode !== 'deleted');
 
@@ -472,13 +484,14 @@
 	// ============================================================================
 
 	let activeSortField = $derived(
-		workspaceMode === 'recent' ? 'created_at' :
-		workspaceMode === 'week' ? 'modified_at' :
-		$fileSortState.field
+		workspaceMode === 'recent'
+			? 'created_at'
+			: workspaceMode === 'week'
+				? 'modified_at'
+				: $fileSortState.field
 	);
 	let activeSortOrder = $derived(
-		workspaceMode === 'recent' || workspaceMode === 'week' ? 'desc' :
-		$fileSortState.order
+		workspaceMode === 'recent' || workspaceMode === 'week' ? 'desc' : $fileSortState.order
 	);
 	let searchTerm = $derived($searchQuery.trim().toLowerCase());
 
@@ -486,12 +499,16 @@
 		return searchTerm.length === 0 || name.toLowerCase().includes(searchTerm);
 	}
 
-	let baseFolders = $derived(filterUserVisibleEntries(
-		($filesQuery.data?.folders || []).filter((folder) => matchesSearch(folder.name))
-	));
-	let baseFiles = $derived(filterUserVisibleEntries(
-		($filesQuery.data?.files || []).filter((file) => matchesSearch(file.name))
-	));
+	let baseFolders = $derived(
+		filterUserVisibleEntries(
+			($filesQuery.data?.folders || []).filter((folder) => matchesSearch(folder.name))
+		)
+	);
+	let baseFiles = $derived(
+		filterUserVisibleEntries(
+			($filesQuery.data?.files || []).filter((file) => matchesSearch(file.name))
+		)
+	);
 
 	let filteredFolders = $derived(
 		workspaceMode === 'all' || workspaceMode === 'starred' || workspaceMode === 'deleted'
@@ -504,41 +521,45 @@
 			: baseFiles
 	);
 
-	let sortedFolders = $derived([...filteredFolders].sort((a, b) => {
-		if (activeSortField === 'name') {
-			return activeSortOrder === 'asc'
-				? a.name.localeCompare(b.name)
-				: b.name.localeCompare(a.name);
-		}
-		if (activeSortField === 'modified_at') {
-			return activeSortOrder === 'asc'
-				? new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
-				: new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-		}
-		return 0;
-	}));
+	let sortedFolders = $derived(
+		[...filteredFolders].sort((a, b) => {
+			if (activeSortField === 'name') {
+				return activeSortOrder === 'asc'
+					? a.name.localeCompare(b.name)
+					: b.name.localeCompare(a.name);
+			}
+			if (activeSortField === 'modified_at') {
+				return activeSortOrder === 'asc'
+					? new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
+					: new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+			}
+			return 0;
+		})
+	);
 
-	let sortedFiles = $derived([...filteredFiles].sort((a, b) => {
-		if (activeSortField === 'name') {
-			return activeSortOrder === 'asc'
-				? a.name.localeCompare(b.name)
-				: b.name.localeCompare(a.name);
-		}
-		if (activeSortField === 'modified_at') {
-			return activeSortOrder === 'asc'
-				? new Date(a.modified_at).getTime() - new Date(b.modified_at).getTime()
-				: new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime();
-		}
-		if (activeSortField === 'size') {
-			return activeSortOrder === 'asc' ? a.size - b.size : b.size - a.size;
-		}
-		if (activeSortField === 'mime_type') {
-			return activeSortOrder === 'asc'
-				? a.mime_type.localeCompare(b.mime_type)
-				: b.mime_type.localeCompare(a.mime_type);
-		}
-		return 0;
-	}));
+	let sortedFiles = $derived(
+		[...filteredFiles].sort((a, b) => {
+			if (activeSortField === 'name') {
+				return activeSortOrder === 'asc'
+					? a.name.localeCompare(b.name)
+					: b.name.localeCompare(a.name);
+			}
+			if (activeSortField === 'modified_at') {
+				return activeSortOrder === 'asc'
+					? new Date(a.modified_at).getTime() - new Date(b.modified_at).getTime()
+					: new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime();
+			}
+			if (activeSortField === 'size') {
+				return activeSortOrder === 'asc' ? a.size - b.size : b.size - a.size;
+			}
+			if (activeSortField === 'mime_type') {
+				return activeSortOrder === 'asc'
+					? a.mime_type.localeCompare(b.mime_type)
+					: b.mime_type.localeCompare(a.mime_type);
+			}
+			return 0;
+		})
+	);
 
 	// ============================================================================
 	// PAGINATION
@@ -1610,13 +1631,14 @@
 		}
 	}
 
-	let isUploading = $derived(uploadTasks.some((t) => t.status === 'uploading' || t.status === 'pending'));
+	let isUploading = $derived(
+		uploadTasks.some((t) => t.status === 'uploading' || t.status === 'pending')
+	);
 	let moveCurrentFolderId = $derived(
 		moveType === 'file'
 			? (moveTarget as File | null)?.parent_folder_id
 			: (moveTarget as Folder | null)?.parent_folder_id
 	);
-
 </script>
 
 <svelte:head>
@@ -1717,7 +1739,6 @@
 			emptyTitle={workspaceEmptyTitle}
 			emptyDescription={workspaceEmptyDescription}
 			emptyActionLabel={workspaceEmptyActionLabel}
-
 			{selectionMode}
 			activeSortField={$fileSortState.field}
 			activeSortOrder={$fileSortState.order}

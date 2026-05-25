@@ -12,16 +12,18 @@
 
 	const PER_PAGE = 20;
 
-	let usersQuery = $derived(createQuery({
-		queryKey: ['admin', 'users', currentPage, searchQuery, statusFilter],
-		queryFn: () =>
-			listAdminUsers({
-				page: currentPage,
-				per_page: PER_PAGE,
-				search: searchQuery || undefined,
-				status: statusFilter || undefined
-			})
-	}));
+	let usersQuery = $derived(
+		createQuery({
+			queryKey: ['admin', 'users', currentPage, searchQuery, statusFilter],
+			queryFn: () =>
+				listAdminUsers({
+					page: currentPage,
+					per_page: PER_PAGE,
+					search: searchQuery || undefined,
+					status: statusFilter || undefined
+				})
+		})
+	);
 
 	function handleSearch(q: string) {
 		searchQuery = q;

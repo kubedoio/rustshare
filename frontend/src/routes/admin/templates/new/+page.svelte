@@ -54,7 +54,13 @@
 		return [
 			{ id: 'column_backlog', title: 'Backlog', slug: '00-Backlog', order: 0, status: 'backlog' },
 			{ id: 'column_ready', title: 'Ready', slug: '01-Ready', order: 1, status: 'ready' },
-			{ id: 'column_in_progress', title: 'In Progress', slug: '02-In-Progress', order: 2, status: 'in_progress' },
+			{
+				id: 'column_in_progress',
+				title: 'In Progress',
+				slug: '02-In-Progress',
+				order: 2,
+				status: 'in_progress'
+			},
 			{ id: 'column_review', title: 'Review', slug: '03-Review', order: 3, status: 'review' },
 			{ id: 'column_done', title: 'Done', slug: '04-Done', order: 4, status: 'done' }
 		];
@@ -87,10 +93,18 @@
 			config = JSON.parse(moduleConfigJson);
 		} catch {}
 		if (!config.kanban) config.kanban = {};
-		if (!config.kanban.columns || !Array.isArray(config.kanban.columns) || config.kanban.columns.length === 0) {
+		if (
+			!config.kanban.columns ||
+			!Array.isArray(config.kanban.columns) ||
+			config.kanban.columns.length === 0
+		) {
 			config.kanban.columns = getStandardKanbanColumns();
 		}
-		if (!config.kanban.labels || !Array.isArray(config.kanban.labels) || config.kanban.labels.length === 0) {
+		if (
+			!config.kanban.labels ||
+			!Array.isArray(config.kanban.labels) ||
+			config.kanban.labels.length === 0
+		) {
 			config.kanban.labels = getDefaultKanbanLabels();
 		}
 		if (!config.kanban.settings) {
@@ -220,7 +234,13 @@
 		</div>
 	{/if}
 
-	<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="mt-6 flex flex-col gap-4">
+	<form
+		onsubmit={(e) => {
+			e.preventDefault();
+			handleSubmit();
+		}}
+		class="mt-6 flex flex-col gap-4"
+	>
 		<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6 shadow-sm">
 			<h2 class="mb-4 text-sm font-semibold tracking-wider text-base-content uppercase">
 				Basic Information
@@ -391,11 +411,7 @@
 					<div>
 						<div class="mb-2 flex items-center justify-between">
 							<span class="text-xs font-semibold text-base-content/70">Columns</span>
-							<button
-								type="button"
-								class="btn btn-ghost btn-xs gap-1"
-								onclick={addKanbanColumn}
-							>
+							<button type="button" class="btn btn-ghost btn-xs gap-1" onclick={addKanbanColumn}>
 								<Plus size={12} />
 								<span>Add Column</span>
 							</button>
@@ -419,7 +435,8 @@
 										class="input-bordered input input-sm w-16"
 										type="number"
 										value={column.order}
-										oninput={(e) => updateKanbanColumn(i, 'order', parseInt(e.currentTarget.value) || 0)}
+										oninput={(e) =>
+											updateKanbanColumn(i, 'order', parseInt(e.currentTarget.value) || 0)}
 										placeholder="Order"
 									/>
 									<select
@@ -449,11 +466,7 @@
 					<div>
 						<div class="mb-2 flex items-center justify-between">
 							<span class="text-xs font-semibold text-base-content/70">Labels</span>
-							<button
-								type="button"
-								class="btn btn-ghost btn-xs gap-1"
-								onclick={addKanbanLabel}
-							>
+							<button type="button" class="btn btn-ghost btn-xs gap-1" onclick={addKanbanLabel}>
 								<Plus size={12} />
 								<span>Add Label</span>
 							</button>
@@ -504,7 +517,9 @@
 										checked={value as boolean}
 										onchange={(e) => updateKanbanSetting(key, e.currentTarget.checked)}
 									/>
-									<span class="text-xs text-base-content/80 capitalize">{key.replace(/_/g, ' ')}</span>
+									<span class="text-xs text-base-content/80 capitalize"
+										>{key.replace(/_/g, ' ')}</span
+									>
 								</label>
 							{/each}
 						</div>
@@ -512,9 +527,8 @@
 				</div>
 			{:else}
 				<div class="flex flex-col gap-1">
-					<label
-						class="text-xs font-semibold text-base-content/70"
-						for="module-config-json-object">Module Config (JSON object)</label
+					<label class="text-xs font-semibold text-base-content/70" for="module-config-json-object"
+						>Module Config (JSON object)</label
 					>
 					<textarea
 						id="module-config-json-object"

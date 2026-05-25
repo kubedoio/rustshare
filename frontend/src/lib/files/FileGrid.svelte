@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { File as FileType, Folder } from '$lib/api/types';
-	
+
 	import { selectionStore } from '$lib/stores/selection';
 	import FileGridTile from './FileGridTile.svelte';
 
@@ -67,7 +67,9 @@
 	}: Props = $props();
 
 	// Drag and drop state
-	let draggedItem = $state<{ id: string; isFolder: boolean; parentFolderId: string | null } | null>(null);
+	let draggedItem = $state<{ id: string; isFolder: boolean; parentFolderId: string | null } | null>(
+		null
+	);
 	let dragOverFolderId = $state<string | null>(null);
 
 	function handleFileToggle(file: FileType, event?: MouseEvent) {
@@ -267,7 +269,6 @@
 				{workspaceMode}
 				selected={selectionMode && $selectionStore.selectedFileIds.has(file.id)}
 				{selectionMode}
-
 				isDragging={draggedItem?.id === file.id}
 				onSelect={() => onFileClick(file)}
 				onToggle={(e) => handleFileToggle(file, e)}

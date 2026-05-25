@@ -21,7 +21,11 @@
 					hasRedirectedToLogin = true;
 					const redirectTarget = `${$page.url.pathname}${$page.url.search}`;
 					goto(`/login?redirect_to=${encodeURIComponent(redirectTarget)}`);
-				} else if (!$authStore.isLoading && $authStore.isAuthenticated && approvalState === 'loading') {
+				} else if (
+					!$authStore.isLoading &&
+					$authStore.isAuthenticated &&
+					approvalState === 'loading'
+				) {
 					approvalState = 'ready';
 				}
 			} else {
@@ -30,7 +34,11 @@
 					hasRedirectedToLogin = true;
 					const redirectTarget = $page.url.pathname;
 					goto(`/login?redirect_to=${encodeURIComponent(redirectTarget)}`);
-				} else if (!$authStore.isLoading && $authStore.isAuthenticated && approvalState === 'loading') {
+				} else if (
+					!$authStore.isLoading &&
+					$authStore.isAuthenticated &&
+					approvalState === 'loading'
+				) {
 					approvalState = 'manual';
 				}
 			}

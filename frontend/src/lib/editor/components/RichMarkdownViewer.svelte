@@ -73,7 +73,9 @@
 	}
 
 	$effect(() => {
-		const resolvedContent = attachments?.length ? resolveAttachmentPaths(content, attachments) : content;
+		const resolvedContent = attachments?.length
+			? resolveAttachmentPaths(content, attachments)
+			: content;
 		const result = markdownToHtml(resolvedContent);
 		if (result.success) {
 			renderedHtml = sanitizeHtml(result.html);

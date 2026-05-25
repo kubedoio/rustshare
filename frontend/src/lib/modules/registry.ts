@@ -172,7 +172,8 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				renderer: 'notes',
 				layout: 'list-grid',
 				emptyStateTitle: 'No notes yet',
-				emptyStateDescription: 'No notes yet. Create your first note to capture ideas, documentation, or working knowledge.',
+				emptyStateDescription:
+					'No notes yet. Create your first note to capture ideas, documentation, or working knowledge.',
 				primaryAction: {
 					label: 'New note',
 					action: 'create-from-template',
@@ -225,7 +226,8 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				renderer: 'meetings',
 				layout: 'list-grid',
 				emptyStateTitle: 'No meeting notes yet',
-				emptyStateDescription: 'No meeting notes yet. Create a meeting note to capture agenda, discussion, decisions, and follow-up items.',
+				emptyStateDescription:
+					'No meeting notes yet. Create a meeting note to capture agenda, discussion, decisions, and follow-up items.',
 				primaryAction: {
 					label: 'New meeting note',
 					action: 'create-from-template',
@@ -278,7 +280,8 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				renderer: 'standups',
 				layout: 'list-grid',
 				emptyStateTitle: 'No standup records yet',
-				emptyStateDescription: 'No standup records yet. Create a daily update to capture progress, blockers, and follow-up items.',
+				emptyStateDescription:
+					'No standup records yet. Create a daily update to capture progress, blockers, and follow-up items.',
 				primaryAction: {
 					label: 'New standup',
 					action: 'create-from-template',
@@ -331,7 +334,8 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				renderer: 'kanban',
 				layout: 'kanban-board',
 				emptyStateTitle: 'No boards yet',
-				emptyStateDescription: 'No boards yet. Create a lightweight board to organize work, ideas, or follow-up items.',
+				emptyStateDescription:
+					'No boards yet. Create a lightweight board to organize work, ideas, or follow-up items.',
 				primaryAction: {
 					label: 'New board',
 					action: 'create-from-template',
@@ -384,7 +388,8 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				renderer: 'decisions',
 				layout: 'decision-registry',
 				emptyStateTitle: 'No decisions yet',
-				emptyStateDescription: 'No decisions yet. Create a decision record to preserve context, rationale, and follow-up.',
+				emptyStateDescription:
+					'No decisions yet. Create a decision record to preserve context, rationale, and follow-up.',
 				primaryAction: {
 					label: 'New decision',
 					action: 'create-from-template',
@@ -437,7 +442,8 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				renderer: 'brainstorming',
 				layout: 'gallery-grid',
 				emptyStateTitle: 'No idea boards yet',
-				emptyStateDescription: 'No idea boards yet. Create a simple visual board to capture sketches, flows, or early thinking.',
+				emptyStateDescription:
+					'No idea boards yet. Create a simple visual board to capture sketches, flows, or early thinking.',
 				primaryAction: {
 					label: 'New idea board',
 					action: 'create-from-template',
@@ -575,8 +581,7 @@ export async function refreshModules() {
 								emptyStateDescription:
 									uiConfig?.page?.emptyStateDescription ?? m.ui.page.emptyStateDescription,
 								primaryAction: uiConfig?.page?.primaryAction ?? m.ui.page.primaryAction,
-								searchPlaceholder:
-									uiConfig?.page?.searchPlaceholder ?? m.ui.page.searchPlaceholder,
+								searchPlaceholder: uiConfig?.page?.searchPlaceholder ?? m.ui.page.searchPlaceholder,
 								filterLabel: uiConfig?.page?.filterLabel ?? m.ui.page.filterLabel,
 								sortLabel: uiConfig?.page?.sortLabel ?? m.ui.page.sortLabel,
 								itemSingular: uiConfig?.page?.itemSingular ?? m.ui.page.itemSingular,

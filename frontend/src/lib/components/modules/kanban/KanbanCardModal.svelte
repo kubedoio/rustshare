@@ -80,7 +80,9 @@
 				)
 			: { done: 0, total: 0 }
 	);
-	let checklistPercent = $derived(checklistStats.total > 0 ? Math.round((checklistStats.done / checklistStats.total) * 100) : 0);
+	let checklistPercent = $derived(
+		checklistStats.total > 0 ? Math.round((checklistStats.done / checklistStats.total) * 100) : 0
+	);
 
 	function priorityBadge(priority: string) {
 		switch (priority) {
@@ -141,7 +143,9 @@
 			];
 		} else {
 			card.checklists = card.checklists.map((g, i) =>
-				i === 0 ? { ...g, items: [...g.items, { id: `new-item-${Date.now()}`, text, done: false }] } : g
+				i === 0
+					? { ...g, items: [...g.items, { id: `new-item-${Date.now()}`, text, done: false }] }
+					: g
 			);
 		}
 		newChecklistItemText = '';
@@ -276,7 +280,7 @@
 							{@const badge = priorityBadge(card.priority)}
 							<span class="priority-badge {badge?.bg}">
 								<span class="priority-dot {badge?.dot}"></span>
-								<span class="{badge?.text}">{badge?.label}</span>
+								<span class={badge?.text}>{badge?.label}</span>
 							</span>
 						{/if}
 					</div>
@@ -461,7 +465,11 @@
 						</h4>
 					</div>
 					{#if checklistStats.total > 0}
-						<progress class="progress progress-primary w-full mb-3" value={checklistPercent} max="100"></progress>
+						<progress
+							class="progress progress-primary w-full mb-3"
+							value={checklistPercent}
+							max="100"
+						></progress>
 					{/if}
 					<div class="checklist-body">
 						{#each card.checklists as group}
@@ -514,12 +522,12 @@
 										<strong>{event.actor}</strong>
 										<span class="text-base-content/60">{formatEventText(event)}</span>
 									</div>
-								{#if event.event_type === 'comment'}
-									{@const commentPayload = event.payload as { text?: string } | undefined}
-									{#if commentPayload?.text}
-										<div class="activity-comment">{commentPayload.text}</div>
+									{#if event.event_type === 'comment'}
+										{@const commentPayload = event.payload as { text?: string } | undefined}
+										{#if commentPayload?.text}
+											<div class="activity-comment">{commentPayload.text}</div>
+										{/if}
 									{/if}
-								{/if}
 									<div class="activity-time">
 										{new Date(event.timestamp).toLocaleString(undefined, {
 											month: 'short',

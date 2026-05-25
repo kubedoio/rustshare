@@ -125,9 +125,10 @@ describe('Auth Store Race Condition', () => {
 		// Start a login that will resolve slowly
 		let loginResolve: ((value: Awaited<ReturnType<typeof loginRequest>>) => void) | undefined;
 		mockLoginRequest.mockImplementation(
-			() => new Promise((resolve) => {
-				loginResolve = resolve as (value: Awaited<ReturnType<typeof loginRequest>>) => void;
-			})
+			() =>
+				new Promise((resolve) => {
+					loginResolve = resolve as (value: Awaited<ReturnType<typeof loginRequest>>) => void;
+				})
 		);
 
 		// Fire login but don't await it

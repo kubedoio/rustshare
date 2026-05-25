@@ -566,7 +566,7 @@
 							{content}
 							editable={true}
 							hasAttachmentHandler={true}
-							currentMarkdown={currentMarkdown}
+							{currentMarkdown}
 							on:change={handleEditorChange}
 							on:save={handleCollabSave}
 							on:ready
@@ -584,7 +584,7 @@
 							editable={true}
 							hasAttachmentHandler={true}
 							syncExternalContent={false}
-							currentMarkdown={currentMarkdown}
+							{currentMarkdown}
 							on:change={handleEditorChange}
 							on:attachment={toggleAttachments}
 							on:sketch={handleSketch}

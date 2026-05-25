@@ -7,10 +7,7 @@ export function renderMarkdown(markdown: string): string {
 	if (!markdown) return '';
 
 	// 1. Escape HTML
-	let rawHtml = markdown
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;');
+	let rawHtml = markdown.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 	// 2. Preserve code blocks with placeholders so their content
 	//    is not affected by list/bold/italic/table processing
@@ -45,19 +42,16 @@ export function renderMarkdown(markdown: string): string {
 	);
 
 	// 5. Unordered lists — match consecutive lines starting with "- "
-	rawHtml = rawHtml.replace(
-		/(^|\n)([ \t]*- .+(?:\n[ \t]*- .+)*)/g,
-		(_, prefix, listBlock) => {
-			const items = listBlock
-				.split('\n')
-				.map((line: string) => {
-					const content = line.replace(/^[ \t]*- /, '');
-					return `<li>${content}</li>`;
-				})
-				.join('');
-			return prefix + `<ul class="list-disc my-2 pl-5">${items}</ul>`;
-		}
-	);
+	rawHtml = rawHtml.replace(/(^|\n)([ \t]*- .+(?:\n[ \t]*- .+)*)/g, (_, prefix, listBlock) => {
+		const items = listBlock
+			.split('\n')
+			.map((line: string) => {
+				const content = line.replace(/^[ \t]*- /, '');
+				return `<li>${content}</li>`;
+			})
+			.join('');
+		return prefix + `<ul class="list-disc my-2 pl-5">${items}</ul>`;
+	});
 
 	// 6. Ordered lists — match consecutive lines starting with "digits. "
 	rawHtml = rawHtml.replace(
@@ -92,9 +86,7 @@ export function renderMarkdown(markdown: string): string {
 		.replace(/__(.*?)__/g, '<strong>$1</strong>');
 
 	// 10. Italic
-	rawHtml = rawHtml
-		.replace(/\*(.*?)\*/g, '<em>$1</em>')
-		.replace(/_(.*?)_/g, '<em>$1</em>');
+	rawHtml = rawHtml.replace(/\*(.*?)\*/g, '<em>$1</em>').replace(/_(.*?)_/g, '<em>$1</em>');
 
 	// 11. Inline code
 	rawHtml = rawHtml.replace(

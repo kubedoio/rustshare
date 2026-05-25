@@ -12,7 +12,15 @@
 	} from '$lib/api/brainstorming';
 	import ShareModal from '$lib/components/modals/ShareModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { ArrowLeft, Save, AlertCircle, CheckCircle2, Loader2, ChevronRight, Share2 } from 'lucide-svelte';
+	import {
+		ArrowLeft,
+		Save,
+		AlertCircle,
+		CheckCircle2,
+		Loader2,
+		ChevronRight,
+		Share2
+	} from 'lucide-svelte';
 
 	let boardId = $derived($page.params.boardId || '');
 
@@ -72,7 +80,10 @@
 				version: 2,
 				source: window.location.origin,
 				elements: currentElements,
-				appState: { viewBackgroundColor: currentAppState?.viewBackgroundColor, gridSize: currentAppState?.gridSize },
+				appState: {
+					viewBackgroundColor: currentAppState?.viewBackgroundColor,
+					gridSize: currentAppState?.gridSize
+				},
 				files: currentFiles
 			});
 			if (currentSource === source) {
@@ -319,7 +330,10 @@
 						Brainstorming
 					</button>
 					<ChevronRight size={14} class="flex-shrink-0 text-base-content/30" />
-					<span class="rounded-md px-1.5 py-0.5 text-sm font-semibold text-base-content" aria-current="page">
+					<span
+						class="rounded-md px-1.5 py-0.5 text-sm font-semibold text-base-content"
+						aria-current="page"
+					>
 						{$boardQuery.data?.title ?? 'Untitled Board'}
 					</span>
 				</nav>
@@ -349,10 +363,7 @@
 				</span>
 			{/if}
 
-			<button
-				class="btn gap-2 btn-sm btn-outline"
-				onclick={() => (showShareModal = true)}
-			>
+			<button class="btn gap-2 btn-sm btn-outline" onclick={() => (showShareModal = true)}>
 				<Share2 size={14} />
 				<span>Share</span>
 			</button>
@@ -509,9 +520,9 @@
 	}
 
 	:global(.excalidraw .layer-ui__wrapper .dropdown-menu .social-links),
-	:global(.excalidraw .layer-ui__wrapper .dropdown-menu a[href^="https://github.com"]),
-	:global(.excalidraw .layer-ui__wrapper .dropdown-menu a[href^="https://twitter.com"]),
-	:global(.excalidraw .layer-ui__wrapper .dropdown-menu a[href^="https://discord.gg"]) {
+	:global(.excalidraw .layer-ui__wrapper .dropdown-menu a[href^='https://github.com']),
+	:global(.excalidraw .layer-ui__wrapper .dropdown-menu a[href^='https://twitter.com']),
+	:global(.excalidraw .layer-ui__wrapper .dropdown-menu a[href^='https://discord.gg']) {
 		display: none !important;
 	}
 </style>

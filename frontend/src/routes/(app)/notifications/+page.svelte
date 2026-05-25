@@ -199,7 +199,7 @@
 										>
 											Mark read
 										</button>
-										{/if}
+									{/if}
 
 									<button
 										class="btn btn-outline btn-sm"

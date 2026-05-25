@@ -144,7 +144,13 @@
 	<div class="card bg-base-100 shadow">
 		<div class="card-body">
 			<h3 class="card-title text-base">Edit Details</h3>
-			<form onsubmit={(e) => { e.preventDefault(); handleSubmit(e); }} class="mt-2 space-y-4">
+			<form
+				onsubmit={(e) => {
+					e.preventDefault();
+					handleSubmit(e);
+				}}
+				class="mt-2 space-y-4"
+			>
 				<div class="form-control">
 					<label class="label" for="edit-email"><span class="label-text">Email</span></label>
 					<input

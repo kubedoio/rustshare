@@ -175,6 +175,6 @@
 		cancelLabel="Cancel"
 		danger={true}
 		onConfirm={onConfirmDelete}
-		onCancel={() => showConfirmModal = false}
+		onCancel={() => (showConfirmModal = false)}
 	/>
 </div>

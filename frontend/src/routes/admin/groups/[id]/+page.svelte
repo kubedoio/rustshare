@@ -7,11 +7,13 @@
 
 	let groupId = $derived($page.params.id);
 
-	let groupQuery = $derived(createQuery({
-		queryKey: ['admin', 'group', groupId],
-		queryFn: () => getAdminGroup(groupId ?? ''),
-		enabled: !!groupId
-	}));
+	let groupQuery = $derived(
+		createQuery({
+			queryKey: ['admin', 'group', groupId],
+			queryFn: () => getAdminGroup(groupId ?? ''),
+			enabled: !!groupId
+		})
+	);
 
 	let editName = $state('');
 	let editDescription = $state('');
@@ -91,7 +93,13 @@
 				</div>
 
 				{#if editing}
-					<form onsubmit={(e) => { e.preventDefault(); $updateMutation.mutate(); }} class="mt-2 space-y-4">
+					<form
+						onsubmit={(e) => {
+							e.preventDefault();
+							$updateMutation.mutate();
+						}}
+						class="mt-2 space-y-4"
+					>
 						<div class="form-control">
 							<label class="label" for="grp-name"><span class="label-text">Name</span></label>
 							<input id="grp-name" type="text" class="input-bordered input" bind:value={editName} />

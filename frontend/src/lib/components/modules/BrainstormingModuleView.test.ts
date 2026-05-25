@@ -60,7 +60,8 @@ const mockModule = {
 			renderer: 'brainstorming',
 			layout: 'gallery-grid',
 			emptyStateTitle: 'No idea boards yet',
-			emptyStateDescription: 'Create a simple visual board to capture sketches, flows, or early thinking.',
+			emptyStateDescription:
+				'Create a simple visual board to capture sketches, flows, or early thinking.',
 			primaryAction: {
 				label: 'New idea board',
 				action: 'create-from-template',
@@ -87,7 +88,9 @@ describe('BrainstormingModuleView', () => {
 			expect(screen.getByText('No idea boards yet')).toBeTruthy();
 		});
 		expect(
-			screen.getByText('Create a simple visual board to capture sketches, flows, or early thinking.')
+			screen.getByText(
+				'Create a simple visual board to capture sketches, flows, or early thinking.'
+			)
 		).toBeTruthy();
 	});
 

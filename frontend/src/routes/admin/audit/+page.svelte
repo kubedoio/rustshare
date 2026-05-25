@@ -8,15 +8,17 @@
 
 	const PER_PAGE = 50;
 
-	let auditQuery = $derived(createQuery({
-		queryKey: ['admin', 'audit', currentPage, filters],
-		queryFn: () =>
-			listAuditLog({
-				page: currentPage,
-				per_page: PER_PAGE,
-				...filters
-			})
-	}));
+	let auditQuery = $derived(
+		createQuery({
+			queryKey: ['admin', 'audit', currentPage, filters],
+			queryFn: () =>
+				listAuditLog({
+					page: currentPage,
+					per_page: PER_PAGE,
+					...filters
+				})
+		})
+	);
 
 	function handleFilterChange(f: typeof filters) {
 		filters = f;

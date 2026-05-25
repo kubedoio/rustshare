@@ -19,10 +19,7 @@
 <section class="pinned-folders" aria-label="Pinned folders">
 	<DashboardSectionHeader title="Pinned folders" href="/files" />
 	{#if folders.length === 0}
-		<DashboardEmptyState
-			description="Star folders to pin them here for quick access."
-			minimal
-		/>
+		<DashboardEmptyState description="Star folders to pin them here for quick access." minimal />
 	{:else}
 		<ul class="folder-list">
 			{#each folders as folder}
@@ -129,7 +126,9 @@
 		color: color-mix(in oklab, var(--base-content) 40%, transparent);
 		cursor: pointer;
 		flex-shrink: 0;
-		transition: background 150ms ease, color 150ms ease;
+		transition:
+			background 150ms ease,
+			color 150ms ease;
 	}
 	.folder-menu-btn:hover {
 		background: color-mix(in oklab, var(--base-300) 40%, transparent);

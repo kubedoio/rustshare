@@ -67,7 +67,9 @@ describe('resolveAttachmentPaths', () => {
 
 	it('handles attachment metadata with ./ prefixed path', () => {
 		const markdown = '[Report](./attachments/report.pdf)';
-		const result = resolveAttachmentPaths(markdown, [makeAtt({ path: './attachments/report.pdf' })]);
+		const result = resolveAttachmentPaths(markdown, [
+			makeAtt({ path: './attachments/report.pdf' })
+		]);
 		expect(result).toBe('[Report](/api/v1/files/file-123/content)');
 	});
 
@@ -169,9 +171,9 @@ describe('prepareAttachment', () => {
 		const prepared = prepareAttachment(file, []);
 		expect(prepared.metadata.filename).toBe('doc.pdf');
 		expect(prepared.metadata.mimeType).toBe('application/pdf');
-		expect(prepared.metadata.path).toBe('attachments/doc.pdf');
+		expect(prepared.metadata.path).toBe('./attachments/doc.pdf');
 		expect(prepared.isImage).toBe(false);
-		expect(prepared.relativePath).toBe('attachments/doc.pdf');
+		expect(prepared.relativePath).toBe('./attachments/doc.pdf');
 	});
 
 	it('deduplicates filename collisions', () => {

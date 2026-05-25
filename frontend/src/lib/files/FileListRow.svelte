@@ -1,11 +1,11 @@
 <script lang="ts">
 	import type { File as FileType, Folder } from '$lib/api/types';
-		import { formatFileSize, formatDate, getFileTypeLabel } from '$lib/utils/format';
+	import { formatFileSize, formatDate, getFileTypeLabel } from '$lib/utils/format';
 	import { detectEditorType, canEditFileSize } from '$lib/utils/editor';
 	import FilePreview from './FilePreview.svelte';
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
 	import FileContextMenu from '$lib/explorer/FileContextMenu.svelte';
-		import {
+	import {
 		MoveVertical as MoreVertical,
 		CreditCard as Edit,
 		CreditCard as Edit3,
@@ -360,278 +360,280 @@
 {#if isInternalRustShareFile(item.name)}
 	<!-- hidden internal file -->
 {:else}
-<tr
-	class="group cursor-pointer transition-colors hover:bg-base-200/60
+	<tr
+		class="group cursor-pointer transition-colors hover:bg-base-200/60
 		{selected ? 'bg-brand-500/5' : ''} 
 		{isDragging ? 'opacity-40' : ''} 
 		{isDropTarget
-		? canDrop
-			? 'bg-brand-500/10 ring-1 ring-brand-500/30 ring-inset'
-			: 'bg-error/10 ring-1 ring-error/30 ring-inset'
-		: ''}
+			? canDrop
+				? 'bg-brand-500/10 ring-1 ring-brand-500/30 ring-inset'
+				: 'bg-error/10 ring-1 ring-error/30 ring-inset'
+			: ''}
 		{!isRenaming ? 'cursor-grab active:cursor-grabbing' : ''}"
-	onclick={handleClick}
-	oncontextmenu={handleContextMenu}
-	draggable={!isRenaming}
-	ondragstart={handleDragStart}
-	ondragend={onDragEnd}
-	ondragover={handleDragOver}
-	ondragleave={handleDragLeave}
-	ondrop={handleDrop}
-	aria-selected={selected}
-	aria-grabbed={isDragging}
-	aria-dropeffect={isFolder && canDrop ? 'move' : 'none'}
->
-	<!-- Checkbox -->
-	<td class="w-10 px-3 py-0.5">
-		{#if selectionMode}
-			<input
-				type="checkbox"
-				class="h-4 w-4 cursor-pointer rounded border-base-300 bg-base-100 text-brand-500 focus:ring-brand-500"
-				checked={selected}
-				onchange={handleToggle}
-				onclick={(e) => e.stopPropagation()}
-			/>
-		{/if}
-	</td>
-
-	<!-- Preview Icon -->
-	<td class="w-10 px-1 py-0.5">
-		<div class="flex items-center justify-center">
-			<FilePreview
-				{item}
-				{isFolder}
-				{isSharedRoot}
-				size="sm"
-				showThumbnail={!isFolder && workspaceMode !== 'deleted'}
-			/>
-		</div>
-	</td>
-
-	<!-- Name -->
-	<td class="max-w-0 min-w-0 px-2 py-0.5">
-		<div class="flex min-w-0 items-center gap-2">
-			{#if isRenaming}
-				<div class="flex min-w-0 flex-1 items-center gap-1">
-					<input
-						bind:this={renameInputRef}
-						type="text"
-						class="min-w-0 flex-1 rounded-md border border-brand-500 bg-base-100 px-2 py-0.5 text-meta focus:ring-2 focus:ring-brand-500/20 focus:outline-hidden"
-						value={renameValue}
-						oninput={(e) => (renameValue = e.currentTarget.value)}
-						onkeydown={handleRenameKeydown}
-						onblur={confirmRename}
-						onclick={(e) => e.stopPropagation()}
-					/>
-				</div>
-			{:else if isFolder && workspaceMode === 'all'}
-				<button
-					type="button"
-					class="group/link flex min-w-0 items-center gap-1 truncate text-left text-body-sm font-medium {isRustshareSystemFolder ? 'text-base-content/40' : 'text-base-content'} transition-colors hover:text-brand-500"
-					onclick={handleNavigate}
-					ondblclick={maybeStartRename}
-				>
-					<span class="truncate">{item.name}</span>
-					<ChevronRight
-						size={12}
-						class="text-base-content/40 opacity-0 transition-opacity group-hover/link:opacity-100"
-					/>
-				</button>
-			{:else}
-				<span
-					class="block min-w-0 truncate text-body-sm font-medium {isRustshareSystemFolder ? 'text-base-content/40' : 'text-base-content'}"
-					ondblclick={maybeStartRename}
-					role="button"
-					tabindex="0"
-				>
-					{item.name}
-				</span>
-			{/if}
-
-			{#if item.is_shared}
-				<ShareIndicator
-					isShared={item.is_shared}
-					shareCount={item.share_count || 0}
-					shareExpiresAt={item.share_expires_at || null}
-					size="sm"
+		onclick={handleClick}
+		oncontextmenu={handleContextMenu}
+		draggable={!isRenaming}
+		ondragstart={handleDragStart}
+		ondragend={onDragEnd}
+		ondragover={handleDragOver}
+		ondragleave={handleDragLeave}
+		ondrop={handleDrop}
+		aria-selected={selected}
+		aria-grabbed={isDragging}
+		aria-dropeffect={isFolder && canDrop ? 'move' : 'none'}
+	>
+		<!-- Checkbox -->
+		<td class="w-10 px-3 py-0.5">
+			{#if selectionMode}
+				<input
+					type="checkbox"
+					class="h-4 w-4 cursor-pointer rounded border-base-300 bg-base-100 text-brand-500 focus:ring-brand-500"
+					checked={selected}
+					onchange={handleToggle}
+					onclick={(e) => e.stopPropagation()}
 				/>
 			{/if}
-			{#if isStarred}
-				<Star size={12} class="flex-shrink-0 fill-brand-500 text-brand-500" />
-			{/if}
-		</div>
-	</td>
+		</td>
 
-	<!-- Type -->
-	<td class="hidden w-28 px-3 py-0.5 md:table-cell">
-		<span
-			class="inline-flex items-center rounded-md bg-base-200/70 px-1.5 py-0.5 text-2xs font-medium tracking-tight text-base-content/60 uppercase"
-		>
-			{fileTypeLabel}
-		</span>
-	</td>
+		<!-- Preview Icon -->
+		<td class="w-10 px-1 py-0.5">
+			<div class="flex items-center justify-center">
+				<FilePreview
+					{item}
+					{isFolder}
+					{isSharedRoot}
+					size="sm"
+					showThumbnail={!isFolder && workspaceMode !== 'deleted'}
+				/>
+			</div>
+		</td>
 
-	<!-- Size -->
-	<td class="hidden w-20 px-3 py-0.5 sm:table-cell">
-		<span class="font-data text-meta text-base-content/50 tabular-nums">{displaySize}</span>
-	</td>
+		<!-- Name -->
+		<td class="max-w-0 min-w-0 px-2 py-0.5">
+			<div class="flex min-w-0 items-center gap-2">
+				{#if isRenaming}
+					<div class="flex min-w-0 flex-1 items-center gap-1">
+						<input
+							bind:this={renameInputRef}
+							type="text"
+							class="min-w-0 flex-1 rounded-md border border-brand-500 bg-base-100 px-2 py-0.5 text-meta focus:ring-2 focus:ring-brand-500/20 focus:outline-hidden"
+							value={renameValue}
+							oninput={(e) => (renameValue = e.currentTarget.value)}
+							onkeydown={handleRenameKeydown}
+							onblur={confirmRename}
+							onclick={(e) => e.stopPropagation()}
+						/>
+					</div>
+				{:else if isFolder && workspaceMode === 'all'}
+					<button
+						type="button"
+						class="group/link flex min-w-0 items-center gap-1 truncate text-left text-body-sm font-medium {isRustshareSystemFolder
+							? 'text-base-content/40'
+							: 'text-base-content'} transition-colors hover:text-brand-500"
+						onclick={handleNavigate}
+						ondblclick={maybeStartRename}
+					>
+						<span class="truncate">{item.name}</span>
+						<ChevronRight
+							size={12}
+							class="text-base-content/40 opacity-0 transition-opacity group-hover/link:opacity-100"
+						/>
+					</button>
+				{:else}
+					<span
+						class="block min-w-0 truncate text-body-sm font-medium {isRustshareSystemFolder
+							? 'text-base-content/40'
+							: 'text-base-content'}"
+						ondblclick={maybeStartRename}
+						role="button"
+						tabindex="0"
+					>
+						{item.name}
+					</span>
+				{/if}
 
-	<!-- Modified -->
-	<td class="hidden w-36 px-3 py-0.5 lg:table-cell">
-		<span class="font-data text-meta text-base-content/50">{displayDate}</span>
-	</td>
+				{#if item.is_shared}
+					<ShareIndicator
+						isShared={item.is_shared}
+						shareCount={item.share_count || 0}
+						shareExpiresAt={item.share_expires_at || null}
+						size="sm"
+					/>
+				{/if}
+				{#if isStarred}
+					<Star size={12} class="flex-shrink-0 fill-brand-500 text-brand-500" />
+				{/if}
+			</div>
+		</td>
 
-
-
-	<!-- Actions -->
-	<td class="w-12 px-3 py-0.5">
-		<div class="relative">
-			<button
-				type="button"
-				bind:this={actionButtonRef}
-				class="rounded-lg p-1 text-base-content/40 opacity-0 transition-all group-hover:opacity-100 hover:bg-base-200 hover:text-base-content focus:opacity-100"
-				onclick={toggleActions}
-				aria-label="Actions"
+		<!-- Type -->
+		<td class="hidden w-28 px-3 py-0.5 md:table-cell">
+			<span
+				class="inline-flex items-center rounded-md bg-base-200/70 px-1.5 py-0.5 text-2xs font-medium tracking-tight text-base-content/60 uppercase"
 			>
-				<MoreVertical size={14} />
-			</button>
+				{fileTypeLabel}
+			</span>
+		</td>
 
-			{#if showActions}
-				<div
-					bind:this={actionMenuRef}
-					class="fixed z-[70] w-44 rounded-xl border border-base-300/70 bg-base-100 py-1 shadow-xl shadow-black/20"
-					style={`top: ${menuTop}px; left: ${menuLeft}px;`}
-					onclick={(e) => e.stopPropagation()}
-					onkeydown={(e: KeyboardEvent) => {
-						if (e.key === 'Escape') {
-							e.stopPropagation();
-							showActions = false;
-						}
-					}}
-					tabindex="-1"
-					role="menu"
+		<!-- Size -->
+		<td class="hidden w-20 px-3 py-0.5 sm:table-cell">
+			<span class="font-data text-meta text-base-content/50 tabular-nums">{displaySize}</span>
+		</td>
+
+		<!-- Modified -->
+		<td class="hidden w-36 px-3 py-0.5 lg:table-cell">
+			<span class="font-data text-meta text-base-content/50">{displayDate}</span>
+		</td>
+
+		<!-- Actions -->
+		<td class="w-12 px-3 py-0.5">
+			<div class="relative">
+				<button
+					type="button"
+					bind:this={actionButtonRef}
+					class="rounded-lg p-1 text-base-content/40 opacity-0 transition-all group-hover:opacity-100 hover:bg-base-200 hover:text-base-content focus:opacity-100"
+					onclick={toggleActions}
+					aria-label="Actions"
 				>
-					{#if workspaceMode === 'deleted'}
-						<button
-							type="button"
-							class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-							onclick={(e) => handleAction(e, onRestore)}
-						>
-							<RotateCcw size={14} />
-							Restore
-						</button>
-						<div class="my-1 border-t border-base-200"></div>
-						<button
-							type="button"
-							class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-error transition-colors hover:bg-error/10"
-							onclick={(e) => handleAction(e, onPermanentDelete)}
-						>
-							<Trash2 size={14} />
-							Delete permanently
-						</button>
-					{:else}
-						{#if canManage}
+					<MoreVertical size={14} />
+				</button>
+
+				{#if showActions}
+					<div
+						bind:this={actionMenuRef}
+						class="fixed z-[70] w-44 rounded-xl border border-base-300/70 bg-base-100 py-1 shadow-xl shadow-black/20"
+						style={`top: ${menuTop}px; left: ${menuLeft}px;`}
+						onclick={(e) => e.stopPropagation()}
+						onkeydown={(e: KeyboardEvent) => {
+							if (e.key === 'Escape') {
+								e.stopPropagation();
+								showActions = false;
+							}
+						}}
+						tabindex="-1"
+						role="menu"
+					>
+						{#if workspaceMode === 'deleted'}
 							<button
 								type="button"
 								class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-								onclick={(e) => {
-									startRename();
-									handleAction(e, () => {});
-								}}
+								onclick={(e) => handleAction(e, onRestore)}
 							>
-								<Edit size={14} />
-								Rename
-							</button>
-							<button
-								type="button"
-								class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-								onclick={(e) => handleAction(e, onToggleStar)}
-							>
-								<Star size={14} class={isStarred ? 'fill-brand-500 text-brand-500' : ''} />
-								{isStarred ? 'Remove star' : 'Add to starred'}
-							</button>
-						{/if}
-						{#if canShare}
-							<button
-								type="button"
-								class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-								onclick={(e) => handleAction(e, onShare)}
-							>
-								<Share2 size={14} />
-								Share
-							</button>
-						{/if}
-						{#if !isFolder}
-							{#if canManage && fileItem && detectEditorType(item.name, fileItem.mime_type) !== 'none' && canEditFileSize(fileItem.size)}
-								<button
-									type="button"
-									class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-									onclick={(e) => handleAction(e, onEdit)}
-								>
-									<Edit3 size={14} />
-									Edit
-								</button>
-							{/if}
-							<button
-								type="button"
-								class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-								onclick={(e) => handleAction(e, onDownload)}
-							>
-								<Download size={14} />
-								Download
-							</button>
-							{#if canManage}
-								<button
-									type="button"
-									class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-									onclick={(e) => handleAction(e, onVersionHistory)}
-								>
-									<History size={14} />
-									Version history
-								</button>
-								<button
-									type="button"
-									class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-									onclick={(e) => handleAction(e, onReplace)}
-								>
-									<RefreshCw size={14} />
-									Replace file
-								</button>
-							{/if}
-						{/if}
-						{#if canManage}
-							<button
-								type="button"
-								class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-								onclick={(e) => handleAction(e, onMove)}
-							>
-								<Move size={14} />
-								Move
+								<RotateCcw size={14} />
+								Restore
 							</button>
 							<div class="my-1 border-t border-base-200"></div>
 							<button
 								type="button"
 								class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-error transition-colors hover:bg-error/10"
-								onclick={(e) => handleAction(e, onDelete)}
+								onclick={(e) => handleAction(e, onPermanentDelete)}
 							>
 								<Trash2 size={14} />
-								Delete
+								Delete permanently
 							</button>
+						{:else}
+							{#if canManage}
+								<button
+									type="button"
+									class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+									onclick={(e) => {
+										startRename();
+										handleAction(e, () => {});
+									}}
+								>
+									<Edit size={14} />
+									Rename
+								</button>
+								<button
+									type="button"
+									class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+									onclick={(e) => handleAction(e, onToggleStar)}
+								>
+									<Star size={14} class={isStarred ? 'fill-brand-500 text-brand-500' : ''} />
+									{isStarred ? 'Remove star' : 'Add to starred'}
+								</button>
+							{/if}
+							{#if canShare}
+								<button
+									type="button"
+									class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+									onclick={(e) => handleAction(e, onShare)}
+								>
+									<Share2 size={14} />
+									Share
+								</button>
+							{/if}
+							{#if !isFolder}
+								{#if canManage && fileItem && detectEditorType(item.name, fileItem.mime_type) !== 'none' && canEditFileSize(fileItem.size)}
+									<button
+										type="button"
+										class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+										onclick={(e) => handleAction(e, onEdit)}
+									>
+										<Edit3 size={14} />
+										Edit
+									</button>
+								{/if}
+								<button
+									type="button"
+									class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+									onclick={(e) => handleAction(e, onDownload)}
+								>
+									<Download size={14} />
+									Download
+								</button>
+								{#if canManage}
+									<button
+										type="button"
+										class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+										onclick={(e) => handleAction(e, onVersionHistory)}
+									>
+										<History size={14} />
+										Version history
+									</button>
+									<button
+										type="button"
+										class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+										onclick={(e) => handleAction(e, onReplace)}
+									>
+										<RefreshCw size={14} />
+										Replace file
+									</button>
+								{/if}
+							{/if}
+							{#if canManage}
+								<button
+									type="button"
+									class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+									onclick={(e) => handleAction(e, onMove)}
+								>
+									<Move size={14} />
+									Move
+								</button>
+								<div class="my-1 border-t border-base-200"></div>
+								<button
+									type="button"
+									class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-error transition-colors hover:bg-error/10"
+									onclick={(e) => handleAction(e, onDelete)}
+								>
+									<Trash2 size={14} />
+									Delete
+								</button>
+							{/if}
 						{/if}
-					{/if}
-				</div>
-			{/if}
-		</div>
-	</td>
-</tr>
+					</div>
+				{/if}
+			</div>
+		</td>
+	</tr>
 
-<!-- Context Menu -->
-<FileContextMenu
-	{item}
-	{workspaceMode}
-	isOpen={contextMenuVisible}
-	position={{ x: contextMenuX, y: contextMenuY }}
-	onClose={() => (contextMenuVisible = false)}
-	onAction={handleContextMenuAction}
-/>
+	<!-- Context Menu -->
+	<FileContextMenu
+		{item}
+		{workspaceMode}
+		isOpen={contextMenuVisible}
+		position={{ x: contextMenuX, y: contextMenuY }}
+		onClose={() => (contextMenuVisible = false)}
+		onAction={handleContextMenuAction}
+	/>
 {/if}

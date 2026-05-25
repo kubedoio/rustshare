@@ -62,8 +62,7 @@
 	}
 
 	function flushPendingSave(): void {
-		const markdown =
-			pendingMarkdown ?? editorComponent?.getMarkdown() ?? localMarkdown ?? content;
+		const markdown = pendingMarkdown ?? editorComponent?.getMarkdown() ?? localMarkdown ?? content;
 
 		if (inFlightMarkdown) {
 			pendingMarkdown = markdown;
@@ -195,7 +194,7 @@
 			editable={resolvedEditable}
 			{hasAttachmentHandler}
 			syncExternalContent={false}
-			currentMarkdown={currentMarkdown}
+			{currentMarkdown}
 			on:change={handleEditorChange}
 			on:ready
 			on:attachment

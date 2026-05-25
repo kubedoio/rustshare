@@ -92,8 +92,7 @@
 
 	let emptyTitle = $derived(module.ui.page.emptyStateTitle ?? 'No items yet');
 	let emptyDescription = $derived(
-		module.ui.page.emptyStateDescription ??
-		'Create your first item from a template to get started.'
+		module.ui.page.emptyStateDescription ?? 'Create your first item from a template to get started.'
 	);
 	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'Create from Template');
 

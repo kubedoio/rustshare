@@ -57,7 +57,13 @@
 		<div class="modal-box w-full max-w-md">
 			<h3 class="mb-4 text-lg font-bold">Create Group</h3>
 
-			<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="space-y-4">
+			<form
+				onsubmit={(e) => {
+					e.preventDefault();
+					handleSubmit();
+				}}
+				class="space-y-4"
+			>
 				<div class="form-control">
 					<label class="label" for="group-name"><span class="label-text">Name *</span></label>
 					<input

@@ -70,7 +70,8 @@
 						</div>
 						<div class="activity-body">
 							<span class="activity-text">
-								<strong>{activity.fileName}</strong> {getActivityVerb(activity.type)}
+								<strong>{activity.fileName}</strong>
+								{getActivityVerb(activity.type)}
 							</span>
 							<span class="activity-time">{getRelativeTime(activity.timestamp)}</span>
 						</div>
@@ -79,13 +80,17 @@
 						</span>
 					</a>
 				{:else}
-					<li class="activity-item activity-item--stale" title="This activity record cannot be opened">
+					<li
+						class="activity-item activity-item--stale"
+						title="This activity record cannot be opened"
+					>
 						<div class="activity-icon-wrap">
 							{display.icon}
 						</div>
 						<div class="activity-body">
 							<span class="activity-text">
-								<strong>{activity.fileName}</strong> {getActivityVerb(activity.type)}
+								<strong>{activity.fileName}</strong>
+								{getActivityVerb(activity.type)}
 							</span>
 							<span class="activity-time">{getRelativeTime(activity.timestamp)}</span>
 						</div>

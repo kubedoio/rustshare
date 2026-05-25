@@ -11,7 +11,12 @@ import type {
 	KanbanCardDetail,
 	KanbanEvent
 } from './types';
-import { cardDetailToMarkdown, markdownToCardDetail, serializeCardMarkdown, parseCardMarkdown } from '$lib/kanban/cardMarkdown';
+import {
+	cardDetailToMarkdown,
+	markdownToCardDetail,
+	serializeCardMarkdown,
+	parseCardMarkdown
+} from '$lib/kanban/cardMarkdown';
 
 export async function listKanbanBoards(limit?: number): Promise<KanbanBoardSummary[]> {
 	const params = limit !== undefined ? `?limit=${limit}` : '';
@@ -220,25 +225,22 @@ export async function saveKanbanCardDetail(card: KanbanCardDetail): Promise<Kanb
 		title: card.title,
 		content: card.content,
 		priority: card.priority,
-		labels: card.labels.map(l => l.id),
-		assignees: card.assignees.map(a => a.id),
+		labels: card.labels.map((l) => l.id),
+		assignees: card.assignees.map((a) => a.id),
 		due_date: card.due_date,
 		checklists: card.checklists,
-		activity: card.activity,
+		activity: card.activity
 	});
 	return {
 		...card,
 		...updated,
 		content: card.content,
 		checklists: card.checklists,
-		activity: card.activity,
+		activity: card.activity
 	};
 }
 
-export async function addKanbanCardComment(
-	cardId: string,
-	text: string
-): Promise<void> {
+export async function addKanbanCardComment(cardId: string, text: string): Promise<void> {
 	// For now, this is a no-op on the backend side
 	// The comment will be saved as part of the card Markdown on full save
 	// In the future, we may have a dedicated endpoint

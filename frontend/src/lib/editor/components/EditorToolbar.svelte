@@ -27,7 +27,10 @@
 	import { createEventDispatcher } from 'svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
 
-	let { editor = null, hasAttachmentHandler = false }: { editor?: Editor | null; hasAttachmentHandler?: boolean } = $props();
+	let {
+		editor = null,
+		hasAttachmentHandler = false
+	}: { editor?: Editor | null; hasAttachmentHandler?: boolean } = $props();
 
 	const dispatch = createEventDispatcher<{
 		attachment: void;
@@ -287,7 +290,6 @@
 				</button>
 			</div>
 		{/if}
-
 	</div>
 {/if}
 

@@ -105,7 +105,12 @@ describe('getArtifactHref', () => {
 
 	it('returns /files?preview={id} for excalidraw files', () => {
 		expect(
-			getArtifactHref({ moduleKey: 'files', item_type: 'file', id: 'exc123', name: 'diagram.excalidraw' })
+			getArtifactHref({
+				moduleKey: 'files',
+				item_type: 'file',
+				id: 'exc123',
+				name: 'diagram.excalidraw'
+			})
 		).toBe('/files?preview=exc123');
 	});
 
