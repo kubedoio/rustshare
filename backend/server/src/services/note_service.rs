@@ -653,6 +653,29 @@ impl NoteService {
         file.name == "note.md"
     }
 
+    /// Resolve the display name for a note.
+    /// For folder-backed notes, returns the parent bundle folder name.
+    /// For legacy single-file notes, returns the file name.
+    async fn resolve_note_name(
+        &self,
+        file: &rustshare_core::domain::File,
+        user_id: UserId,
+    ) -> String {
+        if Self::is_folder_backed_note(file) {
+            if let Some(parent_id) = file.parent_folder_id {
+                match self
+                    .metadata_store
+                    .find_folder_by_id(parent_id, user_id)
+                    .await
+                {
+                    Ok(Some(folder)) => return folder.name,
+                    _ => {}
+                }
+            }
+        }
+        file.name.clone()
+    }
+
     /// Count visible files in a note bundle's attachments, drawings, and exports subfolders.
     async fn count_bundle_contents(
         &self,
@@ -817,9 +840,11 @@ impl NoteService {
         self.save_metadata(file.id, owner_id, tenant_id, &meta)
             .await?;
 
+        let name = self.resolve_note_name(&file, owner_id).await;
+
         Ok(Note {
             id: file.id,
-            name: file.name,
+            name,
             path: file.path,
             content,
             metadata: meta,
@@ -856,9 +881,11 @@ impl NoteService {
             }
         };
 
+        let name = self.resolve_note_name(&file, user_id).await;
+
         Ok(Note {
             id: file.id,
-            name: file.name,
+            name,
             path: file.path,
             content,
             metadata: meta,
@@ -880,6 +907,7 @@ impl NoteService {
         attachments: Option<Vec<NoteAttachment>>,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
+        let is_folder_backed = Self::is_folder_backed_note(&file);
 
         // Update file content via edit_file (overwrite mode)
         let updated_file = self
@@ -911,14 +939,50 @@ impl NoteService {
             meta.attachments = new_attachments;
         }
 
+        // Extract H1 title from content for folder-backed notes
+        let h1_title = extract_h1_title(&content);
+
         meta.updated_at = Utc::now();
         meta.excerpt = generate_excerpt(&content);
+
+        // For folder-backed notes, rename bundle folder if H1 title changed
+        if is_folder_backed {
+            if let Some(new_title) = h1_title {
+                if new_title != meta.title {
+                    if let Some(parent_folder_id) = file.parent_folder_id {
+                        let parent_folder = self
+                            .folder_service
+                            .get_folder(parent_folder_id, user_id)
+                            .await
+                            .map_err(|e| NoteError::Storage(e.to_string()))?;
+                        let new_folder_name = self
+                            .unique_folder_name(
+                                user_id,
+                                file.tenant_id,
+                                parent_folder.parent_folder_id,
+                                &new_title,
+                            )
+                            .await?;
+                        if new_folder_name != parent_folder.name {
+                            self.folder_service
+                                .rename_folder(parent_folder_id, new_folder_name, user_id)
+                                .await
+                                .map_err(|e| NoteError::Storage(e.to_string()))?;
+                        }
+                    }
+                    meta.title = new_title;
+                }
+            }
+        }
+
         self.save_metadata(file_id, user_id, file.tenant_id, &meta)
             .await?;
 
+        let name = self.resolve_note_name(&updated_file, user_id).await;
+
         Ok(Note {
             id: updated_file.id,
-            name: updated_file.name,
+            name,
             path: updated_file.path,
             content,
             metadata: meta,
@@ -997,9 +1061,11 @@ impl NoteService {
             Err(_) => String::new(),
         };
 
+        let name = self.resolve_note_name(&file, user_id).await;
+
         Ok(Note {
             id: file.id,
-            name: file.name,
+            name,
             path: file.path,
             content,
             metadata: meta,
@@ -1094,9 +1160,11 @@ impl NoteService {
             Err(_) => String::new(),
         };
 
+        let name = self.resolve_note_name(&moved_file, user_id).await;
+
         Ok(Note {
             id: moved_file.id,
-            name: moved_file.name,
+            name,
             path: moved_file.path,
             content,
             metadata: meta,
@@ -1230,9 +1298,11 @@ impl NoteService {
                 .await
                 .ok();
 
+            let name = self.resolve_note_name(&new_file, user_id).await;
+
             return Ok(Note {
                 id: new_file.id,
-                name: new_file.name,
+                name,
                 path: new_file.path,
                 content: original.content,
                 metadata: meta,
@@ -1521,9 +1591,11 @@ impl NoteService {
             Err(_) => String::new(),
         };
 
+        let name = self.resolve_note_name(&file, user_id).await;
+
         Ok(Note {
             id: file.id,
-            name: file.name,
+            name,
             path: file.path,
             content,
             metadata: meta,
@@ -1587,6 +1659,21 @@ fn generate_excerpt(content: &str) -> String {
 
     plain.truncate(200);
     plain.trim().to_string()
+}
+
+/// Extract the first H1 heading from markdown content.
+/// Returns None if no H1 is found.
+fn extract_h1_title(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(title) = trimmed.strip_prefix("# ") {
+            let title = title.trim();
+            if !title.is_empty() {
+                return Some(title.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn generate_share_id() -> String {
