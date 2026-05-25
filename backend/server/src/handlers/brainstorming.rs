@@ -13,9 +13,7 @@ use super::AuthenticatedUser;
 use crate::handlers::AppError;
 use crate::services::brainstorming_service::BrainstormBoard;
 use crate::AppState;
-use rustshare_core::events::{
-    AggregateType, BrainstormBoardModifiedPayload, Event, EventType,
-};
+use rustshare_core::events::{AggregateType, BrainstormBoardModifiedPayload, Event, EventType};
 
 // ============================================================================
 // List Boards
