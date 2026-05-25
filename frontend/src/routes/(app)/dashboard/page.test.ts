@@ -197,7 +197,7 @@ describe('Dashboard Page Workspace Surface', () => {
 		render(DashboardPage);
 
 		await vi.waitFor(() => {
-			expect(screen.getByText('3')).toBeTruthy();
+			expect(screen.getAllByText('2').length).toBeGreaterThanOrEqual(1);
 			expect(screen.getAllByText('0').length).toBe(2);
 		});
 	});

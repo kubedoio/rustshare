@@ -55,10 +55,6 @@ export async function logout(): Promise<void> {
 	} catch (error) {
 		console.error('Failed to logout cleanly:', error);
 	}
-
-	if (typeof window !== 'undefined') {
-		window.location.href = '/login';
-	}
 }
 
 export async function requestDevicePairing(): Promise<DeviceRequestResponse> {

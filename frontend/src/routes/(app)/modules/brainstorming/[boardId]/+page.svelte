@@ -46,6 +46,7 @@
 	let isLoadingEditor = $state(true);
 	let editorError = $state<string | null>(null);
 	let editorInitialized = $state(false);
+	let lastSavedSource = $state<string | null>(null);
 	let reactRoot: any = null;
 	let showShareModal = $state(false);
 
@@ -60,12 +61,33 @@
 			saveStatus = 'saving';
 			saveError = null;
 		},
-		onSuccess: async () => {
-			hasChanges = false;
-			saveStatus = 'saved';
-			// Invalidate cache so returning users get fresh data
-			queryClient.invalidateQueries({ queryKey: ['brainstorm-board-source', boardId] });
-			queryClient.invalidateQueries({ queryKey: ['brainstorm-board', boardId] });
+		onSuccess: async (data, source) => {
+			lastSavedSource = source;
+			// Only clear hasChanges if user hasn't made new changes since this save started
+			const currentElements = excalidrawInstance?.getSceneElements();
+			const currentAppState = excalidrawInstance?.getAppState();
+			const currentFiles = excalidrawInstance?.getFiles();
+			const currentSource = JSON.stringify({
+				type: 'excalidraw',
+				version: 2,
+				source: window.location.origin,
+				elements: currentElements,
+				appState: { viewBackgroundColor: currentAppState?.viewBackgroundColor, gridSize: currentAppState?.gridSize },
+				files: currentFiles
+			});
+			if (currentSource === source) {
+				hasChanges = false;
+				saveStatus = 'saved';
+			} else {
+				// User made changes while saving — keep unsaved state
+				saveStatus = 'unsaved';
+				scheduleAutoSave();
+			}
+			// Optimistically update cache
+			queryClient.setQueryData(['brainstorm-board-source', boardId], source);
+			queryClient.setQueryData(['brainstorm-board', boardId], (old: any) =>
+				old ? { ...old, updated_at: new Date().toISOString() } : old
+			);
 			// Generate and upload preview
 			try {
 				await generateAndUploadPreview();
@@ -216,9 +238,8 @@
 
 		if (!editorInitialized) {
 			initExcalidraw(source);
-		} else if (excalidrawInstance && !hasChanges) {
-			// Source data changed (e.g., returned after editing elsewhere)
-			// Update scene without overwriting local unsaved changes
+		} else if (excalidrawInstance && source !== lastSavedSource) {
+			// Only update if data came from EXTERNAL source (another user/tab)
 			try {
 				const data = JSON.parse(source);
 				excalidrawInstance.updateScene({

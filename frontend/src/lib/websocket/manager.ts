@@ -19,7 +19,11 @@ import type {
 	FolderDeletedPayload,
 	ShareCreatedPayload,
 	ShareRevokedPayload,
-	ShareUpdatedPayload
+	ShareUpdatedPayload,
+	BrainstormBoardModifiedPayload,
+	MeetingNoteModifiedPayload,
+	DecisionModifiedPayload,
+	StandupModifiedPayload
 } from './events';
 
 const managerState = {
@@ -85,6 +89,10 @@ function registerEventHandlers(wsClient: ReturnType<typeof getWebSocketClient>):
 	wsClient.on('ShareUpdated', handleShareUpdated);
 	wsClient.on('ReplicationStateChanged', handleReplicationStateChanged);
 	wsClient.on('NotificationCreated', handleNotificationCreated);
+	wsClient.on('BrainstormBoardModified', handleBrainstormBoardModified);
+	wsClient.on('MeetingNoteModified', handleMeetingNoteModified);
+	wsClient.on('DecisionModified', handleDecisionModified);
+	wsClient.on('StandupModified', handleStandupModified);
 }
 
 // Helper to check if event is from current user
@@ -396,6 +404,47 @@ function handleReplicationStateChanged(event: WebSocketEvent): void {
 		toastStore.show('Replication delayed, retrying in background', 'info');
 	} else if (replicationState === 'failed') {
 		toastStore.show('Replication failed for a file version', 'error');
+	}
+}
+
+function handleBrainstormBoardModified(event: WebSocketEvent): void {
+	const payload = event.payload as BrainstormBoardModifiedPayload | undefined;
+	if (!payload) return;
+	queryClient.invalidateQueries({ queryKey: ['brainstorm-board', payload.board_id] });
+	queryClient.invalidateQueries({ queryKey: ['brainstorm-board-source', payload.board_id] });
+	queryClient.invalidateQueries({ queryKey: ['brainstorm-boards'] });
+	if (!isOwnEvent(event)) {
+		toastStore.show(`Brainstorm board "${payload.title}" was updated`, 'info');
+	}
+}
+
+function handleMeetingNoteModified(event: WebSocketEvent): void {
+	const payload = event.payload as MeetingNoteModifiedPayload | undefined;
+	if (!payload) return;
+	queryClient.invalidateQueries({ queryKey: ['module-item', 'meetings', payload.meeting_id] });
+	queryClient.invalidateQueries({ queryKey: ['meetings'] });
+	if (!isOwnEvent(event)) {
+		toastStore.show(`Meeting note "${payload.title}" was updated`, 'info');
+	}
+}
+
+function handleDecisionModified(event: WebSocketEvent): void {
+	const payload = event.payload as DecisionModifiedPayload | undefined;
+	if (!payload) return;
+	queryClient.invalidateQueries({ queryKey: ['module-item', 'decisions', payload.decision_id] });
+	queryClient.invalidateQueries({ queryKey: ['decisions'] });
+	if (!isOwnEvent(event)) {
+		toastStore.show(`Decision "${payload.title}" was updated`, 'info');
+	}
+}
+
+function handleStandupModified(event: WebSocketEvent): void {
+	const payload = event.payload as StandupModifiedPayload | undefined;
+	if (!payload) return;
+	queryClient.invalidateQueries({ queryKey: ['module-item', 'standups', payload.standup_id] });
+	queryClient.invalidateQueries({ queryKey: ['standups'] });
+	if (!isOwnEvent(event)) {
+		toastStore.show(`Standup "${payload.title}" was updated`, 'info');
 	}
 }
 

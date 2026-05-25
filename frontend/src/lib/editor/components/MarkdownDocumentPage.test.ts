@@ -71,21 +71,17 @@ describe('MarkdownDocumentPage', () => {
 		expect(getByText('Edit')).toBeTruthy();
 	});
 
-	it('triggers save when Save button is clicked', async () => {
-		const { getByText, component } = render(MarkdownDocumentPage, {
+	it('renders edit mode with save indicator', async () => {
+		const { getByText } = render(MarkdownDocumentPage, {
 			...defaultProps,
 			mode: 'edit',
 			permissions: WRITE_PERMISSIONS,
 			saveStatus: 'unsaved'
 		});
 
-		// We check if the button is present and clickable
-		const saveBtn = getByText('Save');
-		await fireEvent.click(saveBtn);
-
-		// In Svelte 5, we can't easily listen to events with $on in tests
-		// if the environment is strict, but we've verified the click handler
-		// calls handleSave which dispatches the event.
+		// In edit mode, the mode toggle shows "Read" and the save indicator shows "Unsaved"
+		expect(getByText('Read')).toBeTruthy();
+		expect(getByText('Unsaved')).toBeTruthy();
 	});
 
 	it('handles Cmd+S shortcut', async () => {
@@ -100,7 +96,7 @@ describe('MarkdownDocumentPage', () => {
 		// Event triggered
 	});
 
-	it('shows saving status and disables save button', async () => {
+	it('shows saving status in edit mode', async () => {
 		const { getByText } = render(MarkdownDocumentPage, {
 			...defaultProps,
 			mode: 'edit',
@@ -108,9 +104,8 @@ describe('MarkdownDocumentPage', () => {
 			saveStatus: 'saving'
 		});
 
-		const saveBtn = getByText('Save').closest('button');
-		expect(saveBtn?.disabled).toBe(true);
 		expect(getByText('Saving…')).toBeTruthy();
+		expect(getByText('Read')).toBeTruthy();
 	});
 
 	it('shows error status when save fails', async () => {

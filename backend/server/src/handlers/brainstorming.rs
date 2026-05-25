@@ -13,6 +13,9 @@ use super::AuthenticatedUser;
 use crate::handlers::AppError;
 use crate::services::brainstorming_service::BrainstormBoard;
 use crate::AppState;
+use rustshare_core::events::{
+    AggregateType, BrainstormBoardModifiedPayload, Event, EventType,
+};
 
 // ============================================================================
 // List Boards
@@ -216,6 +219,20 @@ pub async fn save_brainstorm_board_source(
         .brainstorming_service
         .save_board_source(board_id, auth.user_id, auth.tenant_id, req.source)
         .await?;
+
+    let payload = BrainstormBoardModifiedPayload {
+        board_id: board_id.to_string(),
+        title: board.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::BrainstormBoardModified,
+        board_id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state.broadcaster.publish(event);
 
     Ok(Json(GetBoardResponse {
         id: board.id,

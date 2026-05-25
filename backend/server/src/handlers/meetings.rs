@@ -13,6 +13,7 @@ use super::AuthenticatedUser;
 use crate::handlers::AppError;
 use crate::services::meeting_service::{MeetingNote, MeetingSummary};
 use crate::AppState;
+use rustshare_core::events::{AggregateType, Event, EventType, MeetingNoteModifiedPayload};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateMeetingRequest {
@@ -78,6 +79,20 @@ pub async fn update_meeting(
             req.attendees,
         )
         .await?;
+
+    let payload = MeetingNoteModifiedPayload {
+        meeting_id: meeting_id.to_string(),
+        title: meeting.metadata.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::MeetingNoteModified,
+        meeting_id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state.broadcaster.publish(event);
 
     Ok(Json(meeting))
 }

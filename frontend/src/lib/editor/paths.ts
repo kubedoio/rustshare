@@ -154,7 +154,7 @@ function stripExtension(filename: string): string {
  * Always uses `./attachments/filename` format for portability.
  */
 export function buildAttachmentMarkdownPath(filename: string): string {
-	return `attachments/${filename}`;
+	return `./attachments/${filename}`;
 }
 
 /**
@@ -173,12 +173,12 @@ export function buildAttachmentStoragePath(
  */
 export function buildImageMarkdown(filename: string, alt?: string): string {
 	const altText = alt || filename;
-	return `![${altText}](attachments/${filename})`;
+	return `![${altText}](./attachments/${filename})`;
 }
 
 /**
  * Builds the Markdown syntax for inserting a file attachment link.
  */
 export function buildFileLinkMarkdown(filename: string): string {
-	return `[${filename}](attachments/${filename})`;
+	return `[${filename}](./attachments/${filename})`;
 }

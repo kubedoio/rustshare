@@ -5,6 +5,7 @@ import { getUserProfile } from '../api/users';
 import { replicationStore } from './replication';
 import { themeStore } from './theme';
 import { initializeWebSocket, cleanupWebSocket } from '../websocket/manager';
+import { queryClient } from '../query-client';
 
 interface AuthState {
 	user: User | null;
@@ -45,9 +46,18 @@ function createAuthStore() {
 		isLoading: true
 	});
 
+	let sessionGeneration = 0;
+
+	function nextGeneration(): number {
+		return ++sessionGeneration;
+	}
+
 	async function bootstrapSession() {
+		const myGeneration = nextGeneration();
 		try {
 			const profile = await getUserProfile();
+			if (myGeneration !== sessionGeneration) return;
+
 			const user = toAuthUser(profile);
 
 			set({
@@ -71,6 +81,7 @@ function createAuthStore() {
 			cleanupWebSocket();
 			replicationStore.reset();
 			clearLegacyWebSocketToken();
+			if (myGeneration !== sessionGeneration) return;
 			set({
 				user: null,
 				isAuthenticated: false,
@@ -86,6 +97,7 @@ function createAuthStore() {
 	return {
 		subscribe,
 		login: async (email: string, password: string) => {
+			const myGeneration = nextGeneration();
 			update((state) => ({ ...state, isLoading: true }));
 
 			try {
@@ -93,11 +105,15 @@ function createAuthStore() {
 				const user = response.user;
 				clearLegacyWebSocketToken();
 
+				if (myGeneration !== sessionGeneration) return;
+
 				set({
 					user,
 					isAuthenticated: true,
 					isLoading: false
 				});
+
+				queryClient.invalidateQueries();
 
 				try {
 					await initializeWebSocket(null, user.id);
@@ -108,6 +124,7 @@ function createAuthStore() {
 				try {
 					const profile = await getUserProfile();
 					themeStore.loadFromBackend(profile.theme);
+					if (myGeneration !== sessionGeneration) return;
 					update((state) => ({
 						...state,
 						user: toAuthUser(profile)
@@ -116,20 +133,24 @@ function createAuthStore() {
 					console.error('Failed to load user profile after login:', error);
 				}
 			} catch (error) {
+				if (myGeneration !== sessionGeneration) return;
 				update((state) => ({ ...state, isLoading: false }));
 				throw error;
 			}
 		},
 		logout: async () => {
+			const myGeneration = nextGeneration();
 			cleanupWebSocket();
 			replicationStore.reset();
 			clearLegacyWebSocketToken();
 			await logoutRequest();
+			if (myGeneration !== sessionGeneration) return;
 			set({
 				user: null,
 				isAuthenticated: false,
 				isLoading: false
 			});
+			queryClient.clear();
 		},
 		updateUser: (user: User) => {
 			update((state) => ({ ...state, user }));

@@ -13,6 +13,7 @@ use super::AuthenticatedUser;
 use crate::handlers::AppError;
 use crate::services::standup_service::{StandupRecord, StandupSummary};
 use crate::AppState;
+use rustshare_core::events::{AggregateType, Event, EventType, StandupModifiedPayload};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateStandupRequest {
@@ -69,6 +70,20 @@ pub async fn update_standup(
         .standup_service
         .update_standup(standup_id, auth.user_id, req.title, req.content)
         .await?;
+
+    let payload = StandupModifiedPayload {
+        standup_id: standup_id.to_string(),
+        title: standup.metadata.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::StandupModified,
+        standup_id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state.broadcaster.publish(event);
 
     Ok(Json(standup))
 }

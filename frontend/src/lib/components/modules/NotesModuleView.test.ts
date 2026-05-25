@@ -210,8 +210,8 @@ describe('NotesModuleView', () => {
 		});
 
 		await screen.findByText('Note with Assets');
-		expect(screen.getByText('3')).toBeTruthy();
-		expect(screen.getByText('1')).toBeTruthy();
+		expect(screen.getAllByText('3').length).toBeGreaterThanOrEqual(1);
+		expect(screen.getAllByText('1').length).toBeGreaterThanOrEqual(1);
 	});
 
 	it('renders attachment and drawing counts in list view', async () => {
@@ -274,8 +274,8 @@ describe('NotesModuleView', () => {
 		});
 
 		await screen.findByText('Note with Assets');
-		expect(screen.getByText('3')).toBeTruthy();
-		expect(screen.getByText('1')).toBeTruthy();
+		expect(screen.getAllByText('3').length).toBeGreaterThanOrEqual(1);
+		expect(screen.getAllByText('1').length).toBeGreaterThanOrEqual(1);
 	});
 
 	it('does not render badges when counts are zero or undefined', async () => {

@@ -48,7 +48,7 @@
 		content: string;
 		modified_at: string;
 		current_version: number;
-		metadata: NoteMetadata & { attachments: NoteAttachment[] };
+		metadata: NoteMetadata & { attachments?: NoteAttachment[] };
 	};
 
 	interface ModuleItem {
@@ -233,30 +233,30 @@
 			const saved = await $saveMutation.mutateAsync({ title, content: saveContent });
 			saveStatus = 'saved';
 			documentPage?.markSaved(editorContent);
-			if (key === 'notes') {
-				const noteAttachments = serializeNoteAttachments();
-				queryClient.setQueryData(
-					['module-item', key, id],
-					(previous: ModuleItemQueryData | undefined) => {
-						if (!previous) return previous;
-						const modifiedAt = (saved as { modified_at?: string })?.modified_at ?? previous.modified_at;
-						return {
-							...previous,
-							content: saveContent,
-							current_version:
-								(saved as { current_version?: number })?.current_version ?? previous.current_version,
-							modified_at: modifiedAt,
-							metadata: {
-								...previous.metadata,
-								attachments: noteAttachments,
-								updated_at: modifiedAt
-							}
-						};
-					}
-				);
-			} else {
-				await $query.refetch();
-			}
+			const modifiedAt = (saved as { modified_at?: string })?.modified_at ?? new Date().toISOString();
+			const noteAttachments = key === 'notes' ? serializeNoteAttachments() : undefined;
+
+			queryClient.setQueryData(
+				['module-item', key, id],
+				(previous: ModuleItemQueryData | undefined) => {
+					if (!previous) return previous;
+					return {
+						...previous,
+						content: saveContent,
+						current_version:
+							(saved as { current_version?: number })?.current_version ?? previous.current_version,
+						modified_at: modifiedAt,
+						metadata: {
+							...previous.metadata,
+							...(noteAttachments ? { attachments: noteAttachments } : {}),
+							updated_at: modifiedAt
+						}
+					};
+				}
+			);
+
+			// Also invalidate the list query so gallery views stay fresh
+			queryClient.invalidateQueries({ queryKey: [key] });
 		} catch (error) {
 			saveStatus = 'error';
 			documentPage?.markSaveError(error instanceof Error ? error.message : 'Autosave failed');

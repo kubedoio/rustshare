@@ -577,18 +577,21 @@
 						/>
 					{/key}
 				{:else}
-					<RichMarkdownEditor
-						bind:this={editorComponent}
-						{content}
-						editable={true}
-						hasAttachmentHandler={true}
-						currentMarkdown={currentMarkdown}
-						on:change={handleEditorChange}
-						on:attachment={toggleAttachments}
-						on:sketch={handleSketch}
-						on:filedrop={handleAttachmentUpload}
-						on:paste={handleAttachmentUpload}
-					/>
+					{#key docId}
+						<RichMarkdownEditor
+							bind:this={editorComponent}
+							{content}
+							editable={true}
+							hasAttachmentHandler={true}
+							syncExternalContent={false}
+							currentMarkdown={currentMarkdown}
+							on:change={handleEditorChange}
+							on:attachment={toggleAttachments}
+							on:sketch={handleSketch}
+							on:filedrop={handleAttachmentUpload}
+							on:paste={handleAttachmentUpload}
+						/>
+					{/key}
 				{/if}
 			{:else}
 				<RichMarkdownViewer

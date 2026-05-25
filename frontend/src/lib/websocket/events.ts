@@ -14,7 +14,11 @@ export type WebSocketEventType =
 	| 'ShareRevoked'
 	| 'ShareUpdated'
 	| 'ReplicationStateChanged'
-	| 'NotificationCreated';
+	| 'NotificationCreated'
+	| 'BrainstormBoardModified'
+	| 'MeetingNoteModified'
+	| 'DecisionModified'
+	| 'StandupModified';
 
 export interface WebSocketEvent {
 	event_id?: string;
@@ -37,7 +41,11 @@ export interface WebSocketEvent {
 		| FolderDeletedPayload
 		| ShareCreatedPayload
 		| ShareRevokedPayload
-		| ShareUpdatedPayload;
+		| ShareUpdatedPayload
+		| BrainstormBoardModifiedPayload
+		| MeetingNoteModifiedPayload
+		| DecisionModifiedPayload
+		| StandupModifiedPayload;
 	file_id?: string;
 	file_version_id?: string;
 	replication_state?: ReplicationStateValue;
@@ -144,6 +152,26 @@ export interface ShareUpdatedPayload {
 	share_id: string;
 	file_id: string;
 	permissions: string;
+}
+
+export interface BrainstormBoardModifiedPayload {
+	board_id: string;
+	title: string;
+}
+
+export interface MeetingNoteModifiedPayload {
+	meeting_id: string;
+	title: string;
+}
+
+export interface DecisionModifiedPayload {
+	decision_id: string;
+	title: string;
+}
+
+export interface StandupModifiedPayload {
+	standup_id: string;
+	title: string;
 }
 
 export type EventHandler = (event: WebSocketEvent) => void;

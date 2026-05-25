@@ -12,6 +12,7 @@ use super::AuthenticatedUser;
 use crate::handlers::AppError;
 use crate::services::decision_service::DecisionSummary;
 use crate::AppState;
+use rustshare_core::events::{AggregateType, DecisionModifiedPayload, Event, EventType};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateDecisionRequest {
@@ -82,6 +83,20 @@ pub async fn update_decision(
         )
         .await?;
 
+    let payload = DecisionModifiedPayload {
+        decision_id: decision_id.to_string(),
+        title: decision.metadata.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::DecisionModified,
+        decision_id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state.broadcaster.publish(event);
+
     Ok(Json(decision))
 }
 
@@ -100,6 +115,21 @@ pub async fn rename_decision(
         .decision_service
         .rename_decision(decision_id, auth.user_id, req.title)
         .await?;
+
+    let payload = DecisionModifiedPayload {
+        decision_id: decision_id.to_string(),
+        title: decision.metadata.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::DecisionModified,
+        decision_id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state.broadcaster.publish(event);
+
     Ok(Json(decision))
 }
 

@@ -28,19 +28,21 @@ vi.mock('$lib/stores/search', () => ({
 vi.mock('$lib/query-compat', () => ({
 	createQuery: vi.fn((options: { queryKey?: unknown[] }) => {
 		const key = options.queryKey?.[0];
+		let result = { data: null, isLoading: false };
 		if (key === 'notifications-unread-count') {
-			return readable({ data: { count: 2 }, isLoading: false });
+			result = { data: { count: 2 }, isLoading: false };
+		} else if (key === 'all-files') {
+			result = { data: [], isLoading: false };
+		} else if (key === 'folder-tree') {
+			result = { data: undefined, isLoading: false };
 		}
-
-		if (key === 'all-files') {
-			return readable({ data: [], isLoading: false });
-		}
-
-		if (key === 'folder-tree') {
-			return readable({ data: undefined, isLoading: false });
-		}
-
-		return readable({ data: null, isLoading: false });
+		const store = readable(result);
+		return {
+			subscribe: store.subscribe,
+			setOptions: vi.fn(),
+			refetch: vi.fn(),
+			remove: vi.fn()
+		};
 	})
 }));
 

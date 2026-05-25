@@ -56,6 +56,12 @@ pub enum EventType {
     ConflictDetected,
     ConflictResolved,
     ReplicationStateChanged,
+
+    // Module events
+    BrainstormBoardModified,
+    MeetingNoteModified,
+    DecisionModified,
+    StandupModified,
 }
 
 impl EventType {
@@ -85,6 +91,10 @@ impl EventType {
             EventType::ConflictDetected => "ConflictDetected",
             EventType::ConflictResolved => "ConflictResolved",
             EventType::ReplicationStateChanged => "ReplicationStateChanged",
+            EventType::BrainstormBoardModified => "BrainstormBoardModified",
+            EventType::MeetingNoteModified => "MeetingNoteModified",
+            EventType::DecisionModified => "DecisionModified",
+            EventType::StandupModified => "StandupModified",
         }
     }
 }
@@ -327,6 +337,34 @@ pub struct ReplicationStateChangedPayload {
     pub next_attempt_at: Option<DateTime<Utc>>,
     pub last_error: Option<String>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrainstormBoardModifiedPayload {
+    pub board_id: String,
+    pub title: String,
+    pub modified_by: UserId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeetingNoteModifiedPayload {
+    pub meeting_id: String,
+    pub title: String,
+    pub modified_by: UserId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionModifiedPayload {
+    pub decision_id: String,
+    pub title: String,
+    pub modified_by: UserId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StandupModifiedPayload {
+    pub standup_id: String,
+    pub title: String,
+    pub modified_by: UserId,
 }
 
 #[cfg(test)]
