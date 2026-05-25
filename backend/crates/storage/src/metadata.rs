@@ -3487,6 +3487,8 @@ mod tests {
             None,
             tenant_id,
         );
+        // Convert public share to direct user share for isolation test
+        share.share_token = None;
         share.recipient_user_id = Some(user_b.id);
         store.create_share(&share).await.unwrap();
 
