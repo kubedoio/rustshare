@@ -38,7 +38,9 @@
 		}
 	}
 
-	let hasActiveTasks = $derived(tasks.some((t) => t.status === 'uploading' || t.status === 'pending'));
+	let hasActiveTasks = $derived(
+		tasks.some((t) => t.status === 'uploading' || t.status === 'pending')
+	);
 	let allCompleted = $derived(
 		tasks.length > 0 && tasks.every((t) => t.status === 'success' || t.status === 'error')
 	);

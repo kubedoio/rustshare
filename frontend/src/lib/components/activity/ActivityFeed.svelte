@@ -16,7 +16,9 @@
 
 	let showConfirmModal = $state(false);
 
-	let recentActivities = $derived($activityStore.filter((a) => !isInternalRustShareFile(a.fileName)).slice(0, maxItems));
+	let recentActivities = $derived(
+		$activityStore.filter((a) => !isInternalRustShareFile(a.fileName)).slice(0, maxItems)
+	);
 
 	function handleClearHistory() {
 		showConfirmModal = true;
@@ -79,7 +81,12 @@
 						{#if typeof display.icon === 'string'}
 							{display.icon}
 						{:else}
-							<svelte:component this={display.icon} size={18} style={display.color.startsWith('#') ? `color: ${display.color}` : undefined} class={!display.color.startsWith('#') ? display.color : undefined} />
+							<svelte:component
+								this={display.icon}
+								size={18}
+								style={display.color.startsWith('#') ? `color: ${display.color}` : undefined}
+								class={!display.color.startsWith('#') ? display.color : undefined}
+							/>
 						{/if}
 					</div>
 					<div class="min-w-0 flex-1">
@@ -137,5 +144,5 @@
 	cancelLabel="Cancel"
 	danger={true}
 	onConfirm={onConfirmClear}
-	onCancel={() => showConfirmModal = false}
+	onCancel={() => (showConfirmModal = false)}
 />

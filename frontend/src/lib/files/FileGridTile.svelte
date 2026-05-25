@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { File as FileType, Folder } from '$lib/api/types';
-	
+
 	import FilePreview from './FilePreview.svelte';
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
 	import FileContextMenu from '$lib/explorer/FileContextMenu.svelte';
@@ -274,177 +274,75 @@
 {#if isInternalRustShareFile(item.name)}
 	<!-- hidden internal file -->
 {:else}
-<div
-	bind:this={tileRef}
-	role="button"
-	tabindex="0"
-	class="group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border bg-base-100 transition-all
+	<div
+		bind:this={tileRef}
+		role="button"
+		tabindex="0"
+		class="group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border bg-base-100 transition-all
 		{selected
-		? 'border-brand-500/40 bg-brand-500/5 ring-1 ring-brand-500/30'
-		: 'border-base-300/60 hover:border-brand-500/30 hover:shadow-md hover:shadow-black/5'}
+			? 'border-brand-500/40 bg-brand-500/5 ring-1 ring-brand-500/30'
+			: 'border-base-300/60 hover:border-brand-500/30 hover:shadow-md hover:shadow-black/5'}
 		{isDragging ? 'opacity-40' : ''}
 		{isDropTarget ? 'border-brand-500 bg-brand-500/10 ring-2 ring-brand-500/30' : ''}"
-	onclick={handleClick}
-	onkeydown={(e) => {
-		if (e.key === 'Enter' || e.key === ' ') handleClick(e as any);
-	}}
-	oncontextmenu={handleContextMenu}
-	draggable={!isRenaming}
-	ondragstart={handleDragStart}
-	ondragend={onDragEnd}
-	ondragover={handleDragOver}
-	ondragleave={handleDragLeave}
-	ondrop={handleDrop}
->
-	<!-- Checkbox (selection mode) -->
-	{#if selectionMode}
-		<div class="absolute top-2 left-2 z-10">
-			<input
-				type="checkbox"
-				class="h-4 w-4 cursor-pointer rounded border-base-300 bg-base-100 text-brand-500 focus:ring-brand-500"
-				checked={selected}
-				onclick={(e) => e.stopPropagation()}
-				onchange={() => onToggle?.()}
-			/>
-		</div>
-	{/if}
-
-	<!-- Actions Menu Button -->
-	{#if !isRenaming}
-		<div class="absolute top-2 right-2 z-20 opacity-0 transition-opacity group-hover:opacity-100">
-			<button
-				type="button"
-				class="rounded-lg border border-base-300/50 bg-base-100/90 p-1.5 text-base-content/50 shadow-sm backdrop-blur-sm transition-colors hover:text-base-content"
-				onclick={(e) => {
-					e.stopPropagation();
-					showActions = !showActions;
-				}}
-				aria-label="Actions"
-			>
-				<MoreVertical size={14} />
-			</button>
-
-			{#if showActions}
-				<div
-					class="absolute top-full right-0 z-50 mt-1 w-44 rounded-xl border border-base-300/70 bg-base-100 py-1 shadow-xl shadow-black/20"
-					role="presentation"
-					tabindex="-1"
+		onclick={handleClick}
+		onkeydown={(e) => {
+			if (e.key === 'Enter' || e.key === ' ') handleClick(e as any);
+		}}
+		oncontextmenu={handleContextMenu}
+		draggable={!isRenaming}
+		ondragstart={handleDragStart}
+		ondragend={onDragEnd}
+		ondragover={handleDragOver}
+		ondragleave={handleDragLeave}
+		ondrop={handleDrop}
+	>
+		<!-- Checkbox (selection mode) -->
+		{#if selectionMode}
+			<div class="absolute top-2 left-2 z-10">
+				<input
+					type="checkbox"
+					class="h-4 w-4 cursor-pointer rounded border-base-300 bg-base-100 text-brand-500 focus:ring-brand-500"
+					checked={selected}
 					onclick={(e) => e.stopPropagation()}
-					onkeydown={(e) => e.stopPropagation()}
+					onchange={() => onToggle?.()}
+				/>
+			</div>
+		{/if}
+
+		<!-- Actions Menu Button -->
+		{#if !isRenaming}
+			<div class="absolute top-2 right-2 z-20 opacity-0 transition-opacity group-hover:opacity-100">
+				<button
+					type="button"
+					class="rounded-lg border border-base-300/50 bg-base-100/90 p-1.5 text-base-content/50 shadow-sm backdrop-blur-sm transition-colors hover:text-base-content"
+					onclick={(e) => {
+						e.stopPropagation();
+						showActions = !showActions;
+					}}
+					aria-label="Actions"
 				>
-					{#if workspaceMode === 'deleted'}
-						<button
-							type="button"
-							class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-							onclick={(e) => {
-								e.stopPropagation();
-								handleAction(onRestore);
-							}}
-						>
-							<RotateCcw size={14} />
-							Restore
-						</button>
-						<div class="my-1 border-t border-base-200"></div>
-						<button
-							type="button"
-							class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-error transition-colors hover:bg-error/10"
-							onclick={(e) => {
-								e.stopPropagation();
-								handleAction(onPermanentDelete);
-							}}
-						>
-							<Trash2 size={14} />
-							Delete permanently
-						</button>
-					{:else}
-						{#if canManage}
+					<MoreVertical size={14} />
+				</button>
+
+				{#if showActions}
+					<div
+						class="absolute top-full right-0 z-50 mt-1 w-44 rounded-xl border border-base-300/70 bg-base-100 py-1 shadow-xl shadow-black/20"
+						role="presentation"
+						tabindex="-1"
+						onclick={(e) => e.stopPropagation()}
+						onkeydown={(e) => e.stopPropagation()}
+					>
+						{#if workspaceMode === 'deleted'}
 							<button
 								type="button"
 								class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
 								onclick={(e) => {
 									e.stopPropagation();
-									startRename();
-									handleAction(() => {});
+									handleAction(onRestore);
 								}}
 							>
-								<Edit size={14} />
-								Rename
-							</button>
-							<button
-								type="button"
-								class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-								onclick={(e) => {
-									e.stopPropagation();
-									handleAction(onToggleStar);
-								}}
-							>
-								<Star size={14} class={isStarred ? 'fill-brand-500 text-brand-500' : ''} />
-								{isStarred ? 'Remove star' : 'Add to starred'}
-							</button>
-						{/if}
-						{#if canShare}
-							<button
-								type="button"
-								class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-								onclick={(e) => {
-									e.stopPropagation();
-									handleAction(onShare);
-								}}
-							>
-								<Share2 size={14} />
-								Share
-							</button>
-						{/if}
-						{#if !isFolder}
-							{#if canManage && fileItem && detectEditorType(fileItem.name, fileItem.mime_type) !== 'none' && canEditFileSize(fileItem.size)}
-								<button
-									type="button"
-									class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-									onclick={(e) => {
-										e.stopPropagation();
-										handleAction(onEdit);
-									}}
-								>
-									<Edit3 size={14} />
-									Edit
-								</button>
-							{/if}
-							<button
-								type="button"
-								class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-								onclick={(e) => {
-									e.stopPropagation();
-									handleAction(onDownload);
-								}}
-							>
-								<Download size={14} />
-								Download
-							</button>
-							{#if canManage}
-								<button
-									type="button"
-									class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-									onclick={(e) => {
-										e.stopPropagation();
-										handleAction(onVersionHistory);
-									}}
-								>
-									<History size={14} />
-									Version history
-								</button>
-							{/if}
-						{/if}
-						{#if canManage}
-							<button
-								type="button"
-								class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
-								onclick={(e) => {
-									e.stopPropagation();
-									handleAction(onMove);
-								}}
-							>
-								<Move size={14} />
-								Move
+								<RotateCcw size={14} />
+								Restore
 							</button>
 							<div class="my-1 border-t border-base-200"></div>
 							<button
@@ -452,114 +350,218 @@
 								class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-error transition-colors hover:bg-error/10"
 								onclick={(e) => {
 									e.stopPropagation();
-									handleAction(onDelete);
+									handleAction(onPermanentDelete);
 								}}
 							>
 								<Trash2 size={14} />
-								Delete
+								Delete permanently
 							</button>
+						{:else}
+							{#if canManage}
+								<button
+									type="button"
+									class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+									onclick={(e) => {
+										e.stopPropagation();
+										startRename();
+										handleAction(() => {});
+									}}
+								>
+									<Edit size={14} />
+									Rename
+								</button>
+								<button
+									type="button"
+									class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+									onclick={(e) => {
+										e.stopPropagation();
+										handleAction(onToggleStar);
+									}}
+								>
+									<Star size={14} class={isStarred ? 'fill-brand-500 text-brand-500' : ''} />
+									{isStarred ? 'Remove star' : 'Add to starred'}
+								</button>
+							{/if}
+							{#if canShare}
+								<button
+									type="button"
+									class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+									onclick={(e) => {
+										e.stopPropagation();
+										handleAction(onShare);
+									}}
+								>
+									<Share2 size={14} />
+									Share
+								</button>
+							{/if}
+							{#if !isFolder}
+								{#if canManage && fileItem && detectEditorType(fileItem.name, fileItem.mime_type) !== 'none' && canEditFileSize(fileItem.size)}
+									<button
+										type="button"
+										class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+										onclick={(e) => {
+											e.stopPropagation();
+											handleAction(onEdit);
+										}}
+									>
+										<Edit3 size={14} />
+										Edit
+									</button>
+								{/if}
+								<button
+									type="button"
+									class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+									onclick={(e) => {
+										e.stopPropagation();
+										handleAction(onDownload);
+									}}
+								>
+									<Download size={14} />
+									Download
+								</button>
+								{#if canManage}
+									<button
+										type="button"
+										class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+										onclick={(e) => {
+											e.stopPropagation();
+											handleAction(onVersionHistory);
+										}}
+									>
+										<History size={14} />
+										Version history
+									</button>
+								{/if}
+							{/if}
+							{#if canManage}
+								<button
+									type="button"
+									class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+									onclick={(e) => {
+										e.stopPropagation();
+										handleAction(onMove);
+									}}
+								>
+									<Move size={14} />
+									Move
+								</button>
+								<div class="my-1 border-t border-base-200"></div>
+								<button
+									type="button"
+									class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-error transition-colors hover:bg-error/10"
+									onclick={(e) => {
+										e.stopPropagation();
+										handleAction(onDelete);
+									}}
+								>
+									<Trash2 size={14} />
+									Delete
+								</button>
+							{/if}
 						{/if}
+					</div>
+				{/if}
+			</div>
+		{/if}
+
+		<!-- Preview Area -->
+		<div
+			class="flex aspect-square items-center justify-center border-b border-base-300/30 bg-base-200/50 p-3"
+		>
+			<div class="flex h-full w-full items-center justify-center">
+				<FilePreview
+					{item}
+					{isFolder}
+					{isSharedRoot}
+					size="lg"
+					showThumbnail={!isFolder && workspaceMode !== 'deleted'}
+				/>
+			</div>
+		</div>
+
+		<!-- Info Area -->
+		<div class="min-w-0 p-2">
+			{#if isRenaming}
+				<div class="flex items-center gap-1">
+					<input
+						bind:this={renameInputRef}
+						type="text"
+						class="min-w-0 flex-1 rounded-md border border-brand-500 bg-base-100 px-1.5 py-0.5 text-xs focus:ring-2 focus:ring-brand-500/20 focus:outline-hidden"
+						value={renameValue}
+						oninput={(e) => (renameValue = e.currentTarget.value)}
+						onkeydown={handleRenameKeydown}
+						onblur={confirmRename}
+					/>
+					<button
+						type="button"
+						class="rounded-md p-1 text-success hover:bg-success/10"
+						onclick={(e) => {
+							e.stopPropagation();
+							confirmRename();
+						}}
+					>
+						<Check size={14} />
+					</button>
+					<button
+						type="button"
+						class="rounded-md p-1 text-error hover:bg-error/10"
+						onclick={(e) => {
+							e.stopPropagation();
+							cancelRename();
+						}}
+					>
+						<X size={14} />
+					</button>
+				</div>
+			{:else}
+				<div class="flex min-w-0 items-start gap-1.5">
+					<p
+						class="flex-1 truncate text-xs leading-4 font-medium {isRustshareSystemFolder
+							? 'text-base-content/40'
+							: 'text-base-content'}"
+						title={item.name}
+						ondblclick={(e) => {
+							e.stopPropagation();
+							startRename();
+						}}
+					>
+						{item.name}
+					</p>
+				</div>
+
+				<div class="mt-1 flex items-center gap-1.5">
+					{#if item.is_shared}
+						<ShareIndicator
+							isShared={item.is_shared}
+							shareCount={item.share_count || 0}
+							shareExpiresAt={item.share_expires_at || null}
+							size="xs"
+						/>
 					{/if}
+					{#if isStarred}
+						<Star size={10} class="fill-brand-500 text-brand-500" />
+					{/if}
+
+					<span class="truncate font-data text-2xs font-medium text-base-content/50">
+						{#if isFolder && displaySize === null}
+							Folder
+						{:else}
+							{displaySize} • {displayDate}
+						{/if}
+					</span>
 				</div>
 			{/if}
 		</div>
-	{/if}
-
-	<!-- Preview Area -->
-	<div
-		class="flex aspect-square items-center justify-center border-b border-base-300/30 bg-base-200/50 p-3"
-	>
-		<div class="flex h-full w-full items-center justify-center">
-			<FilePreview
-				{item}
-				{isFolder}
-				{isSharedRoot}
-				size="lg"
-				showThumbnail={!isFolder && workspaceMode !== 'deleted'}
-			/>
-		</div>
 	</div>
 
-	<!-- Info Area -->
-	<div class="min-w-0 p-2">
-		{#if isRenaming}
-			<div class="flex items-center gap-1">
-				<input
-					bind:this={renameInputRef}
-					type="text"
-					class="min-w-0 flex-1 rounded-md border border-brand-500 bg-base-100 px-1.5 py-0.5 text-xs focus:ring-2 focus:ring-brand-500/20 focus:outline-hidden"
-					value={renameValue}
-					oninput={(e) => (renameValue = e.currentTarget.value)}
-					onkeydown={handleRenameKeydown}
-					onblur={confirmRename}
-				/>
-				<button
-					type="button"
-					class="rounded-md p-1 text-success hover:bg-success/10"
-					onclick={(e) => {
-						e.stopPropagation();
-						confirmRename();
-					}}
-				>
-					<Check size={14} />
-				</button>
-				<button
-					type="button"
-					class="rounded-md p-1 text-error hover:bg-error/10"
-					onclick={(e) => {
-						e.stopPropagation();
-						cancelRename();
-					}}
-				>
-					<X size={14} />
-				</button>
-			</div>
-		{:else}
-			<div class="flex min-w-0 items-start gap-1.5">
-				<p
-					class="flex-1 truncate text-xs leading-4 font-medium {isRustshareSystemFolder ? 'text-base-content/40' : 'text-base-content'}"
-					title={item.name}
-					ondblclick={(e) => {
-						e.stopPropagation();
-						startRename();
-					}}
-				>
-					{item.name}
-				</p>
-			</div>
-
-			<div class="mt-1 flex items-center gap-1.5">
-				{#if item.is_shared}
-					<ShareIndicator
-						isShared={item.is_shared}
-						shareCount={item.share_count || 0}
-						shareExpiresAt={item.share_expires_at || null}
-						size="xs"
-					/>
-				{/if}
-				{#if isStarred}
-					<Star size={10} class="fill-brand-500 text-brand-500" />
-				{/if}
-
-				<span class="truncate font-data text-2xs font-medium text-base-content/50">
-					{#if isFolder && displaySize === null}
-						Folder
-					{:else}
-						{displaySize} • {displayDate}
-					{/if}
-				</span>
-			</div>
-		{/if}
-	</div>
-</div>
-
-<!-- Context Menu -->
-<FileContextMenu
-	{item}
-	{workspaceMode}
-	isOpen={contextMenuVisible}
-	position={{ x: contextMenuX, y: contextMenuY }}
-	onClose={() => (contextMenuVisible = false)}
-	onAction={handleContextMenuAction}
-/>
+	<!-- Context Menu -->
+	<FileContextMenu
+		{item}
+		{workspaceMode}
+		isOpen={contextMenuVisible}
+		position={{ x: contextMenuX, y: contextMenuY }}
+		onClose={() => (contextMenuVisible = false)}
+		onAction={handleContextMenuAction}
+	/>
 {/if}

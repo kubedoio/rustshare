@@ -62,10 +62,7 @@
 						<td>
 							<div class="flex gap-1">
 								<a href="/admin/groups/{group.id}" class="btn btn-ghost btn-xs">Edit</a>
-								<button
-									class="btn text-error btn-ghost btn-xs"
-									onclick={() => handleDelete(group)}
-								>
+								<button class="btn text-error btn-ghost btn-xs" onclick={() => handleDelete(group)}>
 									Delete
 								</button>
 							</div>

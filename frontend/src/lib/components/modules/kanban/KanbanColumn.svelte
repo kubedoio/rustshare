@@ -78,10 +78,7 @@
 		{#if cards.length === 0}
 			<div class="kanban-empty-column">
 				No cards yet
-				<button
-					class="mt-1 block text-xs text-brand-500 hover:underline"
-					onclick={onShowAddCard}
-				>
+				<button class="mt-1 block text-xs text-brand-500 hover:underline" onclick={onShowAddCard}>
 					Add card
 				</button>
 			</div>
@@ -99,9 +96,7 @@
 
 	<div class="mt-2">
 		{#if isCreatingCard}
-			<div
-				class="flex flex-col gap-2 rounded-xl border border-base-300/60 bg-base-100 p-2"
-			>
+			<div class="flex flex-col gap-2 rounded-xl border border-base-300/60 bg-base-100 p-2">
 				<input
 					type="text"
 					placeholder="Card title"
@@ -114,25 +109,14 @@
 					}}
 				/>
 				<div class="flex gap-2">
-					<button
-						class="btn flex-1 btn-xs btn-primary"
-						onclick={() => onAddCard(newCardTitle)}
-					>
+					<button class="btn flex-1 btn-xs btn-primary" onclick={() => onAddCard(newCardTitle)}>
 						Add
 					</button>
-					<button
-						class="btn btn-ghost btn-xs"
-						onclick={onCancelAddCard}
-					>
-						Cancel
-					</button>
+					<button class="btn btn-ghost btn-xs" onclick={onCancelAddCard}> Cancel </button>
 				</div>
 			</div>
 		{:else}
-			<button
-				class="btn w-full text-base-content/60 btn-ghost btn-xs"
-				onclick={onShowAddCard}
-			>
+			<button class="btn w-full text-base-content/60 btn-ghost btn-xs" onclick={onShowAddCard}>
 				<Plus size={12} />
 				Add card
 			</button>

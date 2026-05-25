@@ -192,7 +192,12 @@ export function prepareAttachment(
 /**
  * Inserts an image into the editor using Markdown image syntax.
  */
-export function insertImageIntoEditor(editor: Editor, filename: string, alt?: string, path?: string): void {
+export function insertImageIntoEditor(
+	editor: Editor,
+	filename: string,
+	alt?: string,
+	path?: string
+): void {
 	const altText = alt || filename;
 	const markdownPath = path || buildAttachmentMarkdownPath(filename);
 	const markdown = `![${altText}](${markdownPath})`;
@@ -281,7 +286,8 @@ export function resolveAttachmentPaths(
 	let result = markdown;
 	for (const att of attachments) {
 		const normalizedPath = att.path?.replace(/^\.\//, '') ?? '';
-		if (!normalizedPath.startsWith('attachments/') && !normalizedPath.startsWith('drawings/')) continue;
+		if (!normalizedPath.startsWith('attachments/') && !normalizedPath.startsWith('drawings/'))
+			continue;
 		const apiUrl = att.mimeType?.startsWith('image/')
 			? `/api/v1/files/${att.id}/preview`
 			: `/api/v1/files/${att.id}/content`;
@@ -311,7 +317,8 @@ export function restoreRelativePaths(
 	let result = markdown;
 	for (const att of attachments) {
 		const normalizedPath = att.path?.replace(/^\.\//, '') ?? '';
-		if (!normalizedPath.startsWith('attachments/') && !normalizedPath.startsWith('drawings/')) continue;
+		if (!normalizedPath.startsWith('attachments/') && !normalizedPath.startsWith('drawings/'))
+			continue;
 		const apiUrl = att.mimeType?.startsWith('image/')
 			? `/api/v1/files/${att.id}/preview`
 			: `/api/v1/files/${att.id}/content`;

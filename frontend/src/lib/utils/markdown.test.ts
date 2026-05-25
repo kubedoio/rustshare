@@ -52,53 +52,53 @@ describe('renderMarkdown', () => {
 	});
 });
 
-	describe('table rendering', () => {
-		it('renders a GFM table as HTML', () => {
-			const input = '| Name | Value |\n|------|-------|\n| Foo  | 42    |';
-			const html = renderMarkdown(input);
-			expect(html).toContain('<table');
-			expect(html).toContain('Name</th>');
-			expect(html).toContain('Foo</td>');
-			expect(html).toContain('42</td>');
-		});
-
-		it('does not render fake tables (missing separator)', () => {
-			const input = '| A | B |\n| C | D |';
-			const html = renderMarkdown(input);
-			expect(html).not.toContain('<table');
-		});
-
-		it('renders a table without outer pipes', () => {
-			const input = 'Name | Value\n-----|------\nFoo  | 42';
-			const html = renderMarkdown(input);
-			expect(html).toContain('<table');
-			expect(html).toContain('Name</th>');
-		});
+describe('table rendering', () => {
+	it('renders a GFM table as HTML', () => {
+		const input = '| Name | Value |\n|------|-------|\n| Foo  | 42    |';
+		const html = renderMarkdown(input);
+		expect(html).toContain('<table');
+		expect(html).toContain('Name</th>');
+		expect(html).toContain('Foo</td>');
+		expect(html).toContain('42</td>');
 	});
 
-	describe('task list rendering', () => {
-		it('renders unchecked task items', () => {
-			const input = '- [ ] Buy groceries\n- [ ] Walk the dog';
-			const html = renderMarkdown(input);
-			expect(html).toContain('<ul class="list-none my-2 pl-0">');
-			expect(html).toContain('<input type="checkbox" disabled="" class="');
-			expect(html).toContain('Buy groceries');
-			expect(html).toContain('Walk the dog');
-			expect(html).not.toContain('checked');
-		});
-
-		it('renders checked task items', () => {
-			const input = '- [x] Buy groceries\n- [X] Walk the dog';
-			const html = renderMarkdown(input);
-			expect(html).toContain('<input type="checkbox" disabled="" checked="" class="');
-			expect(html).toContain('Buy groceries');
-			expect(html).toContain('Walk the dog');
-		});
-
-		it('does not treat regular lists as task lists', () => {
-			const input = '- Regular item\n- Another item';
-			const html = renderMarkdown(input);
-			expect(html).toContain('<ul class="list-disc my-2 pl-5">');
-			expect(html).not.toContain('<input');
-		});
+	it('does not render fake tables (missing separator)', () => {
+		const input = '| A | B |\n| C | D |';
+		const html = renderMarkdown(input);
+		expect(html).not.toContain('<table');
 	});
+
+	it('renders a table without outer pipes', () => {
+		const input = 'Name | Value\n-----|------\nFoo  | 42';
+		const html = renderMarkdown(input);
+		expect(html).toContain('<table');
+		expect(html).toContain('Name</th>');
+	});
+});
+
+describe('task list rendering', () => {
+	it('renders unchecked task items', () => {
+		const input = '- [ ] Buy groceries\n- [ ] Walk the dog';
+		const html = renderMarkdown(input);
+		expect(html).toContain('<ul class="list-none my-2 pl-0">');
+		expect(html).toContain('<input type="checkbox" disabled="" class="');
+		expect(html).toContain('Buy groceries');
+		expect(html).toContain('Walk the dog');
+		expect(html).not.toContain('checked');
+	});
+
+	it('renders checked task items', () => {
+		const input = '- [x] Buy groceries\n- [X] Walk the dog';
+		const html = renderMarkdown(input);
+		expect(html).toContain('<input type="checkbox" disabled="" checked="" class="');
+		expect(html).toContain('Buy groceries');
+		expect(html).toContain('Walk the dog');
+	});
+
+	it('does not treat regular lists as task lists', () => {
+		const input = '- Regular item\n- Another item';
+		const html = renderMarkdown(input);
+		expect(html).toContain('<ul class="list-disc my-2 pl-5">');
+		expect(html).not.toContain('<input');
+	});
+});

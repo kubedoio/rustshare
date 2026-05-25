@@ -175,7 +175,9 @@
 							<button
 								type="button"
 								class="rounded-lg p-2 text-base-content/40 opacity-0 transition-all group-hover:opacity-100 hover:bg-base-200 hover:text-base-content"
-								onclick={(e) => { e.stopPropagation(); }}
+								onclick={(e) => {
+									e.stopPropagation();
+								}}
 								aria-label="Folder actions"
 							>
 								<svg
@@ -405,7 +407,9 @@
 							<button
 								type="button"
 								class="rounded-lg p-2 text-base-content/40 opacity-0 transition-all group-hover:opacity-100 hover:bg-base-200 hover:text-base-content"
-								onclick={(e) => { e.stopPropagation(); }}
+								onclick={(e) => {
+									e.stopPropagation();
+								}}
 								aria-label="File actions"
 							>
 								<svg

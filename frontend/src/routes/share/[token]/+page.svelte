@@ -58,22 +58,26 @@
 
 	let currentFolderId = $derived($page.url.searchParams.get('folder'));
 
-	let shareQuery = $derived(createQuery({
-		queryKey: ['public-share', token],
-		queryFn: () => getPublicShareInfo(token),
-		enabled: Boolean(token)
-	}));
+	let shareQuery = $derived(
+		createQuery({
+			queryKey: ['public-share', token],
+			queryFn: () => getPublicShareInfo(token),
+			enabled: Boolean(token)
+		})
+	);
 
-	let folderContentsQuery = $derived(createQuery({
-		queryKey: ['public-share-folder', token, currentFolderId, sessionToken],
-		queryFn: () => getPublicFolderContents(token, sessionToken, currentFolderId || undefined),
-		enabled: Boolean(
-			token &&
+	let folderContentsQuery = $derived(
+		createQuery({
+			queryKey: ['public-share-folder', token, currentFolderId, sessionToken],
+			queryFn: () => getPublicFolderContents(token, sessionToken, currentFolderId || undefined),
+			enabled: Boolean(
+				token &&
 				sessionToken &&
 				$shareQuery.data?.resource_type === 'folder' &&
 				!$shareQuery.data?.upload_only
-		)
-	}));
+			)
+		})
+	);
 
 	onMount(() => {
 		const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
@@ -121,12 +125,14 @@
 
 	let needsPassword = $derived($shareQuery.data?.password_protected && !sessionToken);
 	let canAccessShare = $derived(Boolean($shareQuery.data && sessionToken));
-	let canUploadToFolder = $derived(Boolean(
-		$shareQuery.data &&
-		$shareQuery.data.resource_type === 'folder' &&
-		($shareQuery.data.upload_only || $shareQuery.data.permissions !== 'View') &&
-		sessionToken
-	));
+	let canUploadToFolder = $derived(
+		Boolean(
+			$shareQuery.data &&
+			$shareQuery.data.resource_type === 'folder' &&
+			($shareQuery.data.upload_only || $shareQuery.data.permissions !== 'View') &&
+			sessionToken
+		)
+	);
 
 	$effect(() => {
 		if ($shareQuery.error) {
@@ -565,9 +571,18 @@
 											class={`rounded-lg border-2 border-dashed p-4 text-center transition-colors ${
 												isDragActive ? 'border-primary bg-primary/5' : 'border-base-300'
 											}`}
-											ondragenter={(e) => { e.preventDefault(); isDragActive = true; }}
-											ondragover={(e) => { e.preventDefault(); isDragActive = true; }}
-											ondragleave={(e) => { e.preventDefault(); isDragActive = false; }}
+											ondragenter={(e) => {
+												e.preventDefault();
+												isDragActive = true;
+											}}
+											ondragover={(e) => {
+												e.preventDefault();
+												isDragActive = true;
+											}}
+											ondragleave={(e) => {
+												e.preventDefault();
+												isDragActive = false;
+											}}
 											ondrop={handleDrop}
 										>
 											<p class="font-medium">Drag files here to upload</p>
@@ -625,8 +640,12 @@
 									</span>
 								</div>
 							{:else if $folderContentsQuery.data}
-								{@const visibleFolders = filterUserVisibleEntries($folderContentsQuery.data.folders ?? [])}
-								{@const visibleFiles = filterUserVisibleEntries($folderContentsQuery.data.files ?? [])}
+								{@const visibleFolders = filterUserVisibleEntries(
+									$folderContentsQuery.data.folders ?? []
+								)}
+								{@const visibleFiles = filterUserVisibleEntries(
+									$folderContentsQuery.data.files ?? []
+								)}
 								<div class="space-y-4">
 									<div class="flex items-center justify-between gap-3">
 										<div>
@@ -685,9 +704,18 @@
 											class={`rounded-lg border-2 border-dashed p-4 text-center transition-colors ${
 												isDragActive ? 'border-primary bg-primary/5' : 'border-base-300'
 											}`}
-											ondragenter={(e) => { e.preventDefault(); isDragActive = true; }}
-											ondragover={(e) => { e.preventDefault(); isDragActive = true; }}
-											ondragleave={(e) => { e.preventDefault(); isDragActive = false; }}
+											ondragenter={(e) => {
+												e.preventDefault();
+												isDragActive = true;
+											}}
+											ondragover={(e) => {
+												e.preventDefault();
+												isDragActive = true;
+											}}
+											ondragleave={(e) => {
+												e.preventDefault();
+												isDragActive = false;
+											}}
 											ondrop={handleDrop}
 										>
 											<p class="font-medium">Drag files here to upload</p>

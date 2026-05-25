@@ -112,10 +112,7 @@
 						>
 							Test
 						</button>
-						<button
-							class="btn text-error btn-ghost btn-xs"
-							onclick={() => (confirmDelete = wh.id)}
-						>
+						<button class="btn text-error btn-ghost btn-xs" onclick={() => (confirmDelete = wh.id)}>
 							Delete
 						</button>
 					</div>

@@ -16,13 +16,15 @@
 	let isPdf = $derived(normalized.includes('pdf'));
 	let isArchive = $derived(
 		normalized.includes('zip') ||
-		normalized.includes('tar') ||
-		normalized.includes('gzip') ||
-		normalized.includes('archive')
+			normalized.includes('tar') ||
+			normalized.includes('gzip') ||
+			normalized.includes('archive')
 	);
 	let isWord = $derived(normalized.includes('msword') || normalized.includes('wordprocessingml'));
 	let isExcel = $derived(normalized.includes('ms-excel') || normalized.includes('spreadsheetml'));
-	let isPowerPoint = $derived(normalized.includes('ms-powerpoint') || normalized.includes('presentationml'));
+	let isPowerPoint = $derived(
+		normalized.includes('ms-powerpoint') || normalized.includes('presentationml')
+	);
 	let isText = $derived(normalized.startsWith('text/'));
 
 	const sizeClasses = {

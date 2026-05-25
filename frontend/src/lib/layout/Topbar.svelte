@@ -76,7 +76,9 @@
 		) ?? 0
 	);
 	let storageQuota = $derived($currentUser?.storage_quota ?? null);
-	let usagePercent = $derived(storageQuota ? Math.min(100, (totalSizeUsed / storageQuota) * 100) : 0);
+	let usagePercent = $derived(
+		storageQuota ? Math.min(100, (totalSizeUsed / storageQuota) * 100) : 0
+	);
 	let usageColor = $derived(
 		usagePercent > 85 ? '#b63e3e' : usagePercent > 60 ? '#a56a12' : 'var(--brand-500, #c65a1e)'
 	);
@@ -101,7 +103,10 @@
 	let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let searchAbortController: AbortController | null = null;
 	let searchLoading = $state(false);
-	let serverSearchResults: { files: SearchItem[]; folders: SearchItem[] } = $state({ files: [], folders: [] });
+	let serverSearchResults: { files: SearchItem[]; folders: SearchItem[] } = $state({
+		files: [],
+		folders: []
+	});
 
 	function getCachedSearch(query: string): { files: SearchItem[]; folders: SearchItem[] } | null {
 		const cached = searchCache.get(query);
@@ -138,31 +143,31 @@
 		}
 		searchAbortController = new AbortController();
 
-			searchResources(q, SEARCH_LIMIT, searchAbortController.signal)
-				.then((response) => {
-					const files = filterUserVisibleEntries(
-						response.results
-							.filter((r) => r.resource_type === 'file')
-							.map((r) => ({ id: r.id, name: r.name, path: r.path }))
-					);
-					const folders = filterUserVisibleEntries(
-						response.results
-							.filter((r) => r.resource_type === 'folder')
-							.map((r) => ({ id: r.id, name: r.name, path: r.path }))
-					);
-					const results = { files, folders };
-					serverSearchResults = results;
-					setCachedSearch(q, results);
-				})
-				.catch((err) => {
-					if (err.name !== 'AbortError') {
-						console.error('Search failed:', err);
-						serverSearchResults = { files: [], folders: [] };
-					}
-				})
-				.finally(() => {
-					searchLoading = false;
-				});
+		searchResources(q, SEARCH_LIMIT, searchAbortController.signal)
+			.then((response) => {
+				const files = filterUserVisibleEntries(
+					response.results
+						.filter((r) => r.resource_type === 'file')
+						.map((r) => ({ id: r.id, name: r.name, path: r.path }))
+				);
+				const folders = filterUserVisibleEntries(
+					response.results
+						.filter((r) => r.resource_type === 'folder')
+						.map((r) => ({ id: r.id, name: r.name, path: r.path }))
+				);
+				const results = { files, folders };
+				serverSearchResults = results;
+				setCachedSearch(q, results);
+			})
+			.catch((err) => {
+				if (err.name !== 'AbortError') {
+					console.error('Search failed:', err);
+					serverSearchResults = { files: [], folders: [] };
+				}
+			})
+			.finally(() => {
+				searchLoading = false;
+			});
 	}
 
 	$effect(() => {

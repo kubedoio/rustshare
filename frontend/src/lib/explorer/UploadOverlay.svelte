@@ -45,16 +45,17 @@
 		class="absolute inset-x-0 bottom-0 z-40 rounded-b-lg border-t border-primary/20 bg-primary/5 px-4 py-2"
 	>
 		<div class="flex items-center gap-3">
-			<div class="h-5 w-5 animate-spin rounded-full border-2 border-primary/30 border-t-primary"></div>
+			<div
+				class="h-5 w-5 animate-spin rounded-full border-2 border-primary/30 border-t-primary"
+			></div>
 			<div class="flex-1">
 				<div class="flex items-center justify-between">
-					<span class="text-sm font-medium text-primary">Uploading {uploadCount} of {uploadTotal}</span>
+					<span class="text-sm font-medium text-primary"
+						>Uploading {uploadCount} of {uploadTotal}</span
+					>
 					<span class="text-sm text-primary/70">{Math.round(uploadProgress)}%</span>
 				</div>
-				<progress
-					class="progress mt-1 w-full progress-primary"
-					value={uploadProgress}
-					max="100"
+				<progress class="progress mt-1 w-full progress-primary" value={uploadProgress} max="100"
 				></progress>
 			</div>
 		</div>

@@ -127,7 +127,9 @@ describe('LeftRail', () => {
 			const workspaceLink = screen.getByRole('link', { name: 'Workspace' });
 			const foldersLink = screen.getByRole('link', { name: 'Folders' });
 
-			expect(workspaceLink.querySelector('span.text-sm.font-medium')?.textContent).toBe('Workspace');
+			expect(workspaceLink.querySelector('span.text-sm.font-medium')?.textContent).toBe(
+				'Workspace'
+			);
 			expect(foldersLink.querySelector('span.text-sm.font-medium')?.textContent).toBe('Folders');
 		});
 

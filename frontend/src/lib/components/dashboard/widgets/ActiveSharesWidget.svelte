@@ -15,7 +15,9 @@
 		queryKey: ['module-summary', module.key],
 		queryFn: () => getModuleSummary(module.key)
 	});
-	let extra = $derived(($summaryQuery.data?.extra ?? {}) as { publicCount?: number; internalCount?: number });
+	let extra = $derived(
+		($summaryQuery.data?.extra ?? {}) as { publicCount?: number; internalCount?: number }
+	);
 	let visibleItems = $derived(filterUserVisibleEntries($summaryQuery.data?.recent_items ?? []));
 </script>
 

@@ -217,7 +217,10 @@
 							{#if editable}
 								<button
 									class="action-btn"
-									onclick={(e) => { e.stopPropagation(); handleInsert(attachment); }}
+									onclick={(e) => {
+										e.stopPropagation();
+										handleInsert(attachment);
+									}}
 									title={isInlineableImage(attachment.mimeType) ? 'Insert image' : 'Insert link'}
 									aria-label="Insert into editor"
 								>
@@ -227,7 +230,10 @@
 							{#if canDelete}
 								<button
 									class="action-btn action-btn-danger"
-									onclick={(e) => { e.stopPropagation(); handleDelete(attachment); }}
+									onclick={(e) => {
+										e.stopPropagation();
+										handleDelete(attachment);
+									}}
 									title="Delete attachment"
 									aria-label="Delete attachment"
 								>

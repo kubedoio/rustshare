@@ -26,7 +26,12 @@
 		restoreRelativePaths,
 		generateUniqueFilename
 	} from '$lib/editor/adapter/attachments';
-	import type { NoteAttachment, NoteMetadata, Folder as ApiFolder, File as ApiFile } from '$lib/api/types';
+	import type {
+		NoteAttachment,
+		NoteMetadata,
+		Folder as ApiFolder,
+		File as ApiFile
+	} from '$lib/api/types';
 
 	const ATTACHMENTS_QUERY_PARAM = 'open';
 	const NOTE_MD_FILENAME = 'note.md';
@@ -92,14 +97,14 @@
 	let item = $derived($query.data as ModuleItem | undefined);
 	let content = $derived(item?.content ?? '');
 	let title = $derived(item?.metadata?.title || item?.name || '');
-	let subtitle = $derived(key === 'notes' ? (item?.metadata?.excerpt || '') : '');
+	let subtitle = $derived(key === 'notes' ? item?.metadata?.excerpt || '' : '');
 	let modifiedAt = $derived(
 		item?.modified_at
 			? key === 'meetings' && item?.metadata?.date
-					? `Date: ${new Date(item.metadata.date).toLocaleDateString()}${item.metadata.attendees?.length ? ` • ${item.metadata.attendees.length} attendee${item.metadata.attendees.length === 1 ? '' : 's'}` : ''} • Last edited ${new Date(item.modified_at).toLocaleString()}`
-					: key === 'decisions' && item?.name?.match(/^DEC-\d+/)
-							? `${item.name.match(/^DEC-\d+/)?.[0]} • Last edited ${new Date(item.modified_at).toLocaleString()}`
-							: `Last edited ${new Date(item.modified_at).toLocaleString()}`
+				? `Date: ${new Date(item.metadata.date).toLocaleDateString()}${item.metadata.attendees?.length ? ` • ${item.metadata.attendees.length} attendee${item.metadata.attendees.length === 1 ? '' : 's'}` : ''} • Last edited ${new Date(item.modified_at).toLocaleString()}`
+				: key === 'decisions' && item?.name?.match(/^DEC-\d+/)
+					? `${item.name.match(/^DEC-\d+/)?.[0]} • Last edited ${new Date(item.modified_at).toLocaleString()}`
+					: `Last edited ${new Date(item.modified_at).toLocaleString()}`
 			: ''
 	);
 
@@ -140,8 +145,8 @@
 				const path = isFolderBacked
 					? `${ATTACHMENTS_FOLDER_NAME}/${a.name}`
 					: isImage
-							? `/api/v1/files/${a.file_id}/preview`
-							: `/api/v1/files/${a.file_id}/content`;
+						? `/api/v1/files/${a.file_id}/preview`
+						: `/api/v1/files/${a.file_id}/content`;
 				return {
 					id: a.file_id,
 					filename: a.name,
@@ -200,7 +205,10 @@
 		return (data: { title: string; content: string }) => {
 			switch (key) {
 				case 'notes':
-					return notesApi.update(itemId, { content: data.content, attachments: serializeNoteAttachments() });
+					return notesApi.update(itemId, {
+						content: data.content,
+						attachments: serializeNoteAttachments()
+					});
 				case 'decisions':
 					return decisionsApi.update(itemId, { title: data.title, content: data.content });
 				case 'meetings':
@@ -233,7 +241,8 @@
 			const saved = await $saveMutation.mutateAsync({ title, content: saveContent });
 			saveStatus = 'saved';
 			documentPage?.markSaved(editorContent);
-			const modifiedAt = (saved as { modified_at?: string })?.modified_at ?? new Date().toISOString();
+			const modifiedAt =
+				(saved as { modified_at?: string })?.modified_at ?? new Date().toISOString();
 			const noteAttachments = key === 'notes' ? serializeNoteAttachments() : undefined;
 
 			queryClient.setQueryData(
@@ -304,7 +313,9 @@
 
 		try {
 			const contents = await getFolderContents(item.parent_folder_id);
-			const attachmentsFolder = contents.folders?.find((f: ApiFolder) => f.name === ATTACHMENTS_FOLDER_NAME);
+			const attachmentsFolder = contents.folders?.find(
+				(f: ApiFolder) => f.name === ATTACHMENTS_FOLDER_NAME
+			);
 			return attachmentsFolder?.id ?? item.parent_folder_id;
 		} catch (err) {
 			console.warn('Could not resolve attachments subfolder:', err);
@@ -440,10 +451,7 @@
 		}
 	}
 
-	function handleShareNotification(event: {
-		message: string;
-		type: 'success' | 'error' | 'info';
-	}) {
+	function handleShareNotification(event: { message: string; type: 'success' | 'error' | 'info' }) {
 		toastStore.show(event.message, event.type);
 	}
 
@@ -456,7 +464,7 @@
 		}
 		renameError = '';
 		void withToastLoading(
-			(v) => isRenaming = v,
+			(v) => (isRenaming = v),
 			async () => {
 				if (key === 'notes') {
 					await renameNote(id, { title: trimmed });
@@ -542,7 +550,7 @@
 		<MarkdownDocumentPage
 			bind:this={documentPage}
 			{title}
-			subtitle={subtitle}
+			{subtitle}
 			content={editorContent}
 			{mode}
 			{saveStatus}
@@ -561,7 +569,7 @@
 			collab={key === 'notes'}
 			docId={id}
 			showNoteActions={key === 'notes'}
-			initialAttachmentsOpen={initialAttachmentsOpen}
+			{initialAttachmentsOpen}
 			on:save={handleSave}
 			on:back={handleBack}
 			on:modechange={handleModeChange}

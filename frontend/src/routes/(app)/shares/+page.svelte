@@ -172,7 +172,9 @@
 
 	let shares = $derived($sharesQuery.data || []);
 	let activeShareCount = $derived(shares.filter((share) => !isExpired(share.expires_at)).length);
-	let expiringSoonCount = $derived(shares.filter((share) => isExpiringSoon(share.expires_at)).length);
+	let expiringSoonCount = $derived(
+		shares.filter((share) => isExpiringSoon(share.expires_at)).length
+	);
 	let totalAccessCount = $derived(shares.reduce((sum, share) => sum + share.access_count, 0));
 </script>
 
@@ -193,8 +195,8 @@
 						Shared links that feel managed, not forgotten
 					</h1>
 					<p class="mt-4 max-w-xl text-sm leading-6 text-base-content/68 lg:text-base">
-						Review every link, see what is still active, and revoke access before stale links
-						turn into clutter.
+						Review every link, see what is still active, and revoke access before stale links turn
+						into clutter.
 					</p>
 				</div>
 
@@ -418,9 +420,7 @@
 											Share Type
 										</p>
 										<p class="mt-2 truncate font-mono text-xs text-base-content/70">
-											{shareType === 'group'
-												? 'Shared with group members'
-												: 'Direct user share'}
+											{shareType === 'group' ? 'Shared with group members' : 'Direct user share'}
 										</p>
 									</div>
 								{/if}

@@ -50,7 +50,9 @@
 						<div class="artifact-body">
 							<span class="artifact-name">{cleanArtifactName(item.name)}</span>
 							<div class="artifact-meta">
-								<span class="artifact-type-badge">{getArtifactTypeLabel(item.moduleKey, item.item_type)}</span>
+								<span class="artifact-type-badge"
+									>{getArtifactTypeLabel(item.moduleKey, item.item_type)}</span
+								>
 								<span class="artifact-time">
 									{formatDistanceToNow(new Date(item.updated_at), { addSuffix: true })}
 								</span>

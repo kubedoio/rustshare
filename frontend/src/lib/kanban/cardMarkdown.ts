@@ -1,77 +1,77 @@
-import matter from 'gray-matter'
-import * as yaml from 'js-yaml'
+import matter from 'gray-matter';
+import * as yaml from 'js-yaml';
 import type {
 	KanbanCardDetail,
 	KanbanLabel,
 	KanbanAssignee,
 	KanbanCardAttachment,
 	KanbanChecklistGroup,
-	KanbanEvent,
-} from '$lib/api/types'
+	KanbanEvent
+} from '$lib/api/types';
 
 export interface KanbanCardMarkdown {
-	id: string
-	title: string
-	board: string
-	column: string
-	priority?: 'low' | 'medium' | 'high' | 'urgent'
-	labels: KanbanLabel[]
-	assignees: KanbanAssignee[]
-	position: number
-	createdAt: string
-	updatedAt: string
-	attachments: KanbanCardAttachment[]
-	checklists: KanbanChecklistGroup[]
-	activity: KanbanEvent[]
-	dueDate?: string
-	description: string
+	id: string;
+	title: string;
+	board: string;
+	column: string;
+	priority?: 'low' | 'medium' | 'high' | 'urgent';
+	labels: KanbanLabel[];
+	assignees: KanbanAssignee[];
+	position: number;
+	createdAt: string;
+	updatedAt: string;
+	attachments: KanbanCardAttachment[];
+	checklists: KanbanChecklistGroup[];
+	activity: KanbanEvent[];
+	dueDate?: string;
+	description: string;
 	// Allow preserving unknown frontmatter fields
-	[key: string]: unknown
+	[key: string]: unknown;
 }
 
 interface FrontmatterData {
-	id?: string
-	title?: string
-	board?: string
-	column?: string
-	priority?: 'low' | 'medium' | 'high' | 'urgent'
-	labels?: KanbanLabel[]
-	assignees?: KanbanAssignee[]
-	position?: number
-	createdAt?: string
-	created_at?: string
-	updatedAt?: string
-	updated_at?: string
-	attachments?: KanbanCardAttachment[]
-	checklists?: KanbanChecklistGroup[]
-	activity?: KanbanEvent[]
-	dueDate?: string
-	due_date?: string
-	[key: string]: unknown
+	id?: string;
+	title?: string;
+	board?: string;
+	column?: string;
+	priority?: 'low' | 'medium' | 'high' | 'urgent';
+	labels?: KanbanLabel[];
+	assignees?: KanbanAssignee[];
+	position?: number;
+	createdAt?: string;
+	created_at?: string;
+	updatedAt?: string;
+	updated_at?: string;
+	attachments?: KanbanCardAttachment[];
+	checklists?: KanbanChecklistGroup[];
+	activity?: KanbanEvent[];
+	dueDate?: string;
+	due_date?: string;
+	[key: string]: unknown;
 }
 
-const DESCRIPTION_REGEX = /^## Description\s*\n?([\s\S]*?)(?=^## |(?![\s\S]))/im
+const DESCRIPTION_REGEX = /^## Description\s*\n?([\s\S]*?)(?=^## |(?![\s\S]))/im;
 
 function extractDescription(body: string): string {
-	const match = body.match(DESCRIPTION_REGEX)
+	const match = body.match(DESCRIPTION_REGEX);
 	if (match) {
-		return match[1].trim()
+		return match[1].trim();
 	}
-	return body.trim()
+	return body.trim();
 }
 
 function computeChecklist(checklists: KanbanChecklistGroup[]) {
-	let done = 0
-	let total = 0
+	let done = 0;
+	let total = 0;
 	for (const group of checklists) {
 		for (const item of group.items) {
-			total++
+			total++;
 			if (item.done) {
-				done++
+				done++;
 			}
 		}
 	}
-	return { done, total }
+	return { done, total };
 }
 
 /**
@@ -85,13 +85,13 @@ export function parseCardMarkdown(raw: string): KanbanCardMarkdown {
 			engines: {
 				yaml: {
 					parse: (str: string) => yaml.load(str, { schema: yaml.JSON_SCHEMA }) as object,
-					stringify: (data: unknown) => yaml.dump(data, { lineWidth: -1 }),
-				},
-			},
-		})
-		const data = (parsed.data as FrontmatterData | undefined) || {}
+					stringify: (data: unknown) => yaml.dump(data, { lineWidth: -1 })
+				}
+			}
+		});
+		const data = (parsed.data as FrontmatterData | undefined) || {};
 
-		const description = extractDescription(parsed.content)
+		const description = extractDescription(parsed.content);
 
 		return {
 			...data,
@@ -109,8 +109,8 @@ export function parseCardMarkdown(raw: string): KanbanCardMarkdown {
 			checklists: data.checklists ?? [],
 			activity: data.activity ?? [],
 			dueDate: data.dueDate ?? data.due_date ?? '',
-			description,
-		}
+			description
+		};
 	} catch {
 		return {
 			id: '',
@@ -125,8 +125,8 @@ export function parseCardMarkdown(raw: string): KanbanCardMarkdown {
 			attachments: [],
 			checklists: [],
 			activity: [],
-			description: raw,
-		}
+			description: raw
+		};
 	}
 }
 
@@ -153,7 +153,7 @@ export function serializeCardMarkdown(card: KanbanCardMarkdown): string {
 		dueDate,
 		description,
 		...unknown
-	} = card
+	} = card;
 
 	const frontmatter = {
 		id,
@@ -170,13 +170,13 @@ export function serializeCardMarkdown(card: KanbanCardMarkdown): string {
 		checklists,
 		activity,
 		...(dueDate && { due_date: dueDate }),
-		...unknown,
-	}
+		...unknown
+	};
 
-	const yamlStr = yaml.dump(frontmatter, { lineWidth: -1 })
-	const body = `## Description\n\n${description}`
+	const yamlStr = yaml.dump(frontmatter, { lineWidth: -1 });
+	const body = `## Description\n\n${description}`;
 
-	return `---\n${yamlStr}---\n\n${body}\n`
+	return `---\n${yamlStr}---\n\n${body}\n`;
 }
 
 /**
@@ -199,8 +199,8 @@ export function cardDetailToMarkdown(card: KanbanCardDetail): KanbanCardMarkdown
 		checklists: card.checklists,
 		activity: card.activity,
 		dueDate: card.due_date ?? '',
-		description: card.content,
-	}
+		description: card.content
+	};
 }
 
 /**
@@ -208,9 +208,9 @@ export function cardDetailToMarkdown(card: KanbanCardDetail): KanbanCardMarkdown
  */
 export function markdownToCardDetail(
 	markdown: KanbanCardMarkdown,
-	base: Partial<KanbanCardDetail>,
+	base: Partial<KanbanCardDetail>
 ): KanbanCardDetail {
-	const checklist = computeChecklist(markdown.checklists)
+	const checklist = computeChecklist(markdown.checklists);
 
 	return {
 		...base,
@@ -235,6 +235,6 @@ export function markdownToCardDetail(
 		path: base.path ?? '',
 		schema_version: base.schema_version ?? '1.0',
 		attachments: markdown.attachments,
-		activity: markdown.activity,
-	} as KanbanCardDetail
+		activity: markdown.activity
+	} as KanbanCardDetail;
 }

@@ -31,7 +31,12 @@ export function getArtifactTypeLabel(moduleKey: string, itemType: string): strin
 	return map[moduleKey] ?? (itemType === 'folder' ? 'Folder' : 'File');
 }
 
-export function getArtifactHref(item: { moduleKey: string; item_type: string; id: string; name?: string }): string {
+export function getArtifactHref(item: {
+	moduleKey: string;
+	item_type: string;
+	id: string;
+	name?: string;
+}): string {
 	// Folders always route to the file browser regardless of module context
 	if (item.item_type === 'folder') {
 		return `/files?folder=${item.id}`;

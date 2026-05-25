@@ -19,10 +19,10 @@ import type { CreateShareRequest } from '$lib/api/shares';
 // Mock the API client
 vi.mock('$lib/api/client', () => ({
 	apiClient: {
-			postVoid: vi.fn(),
-			patchVoid: vi.fn(),
-			requestText: vi.fn(),
-			requestVoid: vi.fn(),
+		postVoid: vi.fn(),
+		patchVoid: vi.fn(),
+		requestText: vi.fn(),
+		requestVoid: vi.fn(),
 		get: vi.fn(),
 		post: vi.fn(),
 		put: vi.fn(),

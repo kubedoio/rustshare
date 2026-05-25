@@ -37,10 +37,12 @@ vi.mock('$lib/query-compat', () => ({
 		}
 		return readable({ data: null, isLoading: false });
 	}),
-	createMutation: vi.fn(() => readable({
-		mutate: vi.fn(),
-		isPending: false
-	}))
+	createMutation: vi.fn(() =>
+		readable({
+			mutate: vi.fn(),
+			isPending: false
+		})
+	)
 }));
 
 describe('Brainstorm Board Page', () => {

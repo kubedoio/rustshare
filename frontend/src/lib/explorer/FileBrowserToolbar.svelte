@@ -119,7 +119,9 @@
 					class="flex items-center gap-1.5 rounded-lg border border-base-300/60 bg-base-100 px-2.5 py-1.5 shadow-sm"
 				>
 					<div class="mr-1 flex items-center gap-2">
-						<span class="text-sm font-medium text-base-content">{effectiveSelectedCount} selected</span>
+						<span class="text-sm font-medium text-base-content"
+							>{effectiveSelectedCount} selected</span
+						>
 					</div>
 					<div class="h-4 w-px bg-base-300"></div>
 					<button
@@ -180,7 +182,19 @@
 							aria-label="Star selected"
 							title="Star selected"
 						>
-							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								class="h-3.5 w-3.5"
+								><polygon
+									points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
+								/></svg
+							>
 						</button>
 					{/if}
 					<div class="h-4 w-px bg-base-300"></div>
@@ -331,11 +345,7 @@
 <!-- Breadcrumbs -->
 {#if showBreadcrumbs && breadcrumbItems.length > 0}
 	<div class="border-b border-base-300/50 bg-base-200/30 px-3 py-1.5 md:px-4 lg:px-5">
-		<Breadcrumbs
-			folderPath={breadcrumbItems}
-			{rootLabel}
-			onNavigate={handleBreadcrumbNavigate}
-		/>
+		<Breadcrumbs folderPath={breadcrumbItems} {rootLabel} onNavigate={handleBreadcrumbNavigate} />
 	</div>
 {/if}
 

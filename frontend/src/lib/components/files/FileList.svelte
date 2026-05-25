@@ -119,13 +119,19 @@
 									type="checkbox"
 									class="checkbox checkbox-sm"
 									checked={$selectionStore.selectedFolderIds.has(folder.id)}
-									onclick={(e) => { e.stopPropagation(); handleFolderToggle(folder); }}
+									onclick={(e) => {
+										e.stopPropagation();
+										handleFolderToggle(folder);
+									}}
 								/>
 							{/if}
 							<button
 								type="button"
 								class="btn btn-ghost btn-sm"
-								onclick={(e) => { e.stopPropagation(); onFolderClick(folder); }}
+								onclick={(e) => {
+									e.stopPropagation();
+									onFolderClick(folder);
+								}}
 							>
 								<span class="text-2xl">📁</span>
 								<span class="font-medium">{folder.name}</span>
@@ -151,7 +157,9 @@
 								type="button"
 								class="btn btn-ghost btn-xs"
 								aria-label={`Open actions for folder ${folder.name}`}
-								onclick={(e) => { e.stopPropagation(); }}
+								onclick={(e) => {
+									e.stopPropagation();
+								}}
 							>
 								<svg
 									xmlns="http://www.w3.org/2000/svg"
@@ -170,24 +178,39 @@
 							</button>
 							<ul class="dropdown-content menu z-50 w-52 rounded-box bg-base-100 p-2 shadow">
 								<li>
-									<button type="button" onclick={(e) => { e.stopPropagation(); onRenameFolder(folder); }}
-										>Rename</button
-									>
-								</li>
-								<li>
-									<button type="button" onclick={(e) => { e.stopPropagation(); onShareFolder(folder); }}
-										>Share</button
-									>
-								</li>
-								<li>
-									<button type="button" onclick={(e) => { e.stopPropagation(); onMoveFolder(folder); }}
-										>Move</button
+									<button
+										type="button"
+										onclick={(e) => {
+											e.stopPropagation();
+											onRenameFolder(folder);
+										}}>Rename</button
 									>
 								</li>
 								<li>
 									<button
 										type="button"
-										onclick={(e) => { e.stopPropagation(); onDeleteFolder(folder); }}
+										onclick={(e) => {
+											e.stopPropagation();
+											onShareFolder(folder);
+										}}>Share</button
+									>
+								</li>
+								<li>
+									<button
+										type="button"
+										onclick={(e) => {
+											e.stopPropagation();
+											onMoveFolder(folder);
+										}}>Move</button
+									>
+								</li>
+								<li>
+									<button
+										type="button"
+										onclick={(e) => {
+											e.stopPropagation();
+											onDeleteFolder(folder);
+										}}
 										class="text-error">Delete</button
 									>
 								</li>
@@ -207,14 +230,20 @@
 									type="checkbox"
 									class="checkbox checkbox-sm"
 									checked={$selectionStore.selectedFileIds.has(file.id)}
-									onclick={(e) => { e.stopPropagation(); handleFileToggle(file); }}
+									onclick={(e) => {
+										e.stopPropagation();
+										handleFileToggle(file);
+									}}
 								/>
 							{/if}
 							<span class="text-2xl">{getFileIcon(file.mime_type)}</span>
 							<button
 								type="button"
 								class="cursor-pointer text-left font-medium hover:text-primary"
-								onclick={(e) => { e.stopPropagation(); onFileClick(file); }}
+								onclick={(e) => {
+									e.stopPropagation();
+									onFileClick(file);
+								}}
 							>
 								{file.name}
 							</button>
@@ -248,7 +277,9 @@
 								type="button"
 								class="btn btn-ghost btn-xs"
 								aria-label={`Open actions for file ${file.name}`}
-								onclick={(e) => { e.stopPropagation(); }}
+								onclick={(e) => {
+									e.stopPropagation();
+								}}
 							>
 								<svg
 									xmlns="http://www.w3.org/2000/svg"
@@ -267,46 +298,77 @@
 							</button>
 							<ul class="dropdown-content menu z-50 w-52 rounded-box bg-base-100 p-2 shadow">
 								<li>
-									<button type="button" onclick={(e) => { e.stopPropagation(); onRenameFile(file); }}
-										>Rename</button
+									<button
+										type="button"
+										onclick={(e) => {
+											e.stopPropagation();
+											onRenameFile(file);
+										}}>Rename</button
 									>
 								</li>
 								{#if detectEditorType(file.name, file.mime_type) !== 'none'}
 									<li>
-										<button type="button" onclick={(e) => { e.stopPropagation(); onEditFile(file); }}
-											>Edit</button
+										<button
+											type="button"
+											onclick={(e) => {
+												e.stopPropagation();
+												onEditFile(file);
+											}}>Edit</button
 										>
 									</li>
 								{/if}
 								<li>
-									<button type="button" onclick={(e) => { e.stopPropagation(); onDownloadFile(file); }}
-										>Download</button
-									>
-								</li>
-								<li>
-									<button type="button" onclick={(e) => { e.stopPropagation(); onReplaceFile(file); }}
-										>Replace File</button
-									>
-								</li>
-								<li>
-									<button type="button" onclick={(e) => { e.stopPropagation(); onShareFile(file); }}
-										>Share</button
-									>
-								</li>
-								<li>
-									<button type="button" onclick={(e) => { e.stopPropagation(); onVersionHistory(file); }}
-										>Version History</button
-									>
-								</li>
-								<li>
-									<button type="button" onclick={(e) => { e.stopPropagation(); onMoveFile(file); }}
-										>Move</button
+									<button
+										type="button"
+										onclick={(e) => {
+											e.stopPropagation();
+											onDownloadFile(file);
+										}}>Download</button
 									>
 								</li>
 								<li>
 									<button
 										type="button"
-										onclick={(e) => { e.stopPropagation(); onDeleteFile(file); }}
+										onclick={(e) => {
+											e.stopPropagation();
+											onReplaceFile(file);
+										}}>Replace File</button
+									>
+								</li>
+								<li>
+									<button
+										type="button"
+										onclick={(e) => {
+											e.stopPropagation();
+											onShareFile(file);
+										}}>Share</button
+									>
+								</li>
+								<li>
+									<button
+										type="button"
+										onclick={(e) => {
+											e.stopPropagation();
+											onVersionHistory(file);
+										}}>Version History</button
+									>
+								</li>
+								<li>
+									<button
+										type="button"
+										onclick={(e) => {
+											e.stopPropagation();
+											onMoveFile(file);
+										}}>Move</button
+									>
+								</li>
+								<li>
+									<button
+										type="button"
+										onclick={(e) => {
+											e.stopPropagation();
+											onDeleteFile(file);
+										}}
 										class="text-error">Delete</button
 									>
 								</li>

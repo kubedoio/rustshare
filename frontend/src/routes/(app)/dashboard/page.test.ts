@@ -65,8 +65,20 @@ vi.mock('$lib/query-compat', () => ({
 		if (key === 'all-files') {
 			return readable({
 				data: [
-					{ id: 'note-123', name: 'New Name.md', size: 1200, deleted_at: null, mime_type: 'text/markdown' },
-					{ id: 'f2', name: 'Other File.txt', size: 3400, deleted_at: null, mime_type: 'text/plain' }
+					{
+						id: 'note-123',
+						name: 'New Name.md',
+						size: 1200,
+						deleted_at: null,
+						mime_type: 'text/markdown'
+					},
+					{
+						id: 'f2',
+						name: 'Other File.txt',
+						size: 3400,
+						deleted_at: null,
+						mime_type: 'text/plain'
+					}
 				],
 				isLoading: false
 			});
@@ -94,7 +106,12 @@ vi.mock('$lib/query-compat', () => ({
 						summary: {
 							total_items: 1,
 							recent_items: [
-								{ id: 'board-1', name: 'Kanban Board', item_type: 'folder', updated_at: new Date().toISOString() }
+								{
+									id: 'board-1',
+									name: 'Kanban Board',
+									item_type: 'folder',
+									updated_at: new Date().toISOString()
+								}
 							]
 						}
 					},
@@ -103,7 +120,12 @@ vi.mock('$lib/query-compat', () => ({
 						summary: {
 							total_items: 1,
 							recent_items: [
-								{ id: 'note-1', name: 'Latest Note.md', item_type: 'file', updated_at: new Date().toISOString() }
+								{
+									id: 'note-1',
+									name: 'Latest Note.md',
+									item_type: 'file',
+									updated_at: new Date().toISOString()
+								}
 							]
 						}
 					},
@@ -112,7 +134,12 @@ vi.mock('$lib/query-compat', () => ({
 						summary: {
 							total_items: 1,
 							recent_items: [
-								{ id: 'unknown-1', name: 'Unknown Widget.md', item_type: 'file', updated_at: new Date().toISOString() }
+								{
+									id: 'unknown-1',
+									name: 'Unknown Widget.md',
+									item_type: 'file',
+									updated_at: new Date().toISOString()
+								}
 							]
 						}
 					}

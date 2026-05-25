@@ -9,7 +9,11 @@
 	import { NodeSelection } from '@tiptap/pm/state';
 	import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 	import type { EditorView } from '@tiptap/pm/view';
-	import { createRichEditor, editorToMarkdown, type CreateEditorOptions } from '../adapter/markdown';
+	import {
+		createRichEditor,
+		editorToMarkdown,
+		type CreateEditorOptions
+	} from '../adapter/markdown';
 	import type { SlashCommand } from '../adapter/slash-commands';
 	import { validateAttachmentUpload } from '../adapter/attachments';
 	import type { EditorPermissions } from '../types';

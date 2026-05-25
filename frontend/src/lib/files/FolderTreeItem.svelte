@@ -144,7 +144,9 @@
 					oninput={(e) => (renameValue = e.currentTarget.value)}
 					onkeydown={(e) => onRenameKeydown(e, folder)}
 					onblur={() => onRenameConfirm(folder)}
-					onclick={(e) => { e.stopPropagation(); }}
+					onclick={(e) => {
+						e.stopPropagation();
+					}}
 				/>
 			</div>
 		{:else}

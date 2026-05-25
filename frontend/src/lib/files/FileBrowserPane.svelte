@@ -26,7 +26,7 @@
 		allowSelectionMode?: boolean;
 		isLoading?: boolean;
 		error?: Error | null;
-	
+
 		selectionMode?: boolean;
 		isSharedRoot?: boolean;
 		isUploading?: boolean;
@@ -88,7 +88,7 @@
 		allowSelectionMode = true,
 		isLoading = false,
 		error = null,
-	
+
 		selectionMode = false,
 		isUploading = false,
 		activeSortField = 'name',
@@ -208,7 +208,6 @@
 				{emptyDescription}
 				{emptyActionLabel}
 				{workspaceMode}
-	
 				{selectionMode}
 				{onFolderClick}
 				{onFileClick}
@@ -242,7 +241,6 @@
 				{emptyDescription}
 				{emptyActionLabel}
 				{workspaceMode}
-	
 				{selectionMode}
 				{activeSortField}
 				{activeSortOrder}

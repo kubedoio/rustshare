@@ -151,7 +151,9 @@
 	// Auto-expand current folder path when it changes
 	$effect(() => {
 		if (currentFolderId && $folderTreeQuery.data && currentRoot === 'my-files') {
-			expandPathToFolder($folderTreeQuery.data, currentFolderId, (id) => fileBrowserUi.expandFolder(id));
+			expandPathToFolder($folderTreeQuery.data, currentFolderId, (id) =>
+				fileBrowserUi.expandFolder(id)
+			);
 		}
 	});
 

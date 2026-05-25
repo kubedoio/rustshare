@@ -45,7 +45,7 @@
 		settings: Settings,
 		activity: Activity,
 		users: Users,
-		'lightbulb': Lightbulb
+		lightbulb: Lightbulb
 	};
 
 	let IconComponent = $derived(iconMap[name] || iconMap[DEFAULT_MODULE_ICON] || Folder);

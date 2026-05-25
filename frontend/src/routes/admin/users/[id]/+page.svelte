@@ -7,11 +7,13 @@
 
 	let userId = $derived($page.params.id);
 
-	let userQuery = $derived(createQuery({
-		queryKey: ['admin', 'user', userId],
-		queryFn: () => getAdminUser(userId ?? ''),
-		enabled: !!userId
-	}));
+	let userQuery = $derived(
+		createQuery({
+			queryKey: ['admin', 'user', userId],
+			queryFn: () => getAdminUser(userId ?? ''),
+			enabled: !!userId
+		})
+	);
 
 	function handleRefresh() {
 		queryClient.invalidateQueries({ queryKey: ['admin', 'user', userId] });

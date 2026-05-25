@@ -130,7 +130,11 @@
 						onClick: () => onAction('rename')
 					},
 					{
-						id: 'move', label: 'Move to...', icon: Move, onClick: () => onAction('move') }
+						id: 'move',
+						label: 'Move to...',
+						icon: Move,
+						onClick: () => onAction('move')
+					}
 				);
 			}
 			if (canShare) {

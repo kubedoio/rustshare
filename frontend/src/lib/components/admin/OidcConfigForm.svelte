@@ -138,7 +138,13 @@
 				<span>Failed to load OIDC settings. The admin control plane is unavailable right now.</span>
 			</div>
 		{:else}
-			<form onsubmit={(e) => { e.preventDefault(); $saveMutation.mutate(); }} class="space-y-6">
+			<form
+				onsubmit={(e) => {
+					e.preventDefault();
+					$saveMutation.mutate();
+				}}
+				class="space-y-6"
+			>
 				<section class="rounded-[1.4rem] border border-base-300/80 bg-base-200/35 p-5">
 					<div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
 						<div class="max-w-2xl">

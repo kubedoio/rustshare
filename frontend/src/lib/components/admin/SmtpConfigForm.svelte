@@ -79,7 +79,13 @@
 		{:else if $query.isError}
 			<div class="alert alert-error">Failed to load SMTP config.</div>
 		{:else}
-			<form onsubmit={(e) => { e.preventDefault(); $saveMutation.mutate(); }} class="mt-2 space-y-4">
+			<form
+				onsubmit={(e) => {
+					e.preventDefault();
+					$saveMutation.mutate();
+				}}
+				class="mt-2 space-y-4"
+			>
 				<div class="form-control">
 					<label class="label cursor-pointer justify-start gap-3">
 						<input type="checkbox" class="toggle toggle-primary" bind:checked={enabled} />

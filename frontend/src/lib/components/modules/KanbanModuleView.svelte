@@ -26,12 +26,7 @@
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import type { KanbanBoard, KanbanCard, KanbanCardDetail } from '$lib/api/types';
-	import {
-		Folder as FolderIcon,
-		Plus,
-		ArrowLeft,
-		MoreHorizontal
-	} from 'lucide-svelte';
+	import { Folder as FolderIcon, Plus, ArrowLeft, MoreHorizontal } from 'lucide-svelte';
 
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
@@ -341,7 +336,7 @@
 					actor: 'current-user',
 					payload: { fromColumn: dragSourceColumnId, toColumn: targetColumnId },
 					id: `act-${Date.now()}`,
-					text: `Moved this card from ${dragSourceColumnId} to ${targetColumnId}`,
+					text: `Moved this card from ${dragSourceColumnId} to ${targetColumnId}`
 				} as import('$lib/api/types').KanbanEvent;
 				cardDetail.activity = [moveEvent, ...cardDetail.activity];
 			}
@@ -536,7 +531,7 @@
 		if (!cardDetail) return;
 		try {
 			await deleteCardAttachment(cardDetail.id, attachmentId);
-			cardDetail.attachments = cardDetail.attachments.filter(a => a.id !== attachmentId);
+			cardDetail.attachments = cardDetail.attachments.filter((a) => a.id !== attachmentId);
 			cardDetail.attachments_count = cardDetail.attachments.length;
 			queryClient.invalidateQueries({ queryKey: ['kanban-board', selectedBoardId] });
 		} catch (err) {
@@ -547,11 +542,11 @@
 	async function handleToggleChecklistItem(checklistId: string, itemId: string, done: boolean) {
 		if (!cardDetail) return;
 		// Update local state
-		const checklists = cardDetail.checklists.map(cl => {
+		const checklists = cardDetail.checklists.map((cl) => {
 			if (cl.id !== checklistId) return cl;
 			return {
 				...cl,
-				items: cl.items.map(item => {
+				items: cl.items.map((item) => {
 					if (item.id !== itemId) return item;
 					return { ...item, done };
 				})
@@ -572,7 +567,7 @@
 
 	async function handleAddChecklistItem(checklistId: string, text: string) {
 		if (!cardDetail) return;
-		const checklists = cardDetail.checklists.map(cl => {
+		const checklists = cardDetail.checklists.map((cl) => {
 			if (cl.id !== checklistId) return cl;
 			return {
 				...cl,
@@ -600,7 +595,7 @@
 			actor: 'current-user', // TODO: get from auth store
 			payload: { text },
 			id: `act-${Date.now()}`,
-			text,
+			text
 		} as import('$lib/api/types').KanbanEvent;
 		cardDetail.activity = [newEvent, ...cardDetail.activity];
 	}
@@ -625,7 +620,7 @@
 			</button>
 		</div>
 		<EmptyState
-			icon={"📋"}
+			icon={'📋'}
 			title={emptyTitle}
 			description={emptyDescription}
 			actionLabel={emptyAction}
@@ -652,7 +647,10 @@
 {:else if viewMode === 'board'}
 	<ModulePageShell
 		title={selectedBoard?.title ?? 'Board'}
-		breadcrumb={[{ label: module.displayName, onClick: showAllBoards }, { label: selectedBoard?.title ?? '' }]}
+		breadcrumb={[
+			{ label: module.displayName, onClick: showAllBoards },
+			{ label: selectedBoard?.title ?? '' }
+		]}
 		metadata={selectedBoard
 			? `${selectedBoard.columns.length} columns · ${selectedBoard.columns.reduce((sum, c) => sum + c.cards.length, 0)} cards`
 			: ''}
@@ -662,7 +660,9 @@
 				class="btn gap-2 btn-sm btn-primary"
 				onclick={handleAddCardToFirstColumn}
 				disabled={!selectedBoard || selectedBoard.columns.length === 0}
-				title={!selectedBoard || selectedBoard.columns.length === 0 ? 'Add a column before creating cards' : 'Add card'}
+				title={!selectedBoard || selectedBoard.columns.length === 0
+					? 'Add a column before creating cards'
+					: 'Add card'}
 			>
 				<Plus size={14} />
 				<span>Add card</span>
@@ -744,9 +744,9 @@
 				onDragOver={handleDragOver}
 				onDragLeave={handleDragLeave}
 				onDrop={handleDrop}
-				draggingOverColumnId={draggingOverColumnId}
-				showCreateCardColumnId={showCreateCardColumnId}
-				newCardTitle={newCardTitle}
+				{draggingOverColumnId}
+				{showCreateCardColumnId}
+				{newCardTitle}
 				setColumnRef={(columnId, el) => (columnRefs[columnId] = el)}
 			/>
 		{/if}
@@ -757,7 +757,26 @@
 	card={cardDetail}
 	open={editingCard !== null}
 	title={editingCard?.title || 'Edit Card'}
-	board={selectedBoard ?? { id: '', title: '', slug: '', path: '', columns: [], labels: [], settings: { show_description_on_cards: true, description_preview_lines: 2, show_assignees: true, show_labels: true, show_due_date: true, show_attachment_badge: true, show_checklist_badge: true }, created_at: '', updated_at: '', archived: false }}
+	board={selectedBoard ?? {
+		id: '',
+		title: '',
+		slug: '',
+		path: '',
+		columns: [],
+		labels: [],
+		settings: {
+			show_description_on_cards: true,
+			description_preview_lines: 2,
+			show_assignees: true,
+			show_labels: true,
+			show_due_date: true,
+			show_attachment_badge: true,
+			show_checklist_badge: true
+		},
+		created_at: '',
+		updated_at: '',
+		archived: false
+	}}
 	{assignableUsers}
 	{loadingDetail}
 	{savingDetail}

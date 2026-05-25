@@ -10,11 +10,13 @@
 	} = $props();
 
 	let config = $derived($dashboardConfig);
-	let orderedModules = $derived(modules.slice().sort((a, b) => {
-		const idxA = config.moduleOrder.indexOf(a.key);
-		const idxB = config.moduleOrder.indexOf(b.key);
-		return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
-	}));
+	let orderedModules = $derived(
+		modules.slice().sort((a, b) => {
+			const idxA = config.moduleOrder.indexOf(a.key);
+			const idxB = config.moduleOrder.indexOf(b.key);
+			return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
+		})
+	);
 
 	function isEnabled(key: string): boolean {
 		return config.enabledModules.includes(key);

@@ -140,7 +140,8 @@ export function normalizeModuleUiConfig(module: ModuleConfig): ModuleUiConfig {
 		emptyStateAction:
 			legacyPage?.emptyStateAction ?? normalizedDashboard.primaryAction?.label ?? 'Create',
 		primaryAction: ui.page?.primaryAction ?? normalizedDashboard.primaryAction,
-		searchPlaceholder: ui.page?.searchPlaceholder ?? `Search ${module.display_name.toLowerCase()}...`,
+		searchPlaceholder:
+			ui.page?.searchPlaceholder ?? `Search ${module.display_name.toLowerCase()}...`,
 		filterLabel: ui.page?.filterLabel ?? `All ${module.display_name.toLowerCase()}`,
 		sortLabel: ui.page?.sortLabel ?? 'Modified',
 		itemSingular: ui.page?.itemSingular ?? module.display_name.toLowerCase(),

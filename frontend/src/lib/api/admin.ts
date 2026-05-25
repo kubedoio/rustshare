@@ -70,8 +70,7 @@ export const createWebhook = (data: CreateWebhookRequest) =>
 export const updateWebhook = (id: string, data: UpdateWebhookRequest) =>
 	apiClient.patch<Webhook>(`/admin/integrations/webhooks/${id}`, data);
 
-export const deleteWebhook = (id: string) =>
-	apiClient.delete(`/admin/integrations/webhooks/${id}`);
+export const deleteWebhook = (id: string) => apiClient.delete(`/admin/integrations/webhooks/${id}`);
 
 export const testWebhook = (id: string) =>
 	apiClient.post<{ success: boolean; message?: string }>(`/admin/integrations/webhooks/${id}/test`);

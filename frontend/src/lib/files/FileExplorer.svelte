@@ -22,7 +22,7 @@
 		allowSelectionMode?: boolean;
 		isLoading?: boolean;
 		error?: Error | null;
-	
+
 		selectionMode?: boolean;
 		isUploading?: boolean;
 		isSharedRoot?: boolean;
@@ -83,7 +83,7 @@
 		allowSelectionMode = true,
 		isLoading = false,
 		error = null,
-	
+
 		selectionMode = false,
 		isUploading = false,
 		isSharedRoot = false,
@@ -144,7 +144,6 @@
 			{allowSelectionMode}
 			{isLoading}
 			{error}
-
 			{selectionMode}
 			{isUploading}
 			{isSharedRoot}
