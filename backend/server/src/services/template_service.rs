@@ -213,7 +213,7 @@ impl TemplateService {
                     TemplateDefaultFile {
                         path: ".rustshare.json".to_string(),
                         content: Some(
-                            r#"{"type":"meeting","module_key":"meetings","title":"{{title}}"}"#
+                            r#"{"kind":"meeting","title":"{{title}}","date":"{{created_at}}","team":"General","attendees":[],"created_at":"{{created_at}}","updated_at":"{{updated_at}}"}"#
                                 .to_string(),
                         ),
                         content_type: Some("application/json".to_string()),
@@ -257,7 +257,7 @@ impl TemplateService {
                     TemplateDefaultFile {
                         path: ".rustshare.json".to_string(),
                         content: Some(
-                            r#"{"type":"standup","module_key":"standups","title":"{{title}}"}"#
+                            r#"{"kind":"standup","title":"{{title}}","date":"{{created_at}}","created_at":"{{created_at}}","updated_at":"{{updated_at}}"}"#
                                 .to_string(),
                         ),
                         content_type: Some("application/json".to_string()),

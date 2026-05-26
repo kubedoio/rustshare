@@ -14,10 +14,8 @@ export function getModuleObjectHref(
 	objectType: ModuleObjectType,
 	objectId: string
 ): string {
-	if (objectType === 'folder') {
-		return `/files?folder=${objectId}`;
-	}
-	// Files — route to their module editor
+	// Known module keys — route to their dedicated editor regardless of
+	// whether the underlying storage is a file or a folder.
 	const moduleRouteMap: Record<string, string> = {
 		notes: `/modules/notes/${objectId}`,
 		meetings: `/modules/meetings/${objectId}`,
@@ -27,7 +25,16 @@ export function getModuleObjectHref(
 		brainstorming: `/modules/brainstorming/${objectId}`,
 		shares: `/modules/shares/${objectId}`
 	};
-	return moduleRouteMap[moduleKey] ?? `/files?preview=${objectId}`;
+
+	if (moduleRouteMap[moduleKey]) {
+		return moduleRouteMap[moduleKey];
+	}
+
+	if (objectType === 'folder') {
+		return `/files?folder=${objectId}`;
+	}
+
+	return `/files?preview=${objectId}`;
 }
 
 /**

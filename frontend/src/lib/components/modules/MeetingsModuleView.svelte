@@ -21,6 +21,7 @@
 	import { activityStore } from '$lib/stores/activity';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
+	import PromptModal from '$lib/components/common/PromptModal.svelte';
 
 	let { module }: { module: ModuleDefinition } = $props();
 
@@ -64,21 +65,35 @@
 	let createError = $state('');
 	let isCreating = $state(false);
 	let autoCreateTriggered = $state(false);
+	let showPromptModal = $state(false);
 
 	$effect(() => {
 		const action = $page.url.searchParams.get('action');
 		if (action === 'new' && !autoCreateTriggered && !isCreating) {
 			autoCreateTriggered = true;
-			handleNewMeeting();
+			showPromptModal = true;
+			createError = '';
 		}
 	});
 
-	async function handleNewMeeting() {
+	function handleNewMeeting() {
+		showPromptModal = true;
+		createError = '';
+	}
+
+	async function handleCreateMeetingConfirm(name: string) {
 		if (isCreating) return;
 		isCreating = true;
 		createError = '';
 
-		let title = 'Untitled Meeting Note';
+		const trimmed = name.trim();
+		if (!trimmed) {
+			createError = 'Title is required';
+			isCreating = false;
+			return;
+		}
+
+		let title = trimmed;
 		const existingNames = meetings.map((m) => m.name?.toLowerCase() ?? '');
 		if (existingNames.includes(title.toLowerCase())) {
 			let counter = 2;
@@ -97,6 +112,7 @@
 				date: new Date().toISOString(),
 				content
 			});
+			showPromptModal = false;
 			activityStore.addActivity(
 				'meeting_created',
 				result.name || title || 'Untitled Meeting Note',
@@ -287,3 +303,18 @@
 		{/if}
 	</div>
 </ModulePageShell>
+
+<PromptModal
+	open={showPromptModal}
+	title="New meeting note"
+	message="Meeting title"
+	placeholder="e.g. Weekly Standup"
+	confirmLabel="Create"
+	error={createError}
+	isLoading={isCreating}
+	onConfirm={handleCreateMeetingConfirm}
+	onCancel={() => {
+		showPromptModal = false;
+		createError = '';
+	}}
+/>
