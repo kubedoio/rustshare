@@ -110,24 +110,48 @@ jobs:
             const requiredWorkflows = ['CI'];
             const sha = '${{ steps.resolve.outputs.commit }}';
 
-            const { data: { workflow_runs: runs } } = await github.rest.actions.listWorkflowRunsForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              head_sha: sha,
-              per_page: 100
-            });
+            async function sleep(ms) {
+              return new Promise(resolve => setTimeout(resolve, ms));
+            }
+
+            async function findLatestRun(name) {
+              const { data: { workflow_runs: runs } } = await github.rest.actions.listWorkflowRunsForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head_sha: sha,
+                per_page: 100
+              });
+              return runs
+                .filter(r => r.name === name && r.head_sha === sha)
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+            }
 
             for (const name of requiredWorkflows) {
-              const matching = runs
-                .filter(r => r.name === name && r.head_sha === sha)
-                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+              let latest = await findLatestRun(name);
+              let attempts = 0;
+              const maxAttempts = 40; // ~10 minutes
 
-              if (matching.length === 0) {
-                core.setFailed(`Workflow "${name}" not found for commit ${sha}`);
+              while ((!latest || latest.status !== 'completed') && attempts < maxAttempts) {
+                if (!latest) {
+                  console.log(`Workflow "${name}" not found yet for commit ${sha}. Waiting... (${attempts + 1}/${maxAttempts})`);
+                } else {
+                  console.log(`Workflow "${name}" status is "${latest.status}" for commit ${sha}. Waiting... (${attempts + 1}/${maxAttempts})`);
+                }
+                await sleep(15000);
+                latest = await findLatestRun(name);
+                attempts++;
+              }
+
+              if (!latest) {
+                core.setFailed(`Workflow "${name}" not found for commit ${sha} after waiting`);
                 return;
               }
 
-              const latest = matching[0];
+              if (latest.status !== 'completed') {
+                core.setFailed(`Workflow "${name}" did not complete in time for commit ${sha} (status: ${latest.status})`);
+                return;
+              }
+
               if (latest.conclusion !== 'success') {
                 core.setFailed(`Workflow "${name}" conclusion was "${latest.conclusion}" for commit ${sha}`);
                 return;
