@@ -95,7 +95,7 @@
 			<form
 				onsubmit={(e) => {
 					e.preventDefault();
-					handleSubmit(e);
+					handleSubmit();
 				}}
 				class="space-y-4"
 			>

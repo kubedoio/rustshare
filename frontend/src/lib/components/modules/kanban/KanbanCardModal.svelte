@@ -394,7 +394,7 @@
 					<div class="description-editor">
 						<RichMarkdownEditor
 							content={card.content}
-							bind:currentMarkdown={card.content}
+							currentMarkdown={card.content}
 							editable={true}
 							on:change={() => {}}
 							hasAttachmentHandler={false}

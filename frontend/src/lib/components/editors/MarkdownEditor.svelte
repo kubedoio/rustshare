@@ -126,7 +126,7 @@
 				{content}
 				editable={true}
 				hasAttachmentHandler={false}
-				bind:currentMarkdown
+				{currentMarkdown}
 			/>
 		{/if}
 	</div>

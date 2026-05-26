@@ -371,6 +371,10 @@
 		}
 
 		const folderId = await resolveAttachmentFolder(item);
+		if (!folderId) {
+			toastStore.show('Could not resolve attachment folder', 'error');
+			return;
+		}
 		const results = await Promise.allSettled(
 			event.detail.files.map((file) => uploadSingleFile(file, folderId))
 		);

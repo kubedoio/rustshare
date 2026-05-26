@@ -16,8 +16,6 @@
 	let widget = $derived(module.ui.dashboard.widget);
 	let decisionsModule = $derived(modules.find((candidate) => candidate.key === 'decisions'));
 
-	import { get } from 'svelte/store';
-
 	const meetingsSummaryQuery = createQuery({
 		queryKey: ['module-summary', module.key],
 		queryFn: () => getModuleSummary(module.key)
@@ -25,7 +23,7 @@
 	const decisionsSummaryQuery = createQuery({
 		queryKey: ['module-summary', 'decisions'],
 		queryFn: () => getModuleSummary('decisions'),
-		enabled: Boolean(get($derived(decisionsModule)))
+		enabled: Boolean(decisionsModule)
 	});
 </script>
 

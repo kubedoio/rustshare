@@ -147,7 +147,7 @@
 			<form
 				onsubmit={(e) => {
 					e.preventDefault();
-					handleSubmit(e);
+					handleSubmit();
 				}}
 				class="mt-2 space-y-4"
 			>

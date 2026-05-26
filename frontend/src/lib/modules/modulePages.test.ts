@@ -39,9 +39,15 @@ describe('getModuleObjectHref', () => {
 	});
 
 	it('routes module folders to their module editor', () => {
-		expect(getModuleObjectHref('meetings', 'folder', 'folder-123')).toBe('/modules/meetings/folder-123');
-		expect(getModuleObjectHref('standups', 'folder', 'folder-123')).toBe('/modules/standups/folder-123');
-		expect(getModuleObjectHref('kanban', 'folder', 'folder-123')).toBe('/modules/kanban/folder-123');
+		expect(getModuleObjectHref('meetings', 'folder', 'folder-123')).toBe(
+			'/modules/meetings/folder-123'
+		);
+		expect(getModuleObjectHref('standups', 'folder', 'folder-123')).toBe(
+			'/modules/standups/folder-123'
+		);
+		expect(getModuleObjectHref('kanban', 'folder', 'folder-123')).toBe(
+			'/modules/kanban/folder-123'
+		);
 	});
 
 	it('routes unknown module folders to the file browser', () => {

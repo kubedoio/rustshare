@@ -132,7 +132,9 @@
 		let config: any = {};
 		try {
 			config = JSON.parse(moduleConfigJson);
-		} catch {}
+		} catch {
+			/* ignore parse error */
+		}
 		if (!config.kanban) config.kanban = {};
 		if (
 			!config.kanban.columns ||

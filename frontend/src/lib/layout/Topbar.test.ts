@@ -28,7 +28,7 @@ vi.mock('$lib/stores/search', () => ({
 vi.mock('$lib/query-compat', () => ({
 	createQuery: vi.fn((options: { queryKey?: unknown[] }) => {
 		const key = options.queryKey?.[0];
-		let result = { data: null, isLoading: false };
+		let result: { data: unknown; isLoading: boolean } = { data: null, isLoading: false };
 		if (key === 'notifications-unread-count') {
 			result = { data: { count: 2 }, isLoading: false };
 		} else if (key === 'all-files') {
