@@ -17,15 +17,25 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
+fn utc_now() -> DateTime<Utc> {
+    Utc::now()
+}
+
 /// Meeting-specific metadata sidecar schema.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MeetingMetadata {
+    #[serde(alias = "type")]
     pub kind: String,
     pub title: String,
+    #[serde(default = "utc_now")]
     pub date: DateTime<Utc>,
+    #[serde(default)]
     pub team: String,
+    #[serde(default)]
     pub attendees: Vec<String>,
+    #[serde(default = "utc_now")]
     pub created_at: DateTime<Utc>,
+    #[serde(default = "utc_now")]
     pub updated_at: DateTime<Utc>,
 }
 

@@ -14,15 +14,25 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
+fn utc_now() -> DateTime<Utc> {
+    Utc::now()
+}
+
 /// Decision-specific metadata sidecar schema.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DecisionMetadata {
+    #[serde(alias = "type")]
     pub kind: String,
     pub title: String,
+    #[serde(default)]
     pub status: String, // "Proposed", "Accepted", "Rejected", "Deprecated"
+    #[serde(default)]
     pub category: String,
+    #[serde(default = "utc_now")]
     pub created_at: DateTime<Utc>,
+    #[serde(default = "utc_now")]
     pub updated_at: DateTime<Utc>,
+    #[serde(default)]
     pub decision_date: Option<DateTime<Utc>>,
 }
 

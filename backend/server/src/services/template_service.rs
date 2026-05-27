@@ -320,7 +320,7 @@ impl TemplateService {
                     TemplateDefaultFile {
                         path: "{{file_stem}}.rustshare.json".to_string(),
                         content: Some(
-                            r#"{"type":"decision","module_key":"decisions","title":"{{title}}"}"#
+                            r#"{"kind":"decision","title":"{{title}}","status":"Proposed","category":"Uncategorized","created_at":"{{created_at}}","updated_at":"{{updated_at}}"}"#
                                 .to_string(),
                         ),
                         content_type: Some("application/json".to_string()),
