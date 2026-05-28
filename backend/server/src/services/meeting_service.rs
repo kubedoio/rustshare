@@ -26,6 +26,7 @@ fn utc_now() -> DateTime<Utc> {
 pub struct MeetingMetadata {
     #[serde(alias = "type")]
     pub kind: String,
+    #[serde(default)]
     pub title: String,
     #[serde(default = "utc_now")]
     pub date: DateTime<Utc>,
@@ -375,8 +376,35 @@ impl MeetingService {
                 .get(&sidecar.storage_key())
                 .await
                 .map_err(|e| MeetingError::Storage(e.to_string()))?;
-            let meta: MeetingMetadata = serde_json::from_slice(&data)
-                .map_err(|e| MeetingError::InvalidData(e.to_string()))?;
+            let meta: MeetingMetadata = match serde_json::from_slice(&data) {
+                Ok(m) => m,
+                Err(parse_err) => {
+                    // Fallback: old templates wrote {"type":"rustshare.module","module_key":"meetings"}
+                    if let Ok(marker) = serde_json::from_slice::<serde_json::Value>(&data) {
+                        if marker.get("type").and_then(|v| v.as_str()) == Some("rustshare.module")
+                            && marker.get("module_key").and_then(|v| v.as_str()) == Some("meetings")
+                        {
+                            MeetingMetadata {
+                                kind: "meeting".to_string(),
+                                title: marker
+                                    .get("title")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                date: Utc::now(),
+                                team: "General".to_string(),
+                                attendees: Vec::new(),
+                                created_at: Utc::now(),
+                                updated_at: Utc::now(),
+                            }
+                        } else {
+                            return Err(MeetingError::InvalidData(parse_err.to_string()));
+                        }
+                    } else {
+                        return Err(MeetingError::InvalidData(parse_err.to_string()));
+                    }
+                }
+            };
             if meta.kind == "meeting" {
                 return Ok(Some(meta));
             }

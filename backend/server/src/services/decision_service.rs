@@ -23,6 +23,7 @@ fn utc_now() -> DateTime<Utc> {
 pub struct DecisionMetadata {
     #[serde(alias = "type")]
     pub kind: String,
+    #[serde(default)]
     pub title: String,
     #[serde(default)]
     pub status: String, // "Proposed", "Accepted", "Rejected", "Deprecated"

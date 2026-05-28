@@ -27,6 +27,7 @@ fn utc_now() -> DateTime<Utc> {
 pub struct StandupMetadata {
     #[serde(alias = "type")]
     pub kind: String,
+    #[serde(default)]
     pub title: String,
     #[serde(default = "utc_now")]
     pub date: DateTime<Utc>,

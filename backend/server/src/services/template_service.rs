@@ -543,7 +543,8 @@ impl TemplateService {
                 )
                 .execute(self.metadata_store.pool())
                 .await?;
-            } else if key == "template_default_kanban" {
+            } else {
+                // Update existing system templates so schema fixes propagate
                 sqlx::query!(
                     r#"
                     UPDATE templates
@@ -551,25 +552,43 @@ impl TemplateService {
                         default_files = $2,
                         metadata_schema = $3,
                         renderer = $4,
-                        ui_config = $5,
-                        module_config = $6,
-                        updated_at = $7
-                    WHERE template_key = $8
-                      AND tenant_id = $9
-                      AND system_template = true
+                        system_template = true,
+                        updated_at = $5
+                    WHERE template_key = $6
+                      AND tenant_id = $7
                     "#,
                     serde_json::to_value(&folder_structure)?,
                     serde_json::to_value(&default_files)?,
                     metadata_schema.clone(),
                     renderer.map(|s| s.to_string()),
-                    ui_config,
-                    module_config,
                     Utc::now(),
                     key,
                     tenant_id
                 )
                 .execute(self.metadata_store.pool())
                 .await?;
+
+                // Kanban also needs ui_config and module_config updates
+                if key == "template_default_kanban" {
+                    sqlx::query!(
+                        r#"
+                        UPDATE templates
+                        SET ui_config = $1,
+                            module_config = $2,
+                            system_template = true,
+                            updated_at = $3
+                        WHERE template_key = $4
+                          AND tenant_id = $5
+                        "#,
+                        ui_config,
+                        module_config,
+                        Utc::now(),
+                        key,
+                        tenant_id
+                    )
+                    .execute(self.metadata_store.pool())
+                    .await?;
+                }
             }
         }
 

@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                        UPDATE templates\n                        SET ui_config = $1,\n                            module_config = $2,\n                            system_template = true,\n                            updated_at = $3\n                        WHERE template_key = $4\n                          AND tenant_id = $5\n                        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Jsonb",
+        "Jsonb",
+        "Timestamptz",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c89f52445404146c8a6cb7759af8cad016071e31e9cf7b2b162b9e834ad124a7"
+}
