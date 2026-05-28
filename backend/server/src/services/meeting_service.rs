@@ -436,11 +436,19 @@ impl MeetingService {
             String::new()
         };
 
-        // Load metadata
+        // Load metadata (gracefully fall back to defaults if sidecar is missing/invalid)
         let meta = self
             .load_metadata(id, user_id, folder.tenant_id)
             .await?
-            .ok_or(MeetingError::NotFound(id))?;
+            .unwrap_or_else(|| MeetingMetadata {
+                kind: "meeting".to_string(),
+                title: folder.name.clone(),
+                date: folder.created_at,
+                team: String::new(),
+                attendees: vec![],
+                created_at: folder.created_at,
+                updated_at: folder.updated_at,
+            });
 
         Ok(MeetingNote {
             id: folder.id,
@@ -466,7 +474,15 @@ impl MeetingService {
         let mut meta = self
             .load_metadata(id, user_id, folder.tenant_id)
             .await?
-            .ok_or(MeetingError::NotFound(id))?;
+            .unwrap_or_else(|| MeetingMetadata {
+                kind: "meeting".to_string(),
+                title: folder.name.clone(),
+                date: folder.created_at,
+                team: String::new(),
+                attendees: vec![],
+                created_at: folder.created_at,
+                updated_at: folder.updated_at,
+            });
 
         if let Some(t) = title {
             meta.title = t;
