@@ -43,6 +43,7 @@ describe('WebSocket Manager - Module Invalidations', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		cleanupWebSocket();
 		handlers['KanbanModified'] = () => {};
 		handlers['NoteModified'] = () => {};
 		handlers['BrainstormBoardModified'] = () => {};

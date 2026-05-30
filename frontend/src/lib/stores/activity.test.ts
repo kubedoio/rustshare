@@ -40,24 +40,16 @@ describe('Activity Store', () => {
 			expect(get(activityStore)).toEqual([]);
 		});
 
-		it('should load from localStorage if available', async () => {
-			const mockActivities: ActivityItem[] = [
-				{
-					id: '1',
-					type: 'file_uploaded',
-					fileName: 'test.txt',
-					timestamp: new Date().toISOString()
-				}
-			];
-
-			localStorage.setItem('activity-history', JSON.stringify(mockActivities));
+		it('should start with empty history on fresh import', async () => {
+			// activityStore no longer persists to localStorage;
+			// serverActivityStore is the canonical source.
+			localStorage.setItem('activity-history', JSON.stringify([{ id: '1', type: 'file_uploaded', fileName: 'test.txt', timestamp: new Date().toISOString() }]));
 
 			vi.resetModules();
 			const { activityStore: freshStore } = await import('./activity');
 			const activities = get(freshStore);
 
-			expect(activities).toHaveLength(1);
-			expect(activities[0].fileName).toBe('test.txt');
+			expect(activities).toEqual([]);
 		});
 
 		it('should handle corrupted localStorage gracefully', async () => {
@@ -132,15 +124,12 @@ describe('Activity Store', () => {
 			expect(activities[0].id).not.toBe(activities[1].id);
 		});
 
-		it('should save to localStorage', () => {
+		it('should add activity to store', () => {
 			activityStore.addActivity('file_uploaded', 'test.txt');
 
-			const stored = localStorage.getItem('activity-history');
-			expect(stored).toBeTruthy();
-
-			const parsed = JSON.parse(stored!);
-			expect(parsed).toHaveLength(1);
-			expect(parsed[0].fileName).toBe('test.txt');
+			const activities = get(activityStore);
+			expect(activities).toHaveLength(1);
+			expect(activities[0].fileName).toBe('test.txt');
 		});
 	});
 
@@ -154,13 +143,11 @@ describe('Activity Store', () => {
 			expect(get(activityStore)).toEqual([]);
 		});
 
-		it('should clear localStorage', () => {
+		it('should clear all activities', () => {
 			activityStore.addActivity('file_uploaded', 'test.txt');
 			activityStore.clearHistory();
 
-			const stored = localStorage.getItem('activity-history');
-			const parsed = JSON.parse(stored!);
-			expect(parsed).toEqual([]);
+			expect(get(activityStore)).toEqual([]);
 		});
 	});
 
@@ -179,16 +166,15 @@ describe('Activity Store', () => {
 			expect(updated[0].id).not.toBe(idToRemove);
 		});
 
-		it('should update localStorage after removal', () => {
+		it('should remove activity by ID', () => {
 			activityStore.addActivity('file_uploaded', 'test1.txt');
 			activityStore.addActivity('file_uploaded', 'test2.txt');
 
 			const activities = get(activityStore);
 			activityStore.removeActivity(activities[0].id);
 
-			const stored = localStorage.getItem('activity-history');
-			const parsed = JSON.parse(stored!);
-			expect(parsed).toHaveLength(1);
+			const updated = get(activityStore);
+			expect(updated).toHaveLength(1);
 		});
 
 		it('should handle removing non-existent ID gracefully', () => {
