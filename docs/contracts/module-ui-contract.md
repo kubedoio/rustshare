@@ -131,9 +131,10 @@ Supported initial layouts:
 
 ```text
 list-grid
+kanban-board
+gallery-grid
 calendar-list
 standup-today
-kanban-board
 decision-registry
 share-manager
 generic-file-list
@@ -145,7 +146,50 @@ Unknown layout must fallback to:
 generic-file-list
 ```
 
-## 8. Template UI contract
+## 8. Page config compatibility alias
+
+The canonical page config key is `page`. The legacy alias `modulePage` is still accepted during normalization but must be mapped to `page` on output.
+
+Example canonical shape:
+
+```json
+{
+  "page": {
+    "enabled": true,
+    "route": "/modules/notes",
+    "renderer": "notes",
+    "layout": "list-grid",
+    "emptyStateTitle": "No notes yet",
+    "emptyStateDescription": "Create your first file-backed note.",
+    "emptyStateAction": "New Note",
+    "primaryAction": {
+      "label": "New Note",
+      "action": "create-from-template",
+      "template": "template_default_note"
+    },
+    "searchPlaceholder": "Search notes...",
+    "filterLabel": "All notes",
+    "sortLabel": "Modified",
+    "itemSingular": "note",
+    "itemPlural": "notes"
+  }
+}
+```
+
+Legacy alias accepted during input:
+
+```json
+{
+  "modulePage": {
+    "layout": "list-grid",
+    "emptyStateTitle": "No notes yet",
+    "emptyStateDescription": "Create your first file-backed note.",
+    "emptyStateAction": "New Note"
+  }
+}
+```
+
+## 9. Template UI contract
 
 ```json
 {
@@ -166,7 +210,7 @@ generic-file-list
 }
 ```
 
-## 9. Form field contract
+## 10. Form field contract
 
 Required field properties:
 
@@ -192,7 +236,7 @@ users
 tags
 ```
 
-## 10. Approved icon registry
+## 11. Approved icon registry
 
 ```text
 layout-dashboard
@@ -207,11 +251,35 @@ share-2
 lock
 globe
 settings
+lightbulb
 ```
+
+> **Note:** `lightbulb` is used by the Brainstorming module default but is currently missing from the backend runtime registry. This is a known gap tracked in the consistency backlog.
 
 No raw SVG, raw HTML, external image URL, or scriptable icon payload is allowed.
 
-## 11. Rendering invariants
+## 12. Widget type registry
+
+Canonical widget types:
+
+```text
+kanban-summary
+decisions-meetings-summary
+latest-notes
+active-shares
+recent-brainstorm-boards
+recent-items
+shares-overview
+generic-module-summary
+```
+
+Unknown widget type must fallback to:
+
+```text
+generic-module-summary
+```
+
+## 13. Rendering invariants
 
 - Sidebar modules are rendered from enabled registry entries.
 - Dashboard modules are rendered from enabled registry entries.
