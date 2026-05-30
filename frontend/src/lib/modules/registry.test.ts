@@ -54,4 +54,52 @@ describe('Module Registry', () => {
 		expect(isValidIconKey('invalid-random-icon')).toBe(false);
 		expect(isValidIconKey('script<alert>1</alert>')).toBe(false);
 	});
+
+	it('does not drift from canonical workspace root paths', () => {
+		const modules = getAllModules();
+		const expectedRoots: Record<string, string> = {
+			notes: '/Workspace/Notes',
+			meetings: '/Workspace/Meetings',
+			standups: '/Workspace/Standups',
+			kanban: '/Workspace/Kanban',
+			decisions: '/Workspace/Decisions',
+			brainstorming: '/Workspace/Brainstorming',
+			shares: '/Workspace/Shares'
+		};
+
+		for (const module of modules) {
+			const expected = expectedRoots[module.key];
+			if (expected) {
+				expect(module.rootPath).toBe(expected);
+			}
+		}
+	});
+
+	it('does not drift from approved icon registry', () => {
+		const modules = getAllModules();
+		const approved = new Set([
+			'layout-dashboard',
+			'folder',
+			'file-text',
+			'sticky-note',
+			'calendar-days',
+			'clipboard-list',
+			'columns',
+			'git-branch',
+			'path-separation',
+			'share-2',
+			'lock',
+			'globe',
+			'settings',
+			'lightbulb',
+			'activity'
+		]);
+
+		for (const module of modules) {
+			expect(
+				approved.has(module.icon),
+				`module ${module.key} uses unapproved icon: ${module.icon}`
+			).toBe(true);
+		}
+	});
 });

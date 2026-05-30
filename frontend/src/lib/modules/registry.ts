@@ -1,5 +1,6 @@
-import type { User } from '$lib/api/types';
+import type { User, ModuleConfig } from '$lib/api/types';
 import { getModuleRoot } from './modulePaths';
+import { normalizeModuleUiConfig } from './workspaceSurface';
 
 export interface ModuleUiSidebar {
 	enabled: boolean;
@@ -100,6 +101,7 @@ export interface ModuleDefinition {
 	rootPath: string;
 	renderer: string;
 	defaultTemplate: string | null;
+	icon: string;
 	schemaVersion: string;
 	permissions: ModulePermissions;
 	ui: ModuleUiDefinition;
@@ -121,8 +123,8 @@ const APPROVED_ICONS = new Set([
 	'lock',
 	'globe',
 	'settings',
-	'activity',
-	'users'
+	'lightbulb',
+	'activity'
 ]);
 
 export function isValidIconKey(icon: string): boolean {
@@ -139,6 +141,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		rootPath: getModuleRoot('Notes'),
 		renderer: 'notes',
 		defaultTemplate: 'template_default_note',
+			icon: 'sticky-note',
 		schemaVersion: '1.0',
 		permissions: {
 			adminCanConfigure: true,
@@ -193,6 +196,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		rootPath: getModuleRoot('Meetings'),
 		renderer: 'meetings',
 		defaultTemplate: 'template_default_meeting',
+			icon: 'calendar-days',
 		schemaVersion: '1.0',
 		permissions: {
 			adminCanConfigure: true,
@@ -247,6 +251,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		rootPath: getModuleRoot('Standups'),
 		renderer: 'standups',
 		defaultTemplate: 'template_default_standup',
+			icon: 'activity',
 		schemaVersion: '1.0',
 		permissions: {
 			adminCanConfigure: true,
@@ -301,6 +306,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		rootPath: getModuleRoot('Kanban'),
 		renderer: 'kanban',
 		defaultTemplate: 'template_default_kanban',
+			icon: 'columns',
 		schemaVersion: '1.0',
 		permissions: {
 			adminCanConfigure: true,
@@ -355,6 +361,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		rootPath: getModuleRoot('Decisions'),
 		renderer: 'decisions',
 		defaultTemplate: 'template_default_decision',
+			icon: 'path-separation',
 		schemaVersion: '1.0',
 		permissions: {
 			adminCanConfigure: true,
@@ -409,6 +416,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		rootPath: getModuleRoot('Brainstorming'),
 		renderer: 'brainstorming',
 		defaultTemplate: 'template_blank_brainstorm',
+			icon: 'lightbulb',
 		schemaVersion: '1.0',
 		permissions: {
 			adminCanConfigure: true,
@@ -463,6 +471,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		rootPath: getModuleRoot('Shares'),
 		renderer: 'shares',
 		defaultTemplate: null,
+			icon: 'share-2',
 		schemaVersion: '1.0',
 		permissions: {
 			adminCanConfigure: true,
@@ -535,13 +544,84 @@ export const DEFAULT_WORKSPACE_SURFACE: WorkspaceSurfaceDefinition = {
 import { writable, get } from 'svelte/store';
 import { listEnabledModules } from '$lib/api/modules';
 
+function moduleConfigToDefinition(config: ModuleConfig): ModuleDefinition {
+	const ui = normalizeModuleUiConfig(config);
+	const dashboard = ui.dashboard!;
+	const widget = dashboard.widget!;
+	const page = ui.page!;
+
+	return {
+		id: config.id,
+		key: config.module_key,
+		displayName: config.display_name,
+		description: config.description,
+		enabled: config.enabled,
+		rootPath: config.root_path,
+		renderer: config.renderer,
+		defaultTemplate: config.default_template,
+		icon: config.icon,
+		schemaVersion: config.schema_version,
+		permissions: {
+			adminCanConfigure: config.permissions.admin_can_configure,
+			workspaceMembersCanUse: config.permissions.workspace_members_can_use,
+			allowPublicShare: config.permissions.allow_public_share,
+			allowInternalShare: config.permissions.allow_internal_share
+		},
+		ui: {
+			sidebar: ui.sidebar!,
+			dashboard: {
+				enabled: dashboard.enabled,
+				order: dashboard.order,
+				widget: {
+					enabled: widget.enabled,
+					type: widget.type,
+					title: widget.title,
+					description: widget.description,
+					size: widget.size,
+					columns: widget.columns,
+					maxItems: widget.maxItems,
+					primaryAction: widget.primaryAction
+						? {
+								label: widget.primaryAction.label,
+								action: widget.primaryAction.action,
+								template: widget.primaryAction.template
+							}
+						: undefined
+				}
+			},
+			page: {
+				enabled: page.enabled,
+				route: page.route,
+				renderer: page.renderer,
+				layout: page.layout,
+				emptyStateTitle: page.emptyStateTitle,
+				emptyStateDescription: page.emptyStateDescription,
+				primaryAction: page.primaryAction
+					? {
+							label: page.primaryAction.label,
+							action: page.primaryAction.action,
+							template: page.primaryAction.template
+						}
+					: undefined,
+				searchPlaceholder: page.searchPlaceholder,
+				filterLabel: page.filterLabel,
+				sortLabel: page.sortLabel,
+				itemSingular: page.itemSingular,
+				itemPlural: page.itemPlural
+			}
+		},
+		aiIndexing: config.ai_indexing,
+		audit: config.audit
+	};
+}
+
 export const modulesStore = writable<ModuleDefinition[]>(PREDEFINED_MODULES);
 
 export async function refreshModules() {
 	try {
 		const enabled = await listEnabledModules();
 		modulesStore.update((current) => {
-			return current.map((m) => {
+			const updated = current.map((m) => {
 				const serverModule = enabled.find((sm) => sm.module_key === m.key);
 				if (serverModule) {
 					const uiConfig = serverModule.ui_config;
@@ -590,8 +670,16 @@ export async function refreshModules() {
 						}
 					};
 				}
-				return m;
+				// Backend no longer returns this module → disable it
+				return { ...m, enabled: false };
 			});
+
+			const existingKeys = new Set(current.map((m) => m.key));
+			const added = enabled
+				.filter((sm) => !existingKeys.has(sm.module_key))
+				.map(moduleConfigToDefinition);
+
+			return [...updated, ...added];
 		});
 	} catch (err) {
 		console.error('Failed to refresh modules:', err);
