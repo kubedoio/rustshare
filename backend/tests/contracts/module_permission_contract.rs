@@ -814,7 +814,7 @@ async fn contract_kanban_same_tenant_unauthorized_get_card_detail_denied() {
         .await
         .unwrap();
 
-    let result = service.get_card_detail(card.id.parse().unwrap(), user_other.id).await;
+    let result = service.get_card_detail(card.id.parse().unwrap(), user_other.id, tenant_id).await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Same-tenant unauthorized get_card_detail should be denied, got {:?}",

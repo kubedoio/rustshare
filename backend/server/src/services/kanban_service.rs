@@ -596,7 +596,7 @@ impl KanbanService {
             return Err(KanbanError::PermissionDenied);
         }
 
-        let mut meta = self.load_card_metadata(&card_folder, user_id).await?
+        let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
 
         if meta.labels.contains(&label_id) {
             return Ok(());
@@ -642,7 +642,7 @@ impl KanbanService {
             return Err(KanbanError::PermissionDenied);
         }
 
-        let mut meta = self.load_card_metadata(&card_folder, user_id).await?
+        let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
 
         let initial_len = meta.labels.len();
         meta.labels.retain(|l| l != &label_id);
@@ -689,7 +689,7 @@ impl KanbanService {
             return Err(KanbanError::PermissionDenied);
         }
 
-        let mut meta = self.load_card_metadata(&card_folder, user_id).await?
+        let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
 
         if meta.assignees.contains(&assignee_id) {
             return Ok(());
@@ -735,7 +735,7 @@ impl KanbanService {
             return Err(KanbanError::PermissionDenied);
         }
 
-        let mut meta = self.load_card_metadata(&card_folder, user_id).await?
+        let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
 
         let initial_len = meta.assignees.len();
         meta.assignees.retain(|a| a != &assignee_id);
@@ -1104,7 +1104,7 @@ impl KanbanService {
             return Err(KanbanError::PermissionDenied);
         }
 
-        let mut meta = self.load_board_metadata(&board_folder, user_id).await?
+        let mut meta = self.load_board_metadata(&board_folder, user_id).await?;
 
         let label = KanbanLabel {
             id: format!("label_{}", &Uuid::new_v4().to_string()[..8]),
@@ -1143,7 +1143,7 @@ impl KanbanService {
             return Err(KanbanError::PermissionDenied);
         }
 
-        let mut meta = self.load_board_metadata(&board_folder, user_id).await?
+        let mut meta = self.load_board_metadata(&board_folder, user_id).await?;
 
         let mut found = false;
         let mut updated_label = None;
@@ -1192,7 +1192,7 @@ impl KanbanService {
             return Err(KanbanError::PermissionDenied);
         }
 
-        let mut meta = self.load_board_metadata(&board_folder, user_id).await?
+        let mut meta = self.load_board_metadata(&board_folder, user_id).await?;
 
         let initial_len = meta.labels.len();
         meta.labels.retain(|l| l.id != label_id);
@@ -1654,7 +1654,7 @@ impl KanbanService {
         self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id)
             .await?;
 
-        self.get_card(card_id, user_id).await
+        self.get_card(card_id, user_id, tenant_id).await
     }
 
     pub async fn update_card_description(
@@ -1670,6 +1670,10 @@ impl KanbanService {
             .await
             .map_err(KanbanError::from)?;
 
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
         let mut card_meta = self.load_card_metadata(&card_folder, user_id).await?;
         self.write_card_index(&card_folder, &content, user_id, tenant_id)
             .await?;
@@ -1679,7 +1683,7 @@ impl KanbanService {
         self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id)
             .await?;
 
-        self.get_card(card_id, user_id).await
+        self.get_card(card_id, user_id, tenant_id).await
     }
 
     pub async fn move_card(
@@ -2903,26 +2907,27 @@ impl KanbanService {
         &self,
         card_folder: &Folder,
         user_id: UserId,
-        tenant_id: Uuid,
+        _tenant_id: Uuid,
     ) -> Result<Vec<KanbanCardAttachment>, KanbanError> {
-        let folders = self
-            .metadata_store
-            .list_folders(Some(card_folder.id), user_id, tenant_id)
+        let contents = self
+            .folder_service
+            .list_contents(card_folder.id, user_id)
             .await
-            .map_err(|e| KanbanError::Database(e.to_string()))?;
+            .map_err(KanbanError::from)?;
 
-        let attachments_folder = match folders.into_iter().find(|f| f.name == "attachments") {
+        let attachments_folder = match contents.folders.into_iter().find(|f| f.name == "attachments") {
             Some(f) => f,
             None => return Ok(vec![]),
         };
 
-        let files = self
-            .metadata_store
-            .list_files(Some(attachments_folder.id), user_id, tenant_id)
+        let attachment_contents = self
+            .folder_service
+            .list_contents(attachments_folder.id, user_id)
             .await
-            .map_err(|e| KanbanError::Database(e.to_string()))?;
+            .map_err(KanbanError::from)?;
 
-        Ok(files
+        Ok(attachment_contents
+            .files
             .into_iter()
             .map(|f| KanbanCardAttachment {
                 id: f.id.to_string(),

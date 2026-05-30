@@ -137,7 +137,7 @@ pub async fn create_label(
     require_kanban_enabled(&state, auth.tenant_id).await?;
     let label = state
         .kanban_service
-        .create_label(board_id, input, auth.user_id)
+        .create_label(board_id, input, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok((StatusCode::CREATED, Json(label)))
@@ -152,7 +152,7 @@ pub async fn update_label(
     require_kanban_enabled(&state, auth.tenant_id).await?;
     let label = state
         .kanban_service
-        .update_label(board_id, label_id, input, auth.user_id)
+        .update_label(board_id, label_id, input, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok(Json(label))
@@ -166,7 +166,7 @@ pub async fn delete_label(
     require_kanban_enabled(&state, auth.tenant_id).await?;
     state
         .kanban_service
-        .delete_label(board_id, label_id, auth.user_id)
+        .delete_label(board_id, label_id, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -186,7 +186,7 @@ pub async fn add_card_label(
 
     state
         .kanban_service
-        .add_card_label(card_id, label_id, auth.user_id)
+        .add_card_label(card_id, label_id, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -200,7 +200,7 @@ pub async fn remove_card_label(
     require_kanban_enabled(&state, auth.tenant_id).await?;
     state
         .kanban_service
-        .remove_card_label(card_id, label_id, auth.user_id)
+        .remove_card_label(card_id, label_id, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -237,7 +237,7 @@ pub async fn assign_card_member(
 
     state
         .kanban_service
-        .assign_card_member(card_id, assignee_id, auth.user_id)
+        .assign_card_member(card_id, assignee_id, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -251,7 +251,7 @@ pub async fn unassign_card_member(
     require_kanban_enabled(&state, auth.tenant_id).await?;
     state
         .kanban_service
-        .unassign_card_member(card_id, assignee_id, auth.user_id)
+        .unassign_card_member(card_id, assignee_id, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -296,7 +296,10 @@ pub async fn get_card(
     Path(card_id): Path<Uuid>,
 ) -> Result<Json<KanbanCard>, AppError> {
     require_kanban_enabled(&state, auth.tenant_id).await?;
-    let card = state.kanban_service.get_card(card_id, auth.user_id).await?;
+    let card = state
+        .kanban_service
+        .get_card(card_id, auth.user_id, auth.tenant_id)
+        .await?;
 
     Ok(Json(card))
 }
@@ -309,7 +312,7 @@ pub async fn get_card_detail(
     require_kanban_enabled(&state, auth.tenant_id).await?;
     let detail = state
         .kanban_service
-        .get_card_detail(card_id, auth.user_id)
+        .get_card_detail(card_id, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok(Json(detail))

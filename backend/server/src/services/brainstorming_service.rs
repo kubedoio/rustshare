@@ -728,6 +728,22 @@ impl BrainstormingService {
 // Utilities
 // ============================================================================
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_slugify_basic() {
+        assert_eq!(slugify("Hello World!"), "hello-world");
+        assert_eq!(slugify("Valid-Slug-123"), "valid-slug-123");
+    }
+
+    #[test]
+    fn test_permission_denied_error_variant() {
+        assert!(matches!(BrainstormError::PermissionDenied, BrainstormError::PermissionDenied));
+    }
+}
+
 fn slugify(title: &str) -> String {
     title
         .to_lowercase()

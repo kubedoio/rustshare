@@ -281,7 +281,7 @@ async fn should_send_event_to_client(
     metadata_store: &rustshare_storage::MetadataStore,
 ) -> Result<bool, String> {
     match client_identity {
-        ClientIdentity::User(user_id) => {
+        ClientIdentity::User { user_id, .. } => {
             // For authenticated users, use existing logic
             should_send_event_to_user(event, *user_id, metadata_store).await
         }
