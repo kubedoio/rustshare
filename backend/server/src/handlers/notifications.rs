@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use uuid::Uuid;
 
+use futures_util::stream::{self, StreamExt};
 use rustshare_core::domain::{Notification, SharePermissions};
 use rustshare_core::events::{AggregateType, EventType};
 
@@ -258,69 +259,82 @@ pub async fn list_activity(
         .await?;
 
     // Build the permission-filtered activity list.
+    // Permission checks are parallelized with limited concurrency to reduce
+    // latency for active tenants while preserving event order.
+    let events_len = events.len();
+    let last_raw_event = events.last().cloned();
     let mut items = Vec::with_capacity(events.len());
     let mut last_timestamp = None;
     let mut last_id = None;
 
-    for event in &events {
-        // Determine whether the user can currently access the resource.
-        let can_access = match event.aggregate_type {
-            AggregateType::File => {
-                state
-                    .permission_resolver
-                    .check_file_permission(auth.user_id, event.aggregate_id, SharePermissions::View)
-                    .await
-                    .unwrap_or(false)
-            }
-            AggregateType::Folder => {
-                state
-                    .permission_resolver
-                    .check_folder_permission(
-                        auth.user_id,
-                        event.aggregate_id,
-                        SharePermissions::View,
-                    )
-                    .await
-                    .unwrap_or(false)
-            }
-            AggregateType::Share => {
-                // Look up the share to find its underlying resource, then check
-                // permission on that resource.
-                let row = sqlx::query("SELECT file_id, folder_id FROM shares WHERE id = $1")
-                    .bind(event.aggregate_id)
-                    .fetch_optional(state.event_store.pool())
-                    .await;
-
-                match row {
-                    Ok(Some(row)) => {
-                        let file_id: Option<Uuid> = row.try_get("file_id").unwrap_or(None);
-                        let folder_id: Option<Uuid> = row.try_get("folder_id").unwrap_or(None);
-                        if let Some(fid) = file_id {
-                            state
-                                .permission_resolver
-                                .check_file_permission(auth.user_id, fid, SharePermissions::View)
-                                .await
-                                .unwrap_or(false)
-                        } else if let Some(fid) = folder_id {
-                            state
-                                .permission_resolver
-                                .check_folder_permission(
-                                    auth.user_id,
-                                    fid,
-                                    SharePermissions::View,
-                                )
-                                .await
-                                .unwrap_or(false)
-                        } else {
-                            false
-                        }
-                    }
-                    _ => false,
+    let access_futures = events.into_iter().map(|event| {
+        let state = state.clone();
+        let auth = auth.clone();
+        async move {
+            let can_access = match event.aggregate_type {
+                AggregateType::File => {
+                    state
+                        .permission_resolver
+                        .check_file_permission(auth.user_id, event.aggregate_id, SharePermissions::View)
+                        .await
+                        .unwrap_or(false)
                 }
-            }
-            AggregateType::User => false,
-        };
+                AggregateType::Folder => {
+                    state
+                        .permission_resolver
+                        .check_folder_permission(
+                            auth.user_id,
+                            event.aggregate_id,
+                            SharePermissions::View,
+                        )
+                        .await
+                        .unwrap_or(false)
+                }
+                AggregateType::Share => {
+                    let row = sqlx::query("SELECT file_id, folder_id FROM shares WHERE id = $1")
+                        .bind(event.aggregate_id)
+                        .fetch_optional(state.event_store.pool())
+                        .await;
 
+                    match row {
+                        Ok(Some(row)) => {
+                            let file_id: Option<Uuid> = row.try_get("file_id").unwrap_or(None);
+                            let folder_id: Option<Uuid> = row.try_get("folder_id").unwrap_or(None);
+                            if let Some(fid) = file_id {
+                                state
+                                    .permission_resolver
+                                    .check_file_permission(auth.user_id, fid, SharePermissions::View)
+                                    .await
+                                    .unwrap_or(false)
+                            } else if let Some(fid) = folder_id {
+                                state
+                                    .permission_resolver
+                                    .check_folder_permission(
+                                        auth.user_id,
+                                        fid,
+                                        SharePermissions::View,
+                                    )
+                                    .await
+                                    .unwrap_or(false)
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    }
+                }
+                AggregateType::User => false,
+            };
+            (event, can_access)
+        }
+    });
+
+    let access_results: Vec<_> = stream::iter(access_futures)
+        .buffer_unordered(10)
+        .collect()
+        .await;
+
+    for (event, can_access) in access_results {
         if !can_access {
             continue;
         }
@@ -345,7 +359,7 @@ pub async fn list_activity(
         last_id = Some(event.id);
     }
 
-    let next_cursor = if events.len() >= limit as usize {
+    let next_cursor = if events_len >= limit as usize {
         // Use the last event from the raw query as the cursor so the next
         // page starts after it, even if it was filtered out.
         if let (Some(ts), Some(id)) = (last_timestamp, last_id) {
@@ -353,7 +367,7 @@ pub async fn list_activity(
                 before_timestamp: ts.to_rfc3339(),
                 before_id: id,
             })
-        } else if let Some(last_event) = events.last() {
+        } else if let Some(last_event) = last_raw_event {
             Some(ActivityCursor {
                 before_timestamp: last_event.timestamp.to_rfc3339(),
                 before_id: last_event.id,

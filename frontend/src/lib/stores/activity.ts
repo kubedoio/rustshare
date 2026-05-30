@@ -55,34 +55,15 @@ export interface Activity {
 }
 
 const MAX_ACTIVITIES = 50;
-const STORAGE_KEY = 'activity-history';
 
-// Load from localStorage
+// Legacy localStorage helpers — now no-ops.
+// serverActivityStore is the canonical source of activity data.
 function loadActivities(): Activity[] {
-	if (typeof window === 'undefined') return [];
-
-	try {
-		const stored = localStorage.getItem(STORAGE_KEY);
-		if (stored) {
-			const activities = JSON.parse(stored);
-			return Array.isArray(activities) ? activities.slice(0, MAX_ACTIVITIES) : [];
-		}
-	} catch (error) {
-		console.error('Failed to load activity history:', error);
-	}
-
 	return [];
 }
 
-// Save to localStorage
-function saveActivities(activities: Activity[]) {
-	if (typeof window === 'undefined') return;
-
-	try {
-		localStorage.setItem(STORAGE_KEY, JSON.stringify(activities));
-	} catch (error) {
-		console.error('Failed to save activity history:', error);
-	}
+function saveActivities(_activities: Activity[]) {
+	// No-op: serverActivityStore is the canonical source.
 }
 
 function generateUUID(): string {
@@ -122,20 +103,17 @@ function createActivityStore() {
 
 				// Add new activity at the beginning
 				const updated = [newActivity, ...activities].slice(0, MAX_ACTIVITIES);
-				saveActivities(updated);
 				return updated;
 			});
 		},
 
 		clearHistory: () => {
 			set([]);
-			saveActivities([]);
 		},
 
 		removeActivity: (id: string) => {
 			update((activities) => {
 				const updated = activities.filter((a) => a.id !== id);
-				saveActivities(updated);
 				return updated;
 			});
 		}

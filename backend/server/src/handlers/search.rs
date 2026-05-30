@@ -105,21 +105,15 @@ pub async fn search(
             Vec::new()
         });
 
-    // Convert to response format, filtering out hidden metadata files and disabled module content
+    // Convert to response format, filtering out disabled module content.
+    // Hidden metadata files are already filtered by SearchService::search.
     let response_results: Vec<SearchResultResponse> = results
         .into_iter()
         .filter(|r| {
-            // Hidden metadata filter
-            !r.name.starts_with(".rustshare")
-                && r.name != "events.jsonl"
-                && r.name != "index.md"
-                && r.name != "__primary__.md"
-                && !r.name.ends_with(".editor.json")
-                // Disabled module filter
-                && !disabled_module_paths.iter().any(|path| {
-                    let normalized = path.trim_end_matches('/');
-                    r.path == normalized || r.path.starts_with(&format!("{}/", normalized))
-                })
+            !disabled_module_paths.iter().any(|path| {
+                let normalized = path.trim_end_matches('/');
+                r.path == normalized || r.path.starts_with(&format!("{}/", normalized))
+            })
         })
         .map(|r| SearchResultResponse {
             id: r.id,
