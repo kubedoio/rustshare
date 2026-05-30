@@ -406,6 +406,37 @@ impl DecisionService {
         })
     }
 
+    pub async fn delete_decision(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), DecisionError> {
+        let file = self.file_service.get_file(id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(DecisionError::PermissionDenied);
+        }
+        // Delete sidecar if it exists
+        let stem = file.name.trim_end_matches(".md");
+        let sidecar_name = format!("{}.rustshare.json", stem);
+        let siblings = self
+            .metadata_store
+            .list_files(file.parent_folder_id, user_id, tenant_id)
+            .await
+            .map_err(|e| DecisionError::Database(e.to_string()))?;
+        if let Some(sidecar) = siblings.into_iter().find(|f| f.name == sidecar_name) {
+            self.file_service
+                .delete_file(sidecar.id, user_id)
+                .await
+                .map_err(DecisionError::from)?;
+        }
+        self.file_service
+            .delete_file(id, user_id)
+            .await
+            .map_err(DecisionError::from)?;
+        Ok(())
+    }
+
     pub async fn update_decision(
         &self,
         id: Uuid,

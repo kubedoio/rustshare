@@ -462,6 +462,23 @@ impl MeetingService {
         })
     }
 
+    pub async fn delete_meeting(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), MeetingError> {
+        let folder = self.folder_service.get_folder(id, user_id).await?;
+        if folder.tenant_id != tenant_id {
+            return Err(MeetingError::PermissionDenied);
+        }
+        self.folder_service
+            .delete_folder(id, user_id)
+            .await
+            .map_err(MeetingError::from)?;
+        Ok(())
+    }
+
     pub async fn update_meeting(
         &self,
         id: Uuid,

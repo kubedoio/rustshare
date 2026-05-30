@@ -62,6 +62,8 @@ pub enum EventType {
     MeetingNoteModified,
     DecisionModified,
     StandupModified,
+    KanbanModified,
+    NoteModified,
 }
 
 impl EventType {
@@ -95,6 +97,8 @@ impl EventType {
             EventType::MeetingNoteModified => "MeetingNoteModified",
             EventType::DecisionModified => "DecisionModified",
             EventType::StandupModified => "StandupModified",
+            EventType::KanbanModified => "KanbanModified",
+            EventType::NoteModified => "NoteModified",
         }
     }
 }
@@ -363,6 +367,20 @@ pub struct DecisionModifiedPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StandupModifiedPayload {
     pub standup_id: String,
+    pub title: String,
+    pub modified_by: UserId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KanbanModifiedPayload {
+    pub board_id: Option<String>,
+    pub card_id: Option<String>,
+    pub modified_by: UserId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteModifiedPayload {
+    pub note_id: String,
     pub title: String,
     pub modified_by: UserId,
 }

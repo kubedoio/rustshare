@@ -130,6 +130,24 @@ pub async fn create_brainstorm_board(
         .get_board(object.object_id, auth.user_id, auth.tenant_id)
         .await?;
 
+    let payload = BrainstormBoardModifiedPayload {
+        board_id: object.object_id.to_string(),
+        title: req.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::BrainstormBoardModified,
+        object.object_id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
     Ok((
         StatusCode::CREATED,
         Json(CreateBoardResponse {
@@ -253,7 +271,11 @@ pub async fn save_brainstorm_board_source(
         serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
         auth.user_id,
     );
-    state.broadcaster.publish(event);
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     Ok(Json(GetBoardResponse {
         id: board.id,
@@ -284,6 +306,24 @@ pub async fn update_brainstorm_board_preview(
         .update_board_preview(board_id, auth.user_id, auth.tenant_id, body)
         .await?;
 
+    let payload = BrainstormBoardModifiedPayload {
+        board_id: board_id.to_string(),
+        title: board.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::BrainstormBoardModified,
+        board_id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
     Ok(Json(GetBoardResponse {
         id: board.id,
         title: board.title,
@@ -307,10 +347,32 @@ pub async fn delete_brainstorm_board(
     Path(board_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     require_brainstorming_enabled(&state, auth.tenant_id).await?;
+    let board = state
+        .brainstorming_service
+        .get_board(board_id, auth.user_id, auth.tenant_id)
+        .await?;
     state
         .brainstorming_service
         .delete_board(board_id, auth.user_id, auth.tenant_id)
         .await?;
+
+    let payload = BrainstormBoardModifiedPayload {
+        board_id: board_id.to_string(),
+        title: board.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::BrainstormBoardModified,
+        board_id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     Ok(StatusCode::NO_CONTENT)
 }

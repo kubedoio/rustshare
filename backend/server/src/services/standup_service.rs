@@ -416,6 +416,23 @@ impl StandupService {
         })
     }
 
+    pub async fn delete_standup(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), StandupError> {
+        let folder = self.folder_service.get_folder(id, user_id).await?;
+        if folder.tenant_id != tenant_id {
+            return Err(StandupError::PermissionDenied);
+        }
+        self.folder_service
+            .delete_folder(id, user_id)
+            .await
+            .map_err(StandupError::from)?;
+        Ok(())
+    }
+
     pub async fn update_standup(
         &self,
         id: Uuid,
